@@ -2,57 +2,38 @@ import 'dotenv/config';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agent';
-import { getSkillAgent, SKILL_SYSTEM_PROMPT, setSessionSkill, clearSessionSkill } from './agents/skill-agent';
-import { setSessionWorkflow, clearSessionWorkflow, getSessionWorkflow } from './tools/workflow';
+import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
-import { verifyAccessToken, AuthErrorCode, parseTokenInfo } from './auth';
-import { createConversation, addAssistantMessage, addUserMessage, getConversationMessages, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, type MessageMetadata } from './supabase';
+import { verifyAccessToken, AuthErrorCode } from './auth';
+import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google } from './utils/models';
 import { handleHttpRoutes } from './routes';
 import { PORT, ENABLE_ROUTING, REQUIRE_AUTH, MAX_STEPS_CAP, DEFAULT_MAX_STEPS, PING_INTERVAL_MS } from './utils/config';
 import { writeLog } from './utils/logger';
-import { sanitizeToolEvent, sanitizeSteps, redactSensitiveData, sanitizeToolResult } from './utils/sanitize';
-import { normalizeMessages, contentToText, buildAttachmentParts, dataStringToBuffer } from './utils/messages';
-import { modelSupportsMultimodal } from './routes/models';
+import { sanitizeToolEvent, sanitizeSteps } from './utils/sanitize';
+import { normalizeMessages, contentToText, buildAttachmentParts } from './utils/messages';
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
 import * as memoryService from './memory/conversations';
-import {
-  compactHistory,
-  emergencyTruncate,
-  getRecentWithinBudget,
-  pruneToolOutputs,
-} from './memory/context-compactor';
-import { computeBudget, estimateTokens, shouldCompact } from './memory/token-budget';
+import { compactHistory } from './memory/context-compactor';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
-import { searchFiles } from './services/file-indexing';
 import { normalizeUsage } from './utils/usage';
-import { hasProactiveModeMarker, mergeForcedToolNames } from './tools/proactive-task-tools';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
 
 import { startVMHealthMonitor } from './services/vm-health';
-import { startBillingCron } from './services/compute-billing';
-import { startReminderCron } from './services/cloud-reminders';
-import { registerConnection, getDesktopWs, getConnectionInfo } from './services/vm-bridge';
-import { verifyVMToken, mintVMToken } from './services/vm-tokens';
-import { handleDesktopRelayResult } from './routes/desktop-tool-relay';
-import { resolveVMBaseUrl, resolveVMSecret } from './services/vm-command';
+import { registerConnection, getDesktopWs } from './services/vm-bridge';
+import { verifyVMToken } from './services/vm-tokens';
 
 // Configuration moved to utils/config
-
-// Token verification cache (avoids Supabase auth round-trip on every message)
-const _serverTokenCache = new Map<string, { ts: number; user: { userId: string; email?: string } }>();
-const SERVER_TOKEN_CACHE_TTL_MS = 60_000; // 60 seconds
 
 type TierChoice = 'auto' | ModelChoice;
 
@@ -94,110 +75,6 @@ function isSISMetaTool(toolName: string): boolean {
     toolName === 'segment_search';
 }
 
-function truncateHistoryToolResult(result: unknown): unknown {
-  if (typeof result !== 'string') return result;
-  if (result.length <= 2000) return result;
-  return result.slice(0, 1800) + `\n...[truncated, ${result.length} chars total]`;
-}
-
-function normalizeResponseHistoryMessage(msg: any): { role: 'assistant' | 'tool'; content: any } | null {
-  if (!msg || typeof msg !== 'object') return null;
-  const role = msg.role === 'assistant' || msg.role === 'tool' ? msg.role : null;
-  if (!role) return null;
-
-  if (typeof msg.content === 'string') {
-    const text = msg.content.trim();
-    return text ? { role, content: text } : null;
-  }
-
-  if (Array.isArray(msg.content)) {
-    const content = msg.content
-      .map((part: any) => {
-        if (typeof part === 'string') return part;
-        if (!part || typeof part !== 'object') return null;
-        if (part.type === 'tool-result') {
-          return { ...part, result: truncateHistoryToolResult(part.result) };
-        }
-        return { ...part };
-      })
-      .filter((part: any) => part !== null);
-
-    return content.length > 0 ? { role, content } : null;
-  }
-
-  return null;
-}
-
-type IncomingSkillStep = {
-  id: string;
-  type: string;
-  label: string;
-  content: string;
-  toolName?: string;
-};
-
-type IncomingSkill = {
-  id: string;
-  name: string;
-  description: string;
-  trigger: string;
-  steps: IncomingSkillStep[];
-  icon?: string;
-  color?: string;
-  isActive?: boolean;
-};
-
-function sanitizeIncomingSkills(rawSkills: any): IncomingSkill[] {
-  if (!Array.isArray(rawSkills)) return [];
-  const MAX_SKILLS = 30;
-  const MAX_STEPS = 40;
-  const trim = (value: unknown, maxLen: number = 4000): string => {
-    const out = String(value ?? '').trim();
-    return out.length > maxLen ? out.slice(0, maxLen) : out;
-  };
-
-  return rawSkills
-    .slice(0, MAX_SKILLS)
-    .map((raw): IncomingSkill | null => {
-      if (!raw || typeof raw !== 'object') return null;
-      const id = trim(raw.id, 256);
-      const name = trim(raw.name, 256);
-      if (!id || !name) return null;
-
-      const steps = Array.isArray(raw.steps)
-        ? raw.steps
-          .slice(0, MAX_STEPS)
-          .map((step: any): IncomingSkillStep | null => {
-            if (!step || typeof step !== 'object') return null;
-            const stepId = trim(step.id, 256);
-            const type = trim(step.type, 64) || 'prompt';
-            if (!stepId || !type) return null;
-            const toolName = trim(step.toolName, 256);
-            return {
-              id: stepId,
-              type,
-              label: trim(step.label, 256),
-              content: trim(step.content, 4000),
-              ...(toolName ? { toolName } : {}),
-            };
-          })
-          .filter((s: IncomingSkillStep | null): s is IncomingSkillStep => !!s)
-        : [];
-
-      return {
-        id,
-        name,
-        description: trim(raw.description, 4000),
-        trigger: trim(raw.trigger, 2000),
-        steps,
-        icon: trim(raw.icon, 64) || undefined,
-        color: trim(raw.color, 64) || undefined,
-        isActive: !!raw.isActive,
-      };
-    })
-    .filter((s: IncomingSkill | null): s is IncomingSkill => !!s);
-}
-
 // Sanitizers moved to utils/sanitize
 
 // Logging moved to utils/logger
@@ -227,17 +104,6 @@ const server = http.createServer(async (req, res) => {
 
 const WS_MAX_PAYLOAD = Number(process.env.CLOUD_WS_MAX_PAYLOAD || 868435456);
 const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
-const vmProxyWss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
-
-function buildVmProxyUrl(baseUrl: string, token: string): string {
-  const trimmed = String(baseUrl || '').replace(/\/+$/, '');
-  const wsBase = trimmed.startsWith('https://')
-    ? `wss://${trimmed.slice('https://'.length)}`
-    : trimmed.startsWith('http://')
-      ? `ws://${trimmed.slice('http://'.length)}`
-      : trimmed;
-  return `${wsBase}/ws?token=${encodeURIComponent(token)}`;
-}
 
 // WS keepalive: periodically ping clients; terminate if no pong
 // PING_INTERVAL_MS is imported from utils/config
@@ -261,13 +127,6 @@ server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
 import { handleTerminalConnection } from './routes/terminal-relay';
-import { handleVoiceConnection } from './routes/voice-bridge';
-import { telnyxBridgeWss } from './routes/integrations/telnyx-bridge';
-import { verifyTelnyxConfig } from './routes/integrations/telnyx';
-import { initVoiceProviders } from './voice';
-
-initVoiceProviders();
-verifyTelnyxConfig().catch(e => console.warn('[telnyx] Config verification failed:', e?.message));
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -275,53 +134,9 @@ server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
     });
-  } else if (url.startsWith('/ws/telnyx-bridge')) {
-    telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
-      telnyxBridgeWss.emit('connection', ws, req);
-    });
-  } else if (url === '/vm/ws' || url.startsWith('/vm/ws?')) {
-    (async () => {
-      try {
-        const parsed = new URL(url, 'http://localhost');
-        const token = parsed.searchParams.get('token') || '';
-        const authResult = token ? await verifyAccessToken(token) : null;
-        if (!authResult?.success || !authResult.userId) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
-        const [baseUrl, vmSecret] = await Promise.all([
-          resolveVMBaseUrl(authResult.userId),
-          resolveVMSecret(authResult.userId),
-        ]);
-        if (!baseUrl || !vmSecret) {
-          socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
-        const vmToken = mintVMToken(vmSecret, authResult.userId, 'cloud-ai-vm-ws');
-        (req as any).__vmProxy = {
-          userId: authResult.userId,
-          vmUrl: buildVmProxyUrl(baseUrl, vmToken),
-        };
-
-        vmProxyWss.handleUpgrade(req, socket, head, (ws) => {
-          vmProxyWss.emit('connection', ws, req);
-        });
-      } catch {
-        try { socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch {}
-        socket.destroy();
-      }
-    })();
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleSpeechConnection(ws, req);
-    });
-  } else if (url === '/voice' || url.startsWith('/voice?')) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handleVoiceConnection(ws, req);
     });
   } else if (url === '/terminal' || url.startsWith('/terminal?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -330,105 +145,6 @@ server.on('upgrade', (req, socket, head) => {
   } else {
     socket.destroy();
   }
-});
-
-vmProxyWss.on('connection', (clientWs: WebSocket, req: any) => {
-  const vmUrl = String(req?.__vmProxy?.vmUrl || '').trim();
-  if (!vmUrl) {
-    try {
-      clientWs.send(JSON.stringify({ type: 'error', message: 'vm_not_reachable' }));
-      clientWs.close(1011, 'vm_not_reachable');
-    } catch {}
-    return;
-  }
-
-  const upstreamWs = new WebSocket(vmUrl, { maxPayload: WS_MAX_PAYLOAD });
-  const pendingFrames: Array<{ data: Buffer; isBinary: boolean }> = [];
-  let upstreamOpen = false;
-
-  const flushPending = () => {
-    if (!upstreamOpen) return;
-    while (pendingFrames.length > 0) {
-      const frame = pendingFrames.shift();
-      if (!frame) continue;
-      upstreamWs.send(frame.data, { binary: frame.isBinary });
-    }
-  };
-
-  const closeClient = (code?: number, reason?: string) => {
-    try {
-      if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
-        clientWs.close(code, reason);
-      }
-    } catch {
-      try { clientWs.terminate(); } catch {}
-    }
-  };
-
-  const closeUpstream = () => {
-    try {
-      if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
-        upstreamWs.close();
-      }
-    } catch {
-      try { upstreamWs.terminate(); } catch {}
-    }
-  };
-
-  clientWs.on('message', (data, isBinary) => {
-    const frame = Buffer.isBuffer(data)
-      ? data
-      : Array.isArray(data)
-        ? Buffer.concat(data)
-        : Buffer.from(data as ArrayBuffer);
-    if (upstreamOpen && upstreamWs.readyState === WebSocket.OPEN) {
-      upstreamWs.send(frame, { binary: isBinary });
-      return;
-    }
-    if (upstreamWs.readyState === WebSocket.CONNECTING) {
-      pendingFrames.push({ data: frame, isBinary });
-      return;
-    }
-    closeClient(1011, 'vm_proxy_unavailable');
-  });
-
-  clientWs.on('close', () => {
-    closeUpstream();
-  });
-
-  clientWs.on('error', () => {
-    closeUpstream();
-  });
-
-  upstreamWs.on('open', () => {
-    upstreamOpen = true;
-    flushPending();
-  });
-
-  upstreamWs.on('message', (data, isBinary) => {
-    try {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(data, { binary: isBinary });
-      }
-    } catch {
-      closeUpstream();
-      closeClient();
-    }
-  });
-
-  upstreamWs.on('close', (code, reason) => {
-    closeClient(code, reason.toString());
-  });
-
-  upstreamWs.on('error', (err: any) => {
-    try {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(JSON.stringify({ type: 'error', message: `vm_proxy_failed: ${String(err?.message || err)}` }));
-      }
-    } catch {}
-    closeClient(1011, 'vm_proxy_failed');
-    closeUpstream();
-  });
 });
 
 server.listen(PORT, () => {
@@ -454,28 +170,6 @@ server.listen(PORT, () => {
   } catch (e) {
     console.warn('[cloud-ai] VM health monitor failed to start:', e);
   }
-
-  // Start compute billing cron (fallback — primary billing is on-demand in status endpoint)
-  try {
-    startBillingCron();
-  } catch (e) {
-    console.warn('[cloud-ai] Billing cron failed to start:', e);
-  }
-
-  // Start cloud reminder cron (polls for due reminders and sends SMS/WhatsApp)
-  try {
-    startReminderCron();
-  } catch (e) {
-    console.warn('[cloud-ai] Reminder cron failed to start:', e);
-  }
-
-  // Start Discord bot (DM-based personal assistant) only when the optional
-  // Discord dependencies are actually available in this workspace.
-  import('./services/discord-bot')
-    .then((mod) => mod.startDiscordBot())
-    .catch((e) => {
-      console.warn('[cloud-ai] Discord bot unavailable or failed to start:', e?.message || e);
-    });
 });
 
 // Increase HTTP keep-alive and headers timeouts to be friendly to long-lived WS
@@ -484,37 +178,10 @@ try {
   (server as any).headersTimeout = Number(process.env.CLOUD_HTTP_HEADERS_TIMEOUT_MS || 120000);
 } catch { }
 
-// Store conversation history per connection per conversation.
-// Keyed by WS -> Map<conversationKey, messages[]> so multiple tabs on the same
-// persistent WebSocket don't bleed history into each other.
-const conversations = new WeakMap<WebSocket, Map<string, Array<any>>>();
-
-function getConversationHistory(ws: WebSocket, convKey: string): Array<any> {
-  let convMap = conversations.get(ws);
-  if (!convMap) { convMap = new Map(); conversations.set(ws, convMap); }
-  let history = convMap.get(convKey);
-  if (!history) { history = []; convMap.set(convKey, history); }
-  return history;
-}
-
-// Track active compaction promises per conversation so incoming requests wait
-// for compaction to finish before touching the history array.
-const compactionLocks = new WeakMap<WebSocket, Map<string, Promise<void>>>();
-
-function getCompactionLock(ws: WebSocket, convKey: string): Promise<void> | undefined {
-  return compactionLocks.get(ws)?.get(convKey);
-}
-
-function setCompactionLock(ws: WebSocket, convKey: string, promise: Promise<void>) {
-  let m = compactionLocks.get(ws);
-  if (!m) { m = new Map(); compactionLocks.set(ws, m); }
-  m.set(convKey, promise);
-}
-
-function clearCompactionLock(ws: WebSocket, convKey: string) {
-  compactionLocks.get(ws)?.delete(convKey);
-}
-
+// Store conversation history per connection
+const conversations = new WeakMap<WebSocket, Array<any>>();
+// Persist conversationId per connection for authenticated users
+const wsConversations = new WeakMap<WebSocket, string>();
 // Anonymous resource/thread IDs per connection for memory when not authenticated
 const anonResources = new WeakMap<WebSocket, string>();
 const anonThreads = new WeakMap<WebSocket, string>();
@@ -556,7 +223,6 @@ function abortAndCleanup(ws: WebSocket, requestId: string | undefined) {
 // Note: Server-side queuing removed - client handles per-tab queuing via requestId routing
 
 wss.on('connection', (ws: WebSocket, req: any) => {
-  let connectToken = '';
   try {
     const rawUrl = String(req?.url || '');
     const qIndex = rawUrl.indexOf('?');
@@ -565,68 +231,36 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       const parts = search.split('&');
       for (const part of parts) {
         const [k, v] = part.split('=');
-        const key = decodeURIComponent(k || '');
-        const val = decodeURIComponent(v || '');
-        if (key === 'client') {
-          (ws as any).__clientType = val;
-        } else if (key === 'token') {
-          connectToken = val;
+        if (decodeURIComponent(k || '') === 'client') {
+          (ws as any).__clientType = decodeURIComponent(v || '');
+          break;
         }
       }
     }
   } catch { }
 
-  // If an auth token was provided in the URL, verify it and immediately
-  // register this connection for webhook delivery (Gmail Pub/Sub, Drive, etc.)
-  // so triggers work even before the user sends a chat message.
-  if (connectToken) {
-    (async () => {
-      try {
-        const authResult = await verifyAccessToken(connectToken);
-        if (authResult?.success && authResult.userId) {
-          (ws as any).__userId = authResult.userId;
-          registerWebhookClient(authResult.userId, ws);
-          // Also register as a desktop connection for VM relay
-          try {
-            const ct = (ws as any).__clientType || 'desktop';
-            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
-          } catch { }
-          // Deliver any queued webhooks that accumulated while offline
-          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
-          if (delivered > 0) {
-            writeLog('connect_queued_webhooks_delivered', { userId: authResult.userId, count: delivered });
-          }
-          writeLog('ws_auth_on_connect', { userId: authResult.userId });
-        }
-      } catch (e) {
-        writeLog('ws_auth_on_connect_failed', { error: String((e as any)?.message || e) });
-      }
-    })();
-  }
-
   send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
-  conversations.set(ws, new Map());
+  conversations.set(ws, []);
   writeLog('ws_connected');
   try { wsAlive.set(ws, true); } catch { }
   try { ws.on('pong', () => { try { wsAlive.set(ws, true); } catch { } }); } catch { }
-  try {
-    ws.on('close', () => {
-      writeLog('ws_disconnected');
-      // Clean up all abort controllers for this connection to prevent leaks
-      try {
-        const m = wsAbortControllers.get(ws);
-        if (m) {
-          for (const [, controller] of m) { try { controller.abort(); } catch { } }
-          m.clear();
-          wsAbortControllers.delete(ws);
-        }
-      } catch { }
-      // Clear conversation history reference
-      try { conversations.delete(ws); } catch { }
-      try { anonResources.delete(ws); } catch { }
-      try { anonThreads.delete(ws); } catch { }
-    });
-  } catch { }
+  try { ws.on('close', () => {
+    writeLog('ws_disconnected');
+    // Clean up all abort controllers for this connection to prevent leaks
+    try {
+      const m = wsAbortControllers.get(ws);
+      if (m) {
+        for (const [, controller] of m) { try { controller.abort(); } catch { } }
+        m.clear();
+        wsAbortControllers.delete(ws);
+      }
+    } catch { }
+    // Clear conversation history reference
+    try { conversations.delete(ws); } catch { }
+    try { wsConversations.delete(ws); } catch { }
+    try { anonResources.delete(ws); } catch { }
+    try { anonThreads.delete(ws); } catch { }
+  }); } catch { }
 
   ws.on('message', async (buf: WebSocket.RawData) => {
     let msg: any;
@@ -641,41 +275,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     // Bridge passthrough: tool events/results coming from the client to resolve pending execLocalTool
     if (kind === 'tool_event' || kind === 'tool_result') {
       try { handleClientToolMessage(ws, msg); } catch { }
-      // Also check if this is a result for a VM→desktop relay request
-      if (kind === 'tool_result') {
-        try {
-          const connInfo = getConnectionInfo(ws);
-          if (connInfo?.userId) handleDesktopRelayResult(connInfo.userId, msg);
-        } catch { }
-      }
-      return;
-    }
-    // Handle explicit auth message: client sends {type:'auth', accessToken:'...'} to register
-    // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.) without needing to send a chat.
-    if (kind === 'auth') {
-      const token = String(msg?.accessToken || '').trim();
-      if (!token) {
-        send(ws, { type: 'auth_result', ok: false, error: 'missing_token' });
-        return;
-      }
-      try {
-        const authResult = await verifyAccessToken(token);
-        if (authResult?.success && authResult.userId) {
-          (ws as any).__userId = authResult.userId;
-          registerWebhookClient(authResult.userId, ws);
-          try {
-            const ct = (ws as any).__clientType || 'desktop';
-            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
-          } catch { }
-          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
-          send(ws, { type: 'auth_result', ok: true, queued: delivered });
-          writeLog('ws_auth_message', { userId: authResult.userId, delivered });
-        } else {
-          send(ws, { type: 'auth_result', ok: false, error: 'invalid_token' });
-        }
-      } catch (e) {
-        send(ws, { type: 'auth_result', ok: false, error: String((e as any)?.message || 'auth_failed') });
-      }
       return;
     }
     // Handle stop/abort request to cancel ongoing stream
@@ -721,7 +320,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const { getTool } = await import('./tools/tool-registry');
         const { initToolRegistry } = await import('./tools/meta-tools');
         // Ensure tools are registered
-        try { initToolRegistry(); } catch { }
+        try { initToolRegistry(); } catch {}
 
         const tool = getTool(toolName);
         if (!tool || typeof (tool as any).execute !== 'function') {
@@ -738,7 +337,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               if (authResult?.success && authResult.userId) {
                 secrets.userId = authResult.userId;
               }
-            } catch { }
+            } catch {}
           }
 
           const result = await withClientBridge(ws, async () => {
@@ -780,16 +379,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
     const secretBag: any = { ...(secrets || {}) };
 
-    // Store active skills in bridge secrets so get_skill_info can return full step details.
-    let activeSkillsFromContext: IncomingSkill[] = [];
-    try {
-      const incomingCtx: any = (msg as any)?.context || {};
-      activeSkillsFromContext = sanitizeIncomingSkills(incomingCtx?.skills);
-      if (activeSkillsFromContext.length > 0) {
-        secretBag.__skills = activeSkillsFromContext;
-      }
-    } catch { }
-
     // Run EVERYTHING in background (don't await) to allow parallel processing across tabs
     // This moves auth, routing, and agent setup into the non-blocking bridge context
     withClientBridge(ws, async () => {
@@ -800,38 +389,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       let routedTier: ModelChoice = 'balanced';
       let chosenModelId: string | undefined;
       let conversationId: string | null = null;
-      let modelLabel: string | undefined;
-      let latestUsage: ReturnType<typeof normalizeUsage> | undefined;
       // Hoisted so the outer catch block can persist partial work on error
       let authUser: { userId: string; email?: string } | null = null;
       let requestedMode: TierChoice = 'balanced';
-      let prompt = '';
-      let thread = '';
-      let contextPathsForMeta: MessageMetadata['contextPaths'];
-      let conversationSource: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard';
-      const _msgT0 = Date.now();
       const toolCallsMap = new Map<string, any>();
       type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
       const streamChunks: StreamChunk[] = [];
-      let aggregatedReasoning = '';
-      let reasoningStartTime: number | null = null;
-      const buildAssistantMetadata = (finishReasonOverride?: string) => {
-        const filteredToolCalls = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
-        const reasoningDuration = reasoningStartTime && aggregatedReasoning
-          ? Math.max(0, (Date.now() - reasoningStartTime) / 1000)
-          : undefined;
-        return {
-          mode: requestedMode,
-          tier: routedTier,
-          modelId: modelLabel || chosenModelId,
-          reasoning: aggregatedReasoning || undefined,
-          reasoningDuration,
-          toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
-          streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-          finishReason: finishReasonOverride,
-          usage: latestUsage,
-        };
-      };
       try {
         const messages = normalizeMessages(msg);
         const providedMessages = Array.isArray((msg as any)?.messages) ? (msg as any).messages : undefined;
@@ -841,86 +404,41 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }
 
         const accessToken = String(msg?.auth?.accessToken || '');
-        const _authStart = Date.now();
+        const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
+        authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
 
-        // Parse JWT locally for userId to enable parallel auth + access check
-        const _tokenInfo = accessToken ? parseTokenInfo(accessToken) : null;
-        const _cachedAuth = accessToken ? _serverTokenCache.get(accessToken) : null;
+        // Update secretBag with userId if authenticated
+        if (authUser?.userId) secretBag.userId = authUser.userId;
 
-        if (_cachedAuth && Date.now() - _cachedAuth.ts < SERVER_TOKEN_CACHE_TTL_MS) {
-          // Fast path: cached token
-          authUser = _cachedAuth.user;
-        } else if (_tokenInfo && _tokenInfo.userId && !_tokenInfo.isExpired) {
-          // Run verifyAccessToken + checkAccess in parallel using locally-parsed userId
-          const [authResult, access] = await Promise.all([
-            verifyAccessToken(accessToken),
-            checkAccess(_tokenInfo.userId),
-          ]);
-          authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
-          if (authUser) {
-            _serverTokenCache.set(accessToken, { ts: Date.now(), user: authUser });
-          }
+        if (REQUIRE_AUTH && !authUser) {
+          // Provide specific error codes for client-side handling
+          const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
+          const errorMessage = authResult?.message || 'unauthorized';
+          send(ws, {
+            type: 'error',
+            message: errorMessage,
+            code: errorCode,
+            data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
+          }, requestId);
+          return;
+        }
 
-          if (REQUIRE_AUTH && !authUser) {
-            const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
-            const errorMessage = authResult?.message || 'unauthorized';
-            send(ws, {
-              type: 'error',
-              message: errorMessage,
-              code: errorCode,
-              data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
-            }, requestId);
-            return;
-          }
-
-          if (authUser && !access.allowed) {
+        if (authUser) {
+          const access = await checkAccess(authUser.userId);
+          if (!access.allowed) {
             send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
             return;
           }
-        } else {
-          const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
-          authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
-          if (authUser) {
-            _serverTokenCache.set(accessToken, { ts: Date.now(), user: authUser });
-          }
+          // Count this chat request towards daily usage
+          try { await incrementDailyRequestCounter(authUser.userId); } catch { }
 
-          if (REQUIRE_AUTH && !authUser) {
-            const errorCode = authResult?.error || AuthErrorCode.UNAUTHORIZED;
-            const errorMessage = authResult?.message || 'unauthorized';
-            send(ws, {
-              type: 'error',
-              message: errorMessage,
-              code: errorCode,
-              data: { requiresReauth: errorCode === AuthErrorCode.EXPIRED_TOKEN }
-            }, requestId);
-            return;
-          }
-
-          if (authUser) {
-            const access = await checkAccess(authUser.userId);
-            if (!access.allowed) {
-              send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
-              return;
-            }
-          }
-        }
-
-        console.log(`[perf] auth+access: ${Date.now() - _authStart}ms`);
-
-        // Update secretBag with userId and accessToken if authenticated
-        if (authUser?.userId) secretBag.userId = authUser.userId;
-        if (accessToken) secretBag.accessToken = accessToken;
-
-        if (authUser) {
-          // Fire-and-forget — don't block the request pipeline
-          incrementDailyRequestCounter(authUser.userId).catch(() => {});
-
-          // Register for webhook delivery and deliver any queued webhooks (non-blocking)
+          // Register for webhook delivery and deliver any queued webhooks
           try {
             registerWebhookClient(authUser.userId, ws);
-            deliverQueuedWebhooks(authUser.userId, ws).then(delivered => {
-              if (delivered > 0) writeLog('queued_webhooks_delivered', { userId: authUser!.userId, count: delivered });
-            }).catch(() => {});
+            const delivered = await deliverQueuedWebhooks(authUser.userId, ws);
+            if (delivered > 0) {
+              writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
+            }
           } catch { }
 
           // Register this WS as a desktop connection so VM agent relay works
@@ -930,7 +448,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           } catch { }
         }
 
-        const _routeStart = Date.now();
         requestedMode = normalizeTierChoice((msg as any)?.model);
         let routed: { model: ModelChoice; modelIndex: number; layerIndexes: number[] } = {
           model: 'balanced',
@@ -958,8 +475,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           routedTier = requestedMode;
         }
 
-        console.log(`[perf] routing: ${Date.now() - _routeStart}ms`);
-
         chosenModelId =
           (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
             ? String((msg as any).modelId).trim()
@@ -969,90 +484,47 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
         } catch { }
 
-        const _intStart = Date.now();
-
         let enabledIntegrations: string[] = [];
         let mcpTools: Record<string, any> = {};
 
         if (authUser) {
           const _au = authUser; // local const for TS narrowing (authUser is `let`)
-          // Check integrations + load MCP tools in parallel
-          const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
-          const [checks, mcpResult] = await Promise.all([
-            Promise.all(providers.map(p => getExternalAccount(_au.userId, p))).catch(() => [] as any[]),
-            (async () => {
-              try {
-                const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('./mcp');
-                const connected = await getConnectedMCPIntegrations(_au.userId);
-                if (connected.length > 0) {
-                  const tools = await getMCPToolsForIntegrations(_au.userId, connected);
-                  console.log(`[cloud-ai] Loaded ${Object.keys(tools).length} MCP tools from ${connected.length} integrations`);
-                  return tools;
-                }
-              } catch (e) {
-                console.warn('[cloud-ai] Failed to load MCP tools:', e);
-              }
-              return {};
-            })(),
-          ]);
-          enabledIntegrations = providers.filter((_, i) => !!checks[i]);
-          mcpTools = mcpResult;
-        }
-
-        console.log(`[perf] integrations+mcp: ${Date.now() - _intStart}ms`);
-
-        // Merge desktop-reported integrations (browser_use, ollama, telnyx, etc.)
-        // outside auth gate so local desktop tools work even when user isn't signed in.
-        const clientIntegrations = Array.isArray((msg as any)?.clientIntegrations)
-          ? (msg as any).clientIntegrations.filter((v: any) => typeof v === 'string')
-          : [];
-        for (const ci of clientIntegrations) {
-          if (!enabledIntegrations.includes(ci)) enabledIntegrations.push(ci);
-        }
-
-        // Get conversation history keyed by conversationId (per-tab isolation).
-        // Falls back to requestId or default key for anonymous/legacy clients.
-        const clientConvId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
-        const historyKey = clientConvId || requestId || '__default__';
-
-        // Wait for any in-progress compaction to finish before touching history
-        const pendingCompaction = getCompactionLock(ws, historyKey);
-        if (pendingCompaction) {
-          console.log(`[cloud-ai] Waiting for compaction to finish on ${historyKey}`);
-          await pendingCompaction;
-        }
-
-        const history = getConversationHistory(ws, historyKey);
-
-        // Hydrate from Supabase when reconnecting to an existing conversation on a
-        // fresh WebSocket (e.g. each SMS turn opens a new WS). Without this, the AI
-        // would lose all prior context because in-memory history is per-connection.
-        let hydratedFromSupabase = false;
-        if (history.length === 0 && clientConvId && authUser) {
+          // Check integrations
+          const providers = ['github', 'google', 'outlook'];
           try {
-            const stored = await getConversationMessages(authUser.userId, clientConvId, 50);
-            if (stored.length > 0) {
-              for (const m of stored) history.push(m);
-              hydratedFromSupabase = true;
+            const checks = await Promise.all(providers.map(p => getExternalAccount(_au.userId, p)));
+            enabledIntegrations = providers.filter((_, i) => !!checks[i]);
+          } catch (e) {
+            // ignore
+          }
+
+          // Load MCP tools from connected integrations (Notion, Linear, Stripe)
+          try {
+            const { getConnectedMCPIntegrations, getMCPToolsForIntegrations } = await import('./mcp');
+            const connected = await getConnectedMCPIntegrations(authUser.userId);
+            if (connected.length > 0) {
+              mcpTools = await getMCPToolsForIntegrations(authUser.userId, connected);
+              console.log(`[cloud-ai] Loaded ${Object.keys(mcpTools).length} MCP tools from ${connected.length} integrations`);
             }
-          } catch { }
+          } catch (e) {
+            console.warn('[cloud-ai] Failed to load MCP tools:', e);
+          }
         }
 
-        // Add new user messages to history for future turns on this persistent WS.
-        // Skip when we just hydrated from Supabase — the current user message will be
-        // appended separately to inputMessages to avoid duplication.
-        if (!hydratedFromSupabase) {
-          const newUserMsgs = messages.filter(m => m.role === 'user');
-          for (const userMsg of newUserMsgs) {
-            if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
-              history.push(userMsg);
-            }
+        // Get conversation history for this connection
+        const history = conversations.get(ws) || [];
+
+        // Add new user messages to history
+        const newUserMsgs = messages.filter(m => m.role === 'user');
+        for (const userMsg of newUserMsgs) {
+          if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
+            history.push(userMsg);
           }
         }
 
         // Use the last user message as the prompt (text-only)
         const lastUserMsg = messages.filter((m) => m.role === 'user').slice(-1)[0];
-        prompt = contentToText(lastUserMsg?.content);
+        const prompt = contentToText(lastUserMsg?.content);
 
         if (!prompt) {
           send(ws, { type: 'error', message: 'no user message found' }, requestId);
@@ -1063,16 +535,16 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         send(ws, { type: 'progress', event: 'ack', data: { ts: Date.now() } }, requestId);
 
         // Kick off embedding early (memoized promise - will be reused by knowledge/memory later)
-        // This runs in parallel with agent selection and other setup.
-        // Always enabled — the memoized promise is reused downstream so no duplicate calls.
-        const earlyEmbeddingPromise = getOrCreateQueryEmbedding(prompt).catch(() => null);
+        // This runs in parallel with agent selection and other setup
+        const earlyEmbeddingPromise = process.env.SIS_PARALLEL_EMBEDDINGS === '1'
+          ? getOrCreateQueryEmbedding(prompt).catch(() => null)
+          : null;
 
         // Determine which agent/model to use
         const rawAgent = typeof (msg as any)?.agent === 'string' ? String((msg as any).agent) : '';
         const rawAgentLower = rawAgent.toLowerCase().trim();
         const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).toLowerCase().trim() : '';
         const ctxMode = typeof (msg as any)?.context?.mode === 'string' ? String((msg as any).context.mode).toLowerCase().trim() : '';
-        const hiddenContextRaw = typeof (msg as any)?.hiddenContext === 'string' ? String((msg as any).hiddenContext) : '';
 
         const inferredWorkflow =
           clientType === 'workflow_ui' ||
@@ -1081,36 +553,15 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           ctxMode === 'workflow_architect' ||
           ctxMode === 'workflow';
 
-        const inferredSkill =
-          clientType === 'skill_ui' ||
-          ctxMode === 'skill_architect' ||
-          ctxMode === 'skill';
-
-        const agentType: 'workflow' | 'skill' | 'stuard' =
+        const agentType =
           rawAgentLower === 'workflow' ||
             rawAgentLower === 'workflow_agent' ||
             rawAgentLower === 'workflow-architect' ||
             rawAgentLower === 'workflow_architect'
             ? 'workflow'
-            : rawAgentLower === 'skill' ||
-              rawAgentLower === 'skill_agent' ||
-              rawAgentLower === 'skill-architect' ||
-              rawAgentLower === 'skill_architect'
-              ? 'skill'
-              : inferredWorkflow
-                ? 'workflow'
-                : inferredSkill
-                  ? 'skill'
-                  : 'stuard';
-
-        conversationSource =
-          hiddenContextRaw.includes('[PROACTIVE MODE]') || hiddenContextRaw.includes('[PROACTIVE FOLLOW-UP]')
-            ? 'proactive'
-            : agentType === 'workflow'
+            : inferredWorkflow
               ? 'workflow'
-              : agentType === 'skill'
-                ? 'skill'
-                : 'stuard';
+              : 'stuard';
 
         const workflowModelId = agentType === 'workflow'
           ? (
@@ -1120,21 +571,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           )
           : undefined;
 
-        const skillModelIdForLabel = agentType === 'skill'
-          ? (
-            (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
-              ? String((msg as any).modelId).trim()
-              : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview')
-          )
-          : undefined;
-        modelLabel = agentType === 'workflow'
-          ? (workflowModelId || 'google/gemini-3-pro-preview')
-          : agentType === 'skill'
-            ? (skillModelIdForLabel || 'google/gemini-3-pro-preview')
-            : (chosenModelId || routedTier);
+        const modelLabel = agentType === 'workflow' ? (workflowModelId || 'google/gemini-3-pro-preview') : (chosenModelId || routedTier);
 
         const incomingCtxForMeta: any = (msg as any)?.context || {};
-        contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
+        const contextPathsForMeta = Array.isArray(incomingCtxForMeta?.paths) ? incomingCtxForMeta.paths : undefined;
 
         // Select agent based on type
         let agent: any;
@@ -1226,88 +666,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.message }, requestId);
             return;
           }
-        } else if (agentType === 'skill') {
-          try {
-            const skillModelId =
-              (typeof (msg as any)?.modelId === 'string' && String((msg as any).modelId).trim())
-                ? String((msg as any).modelId).trim()
-                : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
-            agent = getSkillAgent(skillModelId);
-            console.log('[cloud-ai] Using skill agent', { rawAgent, clientType, ctxMode, modelId: skillModelId });
-
-            // Pre-store skill in session for modify_skill tool
-            clearSessionSkill();
-            const incomingCtx = (msg as any)?.context || {};
-            const directSkill = incomingCtx?.skill;
-            let sessionLoaded = false;
-            if (directSkill && typeof directSkill === 'object' && !Array.isArray(directSkill)) {
-              setSessionSkill(directSkill);
-              sessionLoaded = true;
-              console.log('[cloud-ai] Pre-stored skill from context:', { id: directSkill.id, name: directSkill.name, steps: directSkill.steps?.length });
-            }
-
-            // Fallback: Extract skill JSON from system context message
-            if (!sessionLoaded) {
-              const skillMsg = providedMessages?.find((m: any) =>
-                m?.role === 'system' &&
-                typeof m?.content === 'string' &&
-                m.content.includes('CURRENT SKILL')
-              );
-              if (skillMsg && typeof skillMsg.content === 'string') {
-                const content = skillMsg.content;
-                const marker = content.indexOf('CURRENT SKILL');
-                if (marker >= 0) {
-                  const jsonStart = content.indexOf('{', marker);
-                  if (jsonStart >= 0) {
-                    let depth = 0;
-                    let jsonEnd = -1;
-                    let inString = false;
-                    let escaped = false;
-                    for (let i = jsonStart; i < content.length; i++) {
-                      const ch = content[i];
-                      if (escaped) {
-                        escaped = false;
-                        continue;
-                      }
-                      if (ch === '\\' && inString) {
-                        escaped = true;
-                        continue;
-                      }
-                      if (ch === '"') {
-                        inString = !inString;
-                        continue;
-                      }
-                      if (inString) continue;
-                      if (ch === '{') depth++;
-                      else if (ch === '}') {
-                        depth--;
-                        if (depth === 0) {
-                          jsonEnd = i + 1;
-                          break;
-                        }
-                      }
-                    }
-                    if (jsonEnd > jsonStart) {
-                      const jsonStr = content.slice(jsonStart, jsonEnd);
-                      try {
-                        const skillJson = JSON.parse(jsonStr);
-                        if (skillJson && (skillJson.id || skillJson.name || skillJson.steps)) {
-                          setSessionSkill(skillJson);
-                          console.log('[cloud-ai] Pre-stored skill in session:', { id: skillJson.id, name: skillJson.name, steps: skillJson.steps?.length });
-                        }
-                      } catch (parseErr) {
-                        console.warn('[cloud-ai] Failed to parse skill JSON:', parseErr);
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          } catch (e: any) {
-            console.error('[cloud-ai] Failed to get skill agent:', e.message);
-            send(ws, { type: 'error', message: 'Skill agent unavailable: ' + e.message }, requestId);
-            return;
-          }
         } else {
           // ─── Parallel embedding + tool ranking pipeline ───────────────
           // Always attempt embedding-based tool ranking. The embedding is
@@ -1320,7 +678,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             try {
               const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
               if (queryEmbedding && queryEmbedding.length > 0) {
-                const topN = Number(process.env.SIS_RANKED_TOPN || '7');
+                const topN = Number(process.env.SIS_RANKED_TOPN || '8');
                 rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
                 if (process.env.SIS_DEBUG === '1') {
                   console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
@@ -1334,40 +692,31 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
           }
 
-          if (hasProactiveModeMarker((msg as any)?.hiddenContext)) {
-            rankedToolNames = mergeForcedToolNames(rankedToolNames);
-          }
-
           agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
         }
 
         let conversationCreatedNow = false;
-        const resetRequested = !!(msg as any)?.resetConversation;
-        if (resetRequested) {
-          // Clear this conversation's history (not other tabs)
-          try {
-            const convMap = conversations.get(ws);
-            if (convMap && historyKey) convMap.delete(historyKey);
-          } catch { }
-          try { anonThreads.delete(ws); } catch { }
-          // Re-fetch a clean history array after reset
-          history.length = 0;
-        }
-        // Start conversation creation as a non-blocking promise so it runs in
-        // parallel with knowledge retrieval (only needed before stream starts).
-        let _convCreatePromise: Promise<string | null> | null = null;
         if (authUser) {
+          const resetRequested = !!(msg as any)?.resetConversation;
+          if (resetRequested) {
+            try { wsConversations.delete(ws); } catch { }
+          }
           const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
           if (requestedId) {
             conversationId = requestedId;
           } else {
-            _convCreatePromise = createConversation(
+            conversationId = await createConversation(
               authUser.userId,
               prompt,
               modelLabel,
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
-              conversationSource
-            ).then(id => id as string | null).catch(() => null);
+              agentType === 'workflow' ? 'workflow' : 'stuard'
+            ) as any;
+            if (conversationId) {
+              conversationCreatedNow = true;
+              // Immediately notify client of new conversation ID so it can be used for subsequent messages
+              send(ws, { type: 'conversation', conversationId }, requestId);
+            }
           }
         }
 
@@ -1383,10 +732,11 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
-        // Use a temporary thread for now; conversationId is resolved later in
-        // parallel with knowledge retrieval to avoid blocking.
-        thread = conversationId || '';
-        if (!thread) {
+        let thread = '';
+        // Prefer Supabase conversation thread when available
+        if (conversationId) {
+          thread = conversationId;
+        } else {
           thread = anonThreads.get(ws) || '';
           if (!thread) {
             thread = 'ws-' + randomUUID();
@@ -1403,87 +753,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           thread = incomingMem.thread.trim();
         }
 
-        const fireEarlyTitleGeneration = (resolvedConversationId: string) => {
-          const titleAuthUser = authUser;
-          void (async () => {
-            try {
-              const titlePrompt = `You will create a short, descriptive chat thread title from the user's question. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\n\nTitle:`;
-              const titleModelId = getDefaultModelForCategory('fast');
-              const titleModel = buildProviderModel(titleModelId);
-              const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-              if (titleAuthUser) {
-                try { await logUsageEvent(titleAuthUser.userId, resolvedConversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
-              }
-              let title = String((tRes as any)?.text || '').trim();
-              title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
-              if (titleAuthUser && resolvedConversationId) {
-                await setConversationTitle(titleAuthUser.userId, resolvedConversationId, title);
-              }
-              if (conversationSource === 'stuard') {
-                try {
-                  await memoryService.ensureLocalConversation(resolvedConversationId, modelLabel, conversationSource);
-                  await memoryService.updateConversation(resolvedConversationId, { title });
-                } catch { }
-              }
-              send(ws, { type: 'title', conversationId: resolvedConversationId, title }, requestId);
-            } catch (titleErr) {
-              console.error('[cloud-ai] Early title generation failed:', titleErr);
-            }
-          })();
-        };
-
-        const finalizeConversationCreation = async (resolvedConversationId?: string | null) => {
-          if (conversationId) return conversationId;
-          const nextConversationId = resolvedConversationId !== undefined
-            ? resolvedConversationId
-            : (_convCreatePromise ? await _convCreatePromise : null);
-          _convCreatePromise = null;
-          if (!nextConversationId || conversationId) {
-            return conversationId;
-          }
-          conversationId = nextConversationId;
-          conversationCreatedNow = true;
-          thread = conversationId;
-          send(ws, { type: 'conversation', conversationId }, requestId);
-          fireEarlyTitleGeneration(conversationId);
-          return conversationId;
-        };
-
-        if (conversationSource === 'stuard' && !conversationId && thread) {
-          send(ws, { type: 'conversation', conversationId: thread }, requestId);
-        }
-
-        const budgetModelId = modelLabel || chosenModelId || routedTier;
-        const budget = computeBudget(budgetModelId);
-        const historySource = (providedMessages && providedMessages.length > 0)
-          ? (providedMessages as any[])
-          : (history as any[]);
-
-        pruneToolOutputs(historySource, budget);
-
-        if (!providedMessages || providedMessages.length === 0) {
-          const preEstimate = estimateTokens(history as any[]);
-          if (preEstimate.totalTokens > budget.historyBudget) {
-            emergencyTruncate(history as any[], budget);
-          }
-        }
-
-        const recentHistory = getRecentWithinBudget(historySource, budget) as any[];
+        const recentHistory = history.slice(-50) as any[];
         let inputMessages: any[] = (providedMessages && providedMessages.length > 0)
-          ? [...recentHistory]
+          ? [...providedMessages]
           : [...recentHistory, { role: 'user', content: prompt }];
-
-        // When we hydrated from Supabase, the current user message was deferred to
-        // avoid duplication in inputMessages. Now push it into history for future
-        // turns on this same WS connection (important for persistent desktop WS).
-        if (hydratedFromSupabase) {
-          const newUserMsgs = messages.filter(m => m.role === 'user');
-          for (const userMsg of newUserMsgs) {
-            if (!history.find((h: any) => h.role === 'user' && h.content === userMsg.content)) {
-              history.push(userMsg);
-            }
-          }
-        }
 
         // If attachments or images are present, attach them to the last user message as multimodal parts
         const attachments = Array.isArray((msg as any)?.attachments) ? (msg as any).attachments : [];
@@ -1495,95 +768,29 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           mimeType: img?.mimeType || 'image/png',
           data: img?.data, // base64
         }));
-        const allAttachments = [...attachments, ...imageAttachments];
-
-        if (allAttachments.length > 0) {
-          // Check if the chosen model supports multimodal input
-          const isMultimodal = chosenModelId ? await modelSupportsMultimodal(chosenModelId) : true;
-
-          if (isMultimodal) {
-            // Model supports multimodal — attach directly as content parts
-            const attachmentParts = buildAttachmentParts(allAttachments);
-            if (attachmentParts.length > 0) {
-              let idx = -1;
-              for (let i = inputMessages.length - 1; i >= 0; i--) {
-                const r = inputMessages[i]?.role;
-                if (r === 'user') { idx = i; break; }
-              }
-              if (idx >= 0) {
-                const c = inputMessages[idx]?.content;
-                const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
-                inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
-              } else {
-                inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
-              }
-            }
+        const attachmentParts = buildAttachmentParts([...attachments, ...imageAttachments]);
+        if (attachmentParts.length > 0) {
+          let idx = -1;
+          for (let i = inputMessages.length - 1; i >= 0; i--) {
+            const r = inputMessages[i]?.role;
+            if (r === 'user') { idx = i; break; }
+          }
+          if (idx >= 0) {
+            const c = inputMessages[idx]?.content;
+            const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
+            inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
           } else {
-            // Model does NOT support multimodal — pre-analyze with Gemini and inject as text
-            try {
-              send(ws, { type: 'progress', event: 'status', data: { text: 'Analyzing attached media...' } }, requestId);
-
-              const mediaParts: any[] = [{ type: 'text', text: `Analyze the following ${allAttachments.length} file(s) in detail. For images describe what you see. For PDFs/documents extract key content. For audio/video describe the content. Provide a thorough analysis.` }];
-              for (const a of allAttachments) {
-                const dataStr = typeof a?.data === 'string' ? a.data : '';
-                const mimeType = typeof a?.mimeType === 'string' ? a.mimeType : 'application/octet-stream';
-                if (!dataStr) continue;
-                const { buffer, mediaTypeHint } = dataStringToBuffer(dataStr);
-                const mt = mimeType || mediaTypeHint || 'application/octet-stream';
-                if (buffer && buffer.length > 0) {
-                  mediaParts.push({ type: 'file', data: buffer, mediaType: mt });
-                }
-              }
-
-              const analysisResult = await generateText({
-                model: google('gemini-2.5-flash') as any,
-                messages: [{ role: 'user' as const, content: mediaParts }],
-                temperature: 0.2,
-              });
-              if (authUser) {
-                try { await logUsageEvent(authUser.userId, conversationId || null, 'google/gemini-2.5-flash', { ...(analysisResult.usage || {}), sourceType: 'attachment_analysis' }); } catch {}
-              }
-
-              const analysisText = analysisResult.text?.trim() || 'Unable to analyze the attached media.';
-              const fileNames = allAttachments.map((a: any) => a?.name || 'file').join(', ');
-              const injectedText = `\n\n[Attached files analyzed: ${fileNames}]\n\n${analysisText}`;
-
-              // Inject the analysis text into the last user message
-              let idx = -1;
-              for (let i = inputMessages.length - 1; i >= 0; i--) {
-                if (inputMessages[i]?.role === 'user') { idx = i; break; }
-              }
-              if (idx >= 0) {
-                const c = inputMessages[idx]?.content;
-                const existingText = typeof c === 'string' ? c : (Array.isArray(c) ? c.filter((p: any) => p?.type === 'text').map((p: any) => p.text).join('\n') : '');
-                inputMessages[idx] = { ...inputMessages[idx], content: existingText + injectedText };
-              } else {
-                inputMessages.push({ role: 'user', content: (prompt || 'Attached files') + injectedText });
-              }
-            } catch (analyzeErr) {
-              console.error('[cloud-ai] Failed to pre-analyze attachments for non-multimodal model:', analyzeErr);
-              // Fallback: still try sending as multimodal parts (might fail, but better than losing data)
-              const attachmentParts = buildAttachmentParts(allAttachments);
-              if (attachmentParts.length > 0) {
-                let idx = -1;
-                for (let i = inputMessages.length - 1; i >= 0; i--) {
-                  if (inputMessages[i]?.role === 'user') { idx = i; break; }
-                }
-                if (idx >= 0) {
-                  const c = inputMessages[idx]?.content;
-                  const baseParts = Array.isArray(c) ? c : [{ type: 'text', text: typeof c === 'string' ? c : '' }];
-                  inputMessages[idx] = { ...inputMessages[idx], content: [...baseParts, ...attachmentParts] };
-                } else {
-                  inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
-                }
-              }
-            }
+            inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
           }
         }
         // Track whether the model produced any text deltas or invoked tools
         let sawAnyTextDelta = false;
         let sawToolCall = false;
         aggregatedText = '';
+
+        // Track metadata for persistence (reasoning, tools, stream chunks)
+        let aggregatedReasoning = '';
+        let reasoningStartTime: number | null = null;
         // toolCallsMap and streamChunks are hoisted above the try block
 
         // Persist this user turn for ongoing conversations (first turn already stored on creation)
@@ -1601,7 +808,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         // Determine maxSteps for this run (per-message override -> env/default), with a safety cap
         // Workflow agent needs more steps for tool discovery and testing
         const reqMaxStepsRaw = (msg as any)?.maxSteps ?? (msg as any)?.limits?.maxSteps;
-        let maxSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : DEFAULT_MAX_STEPS;
+        let maxSteps = agentType === 'workflow' ? 60 : DEFAULT_MAX_STEPS;
         try {
           const n = Number(reqMaxStepsRaw);
           if (!isNaN(n) && n > 0) maxSteps = Math.min(n, MAX_STEPS_CAP);
@@ -1646,28 +853,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           if (contextParts.length > 0) {
             inputMessages = [{ role: 'system', content: contextParts.join(' | ') }, ...inputMessages];
           }
-
-          // Inject active skills into system prompt
-          if (activeSkillsFromContext.length > 0) {
-            const skillLines = activeSkillsFromContext.map((s) => {
-              const tools = s.steps
-                .map((step) => String(step.toolName || '').trim())
-                .filter(Boolean);
-              const uniqueTools = Array.from(new Set(tools)).slice(0, 5);
-              const toolsSuffix = uniqueTools.length > 0 ? ` | tools: ${uniqueTools.join(', ')}` : '';
-              return `• ${s.name} — ${s.description} (trigger: ${s.trigger}) | steps: ${s.steps.length}${toolsSuffix}`;
-            }).join('\n');
-            const skillsBlock = `[ACTIVE SKILLS]
-The user has configured these reusable skills.
-Treat each skill as guidance (a playbook), not a strict script.
-When a request matches a skill, do this:
-1) Call get_skill_info with skill_name (or skill_id) to load the full skill.
-2) Use the returned steps as recommended order and tool-calling guidance.
-3) Adapt step order/tool usage when context requires it, while staying aligned with the skill intent.
-4) Keep the user informed as you progress.
-${skillLines}`;
-            inputMessages = [{ role: 'system', content: skillsBlock }, ...inputMessages];
-          }
         } catch { }
 
         // Inject hidden state context (terminals, subagents, recent tool results) - NOT rendered in UI
@@ -1679,75 +864,91 @@ ${skillLines}`;
         } catch { }
 
         // Retrieve knowledge context and similar conversations, inject into messages
-        if (agentType !== 'workflow' && agentType !== 'skill' && prompt) {
+        if (agentType !== 'workflow') {
           // ─── Parallel knowledge + memory retrieval ───────────────────
-          // Reuse the shared embedding (kicked off earlier) so knowledge
-          // and memory search run in parallel without duplicate OpenAI calls.
+          // When SIS_PARALLEL_EMBEDDINGS=1, reuse the shared embedding
+          // so knowledge and memory search run in parallel without
+          // duplicate OpenAI embedding calls.
+          const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
+
+          // Token budget for knowledge context (chars, not tokens — ~4 chars/token)
           const KNOWLEDGE_MAX_CHARS = 2000;
 
-          try {
-            const _kStart = Date.now();
-            const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
-            console.log(`[perf] embedding await: ${Date.now() - _kStart}ms`);
+          if (useParallelEmbeddings && prompt) {
+            try {
+              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
 
-            const _pStart = Date.now();
-            const [knowledgeCtx, segmentMatches, fileMatches, _resolvedConvId] = await Promise.all([
-              buildKnowledgeContext(prompt, {
+              const [knowledgeCtx, segmentMatches] = await Promise.all([
+                buildKnowledgeContext(prompt, {
+                  includeIdentity: true,
+                  includeDirectives: true,
+                  includeBio: false,
+                  maxGlobalFacts: 4,
+                  detectEntities: true,
+                  queryEmbedding,
+                }).catch(() => null),
+                memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
+                  .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
+              ]);
+
+              // Build ONE merged context block
+              const ctxParts: string[] = [];
+              if (knowledgeCtx && knowledgeCtx.text.trim()) {
+                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
+              }
+              if (segmentMatches.length > 0) {
+                const similar = segmentMatches.filter(({ score }) => score >= 0.6).slice(0, 3);
+                if (similar.length > 0) {
+                  const lines = ['[PAST CONTEXT]'];
+                  for (const { segment } of similar) {
+                    const summary = String(segment.summary || '').trim().slice(0, 100);
+                    if (summary) lines.push(`- ${summary}`);
+                  }
+                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
+                }
+              }
+              if (ctxParts.length > 0) {
+                inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
+              }
+            } catch (parallelErr) {
+              console.error('[cloud-ai] Parallel knowledge/memory pipeline failed:', parallelErr);
+            }
+          } else {
+            // ─── Legacy sequential path ──
+            const ctxParts: string[] = [];
+            try {
+              const knowledgeCtx = await buildKnowledgeContext(prompt, {
                 includeIdentity: true,
                 includeDirectives: true,
                 includeBio: false,
                 maxGlobalFacts: 4,
                 detectEntities: true,
-                queryEmbedding,
-              }).catch(() => null),
-              memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
-                .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
-              searchFiles(prompt, { mode: 'semantic', limit: 5 })
-                .catch(() => null),
-              // Resolve conversation creation in parallel (first-message-per-tab only)
-              _convCreatePromise || Promise.resolve(null),
-            ]);
-            console.log(`[perf] knowledge+memory+files parallel: ${Date.now() - _pStart}ms (total from embedding start: ${Date.now() - _kStart}ms)`);
+              });
+              if (knowledgeCtx.text.trim()) {
+                ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
+              }
+            } catch { }
 
-            await finalizeConversationCreation(_resolvedConvId);
-
-            // Build ONE merged context block
-            const ctxParts: string[] = [];
-            if (knowledgeCtx && knowledgeCtx.text.trim()) {
-              ctxParts.push(knowledgeCtx.text.trim().slice(0, KNOWLEDGE_MAX_CHARS));
-            }
-            if (segmentMatches.length > 0) {
-              const similar = segmentMatches.filter(({ score }) => score >= 0.6).slice(0, 3);
-              if (similar.length > 0) {
-                const lines = ['[PAST CONTEXT]'];
-                for (const { segment } of similar) {
-                  const summary = String(segment.summary || '').trim().slice(0, 100);
-                  if (summary) lines.push(`- ${summary}`);
+            try {
+              const query = String(prompt || '').trim();
+              if (query) {
+                const matches = await memoryService.searchSegments(query, { limit: 3, threshold: 0.6 });
+                const similar = matches.filter(({ score }) => score >= 0.6).slice(0, 3);
+                if (similar.length > 0) {
+                  const lines = ['[PAST CONTEXT]'];
+                  for (const { segment } of similar) {
+                    const summary = String(segment.summary || '').trim().slice(0, 100);
+                    if (summary) lines.push(`- ${summary}`);
+                  }
+                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
                 }
-                if (lines.length > 1) ctxParts.push(lines.join('\n'));
               }
-            }
-            // Inject relevant file results from semantic search
-            if (fileMatches?.ok && Array.isArray(fileMatches.results) && fileMatches.results.length > 0) {
-              const topFiles = fileMatches.results.slice(0, 5);
-              const lines = ['[RELEVANT FILES]'];
-              for (const f of topFiles) {
-                const name = f.filename || f.path || '';
-                const score = typeof f.score === 'number' ? ` (${(f.score * 100).toFixed(0)}%)` : '';
-                const summary = f.summary ? ` — ${String(f.summary).slice(0, 80)}` : '';
-                lines.push(`- ${name}${score}${summary}`);
-              }
-              if (lines.length > 1) ctxParts.push(lines.join('\n'));
-            }
+            } catch { }
+
             if (ctxParts.length > 0) {
               inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
             }
-          } catch (err) {
-            console.error('[cloud-ai] Knowledge/memory pipeline failed:', err);
-            await finalizeConversationCreation();
           }
-        } else if (_convCreatePromise) {
-          await finalizeConversationCreation();
         }
 
 
@@ -1768,15 +969,7 @@ ${skillLines}`;
         // ---------- Google Gemini thinking ----------
         // Enable thinking for Google Gemini models that support it (2.5+, 3+).
         // Gemini 3 models require thought parts to be preserved and passed back with function responses.
-        const resolvedGoogleModelId =
-          typeof workflowModelId === 'string' && workflowModelId.startsWith('google/')
-            ? workflowModelId
-            : (chosenModelId?.startsWith('google/') ? chosenModelId : (modelLabel?.startsWith('google/') ? modelLabel : ''));
-        const isGemini3 = resolvedGoogleModelId.includes('google/gemini-3');
-        const isGemini25 = resolvedGoogleModelId.includes('google/gemini-2.5');
         const isGeminiThinking =
-          isGemini3 ||
-          isGemini25 ||
           (agentType === 'workflow' && typeof workflowModelId === 'string' && (workflowModelId.includes('google/gemini-3') || workflowModelId.includes('google/gemini-2.5'))) ||
           chosenModelId?.includes('google/gemini-3') ||
           chosenModelId?.includes('google/gemini-2.5') ||
@@ -1786,27 +979,12 @@ ${skillLines}`;
           modelLabel?.includes('gemini-2.5');
 
         if (isGeminiThinking) {
-          if (isGemini25) {
-            const gemini25Budget: Record<'none' | 'low' | 'medium' | 'high', number> = {
-              none: 0,
-              low: 1024,
-              medium: 8192,
-              high: 24576,
-            };
-            providerOptions.google = {
-              thinkingConfig: {
-                includeThoughts: reasoningLevel !== 'none',
-                thinkingBudget: gemini25Budget[reasoningLevel as 'none' | 'low' | 'medium' | 'high'],
-              },
-            };
-          } else if (isGemini3 && reasoningLevel !== 'none') {
-            providerOptions.google = {
-              thinkingConfig: {
-                includeThoughts: true,
-                thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
-              },
-            };
-          }
+          providerOptions.google = {
+            thinkingConfig: {
+              includeThoughts: reasoningLevel !== 'none',
+              thinkingLevel: reasoningLevel as 'none' | 'low' | 'medium' | 'high',
+            },
+          };
         }
 
         // ---------- Anthropic thinking ----------
@@ -1841,18 +1019,13 @@ ${skillLines}`;
           chosenModelId?.includes('openai/') ||
           modelLabel?.includes('openai/')
         ) {
+          // Only set for models known to support reasoning effort (o-series, gpt-5-pro, gpt-5.1+)
           const modelPart = (chosenModelId || modelLabel || '').split('/').pop() || '';
-          const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
-          if (supportsEffort) {
-            // gpt-5.1 only supports up to 'medium' reasoning effort
-            const maxEffort = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
-            const effortLevels = ['none', 'low', 'medium', 'high'];
-            const clampedEffort = effortLevels.indexOf(reasoningLevel) > effortLevels.indexOf(maxEffort)
-              ? maxEffort
-              : reasoningLevel;
+          const supportsEffort = /^(o[1-9]|gpt-5-pro|gpt-5\.1)/.test(modelPart);
+          if (supportsEffort && reasoningLevel !== 'none') {
             providerOptions.openai = {
               ...(providerOptions.openai || {}),
-              reasoningEffort: clampedEffort as 'none' | 'low' | 'medium' | 'high',
+              reasoningEffort: reasoningLevel as 'low' | 'medium' | 'high',
             };
           }
         }
@@ -1890,29 +1063,7 @@ ${skillLines}`;
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
-          onStepFinish: ({ usage: stepUsage }: any) => {
-            if (!stepUsage) return;
-            const normalized = normalizeUsage(stepUsage);
-            cumulativeInputTokens += normalized.promptTokens;
-            try {
-              send(ws, {
-                type: 'progress',
-                event: 'usage_update',
-                data: {
-                  promptTokens: cumulativeInputTokens,
-                  completionTokens: normalized.completionTokens || 0,
-                  totalTokens: cumulativeInputTokens + (normalized.completionTokens || 0),
-                  contextWindow: budget.contextWindow,
-                  modelId: chosenModelId || routedTier,
-                },
-              }, requestId);
-            } catch { }
-          },
-          onFinish: async ({ text, steps, finishReason, usage, response }: any) => {
-            // Re-establish bridge context — the AI SDK invokes onFinish
-            // from a different async context, so the AsyncLocalStorage
-            // store set by withClientBridge is no longer available.
-            return withClientBridge(ws, async () => {
+          onFinish: async ({ text, steps, finishReason, usage }: any) => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
               return;
@@ -1920,7 +1071,6 @@ ${skillLines}`;
             didSendFinal = true;
             try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
             const normalizedUsage = normalizeUsage(usage);
-            latestUsage = normalizedUsage;
             try {
               console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', normalizedUsage);
             } catch { }
@@ -1929,111 +1079,79 @@ ${skillLines}`;
               finalText = aggregatedText.trim();
             }
             writeLog('stream_finish', { finishReason, usage: normalizedUsage, textLength: finalText.length, sawToolCall, sawAnyTextDelta });
+            
+            // ── Persist tool calls + results in history so the LLM remembers what it did ──
+            const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
+            if (completedToolCalls.length > 0) {
+              // Build AI SDK-compatible tool-call / tool-result message pairs
+              // This lets the LLM see its own previous actions in subsequent turns
+              const toolCallParts = completedToolCalls.map(tc => ({
+                type: 'tool-call' as const,
+                toolCallId: tc.id,
+                toolName: tc.tool,
+                args: tc.args || {},
+              }));
+              history.push({ role: 'assistant', content: toolCallParts });
 
-            // Persist the provider-generated response messages when available.
-            // This preserves structured assistant content such as reasoning parts
-            // and provider-specific tool-call continuity data across turns.
-            const responseMessages = Array.isArray(response?.messages)
-              ? response.messages
-                .map((msg: any) => normalizeResponseHistoryMessage(msg))
-                .filter((msg: { role: 'assistant' | 'tool'; content: any } | null): msg is { role: 'assistant' | 'tool'; content: any } => !!msg)
-              : [];
-
-            if (responseMessages.length > 0) {
-              history.push(...responseMessages);
-            } else {
-              // Fallback: persist tool activity plus the reasoning/text we observed
-              // from the stream so later turns can still see prior internal work.
-              const completedToolCalls = Array.from(toolCallsMap.values()).filter(tc => tc.status === 'completed');
-              if (completedToolCalls.length > 0) {
-                const toolCallParts = completedToolCalls.map(tc => ({
-                  type: 'tool-call' as const,
-                  toolCallId: tc.id,
-                  toolName: tc.tool,
-                  args: tc.args || {},
-                }));
-                history.push({ role: 'assistant', content: toolCallParts });
-
-                for (const tc of completedToolCalls) {
-                  let resultStr = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result ?? '');
-                  resultStr = String(truncateHistoryToolResult(resultStr));
-                  history.push({
-                    role: 'tool',
-                    content: [{ type: 'tool-result', toolCallId: tc.id, toolName: tc.tool, result: resultStr }],
-                  });
+              for (const tc of completedToolCalls) {
+                // Truncate large results to avoid blowing up the context window
+                let resultStr = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result ?? '');
+                if (resultStr.length > 2000) {
+                  resultStr = resultStr.slice(0, 1800) + '\n...[truncated, ' + resultStr.length + ' chars total]';
                 }
-              }
-
-              const assistantParts: any[] = [];
-              if (aggregatedReasoning) {
-                assistantParts.push({ type: 'reasoning', text: aggregatedReasoning });
-              }
-              if (finalText) {
-                assistantParts.push({ type: 'text', text: finalText });
-              }
-
-              if (assistantParts.length === 1 && assistantParts[0]?.type === 'text') {
-                history.push({ role: 'assistant', content: finalText });
-              } else if (assistantParts.length > 0) {
-                history.push({ role: 'assistant', content: assistantParts });
+                history.push({
+                  role: 'tool',
+                  content: [{ type: 'tool-result', toolCallId: tc.id, toolName: tc.tool, result: resultStr }],
+                });
               }
             }
 
-            // Layer 0 always runs after each turn, even when full summarization is unnecessary.
-            const compactionModelId = modelLabel || chosenModelId || routedTier;
-            const compactionBudget = computeBudget(compactionModelId);
-            pruneToolOutputs(history as any[], compactionBudget);
-
-            if (estimateTokens(history as any[]).totalTokens > compactionBudget.historyBudget) {
-              emergencyTruncate(history as any[], compactionBudget);
+            // Final assistant text
+            if (finalText) {
+              history.push({ role: 'assistant', content: finalText });
             }
-
-            const compactionCheck = shouldCompact(history as any[], compactionModelId);
-            if (compactionCheck.shouldCompact) {
-              const compactionPromise = compactHistory(history, compactionModelId).then(() => {
-                console.log(`[compactor] Compacted: ${estimateTokens(history as any[]).totalTokens} tokens remaining`);
-              }).catch((err) => {
-                console.warn('[cloud-ai] Compaction failed, emergency truncating:', err);
-                emergencyTruncate(history as any[], compactionCheck.budget);
-              }).finally(() => {
-                clearCompactionLock(ws, historyKey);
-              });
-              // Register the lock so the next request on this conversation waits
-              setCompactionLock(ws, historyKey, compactionPromise);
-            }
+            
+            // Auto-compact: summarize older messages, truncate large tool results
+            // This runs asynchronously — fire-and-forget since we already have the final text
+            compactHistory(history).then(() => {
+              conversations.set(ws, history);
+            }).catch((err) => {
+              console.warn('[cloud-ai] Compaction failed:', err);
+              // Fallback: hard cap at 60
+              if (history.length > 60) history.splice(0, history.length - 60);
+              conversations.set(ws, history);
+            });
             if (authUser && conversationId) {
               // Build metadata for persistence
-              const metadata = buildAssistantMetadata(finishReason);
+              const toolCallsList = Array.from(toolCallsMap.values());
+              // Filter out SIS meta-tools from saved metadata
+              const filteredToolCalls = toolCallsList.filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode,
+                tier: routedTier,
+                modelId: chosenModelId,
+                toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+              };
               try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch { }
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
             send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
-            // Title generation for stuard reset-conversations (non-new convos)
-            // New conversations already get title generated immediately on creation (above)
-            if (!conversationCreatedNow && conversationSource === 'stuard' && resetRequested) {
-              const titleConversationId = conversationId || thread;
-              if (titleConversationId) {
-                try {
-                  const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
-                  const titleModelId = getDefaultModelForCategory('fast');
-                  const titleModel = buildProviderModel(titleModelId);
-                  const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-                  if (authUser) {
-                    try { await logUsageEvent(authUser.userId, conversationId || null, titleModelId, { ...((tRes as any).usage || {}), sourceType: 'title_generation' }); } catch {}
-                  }
-                  let title = String((tRes as any)?.text || '').trim();
-                  title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
-                  if (authUser && conversationId) {
-                    await setConversationTitle(authUser.userId, conversationId, title);
-                  }
-                  try {
-                    await memoryService.ensureLocalConversation(titleConversationId, modelLabel, conversationSource);
-                    await memoryService.updateConversation(titleConversationId, { title });
-                  } catch { }
-                  send(ws, { type: 'title', conversationId: titleConversationId, title }, requestId);
-                } catch { }
-              }
+            if (authUser && conversationId && conversationCreatedNow) {
+              // Only generate title for new conversations
+              try {
+                const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.
+User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
+                const titleModelId = getDefaultModelForCategory('fast');
+                const titleModel = buildProviderModel(titleModelId);
+                const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+                let title = String((tRes as any)?.text || '').trim();
+                title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+                await setConversationTitle(authUser.userId, conversationId, title);
+                // Send title update to client
+                send(ws, { type: 'title', conversationId, title }, requestId);
+              } catch { }
             }
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
@@ -2065,99 +1183,55 @@ ${skillLines}`;
               console.error('[cloud-ai] Knowledge ingestion import failed:', ingestionErr);
             }
 
-            // Local Memory Storage - store conversation locally with encryption
+            // Auto-Skill Generation - analyze conversation for teachable patterns
             try {
-              if (conversationSource === 'stuard' || conversationSource === 'proactive') {
-                const localConvId = conversationId || thread;
-
-                // Store the user message locally
-                if (prompt) {
-                  await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
-                    metadata: {
-                      mode: requestedMode,
-                      tier: routedTier,
-                      modelId: chosenModelId,
-                      contextPaths: contextPathsForMeta,
-                    },
-                    model: modelLabel,
-                    source: conversationSource,
-                  });
+              const { analyzeForAutoSkill } = await import('./knowledge');
+              const fullHistoryCopy = [...history];
+              analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined).then((draft) => {
+                if (draft) {
+                  console.log(`[cloud-ai] Auto-skill created: "${draft.name}" (${draft.steps.length} steps, confidence=${draft.confidence})`);
+                  writeLog('auto_skill_generated', { name: draft.name, confidence: draft.confidence, steps: draft.steps.length });
                 }
-
-                // Store the assistant response locally
-                if (finalText) {
-                  await memoryService.storeMessageLocally(localConvId, 'assistant', finalText, {
-                    metadata: buildAssistantMetadata(finishReason),
-                    model: modelLabel,
-                    source: conversationSource,
-                  });
-                }
-
-                // Process conversation turn (segmentation, embeddings, etc.)
-                const fullHistory = [...history];
-                memoryService.processConversationTurn(localConvId, fullHistory).catch((err) => {
-                  console.error('[cloud-ai] Local memory processing failed:', err);
-                });
-              }
-            } catch (memoryErr) {
-              console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
-            }
-
-            // Auto-Skills — analyze conversation for teachable patterns
-            // Runs in background after every stuard conversation. If the user had to
-            // correct/guide the AI through a procedure, generates a reusable skill.
-            try {
-              if (conversationSource === 'stuard') {
-                const { analyzeForAutoSkill } = await import('./knowledge');
-                const autoSkillHistory = [...history];
-                const autoSkillConvId = conversationId || thread;
-                analyzeForAutoSkill(autoSkillHistory, autoSkillConvId).then((draft) => {
-                  if (draft) {
-                    console.log(`[cloud-ai] Auto-skill generated: "${draft.name}" (${draft.steps.length} steps, confidence=${draft.confidence})`);
-                    writeLog('auto_skill_generated', {
-                      name: draft.name,
-                      steps: draft.steps.length,
-                      confidence: draft.confidence,
-                      tools: draft.toolUsage.length,
-                      injections: draft.userInjections.length,
-                      conversationId: autoSkillConvId,
-                    });
-                  }
-                }).catch((err) => {
-                  console.error('[cloud-ai] Auto-skill analysis failed:', err);
-                });
-              }
+              }).catch((err) => {
+                console.error('[cloud-ai] Auto-skill analysis failed:', err);
+              });
             } catch (autoSkillErr) {
               console.error('[cloud-ai] Auto-skill import failed:', autoSkillErr);
             }
 
-            }); // end withClientBridge re-wrap for onFinish
+            // Local Memory Storage - store conversation locally with encryption
+            try {
+              const localConvId = conversationId || resource;
+
+              // Store the user message locally
+              if (prompt) {
+                memoryService.storeMessageLocally(localConvId, 'user', prompt).catch((err) => {
+                  console.error('[cloud-ai] Failed to store user message locally:', err);
+                });
+              }
+
+              // Store the assistant response locally
+              if (finalText) {
+                memoryService.storeMessageLocally(localConvId, 'assistant', finalText).catch((err) => {
+                  console.error('[cloud-ai] Failed to store assistant message locally:', err);
+                });
+              }
+
+              // Process conversation turn (segmentation, embeddings, etc.)
+              const fullHistory = [...history];
+              memoryService.processConversationTurn(localConvId, fullHistory).catch((err) => {
+                console.error('[cloud-ai] Local memory processing failed:', err);
+              });
+            } catch (memoryErr) {
+              console.error('[cloud-ai] Local memory storage import failed:', memoryErr);
+            }
           },
         };
 
-        if (agentType !== 'workflow' && agentType !== 'skill') {
+        if (agentType !== 'workflow') {
           streamOptions.memory = { resource, thread };
         }
 
-        // Send initial token estimate so the UI can show context usage from the start
-        try {
-          const initialEstimate = estimateTokens(inputMessages as any[]);
-          send(ws, {
-            type: 'progress',
-            event: 'usage_update',
-            data: {
-              promptTokens: initialEstimate.totalTokens,
-              completionTokens: 0,
-              totalTokens: initialEstimate.totalTokens,
-              contextWindow: budget.contextWindow,
-              modelId: chosenModelId || routedTier,
-            },
-          }, requestId);
-        } catch { }
-
-        let cumulativeInputTokens = 0;
-
-        console.log(`[perf] TOTAL pre-stream: ${Date.now() - _msgT0}ms`);
         const stream: any = await agent.stream(inputMessages, streamOptions);
 
         const hasFull = !!(stream as any)?.fullStream;
@@ -2212,7 +1286,6 @@ ${skillLines}`;
                   // Reasoning/Thinking events - forward to client for display
                   case 'reasoning-start':
                   case 'thinking-start': {
-                    if (!reasoningStartTime) reasoningStartTime = Date.now();
                     send(ws, { type: 'progress', event: 'reasoning_start', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -2222,14 +1295,6 @@ ${skillLines}`;
                   case 'thinking-delta': {
                     const reasoningText = (chunk as any)?.payload?.text || (chunk as any)?.textDelta || (typeof (chunk as any)?.payload === 'string' ? (chunk as any).payload : '');
                     if (reasoningText) {
-                      if (!reasoningStartTime) reasoningStartTime = Date.now();
-                      aggregatedReasoning += reasoningText;
-                      const lastReasoningChunk = streamChunks[streamChunks.length - 1];
-                      if (lastReasoningChunk?.type === 'reasoning') {
-                        lastReasoningChunk.content += reasoningText;
-                      } else {
-                        streamChunks.push({ type: 'reasoning', content: reasoningText });
-                      }
                       send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoningText } }, requestId);
                     }
                     handledChunk = true;
@@ -2270,16 +1335,15 @@ ${skillLines}`;
                     const toolName = (chunk as any)?.payload?.toolName || 'tool';
                     const toolCallId = (chunk as any)?.payload?.toolCallId || `tc-${Date.now()}`;
                     const toolArgs = (chunk as any)?.payload?.args;
-                    const safeToolArgs = redactSensitiveData(toolArgs);
 
                     // Track tool call
-                    const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: safeToolArgs, timestamp: Date.now() };
+                    const toolCall = { id: toolCallId, tool: toolName, status: 'called', args: toolArgs, timestamp: Date.now() };
                     toolCallsMap.set(toolCallId, toolCall);
                     streamChunks.push({ type: 'tool', tool: { ...toolCall } });
 
                     // Only send to UI if not a SIS meta-tool
                     if (!isSISMetaTool(toolName)) {
-                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: safeToolArgs } }, requestId);
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'called', toolCallId, args: toolArgs } }, requestId);
                     }
                     writeLog('tool_call', { name: toolName });
                     handledChunk = true;
@@ -2291,32 +1355,17 @@ ${skillLines}`;
                     const toolName = (chunk as any)?.payload?.toolName || 'tool';
                     const toolCallId = (chunk as any)?.payload?.toolCallId || '';
                     const toolResult = (chunk as any)?.payload?.result;
-                    const safeToolResult = sanitizeToolResult(toolResult);
-                    const uiToolResult = (() => {
-                      const isWorkflowModifyTool =
-                        toolName === 'modify_workflow' || toolName === 'workflow_modify' || toolName === 'create_workflow';
-                      if (!isWorkflowModifyTool) return safeToolResult;
-                      if (safeToolResult?.workflow) return safeToolResult;
-
-                      const currentWorkflow = getSessionWorkflow();
-                      if (!currentWorkflow) return safeToolResult;
-
-                      return {
-                        ...safeToolResult,
-                        workflow: currentWorkflow,
-                      };
-                    })();
 
                     // Update tool call with result
                     const existingCall = toolCallsMap.get(toolCallId);
                     if (existingCall) {
                       existingCall.status = 'completed';
-                      existingCall.result = uiToolResult;
+                      existingCall.result = toolResult;
                       // Update in streamChunks
                       for (const sc of streamChunks) {
                         if (sc.type === 'tool' && sc.tool.id === toolCallId) {
                           sc.tool.status = 'completed';
-                          sc.tool.result = uiToolResult;
+                          sc.tool.result = toolResult;
                           break;
                         }
                       }
@@ -2324,25 +1373,27 @@ ${skillLines}`;
 
                     // Only send to UI if not a SIS meta-tool
                     if (!isSISMetaTool(toolName)) {
-                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: uiToolResult } }, requestId);
+                      send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolName, status: 'completed', toolCallId, result: toolResult } }, requestId);
                     }
                     handledChunk = true;
                     break;
                   }
 
                   case 'finish': {
-                    // The finish event contains the COMPLETE response text.
-                    // Only use it as a fallback if no text-delta events were received,
-                    // otherwise we'd duplicate the already-streamed content.
                     const text =
                       (chunk as any)?.payload?.text ||
                       (chunk as any)?.payload?.response?.text ||
                       (chunk as any)?.text ||
                       '';
-                    if (typeof text === 'string' && text && !sawAnyTextDelta) {
+                    if (typeof text === 'string' && text) {
                       sawAnyTextDelta = true;
-                      aggregatedText = text;
-                      streamChunks.push({ type: 'text', content: text });
+                      aggregatedText += text;
+                      const lastChunk = streamChunks[streamChunks.length - 1];
+                      if (lastChunk?.type === 'text') {
+                        lastChunk.content += text;
+                      } else {
+                        streamChunks.push({ type: 'text', content: text });
+                      }
                     }
                     handledChunk = true;
                     break;
@@ -2351,7 +1402,7 @@ ${skillLines}`;
                   case 'step-finish':
                   case 'step-start':
                   case 'response-metadata':
-                    // Control chunks - usage_update is emitted via onStepFinish callback
+                    // Control chunks - don't need to forward to UI
                     handledChunk = true;
                     break;
                 }
@@ -2388,19 +1439,18 @@ ${skillLines}`;
                 const toolCall = (chunk as any)?.toolCall;
                 if (toolCall?.name) {
                   sawToolCall = true;
-                  const safeToolArgs = redactSensitiveData(toolCall.args);
-                  console.log(`[cloud-ai] Tool called: ${toolCall.name}`, safeToolArgs);
+                  console.log(`[cloud-ai] Tool called: ${toolCall.name}`, toolCall.args);
 
                   // Only send to UI if not a SIS meta-tool
                   if (!isSISMetaTool(toolCall.name)) {
-                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: safeToolArgs } }, requestId);
+                    send(ws, { type: 'progress', event: 'tool_event', data: { tool: toolCall.name, status: 'called', args: toolCall.args } }, requestId);
                   }
                   writeLog('tool_call', { name: toolCall.name });
                 }
                 const toolResult = (chunk as any)?.toolResult;
                 if (toolResult) {
                   sawToolCall = true;
-                  console.log(`[cloud-ai] Tool result:`, sanitizeToolResult(toolResult));
+                  console.log(`[cloud-ai] Tool result:`, toolResult);
                 }
               }
             } catch (e) {
@@ -2424,7 +1474,13 @@ ${skillLines}`;
           // Persist partial work (tool calls, text) even on error
           if (authUser && conversationId) {
             try {
-              const metadata = buildAssistantMetadata('error');
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'error',
+              };
               await addAssistantMessage(authUser.userId, conversationId, errorFinalText, metadata);
             } catch { }
           }
@@ -2460,7 +1516,7 @@ ${skillLines}`;
         }
 
         // Check if we broke out of the loop due to abort
-        if (abortController?.signal.aborted && !didSendFinal) {
+        if (abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user (loop break)');
           didSendFinal = true;
           try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
@@ -2470,29 +1526,16 @@ ${skillLines}`;
           // Persist partial work even on abort so conversation history isn't lost
           if (authUser && conversationId && partialText) {
             try {
-              const metadata = buildAssistantMetadata('aborted');
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'aborted',
+              };
               await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
             } catch { }
           }
-
-          // Local memory storage on abort — don't lose conversation data
-          try {
-            if (conversationSource === 'stuard' || conversationSource === 'proactive') {
-              const localConvId = conversationId || thread;
-              if (prompt) {
-                await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
-                  metadata: { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
-                  model: modelLabel, source: conversationSource,
-                });
-              }
-              if (partialText) {
-                await memoryService.storeMessageLocally(localConvId, 'assistant', partialText, {
-                  metadata: buildAssistantMetadata('aborted'),
-                  model: modelLabel, source: conversationSource,
-                });
-              }
-            }
-          } catch { }
 
           send(
             ws,
@@ -2513,7 +1556,7 @@ ${skillLines}`;
           let finalText = aggregatedText ? aggregatedText.trim() : '';
           let emptyOutput = !finalText && !sawAnyTextDelta && !sawToolCall;
 
-          if (emptyOutput && (agentType === 'workflow' || agentType === 'skill') && typeof (agent as any)?.generate === 'function') {
+          if (emptyOutput && agentType === 'workflow' && typeof (agent as any)?.generate === 'function') {
             try {
               const genRes: any = await (agent as any).generate(inputMessages);
               const genText = String(genRes?.text || '').trim();
@@ -2557,46 +1600,30 @@ ${skillLines}`;
         // Handle abort errors specifically
         if (e?.name === 'AbortError' || abortController?.signal.aborted) {
           console.log('[cloud-ai] Stream aborted by user');
-          if (!didSendFinal) {
-            didSendFinal = true;
-            const partialText = aggregatedText ? aggregatedText.trim() : '';
+          const partialText = aggregatedText ? aggregatedText.trim() : '';
 
-            // Persist partial work on abort
-            if (authUser && conversationId && partialText) {
-              try {
-                const metadata = buildAssistantMetadata('aborted');
-                await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
-              } catch { }
-            }
-
-            // Local memory storage on abort — don't lose conversation data
+          // Persist partial work on abort
+          if (authUser && conversationId && partialText) {
             try {
-              if (conversationSource === 'stuard' || conversationSource === 'proactive') {
-                const localConvId = conversationId || thread;
-                if (prompt) {
-                  await memoryService.storeMessageLocally(localConvId, 'user', prompt, {
-                    metadata: { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
-                    model: modelLabel, source: conversationSource,
-                  });
-                }
-                if (partialText) {
-                  await memoryService.storeMessageLocally(localConvId, 'assistant', partialText, {
-                    metadata: buildAssistantMetadata('aborted'),
-                    model: modelLabel, source: conversationSource,
-                  });
-                }
-              }
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'aborted',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, partialText, metadata);
             } catch { }
-
-            send(ws, {
-              type: 'final',
-              origin: 'cloud-ai',
-              model: chosenModelId || routedTier,
-              conversationId,
-              result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
-              aborted: true
-            }, requestId);
           }
+
+          send(ws, {
+            type: 'final',
+            origin: 'cloud-ai',
+            model: chosenModelId || routedTier,
+            conversationId,
+            result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
+            aborted: true
+          }, requestId);
           return;
         }
 
@@ -2642,107 +1669,43 @@ ${skillLines}`;
 
           const finalText = `Tool call failed: ${errMsg}. Please retry.`;
 
-          // Persist partial work on tool parse error (only if not already persisted)
-          if (!didSendFinal) {
-            didSendFinal = true;
-            if (authUser && conversationId) {
-              try {
-                const metadata = buildAssistantMetadata('error');
-                await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
-              } catch { }
-            }
-
-            send(
-              ws,
-              {
-                type: 'final',
-                origin: 'cloud-ai',
-                result: { text: finalText, steps: [], finishReason: 'error' },
-              },
-              requestId
-            );
+          // Persist partial work on tool parse error
+          if (authUser && conversationId) {
+            try {
+              const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+              const metadata = {
+                mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                finishReason: 'error',
+              };
+              await addAssistantMessage(authUser.userId, conversationId, finalText, metadata);
+            } catch { }
           }
-          return;
-        }
 
-        // Check for tool hallucination errors (model tried to call a non-existent tool)
-        const isToolHallucination = (() => {
-          if (!e || typeof e !== 'object') return null;
-          const eName = String((e as any).name || '');
-          const eMsg = String((e as any).message || '');
-          if (eName === 'AI_NoSuchToolError' || eName === 'NoSuchToolError' || eMsg.includes('is not a tool')) {
-            return { toolName: (e as any).toolName || eMsg.match(/[Tt]ool\s+['"`](\w+)['"`]/)?.[1] || 'unknown', message: eMsg };
-          }
-          if (eName === 'AI_InvalidToolArgumentsError' || eName === 'InvalidToolArgumentsError') {
-            return { toolName: (e as any).toolName || 'unknown', message: eMsg };
-          }
-          const lower = eMsg.toLowerCase();
-          if ((lower.includes('tool') && (lower.includes('not found') || lower.includes('does not exist') || lower.includes('unknown tool'))) || lower.includes('no such tool')) {
-            return { toolName: (e as any).toolName || eMsg.match(/[Tt]ool\s+['"`](\w+)['"`]/)?.[1] || 'unknown', message: eMsg };
-          }
-          return null;
-        })();
-
-        if (isToolHallucination) {
-          const toolCallId = `tc-hallucinated-${Date.now()}`;
-          console.warn(`[cloud-ai] Tool hallucination: "${isToolHallucination.toolName}"`);
-
-          try {
-            writeLog('tool_hallucination', { toolName: isToolHallucination.toolName, message: isToolHallucination.message });
-          } catch { }
-
-          // Show the hallucinated tool as an error pill in the UI
-          try {
-            send(ws, {
-              type: 'progress',
-              event: 'tool_event',
-              data: {
-                tool: isToolHallucination.toolName,
-                status: 'called',
-                toolCallId,
-                args: {},
-                description: `${isToolHallucination.toolName} (hallucinated)`,
-              }
-            }, requestId);
-            send(ws, {
-              type: 'progress',
-              event: 'tool_event',
-              data: {
-                tool: isToolHallucination.toolName,
-                status: 'error',
-                toolCallId,
-                error: `Tool "${isToolHallucination.toolName}" does not exist. The model tried to call a non-existent tool.`,
-              }
-            }, requestId);
-          } catch { }
-
-          const errorText = aggregatedText
-            ? aggregatedText.trim() + `\n\nI attempted to use a tool called "${isToolHallucination.toolName}" that doesn't exist. Please try rephrasing your request.`
-            : `I attempted to use a tool called "${isToolHallucination.toolName}" that doesn't exist. Please try rephrasing your request.`;
-
-          if (!didSendFinal) {
-            didSendFinal = true;
-            if (authUser && conversationId) {
-              try {
-                const metadata = buildAssistantMetadata('error');
-                await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
-              } catch { }
-            }
-            send(ws, {
+          send(
+            ws,
+            {
               type: 'final',
               origin: 'cloud-ai',
-              result: { text: errorText, steps: [], finishReason: 'error' },
-            }, requestId);
-          }
+              result: { text: finalText, steps: [], finishReason: 'error' },
+            },
+            requestId
+          );
           return;
         }
 
-        // Persist partial work on generic errors too (only if not already persisted)
-        if (!didSendFinal && authUser && conversationId) {
-          didSendFinal = true;
+        // Persist partial work on generic errors too
+        if (authUser && conversationId) {
           try {
             const errorText = aggregatedText ? aggregatedText.trim() : `Error: ${e?.message || String(e)}`;
-            const metadata = buildAssistantMetadata('error');
+            const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
+            const metadata = {
+              mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+              toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
+              streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+              finishReason: 'error',
+            };
             await addAssistantMessage(authUser.userId, conversationId, errorText, metadata);
           } catch { }
         }

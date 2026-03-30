@@ -148,10 +148,9 @@ jobs:
         run: gcloud auth configure-docker $GAR_HOST --quiet
 
       - name: Build & Push Container
-        working-directory: apps/cloud-ai
         run: |
           IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ steps.env.outputs.IMAGE_TAG }}"
-          docker build -t "$IMAGE" .
+          docker build -f apps/cloud-ai/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           # Also tag with commit SHA for rollback
           docker tag "$IMAGE" "$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:${{ github.sha }}"

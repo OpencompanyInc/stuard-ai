@@ -139,6 +139,19 @@ def build_service(name: str, agent_dir: Path, dist_dir: Path) -> tuple[str, bool
     return name, True, f"Built {exe_name} ({size_mb:.1f} MB) in {elapsed:.0f}s"
 
 
+def print_build_header(services_to_build: list[str], parallel: bool, dist_dir: Path):
+    divider = "=" * 60
+    print(divider)
+    print("Stuard AI Service Builder")
+    print(divider)
+    print(f"Platform : {platform.system()} {platform.machine()}")
+    print(f"Python   : {sys.version.split()[0]}")
+    print(f"Services : {', '.join(services_to_build)}")
+    print(f"Parallel : {'Yes' if parallel else 'No'}")
+    print(f"Output   : {dist_dir}")
+    print(divider)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build Stuard AI service executables")
     parser.add_argument(
@@ -176,15 +189,7 @@ def main():
     if args.skip_mediapipe and "mediapipe" in services_to_build:
         services_to_build.remove("mediapipe")
 
-    print(f"╔══════════════════════════════════════════════════════════╗")
-    print(f"║            Stuard AI Service Builder                    ║")
-    print(f"╠══════════════════════════════════════════════════════════╣")
-    print(f"║  Platform : {platform.system()} {platform.machine():<42}║")
-    print(f"║  Python   : {sys.version.split()[0]:<44}║")
-    print(f"║  Services : {', '.join(services_to_build):<44}║")
-    print(f"║  Parallel : {'Yes' if args.parallel else 'No':<44}║")
-    print(f"║  Output   : {str(dist_dir):<44}║")
-    print(f"╚══════════════════════════════════════════════════════════╝")
+    print_build_header(services_to_build, args.parallel, dist_dir)
 
     if args.clean:
         print("\nCleaning build caches...")
