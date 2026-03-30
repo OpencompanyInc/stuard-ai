@@ -334,7 +334,7 @@ app.whenReady().then(async () => {
   // This ensures globalShortcut is ready for workflow hotkeys
   try {
     logger.info("Running workflows autostart...");
-    workflows_autostart();
+    await workflows_autostart();
     logger.info("Workflows autostart done");
   } catch (e) {
     logger.error("Failed workflows autostart:", e);

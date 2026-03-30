@@ -5,7 +5,7 @@ import React from "react";
 import { 
   Rocket, X, Check, Download, Upload, Play, Square, RefreshCw,
   Clock, Keyboard, FolderOpen, Link2, Zap, CircleDot, Cloud,
-  Server, Loader2, CheckCircle2, AlertCircle, ChevronRight
+  Server, Loader2, CheckCircle2, AlertCircle, ChevronRight, AppWindow
 } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
 import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
@@ -73,6 +73,12 @@ function getTriggerInfo(trigger: DesignerTrigger, d: boolean): { icon: React.Rea
         icon: <Play className="w-3.5 h-3.5" />, 
         label: 'Manual', 
         color: d ? 'text-blue-300 bg-blue-500/10 border-blue-500/20' : 'text-blue-700 bg-blue-50 border-blue-200'
+      };
+    case 'app_start':
+      return {
+        icon: <AppWindow className="w-3.5 h-3.5" />,
+        label: 'On App Start',
+        color: d ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' : 'text-emerald-700 bg-emerald-50 border-emerald-200'
       };
     default:
       return { 
@@ -420,4 +426,3 @@ export function DeployPanelModal({
     </div>
   );
 }
-

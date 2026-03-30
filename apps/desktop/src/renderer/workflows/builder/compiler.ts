@@ -208,6 +208,8 @@ function generateBuilderCode(model: DesignerModel): string {
     const type = trigger.type;
     if (type === 'manual') {
       lines.push(`  .manual()`);
+    } else if (type === 'app_start') {
+      lines.push(`  .onAppStart()`);
     } else if (type === 'hotkey' && trigger.args?.accelerator) {
       lines.push(`  .onHotkey("${trigger.args.accelerator}")`);
     } else if (type === 'schedule.cron' && trigger.args?.cron) {
@@ -269,6 +271,8 @@ function generateSimpleFormat(model: DesignerModel): string {
       lines.push(`trigger: gmail.new_email`);
     } else if (trigger.type === 'drive.new_file') {
       lines.push(`trigger: drive.new_file`);
+    } else if (trigger.type === 'app_start') {
+      lines.push(`trigger: app_start`);
     } else if (trigger.type === 'manual') {
       lines.push(`trigger: manual`);
     } else {

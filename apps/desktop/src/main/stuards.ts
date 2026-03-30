@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import WebSocket from "ws";
 
-import { unifiedTasksService } from "./services";
+import { unifiedTasksService, waitForAgentReady } from "./services";
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { }
 
@@ -947,8 +947,21 @@ export function startStuardRuntime(id: string) {
     if (type === 'manual') {
       // no-op: will be triggered explicitly via stuards:run
     } else if (type === 'app_start') {
-      // fire immediately
-      try { runStuardOnce(safe); } catch { }
+      try {
+        const h = setTimeout(() => {
+          void (async () => {
+            try {
+              const agentReady = await waitForAgentReady(30000, 1000);
+              if (!agentReady) {
+                console.warn(`[stuards] Skipping app_start for ${safe} because the Python agent was not ready in time`);
+                return;
+              }
+              runStuardOnce(safe);
+            } catch { }
+          })();
+        }, 0);
+        rt.timers.push(h);
+      } catch { }
     } else if (type === 'one_time') {
       const ts = String(args?.at || args?.timestamp || '');
       const at = Date.parse(ts);

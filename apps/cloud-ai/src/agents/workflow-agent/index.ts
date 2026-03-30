@@ -140,7 +140,7 @@ TRIGGER TYPES:
 │ webhook.local    │ {} - HTTP POST to local endpoint                          │
 │ fs.watch         │ { path: "C:/folder", pattern: "*.txt" } - File changes    │
 │ function         │ {} - Called by call_function tool (internal reuse)        │
-│ app_start        │ {} - Runs when Stuard starts                              │
+│ app_start        │ {} - Runs once when Stuard starts after agent readiness   │
 └──────────────────┴───────────────────────────────────────────────────────────┘
 
 HOTKEY TRIGGER — args:

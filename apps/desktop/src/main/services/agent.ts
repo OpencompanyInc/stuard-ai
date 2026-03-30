@@ -14,6 +14,19 @@ interface AgentInstance {
 
 const agents = new Map<string, AgentInstance>();
 const DEFAULT_PORT = 8765;
+const AGENT_READY_CACHE_MS = 2000;
+
+let lastAgentReadyCheckAt = 0;
+let lastAgentReady = false;
+
+function getAgentHttpUrl() {
+  try {
+    const raw = String(process.env.AGENT_HTTP || `http://127.0.0.1:${DEFAULT_PORT}`);
+    return raw.replace(/\/+$/, "");
+  } catch {
+    return `http://127.0.0.1:${DEFAULT_PORT}`;
+  }
+}
 
 function setAgentProcessEnv(port: number) {
   try {
@@ -164,6 +177,44 @@ export async function startAgentIfNeeded() {
   } catch (e) {
     logger.error("Failed to start default agent:", e);
   }
+}
+
+export async function checkAgentReady(options: { timeoutMs?: number; useCache?: boolean } = {}): Promise<boolean> {
+  const timeoutMs = Math.max(250, Number(options.timeoutMs || 2000));
+  const useCache = options.useCache !== false;
+  const now = Date.now();
+
+  if (useCache && lastAgentReady && now - lastAgentReadyCheckAt < AGENT_READY_CACHE_MS) {
+    return true;
+  }
+
+  try {
+    const resp = await fetch(`${getAgentHttpUrl()}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    lastAgentReady = resp.ok;
+    lastAgentReadyCheckAt = now;
+    return lastAgentReady;
+  } catch {
+    lastAgentReady = false;
+    lastAgentReadyCheckAt = now;
+    return false;
+  }
+}
+
+export async function waitForAgentReady(maxWaitMs: number = 10000, intervalMs: number = 1000): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, Number(maxWaitMs || 0));
+  const pollInterval = Math.max(250, Number(intervalMs || 1000));
+
+  while (Date.now() < deadline) {
+    if (await checkAgentReady({ timeoutMs: Math.min(2000, pollInterval), useCache: false })) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+
+  return await checkAgentReady({ timeoutMs: Math.min(2000, pollInterval), useCache: false });
 }
 
 export async function stopAgent(id: string = 'default'): Promise<void> {

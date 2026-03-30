@@ -9,6 +9,7 @@ import { runStuardEngine, EngineContext, stopStuardEngineRuns, isStuardEngineRun
 import { prepareForSave, prepareForLoad, isEncrypted } from "../crypto";
 import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } from "../workflow-variables";
 import { getTimezone } from "../settings";
+import { waitForAgentReady } from "../services/agent";
 
 let chokidar: any = null;
 try { chokidar = require('chokidar'); } catch { }
@@ -528,6 +529,10 @@ export type FlowRuntime = {
   googleNativeTriggers: Array<{ type: 'gmail.new_email' | 'drive.new_file'; triggerId: string }>;
   cloudWebhookTriggerId?: string;
   lastOutlookCalendarStamp?: string;
+};
+
+type StartFlowRuntimeOptions = {
+  appStartup?: boolean;
 };
 
 const flowRuntimes = new Map<string, FlowRuntime>();
@@ -1070,7 +1075,7 @@ export function startLocalWebhookServer() {
   } catch { }
 }
 
-export function startFlowRuntime(id: string) {
+export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = {}) {
   const safe = safeFlowId(id);
   const model = readWorkflowModel(safe);
   const triggers = Array.isArray(model?.triggers) ? model.triggers : [];
@@ -1101,7 +1106,29 @@ export function startFlowRuntime(id: string) {
       continue;
     }
 
-    if (type === 'fs.watch' && chokidar) {
+    if (type === 'app_start') {
+      started++;
+      if (options.appStartup) {
+        const tId = triggerId;
+        const startupHandle = setTimeout(() => {
+          void (async () => {
+            try {
+              logFlow(safe, 'Waiting for Python agent before app_start trigger');
+              const agentReady = await waitForAgentReady(30000, 1000);
+              if (!agentReady) {
+                logFlow(safe, 'Skipping app_start trigger because the Python agent was not ready in time');
+                return;
+              }
+              logFlow(safe, 'Python agent ready; firing app_start trigger');
+              executeWorkflowFromTrigger(safe, 'app_start', { event: 'app_start' }, tId);
+            } catch (e: any) {
+              logFlow(safe, `app_start trigger failed: ${String(e?.message || e || 'unknown_error')}`);
+            }
+          })();
+        }, 0);
+        rt.intervals.push(startupHandle as any);
+      }
+    } else if (type === 'fs.watch' && chokidar) {
       try {
         const base = String(args?.path || '');
         const pat = String(args?.pattern || '**/*');
@@ -1399,7 +1426,7 @@ export function stopFlowRuntime(id: string) {
  * Start all workflows that have autostart: true
  * Called on app startup to enable cron triggers, hotkeys, etc.
  */
-export function workflows_autostart() {
+export async function workflows_autostart() {
   try {
     const dir = path.join(app.getPath('userData'), 'workflows');
     if (!fs.existsSync(dir)) {
@@ -1459,7 +1486,7 @@ export function workflows_autostart() {
           }
 
           console.log(`[workflows] Autostarting workflow: ${id} (${model.name || 'unnamed'}) - triggers: [${triggerTypes}]`);
-          startFlowRuntime(id);
+          startFlowRuntime(id, { appStartup: true });
           started++;
         }
       } catch (e) {

@@ -679,6 +679,7 @@ export const listAllToolFormats = createTool({
   execute: async () => {
     const triggers = [
       { type: 'manual', description: 'Manual trigger - run workflow on demand', argsTemplate: {} },
+      { type: 'app_start', description: 'Application startup trigger - run once when Stuard launches after the local Python agent is ready', argsTemplate: {} },
       { type: 'webhook', description: 'Webhook trigger - receive HTTP POST requests. Set mode to "cloud" for public URL or "local" for localhost.', argsTemplate: { mode: 'cloud' } },
       { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '0 9 * * *' } },
       { type: 'hotkey', description: 'Global hotkey trigger', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },

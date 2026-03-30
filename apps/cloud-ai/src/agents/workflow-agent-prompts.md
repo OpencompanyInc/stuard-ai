@@ -73,6 +73,7 @@ TRIGGERS (these are fixed, not tools)
 ═══════════════════════════════════════════════════════════════════════════════
 
 - "manual" - no args
+- "app_start" - no args
 - "webhook.local" - no args  
 - "hotkey" - args: { "accelerator": "Ctrl+Alt+K" }
 - "schedule.cron" - args: { "cron": "*/5 * * * *" }

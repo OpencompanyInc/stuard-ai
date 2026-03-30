@@ -1,6 +1,7 @@
 import type { PaletteItem } from "../types";
 
 export const TRIGGER_ITEMS: PaletteItem[] = [
+  { k: 'trigger', t: 'app_start', label: 'On App Start', args: {} },
   { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', args: { path: '', pattern: '*.*', recursive: true } },
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
   { k: 'trigger', t: 'webhook', label: 'Webhook', args: { mode: 'cloud' } },

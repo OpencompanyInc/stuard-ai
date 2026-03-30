@@ -58,6 +58,7 @@ const TRIGGER_ALIASES: Record<string, string> = {
   'file': 'fs.watch',
   'gmail': 'gmail.new_email',
   'drive': 'drive.new_file',
+  'app_start': 'app_start',
   'manual': 'manual',
 };
 

@@ -127,6 +127,8 @@ export class WorkflowBuilder {
     switch (type) {
       case 'hotkey':
         return { accelerator: shortcut };
+      case 'app_start':
+        return {};
       case 'schedule':
       case 'schedule.cron':
         return { cron: shortcut };
@@ -154,6 +156,10 @@ export class WorkflowBuilder {
 
   onSchedule(cron: string): this {
     return this.trigger('schedule.cron', { cron });
+  }
+
+  onAppStart(): this {
+    return this.trigger('app_start', {});
   }
 
   onWebhook(cloud: boolean = false): this {

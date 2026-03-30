@@ -388,6 +388,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
 const TRIGGER_DEFINITIONS = [
   { type: 'manual', description: 'Manual trigger - user clicks run. Supports inputParams for user input forms.', argsTemplate: {}, inputParams: [] },
+  { type: 'app_start', description: 'Application startup trigger - fires once when Stuard launches after the local Python agent is ready.', argsTemplate: {} },
   { type: 'function', description: 'Function trigger - allows this workflow to be called from other workflows with input parameters', argsTemplate: {}, inputParams: [] },
   { type: 'webhook', description: 'Webhook trigger - receive HTTP POST requests to trigger this workflow', argsTemplate: { mode: 'cloud' } },
   { type: 'webhook.local', description: 'Local webhook trigger (legacy)', argsTemplate: { mode: 'local' } },

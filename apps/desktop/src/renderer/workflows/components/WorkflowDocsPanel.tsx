@@ -226,7 +226,7 @@ const DOCS: DocSection[] = [
             ["`drive.new_file`", "Native Drive push trigger (Google watch)", "`profile`, `onlyNew?`, `includeFolders?`"],
             ["`fs.watch`", "File/folder changes", "`path`, `pattern`, `recursive?`"],
             ["`function`", "Callable by other workflows", "`inputParams?`"],
-            ["`app_start`", "Runs when Stuard starts", "None"],
+            ["`app_start`", "Runs once when Stuard starts after the Python agent is ready", "None"],
           ]},
         ],
       },

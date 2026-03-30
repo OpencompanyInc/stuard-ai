@@ -40,6 +40,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     color: 'amber',
     items: [
       { k: 'trigger', t: 'manual', label: 'Manual (Click to Run)', icon: Play, args: {} },
+      { k: 'trigger', t: 'app_start', label: 'On App Start', icon: AppWindow, args: {} },
       { k: 'trigger', t: 'hotkey', label: 'Hotkey', icon: Keyboard, args: { accelerator: 'Ctrl+Alt+K' } },
       { k: 'trigger', t: 'hotkey', label: 'Hotkey (hold)', icon: Radio, args: { accelerator: 'Ctrl+H', hold: true } },
       { k: 'trigger', t: 'hotkey.release', label: 'Hotkey Release', icon: Keyboard, args: { accelerator: 'Ctrl+H' } },
