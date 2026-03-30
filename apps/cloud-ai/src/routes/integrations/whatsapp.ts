@@ -11,6 +11,11 @@ import {
   getSmsQueueItem,
   markSmsQueueReplySent,
   debitCredits,
+  createConversation,
+  addUserMessage,
+  addAssistantMessage,
+  finishRun,
+  setConversationTitle,
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
@@ -311,28 +316,25 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
           mediaId = String(msg?.image?.id || '');
           mediaMimeType = String(msg?.image?.mime_type || 'image/jpeg');
           mediaCaption = msg?.image?.caption ? String(msg.image.caption) : undefined;
-          text = mediaCaption
-            ? `[Image received] ${mediaCaption} (mediaId: ${mediaId})`
-            : `[Image received] (mediaId: ${mediaId})`;
+          // Use caption as the text (the actual image will be attached separately)
+          text = mediaCaption || '[Image received]';
         } else if (msgType === 'audio') {
           mediaId = String(msg?.audio?.id || '');
           mediaMimeType = String(msg?.audio?.mime_type || 'audio/ogg');
-          text = `[Voice note received] (mediaId: ${mediaId})`;
+          text = '[Voice note received]';
         } else if (msgType === 'video') {
           mediaId = String(msg?.video?.id || '');
           mediaMimeType = String(msg?.video?.mime_type || 'video/mp4');
           mediaCaption = msg?.video?.caption ? String(msg.video.caption) : undefined;
-          text = mediaCaption
-            ? `[Video received] ${mediaCaption} (mediaId: ${mediaId})`
-            : `[Video received] (mediaId: ${mediaId})`;
+          text = mediaCaption || '[Video received]';
         } else if (msgType === 'document') {
           mediaId = String(msg?.document?.id || '');
           mediaMimeType = String(msg?.document?.mime_type || 'application/octet-stream');
           const docName = msg?.document?.filename ? String(msg.document.filename) : 'document';
-          text = `[Document received: ${docName}] (mediaId: ${mediaId})`;
+          text = `[Document received: ${docName}]`;
         } else if (msgType === 'sticker') {
           mediaId = String(msg?.sticker?.id || '');
-          text = `[Sticker received] (mediaId: ${mediaId})`;
+          text = '[Sticker received]';
         }
 
         // ── Process media through unified MediaProcessor ─────────────
@@ -349,9 +351,11 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
             const result = await MediaProcessor.process(inbound);
             mediaAttachments = result.attachments;
             mediaSuppText = result.supplementaryText;
-            // Replace placeholder text with actual content for media messages
+            // Build text: caption + any supplementary text (transcriptions, etc.)
+            // For images/videos: text is already the caption from above
+            // For audio: supplementary text contains the transcription
             if (mediaSuppText) {
-              text = [mediaCaption || '', mediaSuppText].filter(Boolean).join('\n');
+              text = [mediaCaption || '', mediaSuppText].filter(Boolean).join('\n') || text;
             }
           } catch (e: any) {
             console.error('[whatsapp] MediaProcessor failed:', e?.message);
@@ -437,23 +441,47 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
 
         if (effectiveTarget === 'vm') {
           try {
+            // Persist conversation in Supabase (same as Telnyx VM route)
+            let waConvId = smsState.conversation_id || null;
+            let waConvCreatedNow = false;
+            if (!waConvId) {
+              waConvId = await createConversation(userId, text, smsState.preferred_model || 'fast', {
+                mode: smsState.preferred_model || 'fast',
+              }, 'stuard', true);
+              if (waConvId) waConvCreatedNow = true;
+            } else {
+              await addUserMessage(userId, waConvId, text, {
+                mode: smsState.preferred_model || 'fast',
+              }, true);
+            }
+
             const vmResult = await sendVMCommand(userId, 'agent_chat', {
               message: text,
-              conversationId: smsState.conversation_id || undefined,
+              conversationId: waConvId || undefined,
               model: smsState.preferred_model || 'fast',
               context: { source: 'whatsapp', fromWaId: from },
               ...(mediaAttachments.length > 0 ? { attachments: mediaAttachments } : {}),
             }, 60_000);
 
             if (vmResult.ok && vmResult.result?.text) {
-              const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 4096);
+              const vmResponseText = String(vmResult.result.text);
+              const replyText = stripMarkdownForSms(vmResponseText).slice(0, 4096);
               await waSendText(from, replyText).catch((e: any) => {
                 console.error('[whatsapp] Failed to send VM agent reply:', e?.message);
               });
               await deductWhatsAppCredit(userId);
               handled = true;
 
-              const vmConvId = vmResult.result?.conversationId || null;
+              const vmConvId = vmResult.result?.conversationId || waConvId;
+              if (vmConvId) {
+                await addAssistantMessage(userId, vmConvId, vmResponseText, {
+                  mode: smsState.preferred_model || 'fast',
+                }, true);
+                try { await finishRun(userId, vmConvId, vmResponseText); } catch { }
+                if (waConvCreatedNow) {
+                  try { await setConversationTitle(userId, vmConvId, text.slice(0, 80), true); } catch { }
+                }
+              }
               if (vmConvId && vmConvId !== smsState.conversation_id) {
                 await upsertSmsUserState({ userId, conversationId: vmConvId });
               }

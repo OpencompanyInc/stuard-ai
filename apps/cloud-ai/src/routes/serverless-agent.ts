@@ -32,10 +32,14 @@ import {
   enqueueMemoryJob,
   getSyncPreferences,
   getSupabaseService,
+  finishRun,
+  setConversationTitle,
 } from '../supabase';
 import { getOrCreateQueryEmbedding } from '../utils/shared-embedding';
 import { normalizeUsage } from '../utils/usage';
+import { buildProviderModel } from '../utils/models';
 import { generateWithToolRecovery } from './proactive-utils';
+import { generateText } from 'ai';
 import type { ModelChoice } from '../router/model-router';
 
 // ─── Cloud-Only System Prompt ──────────────────────────────────────────────
@@ -292,6 +296,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
   } = input;
 
   let conversationId = input.conversationId || null;
+  let conversationCreatedNow = false;
 
   try {
     // 1. Create or continue conversation in Supabase
@@ -304,6 +309,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
         'stuard',
         true, // forcePersist — cloud-sync conversations always persist
       );
+      if (conversationId) conversationCreatedNow = true;
     } else {
       // Add user message to existing conversation
       await addUserMessage(userId, conversationId, message, { mode: modelChoice }, true);
@@ -335,10 +341,13 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       systemPrompt += `\n\n[ADDITIONAL CONTEXT]\n${extraContext}`;
     }
 
+    // Note: SMS/WhatsApp sources get full responses here — truncation for
+    // delivery happens in the telnyx/whatsapp route handlers AFTER this returns.
+    // This keeps the stored conversation history complete for desktop viewing.
     if (source === 'sms' || source === 'mms') {
-      systemPrompt += '\n\n**Response Format**: Keep responses concise (under 1500 chars) — this is an SMS conversation.';
+      systemPrompt += '\n\n**Source**: The user sent this message via SMS. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over SMS automatically.';
     } else if (source === 'whatsapp') {
-      systemPrompt += '\n\n**Response Format**: Keep responses concise (under 4000 chars) — this is a WhatsApp conversation.';
+      systemPrompt += '\n\n**Source**: The user sent this message via WhatsApp. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over WhatsApp automatically.';
     } else if (source === 'call') {
       systemPrompt += '\n\n**Response Format**: Keep responses brief and conversational — this will be spoken aloud via TTS.';
     }
@@ -390,9 +399,13 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       const content: any[] = [{ type: 'text', text: message }];
       for (const att of attachments) {
         if (att.type === 'image' && att.data) {
+          // Image attachment — data is a data URI or base64 string
           content.push({ type: 'image', image: att.data, mimeType: att.mimeType || 'image/jpeg' });
+        } else if (att.type === 'file' && att.data) {
+          // Document/file attachment — convert data URI to buffer for AI SDK
+          content.push({ type: 'file', data: att.data, mediaType: att.mimeType || 'application/octet-stream', filename: att.name });
         } else if (att.type === 'text' && att.content) {
-          content.push({ type: 'text', text: `[Attachment: ${att.filename || 'file'}]\n${att.content}` });
+          content.push({ type: 'text', text: `[Attachment: ${att.filename || att.name || 'file'}]\n${att.content}` });
         }
       }
       messages.push({ role: 'user', content });
@@ -425,6 +438,48 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       roles: ['user', 'assistant'],
       threadId: conversationId,
     }).catch(() => {});
+
+    // 11. Knowledge Graph Ingestion — extract and store knowledge from this turn
+    //     (same as the desktop WS handler in server.ts, so mobile messages get
+    //     the same analysis and knowledge ingestion as desktop messages)
+    try {
+      const { ingestConversationTurn } = await import('../knowledge');
+      const turnHistory = [
+        ...conversationHistory.map(m => ({ role: m.role, content: m.content })),
+        { role: 'user' as const, content: message },
+        { role: 'assistant' as const, content: responseText },
+      ];
+      ingestConversationTurn(turnHistory).then(({ extracted, executed }) => {
+        if (extracted.actions.length > 0) {
+          console.log('[serverless-agent] Knowledge ingestion complete:', {
+            actionsExtracted: extracted.actions.length,
+            actionsSucceeded: executed.success,
+            actionsFailed: executed.failed,
+          });
+        }
+      }).catch((err) => {
+        console.error('[serverless-agent] Knowledge ingestion failed:', err);
+      });
+    } catch (ingestionErr) {
+      console.error('[serverless-agent] Knowledge ingestion import failed:', ingestionErr);
+    }
+
+    // 12. Finish run + generate title (so conversations show up properly in chat history)
+    if (conversationId) {
+      try { await finishRun(userId, conversationId, responseText || ''); } catch { }
+
+      if (conversationCreatedNow && responseText) {
+        try {
+          const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.\nUser: ${message}\nAssistant: ${responseText}\n\nTitle:`;
+          const titleModelId = getDefaultModelForCategory('fast');
+          const titleModel = buildProviderModel(titleModelId);
+          const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+          let title = String((tRes as any)?.text || '').trim();
+          title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+          if (title) await setConversationTitle(userId, conversationId, title, true);
+        } catch { }
+      }
+    }
 
     return {
       ok: true,

@@ -725,6 +725,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }
 
         let conversationCreatedNow = false;
+        // Mobile-originated messages (SMS/WhatsApp routed to desktop) must always
+        // persist conversations regardless of sync_conversations preference.
+        const forcePersist = !!(msg as any)?.forcePersist;
+        const mobileSource: string | undefined = typeof (msg as any)?.mobileSource === 'string' ? (msg as any).mobileSource : undefined;
         if (authUser) {
           const resetRequested = !!(msg as any)?.resetConversation;
           if (resetRequested) {
@@ -739,7 +743,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               prompt,
               modelLabel,
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
-              agentType === 'workflow' ? 'workflow' : 'stuard'
+              agentType === 'workflow' ? 'workflow' : 'stuard',
+              forcePersist,
             ) as any;
             if (conversationId) {
               conversationCreatedNow = true;
@@ -830,7 +835,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               tier: routedTier,
               modelId: chosenModelId,
               contextPaths: contextPathsForMeta,
-            });
+            }, forcePersist);
           } catch { }
         }
 
@@ -1162,7 +1167,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               };
-              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch { }
+              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata, forcePersist); } catch { }
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;

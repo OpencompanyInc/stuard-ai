@@ -14,6 +14,8 @@ import {
   createConversation,
   addUserMessage,
   addAssistantMessage,
+  finishRun,
+  setConversationTitle,
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
@@ -847,10 +849,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
                 // Ensure conversation is persisted in Supabase (forcePersist=true bypasses sync pref)
                 let convId = smsState.conversation_id || null;
+                let vmConvCreatedNow = false;
                 if (!convId) {
                   convId = await createConversation(userId, inboundText, smsState.preferred_model || 'fast', {
                     mode: smsState.preferred_model || 'fast',
                   }, 'stuard', true);
+                  if (convId) vmConvCreatedNow = true;
                 } else {
                   await addUserMessage(userId, convId, inboundText, {
                     mode: smsState.preferred_model || 'fast',
@@ -868,7 +872,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
-                  const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
+                  const vmResponseText = String(vmResult.result.text);
+                  const replyText = stripMarkdownForSms(vmResponseText).slice(0, 1500);
                   await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
                     console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
                   });
@@ -877,9 +882,14 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
                   const vmConvId = vmResult.result?.conversationId || convId;
                   if (vmConvId) {
-                    await addAssistantMessage(userId, vmConvId, String(vmResult.result.text), {
+                    await addAssistantMessage(userId, vmConvId, vmResponseText, {
                       mode: smsState.preferred_model || 'fast',
                     }, true);
+                    // Finish run + generate title for new conversations
+                    try { await finishRun(userId, vmConvId, vmResponseText); } catch { }
+                    if (vmConvCreatedNow) {
+                      try { await setConversationTitle(userId, vmConvId, inboundText.slice(0, 80), true); } catch { }
+                    }
                   }
 
                   if (vmConvId && vmConvId !== smsState.conversation_id) {
@@ -1049,9 +1059,23 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
             if (effectiveTarget === 'vm') {
               try {
+                // Persist conversation in Supabase (same as SMS VM route)
+                let mmsConvId = smsState.conversation_id || null;
+                let mmsConvCreatedNow = false;
+                if (!mmsConvId) {
+                  mmsConvId = await createConversation(userId, messageText, smsState.preferred_model || 'fast', {
+                    mode: smsState.preferred_model || 'fast',
+                  }, 'stuard', true);
+                  if (mmsConvId) mmsConvCreatedNow = true;
+                } else {
+                  await addUserMessage(userId, mmsConvId, messageText, {
+                    mode: smsState.preferred_model || 'fast',
+                  }, true);
+                }
+
                 const vmResult = await sendVMCommand(userId, 'agent_chat', {
                   message: messageText,
-                  conversationId: smsState.conversation_id || undefined,
+                  conversationId: mmsConvId || undefined,
                   model: smsState.preferred_model || 'fast',
                   context: {
                     source: 'mms',
@@ -1061,14 +1085,24 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
-                  const replyText = stripMarkdownForSms(String(vmResult.result.text)).slice(0, 1500);
+                  const vmResponseText = String(vmResult.result.text);
+                  const replyText = stripMarkdownForSms(vmResponseText).slice(0, 1500);
                   await sendSmsRaw(from, replyText).catch((e: any) => {
                     console.error('[telnyx] Failed to send VM agent MMS reply:', e?.message);
                   });
                   await deductTelnyxCredit(userId);
                   handled = true;
 
-                  const vmConvId = vmResult.result?.conversationId || null;
+                  const vmConvId = vmResult.result?.conversationId || mmsConvId;
+                  if (vmConvId) {
+                    await addAssistantMessage(userId, vmConvId, vmResponseText, {
+                      mode: smsState.preferred_model || 'fast',
+                    }, true);
+                    try { await finishRun(userId, vmConvId, vmResponseText); } catch { }
+                    if (mmsConvCreatedNow) {
+                      try { await setConversationTitle(userId, vmConvId, messageText.slice(0, 80), true); } catch { }
+                    }
+                  }
                   if (vmConvId && vmConvId !== smsState.conversation_id) {
                     await upsertSmsUserState({ userId, conversationId: vmConvId });
                   }

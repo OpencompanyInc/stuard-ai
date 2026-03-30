@@ -244,19 +244,15 @@ async function loadSmsUserState(userId: string): Promise<SmsUserState> {
 }
 
 function buildSmsHiddenContext(mode: SmsMode, proactiveMessage?: string | null): string {
-  const modeMarker = mode === 'proactive' ? '[PROACTIVE FOLLOW-UP]' : '[SMS MODE]';
+  const modeMarker = mode === 'proactive' ? '[PROACTIVE FOLLOW-UP]' : '[MOBILE MESSAGE]';
   const contextLine = mode === 'proactive'
     ? 'Context: the user is replying to a proactive check-in. Stay in that context unless they clearly change topic.'
-    : 'Context: the user is chatting with you directly over SMS.';
+    : 'Context: the user is chatting with you from their phone (SMS/WhatsApp). Respond fully and naturally — your response will be saved to conversation history and the user can view the full version on desktop. A condensed version will be sent back over SMS automatically.';
   const lines = [
     modeMarker,
-    'You are replying over SMS text message.',
-    'Critical rules:',
-    '- Plain text only. No markdown, headers, bullet syntax beyond plain text, backticks, or formatting markup.',
-    '- Keep replies short. Aim for under 300 characters when possible. Hard limit 600 characters.',
-    '- Use only plain ASCII characters. No smart quotes, em dashes, ellipsis glyphs, or other Unicode.',
-    '- No GenUI or visual components.',
-    '- Be warm, direct, and conversational.',
+    'The user sent this message from their mobile device.',
+    'Respond fully as you would for any desktop conversation — use markdown, detailed explanations, and complete answers.',
+    'Be warm, helpful, and thorough.',
     contextLine,
   ];
   if (mode === 'proactive' && proactiveMessage) {
@@ -543,6 +539,11 @@ async function runSmsTurn(input: {
           conversationId: input.conversationId || undefined,
           hiddenContext: buildSmsHiddenContext(input.mode, input.proactiveMessage),
           auth: { accessToken: token },
+          // Signal to cloud WS that this is a mobile-originated message:
+          // - forcePersist: bypass sync_conversations pref (SMS convos must always save)
+          // - mobileSource: provider name so cloud can generate title and finishRun
+          forcePersist: true,
+          mobileSource: input.provider || 'sms',
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         });
       } catch (e: any) {

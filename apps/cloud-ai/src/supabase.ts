@@ -94,10 +94,12 @@ function isIncludedGrant(sourceType: string): boolean {
   return ['subscription_cycle', 'legacy_plan', 'trial'].includes(String(sourceType || ''));
 }
 
-export async function setConversationTitle(userId: string, conversationId: string, title: string): Promise<void> {
+export async function setConversationTitle(userId: string, conversationId: string, title: string, forcePersist = false): Promise<void> {
   if (!supabaseService) return;
-  const prefs = await getSyncPreferences(userId);
-  if (!prefs.sync_conversations) return;
+  if (!forcePersist) {
+    const prefs = await getSyncPreferences(userId);
+    if (!prefs.sync_conversations) return;
+  }
   const t = String(title || '').trim().slice(0, 80);
   if (!t) return;
   try {
