@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
   mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
   mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
+  mediaDelete: (itemId: string, deleteFile?: boolean) => ipcRenderer.invoke('media:delete', itemId, deleteFile),
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),

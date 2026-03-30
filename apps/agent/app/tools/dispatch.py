@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, wakeword, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
+from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
 
 
 # Tool metadata for discovery (category and description)
@@ -243,11 +243,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "invoke_workflow": ("flow", "Invoke a workflow with arguments"),
     "test_run_steps": ("flow", "Test run workflow steps"),
     "show_json_workflow_code": ("flow", "Display workflow JSON code"),
-
-    # Wakeword
-    "wakeword_start": ("system", "Start wakeword detection"),
-    "wakeword_stop": ("system", "Stop wakeword detection"),
-    "wakeword_status": ("system", "Get wakeword detection status"),
 
     # File Index & Search
     "file_index_add_root": ("data", "Add a root directory to file index"),
@@ -610,11 +605,6 @@ _HANDLERS = {
     "test_run_steps": workflows.test_run_steps,
     "show_json_workflow_code": workflows.show_json_workflow_code,  # Supports emit for JSON display
 
-    # Wakeword
-    "wakeword_start": wakeword.wakeword_start,
-    "wakeword_stop": wakeword.wakeword_stop,
-    "wakeword_status": wakeword.wakeword_status,
-
     # File Index & Search
     "file_index_add_root": file_scanner.add_index_root,
     "file_index_remove_root": file_scanner.remove_index_root,
@@ -793,10 +783,6 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "stop_screen_capture",
         "capture_system_audio",
         "stop_system_audio",
-
-        # Wakeword tools
-        "wakeword_start",
-        "wakeword_stop",
 
         # Workflow tools
         "show_json_workflow_code",

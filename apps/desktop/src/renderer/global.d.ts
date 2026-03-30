@@ -93,6 +93,7 @@ declare global {
       mediaSync: (itemIds?: string[]) => Promise<{ ok: boolean; synced?: number; failed?: number; items?: MediaLibraryItem[]; error?: string }>;
       mediaImportPaths: (paths: string[]) => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
       mediaOpenPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
+      mediaDelete: (itemId: string, deleteFile?: boolean) => Promise<{ ok: boolean; id?: string; error?: string }>;
       onShow: (cb: () => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;

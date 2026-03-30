@@ -131,7 +131,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'set_window_bounds', category: 'system', kind: 'local', description: 'Move and/or resize a window', argsTemplate: { title: '', bounds: { x: 0, y: 0, width: 800, height: 600 }, bringToTop: true }, outputSchema: { ok: 'boolean', bounds: 'object' } },
 
   // --- INPUT ---
-  { id: 'send_hotkey', category: 'input', kind: 'local', description: 'Send keyboard hotkey combinations', argsTemplate: { keys: ['ctrl', 'c'] }, outputSchema: { ok: 'boolean' } },
+  { id: 'send_hotkey', category: 'input', kind: 'local', description: 'Send keyboard hotkey combinations', argsTemplate: { keys: ['ctrl', 'c'], count: 1, delay: 0 }, outputSchema: { ok: 'boolean', count: 'number' } },
   { id: 'type_text', category: 'input', kind: 'local', description: 'Type text at cursor position', argsTemplate: { text: '', useClipboardFallback: false }, outputSchema: { ok: 'boolean' } },
   { id: 'click_at_coordinates', category: 'input', kind: 'local', description: 'Click at specific screen coordinates', argsTemplate: { x: 100, y: 100, button: 'left' }, outputSchema: { ok: 'boolean' } },
   { id: 'double_click_at_coordinates', category: 'input', kind: 'local', description: 'Double-click at specific screen coordinates', argsTemplate: { x: 100, y: 100, button: 'left' }, outputSchema: { ok: 'boolean' } },

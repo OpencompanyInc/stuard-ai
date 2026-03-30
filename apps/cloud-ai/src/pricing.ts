@@ -35,17 +35,6 @@ export const PLAN_CONFIG: Record<PlanType, {
   BYOK: { priceUsd: 0, budgetUsd: Infinity, isRecurring: false, allModels: true },
 };
 
-// Paid plans that can access wakeword enrollment.
-export const WAKEWORD_ALLOWED_PLANS = new Set<string>([
-  'STARTER',
-  'PRO',
-  'POWER',
-  'BYOK',
-]);
-
-// Keep the wakeword enrollment credit display configurable from env.
-export const WAKEWORD_ENROLL_CREDIT_COST = envNumber('WAKEWORD_ENROLL_CREDIT_COST', 0);
-
 /**
  * Usage cost percentage - how much of plan price goes to API usage budget
  */

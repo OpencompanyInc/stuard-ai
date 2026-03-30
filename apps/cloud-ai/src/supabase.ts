@@ -1401,13 +1401,22 @@ export async function getMonthlyUsageTokens(userId: string, monthStart?: Date): 
   if (!supabaseService) return 0;
   try {
     const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const { data, error } = await supabaseService
-      .from('usage_events')
-      .select('total_tokens, created_at')
-      .eq('user_id', userId)
-      .gte('created_at', start.toISOString());
-    if (error || !data) return 0;
-    return (data as any[]).reduce((sum, r) => sum + (Number(r.total_tokens) || 0), 0);
+    let total = 0;
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabaseService
+        .from('usage_events')
+        .select('total_tokens')
+        .eq('user_id', userId)
+        .gte('created_at', start.toISOString())
+        .range(offset, offset + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      total += (data as any[]).reduce((sum, r) => sum + (Number(r.total_tokens) || 0), 0);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+    return total;
   } catch {
     return 0;
   }
@@ -1417,30 +1426,37 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
   if (!supabaseService) return 0;
   try {
     const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const { data, error } = await supabaseService
-      .from('usage_events')
-      .select('model, prompt_tokens, completion_tokens, total_tokens, cost_usd, raw, created_at')
-      .eq('user_id', userId)
-      .gte('created_at', start.toISOString());
-    if (error || !data) return 0;
     let totalCredits = 0;
-    for (const r of data as any[]) {
-      const raw = (r as any).raw && typeof (r as any).raw === 'object' ? (r as any).raw : {};
-      const normalized = normalizeUsage({
-        ...raw,
-        promptTokens: (r as any).prompt_tokens,
-        completionTokens: (r as any).completion_tokens,
-        totalTokens: (r as any).total_tokens,
-      });
-      const model = String((r as any).model || (raw as any).model || '');
-      const pt = normalized.promptTokens;
-      const ct = normalized.completionTokens;
-      const cachedPt = Math.max(0, Number(normalized.cachedPromptTokens || 0));
-      const explicitUsd = Number((r as any).cost_usd ?? (raw as any).costUsd ?? (raw as any).cost_usd);
-      const usd = Number.isFinite(explicitUsd) && explicitUsd >= 0
-        ? explicitUsd
-        : estimateCostUsd(model, pt, ct, cachedPt);
-      if (typeof usd === 'number' && isFinite(usd) && usd > 0) totalCredits += roundCredits(usd * creditsPerUsd());
+    let offset = 0;
+    const PAGE = 500;
+    while (true) {
+      const { data, error } = await supabaseService
+        .from('usage_events')
+        .select('model, prompt_tokens, completion_tokens, total_tokens, cost_usd, raw, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', start.toISOString())
+        .range(offset, offset + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      for (const r of data as any[]) {
+        const raw = (r as any).raw && typeof (r as any).raw === 'object' ? (r as any).raw : {};
+        const normalized = normalizeUsage({
+          ...raw,
+          promptTokens: (r as any).prompt_tokens,
+          completionTokens: (r as any).completion_tokens,
+          totalTokens: (r as any).total_tokens,
+        });
+        const model = String((r as any).model || (raw as any).model || '');
+        const pt = normalized.promptTokens;
+        const ct = normalized.completionTokens;
+        const cachedPt = Math.max(0, Number(normalized.cachedPromptTokens || 0));
+        const explicitUsd = Number((r as any).cost_usd ?? (raw as any).costUsd ?? (raw as any).cost_usd);
+        const usd = Number.isFinite(explicitUsd) && explicitUsd >= 0
+          ? explicitUsd
+          : estimateCostUsd(model, pt, ct, cachedPt);
+        if (typeof usd === 'number' && isFinite(usd) && usd > 0) totalCredits += roundCredits(usd * creditsPerUsd());
+      }
+      if (data.length < PAGE) break;
+      offset += PAGE;
     }
     return Math.max(0, Math.ceil(totalCredits));
   } catch {
@@ -1455,7 +1471,8 @@ export async function getActiveCreditGrants(userId: string, asOf = new Date(), o
       .from('credit_grants')
       .select('id, user_id, source_type, source_ref, plan, amount_usd, total_credits, remaining_credits, expires_at, metadata, created_at, updated_at')
       .eq('user_id', userId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(500);
     if (!options?.includeSpent) query = query.gt('remaining_credits', 0);
     const { data, error } = await query;
     if (error || !data) return [];
@@ -1636,14 +1653,23 @@ export async function getCurrentPeriodDebitedCredits(userId: string, monthStart?
   if (!supabaseService) return 0;
   try {
     const start = (monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1)).toISOString();
-    const { data, error } = await supabaseService
-      .from('credit_transactions')
-      .select('credits')
-      .eq('user_id', userId)
-      .eq('entry_type', 'debit')
-      .gte('created_at', start);
-    if (error || !data) return 0;
-    return snapCredits((data as any[]).reduce((sum, row) => sum + (Number(row.credits) || 0), 0));
+    let total = 0;
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabaseService
+        .from('credit_transactions')
+        .select('credits')
+        .eq('user_id', userId)
+        .eq('entry_type', 'debit')
+        .gte('created_at', start)
+        .range(offset, offset + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      total += (data as any[]).reduce((sum, row) => sum + (Number(row.credits) || 0), 0);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+    return snapCredits(total);
   } catch {
     return 0;
   }

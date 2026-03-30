@@ -598,8 +598,6 @@ _DESKTOP_ONLY_STUBS = [
     "mediapipe_status", "mediapipe_setup", "mediapipe_pose", "mediapipe_hands",
     "mediapipe_face_detection", "mediapipe_face_mesh", "mediapipe_segmentation",
     "mediapipe_holistic", "mediapipe_process_video",
-    # Wakeword (needs mic)
-    "wakeword_start", "wakeword_stop", "wakeword_status",
     # Desktop notifications (no UI to show them)
     "send_notification",
     # Desktop file open (no GUI to open with)

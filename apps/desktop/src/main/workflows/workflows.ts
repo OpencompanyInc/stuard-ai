@@ -66,6 +66,19 @@ function startKeystrokeHook() {
     keyMap[UiohookKey.Space] = ' ';
     keyMap[UiohookKey.Enter] = '\n';
 
+    // Add punctuation/symbol keys (multi-char names skipped by the loop above)
+    keyMap[UiohookKey.Slash] = '/';
+    keyMap[UiohookKey.Backslash] = '\\';
+    keyMap[UiohookKey.Minus] = '-';
+    keyMap[UiohookKey.Equal] = '=';
+    keyMap[UiohookKey.Semicolon] = ';';
+    keyMap[UiohookKey.Quote] = "'";
+    keyMap[UiohookKey.Comma] = ',';
+    keyMap[UiohookKey.Period] = '.';
+    keyMap[UiohookKey.Backquote] = '`';
+    keyMap[UiohookKey.BracketLeft] = '[';
+    keyMap[UiohookKey.BracketRight] = ']';
+
     // Modifier key codes (explicit codes for reliability)
     // See: https://github.com/pqrs-org/Karabiner-Elements/issues/925#issuecomment-626178578
     const modifierKeys: Record<number, string> = {
@@ -146,7 +159,7 @@ function startKeystrokeHook() {
       }
 
       // Continue with keystroke sequence handling
-      if (!char) return;
+      if (!char || keystrokeListeners.size === 0) return;
 
       // Update all keystroke listeners
       for (const [listenerId, listener] of keystrokeListeners.entries()) {
@@ -164,14 +177,18 @@ function startKeystrokeHook() {
         // Check if sequence matches
         if (listener.buffer.endsWith(listener.sequence)) {
           console.log('[Workflows] Keystroke sequence matched:', listener.sequence);
-          executeWorkflowFromTrigger(listener.flowId, `keystroke:${listener.sequence}`, { sequence: listener.sequence }, listener.triggerId);
           listener.buffer = ''; // Reset buffer after match
+          // Execute asynchronously to not block the uiohook event loop
+          const { flowId, sequence, triggerId } = listener;
+          setImmediate(() => {
+            executeWorkflowFromTrigger(flowId, `keystroke:${sequence}`, { sequence }, triggerId);
+          });
+        } else {
+          // Clear buffer after 2 seconds of inactivity
+          listener.timeout = setTimeout(() => {
+            listener.buffer = '';
+          }, 2000);
         }
-
-        // Clear buffer after 2 seconds of inactivity
-        listener.timeout = setTimeout(() => {
-          listener.buffer = '';
-        }, 2000);
       }
     });
 

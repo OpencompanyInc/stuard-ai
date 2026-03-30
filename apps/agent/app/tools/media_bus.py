@@ -147,14 +147,23 @@ def _remove_bus(kind: str, device: Optional[int] = None) -> None:
         _buses.pop(key, None)
 
 
-def _tmp_dir() -> str:
-    """Get temp directory for recordings."""
-    base = os.path.join(tempfile.gettempdir(), "stuardai", "bus")
+def _media_dir(category: str = "recordings") -> str:
+    """Get organized media directory for bus recordings."""
+    home = os.path.expanduser("~")
+    docs = os.path.join(home, "Documents")
+    if not os.path.isdir(docs):
+        docs = home
+    base = os.path.join(docs, "StuardAI", "media", category)
     try:
         os.makedirs(base, exist_ok=True)
     except Exception:
         pass
     return base
+
+
+def _tmp_dir() -> str:
+    """Legacy alias — points to organized recordings directory."""
+    return _media_dir("recordings")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

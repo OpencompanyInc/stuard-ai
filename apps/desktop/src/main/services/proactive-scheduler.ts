@@ -1207,8 +1207,8 @@ async function executeWakeUp() {
         channels = [];
         logger.info(`[proactive-scheduler] Agent chose to skip notification (urgency: ${agentUrgency})`);
       } else if (agentChannel && agentChannel !== 'app') {
-        // Agent chose an elevated channel (sms/call/whatsapp)
-        channels = [agentChannel];
+        // Agent chose an elevated channel (sms/call/whatsapp) — always include 'app' so the custom UI notification fires too
+        channels = ['app', agentChannel];
         logger.info(`[proactive-scheduler] Agent chose channel: ${agentChannel} (urgency: ${agentUrgency})`);
       }
 

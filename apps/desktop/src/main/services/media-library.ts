@@ -778,6 +778,25 @@ export async function registerIncomingMessagingMedia(provider: string, attachmen
   return imported;
 }
 
+export function deleteMediaItem(itemId: string, deleteFile = true) {
+  const store = loadStore();
+  const index = store.items.findIndex((item) => item.id === itemId);
+  if (index < 0) {
+    return { ok: false, error: 'item_not_found' };
+  }
+  const item = store.items[index];
+  if (deleteFile && item.localPath && fileExists(item.localPath)) {
+    try {
+      fs.unlinkSync(item.localPath);
+    } catch (error) {
+      logger.warn('[media-library] Failed to delete file:', error);
+    }
+  }
+  store.items.splice(index, 1);
+  saveStore(store);
+  return { ok: true, id: itemId };
+}
+
 export async function captureToolMedia(toolName: string, args: any, result: any) {
   if (!result || result.ok === false) return result;
 

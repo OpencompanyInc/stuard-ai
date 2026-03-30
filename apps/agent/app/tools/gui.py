@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import io
 import os
-import tempfile
 import time
 from typing import Any, Dict
 
@@ -116,6 +115,9 @@ async def send_hotkey(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("missing keys")
     norm = [_norm_key(k) for k in keys]
 
+    count = max(1, int(args.get("count") or args.get("repeat") or 1))
+    delay = max(0, float(args.get("delay") or 0))
+
     # Release any stuck modifier keys before sending the hotkey
     # This fixes issues when send_hotkey is triggered by a global hotkey
     # (e.g., Ctrl+Alt+E triggers workflow that immediately sends Ctrl+C)
@@ -126,11 +128,12 @@ async def send_hotkey(args: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Small delay to ensure modifiers are released
-    time.sleep(0.05)
+    for i in range(count):
+        pag.hotkey(*norm)
+        if delay > 0 and i < count - 1:
+            time.sleep(delay)
 
-    pag.hotkey(*norm)
-    return {"ok": True, "keys": norm}
+    return {"ok": True, "keys": norm, "count": count}
 
 
 async def scroll(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,9 +336,8 @@ async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
     mon = _get_monitor()
     with mss.mss() as sct:
         sct_img = sct.grab(mon)
-        tmpdir = os.path.join(tempfile.gettempdir(), "stuardai")
-        if not os.path.exists(tmpdir):
-            os.makedirs(tmpdir, exist_ok=True)
+        tmpdir = os.path.join(os.path.expanduser("~"), "Documents", "StuardAI", "media", "screenshots")
+        os.makedirs(tmpdir, exist_ok=True)
         file_path = os.path.join(tmpdir, f"computer_use_{int(time.time()*1000)}.png")
         msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
 
@@ -410,9 +412,8 @@ async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
         else:
             monitor = sct.monitors[0]
         sct_img = sct.grab(monitor)
-        tmpdir = os.path.join(tempfile.gettempdir(), "stuardai")
-        if not os.path.exists(tmpdir):
-            os.makedirs(tmpdir, exist_ok=True)
+        tmpdir = os.path.join(os.path.expanduser("~"), "Documents", "StuardAI", "media", "screenshots")
+        os.makedirs(tmpdir, exist_ok=True)
         file_path = os.path.join(tmpdir, f"screenshot_{int(time.time()*1000)}.png")
         msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
     return {"ok": True, "filePath": file_path}

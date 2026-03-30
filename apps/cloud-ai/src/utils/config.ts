@@ -169,8 +169,3 @@ export const GCP_KEY_FILE = clean(process.env.GOOGLE_APPLICATION_CREDENTIALS || 
 export const VM_HEALTH_CHECK_INTERVAL_MS = Number(clean(process.env.VM_HEALTH_CHECK_INTERVAL_MS || 300000)); // 5 min
 export const VM_HEALTH_STALE_THRESHOLD_MS = Number(clean(process.env.VM_HEALTH_STALE_THRESHOLD_MS || 90000)); // 90s
 
-// Wakeword fine-tuning paths
-export const WAKEWORD_REPO_PATH = clean(process.env.WAKEWORD_REPO_PATH || '');
-export const WAKEWORD_BASE_MODEL_PATH = clean(process.env.WAKEWORD_BASE_MODEL_PATH || '');
-export const WAKEWORD_WORK_DIR = clean(process.env.WAKEWORD_WORK_DIR || './tmp/wakeword');
-export const WAKEWORD_PYTHON = clean(process.env.WAKEWORD_PYTHON || 'python');

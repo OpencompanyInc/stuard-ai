@@ -22,6 +22,7 @@ import {
   listMediaLibraryItems,
   syncMediaLibrary,
   updateMediaLibraryPrefs,
+  deleteMediaItem,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 import { TOOL_REGISTRY } from "../tools/registry";
@@ -456,6 +457,13 @@ export function setupIpc() {
     try {
       const items = await importMediaPaths(Array.isArray(paths) ? paths : []);
       return { ok: true, items };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+  ipcMain.handle("media:delete", (_e, itemId: string, deleteFile?: boolean) => {
+    try {
+      return deleteMediaItem(String(itemId || ''), deleteFile !== false);
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }

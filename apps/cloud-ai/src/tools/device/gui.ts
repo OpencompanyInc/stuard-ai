@@ -113,7 +113,7 @@ export const type_text = makeLocalTool(
 export const send_hotkey = makeLocalTool(
   'send_hotkey',
   'Send keyboard hotkey combinations',
-  z.object({ keys: z.array(z.string()).min(1).describe('e.g., ["Control","C"]') }),
+  z.object({ keys: z.array(z.string()).min(1).describe('e.g., ["Control","C"]'), count: z.number().optional().describe('Number of times to repeat (default 1)'), delay: z.number().optional().describe('Delay in seconds between repeats (default 0)') }),
 );
 
 export const scroll = makeLocalTool(

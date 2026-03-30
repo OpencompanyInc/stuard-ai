@@ -21,6 +21,11 @@ _terminal_lock = threading.Lock()
 _terminal_sessions: Dict[str, Dict[str, Any]] = {}
 COMMAND_CHECKPOINT_MAX_ENTRIES = int(os.getenv("COMMAND_CHECKPOINT_MAX_ENTRIES", "2000"))
 
+# Cached binary paths to avoid repeated slow PATH traversal on Windows
+_cached_python_bin: str | None = None
+_cached_node_bin: str | None = None
+_cached_pip_ok: set[str] = set()  # env dirs where pip is known to be available
+
 
 def _checkpoint_requested(args: Dict[str, Any]) -> bool:
     """
@@ -546,11 +551,16 @@ def _get_system_python() -> str:
     create venvs or run ``-m pip``.  In that case we fall back to whichever
     Python is available on the system PATH.
     """
+    global _cached_python_bin
+    if _cached_python_bin:
+        return _cached_python_bin
     is_frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
     if is_frozen:
         found = shutil.which("python") or shutil.which("python3") or shutil.which("py")
         if found:
+            _cached_python_bin = found
             return found
+    _cached_python_bin = sys.executable
     return sys.executable
 
 
@@ -751,19 +761,21 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                 except Exception as e:
                     return {"ok": False, "error": f"venv_create_failed: {e}"}
 
-            # Ensure pip is available
-            pip_check = await asyncio.to_thread(
-                subprocess.run, [py_bin, "-m", "pip", "--version"],
-                capture_output=True, text=True
-            )
-            if pip_check.returncode != 0:
-                if emit:
-                    await emit("installing_pip", {"envId": env_id})
-                try:
-                    await asyncio.to_thread(subprocess.run, [py_bin, "-m", "ensurepip", "--upgrade"], capture_output=True, check=False)
-                    await asyncio.to_thread(subprocess.run, [py_bin, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], capture_output=True, check=False)
-                except Exception:
-                    pass
+            # Ensure pip is available (cached per env_dir after first successful check)
+            if env_dir not in _cached_pip_ok:
+                pip_check = await asyncio.to_thread(
+                    subprocess.run, [py_bin, "-m", "pip", "--version"],
+                    capture_output=True, text=True
+                )
+                if pip_check.returncode != 0:
+                    if emit:
+                        await emit("installing_pip", {"envId": env_id})
+                    try:
+                        await asyncio.to_thread(subprocess.run, [py_bin, "-m", "ensurepip", "--upgrade"], capture_output=True, check=False)
+                        await asyncio.to_thread(subprocess.run, [py_bin, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], capture_output=True, check=False)
+                    except Exception:
+                        pass
+                _cached_pip_ok.add(env_dir)
 
             # Install packages if specified
             if auto_install and (packages or req_txt):
@@ -818,17 +830,8 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                     if emit:
                         await emit("packages_ready", {"installed": packages_installed, "count": len(packages_installed)})
         else:
-            # Use system Python - prefer PATH python over bundled exe to avoid polluting user scripts with our dependencies
-            # In packaged PyInstaller builds, sys.executable is the bundled Python which has all our imports
-            is_frozen = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
-            if is_frozen:
-                # Prefer system Python from PATH to keep user scripts clean
-                # Run in thread to avoid blocking the event loop on Windows PATH traversal
-                py_bin = await asyncio.to_thread(
-                    lambda: shutil.which("python") or shutil.which("python3") or shutil.which("py") or sys.executable
-                )
-            else:
-                py_bin = sys.executable or shutil.which("python") or shutil.which("python3") or ("py" if sys.platform.startswith("win") else "python")
+            # Use cached system Python (avoids repeated slow PATH traversal on Windows)
+            py_bin = _get_system_python()
 
         # Prepare cleanup list
         cleanup: list[str] = []
@@ -935,11 +938,16 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
         cwd = args.get("cwd")
         checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
 
-        # Find node executable (run in thread to avoid blocking the event loop
-        # on Windows where PATH traversal can be slow)
-        node_bin = await asyncio.to_thread(
-            lambda: shutil.which("node") or shutil.which("nodejs")
-        )
+        # Find node executable (cached after first lookup to avoid slow PATH traversal on Windows)
+        global _cached_node_bin
+        if _cached_node_bin:
+            node_bin = _cached_node_bin
+        else:
+            node_bin = await asyncio.to_thread(
+                lambda: shutil.which("node") or shutil.which("nodejs")
+            )
+            if node_bin:
+                _cached_node_bin = node_bin
         if not node_bin:
             return {"ok": False, "error": "node_not_found"}
 

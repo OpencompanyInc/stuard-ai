@@ -157,6 +157,21 @@ export function useMediaLibrary() {
     }
   }, [refresh]);
 
+  const deleteItem = useCallback(async (itemId: string, deleteFile = true) => {
+    try {
+      const resp = await window.desktopAPI.mediaDelete(itemId, deleteFile);
+      if (!resp.ok) throw new Error(resp.error || 'Failed to delete media');
+      setItems((prev) => prev.filter((item) => item.id !== itemId));
+      await refresh(true);
+      setError(null);
+      return { ok: true };
+    } catch (nextError) {
+      const message = toErrorMessage(nextError);
+      setError(message);
+      return { ok: false, error: message };
+    }
+  }, [refresh]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -193,5 +208,6 @@ export function useMediaLibrary() {
     sync,
     updateSyncMode,
     importPaths,
+    deleteItem,
   };
 }
