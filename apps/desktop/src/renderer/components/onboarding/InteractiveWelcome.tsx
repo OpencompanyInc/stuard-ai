@@ -205,13 +205,33 @@ function SkipButton({ onClick }: { onClick: () => void }) {
 // CAPABILITY DATA
 // =============================================================================
 
-interface Capability { id: string; icon: LucideIcon; label: string; tagline: string; color: string; glow: string }
+interface Capability { id: string; icon: LucideIcon; label: string; hook: string; followUp: string; color: string; glow: string }
 
 const CAPABILITIES: Capability[] = [
-  { id: 'chat', icon: MessageSquare, label: 'Chat', tagline: 'Ask anything naturally. Get direct answers, not search results.', color: 'text-blue-400/80', glow: 'rgba(56,168,255,0.08)' },
-  { id: 'workflows', icon: Workflow, label: 'Workflows', tagline: 'Automate tasks visually, or describe what you need and let Stuard build it.', color: 'text-purple-400/80', glow: 'rgba(168,85,247,0.08)' },
-  { id: 'proactive', icon: Bell, label: 'Proactive Agent', tagline: 'Stuard works quietly in the background so nothing slips through.', color: 'text-amber-400/80', glow: 'rgba(245,158,11,0.08)' },
-  { id: 'integrations', icon: Plug, label: 'Integrations', tagline: 'Connected to the tools you already use, right out of the box.', color: 'text-emerald-400/80', glow: 'rgba(34,197,94,0.08)' },
+  {
+    id: 'chat', icon: MessageSquare, label: 'Chat',
+    hook: "Ever spent 20 minutes down a Google rabbit hole for something that should've taken 10 seconds?",
+    followUp: "Just ask me. No tabs, no digging — straight answers.",
+    color: 'text-blue-400/80', glow: 'rgba(56,168,255,0.08)',
+  },
+  {
+    id: 'proactive', icon: Bell, label: 'Proactive Agent',
+    hook: "You know that feeling when you wake up and realize you forgot to send that email? Or missed a deadline because it just... slipped?",
+    followUp: "I keep track of things for you — even when you're asleep.",
+    color: 'text-amber-400/80', glow: 'rgba(245,158,11,0.08)',
+  },
+  {
+    id: 'workflows', icon: Workflow, label: 'Workflows',
+    hook: "You've probably been paying for a bunch of AI tools that each do one thing. What if you could just build exactly what you need — for free?",
+    followUp: "Drag, drop, done. Or just tell me what you want and I'll build it for you.",
+    color: 'text-purple-400/80', glow: 'rgba(168,85,247,0.08)',
+  },
+  {
+    id: 'integrations', icon: Plug, label: 'Integrations',
+    hook: "Your stuff is scattered across Gmail, Calendar, GitHub, Slack... you're constantly switching tabs just to stay on top of things.",
+    followUp: "I plug into all of them, so everything's in one place.",
+    color: 'text-emerald-400/80', glow: 'rgba(34,197,94,0.08)',
+  },
 ];
 
 // =============================================================================
@@ -277,31 +297,263 @@ function HelloSplash({ onNext }: { onNext: () => void }) {
 }
 
 // =============================================================================
+// MINI-DEMO COMPONENTS — visual previews that mirror actual features
+// =============================================================================
+
+/** Chat demo: a miniature chat exchange with typing */
+function ChatDemo() {
+  const { displayed: answer, done } = useTypewriter('Paris. The capital of France.', 30, 2400);
+  const [showTyping, setShowTyping] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setShowTyping(true), 1800);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div className="w-[280px] rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden backdrop-blur-sm">
+      {/* Title bar */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04]">
+        <div className="w-2 h-2 rounded-full bg-blue-400/40" />
+        <span className="text-[10px] text-white/30 tracking-wide">Chat</span>
+      </div>
+      {/* Messages */}
+      <div className="px-4 py-3 flex flex-col gap-2.5 min-h-[100px]">
+        {/* User message */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.4, duration: 0.4 }}
+          className="self-end max-w-[80%]"
+        >
+          <div className="rounded-2xl rounded-br-md bg-blue-500/15 border border-blue-400/10 px-3 py-2">
+            <p className="text-[11px] text-white/70">What's the capital of France?</p>
+          </div>
+        </motion.div>
+        {/* Stuard response */}
+        {showTyping && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="self-start max-w-[85%]"
+          >
+            <div className="rounded-2xl rounded-bl-md bg-white/[0.04] border border-white/[0.06] px-3 py-2">
+              {!done ? (
+                <p className="text-[11px] text-white/60">
+                  {answer}<span className="inline-block w-[1.5px] h-[0.85em] bg-white/40 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
+                </p>
+              ) : (
+                <p className="text-[11px] text-white/60">{answer}</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Proactive demo: notification cards sliding in */
+function ProactiveDemo() {
+  return (
+    <div className="flex flex-col gap-2 w-[280px]">
+      {[
+        { delay: 1.6, icon: '\u2709\uFE0F', text: "You haven't replied to Sarah \u2014 it's been 3 hours.", time: '2m ago' },
+        { delay: 2.4, icon: '\uD83D\uDCC5', text: 'Team standup in 15 minutes.', time: 'just now' },
+      ].map((n, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: n.delay, duration: 0.5, ease: 'easeOut' }}
+          className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 backdrop-blur-sm"
+        >
+          <div className="flex items-start gap-3">
+            <span className="text-[14px] mt-0.5">{n.icon}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-white/65 leading-relaxed">{n.text}</p>
+              <p className="text-[9px] text-white/25 mt-1">{n.time}</p>
+            </div>
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+/** Workflow demo: mini node graph with animated connections */
+function WorkflowDemo() {
+  const nodes = [
+    { label: 'New Email', x: 0, color: 'rgba(56,168,255,0.3)' },
+    { label: 'AI Summarize', x: 110, color: 'rgba(168,85,247,0.3)' },
+    { label: 'Send Slack', x: 220, color: 'rgba(34,197,94,0.3)' },
+  ];
+
+  return (
+    <div className="w-[300px] rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden backdrop-blur-sm">
+      {/* Title bar */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04]">
+        <div className="w-2 h-2 rounded-full bg-purple-400/40" />
+        <span className="text-[10px] text-white/30 tracking-wide">Workflow Builder</span>
+      </div>
+      <div className="relative px-5 py-6">
+        {/* Connection lines */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ top: 0, left: 0 }}>
+          {[0, 1].map(i => (
+            <motion.line
+              key={i}
+              x1={nodes[i].x + 65}
+              y1={32}
+              x2={nodes[i + 1].x + 25}
+              y2={32}
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth={1.5}
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ delay: 1.8 + i * 0.4, duration: 0.6 }}
+            />
+          ))}
+          {/* Animated pulse traveling along lines */}
+          {[0, 1].map(i => (
+            <motion.circle
+              key={`pulse-${i}`}
+              r={3}
+              fill="rgba(168,85,247,0.5)"
+              initial={{ cx: nodes[i].x + 65, cy: 32, opacity: 0 }}
+              animate={{
+                cx: [nodes[i].x + 65, nodes[i + 1].x + 25],
+                cy: 32,
+                opacity: [0, 1, 1, 0],
+              }}
+              transition={{ delay: 3.0 + i * 0.6, duration: 0.8, ease: 'easeInOut' }}
+            />
+          ))}
+        </svg>
+        {/* Nodes */}
+        <div className="flex items-center justify-between relative z-10">
+          {nodes.map((node, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 1.4 + i * 0.2, duration: 0.4 }}
+              className="flex flex-col items-center gap-1.5"
+            >
+              <div
+                className="w-[50px] h-[36px] rounded-lg border border-white/[0.08] flex items-center justify-center"
+                style={{ background: node.color }}
+              >
+                <span className="text-[8px] text-white/50 font-medium tracking-wide">{(i + 1)}</span>
+              </div>
+              <span className="text-[9px] text-white/40 whitespace-nowrap">{node.label}</span>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Integrations demo: app icons consolidating into one hub */
+function IntegrationsDemo() {
+  const apps = [
+    { label: 'Gmail', color: '#EA4335', letter: 'G' },
+    { label: 'Calendar', color: '#4285F4', letter: 'C' },
+    { label: 'GitHub', color: '#8B5CF6', letter: 'GH' },
+    { label: 'Slack', color: '#E01E5A', letter: 'S' },
+  ];
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="flex items-center gap-3">
+        {apps.map((app, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1.4 + i * 0.15, duration: 0.4 }}
+            className="flex flex-col items-center gap-1.5"
+          >
+            <div
+              className="w-10 h-10 rounded-xl border border-white/[0.06] flex items-center justify-center"
+              style={{ background: `${app.color}15` }}
+            >
+              <span className="text-[10px] font-semibold" style={{ color: app.color }}>{app.letter}</span>
+            </div>
+            <span className="text-[9px] text-white/30">{app.label}</span>
+          </motion.div>
+        ))}
+      </div>
+      {/* Connecting arrows */}
+      <motion.div
+        initial={{ opacity: 0, scaleY: 0 }}
+        animate={{ opacity: 1, scaleY: 1 }}
+        transition={{ delay: 2.4, duration: 0.5 }}
+        className="flex flex-col items-center gap-1"
+      >
+        <div className="w-px h-4 bg-gradient-to-b from-white/10 to-white/5" />
+        <div className="w-2 h-2 rotate-45 border-b border-r border-white/15" />
+      </motion.div>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 2.8, duration: 0.5 }}
+        className="rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] px-5 py-2.5"
+      >
+        <span className="text-[11px] text-emerald-300/70 tracking-wide">Everything in one place</span>
+      </motion.div>
+    </div>
+  );
+}
+
+const CAPABILITY_DEMOS: Record<string, React.FC> = {
+  chat: ChatDemo,
+  proactive: ProactiveDemo,
+  workflows: WorkflowDemo,
+  integrations: IntegrationsDemo,
+};
+
+// =============================================================================
 // PAGES 1-4: CAPABILITY SHOWCASE
 // =============================================================================
 
 function CapabilityPage({ capability, index, total, onNext, onBack }: {
   capability: Capability; index: number; total: number; onNext: () => void; onBack: () => void;
 }) {
+  const Demo = CAPABILITY_DEMOS[capability.id];
+
   return (
     <Page stepKey={`cap-${capability.id}`}>
       <BackButton onClick={onBack} />
-      <Fade delay={0.15} duration={0.9}>
-        <div className="relative">
-          <div className="absolute inset-0 rounded-full blur-[60px] opacity-80" style={{ background: capability.glow, transform: 'scale(5)' }} />
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
-            <capability.icon className={clsx('w-9 h-9', capability.color)} strokeWidth={1.5} />
-          </div>
+
+      {/* Hook — the relatable scenario */}
+      <Fade delay={0.3} duration={1.0}>
+        <p className="max-w-[28rem] text-center text-[18px] leading-relaxed text-white/70 font-light italic">
+          {capability.hook}
+        </p>
+      </Fade>
+
+      {/* Interactive demo that mirrors the real feature */}
+      <Fade delay={1.0} duration={0.6}>
+        <div className="mt-10">
+          {Demo && <Demo />}
         </div>
       </Fade>
-      <Fade delay={0.4} duration={0.9}><h2 className="mt-10 text-[28px] font-light tracking-tight text-white/90">{capability.label}</h2></Fade>
-      <Fade delay={0.7} duration={0.9}><p className="mt-4 max-w-[26rem] text-center text-[15px] leading-relaxed text-white/55 font-light">{capability.tagline}</p></Fade>
-      <Fade delay={0.9}>
-        <div className="mt-10 flex items-center gap-2">
+
+      {/* Follow-up — the punchline */}
+      <Fade delay={2.0} duration={0.9}>
+        <p className="mt-6 max-w-[26rem] text-center text-[15px] leading-relaxed text-white/55 font-light">
+          {capability.followUp}
+        </p>
+      </Fade>
+
+      <Fade delay={2.6}>
+        <div className="mt-8 flex items-center gap-2">
           {Array.from({ length: total }).map((_, i) => (<div key={i} className={clsx('rounded-full transition-all duration-700', i === index ? 'h-1.5 w-6 bg-white/50' : 'h-1.5 w-1.5 bg-white/10')} />))}
         </div>
       </Fade>
-      <ContinueButton onClick={onNext} />
+      <ContinueButton onClick={onNext} delay={2.8} />
     </Page>
   );
 }
@@ -480,8 +732,8 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
     <ScrollablePage stepKey="features">
       <BackButton onClick={onBack} />
 
-      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Set things up</h2></Fade>
-      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">Turn on what matters to you. Everything else is in settings.</p></Fade>
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">A couple things before we start</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">Turn on what you want now — you can always change this later.</p></Fade>
 
       <Fade delay={0.7}>
         <div className="mt-10 flex flex-col gap-4 w-full max-w-md">
@@ -494,7 +746,7 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
               </div>
               <div className="flex-1">
                 <span className="text-[14px] font-normal text-white/90">Proactive Agent</span>
-                <p className="text-[12px] text-white/55 mt-0.5">Monitors tasks, sends reminders, checks in on you.</p>
+                <p className="text-[12px] text-white/55 mt-0.5">I'll remember things so you don't have to — reminders, follow-ups, check-ins.</p>
               </div>
               <button
                 onClick={() => void toggleProactive()}
@@ -644,8 +896,8 @@ function MarketplacePage({ onNext, onBack, userRole }: { onNext: () => void; onB
     <ScrollablePage stepKey="marketplace">
       <BackButton onClick={onBack} />
 
-      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Pick some workflows</h2></Fade>
-      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">Install a few to get started, or browse later.</p></Fade>
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Start with a workflow</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">These are pre-built — grab one and it just works. Or skip and build your own later.</p></Fade>
 
       <Fade delay={0.7}>
         <div className="mt-8 w-full max-w-lg relative">

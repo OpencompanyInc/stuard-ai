@@ -15,14 +15,14 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/http';
 import { PROACTIVE_SYSTEM_PROMPT } from '../agents/stuard/prompts';
 import { getModel } from '../agents/stuard/models';
-import { search_tools, get_tool_schema, execute_tool } from '../tools/meta-tools';
+import { search_tools, get_tool_schema, execute_tool, initToolRegistry } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
-import { buildProactiveMessageContent, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
+import { buildProactiveMessageContent, expandProactiveAllowedToolNames, filterProactiveTools, generateWithToolRecovery, isBlockedProactiveToolName } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -37,6 +37,8 @@ import * as memoryService from '../memory/conversations';
 import { withClientBridge } from '../tools/bridge';
 import { getDesktopWs } from '../services/vm-bridge';
 import { sendVMCommand } from '../services/vm-command';
+import { getToolRegistry } from '../tools/tool-registry';
+import { browser_use_configure } from '../tools/device-tools';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -150,6 +152,45 @@ async function deliverProactiveNotifications(
     }, {} as any);
   }
   return results;
+}
+
+async function ensureProactiveBrowserHeadless(runCtx: any): Promise<void> {
+  await (browser_use_configure as any).execute?.({ mode: 'headless' }, runCtx);
+}
+
+function wrapProactiveTool(name: string, tool: any): any {
+  if (!tool || typeof tool.execute !== 'function') return tool;
+
+  if (name === 'browser_use_configure') {
+    return createTool({
+      id: name,
+      description: `${tool.description || ''} Proactive agents always run browser_use in headless mode; headed mode is not allowed here.`.trim(),
+      inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
+      execute: async (inputData: any, runCtx: any) => {
+        const safeInput = {
+          ...(inputData && typeof inputData === 'object' ? inputData : {}),
+          mode: 'headless',
+        };
+        return await tool.execute(safeInput, runCtx);
+      },
+    });
+  }
+
+  if (name.startsWith('browser_use_')) {
+    return createTool({
+      id: name,
+      description: `${tool.description || ''} Proactive agents use browser_use only in headless mode.`.trim(),
+      inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
+      execute: async (inputData: any, runCtx: any) => {
+        await ensureProactiveBrowserHeadless(runCtx);
+        return await tool.execute(inputData, runCtx);
+      },
+    });
+  }
+
+  return tool;
 }
 
 // ─── In-Memory Kanban Tools Factory ──────────────────────────────────────────
@@ -320,12 +361,12 @@ function createSessionSummaryTool() {
 
   const write_session_summary = createTool({
     id: 'write_session_summary',
-    description: 'Record observations from this proactive session for future pattern learning. Note what the user was doing, whether you intervened, and any behavioral patterns. This helps your future self make smarter decisions.',
+    description: 'Record observations from this session for your future self. Be specific about what you saw, what you did (or chose not to do), and any patterns emerging. This is your memory.',
     inputSchema: z.object({
-      user_activity: z.string().describe('What the user was doing (e.g., "playing Fortnite", "working in VS Code", "idle")'),
-      intervention: z.string().optional().describe('What you did or suggested, if anything'),
-      pattern_notes: z.string().optional().describe('Any behavioral patterns noticed (e.g., "user always games Tuesday evenings", "user studies best in morning")'),
-      urgency_used: z.string().optional().describe('What urgency level you chose and why'),
+      user_activity: z.string().describe('Specific observation of what the user was doing (app names, not generic "working")'),
+      intervention: z.string().optional().describe('What you notified/acted on, OR "skipped — [reason]" if you stayed silent'),
+      pattern_notes: z.string().optional().describe('Emerging patterns (e.g., "user games Tuesday evenings", "ignores task reminders but responds to deadline warnings")'),
+      urgency_used: z.string().optional().describe('Channel and urgency chosen, and why'),
     }),
     outputSchema: z.object({ ok: z.boolean() }),
     execute: async ({ user_activity, intervention, pattern_notes, urgency_used }) => {
@@ -379,6 +420,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       notificationChannels = [],
       deliverNotifications = false,
       sendNotifications = false,
+      notificationDigest = [],
     } = body;
 
     // Build in-memory kanban
@@ -398,6 +440,83 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     const channelSelector = createChannelSelectionTool(enabledChannels);
     const sessionSummaryTool = createSessionSummaryTool();
 
+    const proactiveSearchTools = createTool({
+      id: 'search_tools',
+      description: 'Search for available tools by category or query. Discovered tools can be called via execute_tool({ tool_name, args }) or after fetching their schema with get_tool_schema.',
+      inputSchema: (search_tools as any).inputSchema,
+      outputSchema: (search_tools as any).outputSchema,
+      execute: async (inputData, runCtx) => {
+        const result = await (search_tools as any).execute?.(inputData, runCtx);
+        if (result && Array.isArray((result as any).tools)) {
+          return {
+            ...(result as any),
+            tools: (result as any).tools.filter((tool: any) => !isBlockedProactiveToolName(String(tool?.name || ''))),
+          };
+        }
+        return result;
+      },
+    });
+
+    const proactiveGetToolSchema = createTool({
+      id: 'get_tool_schema',
+      description: 'Get the full JSON schema for a tool. After calling this, you can call the tool directly by name or via execute_tool.',
+      inputSchema: (get_tool_schema as any).inputSchema,
+      outputSchema: (get_tool_schema as any).outputSchema,
+      execute: async (inputData, runCtx) => {
+        const toolName = String((inputData as any)?.tool_name || '').trim();
+        if (isBlockedProactiveToolName(toolName)) {
+          throw new Error(`Tool '${toolName}' is not available to proactive agents. Use headless browser_use_* tools instead.`);
+        }
+        const result = await (get_tool_schema as any).execute?.(inputData, runCtx);
+        // Dynamically register the tool into the agent's tool map so the LLM can call it directly
+        if (result && toolName && !tools[toolName]) {
+          const registeredTool = getToolRegistry().get(toolName);
+          if (registeredTool && typeof (registeredTool as any).execute === 'function' && !isBlockedProactiveToolName(toolName)) {
+            tools[toolName] = wrapProactiveTool(toolName, registeredTool);
+          }
+        }
+        return result;
+      },
+    });
+
+    const proactiveExecuteTool = createTool({
+      id: 'execute_tool',
+      description: 'Execute any tool by name with arguments. Use get_tool_schema first to see the correct argument format.',
+      inputSchema: (execute_tool as any).inputSchema,
+      outputSchema: (execute_tool as any).outputSchema,
+      execute: async (inputData, runCtx) => {
+        const toolName = String((inputData as any)?.tool_name || '').trim();
+        if (isBlockedProactiveToolName(toolName)) {
+          return {
+            success: false,
+            tool: toolName,
+            error: `Tool '${toolName}' is not available to proactive agents. Use headless browser_use_* tools instead.`,
+          };
+        }
+        // Also register the tool for future direct calls
+        if (toolName && !tools[toolName]) {
+          const registeredTool = getToolRegistry().get(toolName);
+          if (registeredTool && typeof (registeredTool as any).execute === 'function' && !isBlockedProactiveToolName(toolName)) {
+            tools[toolName] = wrapProactiveTool(toolName, registeredTool);
+          }
+        }
+        if (toolName === 'browser_use_configure') {
+          const nextInput = {
+            ...(inputData as any),
+            args: {
+              ...(((inputData as any)?.args && typeof (inputData as any).args === 'object') ? (inputData as any).args : {}),
+              mode: 'headless',
+            },
+          };
+          return await (execute_tool as any).execute?.(nextInput, runCtx);
+        }
+        if (toolName.startsWith('browser_use_')) {
+          await ensureProactiveBrowserHeadless(runCtx);
+        }
+        return await (execute_tool as any).execute?.(inputData, runCtx);
+      },
+    });
+
     // Build tool set — include kanban, discovery, web search, skills, and headless agents
     const availableTools: Record<string, any> = {
       ...kanban.tools,
@@ -405,20 +524,48 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       write_session_summary: sessionSummaryTool.tool,
       web_search,
       deploy_headless_agent: deployHeadlessAgent,
-      search_tools,
-      get_tool_schema,
-      execute_tool,
+      search_tools: proactiveSearchTools,
+      get_tool_schema: proactiveGetToolSchema,
+      execute_tool: proactiveExecuteTool,
       get_skill_info,
       search_past_conversations,
       get_conversation_context,
     };
-    const tools = filterProactiveTools(availableTools, allowedTools);
+    const expandedAllowedTools = expandProactiveAllowedToolNames(allowedTools);
+    try {
+      initToolRegistry();
+      const registry = getToolRegistry();
+      for (const name of expandedAllowedTools) {
+        if (name.endsWith('_')) {
+          for (const [toolName, tool] of registry.entries()) {
+            if (
+              !availableTools[toolName] &&
+              !isBlockedProactiveToolName(toolName) &&
+              toolName.startsWith(name) &&
+              tool &&
+              typeof (tool as any).execute === 'function'
+            ) {
+              availableTools[toolName] = wrapProactiveTool(toolName, tool);
+            }
+          }
+          continue;
+        }
+        const tool = registry.get(name);
+        if (!availableTools[name] && !isBlockedProactiveToolName(name) && tool && typeof (tool as any).execute === 'function') {
+          availableTools[name] = wrapProactiveTool(name, tool);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[proactive] Failed to augment allowed tools from registry:', e?.message || e);
+    }
+    const tools = filterProactiveTools(availableTools, expandedAllowedTools);
 
     // Build system prompt with user instructions and skill awareness
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
     if (instructions.trim()) {
       systemPrompt += `\n\n## USER INSTRUCTIONS\n${instructions.trim()}`;
     }
+    systemPrompt += '\n\n## BROWSER CONSTRAINT\nIf browser automation is needed, use browser_use_configure with mode="headless" and keep browser_use in headless mode for the whole proactive run. Never switch to headed mode. Never use legacy browser_* headed desktop browser tools.';
 
     // ── Inject memory context for personalization ──
     // The VM sends pre-built memoryContext (built locally from its Python agent).
@@ -499,8 +646,8 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     // Recent session summaries for pattern awareness
     if (Array.isArray(context.recentSessionSummaries) && context.recentSessionSummaries.length > 0) {
-      const sumLines = ['[RECENT SESSION OBSERVATIONS — patterns from previous wake-ups]'];
-      for (const s of (context.recentSessionSummaries as string[]).slice(0, 5)) {
+      const sumLines = ['[SESSION OBSERVATIONS — your notes from previous wake-ups]'];
+      for (const s of (context.recentSessionSummaries as string[]).slice(0, 10)) {
         sumLines.push(`- ${String(s).trim()}`);
       }
       envContextParts.push(sumLines.join('\n'));
@@ -560,6 +707,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
         screenshot: screenshotData,
         systemAudio: systemAudioData,
         micAudio: micAudioData,
+        notificationDigest: Array.isArray(notificationDigest) ? notificationDigest : [],
       });
 
       try {
@@ -574,6 +722,16 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           baseMessages: [{ role: 'user', content: messageContent }],
           maxSteps: 20,
           maxRetries: 3,
+          onToolNotFound: (toolName: string) => {
+            // Dynamically register missing tools so the retry finds them
+            if (!tools[toolName] && !isBlockedProactiveToolName(toolName)) {
+              initToolRegistry();
+              const registeredTool = getToolRegistry().get(toolName);
+              if (registeredTool && typeof (registeredTool as any).execute === 'function') {
+                tools[toolName] = wrapProactiveTool(toolName, registeredTool);
+              }
+            }
+          },
         });
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -672,4 +830,3 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
   return false;
 }
-

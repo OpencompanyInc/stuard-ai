@@ -26,8 +26,8 @@ const CAPABILITIES: CapabilityItem[] = [
     id: 'workflows',
     icon: Workflow,
     label: 'Workflows',
-    description: 'Build automations visually — or describe what you want and Stuard builds it.',
-    cta: 'Build your first workflow',
+    description: "Stop paying for 5 different AI tools. Build exactly what you need — drag, drop, or just ask me.",
+    cta: 'Try building one',
     color: 'purple',
     featured: true,
   },
@@ -35,8 +35,8 @@ const CAPABILITIES: CapabilityItem[] = [
     id: 'proactive',
     icon: Bell,
     label: 'Proactive Agent',
-    description: 'Stuard monitors, reminds, and acts in the background without being asked.',
-    cta: 'Turn on proactive mode',
+    description: "Never forget a deadline or miss a follow-up again. I watch your back, even when you're not looking.",
+    cta: 'Turn it on',
     color: 'amber',
     featured: true,
   },
@@ -44,24 +44,24 @@ const CAPABILITIES: CapabilityItem[] = [
     id: 'planner',
     icon: Calendar,
     label: 'Planner',
-    description: 'See your schedule, create tasks, and stay organized.',
-    cta: 'See your schedule',
+    description: "Your day, tasks, and deadlines — all in one view.",
+    cta: 'See your day',
     color: 'cyan',
   },
   {
     id: 'integrations',
     icon: Plug,
     label: 'Integrations',
-    description: 'Connect Google, GitHub, Outlook, WhatsApp, and more.',
-    cta: 'Connect your accounts',
+    description: "Gmail, Calendar, GitHub — no more tab-switching.",
+    cta: 'Connect your stuff',
     color: 'green',
   },
   {
     id: 'memories',
     icon: Brain,
     label: 'Memories',
-    description: 'Stuard learns your context over time. You control what it remembers.',
-    cta: 'See what Stuard knows',
+    description: "I remember your context so you don't have to repeat yourself.",
+    cta: 'See what I know',
     color: 'blue',
   },
 ];
@@ -87,7 +87,7 @@ export function CapabilityCards({ onSelect, experienced = {} }: CapabilityCardsP
         animate={{ opacity: 1 }}
         className="text-xs font-bold uppercase tracking-widest text-white/25 mb-1"
       >
-        See what Stuard can do
+        Here's how I help
       </motion.p>
 
       {/* Featured capabilities — larger cards */}

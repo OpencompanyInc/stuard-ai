@@ -435,7 +435,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             openai: {
               reasoningEffort: clampedEffort,
               // Responses API: expose reasoning summaries as streaming chunks
-              reasoningSummary: clampedEffort !== 'none' ? 'auto' : undefined,
+              // GPT-5.4 supports 'detailed' summaries for richer reasoning output
+              reasoningSummary: clampedEffort !== 'none'
+                ? (/^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto')
+                : undefined,
             },
           };
         }
@@ -862,6 +865,15 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
         const reasoning = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
         if (reasoning) {
           send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoning } });
+        }
+        break;
+      }
+
+      case 'reasoning': {
+        // Raw AI SDK reasoning chunk format (type: 'reasoning', textDelta: '...')
+        const rawReasoning = chunk.textDelta || chunk.payload?.text || chunk.payload?.textDelta || '';
+        if (rawReasoning) {
+          send(ws, { type: 'progress', event: 'reasoning', data: { text: rawReasoning } });
         }
         break;
       }

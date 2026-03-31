@@ -1316,7 +1316,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             try {
               const { analyzeForAutoSkill } = await import('./knowledge');
               const fullHistoryCopy = [...history];
-              analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined).then((draft) => {
+              analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined, normalizedUsage?.totalTokens).then((draft) => {
                 if (draft) {
                   console.log(`[cloud-ai] Auto-skill created: "${draft.name}" (${draft.steps.length} steps, confidence=${draft.confidence})`);
                   writeLog('auto_skill_generated', { name: draft.name, confidence: draft.confidence, steps: draft.steps.length });

@@ -112,6 +112,9 @@ let baseContentHeight = 100;
 // Also keep the stable OUTER window size (pixel bounds) to fully lock size while moving
 let baseOuterWidth = 0;
 let baseOuterHeight = 0;
+let pendingProgrammaticOuterSize:
+  | { width: number; height: number }
+  | null = null;
 // When changing size programmatically (expand/collapse), temporarily disable the size lock
 let resizingProgrammatically = false;
 let resizeFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -644,7 +647,15 @@ function repositionTopCenter(target: BrowserWindow) {
   }
 }
 
-function scheduleOverlayResizeFinalize() {
+function scheduleOverlayResizeFinalize(
+  intendedOuterSize?: { width: number; height: number },
+) {
+  if (intendedOuterSize) {
+    pendingProgrammaticOuterSize = {
+      width: intendedOuterSize.width,
+      height: intendedOuterSize.height,
+    };
+  }
   if (resizeFinalizeTimer) {
     clearTimeout(resizeFinalizeTimer);
   }
@@ -655,22 +666,35 @@ function scheduleOverlayResizeFinalize() {
       return;
     }
     const ob = win.getBounds();
-    baseOuterWidth = ob.width;
-    baseOuterHeight = ob.height;
+    const finalizedWidth = pendingProgrammaticOuterSize?.width ?? ob.width;
+    const finalizedHeight = pendingProgrammaticOuterSize?.height ?? ob.height;
+    pendingProgrammaticOuterSize = null;
+    baseOuterWidth = finalizedWidth;
+    baseOuterHeight = finalizedHeight;
     const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
     const maxWidth =
-      internalSidebarOpen || ob.width > constraints.maxW
-        ? Math.max(constraints.maxW, ob.width)
+      internalSidebarOpen || finalizedWidth > constraints.maxW
+        ? Math.max(constraints.maxW, finalizedWidth)
         : constraints.maxW;
     try {
       win.setMinimumSize(constraints.minW, constraints.minH);
       win.setMaximumSize(maxWidth, constraints.maxH);
     } catch {}
+    if (ob.width !== finalizedWidth || ob.height !== finalizedHeight) {
+      try {
+        win.setBounds({
+          x: ob.x,
+          y: ob.y,
+          width: finalizedWidth,
+          height: finalizedHeight,
+        });
+      } catch {}
+    }
     resizingProgrammatically = false;
     try {
       win.webContents.send("overlay:resized", {
-        width: ob.width,
-        height: ob.height,
+        width: finalizedWidth,
+        height: finalizedHeight,
         mode: currentMode,
       });
     } catch {}
@@ -1902,7 +1926,7 @@ export function setOverlaySize(
     }
   }
 
-  scheduleOverlayResizeFinalize();
+  scheduleOverlayResizeFinalize({ width, height });
 }
 
 export function setOverlayMode(mode: OverlayMode) {
@@ -1955,7 +1979,10 @@ export function setOverlayMode(mode: OverlayMode) {
         width: sidebarWidth,
         height: h,
       });
-      scheduleOverlayResizeFinalize();
+      scheduleOverlayResizeFinalize({
+        width: sidebarWidth,
+        height: h,
+      });
     }
 
     // Notify renderer of mode change
@@ -2020,28 +2047,33 @@ function clamp(n: number, min: number, max: number) {
 export function moveOverlayBy(dx: number, dy: number) {
   if (!win) return;
   const outer = win.getBounds();
+  const lockedWidth = baseOuterWidth || outer.width;
+  const lockedHeight = baseOuterHeight || outer.height;
   const display = screen.getDisplayMatching({
     x: outer.x,
     y: outer.y,
-    width: outer.width,
-    height: outer.height,
+    width: lockedWidth,
+    height: lockedHeight,
   });
   const wa = display.workArea;
-  const targetOuterX = clamp(outer.x + dx, wa.x, wa.x + wa.width - outer.width);
+  const targetOuterX = clamp(
+    outer.x + dx,
+    wa.x,
+    wa.x + wa.width - lockedWidth,
+  );
   const targetOuterY = clamp(
     outer.y + dy,
     wa.y,
-    wa.y + wa.height - outer.height,
+    wa.y + wa.height - lockedHeight,
   );
-  if (targetOuterX === outer.x && targetOuterY === outer.y) return;
-
-  const lockedWidth = baseOuterWidth || outer.width;
-  const lockedHeight = baseOuterHeight || outer.height;
-  if (outer.width === lockedWidth && outer.height === lockedHeight) {
-    win.setPosition(targetOuterX, targetOuterY);
+  const sizeDrifted =
+    outer.width !== lockedWidth || outer.height !== lockedHeight;
+  if (targetOuterX === outer.x && targetOuterY === outer.y && !sizeDrifted) {
     return;
   }
 
+  // Always use setBounds with explicit size to prevent Windows Aero Snap
+  // from resizing the window when it reaches screen edges.
   resizingProgrammatically = true;
   win.setBounds({
     x: targetOuterX,
@@ -2049,7 +2081,10 @@ export function moveOverlayBy(dx: number, dy: number) {
     width: lockedWidth,
     height: lockedHeight,
   });
-  scheduleOverlayResizeFinalize();
+  scheduleOverlayResizeFinalize({
+    width: lockedWidth,
+    height: lockedHeight,
+  });
 }
 
 export function setOverlayBounds(bounds: {
@@ -2060,9 +2095,14 @@ export function setOverlayBounds(bounds: {
 }) {
   if (!win) return;
   resizingProgrammatically = true;
+  let intendedOuterSize: { width: number; height: number } | null = null;
   try {
     const current = win.getBounds();
     const target = { ...current, ...bounds };
+    intendedOuterSize = {
+      width: target.width,
+      height: target.height,
+    };
     const positionChanged = target.x !== current.x || target.y !== current.y;
     const sizeChanged =
       target.width !== current.width || target.height !== current.height;
@@ -2091,7 +2131,7 @@ export function setOverlayBounds(bounds: {
     win.setBounds(target);
   } finally {
     if (resizingProgrammatically) {
-      scheduleOverlayResizeFinalize();
+      scheduleOverlayResizeFinalize(intendedOuterSize ?? undefined);
     }
   }
 }
@@ -2207,7 +2247,10 @@ export function toggleInternalSidebar(open?: boolean): {
       });
     } catch {}
   } finally {
-    scheduleOverlayResizeFinalize();
+    scheduleOverlayResizeFinalize({
+      width: baseOuterWidth || win.getBounds().width,
+      height: baseOuterHeight || win.getBounds().height,
+    });
   }
 
   return { open: internalSidebarOpen, width: win.getBounds().width };

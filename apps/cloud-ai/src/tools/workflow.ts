@@ -630,7 +630,8 @@ STUARD FILE TARGETING:
     error: z.string().optional(),
     diagram: z.string().optional().describe('ASCII diagram of the workflow structure'),
     affectedFlow: z.any().optional().describe('Topology context for touched nodes/triggers after the mutation'),
-  }),
+    workflow: z.any().optional().describe('The full modified workflow object for UI application'),
+  }).passthrough(),
 
   execute: async (inputData, { writer }) => {
     const ctx = inputData as any;
@@ -963,24 +964,21 @@ STUARD FILE TARGETING:
         message,
         diagram,
         affectedFlow,
-        ...(stuardFile ? { stuardFile } : {}),
-      };
-
-      const uiResult = {
-        ...result,
         workflow: wf,
+        ...(stuardFile ? { stuardFile } : {}),
       };
 
       log('success', { workflowId: wf.id, message, stuardFile: stuardFile || undefined });
 
-      // Emit event for immediate UI update
+      // Emit event for immediate UI update (redundant path — also included in return value
+      // so the tool-result chunk carries the workflow even if writer is unavailable)
       await safeToolWrite(writer as any, {
         type: 'tool_event',
         tool: 'modify_workflow',
         status: 'completed',
         workflowId: wf.id,
         ...(stuardFile ? { stuardFile } : {}),
-        result: uiResult,
+        result,
       });
 
       return result;

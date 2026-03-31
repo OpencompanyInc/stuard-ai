@@ -111,6 +111,18 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'perplexity/sonar-deep-research',
   'openai/o3-deep-research',
   'openai/o4-mini-deep-research',
+  // OpenRouter models
+  'openrouter/meta-llama/llama-4-maverick',
+  'openrouter/meta-llama/llama-4-scout',
+  'openrouter/meta-llama/llama-3.3-70b-instruct',
+  'openrouter/mistralai/mistral-large-latest',
+  'openrouter/mistralai/codestral-latest',
+  'openrouter/mistralai/mistral-small-latest',
+  'openrouter/qwen/qwen3-235b-a22b',
+  'openrouter/qwen/qwen3-30b-a3b',
+  'openrouter/cohere/command-a',
+  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct',
+  'openrouter/nousresearch/hermes-3-llama-3.1-405b',
 ];
 
 const REASONING_MODEL_IDS = new Set<string>([
@@ -140,6 +152,8 @@ const REASONING_MODEL_IDS = new Set<string>([
   'anthropic/claude-3-7-sonnet-latest',
   'anthropic/claude-sonnet-4-5',
   'anthropic/claude-opus-4-5',
+  'openrouter/meta-llama/llama-4-maverick',
+  'openrouter/qwen/qwen3-235b-a22b',
 ]);
 
 const CONTEXT_WINDOWS: Record<string, number> = {
@@ -178,6 +192,18 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'perplexity/sonar-deep-research': 128000,
   'openai/o3-deep-research': 128000,
   'openai/o4-mini-deep-research': 128000,
+  // OpenRouter models
+  'openrouter/meta-llama/llama-4-maverick': 1000000,
+  'openrouter/meta-llama/llama-4-scout': 512000,
+  'openrouter/meta-llama/llama-3.3-70b-instruct': 128000,
+  'openrouter/mistralai/mistral-large-latest': 128000,
+  'openrouter/mistralai/codestral-latest': 256000,
+  'openrouter/mistralai/mistral-small-latest': 128000,
+  'openrouter/qwen/qwen3-235b-a22b': 128000,
+  'openrouter/qwen/qwen3-30b-a3b': 128000,
+  'openrouter/cohere/command-a': 256000,
+  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 128000,
+  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 128000,
 };
 
 const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
@@ -234,6 +260,18 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'perplexity/sonar-deep-research': 'research',
   'openai/o3-deep-research': 'research',
   'openai/o4-mini-deep-research': 'research',
+  // OpenRouter models
+  'openrouter/meta-llama/llama-4-maverick': 'smart',
+  'openrouter/meta-llama/llama-4-scout': 'balanced',
+  'openrouter/meta-llama/llama-3.3-70b-instruct': 'balanced',
+  'openrouter/mistralai/mistral-large-latest': 'smart',
+  'openrouter/mistralai/codestral-latest': 'smart',
+  'openrouter/mistralai/mistral-small-latest': 'fast',
+  'openrouter/qwen/qwen3-235b-a22b': 'smart',
+  'openrouter/qwen/qwen3-30b-a3b': 'fast',
+  'openrouter/cohere/command-a': 'balanced',
+  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 'balanced',
+  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 'smart',
 };
 
 function humanizeProvider(p: string): string {
@@ -244,8 +282,23 @@ function humanizeProvider(p: string): string {
   if (s === 'deepseek') return 'DeepSeek';
   if (s === 'anthropic') return 'Anthropic';
   if (s === 'perplexity') return 'Perplexity';
+  if (s === 'openrouter') return 'OpenRouter';
   return p;
 }
+
+const FRIENDLY_MODEL_NAMES: Record<string, string> = {
+  'openrouter/meta-llama/llama-4-maverick': 'Llama 4 Maverick',
+  'openrouter/meta-llama/llama-4-scout': 'Llama 4 Scout',
+  'openrouter/meta-llama/llama-3.3-70b-instruct': 'Llama 3.3 70B',
+  'openrouter/mistralai/mistral-large-latest': 'Mistral Large',
+  'openrouter/mistralai/codestral-latest': 'Codestral',
+  'openrouter/mistralai/mistral-small-latest': 'Mistral Small',
+  'openrouter/qwen/qwen3-235b-a22b': 'Qwen3 235B',
+  'openrouter/qwen/qwen3-30b-a3b': 'Qwen3 30B',
+  'openrouter/cohere/command-a': 'Command A',
+  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 'Nemotron 70B',
+  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 'Hermes 3 405B',
+};
 
 function titleizeModelName(mid: string): string {
   try {
@@ -267,11 +320,25 @@ export const FALLBACK_MODELS: ModelMeta[] = ALL_CHAT_MODEL_IDS.map((id) => {
   const modelKey = parts.slice(1).join('/') || raw;
   const isNonReasoning = modelKey.includes('non-reasoning');
   const isReasoning = !isNonReasoning && REASONING_MODEL_IDS.has(raw);
+  // For OpenRouter models, show sub-provider as the provider label (e.g. "Meta" for meta-llama)
+  let displayProvider = humanizeProvider(providerKey);
+  if (providerKey === 'openrouter' && parts.length >= 3) {
+    const subProvider = parts[1] || '';
+    const subProviderMap: Record<string, string> = {
+      'meta-llama': 'Meta',
+      'mistralai': 'Mistral',
+      'qwen': 'Qwen',
+      'cohere': 'Cohere',
+      'nvidia': 'NVIDIA',
+      'nousresearch': 'Nous Research',
+    };
+    displayProvider = subProviderMap[subProvider] || subProvider.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
   return {
     id: raw,
     providerId: providerKey,
-    provider: humanizeProvider(providerKey),
-    name: titleizeModelName(modelKey),
+    provider: displayProvider,
+    name: FRIENDLY_MODEL_NAMES[raw] || titleizeModelName(modelKey),
     isReasoning,
     contextWindow: CONTEXT_WINDOWS[raw],
     category: MODEL_CATEGORIES[raw] || 'balanced',

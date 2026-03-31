@@ -615,6 +615,7 @@ JSX SYNTAX:
 AVAILABLE HOOKS:
   - useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext
   - useVar(name, default)  — bridges React state to workflow variables. Auto-seeds from data args.
+  - useStream(streamId)    — subscribe to a live stream from a previous node. Returns { chunk, text, fullText, index, done }.
   - useStyles(cssString)   — inject dynamic CSS (custom keyframes, animations) at runtime. Auto-cleaned on unmount.
   - useInterval(fn, ms)    — safe setInterval hook (auto-clears on unmount)
   - useTimeout(fn, ms)     — safe setTimeout hook (auto-clears on unmount)
@@ -626,6 +627,48 @@ useVar HOOK:
   // setCount(5) updates everywhere (other UIs, workflow context)
   // External set_variable calls also trigger re-render
   // AUTO-SEEDS from data: if data has {"counter": "{{step1.json.count}}"}, useVar('counter', 0) returns it
+
+useStream HOOK — subscribe to live streaming data from another node:
+  const { chunk, text, fullText, index, done } = useStream(streamId);
+  // chunk: latest data chunk (any type — string, object, etc.)
+  // text: chunk as string (null if not a string)
+  // fullText: accumulated text from all string chunks
+  // index: chunk sequence number (-1 = not started)
+  // done: true when stream is closed
+  // Auto-subscribes on mount, auto-unsubscribes on cleanup
+
+  To use useStream, the PREVIOUS node must produce a streamId:
+    - capture_media with mode="stream" returns { streamId }
+    - capture_screen with mode="stream" returns { streamId }
+    - Any tool that emits live chunks via a streamId
+
+  Wire the stream producer to the custom_ui with a STREAM WIRE:
+    { from: "camera_node", to: "ui_node", stream: { sourceField: "streamId", mode: "reactive" } }
+
+  STREAM WIRE — live data flow between nodes:
+    • sourceField: which field of the producer's output holds the streamId (usually "streamId")
+    • mode: "reactive" — consumer node receives live chunks as they arrive
+    • The consumer node's custom_ui can read the streamId from data and pass it to useStream
+
+  EXAMPLE — Live camera feed in custom_ui:
+    nodes: [
+      { id: "cam", tool: "capture_media", args: { kind: "video", mode: "stream" } },
+      { id: "display", tool: "custom_ui", args: {
+        blocking: true,
+        data: { "sid": "{{cam.streamId}}" },
+        component: "function App() {\\n  const [sid] = useVar('sid', '');\\n  const { chunk, done } = useStream(sid);\\n  return <div>{chunk ? <img src={chunk} /> : 'Waiting...'}</div>;\\n}"
+      }}
+    ],
+    wires: [
+      { from: "trig_0", to: "cam" },
+      { from: "cam", to: "display", stream: { sourceField: "streamId", mode: "reactive" } }
+    ]
+
+DIRECT VARIABLE APIs (available on stuard global):
+  stuard.getVar(name)              // Read a workflow variable directly
+  stuard.setVar(name, value)       // Update a workflow variable (triggers useVar re-renders)
+  stuard.onVarUpdate(name, fn)     // Listen for variable changes — returns unsubscribe function
+  stuard.onDataUpdate(fn)          // Listen for data pushes from other nodes — returns unsubscribe function
 
 useStyles HOOK — inject dynamic CSS at runtime:
   useStyles(\`

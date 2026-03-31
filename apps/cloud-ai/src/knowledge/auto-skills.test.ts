@@ -427,8 +427,8 @@ describe('analyzeForAutoSkill', () => {
     mockExecLocalTool.mockResolvedValue({ ok: true });
   });
 
-  it('returns null for conversations shorter than MIN_MESSAGES', async () => {
-    const result = await analyzeForAutoSkill(SHORT_CONVERSATION);
+  it('returns null when totalTokensUsed is below MIN_TOTAL_TOKENS', async () => {
+    const result = await analyzeForAutoSkill(SHORT_CONVERSATION, undefined, 30);
     expect(result).toBeNull();
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
@@ -725,7 +725,6 @@ describe('analyzeForAutoSkill', () => {
   });
 
   it('skips analysis when transcript is too short (< 200 chars)', async () => {
-    // 6 messages but very short content
     const tinyMessages: ConversationMessage[] = [
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'hey' },
@@ -734,8 +733,23 @@ describe('analyzeForAutoSkill', () => {
       { role: 'user', content: 'bye' },
       { role: 'assistant', content: 'bye' },
     ];
-    const result = await analyzeForAutoSkill(tinyMessages);
+    // Pass high tokens so we don't hit the token gate — test transcript length gate only
+    const result = await analyzeForAutoSkill(tinyMessages, undefined, 500);
     expect(result).toBeNull();
     expect(mockGenerateObject).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when totalTokensUsed is not provided (undefined)', async () => {
+    mockGenerateObject.mockResolvedValue({
+      object: {
+        has_teachable_pattern: false,
+        pattern_reasoning: 'No pattern found.',
+      },
+    });
+    // No totalTokensUsed passed — should skip the token gate and proceed
+    const result = await analyzeForAutoSkill(SIMPLE_QA_CONVERSATION);
+    expect(result).toBeNull();
+    // Should have reached the LLM call (past the token gate)
+    expect(mockGenerateObject).toHaveBeenCalled();
   });
 });

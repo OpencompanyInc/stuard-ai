@@ -15,6 +15,20 @@ const PROACTIVE_CORE_TOOLS = [
   'write_session_summary',
 ] as const;
 
+const PROACTIVE_TOOL_FAMILY_PREFIXES = [
+  ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
+  ['outlook_'],
+  ['github_'],
+  ['facebook_', 'instagram_', 'threads_'],
+  ['whatsapp_'],
+  ['telnyx_'],
+] as const;
+
+export function isBlockedProactiveToolName(name: string): boolean {
+  const trimmed = String(name || '').trim();
+  return trimmed.startsWith('browser_') && !trimmed.startsWith('browser_use_');
+}
+
 interface TaskSnapshot {
   id: string;
   title: string;
@@ -28,13 +42,14 @@ export function buildProactiveUserMessage(args: {
   taskCount: number;
   tasks?: TaskSnapshot[];
   screenshot?: string | boolean;
+  notificationDigest?: string[];
 }): string {
   const parts: string[] = [];
 
   if (typeof args.prompt === 'string' && args.prompt.trim()) {
     parts.push(args.prompt.trim());
   } else {
-    parts.push('[Proactive Wake-Up] — Act on your tasks NOW.');
+    parts.push('[Proactive Wake-Up] — Read the room, then decide what to do.');
 
     const tasks = args.tasks || [];
     const queued = tasks.filter(t => t.status === 'queued');
@@ -42,30 +57,35 @@ export function buildProactiveUserMessage(args: {
 
     if (queued.length > 0 || inProgress.length > 0) {
       parts.push('');
-      parts.push(`You have ${queued.length} queued and ${inProgress.length} in-progress task(s). Here they are:`);
-      parts.push('');
-      for (const t of [...inProgress, ...queued].slice(0, 15)) {
+      parts.push(`Task board: ${queued.length} queued, ${inProgress.length} in-progress.`);
+      for (const t of [...inProgress, ...queued].slice(0, 10)) {
         const detail = t.instructions ? ` — ${t.instructions}` : '';
-        parts.push(`• [${t.status.toUpperCase()}] "${t.title}" (id: ${t.id})${detail}`);
+        parts.push(`  • [${t.status}] "${t.title}" (id: ${t.id})${detail}`);
       }
       parts.push('');
-      parts.push('ACTION REQUIRED:');
-      parts.push('1. For each task above, call proactive_task_update(task_id, status="in_progress") to claim it');
-      parts.push('2. Use your tools (web_search, execute_tool, etc.) to actually work on and complete the task');
-      parts.push('3. When done, call proactive_task_update(task_id, status="completed", result="what you did")');
-      parts.push('4. If you cannot complete it, set status="failed" with the reason');
-      parts.push('Do NOT just list the tasks — actually work on them and change their status.');
+      parts.push('Work on these silently. Only notify the user if you completed something they\'re waiting on, or if you need their input.');
     } else if (args.taskCount > 0) {
-      parts.push(`\nYou have ${args.taskCount} task(s) (all completed/failed). Call proactive_task_list to review. Create new tasks if you spot opportunities.`);
+      parts.push('\nAll tasks completed/failed. Focus on observation — create a task only if you spot a genuine opportunity.');
     } else {
-      parts.push('\nNo tasks on the board. Check in with the user — create a task if you spot something helpful.');
+      parts.push('\nNo tasks. Focus on reading the room and deciding if there\'s anything worth bringing up.');
     }
   }
 
   if (args.screenshot && typeof args.screenshot === 'string') {
-    parts.push('\nA screenshot of the user\'s current screen is attached for context.');
+    parts.push('\nA screenshot of the user\'s current screen is attached.');
   }
-  parts.push('\nYour final response will be shown as a user notification. Return ONLY a concise, user-facing summary of what you accomplished. Do not include reasoning or internal planning.');
+
+  // Inject notification digest so the agent knows what it recently said
+  if (Array.isArray(args.notificationDigest) && args.notificationDigest.length > 0) {
+    parts.push('');
+    parts.push('[YOUR RECENT NOTIFICATIONS — do not repeat these]');
+    for (const line of args.notificationDigest.slice(0, 8)) {
+      parts.push(`  ${line}`);
+    }
+    parts.push('Only bring up a topic from above if it has meaningfully escalated.');
+  }
+
+  parts.push('\nYour response becomes the user notification. If you have nothing new or important to say, call choose_notification_channel with channel=\'skip\' and return a brief internal note.');
   return parts.join('\n');
 }
 
@@ -73,12 +93,13 @@ export function buildProactiveUserMessage(args: {
  * Build the user message content array for the proactive agent.
  * When a screenshot is available, returns a multi-part message with both text and image.
  */
-export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null; systemAudio?: string | null; micAudio?: string | null }): any[] {
+export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null; systemAudio?: string | null; micAudio?: string | null; notificationDigest?: string[] }): any[] {
   const textPart = buildProactiveUserMessage({
     prompt: args.prompt,
     taskCount: args.taskCount,
     tasks: args.tasks,
     screenshot: args.screenshot || undefined,
+    notificationDigest: args.notificationDigest,
   });
 
   const content: any[] = [{ type: 'text', text: textPart }];
@@ -198,8 +219,9 @@ export async function generateWithToolRecovery(args: {
   baseMessages: any[];
   maxSteps?: number;
   maxRetries?: number;
+  onToolNotFound?: (toolName: string) => void;
 }): Promise<any> {
-  const { agent, baseMessages, maxSteps = 20, maxRetries = 3 } = args;
+  const { agent, baseMessages, maxSteps = 20, maxRetries = 3, onToolNotFound } = args;
   const toolErrorHistory: string[] = [];
   let attempt = 0;
 
@@ -226,8 +248,12 @@ export async function generateWithToolRecovery(args: {
       attempt++;
       const isHallucination = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
       if (isHallucination) {
+        // Try to dynamically register the missing tool so the retry succeeds
+        if (onToolNotFound && toolError.toolName && toolError.toolName !== 'unknown') {
+          onToolNotFound(toolError.toolName);
+        }
         toolErrorHistory.push(
-          `The tool "${toolError.toolName}" does not exist and cannot be called directly. Use search_tools to find available tools, or use execute_tool({ tool_name: "...", args: {...} }) to run tools by name. Do NOT invent tool names — only use tools you can verify exist.`
+          `The tool "${toolError.toolName}" was not directly available. Use execute_tool({ tool_name: "${toolError.toolName}", args: {...} }) to run it, or call get_tool_schema first to make it available for direct use.`
         );
       } else if (toolError.type === 'invalid_args') {
         toolErrorHistory.push(
@@ -244,19 +270,45 @@ export async function generateWithToolRecovery(args: {
   throw new Error('Agent execution failed');
 }
 
-export function filterProactiveTools<T extends Record<string, any>>(tools: T, allowedTools: unknown): T {
-  if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
-    return tools;
+export function expandProactiveAllowedToolNames(allowedTools: unknown): string[] {
+  const expanded = new Set(
+    (Array.isArray(allowedTools) ? allowedTools : [])
+      .map((tool) => String(tool || '').trim())
+      .filter((tool) => tool && !isBlockedProactiveToolName(tool))
+  );
+
+  if (expanded.has('search_tools') || expanded.has('get_tool_schema') || expanded.has('execute_tool')) {
+    expanded.add('search_tools');
+    expanded.add('get_tool_schema');
+    expanded.add('execute_tool');
   }
 
-  const allowed = new Set(
-    allowedTools
-      .map((tool) => String(tool || '').trim())
-      .filter(Boolean)
-  );
+  for (const family of PROACTIVE_TOOL_FAMILY_PREFIXES) {
+    const matched = Array.from(expanded).some((name) => family.some((prefix) => name.startsWith(prefix)));
+    if (!matched) continue;
+    for (const prefix of family) {
+      expanded.add(prefix);
+    }
+  }
+
+  return Array.from(expanded);
+}
+
+export function filterProactiveTools<T extends Record<string, any>>(tools: T, allowedTools: unknown): T {
+  if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
+    const filteredEntries = Object.entries(tools).filter(([name]) => !isBlockedProactiveToolName(name));
+    return Object.fromEntries(filteredEntries) as T;
+  }
+
+  const expandedAllowed = expandProactiveAllowedToolNames(allowedTools);
+  const allowed = new Set(expandedAllowed);
 
   // Always keep core proactive tools + user-allowed tools
   const keep = new Set<string>([...PROACTIVE_CORE_TOOLS, ...allowed]);
-  const filteredEntries = Object.entries(tools).filter(([name]) => keep.has(name));
+  const filteredEntries = Object.entries(tools).filter(([name]) => {
+    if (isBlockedProactiveToolName(name)) return false;
+    if (keep.has(name)) return true;
+    return expandedAllowed.some((allowedName) => allowedName.endsWith('_') && name.startsWith(allowedName));
+  });
   return Object.fromEntries(filteredEntries) as T;
 }

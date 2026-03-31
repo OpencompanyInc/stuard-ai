@@ -220,34 +220,26 @@ export async function executeAgentToolRequest(
 const LOCAL_PROACTIVE_MARKER = '[PROACTIVE MODE]';
 
 export function buildLocalProactivePrompt(payload: any): string {
-  const parts: string[] = ['[Proactive Wake-Up] — Observe first, then act.'];
+  const parts: string[] = ['[Proactive Wake-Up] — Read the room, then decide what to do.'];
 
   // Task summary
   const tasks: any[] = Array.isArray(payload?.tasks) ? payload.tasks : [];
   const queued = tasks.filter((t: any) => t.status === 'queued');
   const inProgress = tasks.filter((t: any) => t.status === 'in_progress');
 
-  parts.push('');
-  parts.push('ACTION REQUIRED: assess the user context, then actively move proactive tasks forward.');
-  parts.push('STEP 1: Check the user\'s situation — call list_open_windows and calendar tools.');
-  parts.push('STEP 2: If there\'s a conflict (distraction + deadline), lead with that.');
-  parts.push('STEP 3: Work on tasks below.');
-  parts.push('STEP 4: Call write_session_summary before finishing.');
-
   if (queued.length > 0 || inProgress.length > 0) {
     parts.push('');
-    parts.push(`You have ${queued.length} queued and ${inProgress.length} in-progress task(s):`);
-    parts.push('');
-    for (const t of [...inProgress, ...queued].slice(0, 15)) {
+    parts.push(`Task board: ${queued.length} queued, ${inProgress.length} in-progress.`);
+    for (const t of [...inProgress, ...queued].slice(0, 10)) {
       const detail = t.instructions ? ` — ${t.instructions}` : '';
-      parts.push(`- [${String(t.status).toUpperCase()}] "${t.title}" (id: ${t.id})${detail}`);
+      parts.push(`  • [${t.status}] "${t.title}" (id: ${t.id})${detail}`);
     }
     parts.push('');
-    parts.push('For each task: claim it (in_progress), do the work, then use proactive_task_update to mark completed/failed.');
+    parts.push('Work on these silently. Only notify the user if you completed something they\'re waiting on or need input.');
   } else if (tasks.length > 0) {
-    parts.push(`\nAll ${tasks.length} task(s) completed/failed. Review the board, create new tasks if useful.`);
+    parts.push('\nAll tasks completed/failed. Focus on observation — create a task only if you spot a genuine opportunity.');
   } else {
-    parts.push('\nNo proactive tasks on the board. Focus on situational awareness and check in if needed.');
+    parts.push('\nNo tasks. Focus on reading the room and deciding if anything is worth bringing up.');
   }
 
   if (payload?.config?.instructions) {
@@ -255,40 +247,53 @@ export function buildLocalProactivePrompt(payload: any): string {
   }
 
   if (payload?.context?.screenshot) {
-    parts.push('\n(A screenshot of the user\'s current screen is attached for context.)');
+    parts.push('\n(A screenshot of the user\'s current screen is attached.)');
   }
 
-  parts.push('\nYour final response becomes the user notification. Be concise and lead with the most important thing.');
+  // Notification digest — so the agent knows what it recently said
+  const digest: string[] = Array.isArray(payload?.context?.notificationDigest) ? payload.context.notificationDigest : [];
+  if (digest.length > 0) {
+    parts.push('');
+    parts.push('[YOUR RECENT NOTIFICATIONS — do not repeat these]');
+    for (const line of digest.slice(0, 8)) {
+      parts.push(`  ${line}`);
+    }
+    parts.push('Only bring up a topic from above if it has meaningfully escalated.');
+  }
+
+  parts.push('\nYour response becomes the user notification. If you have nothing new or important to say, skip the notification and just record a session summary.');
   return parts.join('\n');
 }
 
 export function buildLocalProactiveHiddenContext(payload: any): string {
   const lines = [
     LOCAL_PROACTIVE_MARKER,
-    'This is a proactive wake-up. Follow the OBSERVE FIRST, THEN ACT procedure from your system prompt.',
-    'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences unless the user explicitly asks for code.',
+    'This is a proactive wake-up. Your job: DO things, not remind about things. Act first, notify with results.',
+    'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences.',
     '',
-    '## PHASE 1 — SITUATIONAL AWARENESS (do this first)',
-    'Before working on tasks, observe the user\'s current state:',
-    '1. Use execute_tool to call list_open_windows — see what apps/windows are open',
-    '2. Use execute_tool to call calendar tools — check upcoming events in the next few hours',
-    '3. Cross-reference: Is the user doing something that conflicts with their schedule?',
-    '4. Determine urgency level (critical/high/normal/low)',
+    '## HOW TO THINK',
+    '1. Read the context below (windows, calendar, session history). What is the user doing? What can you DO for them?',
+    '2. Check your notification digest in the user message. DO NOT repeat yourself. If you said it before, skip it.',
+    '3. If you have tasks, DO THE WORK — use tools, produce output, complete things. Then tell the user what you accomplished.',
+    '4. If you spot a conflict (distraction + deadline), you can mention it — but only if you haven\'t already AND you\'re also offering help (e.g., "I prepped your meeting notes").',
+    '5. If you have nothing to act on or report, skip the notification. Don\'t manufacture check-ins.',
     '',
-    '## PHASE 2 — ACT ON OBSERVATIONS',
-    'If you detect a conflict (e.g., gaming before an exam), lead with that.',
-    'If the user is focused on productive work, keep your message minimal.',
+    '## BIAS TOWARD ACTION',
+    'You are NOT a reminder bot. Never say "don\'t forget" or "you should". Instead:',
+    '- Research things → present findings',
+    '- Draft things → show the draft',
+    '- Complete tasks → report results',
+    '- Spot opportunities → create a task and start working on it',
     '',
-    '## PHASE 3 — WORK ON TASKS',
-    'For each queued/in-progress task:',
-    '1. Call proactive_task_update(task_id, "in_progress") to claim it',
-    '2. Use tools (web_search, execute_tool, search_tools, etc.) to ACTUALLY DO THE WORK',
-    '3. Call proactive_task_update(task_id, "completed", result="summary") when done',
-    '4. Or set status="failed" with the reason if you cannot complete it',
+    '## ANTI-REPETITION',
+    'Your notification digest shows what you recently told the user. Do NOT bring up the same topics unless they escalated.',
+    'If the user ignored/dismissed your last 2+ notifications, strongly consider skipping.',
     '',
-    '## PHASE 4 — SESSION MEMORY',
-    'Before finishing, call write_session_summary to record what you observed.',
-    'Other task tools: proactive_task_create (new tasks), proactive_task_delete (remove obsolete).',
+    '## TASKS',
+    'Claim → work → complete. Use proactive_task_update to change status. Create tasks for things YOU can do, not reminders for the user.',
+    '',
+    '## SESSION MEMORY',
+    'Call write_session_summary before finishing. Note: what user was doing, what you did (or skipped), patterns observed.',
   ];
 
   // Inject time context

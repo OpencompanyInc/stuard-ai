@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProactiveUserMessage, buildProactiveMessageContent, detectRetryableToolError, filterProactiveTools, generateWithToolRecovery } from './proactive-utils';
+import { buildProactiveUserMessage, buildProactiveMessageContent, detectRetryableToolError, expandProactiveAllowedToolNames, filterProactiveTools, generateWithToolRecovery, isBlockedProactiveToolName } from './proactive-utils';
 
 describe('buildProactiveUserMessage', () => {
   it('uses the explicit prompt when provided', () => {
@@ -17,8 +17,7 @@ describe('buildProactiveUserMessage', () => {
     expect(message).toContain('[Proactive Wake-Up]');
     expect(message).toContain('Research AI news');
     expect(message).toContain('ptask_1');
-    expect(message).toContain('ACTION REQUIRED');
-    expect(message).toContain('proactive_task_update');
+    expect(message).toContain('Work on these silently');
     expect(message).toContain('screenshot');
   });
 
@@ -30,7 +29,7 @@ describe('buildProactiveUserMessage', () => {
   it('handles no tasks gracefully', () => {
     const message = buildProactiveUserMessage({ taskCount: 0, tasks: [] });
     expect(message).toContain('No tasks');
-    expect(message).toContain('Check in');
+    expect(message).toContain('reading the room');
   });
 });
 
@@ -110,6 +109,19 @@ describe('filterProactiveTools', () => {
     expect(result).not.toHaveProperty('some_other_tool');
   });
 
+  it('never keeps legacy headed browser_* tools for proactive agents', () => {
+    const tools = {
+      proactive_task_list: 1,
+      search_tools: 2,
+      browser_get_content: 3,
+      browser_use_navigate: 4,
+    };
+
+    const result = filterProactiveTools(tools, ['browser_get_content', 'browser_use_navigate']);
+    expect(result).not.toHaveProperty('browser_get_content');
+    expect(result).toHaveProperty('browser_use_navigate');
+  });
+
   it('preserves conversation memory tools', () => {
     const tools = {
       proactive_task_list: 1,
@@ -125,6 +137,52 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('get_conversation_context');
     expect(result).toHaveProperty('search_past_conversations');
     expect(result).not.toHaveProperty('some_other_tool');
+  });
+
+  it('expands related Google tool families so proactive agents do not lose sibling tools', () => {
+    const tools = {
+      proactive_task_list: 1,
+      search_tools: 2,
+      gmail_list_recent_brief: 3,
+      tasks_list: 4,
+      calendar_list_events: 5,
+      docs_get_document: 6,
+      unrelated_tool: 7,
+    };
+
+    const result = filterProactiveTools(tools, ['gmail_list_recent_brief', 'tasks_list', 'search_tools']);
+    expect(result).toHaveProperty('gmail_list_recent_brief');
+    expect(result).toHaveProperty('tasks_list');
+    expect(result).toHaveProperty('calendar_list_events');
+    expect(result).toHaveProperty('docs_get_document');
+    expect(result).not.toHaveProperty('unrelated_tool');
+  });
+});
+
+describe('expandProactiveAllowedToolNames', () => {
+  it('completes the meta-tool trio and expands provider families', () => {
+    const result = expandProactiveAllowedToolNames(['gmail_list_recent_brief', 'search_tools']);
+
+    expect(result).toContain('search_tools');
+    expect(result).toContain('get_tool_schema');
+    expect(result).toContain('execute_tool');
+    expect(result).toContain('gmail_');
+    expect(result).toContain('calendar_');
+    expect(result).toContain('tasks_');
+  });
+
+  it('drops legacy headed browser_* tools while keeping browser_use_*', () => {
+    const result = expandProactiveAllowedToolNames(['browser_get_content', 'browser_use_navigate']);
+
+    expect(result).not.toContain('browser_get_content');
+    expect(result).toContain('browser_use_navigate');
+  });
+});
+
+describe('isBlockedProactiveToolName', () => {
+  it('blocks legacy browser tools but allows browser_use tools', () => {
+    expect(isBlockedProactiveToolName('browser_get_content')).toBe(true);
+    expect(isBlockedProactiveToolName('browser_use_navigate')).toBe(false);
   });
 });
 
@@ -189,7 +247,32 @@ describe('generateWithToolRecovery', () => {
 
     expect(calls).toHaveLength(2);
     expect(calls[1][1]).toMatchObject({ role: 'assistant', content: 'I tried to use a tool.' });
-    expect(String(calls[1][2]?.content || '')).toContain('Use search_tools');
     expect(String(calls[1][2]?.content || '')).toContain('execute_tool');
+    expect(String(calls[1][2]?.content || '')).toContain('bad_tool');
+  });
+
+  it('calls onToolNotFound callback when a tool is missing', async () => {
+    const registeredTools: string[] = [];
+    const agent = {
+      generate: async (messages: any[]) => {
+        if (messages.length === 1) {
+          throw {
+            name: 'NoSuchToolError',
+            toolName: 'calendar_list_events',
+            message: 'Tool calendar_list_events not found',
+          };
+        }
+        return { text: 'ok' };
+      },
+    };
+
+    await generateWithToolRecovery({
+      agent,
+      baseMessages: [{ role: 'user', content: 'Check my calendar' }],
+      maxRetries: 2,
+      onToolNotFound: (name) => registeredTools.push(name),
+    });
+
+    expect(registeredTools).toEqual(['calendar_list_events']);
   });
 });

@@ -14,7 +14,7 @@ import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
 import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
-import { getNotificationWindow } from '../windows/window';
+import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
 import { loadSkills } from '../skills';
@@ -298,16 +298,28 @@ function sendCheckinNotification(wakeUpId: string, agentMessage: string, screens
   // Track the agent message in conversation history
   appendConversation(wakeUpId, 'agent', message);
 
+  // Ensure the notification overlay window is open (same pattern as deliverNotification)
+  openNotificationWindow();
   const notifWin = getNotificationWindow();
   if (notifWin && !notifWin.isDestroyed()) {
-    notifWin.webContents.send('proactive-checkin', {
-      wakeUpId,
-      agentMessage: message,
-      structuredContent,
-      screenshotUsed,
-      tasksCompleted,
-      isFollowUp,
-    });
+    const send = () => {
+      try {
+        notifWin.webContents.send('proactive-checkin', {
+          wakeUpId,
+          agentMessage: message,
+          structuredContent,
+          screenshotUsed,
+          tasksCompleted,
+          isFollowUp,
+        });
+      } catch { }
+    };
+
+    if (notifWin.webContents.isLoadingMainFrame()) {
+      notifWin.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
   } else {
     try {
       if (Notification.isSupported()) {
@@ -324,6 +336,9 @@ function sendCheckinNotification(wakeUpId: string, agentMessage: string, screens
 export async function handleProactiveReply(wakeUpId: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const replyLogId = `${wakeUpId}_reply_${Date.now()}`;
   const startedAt = new Date().toISOString();
+
+  // Mark the notification as engaged (user replied)
+  proactiveService.markNotificationEngagement(wakeUpId, 'replied');
 
   try {
     pruneStaleConversations();
@@ -881,6 +896,7 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
         recentSessionSummaries: payload.context?.recentSessionSummaries || [],
       },
       notificationChannels: payload.config?.notificationChannels || ['app'],
+      notificationDigest: payload.context?.notificationDigest || [],
       skills: activeSkills.map(s => ({
         id: s.id,
         name: s.name,
@@ -959,6 +975,16 @@ async function executeWakeUp() {
   let screenshotData: string | null = null;
   const startedAt = new Date().toISOString();
   const modelSelection = buildModelSelection(config);
+
+  // Age out stale "pending" notifications as "ignored" (user never replied)
+  try {
+    const recentNotifs = proactiveService.getRecentNotifications(20);
+    for (const n of recentNotifs) {
+      if (n.engagement === 'pending' && n.channel !== 'skip') {
+        proactiveService.markNotificationEngagement(n.wakeUpId, 'ignored');
+      }
+    }
+  } catch { }
 
   try {
     logger.info(`[proactive-scheduler] Starting wake-up (target: ${config.executionTarget})`);
@@ -1076,7 +1102,10 @@ async function executeWakeUp() {
     }
 
     // Load recent session summaries for pattern awareness
-    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(5);
+    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(10);
+
+    // Load notification digest so the agent knows what it recently said
+    const notificationDigest = proactiveService.getNotificationDigest(8);
 
     // Get all active tasks (queued + in_progress) — agent manages lifecycle via tools
     const activeTasks = proactiveService.getActiveTasks();
@@ -1104,6 +1133,7 @@ async function executeWakeUp() {
         micAudio: micAudioData,
         openWindows,
         recentSessionSummaries,
+        notificationDigest,
       },
       tasks: activeTasks.map(t => ({
         id: t.id,
@@ -1221,6 +1251,27 @@ async function executeWakeUp() {
       if (channels.includes('call')) {
         sendTelnyxNotification('call', agentMessage.slice(0, 500)).catch(() => { });
       }
+
+      // Log the notification for dedup and engagement tracking
+      const primaryChannel = channels[0] || 'skip';
+      if (primaryChannel !== 'skip') {
+        proactiveService.logNotification({
+          wakeUpId: logId,
+          message: agentMessage.slice(0, 300),
+          channel: primaryChannel,
+          urgency: agentUrgency || 'normal',
+          engagement: 'pending',
+        });
+      }
+    } else if (agentChannel === 'skip') {
+      // Agent explicitly chose to stay silent — still log it so we track the skip
+      proactiveService.logNotification({
+        wakeUpId: logId,
+        message: '(skipped — nothing new)',
+        channel: 'skip',
+        urgency: agentUrgency || 'low',
+        engagement: 'ignored',
+      });
     }
 
     broadcastUpdate({

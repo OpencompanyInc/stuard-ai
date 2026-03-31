@@ -86,9 +86,10 @@ export function parseChunk(chunk: unknown): StreamEvent | null {
       return { type: 'reasoning-start' as const, id: (payload?.id ?? undefined) as string | undefined };
     }
 
+    case 'reasoning':
     case 'reasoning-delta':
     case 'thinking-delta': {
-      const text = (payload?.text ?? c.textDelta ?? '') as string;
+      const text = (payload?.text ?? c.textDelta ?? payload?.textDelta ?? '') as string;
       if (text) {
         return { type: 'reasoning-delta' as const, text };
       }

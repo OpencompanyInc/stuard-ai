@@ -419,8 +419,9 @@ async function storeAutoSkillDraft(draft: AutoSkillDraft): Promise<boolean> {
 // MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Minimum conversation length to analyze (too short = not enough signal)
-const MIN_MESSAGES = 6;
+// Minimum token usage to analyze — teachable patterns can happen in short exchanges,
+// so we gate on engagement (tokens used) rather than message count.
+const MIN_TOTAL_TOKENS = 50_000;
 // Maximum messages to feed the model
 const MAX_ANALYSIS_MESSAGES = 60;
 
@@ -436,10 +437,11 @@ const MAX_ANALYSIS_MESSAGES = 60;
  */
 export async function analyzeForAutoSkill(
   conversationHistory: ConversationMessage[],
-  conversationId?: string
+  conversationId?: string,
+  totalTokensUsed?: number
 ): Promise<AutoSkillDraft | null> {
-  // Gate: minimum conversation length
-  if (conversationHistory.length < MIN_MESSAGES) {
+  // Gate: minimum engagement — need enough back-and-forth to contain a teachable pattern
+  if (typeof totalTokensUsed === 'number' && totalTokensUsed < MIN_TOTAL_TOKENS) {
     return null;
   }
 

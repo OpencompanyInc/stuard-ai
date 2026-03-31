@@ -365,12 +365,72 @@ export const proactiveService = {
     }
   },
 
-  getRecentSessionSummaries(limit = 5): string[] {
+  getRecentSessionSummaries(limit = 10): string[] {
     try {
       const summaries = loadSessionSummaries();
       return summaries.slice(0, limit).map(s => {
         const timeAgo = getTimeAgo(s.at);
         return `[${timeAgo}] ${s.summary}`;
+      });
+    } catch {
+      return [];
+    }
+  },
+
+  // ── Notification Log ───────────────────────────────────────────────────
+  // Tracks what was said, when, and whether the user engaged — so the agent
+  // can avoid repeating itself and learn what kinds of check-ins get replies.
+
+  logNotification(entry: Omit<NotificationLogEntry, 'id' | 'at'>): void {
+    try {
+      const p = notificationLogPath();
+      const existing = loadNotificationLog();
+      existing.unshift({
+        ...entry,
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        at: new Date().toISOString(),
+      });
+      // Keep last 100 entries
+      fs.writeFileSync(p, JSON.stringify(existing.slice(0, 100), null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('[proactive] Failed to save notification log:', e);
+    }
+  },
+
+  markNotificationEngagement(wakeUpId: string, engagement: NotificationLogEntry['engagement']): void {
+    try {
+      const p = notificationLogPath();
+      const log = loadNotificationLog();
+      const idx = log.findIndex(e => e.wakeUpId === wakeUpId);
+      if (idx >= 0) {
+        log[idx].engagement = engagement;
+        fs.writeFileSync(p, JSON.stringify(log, null, 2), 'utf-8');
+      }
+    } catch (e) {
+      logger.warn('[proactive] Failed to update notification engagement:', e);
+    }
+  },
+
+  getRecentNotifications(limit = 15): NotificationLogEntry[] {
+    try {
+      return loadNotificationLog().slice(0, limit);
+    } catch {
+      return [];
+    }
+  },
+
+  /** Build a compact digest of recent notifications for the agent's context */
+  getNotificationDigest(limit = 8): string[] {
+    try {
+      const log = loadNotificationLog().slice(0, limit);
+      return log.map(entry => {
+        const timeAgo = getTimeAgo(entry.at);
+        const eng = entry.engagement === 'replied' ? '(user replied)'
+          : entry.engagement === 'dismissed' ? '(dismissed)'
+          : entry.engagement === 'ignored' ? '(no response)'
+          : '(pending)';
+        const msg = (entry.message || '').slice(0, 120);
+        return `[${timeAgo}] ${msg} ${eng}`;
       });
     } catch {
       return [];
@@ -392,6 +452,33 @@ function sessionSummariesPath(): string {
 function loadSessionSummaries(): SessionSummaryEntry[] {
   try {
     const p = sessionSummariesPath();
+    if (fs.existsSync(p)) {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      return Array.isArray(data) ? data : [];
+    }
+  } catch {}
+  return [];
+}
+
+// ── Notification log persistence ─────────────────────────────────────────────
+
+export interface NotificationLogEntry {
+  id: string;
+  wakeUpId: string;
+  message: string;
+  channel: string;
+  urgency: string;
+  engagement: 'pending' | 'replied' | 'dismissed' | 'ignored';
+  at: string;
+}
+
+function notificationLogPath(): string {
+  return path.join(app.getPath('userData'), 'proactive-notification-log.json');
+}
+
+function loadNotificationLog(): NotificationLogEntry[] {
+  try {
+    const p = notificationLogPath();
     if (fs.existsSync(p)) {
       const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
       return Array.isArray(data) ? data : [];
