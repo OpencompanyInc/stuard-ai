@@ -2,6 +2,7 @@ export type ToolKind = 'local' | 'cloud' | 'orchestration' | 'electron';
 
 export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }> = {
   // Electron-native tools (handled in main process)
+  '_media_register': { kind: 'electron' },  // Internal: register media from cloud tools into local media library
   'custom_ui': { kind: 'electron' },
   'update_custom_ui': { kind: 'electron' },
   'close_custom_ui': { kind: 'electron' },

@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startBrowserExtensionServer, refreshAppCache, startReminderScheduler, stopReminderScheduler, startProactiveScheduler, stopProactiveScheduler, startCloudWebhooks, stopCloudWebhooks, startSmsInbox, stopSmsInbox } from "./services/index";
+import { startAgentIfNeeded, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, refreshAppCache, startReminderScheduler, stopReminderScheduler, startProactiveScheduler, stopProactiveScheduler, startCloudWebhooks, stopCloudWebhooks, startSmsInbox, stopSmsInbox } from "./services/index";
 import { loadSettings } from "./settings";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
@@ -374,10 +374,6 @@ app.whenReady().then(async () => {
 
   deferStartupTask("start local webhook server", startupProfile.agentDelayMs, () => {
     startLocalWebhookServer();
-  });
-
-  deferStartupTask("start browser extension server", startupProfile.agentDelayMs, () => {
-    startBrowserExtensionServer();
   });
 
   deferStartupTask("stuards autostart", startupProfile.workflowDelayMs, () => {

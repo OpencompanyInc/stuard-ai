@@ -3,6 +3,7 @@ import { getToolRegistry, getToolMetadata } from './tool-registry';
 import { embedMany } from 'ai';
 import { google } from '../utils/models';
 import { clearToolCache } from './sis-supabase';
+import { invalidateGroupCache } from '../utils/tool-groups';
 import { z } from 'zod';
 
 // Ensure registry is initialized
@@ -17,6 +18,202 @@ export interface ToolSyncResult {
   skipped: number;
   errors: string[];
 }
+
+/**
+ * Semantic groups for keyword-based runtime tool injection.
+ * When a user query contains a group keyword, all tools in that group
+ * are injected natively (full schema) — no search_tools round-trip.
+ *
+ * Key = tool name, Value = group keywords this tool belongs to.
+ * Stored in Supabase `tool_embeddings.semantic_groups` column.
+ */
+const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
+  // Terminal / interactive CLI (core 3 only — rest discoverable via search_tools)
+  terminal_create: ['terminal', 'shell', 'cli', 'interactive'],
+  terminal_send_input: ['terminal', 'shell', 'cli', 'interactive'],
+  terminal_read: ['terminal', 'shell', 'cli', 'interactive'],
+
+  // Browser automation
+  browser_use_navigate: ['browser', 'website', 'web automation', 'scrape'],
+  browser_use_get_interactive_elements: ['browser', 'website', 'web automation'],
+  browser_use_interact_with_element: ['browser', 'website', 'web automation'],
+  browser_use_take_screenshot: ['browser', 'website', 'screenshot'],
+  browser_use_execute_js: ['browser', 'javascript', 'web automation'],
+  browser_use_scroll: ['browser', 'web automation'],
+
+  // FFmpeg / media processing
+  ffmpeg_run: ['ffmpeg', 'video', 'audio', 'media processing', 'convert'],
+  ffmpeg_convert_media: ['ffmpeg', 'video', 'audio', 'convert', 'transcode'],
+  ffmpeg_extract_audio: ['ffmpeg', 'audio', 'extract audio'],
+  ffmpeg_trim_media: ['ffmpeg', 'video', 'audio', 'trim', 'cut'],
+  ffmpeg_probe_media: ['ffmpeg', 'video', 'audio', 'media info'],
+  ffmpeg_extract_frames: ['ffmpeg', 'video', 'frames', 'screenshot'],
+  ffmpeg_status: ['ffmpeg'],
+  ffmpeg_setup: ['ffmpeg'],
+
+  // Cloud storage
+  cloud_storage_upload: ['cloud storage', 'upload', 'stuard storage'],
+  cloud_storage_get_url: ['cloud storage', 'upload', 'file url', 'stuard storage'],
+  cloud_storage_list: ['cloud storage', 'stuard storage'],
+  cloud_storage_delete: ['cloud storage', 'stuard storage'],
+  cloud_storage_set_visibility: ['cloud storage', 'stuard storage'],
+
+  // Vault / credentials
+  vault_list: ['vault', 'password', 'credential', 'secret'],
+  vault_get: ['vault', 'password', 'credential', 'secret'],
+  vault_add: ['vault', 'password', 'credential', 'secret', 'api key'],
+  vault_update: ['vault', 'password', 'credential'],
+  vault_delete: ['vault', 'password', 'credential'],
+  vault_get_credential: ['vault', 'password', 'credential', 'login'],
+  vault_search: ['vault', 'password', 'credential'],
+  vault_stats: ['vault'],
+
+  // GUI / computer use
+  computer_use: ['gui', 'click', 'screenshot', 'computer use', 'desktop control'],
+  computer_use_agent: ['gui', 'computer use', 'desktop control'],
+  click_at_coordinates: ['gui', 'click', 'mouse'],
+  type_text: ['gui', 'type', 'keyboard'],
+  send_hotkey: ['gui', 'hotkey', 'keyboard shortcut'],
+  scroll: ['gui', 'scroll'],
+  take_screenshot: ['gui', 'screenshot', 'screen capture'],
+  capture_screen_to_file: ['gui', 'screenshot', 'screen capture'],
+  find_and_click_text: ['gui', 'click', 'ocr'],
+  find_text: ['gui', 'ocr', 'screen text'],
+  drag_and_drop: ['gui', 'drag', 'mouse'],
+
+  // Window management
+  list_open_windows: ['window', 'windows', 'apps', 'processes'],
+  bring_window_to_foreground: ['window', 'focus', 'switch app'],
+  smart_bring_window_to_foreground: ['window', 'launch', 'open app'],
+  set_window_bounds: ['window', 'resize', 'move window'],
+  launch_application_or_uri: ['launch', 'open app', 'window'],
+
+  // Spaces / knowledge
+  list_user_spaces: ['space', 'spaces', 'knowledge'],
+  get_space_contents: ['space', 'spaces', 'knowledge'],
+  add_to_space: ['space', 'spaces', 'save', 'knowledge'],
+  create_space: ['space', 'spaces', 'knowledge'],
+  find_or_create_space: ['space', 'spaces', 'knowledge'],
+  add_note_to_space: ['space', 'note', 'knowledge'],
+  add_source_to_space: ['space', 'bookmark', 'knowledge'],
+  add_code_snippet_to_space: ['space', 'code', 'knowledge'],
+  get_space_tree: ['space', 'spaces', 'knowledge'],
+
+  // Streaming / capture
+  capture_media: ['record', 'screen record', 'capture', 'audio record'],
+  stop_capture: ['record', 'screen record', 'capture'],
+  list_active_captures: ['record', 'capture'],
+  stream_create: ['stream', 'streaming'],
+  stream_close: ['stream', 'streaming'],
+  stream_list: ['stream', 'streaming'],
+
+  // Headless agents
+  deploy_headless_agent: ['agent', 'background task', 'parallel', 'sub-agent'],
+  get_headless_agent_status: ['agent', 'background task'],
+  list_headless_agent_tasks: ['agent', 'background task'],
+
+  // MediaPipe
+  mediapipe_pose: ['mediapipe', 'pose', 'body tracking'],
+  mediapipe_hands: ['mediapipe', 'hand tracking'],
+  mediapipe_face_detection: ['mediapipe', 'face detection'],
+  mediapipe_face_mesh: ['mediapipe', 'face mesh'],
+  mediapipe_segmentation: ['mediapipe', 'segmentation'],
+  mediapipe_process_video: ['mediapipe', 'video analysis'],
+
+  // ── Integration tools (gated by enabledIntegrations at runtime) ──
+
+  // Gmail
+  gmail_send_message: ['email', 'gmail', 'send email', 'compose'],
+  gmail_list_messages: ['email', 'gmail', 'inbox', 'check email'],
+  gmail_get_message_brief: ['email', 'gmail', 'read email'],
+  gmail_get_message_full: ['email', 'gmail', 'read email'],
+  gmail_get_messages_brief: ['email', 'gmail', 'inbox'],
+  gmail_list_recent_brief: ['email', 'gmail', 'inbox', 'recent'],
+  gmail_get_most_recent_full: ['email', 'gmail', 'inbox', 'recent'],
+  gmail_modify_message: ['email', 'gmail', 'label'],
+  gmail_delete_message: ['email', 'gmail', 'delete email'],
+  gmail_archive_message: ['email', 'gmail', 'archive'],
+  gmail_mark_as_read: ['email', 'gmail'],
+  gmail_mark_as_unread: ['email', 'gmail'],
+  gmail_download_attachment: ['email', 'gmail', 'attachment', 'download'],
+  gmail_retrieve_messages_with_attachments: ['email', 'gmail', 'attachment', 'download'],
+  // Google Calendar
+  calendar_list_events: ['calendar', 'events', 'schedule', 'meetings'],
+  calendar_create_event: ['calendar', 'schedule', 'meeting', 'event'],
+  calendar_delete_event: ['calendar', 'cancel', 'delete event'],
+  calendar_update_event: ['calendar', 'reschedule', 'update event'],
+  // Google Drive / Sheets / Docs / Tasks
+  drive_list_files: ['drive', 'google drive', 'files'],
+  sheets_read_range: ['sheets', 'spreadsheet', 'google sheets'],
+  sheets_create_spreadsheet: ['sheets', 'spreadsheet', 'google sheets'],
+  sheets_write_range: ['sheets', 'spreadsheet', 'google sheets'],
+  sheets_append_rows: ['sheets', 'spreadsheet', 'google sheets'],
+  docs_get_document: ['docs', 'google docs', 'document'],
+  docs_create_document: ['docs', 'google docs', 'document'],
+  docs_write_text: ['docs', 'google docs', 'document'],
+  tasks_list: ['tasks', 'google tasks', 'todo'],
+  google_list_profiles: ['google', 'profile', 'account'],
+  google_get_userinfo: ['google', 'profile', 'account'],
+
+  // Outlook
+  outlook_list_messages: ['email', 'outlook', 'inbox'],
+  outlook_search_messages: ['email', 'outlook', 'search email'],
+  outlook_send_mail: ['email', 'outlook', 'send email', 'compose'],
+  outlook_get_message: ['email', 'outlook', 'read email'],
+  outlook_list_recent_brief: ['email', 'outlook', 'inbox', 'recent'],
+  outlook_reply_message: ['email', 'outlook', 'reply'],
+  outlook_forward_message: ['email', 'outlook', 'forward'],
+  outlook_create_draft: ['email', 'outlook', 'draft'],
+  outlook_delete_message: ['email', 'outlook', 'delete email'],
+  outlook_download_attachment: ['email', 'outlook', 'attachment'],
+  outlook_retrieve_messages_with_attachments: ['email', 'outlook', 'attachment'],
+  outlook_calendar_list_events: ['calendar', 'outlook', 'events', 'schedule'],
+  outlook_calendar_create_event: ['calendar', 'outlook', 'meeting', 'event'],
+  outlook_calendar_update_event: ['calendar', 'outlook', 'reschedule'],
+  outlook_calendar_delete_event: ['calendar', 'outlook', 'cancel event'],
+
+  // GitHub
+  github_list_repos: ['github', 'repos', 'repositories'],
+  github_get_repo: ['github', 'repo'],
+  github_list_issues: ['github', 'issues', 'bugs'],
+  github_create_issue: ['github', 'issue', 'bug report'],
+  github_update_issue: ['github', 'issue'],
+  github_list_pulls: ['github', 'pull request', 'pr'],
+  github_get_pull: ['github', 'pull request', 'pr'],
+  github_create_pull: ['github', 'pull request', 'pr'],
+  github_merge_pull: ['github', 'merge', 'pr'],
+  github_list_branches: ['github', 'branch'],
+  github_create_branch: ['github', 'branch'],
+  github_list_commits: ['github', 'commits', 'history'],
+  github_search_code: ['github', 'search', 'code'],
+  github_list_workflow_runs: ['github', 'actions', 'ci', 'workflow'],
+  github_dispatch_workflow: ['github', 'actions', 'ci', 'workflow'],
+  github_get_me: ['github', 'profile'],
+
+  // WhatsApp
+  whatsapp_send_message: ['whatsapp', 'message', 'chat'],
+  whatsapp_send_media: ['whatsapp', 'media', 'photo'],
+  whatsapp_send_voice_note: ['whatsapp', 'voice', 'audio'],
+  whatsapp_voice_call: ['whatsapp', 'call', 'voice call'],
+
+  // Telnyx
+  telnyx_send_sms: ['sms', 'text message', 'telnyx'],
+  telnyx_send_mms: ['mms', 'picture message', 'telnyx'],
+  telnyx_voice_call: ['phone call', 'voice call', 'telnyx', 'call'],
+  telnyx_send_voice_note: ['voice note', 'telnyx'],
+
+  // Reddit
+  reddit_search: ['reddit', 'search reddit'],
+  reddit_view_subreddit: ['reddit', 'subreddit'],
+  reddit_view_comments: ['reddit', 'comments'],
+  reddit_create_post: ['reddit', 'post'],
+
+  // Discord
+  discord_list_guilds: ['discord', 'servers'],
+  discord_list_channels: ['discord', 'channels'],
+  discord_read_messages: ['discord', 'messages', 'chat'],
+  discord_send_dm: ['discord', 'dm', 'message'],
+};
 
 /**
  * Semantic hints to improve tool matching.
@@ -378,6 +575,7 @@ export async function syncToolsToSupabase(options: {
             output: zodToJSON(tool.outputSchema)
           },
           semantic_hints: getSemanticHints(id),
+          semantic_groups: TOOL_SEMANTIC_GROUPS[id] || [],
           embedding: embeddings[idx],
           enabled: true,
           updated_at: new Date().toISOString(),
@@ -405,8 +603,9 @@ export async function syncToolsToSupabase(options: {
     }
   }
 
-  // Clear cache after sync
+  // Clear caches after sync
   clearToolCache();
+  invalidateGroupCache();
 
   console.log(`[tool-sync] Sync complete: ${result.synced} synced, ${result.errors.length} errors`);
   return result;

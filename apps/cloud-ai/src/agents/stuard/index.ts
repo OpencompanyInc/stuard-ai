@@ -32,13 +32,17 @@ export function getAgent(
     },
   ];
 
-  return new Agent({
+  const agent = new Agent({
     id: name,
     name,
     instructions: instructions as any,
     model: selectedModel as any,
     tools,
   });
+  // Attach metadata for token diagnostics (Mastra doesn't expose these publicly)
+  (agent as any).__diagTools = tools;
+  (agent as any).__diagInstructions = instructions;
+  return agent;
 }
 
 export async function getAgentForQuery(
@@ -64,13 +68,16 @@ export async function getAgentForQuery(
     },
   ];
 
-  return new Agent({
+  const agent = new Agent({
     id: name,
     name,
     instructions: instructions as any,
     model: selectedModel as any,
     tools,
   });
+  (agent as any).__diagTools = tools;
+  (agent as any).__diagInstructions = instructions;
+  return agent;
 }
 
 export type { ModelChoice };

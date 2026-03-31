@@ -94,6 +94,7 @@ declare global {
       mediaImportPaths: (paths: string[]) => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
       mediaOpenPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
       mediaDelete: (itemId: string, deleteFile?: boolean) => Promise<{ ok: boolean; id?: string; error?: string }>;
+      mediaRegisterPath: (filePath: string, opts?: { source?: string; tags?: string[] }) => Promise<{ ok: boolean; id?: string; localPath?: string; error?: string }>;
       onShow: (cb: () => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
@@ -220,9 +221,6 @@ declare global {
       // Global Hotkey
       setGlobalHotkey: (accelerator: string) => Promise<{ ok: boolean; error?: string }>;
       getGlobalHotkey: () => Promise<{ ok: boolean; hotkey?: string }>;
-      browserUseGetChromeSyncSettings: () => Promise<{ ok: boolean; settings?: { chromeSyncEnabled: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }; error?: string }>;
-      browserUseListChromeProfiles: () => Promise<{ ok: boolean; browsers?: Array<{ browser: string; userDataDir: string; profiles: Array<{ name: string; path: string }> }>; error?: string }>;
-      browserUseUpdateChromeSyncSettings: (updates: { chromeSyncEnabled?: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }) => Promise<{ ok: boolean; settings?: { chromeSyncEnabled: boolean; chromeSyncBrowserName?: string | null; chromeSyncProfileName?: string | null; chromeSyncProfilePath?: string | null; chromeSyncUserDataDir?: string | null }; error?: string }>;
 
       // Security & Privacy
       securityGetSettings: () =>

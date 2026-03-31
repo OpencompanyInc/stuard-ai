@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
   mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
   mediaDelete: (itemId: string, deleteFile?: boolean) => ipcRenderer.invoke('media:delete', itemId, deleteFile),
+  mediaRegisterPath: (filePath: string, opts?: { source?: string; tags?: string[] }) => ipcRenderer.invoke('media:registerPath', filePath, opts),
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
@@ -300,12 +301,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('speech:stopped', handler);
     return () => { try { ipcRenderer.off('speech:stopped', handler); } catch { } };
   },
-  // Browser Extension
-  onBrowserExtensionStatus: (cb: (status: { connected: boolean; clients: number }) => void) => {
-    const handler = (_e: any, status: any) => cb(status);
-    ipcRenderer.on('browser-extension:status', handler);
-    return () => { try { ipcRenderer.off('browser-extension:status', handler); } catch { } };
-  },
   onBrowserExtensionChat: (cb: (data: { text: string; messageId: string; pageContext?: any }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('browser-extension:chat', handler);
@@ -491,9 +486,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Global Hotkey
   setGlobalHotkey: (accelerator: string) => ipcRenderer.invoke('system:setGlobalHotkey', accelerator),
   getGlobalHotkey: () => ipcRenderer.invoke('system:getGlobalHotkey'),
-  browserUseGetChromeSyncSettings: () => ipcRenderer.invoke('browserUse:getChromeSyncSettings'),
-  browserUseListChromeProfiles: () => ipcRenderer.invoke('browserUse:listChromeProfiles'),
-  browserUseUpdateChromeSyncSettings: (updates: any) => ipcRenderer.invoke('browserUse:updateChromeSyncSettings', updates),
 
   // View mode change events (for shortcuts to switch views)
   onViewModeChange: (cb: (data: { mode: 'chat' | 'tasks'; subTab?: 'todo' | 'agent' }) => void) => {

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { supabase } from '../lib/supabaseClient';
 
@@ -37,6 +38,14 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(termRef.current);
+
+    // GPU-accelerated rendering
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => webglAddon.dispose());
+      term.loadAddon(webglAddon);
+    } catch {}
+
     fit.fit();
     xtermRef.current = term;
     fitRef.current = fit;
@@ -86,10 +95,35 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
       ws.onclose = () => setConnected(false);
       ws.onerror = () => setConnected(false);
 
-      disposable = term.onData((data) => {
+      // Clipboard: Ctrl+V paste, Ctrl+C copy (when selected), right-click paste
+      const sendInput = (text: string) => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'terminal_data', data }));
+          ws.send(JSON.stringify({ type: 'terminal_data', data: text }));
         }
+      };
+
+      term.attachCustomKeyEventHandler((event) => {
+        const isMod = event.ctrlKey || event.metaKey;
+        if (isMod && event.key === 'v' && event.type === 'keydown') {
+          navigator.clipboard.readText().then(text => { if (text) sendInput(text); });
+          return false;
+        }
+        if (isMod && event.key === 'c' && event.type === 'keydown' && term.hasSelection()) {
+          navigator.clipboard.writeText(term.getSelection());
+          return false;
+        }
+        return true;
+      });
+
+      if (termRef.current) {
+        termRef.current.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          navigator.clipboard.readText().then(text => { if (text) sendInput(text); });
+        });
+      }
+
+      disposable = term.onData((data) => {
+        sendInput(data);
       });
 
       const onResize = () => { fit.fit(); };

@@ -19,6 +19,7 @@ import { sanitizeToolEvent, sanitizeSteps } from './utils/sanitize';
 import { normalizeMessages, contentToText, buildAttachmentParts } from './utils/messages';
 import { buildKnowledgeContext } from './knowledge/retrieval';
 import { ensureToolEmbeddings } from './tools/meta-tools';
+import { warmupGroupCache } from './utils/tool-groups';
 import * as memoryService from './memory/conversations';
 import { compactHistory } from './memory/context-compactor';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
@@ -160,6 +161,11 @@ server.listen(PORT, () => {
   // console.log(`[cloud-ai] HTTP listening on http://0.0.0.0:${PORT}`);
   // console.log(`[cloud-ai] WS endpoint at ws://<host>:${PORT}/ws`);
   // console.log(`[cloud-ai] Model routing: ${ENABLE_ROUTING ? 'enabled (Gemini)' : 'disabled (gpt-5-medium)'}`);
+
+  // Warm up semantic group cache (lightweight SELECT, no embeddings)
+  try {
+    warmupGroupCache();
+  } catch { }
 
   // Optional: eager tool embedding sync on startup (disabled by default to avoid embedding costs)
   try {
@@ -707,7 +713,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             try {
               const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
               if (queryEmbedding && queryEmbedding.length > 0) {
-                const topN = Number(process.env.SIS_RANKED_TOPN || '8');
+                const topN = Number(process.env.SIS_RANKED_TOPN || '5');
                 rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
                 if (process.env.SIS_DEBUG === '1') {
                   console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
@@ -987,11 +993,70 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
 
 
-        // Log system prompt size for debugging (compact log, no full dump)
-        const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
-        if (systemMessages.length > 0) {
-          const totalChars = systemMessages.reduce((sum: number, m: any) => sum + String(m.content || '').length, 0);
-          console.log(`[cloud-ai] System context: ${systemMessages.length} msgs, ~${totalChars} chars, ~${Math.round(totalChars / 4)} tokens est.`);
+        // ─── TOKEN BREAKDOWN DIAGNOSTIC ─────────────────────────────────
+        // Detailed per-component token estimation to identify bloat sources.
+        // Rough estimate: 1 token ≈ 4 chars for English text, ~3 chars for JSON/schemas.
+        try {
+          const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
+          const userMessages = inputMessages.filter((m: any) => m.role === 'user');
+          const assistantMessages = inputMessages.filter((m: any) => m.role === 'assistant');
+          const toolMessages = inputMessages.filter((m: any) => m.role === 'tool');
+
+          const charCount = (msgs: any[]) => msgs.reduce((sum: number, m: any) => {
+            const c = m.content;
+            if (typeof c === 'string') return sum + c.length;
+            if (Array.isArray(c)) return sum + c.reduce((s: number, p: any) => s + String(p?.text || JSON.stringify(p) || '').length, 0);
+            return sum + JSON.stringify(c || '').length;
+          }, 0);
+
+          const systemChars = charCount(systemMessages);
+          const userChars = charCount(userMessages);
+          const assistantChars = charCount(assistantMessages);
+          const toolChars = charCount(toolMessages);
+
+          // Estimate tool definition tokens (JSON schemas are denser, ~3 chars/token)
+          // Read from __diagTools attached in getAgent/getAgentForQuery (Mastra doesn't expose these)
+          const agentTools = (agent as any)?.__diagTools || agent?.tools || {};
+          const toolNames = Object.keys(agentTools);
+          let toolSchemaChars = 0;
+          const perToolSizes: { name: string; chars: number; tokEst: number }[] = [];
+          for (const [name, tool] of Object.entries(agentTools)) {
+            try {
+              const desc = String((tool as any)?.description || '').length;
+              const params = JSON.stringify((tool as any)?.parameters || (tool as any)?.inputSchema || {}).length;
+              const total = desc + params + name.length + 20;
+              toolSchemaChars += total;
+              perToolSizes.push({ name, chars: total, tokEst: Math.round(total / 3) });
+            } catch { toolSchemaChars += 200; perToolSizes.push({ name, chars: 200, tokEst: 67 }); }
+          }
+          perToolSizes.sort((a, b) => b.chars - a.chars);
+
+          // Agent system instructions (separate from inputMessages system msgs)
+          let agentInstructionChars = 0;
+          try {
+            const instr = (agent as any)?.__diagInstructions || (agent as any)?.instructions;
+            if (typeof instr === 'string') agentInstructionChars = instr.length;
+            else if (Array.isArray(instr)) agentInstructionChars = instr.reduce((s: number, i: any) => s + String(i?.content || JSON.stringify(i) || '').length, 0);
+          } catch {}
+
+          const totalMsgChars = systemChars + userChars + assistantChars + toolChars;
+
+          console.log(`[cloud-ai] ═══ TOKEN BREAKDOWN (estimated) ═══`);
+          console.log(`[cloud-ai]   Agent instructions:  ~${Math.round(agentInstructionChars / 4)} tok (${agentInstructionChars} chars)`);
+          console.log(`[cloud-ai]   Tool definitions:    ~${Math.round(toolSchemaChars / 3)} tok (${toolNames.length} tools, ${toolSchemaChars} chars)`);
+          console.log(`[cloud-ai]   System messages:     ~${Math.round(systemChars / 4)} tok (${systemMessages.length} msgs, ${systemChars} chars)`);
+          console.log(`[cloud-ai]   User messages:       ~${Math.round(userChars / 4)} tok (${userMessages.length} msgs, ${userChars} chars)`);
+          console.log(`[cloud-ai]   Assistant messages:   ~${Math.round(assistantChars / 4)} tok (${assistantMessages.length} msgs, ${assistantChars} chars)`);
+          console.log(`[cloud-ai]   Tool result messages: ~${Math.round(toolChars / 4)} tok (${toolMessages.length} msgs, ${toolChars} chars)`);
+          console.log(`[cloud-ai]   ─────────────────────────────────`);
+          console.log(`[cloud-ai]   TOTAL est:           ~${Math.round(agentInstructionChars / 4 + toolSchemaChars / 3 + totalMsgChars / 4)} tok`);
+          console.log(`[cloud-ai]   ─── Per-tool schema sizes (desc) ───`);
+          for (const t of perToolSizes) {
+            console.log(`[cloud-ai]     ${t.name.padEnd(35)} ~${String(t.tokEst).padStart(5)} tok (${t.chars} chars)`);
+          }
+          console.log(`[cloud-ai] ═══════════════════════════════════`);
+        } catch (diagErr) {
+          console.warn('[cloud-ai] Token breakdown diagnostic failed:', diagErr);
         }
 
         // Provider options
@@ -1093,10 +1158,40 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }, hardTimeoutMs);
 
         // fast/balanced use Grok models that don't support reasoningEffort
+        let stepCount = 0;
+        let cumulativeInputTokens = 0;
         const streamOptions: any = {
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
+          onStepFinish: (stepData: any) => {
+            stepCount++;
+            const stepUsage = stepData?.usage;
+            const normalized = stepUsage ? normalizeUsage(stepUsage) : null;
+            if (normalized) cumulativeInputTokens += normalized.promptTokens;
+            // Mastra wraps tool calls in { type, runId, from, payload } — dig into payload
+            const rawCalls = stepData?.toolCalls || stepData?.tool_calls || [];
+            const extractToolName = (tc: any) =>
+              tc?.toolName || tc?.tool_name || tc?.name || tc?.function?.name
+              || tc?.payload?.toolName || tc?.payload?.tool_name || tc?.payload?.name
+              || '?';
+            const toolNames = (Array.isArray(rawCalls) ? rawCalls : []).map(extractToolName).join(', ');
+            // Also check toolResults for tool names if toolCalls is empty
+            const rawResults = stepData?.toolResults || stepData?.tool_results || [];
+            const resultToolNames = (!toolNames || toolNames === '?') && Array.isArray(rawResults)
+              ? rawResults.map((tr: any) => extractToolName(tr)).join(', ')
+              : '';
+            const finalToolNames = (toolNames && toolNames !== '?') ? toolNames : resultToolNames;
+            // Log raw keys on first step for debugging
+            if (stepCount === 1) {
+              const keys = Object.keys(stepData || {});
+              console.log(`[cloud-ai] ── Step 1 raw keys: ${keys.join(', ')}`);
+              if (rawCalls.length > 0) console.log(`[cloud-ai]    toolCalls[0] keys: ${Object.keys(rawCalls[0] || {}).join(', ')}`);
+              if (rawResults.length > 0) console.log(`[cloud-ai]    toolResults[0] keys: ${Object.keys(rawResults[0] || {}).join(', ')}`);
+            }
+            const inputTok = normalized ? `input: ${normalized.promptTokens} tok | output: ${normalized.completionTokens} tok | cached: ${normalized.cachedPromptTokens || 0} tok | cumulative input: ${cumulativeInputTokens} tok` : 'no usage';
+            console.log(`[cloud-ai] ── Step ${stepCount} ── ${inputTok}${finalToolNames ? ` | tools: ${finalToolNames}` : ''}`);
+          },
           onFinish: async ({ text, steps, finishReason, usage }: any) => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }

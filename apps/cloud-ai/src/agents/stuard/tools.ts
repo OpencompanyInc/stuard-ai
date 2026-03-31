@@ -1,3 +1,4 @@
+import { getSemanticInjections } from '../../utils/tool-groups';
 import { waitTool } from '../../tools/wait';
 import { runSequentialTool, runParallelTool } from '../../tools/workflow-system';
 import { analyzeMediaTool } from '../../tools/analyze-media';
@@ -492,6 +493,7 @@ const _INTERNAL_SPACE_TOOLS = {
 } as const;
 
 const LEGACY_BROWSER_EXTENSION_TOOL_NAMES = new Set([
+  'browser_status',
   'browser_get_content',
   'browser_click_element',
   'browser_type_text',
@@ -562,6 +564,9 @@ export const TIER_1_PARAMOUNT_TOOLS = [
   // Meta-tools for lazy-loading (3) — discover & run any other tool
   'get_tool_schema', 'execute_tool', 'search_tools',
 
+  // Orchestration (3) — always needed for multi-step flows
+  'wait', 'run_sequential', 'run_parallel',
+
   // Skills (1) — retrieve user-defined skill details
   'get_skill_info',
 
@@ -580,9 +585,13 @@ const _FFMPEG_TIER_1_TOOLS = [
   'ffmpeg_extract_frames',
 ] as const;
 
+// These are now in TIER_1_PARAMOUNT_TOOLS — kept as alias for SIS priority boost
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
 
-const PROMPT_DIRECT_TOOLS = ['terminal_create', 'terminal_send_input', 'terminal_read', 'search_local_workflows', 'run_workflow'] as const;
+const PROMPT_DIRECT_TOOLS = ['search_local_workflows', 'run_workflow'] as const;
+
+// Semantic injection map is now DB-backed via tool_embeddings.semantic_groups.
+// See utils/tool-groups.ts for the runtime loader and cache.
 
 const SIS_META_TOOL_NAMES = ['sis_search_tools', 'sis_execute_tool', 'sis_list_categories'] as const;
 
@@ -697,8 +706,9 @@ export function getTools(
     }
   }
 
-  // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
-  if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
+  // Browser use tools are now lazy-loaded via search_tools + get_tool_schema + execute_tool
+  // to save ~10-15k tokens per request. Set BROWSER_USE_NATIVE=1 to force native loading.
+  if (process.env.BROWSER_USE_NATIVE === '1' && (enabledIntegrations.includes('browser_use') || hasClientBridge())) {
     for (const [name, tool] of Object.entries(toolUniverse as any)) {
       if (name.startsWith('browser_use_')) tools[name] = tool;
     }
@@ -755,7 +765,25 @@ export async function getToolsForQuery(
     }
   }
 
-  // ── 3. Embedding-ranked tools (dynamic, top-N from pgvector) ──
+  // ── 3. Semantic group injection (keyword → tools from Supabase) ──
+  // Fast keyword matching against DB-stored semantic_groups.
+  // e.g. "do this in terminal" → injects terminal_create, terminal_send_input, terminal_read
+  // Integration tools (gmail_*, github_*, etc.) are gated by enabledIntegrations.
+  try {
+    const injected = await getSemanticInjections(query, enabledIntegrations);
+    for (const name of injected) {
+      if (isLegacyBrowserExtensionTool(name)) continue;
+      if ((toolUniverse as any)[name] && !selected[name]) {
+        selected[name] = (toolUniverse as any)[name];
+      }
+    }
+  } catch (e: any) {
+    if (process.env.SIS_DEBUG === '1') {
+      console.warn('[tools] Semantic injection failed:', e.message);
+    }
+  }
+
+  // ── 4. Embedding-ranked tools (dynamic, top-N from pgvector) ──
   // These are the tools most likely needed for this specific query,
   // selected by cosine similarity between prompt embedding and tool embeddings.
   // The embedding is memoized and shared with knowledge/memory retrieval.
@@ -768,12 +796,13 @@ export async function getToolsForQuery(
     }
   }
 
-  // ── 4. Integration tools are NOT loaded natively to save tokens ──
+  // ── 5. Integration tools are NOT loaded natively to save tokens ──
   // The system prompt tells the model which integrations are connected,
   // and it discovers/executes them via search_tools + get_tool_schema + execute_tool.
 
-  // Browser use tools are still loaded natively when bridge is active (needed for real-time automation)
-  if (enabledIntegrations.includes('browser_use') || hasClientBridge()) {
+  // Browser use tools are now lazy-loaded via search_tools + get_tool_schema + execute_tool
+  // to save ~10-15k tokens per request. Set BROWSER_USE_NATIVE=1 to force native loading.
+  if (process.env.BROWSER_USE_NATIVE === '1' && (enabledIntegrations.includes('browser_use') || hasClientBridge())) {
     for (const [name, tool] of Object.entries(toolUniverse as any)) {
       if (!selected[name] && name.startsWith('browser_use_')) {
         selected[name] = tool;

@@ -18,9 +18,6 @@ type BrowserUseRuntime = {
   process: ChildProcess | null;
   ready: boolean;
   setupPromise: Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> | null;
-  chromeSyncPromise: Promise<{ ok: boolean; error?: string }> | null;
-  lastChromeSyncAt: number;
-  lastChromeSyncKey: string;
 };
 
 type BrowserServerExecutable = {
@@ -66,6 +63,18 @@ function getProfileDir(sessionId = 'default'): string {
   return path.join(getProfileRootDir(), normalizeBrowserUseSessionId(sessionId));
 }
 
+function getPreferredBrowserMode(): 'headed' | 'headless' | 'connect' {
+  const mode = String(process.env.STUARD_BROWSER_MODE || '').trim().toLowerCase();
+  if (mode === 'headless' || mode === 'connect') return mode;
+  return 'headed';
+}
+
+function shouldRestartForPreferredMode(status: any): boolean {
+  const preferredMode = getPreferredBrowserMode();
+  const currentMode = String(status?.mode || '').trim().toLowerCase();
+  return !!currentMode && currentMode !== preferredMode;
+}
+
 async function allocateBrowserUsePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -97,9 +106,6 @@ async function getRuntime(sessionId = 'default'): Promise<BrowserUseRuntime> {
       process: null,
       ready: false,
       setupPromise: null,
-      chromeSyncPromise: null,
-      lastChromeSyncAt: 0,
-      lastChromeSyncKey: '',
     };
     browserUseRuntimes.set(normalizedSessionId, runtime);
     browserUseRuntimePromises.delete(normalizedSessionId);
@@ -430,9 +436,7 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
         STUARD_BROWSER_PORT: String(runtime.port),
         STUARD_BROWSER_PROFILE_DIR: profileDir,
         STUARD_BROWSER_AUTH_TOKEN: BROWSER_USE_AUTH_TOKEN,
-        // Default to CDP connect mode so we attach to the user's real Chrome
-        // instead of launching Playwright's own Chromium (which looks like guest mode).
-        STUARD_BROWSER_MODE: process.env.STUARD_BROWSER_MODE || 'connect',
+        STUARD_BROWSER_MODE: getPreferredBrowserMode(),
       },
       cwd: exe.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -499,9 +503,6 @@ async function stopAllBrowserUseServers(): Promise<void> {
     runtime.process = null;
     runtime.ready = false;
     runtime.setupPromise = null;
-    runtime.chromeSyncPromise = null;
-    runtime.lastChromeSyncAt = 0;
-    runtime.lastChromeSyncKey = '';
   }));
 }
 
@@ -527,6 +528,10 @@ async function getBrowserUseServerStatus(sessionId = 'default'): Promise<any | n
 export async function setupBrowserUse(sessionId = 'default'): Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> {
   const status = await getBrowserUseServerStatus(sessionId);
   if (status) {
+    if (shouldRestartForPreferredMode(status)) {
+      await stopBrowserUseServer(sessionId);
+      return await startBrowserUseServer(sessionId);
+    }
     // Server can be alive but unusable (missing browser_use package in that Python env).
     if (!status.installed) {
       const install = await installBrowserUse();
@@ -549,6 +554,10 @@ async function ensureReady(sessionId = 'default'): Promise<{ ok: boolean; error?
   const runtime = await getRuntime(sessionId);
   const status = await getBrowserUseServerStatus(sessionId);
   if (status?.installed) {
+    if (shouldRestartForPreferredMode(status)) {
+      await stopBrowserUseServer(sessionId);
+      return await startBrowserUseServer(sessionId);
+    }
     const opened = await ensureBrowserPageOpen(sessionId);
     if (opened.ok) return { ok: true };
   }

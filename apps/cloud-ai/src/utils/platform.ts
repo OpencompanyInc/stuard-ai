@@ -1,4 +1,6 @@
-import { platform as osPlatform } from 'os';
+import { platform as osPlatform, homedir } from 'os';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
 
 export type Platform = 'win32' | 'darwin' | 'linux';
 
@@ -39,6 +41,21 @@ export function buildShellCommand(command: string, plat?: Platform): { shell: st
   }
   const sh = p === 'darwin' ? '/bin/zsh' : '/bin/bash';
   return { shell: sh, args: ['-c', command] };
+}
+
+/**
+ * Return the canonical media gallery directory for a given source category.
+ * On local machines: ~/Documents/StuardAI/media/{source}/
+ * On cloud VMs:      /home/stuard/media/{source}/
+ * Creates the directory if it doesn't exist.
+ */
+export function mediaGalleryDir(source: string): string {
+  const base = isCloudVM()
+    ? join('/home/stuard', 'media')
+    : join(homedir(), 'Documents', 'StuardAI', 'media');
+  const dir = join(base, source || 'misc');
+  try { mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
 }
 
 /** Escape a string for safe embedding in a shell command */

@@ -1,5 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { NotificationProvider, useNotification, NotificationConfig } from './components/NotificationSystem';
+import { normalizeAskUserPrompt } from './components/chat-view/askUserPromptUtils';
+
+type InteractiveNotificationConfig = NotificationConfig & {
+    permissionRequest?: any;
+    responseId?: string;
+    askUser?: {
+        type?: string;
+        options?: any[];
+    };
+};
 
 // Component to handle IPC events and show notifications
 const NotificationListener = () => {
@@ -7,7 +17,7 @@ const NotificationListener = () => {
 
     useEffect(() => {
         // Listen for show-notification events from Main process
-        const removeListener = (window as any).desktopAPI?.onShowNotification?.((config: NotificationConfig & { permissionRequest?: any }) => {
+        const removeListener = (window as any).desktopAPI?.onShowNotification?.((config: InteractiveNotificationConfig) => {
             // If this is a permission request, inject Accept/Reject actions
             if (config.permissionRequest) {
                 const { id, tool, args, description } = config.permissionRequest;
@@ -61,13 +71,16 @@ const NotificationListener = () => {
                 return;
             }
 
-            const responseId = typeof (config as any).responseId === 'string' ? (config as any).responseId : '';
+            const responseId = typeof config.responseId === 'string' ? config.responseId : '';
             if (!responseId) {
                 show(config);
                 return;
             }
 
+            let hasResponded = false;
             const respond = (type: 'submit' | 'cancel' | 'dismiss', value?: string) => {
+                if (hasResponded) return;
+                hasResponded = true;
                 try {
                     (window as any).desktopAPI?.respondToNotification?.({ responseId, type, value });
                 } catch {
@@ -75,14 +88,58 @@ const NotificationListener = () => {
                 }
             };
 
-            show({
-                ...config,
-                onDismiss: () => respond('dismiss'),
-                input: config.input ? {
+            const askUserPrompt = config.askUser
+                ? normalizeAskUserPrompt({
+                    title: config.title,
+                    message: config.message,
+                    type: config.askUser?.type,
+                    options: config.askUser?.options,
+                    placeholder: config.input?.placeholder,
+                })
+                : null;
+            const askUserQuestion = askUserPrompt?.pages[0]?.questions[0];
+
+            const actions = askUserQuestion?.type === 'confirm'
+                ? [
+                    {
+                        label: 'No',
+                        variant: 'secondary' as const,
+                        onClick: () => respond('submit', 'no'),
+                    },
+                    {
+                        label: 'Yes',
+                        variant: 'primary' as const,
+                        onClick: () => respond('submit', 'yes'),
+                    },
+                ]
+                : askUserQuestion?.type === 'choices'
+                    ? askUserQuestion.options.map((option) => ({
+                        label: option.label,
+                        variant: 'secondary' as const,
+                        onClick: () => respond('submit', option.id),
+                    }))
+                    : config.actions;
+
+            const input = askUserQuestion
+                ? (askUserQuestion.type === 'text'
+                    ? {
+                        ...(config.input || {}),
+                        placeholder: askUserQuestion.placeholder || config.input?.placeholder || 'Type here...',
+                        onSubmit: (value: string) => respond('submit', value),
+                        onCancel: () => respond('cancel'),
+                    }
+                    : undefined)
+                : (config.input ? {
                     ...config.input,
                     onSubmit: (value: string) => respond('submit', value),
                     onCancel: () => respond('cancel'),
-                } : config.input,
+                } : config.input);
+
+            show({
+                ...config,
+                onDismiss: () => respond('dismiss'),
+                input,
+                actions,
             });
         });
 

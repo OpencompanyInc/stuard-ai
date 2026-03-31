@@ -8,15 +8,6 @@ export interface UserSettings {
   globalHotkey?: string;
   /** IANA timezone override (e.g. 'America/New_York'). null/undefined = use OS default. */
   timezone?: string | null;
-  /** Whether to auto-sync cookies from Chrome when browser-use starts. Default: true. */
-  chromeSyncEnabled?: boolean;
-  chromeSyncBrowserName?: string | null;
-  chromeSyncProfileName?: string | null;
-  /** Path to the Chrome profile directory to sync from (e.g. '.../User Data/Default'). null = auto-detect. */
-  chromeSyncProfilePath?: string | null;
-  /** Path to the Chrome User Data directory (e.g. '.../Google/Chrome/User Data'). null = auto-detect. */
-  chromeSyncUserDataDir?: string | null;
-
   // ── Renderer preferences (persisted across restarts) ──
   themeMode?: string;
   themeDarkShade?: string;

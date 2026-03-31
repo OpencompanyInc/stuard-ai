@@ -5,7 +5,7 @@ import { makeLocalTool } from './shared';
 
 export const browser_use_status = makeLocalTool(
   'browser_use_status',
-  'Check if browser automation is installed and running. Returns current mode (headed/headless/connect), active profile, and current page URL. Use this before other browser_use_* tools.',
+  'Check if the browser is installed and running. Returns the current mode, active profile, and current page URL. Use this before other browser_use_* tools.',
   z.object({}),
   z.object({
     ok: z.boolean(),
@@ -26,12 +26,10 @@ export const browser_use_status = makeLocalTool(
 
 export const browser_use_configure = makeLocalTool(
   'browser_use_configure',
-  'Configure the browser automation browser mode and profile. Modes: "headed" (visible window), "headless" (no UI), "connect" (attach to user\'s real Chrome browser via CDP — auto-detects debug port or restarts Chrome with one). When multiple Chrome profiles are open, use connect_profile to pick which one. Changing mode restarts the browser.',
+  'Configure the browser mode and profile. Modes: "headed" (visible window) or "headless" (no UI). Changing mode restarts the browser.',
   z.object({
-    mode: z.enum(['headed', 'headless', 'connect']).optional().describe('Browser mode. Use "connect" to attach to the user\'s current Chrome window.'),
-    cdp_url: z.string().optional().describe('Chrome DevTools Protocol URL (optional for "connect" mode — auto-detected if omitted)'),
+    mode: z.enum(['headed', 'headless']).optional().describe('Browser mode.'),
     profile: z.string().optional().describe('Named profile for persistent cookies/sessions (default: "default")'),
-    connect_profile: z.union([z.number(), z.string()]).optional().describe('Which Chrome profile to attach to in connect mode. Use index (0, 1, 2...) or a search string matching a tab title/URL. Use browser_use_connected_profiles to see available profiles.'),
   }),
   z.object({
     ok: z.boolean(),
@@ -45,42 +43,11 @@ export const browser_use_configure = makeLocalTool(
   { noFallback: true },
 );
 
-// ─── browser_use_connected_profiles ─────────────────────────────────────────
-
-export const browser_use_connected_profiles = makeLocalTool(
-  'browser_use_connected_profiles',
-  'List all Chrome profiles/windows available via the CDP connection. Only works in "connect" mode. Shows each profile\'s tabs so you can identify which is which (e.g. personal vs work).',
-  z.object({}),
-  z.object({
-    ok: z.boolean(),
-    connected: z.boolean().optional(),
-    activeProfile: z.number().optional(),
-    profileCount: z.number().optional(),
-    profiles: z.array(z.any()).optional(),
-    message: z.string().optional(),
-  }),
-  5000,
-  { noFallback: true },
-);
-
-// ─── browser_use_switch_profile ─────────────────────────────────────────────
-
-export const browser_use_switch_profile = makeLocalTool(
-  'browser_use_switch_profile',
-  'Switch to a different Chrome profile when multiple are connected via CDP. Specify by index (0, 1, 2...) or search by tab title/URL. Use browser_use_connected_profiles first to see what\'s available.',
-  z.object({
-    profile: z.union([z.number(), z.string()]).describe('Profile index or search string matching a tab title/URL'),
-  }),
-  undefined,
-  5000,
-  { noFallback: true },
-);
-
 // ─── browser_use_execute_script ─────────────────────────────────────────────
 
 export const browser_use_execute_script = makeLocalTool(
   'browser_use_execute_script',
-  'Execute JavaScript inside the current browser automation page context. Best for complex extraction, DOM transformation, or page logic where one script is cleaner than many tool calls. The script runs inside an async function and should return JSON-serializable data.',
+  'Execute JavaScript inside the current browser page context. Best for complex extraction, DOM transformation, or page logic where one script is cleaner than many tool calls. The script runs inside an async function and should return JSON-serializable data.',
   z.object({
     script: z.string().describe('JavaScript body to execute in the page context. The script runs inside an async function with an `args` object in scope; return a JSON-serializable value.'),
     args: z.record(z.string(), z.any()).optional().describe('Named arguments exposed to the script as `args`'),

@@ -2,8 +2,8 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+import { mediaGalleryDir } from '../utils/platform';
 import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { waSendText, waSendMedia, waSendReaction, waMarkRead, waUploadMediaFromUrl, waGetMediaUrl } from '../routes/integrations/whatsapp';
@@ -236,8 +236,7 @@ export const whatsapp_download_media = createTool({
       };
       const ext = extMap[info.mimeType] || info.mimeType.split('/')[1] || 'bin';
       const name = input.filename || `wa_media_${randomUUID().slice(0, 8)}.${ext}`;
-      const dir = join(tmpdir(), 'stuard-wa-media');
-      await mkdir(dir, { recursive: true }).catch(() => {});
+      const dir = mediaGalleryDir('message-media');
       const filePath = join(dir, name);
       await writeFile(filePath, buffer);
 

@@ -16,20 +16,6 @@ interface IntegrationProfile {
   scopes_csv?: string | null;
 }
 
-interface BrowserUseChromeProfileBrowser {
-  browser: string;
-  userDataDir: string;
-  profiles: Array<{ name: string; path: string }>;
-}
-
-interface BrowserUseChromeSyncSettings {
-  chromeSyncEnabled: boolean;
-  chromeSyncBrowserName?: string | null;
-  chromeSyncProfileName?: string | null;
-  chromeSyncProfilePath?: string | null;
-  chromeSyncUserDataDir?: string | null;
-}
-
 export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: UseIntegrationsStateArgs) {
   const [connectedMap, setConnectedMap] = useState<Record<string, boolean>>({});
   const [intQuery, setIntQuery] = useState("");
@@ -46,21 +32,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [pyRunning, setPyRunning] = useState<boolean>(false);
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
   const [pyRunResult, setPyRunResult] = useState<any | null>(null);
-  const [browserStatus, setBrowserStatus] = useState<{ connected: boolean; clients: number }>({ connected: false, clients: 0 });
   const [ollamaStatus, setOllamaStatus] = useState<any | null>(null);
   const [ollamaChecking, setOllamaChecking] = useState<boolean>(false);
   const [browserUseStatus, setBrowserUseStatus] = useState<any | null>(null);
   const [browserUseChecking, setBrowserUseChecking] = useState<boolean>(false);
   const [browserUseSetupProgress, setBrowserUseSetupProgress] = useState<string | null>(null);
-  const [browserUseChromeProfiles, setBrowserUseChromeProfiles] = useState<BrowserUseChromeProfileBrowser[]>([]);
-  const [browserUseSyncSettings, setBrowserUseSyncSettings] = useState<BrowserUseChromeSyncSettings>({
-    chromeSyncEnabled: true,
-    chromeSyncBrowserName: 'Chrome',
-    chromeSyncProfileName: 'Default',
-    chromeSyncProfilePath: null,
-    chromeSyncUserDataDir: null,
-  });
-  const [browserUseSyncSaving, setBrowserUseSyncSaving] = useState<boolean>(false);
   const [telnyxPhones, setTelnyxPhones] = useState<Array<{phone: string, slot: number}>>([]);
   const [telnyxVerifying, setTelnyxVerifying] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState<string | null>(null);
@@ -86,6 +62,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           try { delete (parsed as any)['browser-control']; } catch { }
+          try { delete (parsed as any)['browser']; } catch { }
         }
         setConnectedMap(parsed);
       }
@@ -197,8 +174,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true },
       { slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
       { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
-      { slug: "browser", name: "Browser Extension", description: "Web automation via browser extension (legacy).", category: "Local", homepage: "https://stuard.ai/extension", available: true },
-      { slug: "browser-use", name: "Browser Use", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://github.com/browser-use/browser-use", available: true },
+      { slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
@@ -218,19 +194,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     []
   );
 
-  const integrationLibrary = useMemo(
-    () => integrationLibraryRaw.map((entry) => (
-      entry.slug === "browser-use"
-        ? {
-            ...entry,
-            name: "Playwright Browser",
-            description: "Playwright-based browser automation for web tasks, forms, logins, and session-aware browsing. Mirrors your Chromium profile when needed.",
-            homepage: "https://playwright.dev/",
-          }
-        : entry
-    )),
-    [integrationLibraryRaw]
-  );
+  const integrationLibrary = useMemo(() => integrationLibraryRaw, [integrationLibraryRaw]);
 
   const intCategories = useMemo(() => {
     const set = new Set<string>();
@@ -282,35 +246,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     })();
   }, []);
 
-  const refreshBrowserStatus = async () => {
-    try {
-      const res = await (window as any).desktopAPI?.execTool?.('browser_status', {});
-      if (res && typeof res === 'object') {
-        setBrowserStatus({ connected: !!res.connected, clients: res.clients || 0 });
-      }
-    } catch {}
-  };
-
-  useEffect(() => {
-    // Initial poll
-    refreshBrowserStatus();
-    // Poll fallback every 8s
-    const interval = setInterval(refreshBrowserStatus, 8000);
-
-    // Real-time push from browser-server (instant status updates)
-    let unsub: (() => void) | undefined;
-    try {
-      unsub = (window as any).desktopAPI?.onBrowserExtensionStatus?.((status: { connected: boolean; clients: number }) => {
-        setBrowserStatus({ connected: !!status.connected, clients: status.clients || 0 });
-      });
-    } catch {}
-
-    return () => {
-      clearInterval(interval);
-      try { unsub?.(); } catch {}
-    };
-  }, []);
-
   const refreshMediapipeStatus = async () => {
     try {
       const res = await (window as any).desktopAPI?.execTool?.('mediapipe_status', {});
@@ -343,45 +278,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     } finally {
       await refreshMediapipeStatus();
       setMpInstalling(false);
-    }
-  };
-
-  const refreshBrowserUseProfiles = async () => {
-    try {
-      const res = await (window as any).desktopAPI?.browserUseListChromeProfiles?.();
-      if (res?.ok && Array.isArray(res.browsers)) {
-        setBrowserUseChromeProfiles(res.browsers);
-      }
-    } catch {}
-  };
-
-  const refreshBrowserUseSyncSettings = async () => {
-    try {
-      const res = await (window as any).desktopAPI?.browserUseGetChromeSyncSettings?.();
-      if (res?.ok && res.settings) {
-        setBrowserUseSyncSettings(res.settings);
-      }
-    } catch {}
-  };
-
-  const updateBrowserUseSyncSettings = async (updates: Partial<BrowserUseChromeSyncSettings>) => {
-    const next = {
-      ...browserUseSyncSettings,
-      ...updates,
-      chromeSyncEnabled: updates.chromeSyncEnabled ?? browserUseSyncSettings.chromeSyncEnabled,
-    };
-    setBrowserUseSyncSaving(true);
-    try {
-      const res = await (window as any).desktopAPI?.browserUseUpdateChromeSyncSettings?.(next);
-      if (res?.ok && res.settings) {
-        setBrowserUseSyncSettings(res.settings);
-      } else if (res?.ok) {
-        setBrowserUseSyncSettings(next);
-      }
-      await refreshBrowserUseStatus();
-      return res;
-    } finally {
-      setBrowserUseSyncSaving(false);
     }
   };
 
@@ -442,9 +338,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const res = await (window as any).desktopAPI?.execTool?.('browser_use_status', {});
       if (res && typeof res === 'object') {
         setBrowserUseStatus(res);
-        if ((res as any).chromeSyncSettings) {
-          setBrowserUseSyncSettings((res as any).chromeSyncSettings);
-        }
       }
 
       const running = !!(res && (res as any).running);
@@ -463,7 +356,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
-  /** One-click: installs the Playwright browser runtime and starts the server */
+  /** One-click: installs Stuard Browser and starts the server */
   const setupBrowserUse = async () => {
     setBrowserUseChecking(true);
     setBrowserUseSetupProgress('Setting up...');
@@ -480,7 +373,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       await refreshBrowserUseStatus();
     } catch {
       setBrowserUseSetupProgress(null);
-      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to set up the Playwright browser runtime.' }));
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to set up Stuard Browser.' }));
     } finally {
       setBrowserUseChecking(false);
     }
@@ -494,14 +387,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       if (res && typeof res === 'object' && !res.ok) {
         setBrowserUseStatus((prev: any) => ({
           ...(prev || {}),
-          error: res.error || 'Failed to start the Playwright browser runtime.',
+          error: res.error || 'Failed to start Stuard Browser.',
         }));
       } else {
         setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: null }));
       }
       await refreshBrowserUseStatus();
     } catch {
-      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to start the Playwright browser runtime.' }));
+      setBrowserUseStatus((prev: any) => ({ ...(prev || {}), error: 'Failed to start Stuard Browser.' }));
     } finally {
       setBrowserUseSetupProgress(null);
       setBrowserUseChecking(false);
@@ -549,8 +442,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     (async () => {
       try {
         await refreshBrowserUseStatus();
-        await refreshBrowserUseSyncSettings();
-        await refreshBrowserUseProfiles();
       } catch {}
     })();
   }, []);
@@ -612,15 +503,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   const handleDisconnect = async (slug: string, profileLabel?: string) => {
-    if (slug === "browser") {
-      try {
-        localStorage.setItem("stuard.pref.browser_enabled", "false");
-        window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'false' }));
-      } catch {}
-      await refreshBrowserStatus();
-      return;
-    }
-
     const token = session?.access_token;
 
     const provider = slugToProvider(slug);
@@ -1003,19 +885,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
-    if (slug === "browser") {
-      try {
-        const raw = localStorage.getItem("stuard.pref.browser_enabled");
-        const isEnabled = raw === "true";
-        if (!isEnabled) {
-          localStorage.setItem("stuard.pref.browser_enabled", "true");
-          window.dispatchEvent(new StorageEvent('storage', { key: 'stuard.pref.browser_enabled', newValue: 'true' }));
-        }
-        await refreshBrowserStatus();
-      } catch {}
-      return;
-    }
-
     if (slug === "browser-use") {
       try {
         await setupBrowserUse();
@@ -1196,15 +1065,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     pyRunCode,
     setPyRunCode,
     pyRunResult,
-    browserStatus,
     ollamaStatus,
     ollamaChecking,
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
-    browserUseChromeProfiles,
-    browserUseSyncSettings,
-    browserUseSyncSaving,
     telnyxPhones,
     telnyxVerifying,
     whatsappPhone,
@@ -1226,16 +1091,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     refreshPythonStatus,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
-    refreshBrowserStatus,
     refreshOllamaStatus,
     startOllama,
     refreshBrowserUseStatus,
-    refreshBrowserUseProfiles,
     setupBrowserUse,
     startBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
-    updateBrowserUseSyncSettings,
     setupPython,
     setupFfmpeg,
     setupMediapipe,

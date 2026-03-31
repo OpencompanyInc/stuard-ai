@@ -225,8 +225,7 @@ export async function execSendNotification(args: any, ctx: RouterContext): Promi
   const progress = Number(args?.progress);
   const requestedDuration = Number(args?.durationMs ?? args?.duration);
   const waitForInput = Boolean(args?.waitForInput);
-  const showInput = waitForInput
-    || Boolean(args?.showInput)
+  const showInput = Boolean(args?.showInput)
     || String(args?.inputPlaceholder || args?.inputDefaultValue || '').trim().length > 0;
   const duration = waitForInput
     ? 0
@@ -248,6 +247,11 @@ export async function execSendNotification(args: any, ctx: RouterContext): Promi
     taskId: args?.taskId ? String(args.taskId) : undefined,
     workflowRunId: args?.workflowRunId ? String(args.workflowRunId) : undefined,
   } as Record<string, any>;
+
+  // Pass through askUser metadata so the renderer can build confirm/choices UI
+  if (args?.askUser) {
+    notification.askUser = args.askUser;
+  }
 
   if (showInput) {
     notification.input = {

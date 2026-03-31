@@ -23,6 +23,7 @@ describe('Tool Registry - Extended Tests', () => {
 
   describe('getToolKind - electron tools', () => {
     const electronTools = [
+      '_media_register',
       'custom_ui',
       'update_custom_ui',
       'close_custom_ui',

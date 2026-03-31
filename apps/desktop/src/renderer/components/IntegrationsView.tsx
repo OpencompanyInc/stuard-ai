@@ -11,20 +11,6 @@ interface IntegrationProfile {
   scopes_csv?: string | null;
 }
 
-interface BrowserUseChromeProfileBrowser {
-  browser: string;
-  userDataDir: string;
-  profiles: Array<{ name: string; path: string }>;
-}
-
-interface BrowserUseChromeSyncSettings {
-  chromeSyncEnabled: boolean;
-  chromeSyncBrowserName?: string | null;
-  chromeSyncProfileName?: string | null;
-  chromeSyncProfilePath?: string | null;
-  chromeSyncUserDataDir?: string | null;
-}
-
 interface IntegrationsViewProps {
   connectedCount: number;
   filteredIntegrations: any[];
@@ -56,11 +42,9 @@ interface IntegrationsViewProps {
   refreshPythonStatus: () => Promise<void> | void;
   refreshFfmpegStatus: () => Promise<void> | void;
   refreshMediapipeStatus: () => Promise<void> | void;
-  refreshBrowserStatus: () => Promise<void> | void;
   setupPython: () => Promise<void> | void;
   installPython: () => Promise<void> | void;
   runPython: () => Promise<void> | void;
-  browserStatus: { connected: boolean; clients: number };
   ollamaStatus: any;
   ollamaChecking: boolean;
   refreshOllamaStatus: () => Promise<void> | void;
@@ -88,15 +72,10 @@ interface IntegrationsViewProps {
   browserUseStatus?: any;
   browserUseChecking?: boolean;
   browserUseSetupProgress?: string | null;
-  browserUseChromeProfiles?: BrowserUseChromeProfileBrowser[];
-  browserUseSyncSettings?: BrowserUseChromeSyncSettings;
-  browserUseSyncSaving?: boolean;
   refreshBrowserUseStatus?: () => Promise<void> | void;
-  refreshBrowserUseProfiles?: () => Promise<void> | void;
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
-  updateBrowserUseSyncSettings?: (updates: Partial<BrowserUseChromeSyncSettings>) => Promise<any> | void;
 }
 
 /** Map integration slug → backend provider name */
@@ -118,11 +97,6 @@ function isOAuthSlug(slug: string): boolean {
 
 function isGoogleSlug(slug: string): boolean {
   return slug.startsWith("google-") || slug === "gmail";
-}
-
-function isGenericChromiumProfileName(value?: string | null): boolean {
-  const normalized = String(value || '').trim().toLowerCase();
-  return !normalized || normalized === 'default' || normalized === 'your chrome' || /^profile\s+\d+$/i.test(normalized) || /^person\s+\d+$/i.test(normalized);
 }
 
 const GOOGLE_SLUGS = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
@@ -1052,8 +1026,6 @@ interface StandardCardProps {
   mpStatus?: any;
   mpInstalling?: boolean;
   refreshMediapipeStatus?: () => Promise<void> | void;
-  browserStatus?: { connected: boolean; clients: number };
-  refreshBrowserStatus?: () => Promise<void> | void;
   ollamaStatus?: any;
   ollamaChecking?: boolean;
   refreshOllamaStatus?: () => Promise<void> | void;
@@ -1061,15 +1033,10 @@ interface StandardCardProps {
   browserUseStatus?: any;
   browserUseChecking?: boolean;
   browserUseSetupProgress?: string | null;
-  browserUseChromeProfiles?: BrowserUseChromeProfileBrowser[];
-  browserUseSyncSettings?: BrowserUseChromeSyncSettings;
-  browserUseSyncSaving?: boolean;
   refreshBrowserUseStatus?: () => Promise<void> | void;
-  refreshBrowserUseProfiles?: () => Promise<void> | void;
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
-  updateBrowserUseSyncSettings?: (updates: Partial<BrowserUseChromeSyncSettings>) => Promise<any> | void;
 }
 
 const StandardCard: React.FC<StandardCardProps> = ({
@@ -1086,9 +1053,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
   pyStatus, pyEnvId, setPyEnvId, pyInstalling, installPython,
   ffStatus, ffInstalling, refreshFfmpegStatus,
   mpStatus, mpInstalling, refreshMediapipeStatus,
-  browserStatus, refreshBrowserStatus,
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
-  browserUseStatus, browserUseChecking, browserUseSetupProgress, browserUseChromeProfiles, browserUseSyncSettings, browserUseSyncSaving, refreshBrowserUseStatus, refreshBrowserUseProfiles, setupBrowserUse, stopBrowserUse, uninstallBrowserUse, updateBrowserUseSyncSettings,
+  browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -1097,7 +1063,6 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const isPython = i.slug === 'python';
   const isFfmpeg = i.slug === 'ffmpeg';
   const isMediapipe = i.slug === 'mediapipe';
-  const isBrowser = i.slug === 'browser';
   const isOllama = i.slug === 'ollama';
   const isBrowserUse = i.slug === 'browser-use';
   const isOAuth = isOAuthSlug(i.slug);
@@ -1111,25 +1076,6 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const ollamaInstalled = !!(ollamaStatus && (ollamaStatus as any).installed);
   const ollamaRunning = !!(ollamaStatus && (ollamaStatus as any).running);
   const ollamaModels: any[] = (ollamaStatus as any)?.models || [];
-  const browserSyncSettings = browserUseSyncSettings || {
-    chromeSyncEnabled: true,
-    chromeSyncBrowserName: 'Chrome',
-    chromeSyncProfileName: 'Default',
-    chromeSyncProfilePath: null,
-    chromeSyncUserDataDir: null,
-  };
-  const browserSyncBrowsers = browserUseChromeProfiles || [];
-  const selectedBrowserEntry = browserSyncBrowsers.find((entry: BrowserUseChromeProfileBrowser) => entry.browser === (browserSyncSettings.chromeSyncBrowserName || 'Chrome'))
-    || browserSyncBrowsers[0]
-    || null;
-  const selectedProfileEntry = selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.path === browserSyncSettings.chromeSyncProfilePath)
-    || selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.name === browserSyncSettings.chromeSyncProfileName)
-    || selectedBrowserEntry?.profiles[0]
-    || null;
-  const mirroredProfileName = !isGenericChromiumProfileName(browserUseStatus?.chromeSync?.sourceProfileName)
-    ? browserUseStatus?.chromeSync?.sourceProfileName
-    : selectedProfileEntry?.name || browserSyncSettings.chromeSyncProfileName || null;
-
   const confirmAddProfile = async () => {
     const label = newProfileName.trim();
     if (!label) return;
@@ -1428,7 +1374,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
         </div>
       )}
 
-      {/* Playwright browser details */}
+      {/* Stuard Browser details */}
       {isBrowserUse && (
         <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
           {browserUseStatus?.running ? (
@@ -1454,7 +1400,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   onClick={uninstallBrowserUse}
                   disabled={browserUseChecking}
                   className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
-                  title="Uninstall Playwright Browser"
+                  title="Uninstall Stuard Browser"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -1476,14 +1422,14 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 <span className="text-theme-muted ml-auto text-[10px]">Auto-start on use</span>
               </div>
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                The Playwright browser runtime is installed and launches automatically when a browser tool needs it.
+                Stuard Browser is installed and launches automatically when a browser tool needs it.
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={uninstallBrowserUse}
                   disabled={browserUseChecking}
                   className="w-full h-7 flex items-center justify-center gap-1.5 rounded-md border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all disabled:opacity-50"
-                  title="Uninstall Playwright Browser"
+                  title="Uninstall Stuard Browser"
                 >
                   <Trash2 className="w-3 h-3" />
                   Uninstall
@@ -1500,7 +1446,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 <span className="font-semibold text-theme-fg">Python required</span>
               </div>
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                The Playwright browser runtime needs Python 3.11+. Download it first, then come back and click Set Up.
+                Stuard Browser needs Python 3.11+. Download it first, then come back and click Set Up.
               </p>
               <div className="flex gap-2">
                 <button
@@ -1537,102 +1483,11 @@ const StandardCard: React.FC<StandardCardProps> = ({
           ) : (
             <div className="space-y-2.5">
               <p className="text-[11px] text-theme-muted leading-relaxed">
-                Click below to install the Playwright browser runtime and set up browser automation.
+                Click below to install Stuard Browser and set up browser automation.
               </p>
             </div>
           )}
 
-          <div className="pt-3 border-t border-theme/40 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold text-theme-fg">Mirror your existing browser login</div>
-                <div className="text-[10px] text-theme-muted">Stuard clones your selected Chromium profile before launch and keeps cookies refreshed automatically.</div>
-              </div>
-              <button
-                onClick={() => updateBrowserUseSyncSettings?.({ chromeSyncEnabled: !browserSyncSettings.chromeSyncEnabled })}
-                disabled={browserUseSyncSaving}
-                className={clsx(
-                  'h-7 px-3 rounded-md border text-[10px] font-bold transition-all disabled:opacity-50',
-                  browserSyncSettings.chromeSyncEnabled
-                    ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-                    : 'border-theme text-theme-muted hover:bg-theme-hover'
-                )}
-              >
-                {browserSyncSettings.chromeSyncEnabled ? 'Auto Sync On' : 'Auto Sync Off'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <label className="space-y-1">
-                <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Browser</span>
-                <select
-                  value={selectedBrowserEntry?.browser || ''}
-                  onChange={(e) => {
-                    const nextBrowser = browserSyncBrowsers.find((entry: BrowserUseChromeProfileBrowser) => entry.browser === e.target.value);
-                    const nextProfile = nextBrowser?.profiles?.[0] || null;
-                    updateBrowserUseSyncSettings?.({
-                      chromeSyncBrowserName: nextBrowser?.browser || 'Chrome',
-                      chromeSyncProfileName: nextProfile?.name || 'Default',
-                      chromeSyncProfilePath: nextProfile?.path || null,
-                      chromeSyncUserDataDir: nextBrowser?.userDataDir || null,
-                    });
-                  }}
-                  disabled={browserUseSyncSaving || browserSyncBrowsers.length === 0}
-                  className="w-full px-3 py-2 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary disabled:opacity-50"
-                >
-                  {browserSyncBrowsers.length === 0 ? (
-                    <option value="">No Chromium profiles found</option>
-                  ) : (
-                    browserSyncBrowsers.map((entry) => (
-                      <option key={`${entry.browser}:${entry.userDataDir}`} value={entry.browser}>{entry.browser}</option>
-                    ))
-                  )}
-                </select>
-              </label>
-
-              <label className="space-y-1">
-                <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Profile</span>
-                <select
-                  value={selectedProfileEntry?.path || ''}
-                  onChange={(e) => {
-                    const nextProfile = selectedBrowserEntry?.profiles.find((profile: { name: string; path: string }) => profile.path === e.target.value) || null;
-                    updateBrowserUseSyncSettings?.({
-                      chromeSyncBrowserName: selectedBrowserEntry?.browser || browserSyncSettings.chromeSyncBrowserName || 'Chrome',
-                      chromeSyncProfileName: nextProfile?.name || null,
-                      chromeSyncProfilePath: nextProfile?.path || null,
-                      chromeSyncUserDataDir: selectedBrowserEntry?.userDataDir || null,
-                    });
-                  }}
-                  disabled={browserUseSyncSaving || !selectedBrowserEntry || selectedBrowserEntry.profiles.length === 0}
-                  className="w-full px-3 py-2 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary disabled:opacity-50"
-                >
-                  {!selectedBrowserEntry?.profiles?.length ? (
-                    <option value="">No profiles found</option>
-                  ) : (
-                    selectedBrowserEntry.profiles.map((profile: { name: string; path: string }) => (
-                      <option key={profile.path} value={profile.path}>{profile.name}</option>
-                    ))
-                  )}
-                </select>
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => refreshBrowserUseProfiles?.()}
-                disabled={browserUseSyncSaving || browserUseChecking}
-                className="h-7 px-3 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all disabled:opacity-50"
-              >
-                <RefreshCw className={clsx('w-3 h-3', (browserUseSyncSaving || browserUseChecking) && 'animate-spin')} />
-                Refresh Profiles
-              </button>
-              {mirroredProfileName && (
-                <span className="text-[10px] text-theme-muted truncate" title={browserUseStatus?.chromeSync?.sourceProfilePath || ''}>
-                  Current mirror: {mirroredProfileName}
-                </span>
-              )}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1643,7 +1498,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             browserUseStatus?.running ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Playwright Active
+                Browser Active
               </div>
             ) : browserUseSetupProgress ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
@@ -1665,8 +1520,6 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 {browserUseChecking ? 'Setting up...' : browserUseStatus?.error ? 'Try Again' : 'Set Up'}
               </button>
             )
-          ) : isBrowser ? (
-            null
           ) : isOllama ? (
             ollamaRunning || ollamaAvailable ? (
               <>
@@ -1816,7 +1669,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     refreshProfiles,
     setDefaultProfile,
     deleteProfile,
-    browserStatus,
     pyStatus,
     ffStatus,
     mpStatus,
@@ -1828,7 +1680,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     installPython,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
-    refreshBrowserStatus,
     ollamaStatus,
     ollamaChecking,
     refreshOllamaStatus,
@@ -1851,15 +1702,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
-    browserUseChromeProfiles,
-    browserUseSyncSettings,
-    browserUseSyncSaving,
     refreshBrowserUseStatus,
-    refreshBrowserUseProfiles,
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
-    updateBrowserUseSyncSettings,
   } = props;
 
   // Load profiles on mount
@@ -2034,8 +1880,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                 mpStatus={mpStatus}
                 mpInstalling={mpInstalling}
                 refreshMediapipeStatus={refreshMediapipeStatus}
-                browserStatus={browserStatus}
-                refreshBrowserStatus={refreshBrowserStatus}
                 ollamaStatus={ollamaStatus}
                 ollamaChecking={ollamaChecking}
                 refreshOllamaStatus={refreshOllamaStatus}
@@ -2043,15 +1887,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                 browserUseStatus={browserUseStatus}
                 browserUseChecking={browserUseChecking}
                 browserUseSetupProgress={browserUseSetupProgress}
-                browserUseChromeProfiles={browserUseChromeProfiles}
-                browserUseSyncSettings={browserUseSyncSettings}
-                browserUseSyncSaving={browserUseSyncSaving}
                 refreshBrowserUseStatus={refreshBrowserUseStatus}
-                refreshBrowserUseProfiles={refreshBrowserUseProfiles}
                 setupBrowserUse={setupBrowserUse}
                 stopBrowserUse={stopBrowserUse}
                 uninstallBrowserUse={uninstallBrowserUse}
-                updateBrowserUseSyncSettings={updateBrowserUseSyncSettings}
               />
             );
           })}

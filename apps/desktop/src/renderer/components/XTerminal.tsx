@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
 export interface XTerminalProps {
@@ -71,10 +72,51 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
     term.open(terminalRef.current);
+
+    // GPU-accelerated rendering via WebGL
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      term.loadAddon(webglAddon);
+    } catch {
+      // WebGL not available, falls back to canvas renderer
+    }
+
     fitAddon.fit();
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // Clipboard: Ctrl+V paste, Ctrl+C copy (when selected), right-click paste
+    term.attachCustomKeyEventHandler((event) => {
+      const isMod = event.ctrlKey || event.metaKey;
+      if (isMod && event.key === 'v' && event.type === 'keydown') {
+        navigator.clipboard.readText().then(text => {
+          if (text) {
+            // Bracket paste mode for proper multi-line handling
+            (window as any).desktopAPI?.terminalWrite?.(sessionId, text);
+          }
+        });
+        return false;
+      }
+      if (isMod && event.key === 'c' && event.type === 'keydown' && term.hasSelection()) {
+        navigator.clipboard.writeText(term.getSelection());
+        return false;
+      }
+      return true;
+    });
+
+    // Right-click paste
+    terminalRef.current.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      navigator.clipboard.readText().then(text => {
+        if (text) {
+          (window as any).desktopAPI?.terminalWrite?.(sessionId, text);
+        }
+      });
+    });
 
     // Handle user input -> send to main process
     term.onData((data) => {

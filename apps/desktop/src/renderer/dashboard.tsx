@@ -274,7 +274,6 @@ function DashboardApp() {
     pyRunCode,
     setPyRunCode,
     pyRunResult,
-    browserStatus,
     intCategories,
     filteredIntegrations,
     connectedCount,
@@ -284,7 +283,6 @@ function DashboardApp() {
     refreshPythonStatus,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
-    refreshBrowserStatus,
     ollamaStatus,
     ollamaChecking,
     refreshOllamaStatus,
@@ -292,15 +290,10 @@ function DashboardApp() {
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
-    browserUseChromeProfiles,
-    browserUseSyncSettings,
-    browserUseSyncSaving,
     refreshBrowserUseStatus,
-    refreshBrowserUseProfiles,
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
-    updateBrowserUseSyncSettings,
     setupPython,
     installPython,
     runPython,
@@ -1384,11 +1377,9 @@ function DashboardApp() {
                                 refreshPythonStatus={refreshPythonStatus}
                                 refreshFfmpegStatus={refreshFfmpegStatus}
                                 refreshMediapipeStatus={refreshMediapipeStatus}
-                                refreshBrowserStatus={refreshBrowserStatus}
                                 setupPython={setupPython}
                                 installPython={installPython}
                                 runPython={runPython}
-                                browserStatus={browserStatus}
                                 ollamaStatus={ollamaStatus}
                                 ollamaChecking={ollamaChecking}
                                 refreshOllamaStatus={refreshOllamaStatus}
@@ -1416,15 +1407,10 @@ function DashboardApp() {
                                 browserUseStatus={browserUseStatus}
                                 browserUseChecking={browserUseChecking}
                                 browserUseSetupProgress={browserUseSetupProgress}
-                                browserUseChromeProfiles={browserUseChromeProfiles}
-                                browserUseSyncSettings={browserUseSyncSettings}
-                                browserUseSyncSaving={browserUseSyncSaving}
                                 refreshBrowserUseStatus={refreshBrowserUseStatus}
-                                refreshBrowserUseProfiles={refreshBrowserUseProfiles}
                                 setupBrowserUse={setupBrowserUse}
                                 stopBrowserUse={stopBrowserUse}
                                 uninstallBrowserUse={uninstallBrowserUse}
-                                updateBrowserUseSyncSettings={updateBrowserUseSyncSettings}
                               />
                             </>
                           )}

@@ -564,15 +564,15 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     // Save to file if requested
     if (save || play) {
       const { randomUUID } = await import('crypto');
-      const { tmpdir } = await import('os');
+      const os = await import('os');
       const { join } = await import('path');
       const { writeFile, mkdir } = await import('fs/promises');
-      
+
       const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
-      const ttsDir = join(tmpdir(), 'stuard-tts');
+      const ttsDir = join(os.homedir(), 'Documents', 'StuardAI', 'media', 'generated-audio');
       const targetPath = outputPath || join(ttsDir, fileName);
       filePath = targetPath;
-      
+
       // Ensure directory exists
       try {
         await mkdir(ttsDir, { recursive: true });
@@ -690,11 +690,12 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
 
     // Re-save images locally using _b64 from cloud, since cloud temp paths aren't accessible
     const { randomUUID } = await import('crypto');
-    const { tmpdir } = await import('os');
+    const { homedir } = await import('os');
     const { join } = await import('path');
     const { writeFile, mkdir } = await import('fs/promises');
 
-    const imgDir = join(tmpdir(), 'stuard-images');
+    const docsDir = join(homedir(), 'Documents');
+    const imgDir = join(docsDir, 'StuardAI', 'media', 'generated');
     try { await mkdir(imgDir, { recursive: true }); } catch {}
 
     const savedImages: Array<{ filePath: string; format: string; sizeBytes?: number; revisedPrompt?: string }> = [];

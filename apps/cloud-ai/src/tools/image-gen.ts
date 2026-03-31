@@ -4,8 +4,8 @@ import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import { basename, extname, join } from 'path';
-import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+import { mediaGalleryDir } from '../utils/platform';
 
 // ─── Provider → Model mapping ───────────────────────────────────────────────
 // Flexible: if a model isn't listed here, the tool will try to infer the
@@ -584,10 +584,9 @@ export const generate_image = createTool({
         return { ok: false, error: 'no_images_generated' };
       }
 
-      // Save to temp files — models can't handle raw base64 blobs as tool output
+      // Save to media gallery — models can't handle raw base64 blobs as tool output
       const outputFormat = result.outputFormat || (provider === 'xai' ? 'jpeg' : format);
-      const imgDir = join(tmpdir(), 'stuard-images');
-      await mkdir(imgDir, { recursive: true }).catch(() => {});
+      const imgDir = mediaGalleryDir('generated');
 
       const images: Array<{ filePath: string; format: string; sizeBytes: number; revisedPrompt?: string; _b64?: string }> = [];
 
@@ -610,6 +609,26 @@ export const generate_image = createTool({
       }
 
       console.log(`[image-gen] Generated ${images.length} image(s) via ${provider}/${model}`);
+
+      // Register images in the desktop media library via bridge (best-effort, silent)
+      try {
+        const { execLocalTool } = await import('./bridge');
+        await execLocalTool('_media_register', {
+          images: images.map(img => ({
+            _b64: img._b64,
+            format: img.format,
+            revisedPrompt: img.revisedPrompt,
+          })),
+          source: 'generated',
+          toolName: 'generate_image',
+          classification: 'Generated image',
+          tags: ['generated', 'ai'],
+          metadata: { model, provider, prompt },
+        }, undefined, 30000, { silent: true });
+      } catch (regErr: any) {
+        console.log(`[image-gen] Media register (best-effort): ${regErr?.message || regErr}`);
+      }
+
       return { ok: true, images, model, provider };
     } catch (e: any) {
       console.error('[image-gen] Error:', e);

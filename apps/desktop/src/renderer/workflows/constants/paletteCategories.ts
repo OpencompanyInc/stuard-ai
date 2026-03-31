@@ -589,7 +589,7 @@ label: 'ElevenLabs Voice',
   },
   {
     id: 'browser_use',
-    label: 'Browser Use',
+    label: 'Browser',
     icon: Globe,
     color: 'cyan',
     items: [

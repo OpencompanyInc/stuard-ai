@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+import { mediaGalleryDir } from '../utils/platform';
 import { execLocalTool } from './bridge';
 
 const ELEVENLABS_DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
@@ -124,7 +124,7 @@ export const text_to_speech = createTool({
 
       if (save || play) {
         const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
-        filePath = outputPath || join(tmpdir(), 'stuard-tts', fileName);
+        filePath = outputPath || join(mediaGalleryDir('generated-audio'), fileName);
 
         const dir = filePath.substring(0, filePath.lastIndexOf('/') || filePath.lastIndexOf('\\'));
         if (dir) {
@@ -132,6 +132,27 @@ export const text_to_speech = createTool({
         }
 
         await writeFile(filePath, audioBuffer);
+
+        // Register saved audio in the desktop media library via bridge (best-effort, silent)
+        try {
+          await execLocalTool('_media_register', {
+            b64: audioBuffer.toString('base64'),
+            fileName,
+            format,
+            mimeType: format === 'mp3' ? 'audio/mpeg' : `audio/${format}`,
+            source: 'generated-audio',
+            toolName: 'text_to_speech',
+            classification: 'Generated audio',
+            tags: ['tts', 'audio'],
+            metadata: {
+              voice_id,
+              model_id,
+              textLength: text.length,
+            },
+          }, writer as any, 30000, { silent: true });
+        } catch (regErr: any) {
+          console.warn('[tts-tools] Media register (best-effort):', regErr?.message || regErr);
+        }
       }
 
       if (play && filePath) {

@@ -3,6 +3,7 @@ import { getToolKind } from './registry';
 import { execCloudTool } from './handlers/cloud';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
 import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendNotification, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
+import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
@@ -12,7 +13,7 @@ import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
-import { captureToolMedia } from '../services/media-library';
+import { captureToolMedia, registerLocalMedia } from '../services/media-library';
 import {
   execBrowserGetContent,
   execBrowserClickElement,
@@ -41,6 +42,129 @@ export { execCloudTool } from './handlers/cloud';
 export { execCustomUi, execCloseCustomUi, initCustomUiIpc } from './handlers/electron';
 
 /**
+ * Internal handler for _media_register tool.
+ * Accepts base64 images (or file paths) from cloud-originated tools and
+ * registers them into the local media library so they appear in the dashboard gallery.
+ */
+async function execMediaRegister(args: any): Promise<any> {
+  const images: any[] = Array.isArray(args?.images) ? args.images : [];
+  const filePath: string = String(args?.filePath || '').trim();
+  const source: string = String(args?.source || 'generated').trim();
+  const toolName: string = String(args?.toolName || 'generate_image').trim();
+  const classification: string | undefined = String(args?.classification || '').trim() || undefined;
+  const tags: string[] = Array.isArray(args?.tags) ? args.tags : [];
+  const metadata: any = args?.metadata || {};
+  const base64Data: string = String(args?.b64 || '').trim();
+  const mimeType: string | undefined = String(args?.mimeType || '').trim() || undefined;
+  const format: string = String(args?.format || '').trim();
+  const fileNameArg: string = String(args?.fileName || '').trim();
+  const linkOnly: boolean = !!args?.linkOnly;
+
+  const results: any[] = [];
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+
+  // Handle base64 images array (from generate_image)
+  if (images.length > 0) {
+    const { randomUUID } = require('crypto');
+    const docsDir = path.join(os.homedir(), 'Documents');
+    const imgDir = path.join(docsDir, 'StuardAI', 'media', source === 'generated' ? 'generated' : source);
+    try { fs.mkdirSync(imgDir, { recursive: true }); } catch {}
+
+    for (const img of images) {
+      try {
+        const b64 = String(img?._b64 || img?.b64 || '');
+        const format = String(img?.format || 'png');
+        const ext = format === 'jpeg' ? 'jpg' : format;
+
+        let localPath = String(img?.filePath || '').trim();
+
+        // Save base64 to file if provided
+        if (b64 && !localPath) {
+          const fileName = `img_${randomUUID().slice(0, 8)}.${ext}`;
+          localPath = path.join(imgDir, fileName);
+          fs.writeFileSync(localPath, Buffer.from(b64, 'base64'));
+        }
+
+        if (!localPath || !fs.existsSync(localPath)) continue;
+
+        const item = await registerLocalMedia({
+          filePath: localPath,
+          source,
+          toolName,
+          classification: classification || 'Generated image',
+          tags: ['generated', 'ai', ...tags],
+          metadata: {
+            ...metadata,
+            revisedPrompt: img?.revisedPrompt || null,
+          },
+          preserveName: true,
+        });
+        results.push({ ok: true, id: item.id, localPath: item.localPath });
+      } catch (e: any) {
+        results.push({ ok: false, error: e?.message });
+      }
+    }
+    return { ok: true, registered: results.length, items: results };
+  }
+
+  // Handle single base64 media payload (for cloud-originated audio or image)
+  if (base64Data) {
+    try {
+      const { randomUUID } = require('crypto');
+      const docsDir = path.join(os.homedir(), 'Documents');
+      const mediaDir = path.join(docsDir, 'StuardAI', 'media', source || 'misc');
+      try { fs.mkdirSync(mediaDir, { recursive: true }); } catch {}
+
+      const extFromMime = mimeType?.split('/')[1]?.replace('jpeg', 'jpg');
+      const ext = (format || extFromMime || path.extname(fileNameArg).replace(/^\./, '') || 'bin').toLowerCase();
+      const baseName = fileNameArg
+        ? path.basename(fileNameArg, path.extname(fileNameArg))
+        : `${toolName || 'media'}_${randomUUID().slice(0, 8)}`;
+      const localPath = path.join(mediaDir, `${baseName}.${ext}`);
+
+      fs.writeFileSync(localPath, Buffer.from(base64Data, 'base64'));
+
+      const item = await registerLocalMedia({
+        filePath: localPath,
+        source,
+        toolName,
+        mimeType: mimeType || null,
+        classification,
+        tags,
+        metadata,
+        preserveName: true,
+      });
+      return { ok: true, id: item.id, localPath: item.localPath };
+    } catch (e: any) {
+      return { ok: false, error: e?.message };
+    }
+  }
+
+  // Handle single file path registration
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      const item = await registerLocalMedia({
+        filePath,
+        source,
+        toolName,
+        classification,
+        tags,
+        metadata,
+        preserveName: true,
+        linkOnly,
+      });
+      return { ok: true, id: item.id, localPath: item.localPath };
+    } catch (e: any) {
+      return { ok: false, error: e?.message };
+    }
+  }
+
+  return { ok: false, error: 'no_media_to_register' };
+}
+
+/**
  * Unified Tool Executor
  * Execute any tool, routing to the correct backend
  */
@@ -50,6 +174,10 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
 
   switch (kind) {
     case 'electron':
+      // Internal: register media files from cloud-originated tools into local media library
+      if (toolName === '_media_register') {
+        return execMediaRegister(args);
+      }
       // Handle Electron-native tools
       if (toolName === 'custom_ui') return execCustomUi(args, ctx);
       if (toolName === 'close_custom_ui') return execCloseCustomUi(args);
@@ -206,17 +334,9 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
         return skills_list();
       }
 
-      // ask_user — blocking interactive questionnaire rendered in chat overlay
+      // ask_user — interactive notification (no window focus needed)
       if (toolName === 'ask_user') {
-        return execCustomUi({
-          id: args?.id || `ask-user-${Date.now()}`,
-          title: args?.title || 'Question',
-          layout: { type: 'ask_user', ...args },
-          blocking: true,
-          timeoutMs: args?.timeoutMs || 300000,
-          window: { width: 420, height: 360, position: 'center', alwaysOnTop: true, ...args?.window },
-          data: args,
-        }, ctx);
+        return execAskUserViaNotification(args, ctx);
       }
 
       // GenUI interactive tools - route through custom_ui with component type

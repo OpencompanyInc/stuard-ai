@@ -17,7 +17,6 @@ import base64
 import collections
 import os
 import platform
-import tempfile
 import threading
 import time
 import uuid
@@ -63,13 +62,18 @@ def _duration_param(args: dict, sec_key: str, ms_key: str, default_ms: int) -> i
     return default_ms
 
 
-def _tmp_dir() -> str:
-    base = os.path.join(tempfile.gettempdir(), "stuardai")
+def _media_dir(category: str = "screen-recordings") -> str:
+    """Return a category-specific media directory under Documents/StuardAI/media/."""
+    home = os.path.expanduser("~")
+    docs = os.path.join(home, "Documents")
+    if not os.path.isdir(docs):
+        docs = home
+    d = os.path.join(docs, "StuardAI", "media", category)
     try:
-        os.makedirs(base, exist_ok=True)
+        os.makedirs(d, exist_ok=True)
     except Exception:
         pass
-    return base
+    return d
 
 
 async def describe_screen_capture_capabilities(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -196,7 +200,7 @@ async def capture_screen(
     with _sessions_lock:
         _active_screen_sessions[session_id] = stop_event
 
-    out_dir = _tmp_dir()
+    out_dir = _media_dir("screen-recordings")
     path = explicit_path or os.path.join(out_dir, f"screen_{int(time.time()*1000)}.mp4")
 
     if emit:
@@ -757,7 +761,7 @@ async def capture_system_audio(
     with _sessions_lock:
         _active_audio_sessions[session_id] = stop_event
 
-    out_dir = _tmp_dir()
+    out_dir = _media_dir("screen-audio")
     ext = "wav" if output_format == "wav" else "mp3"
     path = explicit_path or os.path.join(out_dir, f"system_audio_{int(time.time()*1000)}.{ext}")
 

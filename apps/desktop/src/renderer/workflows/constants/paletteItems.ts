@@ -206,7 +206,7 @@ export const MATH_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'math_range', label: 'Range', args: { start: 1, stop: 10 } },
 ];
 
-// Browser Use (Playwright-powered browser automation)
+// Browser automation
 export const BROWSER_USE_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'browser_use_status', label: 'Browser Status', args: {} },
   { k: 'local.tool', t: 'browser_use_navigate', label: 'Navigate to URL', args: { url: 'https://example.com', wait_until: 'domcontentloaded' } },

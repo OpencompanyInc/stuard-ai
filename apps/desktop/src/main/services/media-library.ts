@@ -55,6 +55,8 @@ export interface RegisterLocalMediaOptions {
   tags?: string[];
   metadata?: Record<string, any>;
   preserveName?: boolean;
+  /** When true, track the file at its current path without copying into the media library directory. */
+  linkOnly?: boolean;
 }
 
 export interface RegisterRemoteMediaOptions {
@@ -358,6 +360,15 @@ function fileExists(targetPath: string | null | undefined) {
   }
 }
 
+/** Check if a path is already inside a known StuardAI media directory (gallery or Documents). */
+function isInMediaDirectory(filePath: string) {
+  const normalized = path.resolve(filePath);
+  if (normalized.startsWith(mediaRootDir())) return true;
+  const docsMedia = path.join(require('os').homedir(), 'Documents', 'StuardAI', 'media');
+  if (normalized.startsWith(path.resolve(docsMedia))) return true;
+  return false;
+}
+
 function copyFileIntoLibrary(originalPath: string, source: string, preserveName = false) {
   const createdAt = new Date();
   const targetDir = ensureDirForSource(source, createdAt);
@@ -532,7 +543,7 @@ export async function registerLocalMedia(options: RegisterLocalMediaOptions) {
     originalPath,
   });
 
-  const finalPath = originalPath.startsWith(mediaRootDir())
+  const finalPath = options.linkOnly || originalPath.startsWith(mediaRootDir())
     ? originalPath
     : copyFileIntoLibrary(originalPath, source, options.preserveName);
 
@@ -820,6 +831,7 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
               revisedPrompt: image?.revisedPrompt || null,
             },
             preserveName: true,
+            linkOnly: isInMediaDirectory(filePath),
           });
           return {
             ...image,
@@ -929,6 +941,7 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
           ...target.metadata,
           toolName,
         },
+        linkOnly: isInMediaDirectory(currentPath),
       });
       nextResult = {
         ...nextResult,

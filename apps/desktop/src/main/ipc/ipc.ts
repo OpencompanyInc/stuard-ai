@@ -13,13 +13,14 @@ import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
-import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs } from "../settings";
 import { syncMainAuthSession } from "../services/auth-session";
 import {
   getMediaLibraryPrefs,
   getMediaLibrarySummary,
   importMediaPaths,
   listMediaLibraryItems,
+  registerLocalMedia,
   syncMediaLibrary,
   updateMediaLibraryPrefs,
   deleteMediaItem,
@@ -33,6 +34,7 @@ import {
   browserMirrorScroll,
   browserMirrorType,
 } from "../tools/handlers/browser-use";
+import { settleNotificationResponse } from "../tools/handlers/electron";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -104,145 +106,6 @@ function isPrivateOrInternalUrl(urlString: string): boolean {
     // If we can't parse the URL, block it to be safe
     return true;
   }
-}
-
-type BrowserUseChromeProfile = {
-  name: string;
-  path: string;
-};
-
-type BrowserUseChromeBrowser = {
-  browser: string;
-  userDataDir: string;
-  profiles: BrowserUseChromeProfile[];
-};
-
-type BrowserUseChromeSyncSettings = {
-  chromeSyncEnabled: boolean;
-  chromeSyncBrowserName?: string | null;
-  chromeSyncProfileName?: string | null;
-  chromeSyncProfilePath?: string | null;
-  chromeSyncUserDataDir?: string | null;
-};
-
-const DEFAULT_BROWSER_USE_SYNC_SETTINGS: BrowserUseChromeSyncSettings = {
-  chromeSyncEnabled: true,
-  chromeSyncBrowserName: 'Chrome',
-  chromeSyncProfileName: 'Default',
-  chromeSyncProfilePath: null,
-  chromeSyncUserDataDir: null,
-};
-
-function getBrowserUseCandidateUserDataDirs(): Array<{ browser: string; userDataDir: string }> {
-  const homeDir = app.getPath('home');
-  const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
-  const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
-
-  if (process.platform === 'win32') {
-    return [
-      { browser: 'Chrome', userDataDir: path.join(localAppData, 'Google', 'Chrome', 'User Data') },
-      { browser: 'Edge', userDataDir: path.join(localAppData, 'Microsoft', 'Edge', 'User Data') },
-      { browser: 'Brave', userDataDir: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') },
-      { browser: 'Chromium', userDataDir: path.join(localAppData, 'Chromium', 'User Data') },
-      { browser: 'Opera', userDataDir: path.join(appData, 'Opera Software', 'Opera Stable') },
-    ];
-  }
-
-  if (process.platform === 'darwin') {
-    return [
-      { browser: 'Chrome', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Google', 'Chrome') },
-      { browser: 'Edge', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Microsoft Edge') },
-      { browser: 'Brave', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser') },
-      { browser: 'Chromium', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Chromium') },
-    ];
-  }
-
-  return [
-    { browser: 'Chrome', userDataDir: path.join(homeDir, '.config', 'google-chrome') },
-    { browser: 'Edge', userDataDir: path.join(homeDir, '.config', 'microsoft-edge') },
-    { browser: 'Brave', userDataDir: path.join(homeDir, '.config', 'BraveSoftware', 'Brave-Browser') },
-    { browser: 'Chromium', userDataDir: path.join(homeDir, '.config', 'chromium') },
-  ];
-}
-
-function listProfilesInUserDataDir(userDataDir: string): BrowserUseChromeProfile[] {
-  try {
-    if (!fs.existsSync(userDataDir)) return [];
-
-    const entries = fs.readdirSync(userDataDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((name) => name === 'Default' || /^Profile \d+$/i.test(name) || /^Person \d+$/i.test(name))
-      .map((name) => ({ name, path: path.join(userDataDir, name) }))
-      .filter((profile) => {
-        try {
-          return fs.existsSync(path.join(profile.path, 'Preferences'));
-        } catch {
-          return false;
-        }
-      });
-
-    return entries.sort((a, b) => {
-      if (a.name === 'Default') return -1;
-      if (b.name === 'Default') return 1;
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
-  } catch {
-    return [];
-  }
-}
-
-function listBrowserUseChromeProfilesLocal(): BrowserUseChromeBrowser[] {
-  return getBrowserUseCandidateUserDataDirs()
-    .map(({ browser, userDataDir }) => ({
-      browser,
-      userDataDir,
-      profiles: listProfilesInUserDataDir(userDataDir),
-    }))
-    .filter((entry) => entry.profiles.length > 0);
-}
-
-function getBrowserUseChromeSyncSettingsLocal(): BrowserUseChromeSyncSettings {
-  const settings = loadSettings();
-  const saved: BrowserUseChromeSyncSettings = {
-    chromeSyncEnabled: typeof settings.chromeSyncEnabled === 'boolean'
-      ? settings.chromeSyncEnabled
-      : DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncEnabled,
-    chromeSyncBrowserName: settings.chromeSyncBrowserName ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncBrowserName,
-    chromeSyncProfileName: settings.chromeSyncProfileName ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfileName,
-    chromeSyncProfilePath: settings.chromeSyncProfilePath ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfilePath,
-    chromeSyncUserDataDir: settings.chromeSyncUserDataDir ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncUserDataDir,
-  };
-
-  const browsers = listBrowserUseChromeProfilesLocal();
-  const selectedBrowser = browsers.find((browser) =>
-    browser.browser === saved.chromeSyncBrowserName
-    || browser.userDataDir === saved.chromeSyncUserDataDir
-  ) || browsers[0];
-  const selectedProfile = selectedBrowser?.profiles.find((profile) =>
-    profile.path === saved.chromeSyncProfilePath
-    || profile.name === saved.chromeSyncProfileName
-  ) || selectedBrowser?.profiles[0];
-
-  return {
-    ...saved,
-    chromeSyncBrowserName: selectedBrowser?.browser || saved.chromeSyncBrowserName || DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncBrowserName,
-    chromeSyncProfileName: selectedProfile?.name || saved.chromeSyncProfileName || DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfileName,
-    chromeSyncProfilePath: selectedProfile?.path || saved.chromeSyncProfilePath || null,
-    chromeSyncUserDataDir: selectedBrowser?.userDataDir || saved.chromeSyncUserDataDir || null,
-  };
-}
-
-function updateBrowserUseChromeSyncSettingsLocal(updates: Partial<BrowserUseChromeSyncSettings>): BrowserUseChromeSyncSettings {
-  const has = (key: keyof BrowserUseChromeSyncSettings) => Object.prototype.hasOwnProperty.call(updates, key);
-  saveSettings({
-    chromeSyncEnabled: has('chromeSyncEnabled') ? !!updates.chromeSyncEnabled : undefined,
-    chromeSyncBrowserName: has('chromeSyncBrowserName') ? (updates.chromeSyncBrowserName ?? null) : undefined,
-    chromeSyncProfileName: has('chromeSyncProfileName') ? (updates.chromeSyncProfileName ?? null) : undefined,
-    chromeSyncProfilePath: has('chromeSyncProfilePath') ? (updates.chromeSyncProfilePath ?? null) : undefined,
-    chromeSyncUserDataDir: has('chromeSyncUserDataDir') ? (updates.chromeSyncUserDataDir ?? null) : undefined,
-  });
-  return getBrowserUseChromeSyncSettingsLocal();
 }
 
 export function setupIpc() {
@@ -468,6 +331,21 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
+  ipcMain.handle("media:registerPath", async (_e, filePath: string, opts?: { source?: string; tags?: string[] }) => {
+    try {
+      const target = String(filePath || '').trim();
+      if (!target) return { ok: false, error: 'invalid_path' };
+      const item = await registerLocalMedia({
+        filePath: target,
+        source: opts?.source || 'misc',
+        tags: opts?.tags,
+        linkOnly: true,
+      });
+      return { ok: true, id: item.id, localPath: item.localPath };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
   ipcMain.handle("media:openPath", async (_e, targetPath: string) => {
     try {
       const target = String(targetPath || '').trim();
@@ -665,6 +543,15 @@ export function setupIpc() {
         }
       }
       return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e || 'failed') };
+    }
+  });
+
+  ipcMain.handle('notification:respond', async (_e, payload: { responseId?: string; type?: 'submit' | 'cancel' | 'dismiss'; value?: string }) => {
+    try {
+      const settled = settleNotificationResponse(payload || {});
+      return settled ? { ok: true } : { ok: false, error: 'response_not_found' };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e || 'failed') };
     }
@@ -1130,17 +1017,6 @@ export function setupIpc() {
       direction === 'up' ? 'up' : 'down',
       typeof amount === 'number' ? amount : 300,
     );
-  });
-
-  // Browser-use Chrome sync settings
-  ipcMain.handle('browserUse:getChromeSyncSettings', () => {
-    return { ok: true, settings: getBrowserUseChromeSyncSettingsLocal() };
-  });
-  ipcMain.handle('browserUse:listChromeProfiles', () => {
-    return { ok: true, browsers: listBrowserUseChromeProfilesLocal() };
-  });
-  ipcMain.handle('browserUse:updateChromeSyncSettings', (_e, updates: Partial<BrowserUseChromeSyncSettings>) => {
-    return { ok: true, settings: updateBrowserUseChromeSyncSettingsLocal(updates || {}) };
   });
 
   // Proactive agent controls

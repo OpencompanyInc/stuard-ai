@@ -364,8 +364,8 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   // --- VISION (cloud) ---
   { id: 'cloud_ai_vision', category: 'vision', kind: 'cloud', description: 'Analyze an image with AI vision and return structured JSON', argsTemplate: { prompt: '', imagePath: '', schema: {} }, outputSchema: { ok: 'boolean', json: 'any', text: 'string' } },
 
-  // --- BROWSER USE (Playwright-powered browser automation) ---
-  { id: 'browser_use_status', category: 'system', kind: 'local', description: 'Check if browser-use is installed and the browser server is running', argsTemplate: {}, outputSchema: { ok: 'boolean', installed: 'boolean', running: 'boolean', serverAlive: 'boolean', mode: 'string', profile: 'string', profileDir: 'string', currentUrl: 'string', title: 'string', sessionId: 'string', hasPython: 'boolean', error: 'string' } },
+  // --- BROWSER (Stuard Browser automation) ---
+  { id: 'browser_use_status', category: 'system', kind: 'local', description: 'Check if Stuard Browser is installed and the browser server is running', argsTemplate: {}, outputSchema: { ok: 'boolean', installed: 'boolean', running: 'boolean', serverAlive: 'boolean', mode: 'string', profile: 'string', profileDir: 'string', currentUrl: 'string', title: 'string', sessionId: 'string', hasPython: 'boolean', error: 'string' } },
   { id: 'browser_use_configure', category: 'system', kind: 'local', description: 'Configure browser mode (headed or headless)', argsTemplate: { mode: 'headed', profile: 'default' }, outputSchema: { ok: 'boolean', mode: 'string', profile: 'string', restarted: 'boolean', error: 'string' } },
   { id: 'browser_use_navigate', category: 'system', kind: 'local', description: 'Navigate the browser to a URL and wait for the page to load', argsTemplate: { url: 'https://example.com', wait_until: 'domcontentloaded', timeout: 30000, wait_for_selector: '' }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', error: 'string' } },
   { id: 'browser_use_click', category: 'system', kind: 'local', description: 'Click an element on the page by CSS selector or visible text', argsTemplate: { selector: '', text: '', exact: false, timeout: 5000 }, outputSchema: { ok: 'boolean', clicked: 'string', method: 'string', error: 'string' } },
@@ -3424,7 +3424,7 @@ if (TOOL_SCHEMAS['ollama_models']) {
 }
 
 // ============================================================================
-// BROWSER USE — Schema overrides for better UX
+// BROWSER — Schema overrides for better UX
 // ============================================================================
 
 const BROWSER_USE_MODE_OPTIONS: ArgOption[] = [
