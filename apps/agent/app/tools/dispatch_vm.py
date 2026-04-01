@@ -36,7 +36,6 @@ async def _stub_handler(args: Dict[str, Any], *_: Any) -> Dict[str, Any]:
 
 _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     # ── System (VM-compatible subset) ────────────────────────────────────────
-    "run_system_command": ("system", "Execute system commands with shell"),
     "run_command": ("system", "Run shell commands cross-platform with timeout"),
     "list_terminals": ("system", "List active terminal sessions"),
     "read_terminal": ("system", "Read incremental terminal output"),
@@ -612,7 +611,6 @@ _HANDLERS: Dict[str, Callable[..., Any]] = {}
 # Register VM-compatible handlers
 _HANDLERS.update({
     # System
-    "run_system_command": system.run_system_command,
     "run_command": system.run_command,
     "list_terminals": system.list_terminals,
     "read_terminal": system.read_terminal,
@@ -943,7 +941,7 @@ _TOOL_METADATA["list_tool_categories"] = ("core", "List tool categories")
 
 # Tools that accept an emit callback for progress events (same list as desktop dispatch)
 _EMIT_TOOLS = {
-    "run_system_command", "run_command",
+    "run_command",
     "python_install", "run_python_script", "run_node_script",
     "task_reminders",
     "ffmpeg_setup", "ffmpeg_run", "ffmpeg_convert_media", "ffmpeg_extract_audio",

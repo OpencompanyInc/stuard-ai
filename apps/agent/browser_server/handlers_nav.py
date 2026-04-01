@@ -1,59 +1,15 @@
-from typing import Any
+import asyncio
 
 from aiohttp import web
 
 from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _normalize_wait_until, _is_allowed_url
 from browser_server.lifecycle import (
-    _ensure_browser, _get_page_url, _get_page_title, _get_playwright_page,
-    _find_elements, _evaluate, _goto, _wait_for_selector,
+    _ensure_browser, _get_page_url, _get_page_title,
+    _evaluate, _goto, _wait_for_selector,
+    _cdp_click_selector, _cdp_click_at, _cdp_type_text, _cdp_press_key,
+    _cdp_clear_and_type,
 )
-
-
-async def _try_click_locator(locator: Any, page: Any, timeout: int, method: str) -> tuple[bool, str]:
-    target = getattr(locator, "first", locator)
-    try:
-        if hasattr(target, "wait_for"):
-            try:
-                await target.wait_for(state="visible", timeout=min(timeout, 2000))
-            except Exception:
-                pass
-        if hasattr(target, "scroll_into_view_if_needed"):
-            try:
-                await target.scroll_into_view_if_needed(timeout=min(timeout, 2000))
-            except Exception:
-                pass
-        if hasattr(target, "focus"):
-            try:
-                await target.focus()
-            except Exception:
-                pass
-        if hasattr(target, "click"):
-            try:
-                await target.click(timeout=timeout)
-                return True, method
-            except Exception:
-                pass
-            try:
-                await target.click(timeout=min(timeout, 3000), force=True)
-                return True, f"{method}_force"
-            except Exception:
-                pass
-        if hasattr(target, "dispatch_event"):
-            try:
-                await target.dispatch_event("click")
-                return True, f"{method}_dispatch"
-            except Exception:
-                pass
-        mouse = getattr(page, "mouse", None)
-        if mouse is not None and hasattr(target, "bounding_box"):
-            box = await target.bounding_box()
-            if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
-                await mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                return True, f"{method}_mouse"
-    except Exception:
-        pass
-    return False, ""
 
 
 async def handle_navigate(req: web.Request) -> web.Response:
@@ -97,69 +53,84 @@ async def handle_click(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            pw = _get_playwright_page()
-
-            # Strategy 1: Playwright locator click by selector with retries/fallbacks
-            if selector and pw:
-                try:
-                    ok_clicked, method = await _try_click_locator(pw.locator(selector), pw, timeout, "playwright_selector")
-                    if ok_clicked:
-                        return _ok({"clicked": selector, "method": method})
-                except Exception:
-                    pass
-
-            # Strategy 2: Prefer accessible roles for button-like targets
-            if text and pw:
-                for role in ["button", "link", "menuitem", "tab", "option", "checkbox", "radio", "combobox"]:
-                    try:
-                        locator = pw.get_by_role(role, name=text, exact=exact)
-                        ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), f"playwright_role_{role}")
-                        if ok_clicked:
-                            return _ok({"clicked": text, "method": method})
-                    except Exception:
-                        continue
-
-            # Strategy 3: Playwright label locator
-            if text and pw:
-                try:
-                    locator = pw.get_by_label(text, exact=exact)
-                    ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), "playwright_label")
-                    if ok_clicked:
-                        return _ok({"clicked": text, "method": method})
-                except Exception:
-                    pass
-
-            # Strategy 4: Playwright placeholder locator
-            if text and pw:
-                try:
-                    locator = pw.get_by_placeholder(text, exact=exact)
-                    ok_clicked, method = await _try_click_locator(locator, pw, min(timeout, 3000), "playwright_placeholder")
-                    if ok_clicked:
-                        return _ok({"clicked": text, "method": method})
-                except Exception:
-                    pass
-
-            # Strategy 5: Playwright text locator after button-like locators
-            if text and pw:
-                try:
-                    locator = pw.get_by_text(text, exact=exact)
-                    ok_clicked, method = await _try_click_locator(locator, pw, timeout, "playwright_text")
-                    if ok_clicked:
-                        return _ok({"clicked": text, "method": method})
-                except Exception:
-                    pass
-
-            # Strategy 6: Playwright element click by selector
+            # Strategy 1: CDP mouse click by CSS selector
             if selector:
-                try:
-                    els = await _find_elements(selector)
-                    if els:
-                        await els[0].click()
-                        return _ok({"clicked": selector, "method": "playwright_selector"})
-                except Exception:
-                    pass
+                clicked = await _cdp_click_selector(selector)
+                if clicked:
+                    return _ok({"clicked": selector, "method": "cdp_selector"})
 
-            # Strategy 7: Enhanced JS click with broad element search, scoring, and full event dispatch
+            # Strategy 2: CDP mouse click by text — find element via JS, get coords, click via CDP
+            if text:
+                coords = await _evaluate(
+                    """([needle, exact, timeoutMs]) => {
+                      return new Promise((resolve) => {
+                        const deadline = Date.now() + timeoutMs;
+                        function attempt() {
+                          const textOf = (el) => {
+                            if (!el) return '';
+                            return [
+                              el.innerText, el.textContent,
+                              el.getAttribute('aria-label'),
+                              el.getAttribute('title'),
+                              el.getAttribute('placeholder'),
+                              el.getAttribute('value'),
+                              el.getAttribute('alt'),
+                            ].filter(Boolean).map(t => t.trim()).join(' ');
+                          };
+                          const all = document.querySelectorAll('*');
+                          const matches = [];
+                          for (const el of all) {
+                            const t = textOf(el);
+                            if (!t) continue;
+                            const isMatch = exact
+                              ? t === needle
+                              : t.toLowerCase().includes(String(needle).toLowerCase());
+                            if (!isMatch) continue;
+                            const r = el.getBoundingClientRect();
+                            const s = window.getComputedStyle(el);
+                            if (r.width === 0 && r.height === 0) continue;
+                            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
+                            let score = 0;
+                            const tag = el.tagName.toLowerCase();
+                            if (['button','a','input','select','textarea'].includes(tag)) score += 100;
+                            if (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') score += 90;
+                            if (el.onclick || el.getAttribute('onclick')) score += 80;
+                            if (el.getAttribute('tabindex')) score += 50;
+                            if (s.cursor === 'pointer') score += 40;
+                            score -= Math.abs(t.length - needle.length) * 0.1;
+                            matches.push({ el, score, r });
+                          }
+                          if (matches.length > 0) {
+                            matches.sort((a, b) => b.score - a.score);
+                            const target = matches[0].el;
+                            target.scrollIntoView({ block: 'center', inline: 'center' });
+                            setTimeout(() => {
+                              const r = target.getBoundingClientRect();
+                              resolve({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+                            }, 50);
+                            return;
+                          }
+                          if (Date.now() < deadline) {
+                            setTimeout(attempt, 200);
+                          } else {
+                            resolve(null);
+                          }
+                        }
+                        attempt();
+                      });
+                    }""",
+                    text,
+                    exact,
+                    timeout,
+                )
+                if isinstance(coords, dict) and "x" in coords and "y" in coords:
+                    try:
+                        await _cdp_click_at(float(coords["x"]), float(coords["y"]))
+                        return _ok({"clicked": text, "method": "cdp_text"})
+                    except Exception:
+                        pass
+
+            # Strategy 3: JS dispatch click by text (fallback — works through overlays)
             if text:
                 clicked = await _evaluate(
                     """([needle, exact, timeoutMs]) => {
@@ -235,7 +206,7 @@ async def handle_click(req: web.Request) -> web.Response:
                 if clicked == "clicked":
                     return _ok({"clicked": text, "method": "js_enhanced"})
 
-            # Strategy 8: JS selector click as last resort
+            # Strategy 4: JS selector click as last resort
             if selector:
                 clicked = await _evaluate(
                     """(sel) => {
@@ -277,41 +248,28 @@ async def handle_type(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            pw = _get_playwright_page()
-
-            # Strategy 1: Playwright fill
-            if selector and pw:
-                try:
-                    if clear:
-                        await pw.fill(selector, text, timeout=timeout)
-                    else:
-                        await pw.type(selector, text, timeout=timeout)
-                    return _ok({"typed": len(text), "method": "playwright_fill"})
-                except Exception:
-                    pass
-
-            # Strategy 2: Playwright keyboard typing into focused element
-            if not selector and pw:
-                try:
-                    if clear:
-                        await pw.keyboard.press("Control+a")
-                        await pw.keyboard.press("Delete")
-                    await pw.keyboard.type(text, delay=20)
-                    return _ok({"typed": len(text), "method": "playwright_keyboard"})
-                except Exception:
-                    pass
-
-            # Strategy 3: Playwright element fill by selector
+            # Strategy 1: CDP clear-and-type into a CSS-selected element
             if selector:
-                try:
-                    els = await _find_elements(selector)
-                    if els:
-                        await els[0].fill(text, clear=clear)
-                        return _ok({"typed": len(text), "method": "playwright_fill"})
-                except Exception:
-                    pass
+                if clear:
+                    typed = await _cdp_clear_and_type(selector, text)
+                else:
+                    # Focus then type without clearing
+                    await _cdp_click_selector(selector)
+                    await asyncio.sleep(0.05)
+                    typed = await _cdp_type_text(text)
+                if typed:
+                    return _ok({"typed": len(text), "method": "cdp_type"})
 
-            # Strategy 4: Enhanced JS with React/Vue-compatible event simulation
+            # Strategy 2: CDP keyboard into currently focused element
+            if not selector:
+                if clear:
+                    await _cdp_press_key("Control+a")
+                    await _cdp_press_key("Delete")
+                typed = await _cdp_type_text(text)
+                if typed:
+                    return _ok({"typed": len(text), "method": "cdp_keyboard"})
+
+            # Strategy 3: JS fill with React/Vue-compatible event simulation
             result = await _evaluate(
                 """([value, clearFirst, sel]) => {
                   let el = sel ? document.querySelector(sel) : document.activeElement;
@@ -388,9 +346,10 @@ async def handle_press_key(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
+            # Focus element if selector provided
             if selector:
                 focused = await _evaluate(
-                    """(sel, dir, amt) => {
+                    """(sel) => {
                       const el = document.querySelector(sel);
                       if (!el) return 'not_found';
                       if (typeof el.focus === 'function') el.focus();
@@ -401,14 +360,12 @@ async def handle_press_key(req: web.Request) -> web.Response:
                 if focused != "ok":
                     return _err(f"Press key failed: selector not found: {selector}")
 
-            keyboard = getattr(state._page, "keyboard", None)
-            if keyboard is not None and hasattr(keyboard, "press"):
-                await keyboard.press(key)
-                return _ok({"key": key})
-            if hasattr(state._page, "send_keys"):
-                await state._page.send_keys(key)
+            # CDP key press (handles modifiers like Control+a)
+            pressed = await _cdp_press_key(key)
+            if pressed:
                 return _ok({"key": key})
 
+            # Fallback: JS key dispatch
             dispatched = await _evaluate(
                 """(k) => {
                   const key = String(k || '');

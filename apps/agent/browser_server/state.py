@@ -3,23 +3,20 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Optional
 
-if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext, CDPSession, Page, Playwright
+from browser_server.cdp_client import CDPBrowser, CDPConnection
 
 # ---------------------------------------------------------------------------
 # Mutable globals
 # ---------------------------------------------------------------------------
 
-_context: Optional["BrowserContext"] = None   # Playwright BrowserContext
-_page: Optional["Page"] = None               # Active Playwright Page
-_playwright: Optional["Playwright"] = None   # Playwright instance
-_cdp_session: Optional["CDPSession"] = None  # Reusable Playwright CDPSession (lazily created for raw CDP commands)
-_config: dict[str, Any] = {
+_browser: Optional[CDPBrowser] = None      # Chrome process + target manager
+_page: Optional[CDPConnection] = None      # Active page CDP connection (also serves as CDP session)
+_config: dict = {
     "mode": os.environ.get("STUARD_BROWSER_MODE", os.environ.get("BROWSER_USE_MODE", "headless")),  # headed | headless
     "profile": "default",
-    "profile_dir": None, # resolved at startup
+    "profile_dir": None,  # resolved at startup
 }
 _lock = asyncio.Lock()
 _viewport_cache: dict[str, int] = {"w": 1280, "h": 900}  # cached viewport size for mirror

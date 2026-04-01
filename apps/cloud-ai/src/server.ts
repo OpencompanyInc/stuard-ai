@@ -535,6 +535,18 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
+        // Merge client-reported integrations (e.g. browser_use from desktop/VM)
+        const clientIntegrations = (msg as any)?.clientIntegrations;
+        if (Array.isArray(clientIntegrations)) {
+          const existing = new Set(enabledIntegrations);
+          for (const ci of clientIntegrations) {
+            if (typeof ci === 'string' && ci && !existing.has(ci)) {
+              enabledIntegrations.push(ci);
+              existing.add(ci);
+            }
+          }
+        }
+
         // Get conversation history for this connection
         const history = conversations.get(ws) || [];
 

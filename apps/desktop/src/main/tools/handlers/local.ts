@@ -296,8 +296,8 @@ export function calcToolTimeout(tool: string, args: any): number {
     return 300000;
   }
   
-  // run_command / run_system_command: user-specified or default
-  if (tool === 'run_command' || tool === 'run_system_command') {
+  // run_command: user-specified or default
+  if (tool === 'run_command') {
     const ms = Number(args?.timeoutMs);
     if (Number.isFinite(ms) && ms > 0) {
       return Math.min(ms + 15000, 600000);

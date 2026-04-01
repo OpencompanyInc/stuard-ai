@@ -89,8 +89,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a rich local desktop notification with optional image and reply input', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', imagePath: '', durationMs: 5000, showInput: false, waitForInput: false, inputPlaceholder: 'Reply…', inputDefaultValue: '', inputSubmitText: 'Send', inputCancelText: 'Cancel', inputType: 'text', keepAfterSubmit: false, progress: 0, taskId: '', workflowRunId: '', timeoutMs: 300000 }, outputSchema: { ok: 'boolean', notification: 'object', value: 'string', response: 'object', submitted: 'boolean', cancelled: 'boolean', dismissed: 'boolean', error: 'string' } },
 
   // --- SYSTEM ---
-  { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout', argsTemplate: { command: 'echo hello', shell: 'auto', timeoutMs: 30000, cwd: '', checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
-  { id: 'run_system_command', category: 'system', kind: 'local', description: 'Execute system commands with timeout (shell=true)', argsTemplate: { command: 'echo hello', timeoutMs: 30000, shell: true, checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
+  { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout. Use shell="default" for the platform default shell.', argsTemplate: { command: 'echo hello', shell: 'auto', timeoutMs: 30000, cwd: '', checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
   { id: 'list_terminals', category: 'system', kind: 'local', description: 'List active and recent terminal sessions', argsTemplate: {}, outputSchema: { ok: 'boolean', terminals: 'any[]' } },
   { id: 'read_terminal', category: 'system', kind: 'local', description: 'Read incremental terminal output for a terminalId', argsTemplate: { terminalId: '', sinceSeq: 0, maxChars: 8000 }, outputSchema: { ok: 'boolean', terminalId: 'string', chunks: 'any[]', done: 'boolean', exitCode: 'number', seq: 'number' } },
   { id: 'run_python_script', category: 'system', kind: 'local', description: 'Run Python code inline or from a workspace file. Use filePath to run a .py file from your workspace (e.g. {{$workspace.scripts}}/process.py), or code for inline. filePath takes priority over code.', argsTemplate: { filePath: '', code: "print('hello')", packages: [], envId: 'default', timeoutMs: 30000, checkpoint: false }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', installed: 'string[]' } },
@@ -846,7 +845,7 @@ for (const trigger of TRIGGER_DEFINITIONS) {
 // ============================================================================
 
 // Command tools - require a human-readable description for approvals
-for (const toolId of ['run_command', 'run_system_command']) {
+for (const toolId of ['run_command']) {
   if (TOOL_SCHEMAS[toolId]) {
     TOOL_SCHEMAS[toolId].args = {
       ...TOOL_SCHEMAS[toolId].args,

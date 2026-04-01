@@ -84,7 +84,8 @@ export function workflowToStuardSpec(def: WorkflowDefinition, options?: Workflow
   for (let i = 0; i < safeSteps.length; i++) {
     const s = safeSteps[i];
     if (!s || !s.id || !s.uses) continue;
-    const tool = mapUsesToTool(s.uses);
+    const mappedTool = mapUsesToTool(s.uses);
+    const tool = mappedTool === "run_system_command" ? "run_command" : mappedTool;
     const step: StuardStep = {
       id: String(s.id),
       tool: tool || undefined,
@@ -95,10 +96,13 @@ export function workflowToStuardSpec(def: WorkflowDefinition, options?: Workflow
 
     // args: pass-through, with some metadata preserved under reserved keys
     const args: any = s.with ? { ...s.with } : {};
-    if ((tool === "run_command" || tool === "run_system_command") && args && typeof args === "object") {
+    if (tool === "run_command" && args && typeof args === "object") {
       // Backwards-compat: allow authoring DSL to use "cmd" but map to the agent's "command" field
       if (args.cmd && !args.command) {
         args.command = args.cmd;
+      }
+      if (mappedTool === "run_system_command" && !args.shell) {
+        args.shell = "default";
       }
     }
     if (s.if) {

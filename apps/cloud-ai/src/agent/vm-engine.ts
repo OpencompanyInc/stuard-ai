@@ -102,7 +102,7 @@ const VM_NATIVE_TOOLS = new Set([
   'write_file', 'read_file', 'delete_file', 'list_files', 'create_directory',
   'file_edit', 'list_directory', 'move_file', 'copy_file', 'glob', 'grep',
   // Shell / scripts
-  'run_command', 'run_system_command', 'run_node_script',
+  'run_command', 'run_node_script',
   // HTTP
   'http_request',
   // Flow control
@@ -1053,12 +1053,16 @@ async function execVmNativeTool(tool: string, args: any, ctx: RouterContext, dep
     }
 
     // ── Shell / script execution ──
-    case 'run_command':
-    case 'run_system_command': {
+    case 'run_command': {
       const cmd = String(args?.command || args?.cmd || '');
       if (!cmd) return { ok: false, error: 'no_command' };
       const cwd = args?.cwd ? resolveSafePath(args.cwd, deployDir) : (deployDir || '/home/stuard');
       const timeoutMs = Math.min(Number(args?.timeoutMs || 300000), 600000);
+      const shellPref = String(args?.shell || 'auto').toLowerCase();
+      const shellPath =
+        shellPref === 'default' || shellPref === 'sh'
+          ? '/bin/sh'
+          : (fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh');
       try {
         const output = execSync(cmd, {
           cwd,
@@ -1066,9 +1070,9 @@ async function execVmNativeTool(tool: string, args: any, ctx: RouterContext, dep
           maxBuffer: 10 * 1024 * 1024,
           env: { ...process.env, HOME: '/home/stuard', PATH: process.env.PATH },
           encoding: 'utf-8',
-          shell: '/bin/bash',
+          shell: shellPath,
         });
-        return { ok: true, stdout: output, exitCode: 0 };
+        return { ok: true, stdout: output, exitCode: 0, shell: path.basename(shellPath) };
       } catch (e: any) {
         return {
           ok: e.status === 0,
@@ -1076,6 +1080,7 @@ async function execVmNativeTool(tool: string, args: any, ctx: RouterContext, dep
           stderr: String(e.stderr || ''),
           exitCode: e.status ?? 1,
           error: e.status !== 0 ? `exit_code_${e.status}` : undefined,
+          shell: path.basename(shellPath),
         };
       }
     }
@@ -1483,6 +1488,10 @@ async function aiDecideNext(
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function execTool(toolName: string, args: any, ctx: EngineContext, deployDir?: string): Promise<any> {
+  if (toolName === 'run_system_command') {
+    toolName = 'run_command';
+    args = { ...(args || {}), shell: typeof args?.shell === 'string' ? args.shell : 'default' };
+  }
   const kind = getToolKind(toolName);
 
   switch (kind) {

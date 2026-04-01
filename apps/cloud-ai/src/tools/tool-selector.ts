@@ -46,7 +46,6 @@ const CORE_TOOLS = new Set([
   'get_space_tree',
   // System
   'run_command',
-  'run_system_command',
 ]);
 
 // Integration tool prefixes - only include if integration is enabled

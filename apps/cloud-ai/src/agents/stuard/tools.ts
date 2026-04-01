@@ -27,7 +27,7 @@ import {
   github_list_gists, github_create_gist,
 } from '../../tools/github-tools';
 import { google_get_userinfo, google_list_profiles, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, gmail_retrieve_messages_with_attachments, calendar_list_events, calendar_create_event, calendar_delete_event, calendar_update_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
@@ -227,7 +227,6 @@ export const ALL_TOOLS = {
   ffmpeg_trim_media,
   ffmpeg_probe_media,
   ffmpeg_extract_frames,
-  run_system_command,
   run_command,
   http_request,
   run_python_script,
@@ -586,25 +585,25 @@ export const MINIMAL_PARAMOUNT_TOOLS = [
   // Basic File Operations (4) - very common operations
   'read_file', 'write_file', 'list_directory', 'file_edit',
 
-  // System Commands (2) - frequently needed
-  'run_command', 'run_system_command',
+  // System Commands (1) - frequently needed
+  'run_command',
 
   // Web Search (1) - common for research
   'web_search',
 ] as const;
 
 /**
- * Tier 1 Paramount Tools - ALWAYS loaded natively (~15 tools)
+ * Tier 1 Paramount Tools - ALWAYS loaded natively
  * These get full schemas sent to the LLM. Keep this list small to save tokens.
  * Everything else is listed as names in the system prompt and accessed via
  * get_tool_schema + execute_tool (lazy-loading pattern).
  */
 export const TIER_1_PARAMOUNT_TOOLS = [
-  // File Operations (4) — most common across all conversations
-  'read_file', 'write_file', 'list_directory', 'file_edit',
+  // File Operations (6) — most common across all conversations
+  'read_file', 'write_file', 'list_directory', 'file_edit', 'grep', 'glob',
 
-  // System Commands (2) — frequently needed
-  'run_command', 'run_system_command',
+  // System Commands (1) — frequently needed
+  'run_command',
 
   // Web (2) — research & scraping
   'web_search', 'scrape_url',
@@ -617,6 +616,12 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Task Tracking (1) — multi-step task management
   'agent_todo',
+
+  // Sub-agents (4) — background delegation and task management
+  'deploy_headless_agent',
+  'get_headless_agent_status',
+  'list_headless_agent_tasks',
+  'stop_headless_agent',
 
   // Meta-tools for lazy-loading (3) — discover & run any other tool
   'get_tool_schema', 'execute_tool', 'search_tools',
@@ -749,7 +754,7 @@ export function getTools(
   // Start with MCP tools
   const tools: Record<string, any> = { ...mcpTools };
 
-  // Default: Tier 1 + SIS discovery tools (lean ~35 tools)
+  // Default: Tier 1 + SIS discovery tools
   // Use SIS_LOAD_ALL=1 to force loading all tools (legacy behavior)
   if (process.env.SIS_LOAD_ALL === '1') {
     Object.assign(tools, toolUniverse);
@@ -780,14 +785,8 @@ export function getTools(
   // Desktop-only UI tools should be directly callable when a bridge is active.
   addDesktopUiTools(tools, toolUniverse);
 
-
-  // Always load browser_use tools natively
-  for (const [name, tool] of Object.entries(toolUniverse as any)) {
-    if (name.startsWith('browser_use_')) tools[name] = tool;
-  }
-
   if (process.env.SIS_DEBUG === '1') {
-    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + browser_use, integrations via system prompt)`);
+    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1, integrations via system prompt)`);
   }
 
   return stripBlockedStuardTools(tools);
@@ -809,7 +808,7 @@ export async function getToolsForQuery(
     return stripBlockedStuardTools(selected);
   }
 
-  // ── 1. Tier 1 paramount tools (always loaded, ~35) ──
+  // ── 1. Tier 1 paramount tools (always loaded) ──
   for (const name of TIER_1_PARAMOUNT_TOOLS) {
     if ((toolUniverse as any)[name]) {
       selected[name] = (toolUniverse as any)[name];
@@ -866,15 +865,6 @@ export async function getToolsForQuery(
   // ── 5. Integration tools are NOT loaded natively to save tokens ──
   // The system prompt tells the model which integrations are connected,
   // and it discovers/executes them via search_tools + get_tool_schema + execute_tool.
-
-  // Always load browser_use tools natively
-  if (true) {
-    for (const [name, tool] of Object.entries(toolUniverse as any)) {
-      if (!selected[name] && name.startsWith('browser_use_')) {
-        selected[name] = tool;
-      }
-    }
-  }
 
   if (process.env.SIS_DEBUG === '1') {
     const rankedCount = rankedToolNames?.length || 0;

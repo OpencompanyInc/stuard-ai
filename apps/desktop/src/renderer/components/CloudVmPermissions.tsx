@@ -24,7 +24,6 @@ const DEFAULT_CONFIG: PermissionsConfig = {
 // Well-known sensitive tools for quick toggle UI
 const KNOWN_TOOLS = [
   { id: 'run_command', label: 'Run Command', desc: 'Execute shell commands', icon: Terminal, risk: 'high' as const },
-  { id: 'run_system_command', label: 'System Command', desc: 'Execute system-level commands', icon: Terminal, risk: 'high' as const },
   { id: 'write_file', label: 'Write File', desc: 'Create or overwrite files', icon: FileEdit, risk: 'medium' as const },
   { id: 'terminal_create', label: 'Create Terminal', desc: 'Open new terminal sessions', icon: Terminal, risk: 'medium' as const },
   { id: 'terminal_send_input', label: 'Terminal Input', desc: 'Send input to terminal', icon: Terminal, risk: 'medium' as const },

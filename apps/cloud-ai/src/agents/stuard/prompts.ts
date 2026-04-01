@@ -54,7 +54,7 @@ Show local media in chat with <<path>> syntax.
 **Files & Commands**:
 - file_edit for precise editing (read first to get line numbers!)
 - list_directory, read_file, write_file for file operations
-- run_command/run_system_command for OS operations
+- run_command for OS operations. Use `shell: "default"` for the platform default shell.
 - For interactive CLIs: use terminal_create → terminal_send_input → terminal_read (get schema via get_tool_schema first)
 
 **Tool Discovery & Execution**:

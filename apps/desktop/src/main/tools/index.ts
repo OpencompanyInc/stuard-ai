@@ -42,6 +42,18 @@ export * from './handlers/local'; // for calcToolTimeout
 export { execCloudTool } from './handlers/cloud';
 export { execCustomUi, execCloseCustomUi, initCustomUiIpc } from './handlers/electron';
 
+function normalizeCommandTool(toolName: string, args: any): { toolName: string; args: any } {
+  if (toolName !== 'run_system_command') {
+    return { toolName, args };
+  }
+
+  const normalizedArgs = (args && typeof args === 'object') ? { ...args } : {};
+  if (typeof normalizedArgs.shell !== 'string' || !normalizedArgs.shell.trim()) {
+    normalizedArgs.shell = 'default';
+  }
+  return { toolName: 'run_command', args: normalizedArgs };
+}
+
 /**
  * Internal handler for _media_register tool.
  * Accepts base64 images (or file paths) from cloud-originated tools and
@@ -170,6 +182,9 @@ async function execMediaRegister(args: any): Promise<any> {
  * Execute any tool, routing to the correct backend
  */
 export async function execTool(toolName: string, args: any, ctx: RouterContext): Promise<any> {
+  const normalized = normalizeCommandTool(toolName, args);
+  toolName = normalized.toolName;
+  args = normalized.args;
   const kind = getToolKind(toolName);
   const withMediaCapture = async (promise: Promise<any>) => captureToolMedia(toolName, args, await promise);
 

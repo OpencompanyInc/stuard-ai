@@ -17,7 +17,7 @@ else:
 
 logger = get_logger("agent")
 
-SENSITIVE_TOOLS = {"run_command", "run_system_command", "write_file"}
+SENSITIVE_TOOLS = {"run_command", "write_file"}
 # Tools that should be executed by the Desktop client (Electron) instead of the local agent.
 CLIENT_TOOLS = {
     # GenUI (handled by renderer)

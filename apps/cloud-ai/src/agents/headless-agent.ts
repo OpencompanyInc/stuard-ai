@@ -23,7 +23,7 @@ import { google_get_userinfo, gmail_list_messages, gmail_get_message_brief, gmai
 import { facebook_get_me, facebook_list_pages, facebook_list_page_posts, facebook_create_page_post, facebook_list_post_comments, facebook_reply_comment, facebook_delete_post, facebook_list_conversations, facebook_get_conversation_messages, facebook_send_message, instagram_get_me, instagram_list_media, instagram_publish_media, instagram_list_comments, instagram_reply_comment, instagram_delete_comment, instagram_list_conversations, instagram_get_conversation_messages, instagram_send_dm, threads_get_me, threads_list_posts, threads_publish_post, threads_get_post, threads_list_replies, threads_reply_to_post } from '../tools/meta-social-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_status, whatsapp_get_media_url, whatsapp_download_media, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_send_template, whatsapp_voice_call, whatsapp_make_call } from '../tools/whatsapp-tools';
 import { telnyx_send_sms, telnyx_call_control, telnyx_phone_status, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../tools/telnyx-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, run_system_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, move_file, calendar_crud, task_crud, task_reminders, planner_list_items, capture_media, describe_media_capture_capabilities, run_command, search_local_workflows, import_workflow, run_automation, stop_automation, search_past_conversations, get_conversation_context, agent_decision, agent_extract, glob, grep, browser_use_status, browser_use_configure, browser_use_execute_script, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for } from '../tools/device-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { initToolRegistry } from '../tools/meta-tools';
 import { getToolRegistry } from '../tools/tool-registry';
@@ -239,7 +239,6 @@ export function getHeadlessAgent(
     grep,
     capture_media,
     describe_media_capture_capabilities,
-    run_system_command,
     run_command,
     browser_use_status,
     browser_use_configure,
@@ -297,7 +296,7 @@ export function getHeadlessAgent(
     'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search',
     'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks',
     'send_hotkey', 'glob', 'grep', 'capture_media',
-    'describe_media_capture_capabilities', 'run_system_command', 'run_command',
+    'describe_media_capture_capabilities', 'run_command',
     'browser_use_status', 'browser_use_configure', 'browser_use_execute_script', 'browser_use_navigate', 'browser_use_click',
     'browser_use_type', 'browser_use_press_key', 'browser_use_screenshot', 'browser_use_content', 'browser_use_scroll',
     'browser_use_tabs', 'browser_use_cookies', 'browser_use_hover', 'browser_use_select_option',
@@ -508,7 +507,7 @@ export function getHeadlessAgent(
 You are running on a headless cloud VM (Linux, Debian 12).
 - Browser automation is available via Xvfb virtual display + Chromium. Use browser_use_* tools normally.
 - Desktop-only tools (clipboard, hotkeys, screen capture from hardware) are NOT available.
-- Use run_command / run_system_command for shell operations.
+- Use run_command for shell operations. Prefer `shell: "default"` when you want the platform default shell semantics.
 - File operations (read_file, write_file, glob, grep) operate on the VM filesystem.
 `;
   }

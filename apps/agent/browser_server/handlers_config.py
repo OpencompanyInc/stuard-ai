@@ -8,49 +8,38 @@ from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _normalize_profile_name
 from browser_server.profile import _current_profile_dir
 from browser_server.lifecycle import _page_is_alive, _get_page_url, _get_page_title, _close_browser, _ensure_browser
+from browser_server.cdp_client import _find_chrome
 
 
 # ---------------------------------------------------------------------------
 # GET /status
 # ---------------------------------------------------------------------------
 
-_chromium_check_cache: bool | None = None  # cached chromium binary check
+_browser_check_cache: bool | None = None  # cached browser binary check
 
 
-def _check_chromium_installed() -> bool:
-    """Check if playwright pip package AND Chromium binary exist (sync, for thread)."""
+def _check_browser_installed() -> bool:
+    """Check if a Chrome-compatible browser binary is available."""
     try:
-        from playwright.sync_api import sync_playwright
-        import os
-        p = sync_playwright().start()
-        exe = p.chromium.executable_path
-        p.stop()
-        return bool(exe and os.path.exists(exe))
+        return bool(_find_chrome())
     except Exception:
         return False
 
 
 async def handle_status(_req: web.Request) -> web.Response:
-    global _chromium_check_cache
-    has_playwright = True
-    try:
-        import playwright  # noqa: F401
-    except ImportError:
-        has_playwright = False
+    global _browser_check_cache
 
-    # If browser is already running, chromium is definitely installed
+    # If the browser is already running, the binary is definitely available.
     browser_running = await _page_is_alive()
     if browser_running:
-        has_chromium = True
-        _chromium_check_cache = True
-    elif _chromium_check_cache is not None:
-        has_chromium = _chromium_check_cache
-    elif has_playwright:
-        import asyncio
-        has_chromium = await asyncio.to_thread(_check_chromium_installed)
-        _chromium_check_cache = has_chromium
+        has_browser = True
+        _browser_check_cache = True
+    elif _browser_check_cache is not None:
+        has_browser = _browser_check_cache
     else:
-        has_chromium = False
+        import asyncio
+        has_browser = await asyncio.to_thread(_check_browser_installed)
+        _browser_check_cache = has_browser
 
     current_url = ""
     title = ""
@@ -59,13 +48,14 @@ async def handle_status(_req: web.Request) -> web.Response:
         title = await _get_page_title(timeout=0.75)
 
     return _ok({
-        "installed": has_playwright and has_chromium,
+        "installed": has_browser,
         "running": browser_running,
         "mode": state._config["mode"],
         "profile": state._config["profile"],
         "profileDir": str(_current_profile_dir()),
         "currentUrl": current_url,
         "title": title,
+        "engine": "chrome-cdp",
     })
 
 

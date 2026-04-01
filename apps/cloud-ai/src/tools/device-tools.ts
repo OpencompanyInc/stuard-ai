@@ -60,7 +60,6 @@ export { find_text, find_text_on_screen, find_and_click_text } from './device/oc
 // System & Window Management
 export {
   launch_application_or_uri,
-  run_system_command,
   run_command,
   list_terminals,
   read_terminal,

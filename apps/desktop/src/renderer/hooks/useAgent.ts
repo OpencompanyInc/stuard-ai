@@ -443,7 +443,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const FILE_MODIFYING_TOOLS = new Set([
     'write_file', 'write_file_base64', 'delete_file', 'move_file', 'copy_file',
     'create_directory', 'edit_and_apply', 'edit_file', 'file_edit', 'patch_file',
-    'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
+    'run_command', 'run_python_script', 'run_node_script',
   ]);
 
   // Tab Management
@@ -1314,7 +1314,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                             existingArgs?.dest ||
                             existingArgs?.src ||
                             existingArgs?.cwd ||
-                            ((tool === 'run_command' || tool === 'run_system_command')
+                            (tool === 'run_command'
                               ? '[command_side_effects]'
                               : undefined);
                           if (filePath) {

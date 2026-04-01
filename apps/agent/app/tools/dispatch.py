@@ -56,7 +56,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
 
     # System
     "launch_application_or_uri": ("system", "Launch desktop applications or open URLs"),
-    "run_system_command": ("system", "Execute system commands with shell"),
     "run_command": ("system", "Run shell commands cross-platform with timeout"),
     "list_terminals": ("system", "List active terminal sessions"),
     "read_terminal": ("system", "Read incremental terminal output"),
@@ -415,7 +414,6 @@ _HANDLERS = {
 
     # System
     "launch_application_or_uri": system.launch_application_or_uri,
-    "run_system_command": system.run_system_command,
     "run_command": system.run_command,
     "list_terminals": system.list_terminals,
     "read_terminal": system.read_terminal,
@@ -760,7 +758,6 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
 
     # Some handlers support an optional emit for progress / streaming events
     if tool in (
-        "run_system_command",
         "run_command",
         "capture_media",
         "stop_capture",

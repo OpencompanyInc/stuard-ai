@@ -31,7 +31,6 @@ interface ApprovalRequest {
 
 const TOOL_RISK: Record<string, 'high' | 'medium' | 'low'> = {
   run_command: 'high',
-  run_system_command: 'high',
   write_file: 'medium',
   terminal_create: 'medium',
   terminal_send_input: 'medium',

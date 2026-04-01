@@ -1,7 +1,7 @@
-"""Browser automation server — lightweight HTTP wrapper around Playwright.
+"""Browser automation server - lightweight HTTP wrapper around Chrome CDP.
 
 Managed by the Stuard desktop app as a child process.
-Requires: pip install playwright aiohttp cryptography
+Requires: aiohttp cryptography
 Runs on port 18082 by default.
 """
 

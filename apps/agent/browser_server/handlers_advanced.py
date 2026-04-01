@@ -8,21 +8,16 @@ from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int
 from browser_server.lifecycle import (
     _ensure_browser, _get_page_url, _get_page_title,
-    _find_elements, _evaluate, _wait_for_selector, _smart_wait_for_element,
+    _evaluate, _wait_for_selector, _smart_wait_for_element,
+    _cdp_press_key,
     _close_browser,
 )
 
 
 async def _get_cdp_session():
-    """Get or create a Playwright CDPSession for raw CDP commands."""
-    if state._cdp_session is not None:
-        return state._cdp_session
-    if state._context is not None and state._page is not None:
-        try:
-            state._cdp_session = await state._context.new_cdp_session(state._page)
-            return state._cdp_session
-        except Exception:
-            pass
+    """Return the active CDP connection for raw commands."""
+    if state._page is not None and state._page.is_connected:
+        return state._page
     return None
 
 
@@ -107,14 +102,6 @@ async def _cdp_type_text(text: str) -> bool:
         except Exception:
             pass
 
-    # Fallback: use Playwright keyboard
-    if hasattr(page, "keyboard"):
-        try:
-            await page.keyboard.type(text, delay=30)
-            return True
-        except Exception:
-            pass
-
     return False
 
 
@@ -125,22 +112,10 @@ async def _cdp_clear_and_type(selector: str, text: str) -> bool:
     await asyncio.sleep(0.1)
 
     # Select all + delete to clear
-    page = state._page
-    if page and hasattr(page, "press"):
-        try:
-            await page.press("Control+a")
-            await asyncio.sleep(0.02)
-            await page.press("Backspace")
-            await asyncio.sleep(0.05)
-        except Exception:
-            # Fallback: JS clear
-            await _evaluate(
-                """(sel) => {
-                  const el = document.querySelector(sel);
-                  if (el && 'value' in el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }
-                }""",
-                selector,
-            )
+    if await _cdp_press_key("Control+a"):
+        await asyncio.sleep(0.02)
+        await _cdp_press_key("Backspace")
+        await asyncio.sleep(0.05)
     else:
         await _evaluate(
             """(sel) => {
@@ -657,13 +632,8 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
                 filter_text = search or (str(label) if label is not None else None) or (str(value) if value is not None else None)
                 if filter_text:
                     # Close the current dropdown first (Escape), then use the combobox handler
-                    page = state._page
-                    if page and hasattr(page, "press"):
-                        try:
-                            await page.press("Escape")
-                            await asyncio.sleep(0.1)
-                        except Exception:
-                            pass
+                    await _cdp_press_key("Escape")
+                    await asyncio.sleep(0.1)
                     result = await _searchable_combobox_select(selector, filter_text, value, label, index, timeout)
                     if result.get("status") == "ok":
                         return result
@@ -679,7 +649,7 @@ async def _select_dropdown(selector: str, value: Any = None, label: Any = None, 
 async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000) -> dict[str, Any]:
     """Upload a file to a file input using CDP DOM.setFileInputFiles.
 
-    Works with Playwright CDPSession.
+    Works with the active CDP connection.
     Strategy:
     1. Find the <input type="file"> element (via selector, or by searching nearby)
     2. Use CDP DOM.setFileInputFiles to set the file directly (no file dialog needed)
@@ -768,13 +738,12 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
     marker = find_result.get("marker", "")
     file_input_sel = f'input[type="file"][data-stuard-upload-target="{marker}"]'
 
-    # Try CDP DOM.setFileInputFiles via Playwright CDPSession
-    page = state._page
     upload_success = False
 
     cdp = await _get_cdp_session()
     if cdp:
         try:
+            await cdp.send("DOM.enable")
             doc_result = await cdp.send("DOM.getDocument", {"depth": 0})
             root_id = doc_result["root"]["nodeId"]
 
@@ -793,17 +762,8 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
         except Exception as cdp_err:
             print(f"[browser-server] CDP file upload failed: {cdp_err}", flush=True)
 
-    # Fallback: try Playwright-style set_input_files
-    if not upload_success and page and hasattr(page, "locator"):
-        try:
-            locator = page.locator(file_input_sel).first
-            await locator.set_input_files(str(resolved_path), timeout=timeout)
-            upload_success = True
-        except Exception:
-            pass
-
     if not upload_success:
-        raise RuntimeError("File upload failed: could not set files via CDP or Playwright")
+        raise RuntimeError("File upload failed: could not set files via CDP")
 
     # Dispatch change event to notify frameworks
     await _evaluate(
@@ -1023,12 +983,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
                     await asyncio.sleep(0.3)
                 # Also try dispatching keyboard open (ArrowDown / Space — common triggers)
                 if attempts == 5:
-                    page = state._page
-                    if page and hasattr(page, "press"):
-                        try:
-                            await page.press("ArrowDown")
-                        except Exception:
-                            pass
+                    await _cdp_press_key("ArrowDown")
                     await asyncio.sleep(0.3)
                 await asyncio.sleep(0.25)
 
@@ -1036,12 +991,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
             await _evaluate(f"""() => {{ document.querySelectorAll('[{MARKER}]').forEach(el => el.removeAttribute('{MARKER}')); }}""")
 
             # Close the dropdown (Escape + click elsewhere)
-            page = state._page
-            if page and hasattr(page, "press"):
-                try:
-                    await page.press("Escape")
-                except Exception:
-                    pass
+            await _cdp_press_key("Escape")
             # Also click body to close any lingering popups
             await _evaluate("""() => { document.body.click(); }""")
 
@@ -1424,10 +1374,8 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                             await _cdp_click_element_by_selector(sel)
                         filled += 1
                     else:
-                        # Text input — use Playwright fill or CDP type
-                        els = await _find_elements(sel)
-                        if els:
-                            await els[0].fill(val, clear=True)
+                        typed = await _cdp_clear_and_type(sel, val)
+                        if typed:
                             filled += 1
                         else:
                             # Fallback: JS fill + events

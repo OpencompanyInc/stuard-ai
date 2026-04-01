@@ -323,62 +323,6 @@ async def launch_application_or_uri(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": True, "launched": target}
 
 
-async def run_system_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
-    cmd = str(args.get("command") or "").strip()
-    timeout_ms = int(args.get("timeoutMs") or 30000)
-    background = bool(args.get("background") or False)
-    # SECURITY: Default to shell=False unless explicitly requested to prevent injection
-    use_shell = bool(args.get("shell") or False)
-    cwd = args.get("cwd")
-    terminal_id = args.get("terminalId")
-    if not cmd:
-        raise ValueError("missing command")
-
-    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
-
-    if emit:
-        await emit("executing", {"command": cmd})
-    if background:
-        return _start_terminal_session(
-            command=cmd,
-            argv=None if use_shell else shlex.split(cmd),
-            shell=use_shell,
-            shell_used="system",
-            cwd=cwd if isinstance(cwd, str) and cwd else None,
-            terminal_id=str(terminal_id) if terminal_id is not None else None,
-            checkpoint_before=checkpoint,
-        )
-    try:
-        if use_shell:
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout_ms/1000,
-                cwd=cwd if isinstance(cwd, str) and cwd else None,
-            )
-        else:
-            argv = shlex.split(cmd)
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                argv,
-                shell=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout_ms/1000,
-                cwd=cwd if isinstance(cwd, str) and cwd else None,
-            )
-
-        _finish_command_checkpoint(checkpoint)
-            
-        return {"ok": True, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
-    except subprocess.TimeoutExpired:
-        _finish_command_checkpoint(checkpoint)
-        return {"ok": False, "error": "timeout"}
-
-
 async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     cmd = str(args.get("command") or "").strip()
     shell_pref = str(args.get("shell") or "auto").lower()
@@ -403,24 +347,24 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
     shell_used = ""
     argv = []  # type: ignore[var-annotated]
     if _is_windows():
-        if shell_pref in ("auto", "powershell", "pwsh"):
+        if shell_pref in ("default", "cmd"):
+            shell_used = "cmd"
+            argv = ["cmd.exe", "/d", "/c", cmd]
+        elif shell_pref in ("auto", "powershell", "pwsh"):
             exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
             shell_used = "powershell"
             argv = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd]
-        elif shell_pref == "cmd":
-            shell_used = "cmd"
-            argv = ["cmd.exe", "/d", "/c", cmd]
         else:
             shell_used = "cmd"
             argv = ["cmd.exe", "/d", "/c", cmd]
     else:
-        if shell_pref in ("auto", "bash"):
-            exe = "/bin/bash" if _exists("/bin/bash") else (shutil.which("bash") or "/bin/sh")
-            shell_used = "bash" if "bash" in exe else "sh"
-            argv = [exe, "-lc", cmd]
-        elif shell_pref == "sh":
+        if shell_pref in ("default", "sh"):
             exe = "/bin/sh"
             shell_used = "sh"
+            argv = [exe, "-lc", cmd]
+        elif shell_pref in ("auto", "bash"):
+            exe = "/bin/bash" if _exists("/bin/bash") else (shutil.which("bash") or "/bin/sh")
+            shell_used = "bash" if "bash" in exe else "sh"
             argv = [exe, "-lc", cmd]
         else:
             exe = "/bin/sh"

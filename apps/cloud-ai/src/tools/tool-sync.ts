@@ -301,7 +301,6 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
 
   // System
   run_command: ['terminal', 'shell', 'execute', 'bash', 'cmd', 'command line'],
-  run_system_command: ['system command', 'shell command'],
   run_python_script: ['python', 'script', 'py', 'python code'],
   run_node_script: ['nodejs', 'javascript', 'node script'],
 

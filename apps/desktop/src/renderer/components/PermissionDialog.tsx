@@ -16,7 +16,6 @@ interface PermissionDialogProps {
 // Map tool names to icons and descriptions
 const toolMeta: Record<string, { icon: React.ElementType; description: string; risk: 'low' | 'medium' | 'high' }> = {
   run_command: { icon: Terminal, description: 'Execute a terminal command', risk: 'high' },
-  run_system_command: { icon: Terminal, description: 'Execute a system command', risk: 'high' },
   run_python_script: { icon: Cpu, description: 'Run a Python script', risk: 'medium' },
   run_node_script: { icon: Cpu, description: 'Run a Node.js script', risk: 'medium' },
   write_file: { icon: FileText, description: 'Write to a file', risk: 'medium' },

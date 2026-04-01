@@ -10,12 +10,13 @@ from aiohttp import web
 from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _make_json_safe
 from browser_server.lifecycle import (
-    _ensure_browser, _page_is_alive, _get_page_url, _get_page_title, _evaluate, _wait_for_selector,
+    _ensure_browser, _page_is_alive, _get_page_url, _get_page_title,
+    _evaluate, _wait_for_selector, _capture_screenshot, _cdp_click_at,
 )
 
 
 async def handle_screenshot(req: web.Request) -> web.Response:
-    body = await req.json() if req.content_length else {}
+    body = await _safe_json(req) if req.content_length else {}
 
     async with state._lock:
         ok, err = await _ensure_browser()
@@ -23,38 +24,29 @@ async def handle_screenshot(req: web.Request) -> web.Response:
             return _err(err or "Browser init failed", status=500)
         try:
             full_page = body.get("full_page", False)
-            if hasattr(state._page, "screenshot"):
-                screenshot_dir = Path(tempfile.gettempdir()) / "stuard-browser-screenshots"
-                screenshot_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="browser-", dir=str(screenshot_dir)) as tmp:
-                    screenshot_path = Path(tmp.name)
-                if "full_page" in str(state._page.screenshot):
-                    raw_screenshot = await state._page.screenshot(full_page=full_page)
-                else:
-                    raw_screenshot = await state._page.screenshot()
-                if isinstance(raw_screenshot, memoryview):
-                    screenshot_bytes = raw_screenshot.tobytes()
-                elif isinstance(raw_screenshot, (bytes, bytearray)):
-                    screenshot_bytes = bytes(raw_screenshot)
-                else:
-                    raw_text = str(raw_screenshot or "").strip()
-                    if raw_text.startswith("data:") and "," in raw_text:
-                        raw_text = raw_text.split(",", 1)[1]
-                    try:
-                        screenshot_bytes = base64.b64decode(raw_text, validate=False)
-                    except Exception as decode_error:
-                        raise RuntimeError(f"Unsupported screenshot payload: {decode_error}")
-                screenshot_path.write_bytes(screenshot_bytes)
-            else:
-                return _err("Screenshot not supported")
+            screenshot_dir = Path(tempfile.gettempdir()) / "stuard-browser-screenshots"
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="browser-", dir=str(screenshot_dir)) as tmp:
+                screenshot_path = Path(tmp.name)
+            screenshot_bytes = await _capture_screenshot("png", full_page=bool(full_page))
+            screenshot_path.write_bytes(screenshot_bytes)
             include_base64 = body.get("include_base64", False)
+            viewport = await _evaluate(
+                """() => ({
+                  w: Math.max(window.innerWidth || 0, document.documentElement?.clientWidth || 0),
+                  h: Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0),
+                })"""
+            )
+            if isinstance(viewport, dict):
+                state._viewport_cache["w"] = int(viewport.get("w", state._viewport_cache["w"]) or state._viewport_cache["w"])
+                state._viewport_cache["h"] = int(viewport.get("h", state._viewport_cache["h"]) or state._viewport_cache["h"])
             result = {
                 "image_path": str(screenshot_path),
                 "screenshot_path": str(screenshot_path),
                 "format": "png",
                 "url": await _get_page_url(),
-                "width": int(await _evaluate("() => String(window.innerWidth || 0)") or "0"),
-                "height": int(await _evaluate("() => String(window.innerHeight || 0)") or "0"),
+                "width": int(state._viewport_cache.get("w", 0)),
+                "height": int(state._viewport_cache.get("h", 0)),
             }
             if include_base64:
                 result["base64"] = base64.b64encode(screenshot_bytes).decode("ascii")
@@ -81,16 +73,7 @@ async def handle_screenshot_mirror(req: web.Request) -> web.Response:
         return web.Response(status=503, text="Browser not running")
 
     try:
-        if not hasattr(state._page, "screenshot"):
-            return web.Response(status=503, text="Screenshot not supported")
-
-        raw = await state._page.screenshot(type="jpeg", quality=quality)
-        if isinstance(raw, memoryview):
-            img_bytes = raw.tobytes()
-        elif isinstance(raw, (bytes, bytearray)):
-            img_bytes = bytes(raw)
-        else:
-            return web.Response(status=500, text="Unexpected screenshot format")
+        img_bytes = await _capture_screenshot("jpeg", quality=quality)
 
         if resize_width > 0:
             try:
@@ -129,7 +112,7 @@ async def handle_screenshot_mirror(req: web.Request) -> web.Response:
 
 
 async def handle_click_at(req: web.Request) -> web.Response:
-    """Click at specific x,y coordinates using Playwright mouse."""
+    """Click at specific x,y coordinates using CDP input events."""
     body = await _safe_json(req)
     x = body.get("x")
     y = body.get("y")
@@ -144,14 +127,12 @@ async def handle_click_at(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            mouse = getattr(state._page, "mouse", None)
-            if mouse is None:
-                return _err("Mouse not available")
-
             if click_type == "dblclick":
-                await mouse.dblclick(x, y)
+                await _cdp_click_at(x, y, click_count=1)
+                await asyncio.sleep(0.05)
+                await _cdp_click_at(x, y, click_count=2)
             else:
-                await mouse.click(x, y)
+                await _cdp_click_at(x, y, click_count=1)
 
             return _ok({"clicked_at": {"x": x, "y": y}, "type": click_type})
         except Exception as e:

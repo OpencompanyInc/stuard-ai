@@ -7,53 +7,18 @@ export const launch_application_or_uri = makeLocalTool(
   z.object({ target: z.string(), args: z.array(z.string()).optional() }),
 );
 
-export const run_system_command = makeLocalTool(
-  'run_system_command',
-  'Execute system commands with timeout. IMPORTANT: Always provide a clear description explaining what this command does and why you are running it.',
-  z.object({
-    command: z.string(),
-    description: z
-      .string()
-      .describe('A clear, non-technical explanation of what this command does and why you are running it. This will be shown to the user for approval.'),
-    timeoutMs: z.number().int().min(100).max(600000).default(30000),
-    checkpoint: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe('When true, create a filesystem checkpoint before execution for potential rollback.'),
-    shell: z.boolean().default(true),
-    background: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe('If true, run in background and return a terminalId for live polling.'),
-    terminalId: z.string().optional().describe('Optional caller-provided terminal ID to reuse/track a session.'),
-    forwardToStreamId: z
-      .string()
-      .optional()
-      .describe('If set, forward live stdout/stderr output chunks to this stream id (only meaningful when background=true).'),
-  }),
-  z.object({
-    ok: z.boolean().optional(),
-    stdout: z.string().optional(),
-    stderr: z.string().optional(),
-    exitCode: z.number().int().optional(),
-    terminalId: z.string().optional(),
-    pid: z.number().int().optional(),
-    status: z.string().optional(),
-    shell: z.string().optional(),
-  }),
-);
-
 export const run_command = makeLocalTool(
   'run_command',
-  'Run shell commands cross-platform (auto/cmd/powershell/bash/sh) with timeout. IMPORTANT: Always provide a clear description explaining what this command does and why you are running it.',
+  'Run shell commands cross-platform (auto/default/cmd/powershell/bash/sh) with timeout. IMPORTANT: Always provide a clear description explaining what this command does and why you are running it.',
   z.object({
     command: z.string(),
     description: z
       .string()
       .describe('A clear, non-technical explanation of what this command does and why you are running it. This will be shown to the user for approval.'),
-    shell: z.enum(['auto', 'cmd', 'powershell', 'bash', 'sh']).default('auto'),
+    shell: z
+      .enum(['auto', 'default', 'cmd', 'powershell', 'bash', 'sh'])
+      .default('auto')
+      .describe('auto prefers a modern cross-platform shell; default uses the platform default shell (cmd on Windows, sh on Unix).'),
     timeoutMs: z.number().int().min(100).max(600000).default(30000),
     cwd: z.string().optional(),
     checkpoint: z
@@ -95,7 +60,7 @@ export const run_command = makeLocalTool(
 
 export const list_terminals = makeLocalTool(
   'list_terminals',
-  'List active and recent terminal sessions created by background run_command/run_system_command calls.',
+  'List active and recent terminal sessions created by background run_command calls.',
   z.object({}),
   z.object({
     ok: z.boolean().optional(),

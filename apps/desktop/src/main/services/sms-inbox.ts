@@ -55,7 +55,7 @@ function formatToolArgsForSms(toolName: string, args: any): string {
       const dur = args?.duration ? ` for ${args.duration}s` : '';
       return `record system audio${dur}`;
     }
-    if (toolName === 'run_command' || toolName === 'run_system_command') {
+    if (toolName === 'run_command') {
       const cmd = String(args?.command || '').slice(0, 80);
       return `run command: ${cmd}`;
     }
@@ -73,7 +73,7 @@ function formatToolArgsForSms(toolName: string, args: any): string {
 
 // Tools that need explicit SMS approval before the desktop executes them
 const SMS_PERMISSION_TOOLS = new Set([
-  'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
+  'run_command', 'run_python_script', 'run_node_script',
   'capture_media', 'capture_screen', 'capture_system_audio',
   'terminal_create', 'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys',
 ]);

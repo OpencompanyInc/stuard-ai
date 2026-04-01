@@ -5,7 +5,7 @@ from aiohttp import web
 
 from browser_server import state
 from browser_server.utils import _ok, _err
-from browser_server.lifecycle import _ensure_browser
+from browser_server.lifecycle import _ensure_browser, _get_page_url, _get_page_title
 
 
 async def handle_tabs(req: web.Request) -> web.Response:
@@ -17,43 +17,59 @@ async def handle_tabs(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
+            browser = state._browser
+            if browser is None:
+                return _err("Browser not initialized", status=500)
+
             if action == "list":
-                pages = state._context.pages if state._context else []
+                targets = await browser.list_targets()
                 tabs = []
-                for i, p in enumerate(pages):
+                for i, t in enumerate(targets):
+                    is_active = t["id"] == browser._active_id
                     tabs.append({
                         "index": i,
-                        "url": p.url,
-                        "title": await p.title(),
-                        "active": p == state._page,
+                        "url": t.get("url", ""),
+                        "title": t.get("title", ""),
+                        "active": is_active,
                     })
                 return _ok({"tabs": tabs, "count": len(tabs)})
 
             elif action == "new":
-                state._page = await state._context.new_page()
-                url = body.get("url")
-                if url:
-                    await state._page.goto(url, wait_until="domcontentloaded")
-                return _ok({"url": state._page.url, "title": await state._page.title()})
+                url = body.get("url", "about:blank")
+                page = await browser.new_page(url)
+                state._page = page
+                return _ok({
+                    "url": await _get_page_url(),
+                    "title": await _get_page_title(),
+                })
 
             elif action == "switch":
                 index = body.get("index", 0)
-                pages = state._context.pages if state._context else []
-                if 0 <= index < len(pages):
-                    state._page = pages[index]
-                    await state._page.bring_to_front()
-                    return _ok({"url": state._page.url, "title": await state._page.title()})
-                return _err(f"Tab index {index} out of range (0-{len(pages) - 1})")
+                targets = await browser.list_targets()
+                if 0 <= index < len(targets):
+                    page = await browser.activate_target(targets[index]["id"])
+                    state._page = page
+                    return _ok({
+                        "url": await _get_page_url(),
+                        "title": await _get_page_title(),
+                    })
+                return _err(f"Tab index {index} out of range (0-{len(targets) - 1})")
 
             elif action == "close":
                 index = body.get("index")
-                pages = state._context.pages if state._context else []
-                if index is not None and 0 <= index < len(pages):
-                    target = pages[index]
-                    await target.close()
-                    pages = state._context.pages
-                    state._page = pages[-1] if pages else await state._context.new_page()
-                    return _ok({"closed": index, "remaining": len(state._context.pages)})
+                targets = await browser.list_targets()
+                if index is not None and 0 <= index < len(targets):
+                    target_id = targets[index]["id"]
+                    await browser.close_target(target_id)
+                    # Switch to remaining tab
+                    remaining = await browser.list_targets()
+                    if remaining:
+                        page = await browser.activate_target(remaining[-1]["id"])
+                        state._page = page
+                    else:
+                        page = await browser.new_page()
+                        state._page = page
+                    return _ok({"closed": index, "remaining": len(remaining) if remaining else 1})
                 return _err("index is required for close action")
 
             return _err(f"Unknown tabs action: {action}")
@@ -70,24 +86,33 @@ async def handle_cookies(req: web.Request) -> web.Response:
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
+            page = state._page
+            if page is None:
+                return _err("No active page", status=500)
+
             if action == "get":
                 urls = body.get("urls")
-                cookies = await state._context.cookies(urls) if urls else await state._context.cookies()
+                if urls:
+                    result = await page.send("Network.getCookies", {"urls": urls})
+                else:
+                    result = await page.send("Network.getAllCookies")
+                cookies = result.get("cookies", [])
                 return _ok({"cookies": cookies, "count": len(cookies)})
 
             elif action == "set":
                 cookies = body.get("cookies", [])
                 if not cookies:
                     return _err("cookies array is required for set action")
-                await state._context.add_cookies(cookies)
+                await page.send("Network.setCookies", {"cookies": cookies})
                 return _ok({"set": len(cookies)})
 
             elif action == "clear":
-                await state._context.clear_cookies()
+                await page.send("Network.clearBrowserCookies")
                 return _ok({"cleared": True})
 
             elif action == "export":
-                cookies = await state._context.cookies()
+                result = await page.send("Network.getAllCookies")
+                cookies = result.get("cookies", [])
                 export_path = body.get("path")
                 if export_path:
                     Path(export_path).parent.mkdir(parents=True, exist_ok=True)
@@ -100,11 +125,9 @@ async def handle_cookies(req: web.Request) -> web.Response:
                 if not import_path or not Path(import_path).exists():
                     return _err("Valid path is required for import action")
                 cookies = json.loads(Path(import_path).read_text())
-                await state._context.add_cookies(cookies)
+                await page.send("Network.setCookies", {"cookies": cookies})
                 return _ok({"imported": len(cookies)})
 
             return _err(f"Unknown cookies action: {action}")
         except Exception as e:
             return _err(f"Cookies operation failed: {e}")
-
-
