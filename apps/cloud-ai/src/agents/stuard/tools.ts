@@ -60,6 +60,89 @@ import { getToolRegistry } from '../../tools/tool-registry';
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
 
+const BLOCKED_STUARD_TOOL_NAMES = new Set([
+  'custom_ui',
+  'update_custom_ui',
+  'close_custom_ui',
+  'list_custom_ui_windows',
+  'send_ui_event',
+  'run_ui_script',
+]);
+
+function isBlockedStuardToolName(name: string): boolean {
+  return BLOCKED_STUARD_TOOL_NAMES.has(String(name || '').trim());
+}
+
+function blockedStuardToolError(name: string): string {
+  return `Tool '${name}' is not available in Stuard agent mode. Use 'chat_ui' instead.`;
+}
+
+function filterBlockedStuardSearchResults<T extends { name?: string }>(tools: T[] | undefined): T[] {
+  if (!Array.isArray(tools)) return [];
+  return tools.filter((tool) => !isBlockedStuardToolName(String(tool?.name || '')));
+}
+
+function stripBlockedStuardTools<T extends Record<string, any>>(tools: T): T {
+  const filtered: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(tools || {})) {
+    if (!isBlockedStuardToolName(name)) filtered[name] = tool;
+  }
+  return filtered as T;
+}
+
+const search_tools_for_stuard = {
+  ...(search_tools as any),
+  execute: async (inputData: any, runCtx: any) => {
+    const result = await (search_tools as any).execute(inputData, runCtx);
+    if (!result || !Array.isArray(result.tools)) return result;
+    const tools = filterBlockedStuardSearchResults(result.tools);
+    return { ...result, tools };
+  },
+} as any;
+
+const get_tool_schema_for_stuard = {
+  ...(get_tool_schema as any),
+  execute: async (inputData: any, runCtx: any) => {
+    const toolName = String(inputData?.tool_name || '');
+    if (isBlockedStuardToolName(toolName)) {
+      throw new Error(blockedStuardToolError(toolName));
+    }
+    return (get_tool_schema as any).execute(inputData, runCtx);
+  },
+} as any;
+
+const execute_tool_for_stuard = {
+  ...(execute_tool as any),
+  execute: async (inputData: any, runCtx: any) => {
+    const toolName = String(inputData?.tool_name || '');
+    if (isBlockedStuardToolName(toolName)) {
+      return { success: false, tool: toolName, error: blockedStuardToolError(toolName) };
+    }
+    return (execute_tool as any).execute(inputData, runCtx);
+  },
+} as any;
+
+const sis_search_tools_for_stuard = {
+  ...(SIS_RUNTIME_TOOLS.sis_search_tools as any),
+  execute: async (inputData: any, runCtx: any) => {
+    const result = await (SIS_RUNTIME_TOOLS.sis_search_tools as any).execute(inputData, runCtx);
+    if (!result || !Array.isArray(result.tools)) return result;
+    const tools = filterBlockedStuardSearchResults(result.tools);
+    return { ...result, count: tools.length, tools };
+  },
+} as any;
+
+const sis_execute_tool_for_stuard = {
+  ...(SIS_RUNTIME_TOOLS.sis_execute_tool as any),
+  execute: async (inputData: any, runCtx: any) => {
+    const toolName = String(inputData?.tool_name || '');
+    if (isBlockedStuardToolName(toolName)) {
+      return { success: false, tool: toolName, error: blockedStuardToolError(toolName) };
+    }
+    return (SIS_RUNTIME_TOOLS.sis_execute_tool as any).execute(inputData, runCtx);
+  },
+} as any;
+
 // Consolidated tool map
 export const ALL_TOOLS = {
   // Keep minimal set while refactoring streaming
@@ -375,13 +458,13 @@ export const ALL_TOOLS = {
   list_my_feedback: listMyFeedback,
   get_feedback_details: getFeedbackDetails,
   // SIS runtime tools (for dynamic tool discovery)
-  sis_search_tools: SIS_RUNTIME_TOOLS.sis_search_tools,
-  sis_execute_tool: SIS_RUNTIME_TOOLS.sis_execute_tool,
+  sis_search_tools: sis_search_tools_for_stuard,
+  sis_execute_tool: sis_execute_tool_for_stuard,
   sis_list_categories: SIS_RUNTIME_TOOLS.sis_list_categories,
   // Meta-tools for lazy-loading (always in Tier 1)
-  get_tool_schema,
-  execute_tool,
-  search_tools,
+  get_tool_schema: get_tool_schema_for_stuard,
+  execute_tool: execute_tool_for_stuard,
+  search_tools: search_tools_for_stuard,
   // Skills
   get_skill_info,
   // User interaction
@@ -643,6 +726,7 @@ async function getSis(): Promise<SISType | null> {
   // We intentionally do not include handlers here; we only use SIS for selection.
   for (const [name, tool] of Object.entries(getToolUniverse() as any)) {
     if (isLegacyBrowserExtensionTool(name)) continue;
+    if (isBlockedStuardToolName(name)) continue;
     const description = String((tool as any)?.description || '').trim();
     _sis.register({
       name,
@@ -686,7 +770,7 @@ export function getTools(
   // Use SIS_LOAD_ALL=1 to force loading all tools (legacy behavior)
   if (process.env.SIS_LOAD_ALL === '1') {
     Object.assign(tools, toolUniverse);
-    return tools;
+    return stripBlockedStuardTools(tools);
   }
 
   // Load Tier 1 tools
@@ -732,7 +816,7 @@ export function getTools(
     console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS, connected integrations via discovery)`);
   }
 
-  return tools;
+  return stripBlockedStuardTools(tools);
 }
 
 export async function getToolsForQuery(
@@ -748,7 +832,7 @@ export async function getToolsForQuery(
   // ── Escape hatch: SIS_LOAD_ALL=1 loads everything (legacy) ──
   if (process.env.SIS_LOAD_ALL === '1') {
     Object.assign(selected, toolUniverse);
-    return selected;
+    return stripBlockedStuardTools(selected);
   }
 
   // ── 1. Tier 1 paramount tools (always loaded, ~35) ──
@@ -831,5 +915,5 @@ export async function getToolsForQuery(
     console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount}, connected integrations via discovery)`);
   }
 
-  return selected;
+  return stripBlockedStuardTools(selected);
 }

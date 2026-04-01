@@ -382,6 +382,7 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             css={safeArgs.css}
             height={safeArgs.height}
             title={safeArgs.title}
+            blocking={safeArgs.blocking === true}
             onResult={onResult}
             isCompleted={isCompleted}
             result={result}

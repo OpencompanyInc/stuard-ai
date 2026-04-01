@@ -79,6 +79,7 @@ declare global {
       showItemInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
       openExternal: (url: string) => Promise<void>;
       getLinkPreview: (url: string) => Promise<{ ok: boolean; data?: { title: string; description: string; image: string; url: string; siteName: string }; error?: string }>;
+      notify: (titleOrConfig: string | any, body?: string) => Promise<any>;
       webhooksLocalUrl: (id?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
       handleCloudWebhook: (payload: any) => Promise<any>;
       selectFiles: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
@@ -102,6 +103,21 @@ declare global {
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
+      chatUiPickFile: (options?: {
+        title?: string;
+        filters?: Array<{ name: string; extensions: string[] }>;
+        multiple?: boolean;
+      }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      chatUiPickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      chatUiPickSavePath: (options?: {
+        title?: string;
+        defaultPath?: string;
+        filters?: Array<{ name: string; extensions: string[] }>;
+      }) => Promise<{ canceled: boolean; filePath?: string }>;
+      chatUiReadFile: (filePath: string, encoding?: string) => Promise<string>;
+      chatUiWriteFile: (filePath: string, content: string) => Promise<void>;
+      chatUiClipboardWrite: (text: string) => Promise<void>;
+      chatUiClipboardRead: () => Promise<string>;
 
       workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; folder?: string }>; folders?: string[]; error?: string }>;
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;

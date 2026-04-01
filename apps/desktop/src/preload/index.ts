@@ -148,6 +148,24 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
   // Transform JSX component code (for UI builder preview)
   customUiTransformJsx: (code: string) => ipcRenderer.invoke('customUi:transformJsx', code),
+  chatUiPickFile: (options?: {
+    title?: string;
+    filters?: Array<{ name: string; extensions: string[] }>;
+    multiple?: boolean;
+  }) => ipcRenderer.invoke('stuard:pickFile', options || {}),
+  chatUiPickFolder: (options?: { title?: string; multiple?: boolean }) =>
+    ipcRenderer.invoke('stuard:pickFolder', options || {}),
+  chatUiPickSavePath: (options?: {
+    title?: string;
+    defaultPath?: string;
+    filters?: Array<{ name: string; extensions: string[] }>;
+  }) => ipcRenderer.invoke('stuard:pickSavePath', options || {}),
+  chatUiReadFile: (filePath: string, encoding?: string) =>
+    ipcRenderer.invoke('stuard:readFile', { path: filePath, encoding }),
+  chatUiWriteFile: (filePath: string, content: string) =>
+    ipcRenderer.invoke('stuard:writeFile', { path: filePath, content }),
+  chatUiClipboardWrite: (text: string) => ipcRenderer.invoke('stuard:clipboard:write', text),
+  chatUiClipboardRead: () => ipcRenderer.invoke('stuard:clipboard:read'),
 
   workflowsList: () => ipcRenderer.invoke('workflows:list'),
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),
