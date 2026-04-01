@@ -492,10 +492,12 @@ Object.values(httpTools).forEach(t => {
 
 export const search_tools = createTool({
     id: 'search_tools',
-    description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
+    description: 'Search for available tools by category or query string. Returns tool names and descriptions. Pass list_categories:true to see all categories.',
     inputSchema: z.object({
         category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
         query: z.string().optional(),
+        list_categories: z.boolean().optional().describe('Return the list of available categories instead of searching'),
+        limit: z.number().int().min(1).max(20).optional().default(10),
     }),
     outputSchema: z.object({
         tools: z.array(z.object({
@@ -505,9 +507,15 @@ export const search_tools = createTool({
         })),
     }),
     execute: async (inputData) => {
-        const { category, query } = inputData;
+        const { category, query, list_categories, limit = 10 } = inputData as any;
         const registry = getToolRegistry();
         const categories = getToolCategories();
+
+        if (list_categories) {
+            return {
+                tools: [...categories.keys()].map(cat => ({ name: cat, description: '', category: cat })),
+            };
+        }
 
         const keywordSearch = () => {
             const results: Array<{ name: string; description: string; category: string }> = [];
@@ -523,68 +531,69 @@ export const search_tools = createTool({
                     const desc = tool.description || '';
                     if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
 
-                    results.push({
-                        name,
-                        description: desc,
-                        category: cat,
-                    });
+                    results.push({ name, description: desc, category: cat });
                 }
             }
 
-            return { tools: results };
+            return results;
         };
 
         const supabase = getSupabaseService();
         const hasQuery = typeof query === 'string' && query.trim().length > 0;
 
-        if (!hasQuery || !supabase) {
-            return keywordSearch();
-        }
+        let results: Array<{ name: string; description: string; category: string }> = [];
 
-        // Vector Search Logic
-        if (!_syncPromise) {
-            _syncPromise = ensureToolEmbeddings().catch(e => console.error('Tool embedding sync failed', e));
-        }
-        try { await _syncPromise; } catch { }
-
-        try {
-            const { embedder } = await resolveEmbedder();
-            const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
-            const queryVector = embeddings[0];
-
-            // Fetch all tools (caching in memory would be better, but for <1000 tools this is fast enough)
-            const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
-            if (error || !rows) throw error;
-
-            let candidates = rows;
-            if (category) {
-                candidates = rows.filter((r: any) => r.category === category);
+        if (hasQuery && supabase) {
+            // Vector Search
+            if (!_syncPromise) {
+                _syncPromise = ensureToolEmbeddings().catch(e => console.error('Tool embedding sync failed', e));
             }
+            try { await _syncPromise; } catch { }
 
-            const withScores = candidates.map((r: any) => {
-                let vec = r.embedding;
-                if (typeof vec === 'string') {
-                    try { vec = JSON.parse(vec); } catch { }
-                }
-                const sim = Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1;
-                return { ...r, score: sim };
-            });
+            try {
+                const { embedder } = await resolveEmbedder();
+                const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
+                const queryVector = embeddings[0];
 
-            withScores.sort((a: any, b: any) => b.score - a.score);
+                const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
+                if (error || !rows) throw error;
 
-            // Return top 10
-            const top = withScores.slice(0, 10).map((t: any) => ({
-                name: t.name,
-                description: t.description,
-                category: t.category,
-            }));
+                let candidates = rows;
+                if (category) candidates = rows.filter((r: any) => r.category === category);
 
-            return { tools: top };
-
-        } catch (e) {
-            console.warn('Vector search failed, falling back to keyword search', e);
-            return keywordSearch();
+                const withScores = candidates.map((r: any) => {
+                    let vec = r.embedding;
+                    if (typeof vec === 'string') { try { vec = JSON.parse(vec); } catch { } }
+                    return { ...r, score: Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1 };
+                });
+                withScores.sort((a: any, b: any) => b.score - a.score);
+                results = withScores.slice(0, limit).map((t: any) => ({ name: t.name, description: t.description, category: t.category }));
+            } catch (e) {
+                console.warn('Vector search failed, falling back to keyword search', e);
+                results = keywordSearch().slice(0, limit);
+            }
+        } else {
+            results = keywordSearch().slice(0, limit);
         }
+
+        // Also query local agent bridge for desktop-only tools
+        if (hasClientBridge() && results.length < limit) {
+            try {
+                const agentResult = await execLocalTool('list_tools', { category }) as any;
+                if (agentResult?.ok && Array.isArray(agentResult.tools)) {
+                    const existing = new Set(results.map(t => t.name));
+                    const q = (query || '').toLowerCase();
+                    for (const t of agentResult.tools) {
+                        if (existing.has(t.name)) continue;
+                        if (q && !t.name.toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) continue;
+                        results.push({ name: t.name, description: t.description || '', category: t.category || 'Other' });
+                        if (results.length >= limit) break;
+                    }
+                }
+            } catch { }
+        }
+
+        return { tools: results };
     },
 });
 

@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
 export interface XTerminalProps {
@@ -26,10 +25,17 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const onResizeRef = useRef(onResize);
+  const lastSizeRef = useRef<string>('');
+  onResizeRef.current = onResize;
 
   // Initialize terminal
   useEffect(() => {
-    if (!terminalRef.current) return;
+    const terminalElement = terminalRef.current;
+    if (!terminalElement) return;
+
+    let disposed = false;
+    let initialFitTimer: number | null = null;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -63,7 +69,6 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
       windowOptions: {
         setWinSizeChars: true,
       },
-      screenReaderMode: true,
     });
 
     const fitAddon = new FitAddon();
@@ -71,23 +76,12 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
 
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
-    term.open(terminalRef.current);
-
-    // GPU-accelerated rendering via WebGL
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      term.loadAddon(webglAddon);
-    } catch {
-      // WebGL not available, falls back to canvas renderer
-    }
-
-    fitAddon.fit();
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+    lastSizeRef.current = '';
+
+    term.open(terminalElement);
 
     // Clipboard: Ctrl+V paste, Ctrl+C copy (when selected), right-click paste
     term.attachCustomKeyEventHandler((event) => {
@@ -109,52 +103,88 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
     });
 
     // Right-click paste
-    terminalRef.current.addEventListener('contextmenu', (e) => {
+    const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       navigator.clipboard.readText().then(text => {
         if (text) {
           (window as any).desktopAPI?.terminalWrite?.(sessionId, text);
         }
       });
-    });
+    };
+    terminalElement.addEventListener('contextmenu', handleContextMenu);
 
     // Handle user input -> send to main process
     term.onData((data) => {
       (window as any).desktopAPI?.terminalWrite?.(sessionId, data);
     });
 
-    // Handle resize
-    const handleResize = () => {
-      if (fitAddonRef.current && xtermRef.current) {
-        fitAddonRef.current.fit();
-        if (onResize) {
-          onResize(xtermRef.current.cols, xtermRef.current.rows);
-        }
+    const notifyResize = () => {
+      const currentTerm = xtermRef.current;
+      if (!currentTerm) return;
+
+      const nextSize = `${currentTerm.cols}x${currentTerm.rows}`;
+      if (nextSize === lastSizeRef.current) return;
+
+      lastSizeRef.current = nextSize;
+      onResizeRef.current?.(currentTerm.cols, currentTerm.rows);
+    };
+
+    const fitTerminal = () => {
+      const currentTerm = xtermRef.current;
+      const currentFitAddon = fitAddonRef.current;
+      if (disposed || !currentTerm || !currentFitAddon || !terminalElement.isConnected) return false;
+      if (terminalElement.clientWidth === 0 || terminalElement.clientHeight === 0) return false;
+
+      try {
+        currentFitAddon.fit();
+        notifyResize();
+        return true;
+      } catch {
+        // xterm can throw if a resize races with disposal.
+        return false;
       }
     };
 
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(terminalRef.current);
+    const scheduleInitialFit = (attemptsRemaining: number) => {
+      if (disposed) return;
+      if (fitTerminal() || attemptsRemaining <= 0) return;
+      initialFitTimer = window.setTimeout(() => {
+        scheduleInitialFit(attemptsRemaining - 1);
+      }, 50);
+    };
 
-    // Initial resize notification
-    setTimeout(() => {
-      handleResize();
-    }, 100);
+    const resizeObserver = new ResizeObserver(() => {
+      fitTerminal();
+    });
+    resizeObserver.observe(terminalElement);
+
+    scheduleInitialFit(10);
 
     return () => {
+      disposed = true;
+      if (initialFitTimer !== null) {
+        window.clearTimeout(initialFitTimer);
+      }
       resizeObserver.disconnect();
-      term.dispose();
+      terminalElement.removeEventListener('contextmenu', handleContextMenu);
       xtermRef.current = null;
       fitAddonRef.current = null;
+      term.dispose();
     };
-  }, [sessionId, onResize]);
+  }, [sessionId]);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     write: (data: string) => xtermRef.current?.write(data),
     clear: () => xtermRef.current?.clear(),
     focus: () => xtermRef.current?.focus(),
-    fit: () => fitAddonRef.current?.fit(),
+    fit: () => {
+      try {
+        fitAddonRef.current?.fit();
+      } catch {
+        // Ignore fit requests that land during disposal.
+      }
+    },
   }), []);
 
   return (

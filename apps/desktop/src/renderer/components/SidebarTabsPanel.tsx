@@ -13,12 +13,13 @@ const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  desc: string;
 }> = [
-  { id: "spaces", label: "Spaces", icon: Layers },
-  { id: "todo", label: "To-Do", icon: ListTodo },
-  { id: "terminal", label: "Terminal", icon: Terminal },
-  { id: "tasks", label: "Agents", icon: Bot },
-  { id: "browser", label: "Browser", icon: Globe },
+  { id: "spaces", label: "Spaces", icon: Layers, desc: "Knowledge & files" },
+  { id: "todo", label: "To-Do", icon: ListTodo, desc: "Agent task list" },
+  { id: "terminal", label: "Terminal", icon: Terminal, desc: "Shell access" },
+  { id: "tasks", label: "Agents", icon: Bot, desc: "Running sub-agents" },
+  { id: "browser", label: "Browser", icon: Globe, desc: "Web browsing" },
 ];
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
@@ -47,7 +48,6 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
   const [showTabPicker, setShowTabPicker] = useState(false);
 
-  // Auto-switch to tasks tab when agents are running
   const [hasRunningAgents, setHasRunningAgents] = useState(false);
   const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
   const [hasTodoActivity, setHasTodoActivity] = useState(false);
@@ -190,31 +190,39 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 42%)",
+            "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 10%, transparent) 0%, transparent 40%)",
         }}
       />
 
       {/* Header Bar */}
-      <div className="relative flex items-center gap-2 px-3 py-2.5 shrink-0 border-b border-theme/10">
+      <div className="relative flex items-center gap-2 px-3 h-11 shrink-0 border-b border-theme/8">
         <button
           onClick={() => setShowTabPicker(!showTabPicker)}
           className={clsx(
-            "flex items-center justify-center w-8 h-8 rounded-xl transition-all",
+            "flex items-center justify-center w-8 h-8 rounded-xl transition-all duration-200",
             showTabPicker
               ? "bg-primary/10 text-primary"
               : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
           )}
           title="Switch tab"
         >
-          <ArrowLeft className={clsx("w-4 h-4 transition-transform", showTabPicker && "rotate-90")} />
+          <ArrowLeft className={clsx(
+            "w-4 h-4 transition-transform duration-200",
+            showTabPicker && "rotate-[-90deg]"
+          )} />
         </button>
 
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {currentTab && (
             <>
-              <currentTab.icon className="w-4 h-4 text-primary shrink-0" />
+              <currentTab.icon className="w-4 h-4 text-primary/70 shrink-0" />
               <span className="text-[13px] font-bold text-theme-fg truncate">{currentTab.label}</span>
             </>
+          )}
+          {((activeTab === 'tasks' && hasRunningAgents) || (activeTab === 'browser' && hasBrowserActivity) || (activeTab === 'todo' && hasTodoActivity)) && (
+            <span className="px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[9px] font-bold uppercase tracking-wider leading-none">
+              Active
+            </span>
           )}
         </div>
 
@@ -226,7 +234,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
               expanded: true,
             });
           }}
-          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted/60 hover:text-theme-fg hover:bg-theme-hover transition-all duration-200"
           title="Open in separate window"
         >
           <Maximize2 className="w-3.5 h-3.5" />
@@ -234,7 +242,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
         <button
           onClick={onClose}
-          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
+          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted/60 hover:text-red-500 hover:bg-red-500/8 transition-all duration-200"
           title="Close Sidebar"
         >
           <X className="w-3.5 h-3.5" />
@@ -244,7 +252,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
       {/* Main area: either tab picker or content */}
       {showTabPicker ? (
         <div
-          className="relative flex-1 min-h-0 flex flex-col p-2 gap-1 overflow-y-auto"
+          className="relative flex-1 min-h-0 flex flex-col p-2 gap-0.5 overflow-y-auto scrollbar-invisible"
           style={{ background: contentBackground }}
         >
           {SIDEBAR_TABS.map((tab) => {
@@ -259,21 +267,38 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                 key={tab.id}
                 onClick={() => handleSelectTab(tab.id)}
                 className={clsx(
-                  "relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-left",
+                  "relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left group",
                   isActive
-                    ? "bg-primary/10 text-primary font-bold"
-                    : "text-theme-fg hover:bg-theme-hover"
+                    ? "bg-primary/10 text-primary"
+                    : "text-theme-fg hover:bg-theme-hover/70"
                 )}
               >
+                {/* Active bar */}
+                {isActive && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+                )}
+
                 <div className={clsx(
-                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                  isActive ? "bg-primary/15" : "bg-theme-hover/50"
+                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200",
+                  isActive ? "bg-primary/15" : "bg-theme-hover/40 group-hover:bg-theme-hover/70"
                 )}>
                   <Icon className="w-[18px] h-[18px]" />
                 </div>
-                <span className="text-[13px] font-semibold">{tab.label}</span>
+
+                <div className="flex-1 min-w-0">
+                  <span className={clsx(
+                    "text-[13px] block truncate",
+                    isActive ? "font-bold" : "font-semibold"
+                  )}>
+                    {tab.label}
+                  </span>
+                  <span className="text-[10px] text-theme-muted block truncate mt-0.5">
+                    {tab.desc}
+                  </span>
+                </div>
+
                 {showDot && (
-                  <span className="ml-auto w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
                 )}
               </button>
             );

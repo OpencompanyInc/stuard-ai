@@ -1080,7 +1080,7 @@ function DashboardApp() {
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
-    media: { title: 'Media', subtitle: 'Browse screenshots, recordings, generated images, and message media in one gallery.' },
+    media: { title: 'Media', subtitle: 'Browse imported files, generated media, and message attachments in one gallery.' },
     storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
     vault: { title: 'Vault', subtitle: 'Keep protected data, secure items, and private resources organized.' },
   };

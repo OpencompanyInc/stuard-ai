@@ -50,7 +50,6 @@ import { proactive_task_create, proactive_task_list, proactive_task_update, proa
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
-import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools, initToolRegistry } from '../../tools/meta-tools';
 import { get_skill_info } from '../../tools/skill-tools';
 import { hasClientBridge } from '../../tools/bridge';
@@ -119,27 +118,6 @@ const execute_tool_for_stuard = {
       return { success: false, tool: toolName, error: blockedStuardToolError(toolName) };
     }
     return (execute_tool as any).execute(inputData, runCtx);
-  },
-} as any;
-
-const sis_search_tools_for_stuard = {
-  ...(SIS_RUNTIME_TOOLS.sis_search_tools as any),
-  execute: async (inputData: any, runCtx: any) => {
-    const result = await (SIS_RUNTIME_TOOLS.sis_search_tools as any).execute(inputData, runCtx);
-    if (!result || !Array.isArray(result.tools)) return result;
-    const tools = filterBlockedStuardSearchResults(result.tools);
-    return { ...result, count: tools.length, tools };
-  },
-} as any;
-
-const sis_execute_tool_for_stuard = {
-  ...(SIS_RUNTIME_TOOLS.sis_execute_tool as any),
-  execute: async (inputData: any, runCtx: any) => {
-    const toolName = String(inputData?.tool_name || '');
-    if (isBlockedStuardToolName(toolName)) {
-      return { success: false, tool: toolName, error: blockedStuardToolError(toolName) };
-    }
-    return (SIS_RUNTIME_TOOLS.sis_execute_tool as any).execute(inputData, runCtx);
   },
 } as any;
 
@@ -457,10 +435,6 @@ export const ALL_TOOLS = {
   suggest_feature: suggestFeature,
   list_my_feedback: listMyFeedback,
   get_feedback_details: getFeedbackDetails,
-  // SIS runtime tools (for dynamic tool discovery)
-  sis_search_tools: sis_search_tools_for_stuard,
-  sis_execute_tool: sis_execute_tool_for_stuard,
-  sis_list_categories: SIS_RUNTIME_TOOLS.sis_list_categories,
   // Meta-tools for lazy-loading (always in Tier 1)
   get_tool_schema: get_tool_schema_for_stuard,
   execute_tool: execute_tool_for_stuard,
@@ -687,7 +661,7 @@ function addDesktopUiTools(target: Record<string, any>, toolUniverse: Record<str
 // Semantic injection map is now DB-backed via tool_embeddings.semantic_groups.
 // See utils/tool-groups.ts for the runtime loader and cache.
 
-const SIS_META_TOOL_NAMES = ['sis_search_tools', 'sis_execute_tool', 'sis_list_categories'] as const;
+// SIS tools removed — search_tools / execute_tool / get_tool_schema are the single canonical set
 
 let _sis: SISType | null = null;
 let _sisInitPromise: Promise<void> | null = null;
@@ -757,6 +731,15 @@ async function getSis(): Promise<SISType | null> {
   return _sis;
 }
 
+/**
+ * Returns the full set of all registered tools (blocked ones stripped).
+ * Used by the Agent constructor so Mastra can execute ANY tool at runtime,
+ * while `activeTools` (from getTools/getToolsForQuery) limits what the LLM sees.
+ */
+export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
+  return stripBlockedStuardTools({ ...getToolUniverse(), ...mcpTools });
+}
+
 export function getTools(
   enabledIntegrations: string[] = [],
   mcpTools: Record<string, any> = {},
@@ -797,23 +780,14 @@ export function getTools(
   // Desktop-only UI tools should be directly callable when a bridge is active.
   addDesktopUiTools(tools, toolUniverse);
 
-  // Always add SIS discovery tools
-  for (const name of SIS_META_TOOL_NAMES) {
-    if ((toolUniverse as any)[name]) {
-      tools[name] = (toolUniverse as any)[name];
-    }
-  }
 
-  // Browser use tools are now lazy-loaded via search_tools + get_tool_schema + execute_tool
-  // to save ~10-15k tokens per request. Set BROWSER_USE_NATIVE=1 to force native loading.
-  if (process.env.BROWSER_USE_NATIVE === '1' && (enabledIntegrations.includes('browser_use') || hasClientBridge())) {
-    for (const [name, tool] of Object.entries(toolUniverse as any)) {
-      if (name.startsWith('browser_use_')) tools[name] = tool;
-    }
+  // Always load browser_use tools natively
+  for (const [name, tool] of Object.entries(toolUniverse as any)) {
+    if (name.startsWith('browser_use_')) tools[name] = tool;
   }
 
   if (process.env.SIS_DEBUG === '1') {
-    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS, connected integrations via discovery)`);
+    console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + browser_use, integrations via system prompt)`);
   }
 
   return stripBlockedStuardTools(tools);
@@ -856,14 +830,7 @@ export async function getToolsForQuery(
     }
   }
 
-  // ── 2. SIS meta-tools for long-tail discovery (always loaded, 3) ──
-  for (const name of SIS_META_TOOL_NAMES) {
-    if ((toolUniverse as any)[name]) {
-      selected[name] = (toolUniverse as any)[name];
-    }
-  }
-
-  // ── 3. Semantic group injection (keyword → tools from Supabase) ──
+  // ── 2. Semantic group injection (keyword → tools from Supabase) ──
   // Fast keyword matching against DB-stored semantic_groups.
   // e.g. "do this in terminal" → injects terminal_create, terminal_send_input, terminal_read
   // Integration tools (gmail_*, github_*, etc.) are gated by enabledIntegrations.
@@ -900,9 +867,8 @@ export async function getToolsForQuery(
   // The system prompt tells the model which integrations are connected,
   // and it discovers/executes them via search_tools + get_tool_schema + execute_tool.
 
-  // Browser use tools are now lazy-loaded via search_tools + get_tool_schema + execute_tool
-  // to save ~10-15k tokens per request. Set BROWSER_USE_NATIVE=1 to force native loading.
-  if (process.env.BROWSER_USE_NATIVE === '1' && (enabledIntegrations.includes('browser_use') || hasClientBridge())) {
+  // Always load browser_use tools natively
+  if (true) {
     for (const [name, tool] of Object.entries(toolUniverse as any)) {
       if (!selected[name] && name.startsWith('browser_use_')) {
         selected[name] = tool;
@@ -912,7 +878,7 @@ export async function getToolsForQuery(
 
   if (process.env.SIS_DEBUG === '1') {
     const rankedCount = rankedToolNames?.length || 0;
-    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + SIS=${SIS_META_TOOL_NAMES.length} + Ranked=${rankedCount}, connected integrations via discovery)`);
+    console.log(`[tools] ${Object.keys(selected).length} tools loaded (Tier1=${TIER_1_PARAMOUNT_TOOLS.length} + Ranked=${rankedCount})`);
   }
 
   return stripBlockedStuardTools(selected);

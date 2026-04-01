@@ -121,6 +121,51 @@
   background-clip: content-box;
 }
 
+/* Invisible scrollbar — hidden by default, thin ghost track on hover */
+.scrollbar-invisible {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overflow-y: auto;
+}
+
+.scrollbar-invisible::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+.scrollbar-invisible:hover {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.scrollbar-invisible:hover::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.scrollbar-invisible:hover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-invisible:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground-muted, #94a3b8) 18%, transparent);
+  border-radius: 999px;
+  transition: background-color 200ms ease;
+}
+
+.scrollbar-invisible:hover::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground-muted, #94a3b8) 32%, transparent);
+}
+
+[data-theme="dark"] .scrollbar-invisible:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+[data-theme="dark"] .scrollbar-invisible:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.20);
+}
+
 /* XTerm specific scrollbar styling */
 .xterm-viewport {
   scrollbar-width: none;

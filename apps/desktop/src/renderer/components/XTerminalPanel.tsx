@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Terminal, X, ChevronDown, Monitor, Cpu, TerminalSquare } from 'lucide-react';
 import { clsx } from 'clsx';
-import { motion, AnimatePresence } from 'framer-motion';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { XTerminal, XTerminalRef } from './XTerminal';
 
@@ -24,7 +23,7 @@ interface XTerminalPanelProps {
   onClose?: () => void;
 }
 
-export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClose }) => {
+export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClose: _onClose }) => {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const terminalRefs = useRef<Map<string, XTerminalRef>>(new Map());
@@ -71,19 +70,28 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
   // Load buffered output when switching sessions
   useEffect(() => {
     if (!activeSessionId) return;
+    let cancelled = false;
+
     const loadBuffer = async () => {
       const result = await (window as any).desktopAPI?.terminalGetBuffer?.(activeSessionId);
+      if (cancelled) return;
       if (result?.ok && Array.isArray(result.buffer)) {
         const termRef = terminalRefs.current.get(activeSessionId);
         if (termRef) {
+          termRef.clear();
           for (const chunk of result.buffer) {
             termRef.write(chunk);
           }
+          termRef.fit();
         }
       }
     };
-    // Small delay to ensure terminal is mounted
-    setTimeout(loadBuffer, 50);
+
+    const timer = window.setTimeout(loadBuffer, 50);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [activeSessionId]);
 
   const createSession = async (shell?: string) => {
@@ -96,12 +104,14 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
 
   const destroySession = async (sessionId: string) => {
     await (window as any).desktopAPI?.terminalDestroy?.(sessionId);
-    setSessions(prev => prev.filter(s => s.id !== sessionId));
     terminalRefs.current.delete(sessionId);
-    if (activeSessionId === sessionId) {
-      const remaining = sessions.filter(s => s.id !== sessionId);
-      setActiveSessionId(remaining.length > 0 ? remaining[0].id : null);
-    }
+    setSessions(prev => {
+      const remaining = prev.filter(s => s.id !== sessionId);
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(remaining.length > 0 ? remaining[0].id : null);
+      }
+      return remaining;
+    });
   };
 
   const handleResize = useCallback((cols: number, rows: number) => {
@@ -228,26 +238,22 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
               New Terminal Session
             </button>
           </div>
-        ) : (
-          sessions.map(session => (
-            <div
-              key={session.id}
-              className={clsx(
-                "absolute inset-0 p-3",
-                session.id === activeSessionId ? "visible opacity-100 scale-100" : "invisible opacity-0 scale-95",
-                "transition-all duration-200"
-              )}
-            >
-              <div className="w-full h-full rounded-xl overflow-hidden border border-[#333] bg-[#1e1e1e]">
-                <XTerminal
-                  sessionId={session.id}
-                  onResize={handleResize}
-                  ref={(ref) => setTerminalRef(session.id, ref)}
-                  className="h-full"
-                />
-              </div>
+        ) : activeSession ? (
+          <div key={activeSession.id} className="absolute inset-0 p-3">
+            <div className="w-full h-full rounded-xl overflow-hidden border border-[#333] bg-[#1e1e1e]">
+              <XTerminal
+                key={activeSession.id}
+                sessionId={activeSession.id}
+                onResize={handleResize}
+                ref={(ref) => setTerminalRef(activeSession.id, ref)}
+                className="h-full"
+              />
             </div>
-          ))
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-sm text-gray-500">
+            Select a terminal session to continue.
+          </div>
         )}
       </div>
     </div>

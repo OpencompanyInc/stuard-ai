@@ -1,8 +1,6 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
- type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
-
 const __cloudBase = process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || "";
 try { contextBridge.exposeInMainWorld('__CLOUD_AI_HTTP__', __cloudBase); } catch { }
 
@@ -13,7 +11,6 @@ const __agentWs = process.env.AGENT_WS || process.env.AGENT_WS_URL || "";
 try { contextBridge.exposeInMainWorld('__AGENT_WS__', __agentWs); } catch { }
 
 contextBridge.exposeInMainWorld("desktopAPI", {
-  syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
@@ -53,14 +50,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
-  // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
-  openSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  // Sidebar window (unified Spaces, Canvas, Terminal)
+  openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
-  toggleSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
   toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
   isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
-  sidebarSetPresentation: (mode: 'full' | 'popup', tab?: SidebarTabId) => ipcRenderer.invoke('sidebar:setPresentation', { mode, tab }),
-  onSidebarNavigate: (cb: (data: { tab: SidebarTabId }) => void) => {
+  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
@@ -70,11 +66,32 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('sidebar:expandedChange', handler);
     return () => { try { ipcRenderer.off('sidebar:expandedChange', handler); } catch { } };
   },
-  onSidebarSelectItem: (cb: (data: { type: 'space'; id: string }) => void) => {
+  onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:selectItem', handler);
     return () => { try { ipcRenderer.off('sidebar:selectItem', handler); } catch { } };
   },
+  // Canvas document operations (sidebar canvas panel)
+  canvasListDocuments: () => ipcRenderer.invoke('canvas:listDocuments'),
+  canvasCreateDocument: (doc: any) => ipcRenderer.invoke('canvas:createDocument', doc),
+  canvasSaveDocument: (doc: any) => ipcRenderer.invoke('canvas:saveDocument', doc),
+  canvasDeleteDocument: (docId: string) => ipcRenderer.invoke('canvas:deleteDocument', docId),
+  canvasGetDocument: (docId: string) => ipcRenderer.invoke('canvas:getDocument', docId),
+  canvasRead: (docId?: string) => ipcRenderer.invoke('canvas:read', docId),
+  canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) =>
+    ipcRenderer.invoke('canvas:write', data),
+  onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:update', handler);
+    return () => { try { ipcRenderer.off('canvas:update', handler); } catch { } };
+  },
+  onCanvasRead: (cb: (data: { requestId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:read', handler);
+    return () => { try { ipcRenderer.off('canvas:read', handler); } catch { } };
+  },
+  canvasReadResponse: (data: { requestId: string; documentId?: string | null; title?: string; content?: string }) =>
+    ipcRenderer.invoke('canvas:readResponse', data),
   closeOnboarding: () => ipcRenderer.invoke('system:closeOnboarding'),
   // Files
   selectFiles: () => ipcRenderer.invoke('files:select'),
@@ -97,16 +114,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   },
-  // Media library
-  mediaList: () => ipcRenderer.invoke('media:list'),
-  mediaSummary: () => ipcRenderer.invoke('media:summary'),
-  mediaGetPrefs: () => ipcRenderer.invoke('media:getPrefs'),
-  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud' }) => ipcRenderer.invoke('media:updatePrefs', updates),
-  mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
-  mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
-  mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
-  mediaDelete: (itemId: string, deleteFile?: boolean) => ipcRenderer.invoke('media:delete', itemId, deleteFile),
-  mediaRegisterPath: (filePath: string, opts?: { source?: string; tags?: string[] }) => ipcRenderer.invoke('media:registerPath', filePath, opts),
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
@@ -144,28 +151,30 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   agentStop: (id: string) => ipcRenderer.invoke('agent:stop', id),
   agentList: () => ipcRenderer.invoke('agent:list'),
 
+  // Canvas windows (separate Electron BrowserWindows)
+  canvasCreate: (item: any) => ipcRenderer.invoke('canvas:create', item),
+  canvasUpdate: (item: any) => ipcRenderer.invoke('canvas:update', item),
+  canvasDelete: (id: string) => ipcRenderer.invoke('canvas:delete', id),
+  canvasShow: (id: string) => ipcRenderer.invoke('canvas:show', id),
+  canvasHide: (id: string) => ipcRenderer.invoke('canvas:hide', id),
+  canvasFocus: (id: string) => ipcRenderer.invoke('canvas:focus', id),
+  canvasClear: () => ipcRenderer.invoke('canvas:clear'),
+  canvasList: () => ipcRenderer.invoke('canvas:list'),
+  // Board window lifecycle events
+  onBoardInit: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('board:init', handler);
+    return () => { try { ipcRenderer.off('board:init', handler); } catch { } };
+  },
+  onBoardUpdate: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('board:update', handler);
+    return () => { try { ipcRenderer.off('board:update', handler); } catch { } };
+  },
   // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
   customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
   // Transform JSX component code (for UI builder preview)
   customUiTransformJsx: (code: string) => ipcRenderer.invoke('customUi:transformJsx', code),
-  chatUiPickFile: (options?: {
-    title?: string;
-    filters?: Array<{ name: string; extensions: string[] }>;
-    multiple?: boolean;
-  }) => ipcRenderer.invoke('stuard:pickFile', options || {}),
-  chatUiPickFolder: (options?: { title?: string; multiple?: boolean }) =>
-    ipcRenderer.invoke('stuard:pickFolder', options || {}),
-  chatUiPickSavePath: (options?: {
-    title?: string;
-    defaultPath?: string;
-    filters?: Array<{ name: string; extensions: string[] }>;
-  }) => ipcRenderer.invoke('stuard:pickSavePath', options || {}),
-  chatUiReadFile: (filePath: string, encoding?: string) =>
-    ipcRenderer.invoke('stuard:readFile', { path: filePath, encoding }),
-  chatUiWriteFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke('stuard:writeFile', { path: filePath, content }),
-  chatUiClipboardWrite: (text: string) => ipcRenderer.invoke('stuard:clipboard:write', text),
-  chatUiClipboardRead: () => ipcRenderer.invoke('stuard:clipboard:read'),
 
   workflowsList: () => ipcRenderer.invoke('workflows:list'),
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),
@@ -203,13 +212,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
   workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
   workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
-  workflowsGetAgentToolOptions: () => ipcRenderer.invoke('workflows:getAgentToolOptions'),
-  // Skills
-  skillsList: () => ipcRenderer.invoke('skills:list'),
-  skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),
-  skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
-  skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
-  skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
   onWorkflowsLog: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:log', handler);
@@ -271,19 +273,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
   setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
-  // Persistent renderer preferences (survive restarts)
-  prefsGetAll: () => ipcRenderer.invoke('prefs:getAll'),
-  prefsSet: (key: string, value: any) => ipcRenderer.invoke('prefs:set', key, value),
-  prefsSetMany: (prefs: Record<string, any>) => ipcRenderer.invoke('prefs:setMany', prefs),
   onThemeUpdated: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('prefs:themeUpdated', handler);
     return () => { try { ipcRenderer.off('prefs:themeUpdated', handler); } catch { } };
-  },
-  onSemanticSearchRequested: (cb: () => void) => {
-    const handler = () => cb();
-    ipcRenderer.on('overlay:semantic-search', handler);
-    return () => { try { ipcRenderer.off('overlay:semantic-search', handler); } catch { } };
   },
   updatesGetState: () => ipcRenderer.invoke('updates:getState'),
   updatesCheck: () => ipcRenderer.invoke('updates:check'),
@@ -319,28 +312,17 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('speech:stopped', handler);
     return () => { try { ipcRenderer.off('speech:stopped', handler); } catch { } };
   },
+  // Browser Extension
+  onBrowserExtensionStatus: (cb: (status: { connected: boolean; clients: number }) => void) => {
+    const handler = (_e: any, status: any) => cb(status);
+    ipcRenderer.on('browser-extension:status', handler);
+    return () => { try { ipcRenderer.off('browser-extension:status', handler); } catch { } };
+  },
   onBrowserExtensionChat: (cb: (data: { text: string; messageId: string; pageContext?: any }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('browser-extension:chat', handler);
     return () => { try { ipcRenderer.off('browser-extension:chat', handler); } catch { } };
   },
-  // Browser activity (auto-open sidebar when agent uses browser)
-  onBrowserActivity: (cb: (data: { action: string; sessionId: string; timestamp: number }) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('browser:activity', handler);
-    return () => { try { ipcRenderer.off('browser:activity', handler); } catch { } };
-  },
-  // Browser mirror (sidebar live view)
-  browserMirrorScreenshot: (sessionId?: string, quality?: number) =>
-    ipcRenderer.invoke('browserMirror:screenshot', sessionId, quality),
-  browserMirrorClickAt: (sessionId: string, x: number, y: number, type?: string) =>
-    ipcRenderer.invoke('browserMirror:clickAt', sessionId, x, y, type),
-  browserMirrorType: (sessionId: string, text: string) =>
-    ipcRenderer.invoke('browserMirror:type', sessionId, text),
-  browserMirrorPressKey: (sessionId: string, key: string) =>
-    ipcRenderer.invoke('browserMirror:pressKey', sessionId, key),
-  browserMirrorScroll: (sessionId: string, direction: string, amount?: number) =>
-    ipcRenderer.invoke('browserMirror:scroll', sessionId, direction, amount),
   // Tools
   execTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
   execLocalTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
@@ -439,29 +421,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   bookmarksExecute: (bookmark: any) => ipcRenderer.invoke('bookmarks:execute', bookmark),
   selectFolder: (options?: { title?: string; multiple?: boolean }) => ipcRenderer.invoke('files:selectFolder', options),
 
-  // Proactive Agent System
-  proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),
-  proactiveUpdateConfig: (updates: any) => ipcRenderer.invoke('proactive:updateConfig', updates),
-  proactiveListTasks: () => ipcRenderer.invoke('proactive:listTasks'),
-  proactiveAddTask: (task: any) => ipcRenderer.invoke('proactive:addTask', task),
-  proactiveUpdateTask: (taskId: string, updates: any) => ipcRenderer.invoke('proactive:updateTask', taskId, updates),
-  proactiveDeleteTask: (taskId: string) => ipcRenderer.invoke('proactive:deleteTask', taskId),
-  proactiveGetWakeUpLog: (limit?: number) => ipcRenderer.invoke('proactive:getWakeUpLog', limit),
-  proactiveTriggerNow: () => ipcRenderer.invoke('proactive:triggerNow'),
-  proactiveGetAvailableTools: () => ipcRenderer.invoke('proactive:getAvailableTools'),
-  proactiveSubmitResult: (payload: any) => ipcRenderer.invoke('proactive:submitResult', payload),
-  proactiveIsRunning: () => ipcRenderer.invoke('proactive:isRunning'),
-  onProactiveUpdate: (cb: (data: any) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('proactive-update', handler);
-    return () => { try { ipcRenderer.off('proactive-update', handler); } catch { } };
-  },
-  onProactiveWakeUp: (cb: (data: any) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('proactive-wakeup', handler);
-    return () => { try { ipcRenderer.off('proactive-wakeup', handler); } catch { } };
-  },
-
   // Unified Tasks System
   unifiedTasksList: () => ipcRenderer.invoke('unified-tasks:list'),
   unifiedTasksGet: (taskId: string) => ipcRenderer.invoke('unified-tasks:get', taskId),
@@ -518,60 +477,34 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('notification:show', handler);
     return () => { try { ipcRenderer.off('notification:show', handler); } catch { } };
   },
-  onDismissNotification: (cb: (data: { id: string }) => void) => {
+  onDismissNotification: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('notification:dismiss', handler);
     return () => { try { ipcRenderer.off('notification:dismiss', handler); } catch { } };
   },
-  respondToNotification: (payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) =>
-    ipcRenderer.invoke('notification:respond', payload),
-  onProactiveProgress: (cb: (data: any) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('proactive-progress', handler);
-    return () => { try { ipcRenderer.off('proactive-progress', handler); } catch { } };
+  respondToPermission: (id: string, allow: boolean) => ipcRenderer.invoke('notification:respondToPermission', { id, allow }),
+  respondToNotification: (payload: { responseId: string; type: string; value?: string }) => ipcRenderer.invoke('notification:respondToNotification', payload),
+  onApprovalResponse: (cb: (data: { id: string; allow: boolean }) => void) => {
+    const handler = (_e: any, data: { id: string; allow: boolean }) => cb(data);
+    ipcRenderer.on('approval:response', handler);
+    return () => { try { ipcRenderer.off('approval:response', handler); } catch { } };
   },
+  onAskUserShow: (cb: (data: { promptId: string; args: any }) => void) => {
+    const handler = (_e: any, data: { promptId: string; args: any }) => cb(data);
+    ipcRenderer.on('ask_user:show', handler);
+    return () => { try { ipcRenderer.off('ask_user:show', handler); } catch { } };
+  },
+  respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
   onProactiveCheckin: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('proactive-checkin', handler);
     return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
   },
   proactiveReply: (payload: { wakeUpId: string; text: string }) => ipcRenderer.invoke('proactive:reply', payload),
-
-  // Permission approval via notification window
-  onPermissionRequest: (cb: (data: { id: string; tool: string; args?: Record<string, any>; description?: string }) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('permission:request', handler);
-    return () => { try { ipcRenderer.off('permission:request', handler); } catch { } };
-  },
-  respondToPermission: (id: string, allow: boolean) => ipcRenderer.send('permission:respond', { id, allow }),
-  onPermissionResponse: (cb: (data: { id: string; allow: boolean }) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('permission:response', handler);
-    return () => { try { ipcRenderer.off('permission:response', handler); } catch { } };
-  },
-
-  // Security & Privacy
-  securityGetSettings: () => ipcRenderer.invoke('security:getSettings'),
-  securitySetPassword: (password: string, currentPassword?: string) =>
-    ipcRenderer.invoke('security:setPassword', password, currentPassword),
-  securityVerifyPassword: (password: string) => ipcRenderer.invoke('security:verifyPassword', password),
-  securityUpdateSettings: (updates: { memory_lock_enabled?: boolean; vault_lock_enabled?: boolean; lock_timeout_minutes?: number }) =>
-    ipcRenderer.invoke('security:updateSettings', updates),
-  securityRemovePassword: (currentPassword: string) => ipcRenderer.invoke('security:removePassword', currentPassword),
-
-  // Secure Vault (Credential Management)
-  vaultList: (options?: { category?: string; search?: string; favorites_only?: boolean; tag?: string; limit?: number; offset?: number }) =>
-    ipcRenderer.invoke('vault:list', options),
-  vaultGet: (id: string) => ipcRenderer.invoke('vault:get', id),
-  vaultAdd: (entry: { name: string; category?: string; service?: string; url?: string; username?: string; password?: string; notes?: string; metadata?: Record<string, any>; favorite?: boolean; tags?: string[] }) =>
-    ipcRenderer.invoke('vault:add', entry),
-  vaultUpdate: (id: string, fields: Record<string, any>) => ipcRenderer.invoke('vault:update', id, fields),
-  vaultDelete: (id: string) => ipcRenderer.invoke('vault:delete', id),
-  vaultSearch: (query: string) => ipcRenderer.invoke('vault:search', query),
-  vaultStats: () => ipcRenderer.invoke('vault:stats'),
-
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
-
-  // Cloud Engine agent data sync
-  uploadAgentData: (cloudAiUrl: string, token: string) => ipcRenderer.invoke('cloud:uploadAgentData', cloudAiUrl, token),
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),
+  skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
+  skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
+  skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
 });

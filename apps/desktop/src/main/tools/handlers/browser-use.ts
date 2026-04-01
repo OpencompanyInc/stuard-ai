@@ -528,10 +528,6 @@ async function getBrowserUseServerStatus(sessionId = 'default'): Promise<any | n
 export async function setupBrowserUse(sessionId = 'default'): Promise<{ ok: boolean; error?: string; step?: string; alreadyRunning?: boolean }> {
   const status = await getBrowserUseServerStatus(sessionId);
   if (status) {
-    if (shouldRestartForPreferredMode(status)) {
-      await stopBrowserUseServer(sessionId);
-      return await startBrowserUseServer(sessionId);
-    }
     // Server can be alive but unusable (missing browser_use package in that Python env).
     if (!status.installed) {
       const install = await installBrowserUse();
@@ -554,10 +550,6 @@ async function ensureReady(sessionId = 'default'): Promise<{ ok: boolean; error?
   const runtime = await getRuntime(sessionId);
   const status = await getBrowserUseServerStatus(sessionId);
   if (status?.installed) {
-    if (shouldRestartForPreferredMode(status)) {
-      await stopBrowserUseServer(sessionId);
-      return await startBrowserUseServer(sessionId);
-    }
     const opened = await ensureBrowserPageOpen(sessionId);
     if (opened.ok) return { ok: true };
   }

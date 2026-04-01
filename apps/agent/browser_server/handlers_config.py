@@ -84,6 +84,8 @@ async def handle_configure(req: web.Request) -> web.Response:
     async with state._lock:
         was_running = await _page_is_alive()
         if was_running:
+            # _close_browser saves session cookies before closing so they are
+            # restored automatically when _ensure_browser opens the new context.
             await _close_browser()
 
         # Start browser with new config so it's immediately usable

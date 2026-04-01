@@ -26,7 +26,7 @@ import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatc
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
-import { buildAvailableSkillsPromptSection, getSkillsFromContext } from './tools/skill-tools';
+// Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -417,6 +417,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       const toolCallsMap = new Map<string, any>();
       type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
       const streamChunks: StreamChunk[] = [];
+      let aggregatedReasoning = '';
+      let reasoningStartTime: number | null = null;
       try {
         const messages = normalizeMessages(msg);
         const providedMessages = Array.isArray((msg as any)?.messages) ? (msg as any).messages : undefined;
@@ -448,7 +450,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         if (authUser) {
           const access = await checkAccess(authUser.userId);
           if (!access.allowed) {
-            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
+            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used, remaining: access.remaining } }, requestId);
             return;
           }
           // Count this chat request towards daily usage
@@ -835,9 +837,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         let sawToolCall = false;
         aggregatedText = '';
 
-        // Track metadata for persistence (reasoning, tools, stream chunks)
-        let aggregatedReasoning = '';
-        let reasoningStartTime: number | null = null;
+        // Reset reasoning tracking for this turn (variables hoisted above try block)
+        aggregatedReasoning = '';
+        reasoningStartTime = null;
         // toolCallsMap and streamChunks are hoisted above the try block
 
         // Persist this user turn for ongoing conversations (first turn already stored on creation)
@@ -902,12 +904,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         } catch { }
 
-        try {
-          const skillsSection = buildAvailableSkillsPromptSection(getSkillsFromContext());
-          if (skillsSection) {
-            inputMessages = [{ role: 'system', content: skillsSection }, ...inputMessages];
-          }
-        } catch { }
+        // Skills are now injected directly into the system prompt via buildSystemInstructions
 
         // Inject hidden state context (terminals, subagents, recent tool results) - NOT rendered in UI
         try {
@@ -1174,10 +1171,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         // fast/balanced use Grok models that don't support reasoningEffort
         let stepCount = 0;
         let cumulativeInputTokens = 0;
+        const activeToolNames: string[] | undefined = (agent as any).__activeToolNames;
         const streamOptions: any = {
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
+          ...(activeToolNames ? { activeTools: activeToolNames } : {}),
           onStepFinish: (stepData: any) => {
             stepCount++;
             const stepUsage = stepData?.usage;
@@ -1273,10 +1272,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 mode: requestedMode,
                 tier: routedTier,
                 modelId: chosenModelId,
+                reasoning: aggregatedReasoning || undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               };
-              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata, forcePersist); } catch { }
+              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata); } catch { }
             }
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
@@ -1429,6 +1430,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   // Reasoning/Thinking events - forward to client for display
                   case 'reasoning-start':
                   case 'thinking-start': {
+                    if (!reasoningStartTime) reasoningStartTime = Date.now();
                     send(ws, { type: 'progress', event: 'reasoning_start', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -1438,6 +1440,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   case 'thinking-delta': {
                     const reasoningText = (chunk as any)?.payload?.text || (chunk as any)?.textDelta || (typeof (chunk as any)?.payload === 'string' ? (chunk as any).payload : '');
                     if (reasoningText) {
+                      aggregatedReasoning += reasoningText;
                       send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoningText } }, requestId);
                     }
                     handledChunk = true;
@@ -1446,6 +1449,10 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
                   case 'reasoning-end':
                   case 'thinking-end': {
+                    // Persist accumulated reasoning as a stream chunk
+                    if (aggregatedReasoning) {
+                      streamChunks.push({ type: 'reasoning', content: aggregatedReasoning });
+                    }
                     send(ws, { type: 'progress', event: 'reasoning_end', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -1620,6 +1627,8 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                reasoning: aggregatedReasoning || undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -1672,6 +1681,8 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                reasoning: aggregatedReasoning || undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1751,6 +1762,8 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                reasoning: aggregatedReasoning || undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1818,6 +1831,8 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+                reasoning: aggregatedReasoning || undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -1845,6 +1860,8 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
             const metadata = {
               mode: requestedMode, tier: routedTier, modelId: chosenModelId,
+              reasoning: aggregatedReasoning || undefined,
+              reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
               toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
               streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               finishReason: 'error',

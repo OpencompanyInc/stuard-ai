@@ -4,6 +4,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import logger from '../utils/logger';
 import { getMainAccessToken, getMainUserId } from './auth-session';
+import {
+  isMediaLibraryItemVisibleInDashboard,
+  shouldAutoRegisterToolMedia,
+} from './media-library-policy';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown';
 export type MediaSyncMode = 'local-only' | 'mirror-cloud';
@@ -481,6 +485,7 @@ export function updateMediaLibraryPrefs(updates: Partial<MediaLibraryPrefs>) {
 export function listMediaLibraryItems() {
   const store = loadStore();
   return store.items.filter((item) => {
+    if (!isMediaLibraryItemVisibleInDashboard(item)) return false;
     if (item.localPath && !fileExists(item.localPath) && item.syncStatus !== 'cloud-only') {
       return !!item.remoteUrl || !!item.cloudObjectName;
     }
@@ -681,6 +686,7 @@ export async function syncMediaLibrary(itemIds?: string[]) {
       : null;
     const candidates = store.items.filter((item) => {
       if (selectedIds && !selectedIds.has(item.id)) return false;
+      if (!isMediaLibraryItemVisibleInDashboard(item)) return false;
       if (!item.localPath || !fileExists(item.localPath)) return false;
       return item.syncStatus !== 'synced';
     });
@@ -810,6 +816,7 @@ export function deleteMediaItem(itemId: string, deleteFile = true) {
 
 export async function captureToolMedia(toolName: string, args: any, result: any) {
   if (!result || result.ok === false) return result;
+  if (!shouldAutoRegisterToolMedia(toolName)) return result;
 
   if (toolName === 'generate_image' && Array.isArray(result.images)) {
     const images = await Promise.all(

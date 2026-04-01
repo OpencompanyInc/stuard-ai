@@ -130,6 +130,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
             plan: access.plan,
             limit: access.limit,
             used: access.used,
+            remaining: access.remaining,
           }, corsOrigin);
           return true;
         }

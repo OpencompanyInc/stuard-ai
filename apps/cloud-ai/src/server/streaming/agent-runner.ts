@@ -1,11 +1,10 @@
 
 import { WebSocket } from 'ws';
 import { getAgent as getStuardAgent } from '../../agents/stuard-agent';
+import { getSkillsFromContext } from '../../tools/skill-tools';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
-import { withClientBridge } from '../../tools/bridge';
-import { getToolRegistry } from '../../tools/tool-registry';
-import { initToolRegistry } from '../../tools/meta-tools';
+import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
@@ -88,13 +87,29 @@ function extractToolName(message: string): string | undefined {
   return match?.[1];
 }
 
-function isCatalogTool(toolName: string): boolean {
+async function isCatalogTool(toolName: string): Promise<boolean> {
   try {
+    const [{ initToolRegistry }, { getToolRegistry }] = await Promise.all([
+      import('../../tools/meta-tools'),
+      import('../../tools/tool-registry'),
+    ]);
     initToolRegistry();
     return getToolRegistry().has(toolName);
   } catch {
     return false;
   }
+}
+
+function isToolCallParseError(error: unknown): error is { error?: unknown; input?: string } {
+  if (!error || typeof error !== 'object') return false;
+
+  const innerError = (error as any).error;
+  const input = (error as any).input;
+  return typeof input === 'string' && (
+    innerError instanceof SyntaxError ||
+    String(innerError || '').includes('SyntaxError') ||
+    String((error as any).message || '').includes('SyntaxError')
+  );
 }
 
 type AgentType = 'stuard' | 'workflow' | 'skill';
@@ -228,6 +243,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
   console.log(`[perf] runAgent pre-stream total: ${Date.now() - _rt0}ms`);
 
+  // Carry forward secrets from the outer bridge context (server.ts path).
+  // Also read skills directly from message.context.skills (manager.ts path has no outer bridge).
+  const inheritedSecrets = getBridgeSecrets();
+  const contextSkills = Array.isArray(message.context?.skills) ? message.context.skills : undefined;
+  const skillsSecret = contextSkills ?? inheritedSecrets?.__skills;
   await withClientBridge(bridgeWs || ws, async () => {
     const _sStart = Date.now();
     let fullText = '';
@@ -246,11 +266,12 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       }
 
       const _agentStart = Date.now();
+      const skills = getSkillsFromContext();
       const agent = agentType === 'workflow'
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'
           ? getSkillAgent(chosenModelId)
-          : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId);
+          : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId, skills);
       console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms`);
 
       // Build context prefix for paths
@@ -314,9 +335,14 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       let cumulativeInputTokens = 0;
       let currentTurnStartIndex = 0;
       let midTurnCompacted = false;
+      // Mastra's `activeTools` controls which tools the LLM sees in its schema.
+      // The Agent is constructed with the FULL tool universe so execution never
+      // fails with "Tool X not found", but we limit the LLM to the lean set.
+      const activeToolNames: string[] | undefined = (agent as any).__activeToolNames;
       const streamOptions: any = {
         maxSteps: maxToolSteps,
         abortSignal: abortController.signal,
+        ...(activeToolNames ? { activeTools: activeToolNames } : {}),
         prepareStep: async ({ messages, stepNumber }: any) => {
           if (!Array.isArray(messages) || stepNumber <= 1 || midTurnCompacted) {
             return {};
@@ -579,13 +605,17 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           break;
 
         } catch (streamError: any) {
+          if (isToolCallParseError(streamError)) {
+            throw streamError;
+          }
+
           // Check if this is a tool error we can retry
           const toolError = detectToolError(streamError);
           if (toolError && attempt < MAX_TOOL_ERROR_RETRIES) {
             attempt++;
             const toolCallId = `tc-error-${Date.now()}`;
             const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
-            const isMetaAccessibleTool = isMissingTool && isCatalogTool(toolError.toolName);
+            const isMetaAccessibleTool = isMissingTool && await isCatalogTool(toolError.toolName);
             const isHallucination = isMissingTool && !isMetaAccessibleTool;
             const label = isMetaAccessibleTool
               ? 'meta-only'
@@ -712,7 +742,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         if (toolError) {
           const toolCallId = `tc-error-final-${Date.now()}`;
           const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
-          const isMetaAccessibleTool = isMissingTool && isCatalogTool(toolError.toolName);
+          const isMetaAccessibleTool = isMissingTool && await isCatalogTool(toolError.toolName);
           const isHallucination = isMissingTool && !isMetaAccessibleTool;
           console.error(`[AgentRunner] Tool error (retries exhausted): "${toolError.toolName}" (${toolError.type})`);
 
@@ -767,13 +797,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           return;
         }
 
-        const toolCallParseError =
-          error &&
-          typeof error === 'object' &&
-          typeof (error as any).input === 'string' &&
-          ((error as any).error instanceof SyntaxError || String((error as any).error || '').includes('SyntaxError'));
-
-        if (toolCallParseError) {
+        if (isToolCallParseError(error)) {
           const errMsg = String((error as any)?.error?.message || 'Invalid JSON in tool call input');
           const inputPreview = String((error as any).input || '').slice(0, 2000);
           const toolCallId = `tc-parse-${Date.now()}`;
@@ -819,7 +843,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       activeControllers.delete(ws);
       if (requestId) { try { delete (ws as any)[`__abort_${requestId}`]; } catch { } }
     }
-  }, { userId, conversationId });
+  }, { ...inheritedSecrets, ...(skillsSecret ? { __skills: skillsSecret } : {}), userId, conversationId });
 
   return resultText ? { text: resultText } : null;
 }

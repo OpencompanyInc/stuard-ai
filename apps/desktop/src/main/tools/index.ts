@@ -4,6 +4,7 @@ import { execCloudTool } from './handlers/cloud';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
 import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendNotification, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
 import { execAskUserViaNotification } from './handlers/ask-user-notification';
+import { execAskUserInApp } from './handlers/ask-user-inapp';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
@@ -334,9 +335,9 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
         return skills_list();
       }
 
-      // ask_user — interactive notification (no window focus needed)
+      // ask_user — in-app when window is focused, notification overlay when not
       if (toolName === 'ask_user') {
-        return execAskUserViaNotification(args, ctx);
+        return execAskUserInApp(args, ctx);
       }
 
       // GenUI interactive tools - route through custom_ui with component type

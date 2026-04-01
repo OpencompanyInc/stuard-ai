@@ -44,7 +44,10 @@ export const AskUserInputSchema = z.object({
   type: z.enum(['confirm', 'choices', 'text']).optional(),
   options: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
   placeholder: z.string().optional(),
-  pages: z.array(AskUserPageSchema).min(1).optional(),
+  // Kept as opaque array to avoid inlining the full nested page/question/option
+  // schema into the LLM's JSON Schema (which would add ~3000 tok).
+  // The renderer (askUserPromptUtils.ts) normalizes the structure at display time.
+  pages: z.array(z.record(z.string(), z.any())).optional(),
 }).refine(
   (value) => Boolean(value.message) || Boolean(value.pages?.length),
   { message: 'ask_user requires either a message or at least one page' },
@@ -53,7 +56,7 @@ export const AskUserInputSchema = z.object({
 export const ask_user = createTool({
   id: 'ask_user',
   description:
-    'Ask the user a question. confirm=yes/no, choices=pick from options, text=free input. Required before destructive actions.',
+    'Ask the user a question interactively. confirm=yes/no, choices=pick from options, text=free input. Use for: destructive/irreversible actions, ambiguous requests needing clarification, interactive multi-step flows, or when you genuinely need user input. Do NOT use for routine confirmations or when intent is already clear.',
   inputSchema: AskUserInputSchema,
   execute: async (args) => {
     if (hasClientBridge()) {

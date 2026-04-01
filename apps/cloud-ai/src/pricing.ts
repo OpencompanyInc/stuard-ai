@@ -28,10 +28,10 @@ export const PLAN_CONFIG: Record<PlanType, {
   isRecurring: boolean;
   allModels: boolean;
 }> = {
-  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.50, isRecurring: false, allModels: false },
+  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.45, isRecurring: false, allModels: false },
   STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },
-  PRO: { priceUsd: 45, budgetUsd: 29.25, isRecurring: true, allModels: true },
-  POWER: { priceUsd: 100, budgetUsd: 65, isRecurring: true, allModels: true },
+  PRO: { priceUsd: 45, budgetUsd: 31.50, isRecurring: true, allModels: true },
+  POWER: { priceUsd: 100, budgetUsd: 75, isRecurring: true, allModels: true },
   BYOK: { priceUsd: 0, budgetUsd: Infinity, isRecurring: false, allModels: true },
 };
 
@@ -76,7 +76,7 @@ export function estimateStorageCostCredits(hotGb: number, coldBytes: number, hou
   const coldGb = coldBytes / (1024 * 1024 * 1024);
   const hotUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd / hoursPerMonth) * hours;
   const coldUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd / hoursPerMonth) * hours;
-  return creditsFromUsd(hotUsd + coldUsd);
+  return preciseCreditsFromUsd(hotUsd + coldUsd);
 }
 
 function envNumber(key: string, def: number) {
@@ -121,13 +121,13 @@ export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
     // Return the first one or a specific preferred one
-    if (category === 'fast') return 'google/gemini-3-flash-preview';
-    if (category === 'balanced') return 'xai/grok-4-1-fast';
-    if (category === 'smart') return 'google/gemini-2.5-pro';
+    if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
+    if (category === 'balanced') return 'openai/gpt-5-chat-latest';
+    if (category === 'smart') return 'google/gemini-3.1-pro-preview';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
-  return 'google/gemini-3-flash-preview'; // Ultimate fallback
+  return 'google/gemini-3.1-flash-lite-preview';
 }
 
 export function priceForModel(modelId: string): Price {
@@ -174,12 +174,11 @@ export function estimateCostUsd(model: string, promptTokens: number, completionT
 }
 
 export function creditsPerUsd(): number {
-  return envNumber('CREDITS_PER_USD', 100);
+  return envNumber('CREDITS_PER_USD', 33);
 }
 
 export function creditsFromUsd(usd: number): number {
-  const c = usd * creditsPerUsd();
-  return Math.max(0, Math.round(c));
+  return snapCredits(preciseCreditsFromUsd(usd));
 }
 
 function planKey(plan: string): string {
@@ -280,8 +279,8 @@ export function getPlanConfig(plan: string) {
  * Used for fractional hourly billing (storage, compute).
  */
 export function preciseCreditsFromUsd(usd: number): number {
-  const c = usd * creditsPerUsd();
-  return Math.max(0, c);
+  if (!Number.isFinite(usd) || usd <= 0) return 0;
+  return Number((usd * creditsPerUsd()).toFixed(4));
 }
 
 /**

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { supabase, getValidAccessToken, getFastAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
-import { agentFetchJson, resolveAgentEndpoints } from '../utils/agentEndpoints';
+import { supabase, getValidAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
 import type { ChatMode, ChatModelsConfig } from './usePreferences';
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
@@ -35,11 +34,6 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_list_entities',
   'knowledge_search_facts',
   'knowledge_get_entity_context',
-  'knowledge_add_fact',
-  'knowledge_upsert_core',
-  'knowledge_find_entity',
-  'knowledge_create_entity',
-  'knowledge_upsert_procedural',
 
   // Pending memories (shown in dedicated UI, should not appear as tool pills)
   'pending_memory_create',
@@ -48,20 +42,6 @@ const HIDDEN_TOOL_NAMES = new Set([
   'pending_memory_confirm',
   'pending_memory_reject',
   'pending_memory_delete',
-
-  // Internal subagent lifecycle tools (track in hidden state only)
-  'subagent_spawn',
-  'subagent_update',
-  'subagent_status',
-  'subagent_list',
-  'subagent_stop',
-  'subagent_create',
-  'run_subagent',
-  'spawn_agent',
-
-  // Internal meta-tools (invisible to user)
-  'get_tool_schema',
-  'search_tools',
 ]);
 
 const HIDDEN_WRAPPER_TOOL_NAMES = new Set([
@@ -86,9 +66,6 @@ const GENUI_TOOL_NAMES = new Set([
   'show_link',
   'show_colors',
   'show_progress',
-  'show_form',
-  // Inline custom React UI (blocking/non-blocking determined by args.blocking)
-  'chat_ui',
 ]);
 
 // GenUI tools that block and wait for user interaction
@@ -98,7 +75,6 @@ const BLOCKING_GENUI_TOOLS = new Set([
   'pick_date',
   'request_files',
   'show_command',
-  'show_form',
 ]);
 
 export interface GenUIToolCall {
@@ -140,9 +116,9 @@ export interface PendingMemory {
 
 // Stream chunk types for interleaved display
 export type StreamChunk =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning'; content: string }
-  | { type: 'tool'; tool: ToolCall };
+| { type: 'text'; content: string }
+| { type: 'reasoning'; content: string }
+| { type: 'tool'; tool: ToolCall };
 
 // Hidden state for AI context - tracks IDs and tool results that should be remembered
 // This is NOT rendered in the UI but sent to the AI for context continuity
@@ -195,144 +171,34 @@ export function summarizeHiddenState(state: HiddenState, maxResults: number = 20
 export function hiddenStateToContextString(state: HiddenState): string {
   const summary = summarizeHiddenState(state);
   const lines: string[] = ['[SESSION CONTEXT - IDs and recent tool results]'];
-
+  
   if (summary.terminals.length > 0) {
     lines.push('\nActive Terminals:');
     for (const t of summary.terminals) {
       lines.push(`  - ${t.terminalId}: "${t.command}" (${t.status}${t.exitCode !== undefined ? `, exit: ${t.exitCode}` : ''})`);
     }
   }
-
+  
   if (summary.subagents.length > 0) {
     lines.push('\nSubagent Tasks:');
     for (const s of summary.subagents) {
       lines.push(`  - ${s.taskId}: "${s.objective}" (${s.status}${s.resultPreview ? `, result: ${s.resultPreview}` : ''})`);
     }
   }
-
+  
   if (summary.recentToolResults.length > 0) {
     lines.push('\nRecent Tool Results (use these instead of re-running):');
     for (const r of summary.recentToolResults.slice(0, 10)) {
       lines.push(`  - ${r.tool}: ${r.resultPreview}`);
     }
   }
-
+  
   if (lines.length === 1) {
     return '';
   }
-
+  
   lines.push('\n[END SESSION CONTEXT]');
   return lines.join('\n');
-}
-
-function normalizeChatError(input: { code?: any; message?: any; data?: any }): { code: string; userMessage: string; rawMessage: string } {
-  const rawCode = String(input?.code || input?.data?.code || '').trim().toLowerCase();
-  const rawMessage = String(input?.message || input?.data?.message || '').trim();
-  const nestedError = String(input?.data?.error || '').trim();
-  const combined = `${rawCode} ${rawMessage} ${nestedError}`.toLowerCase();
-
-  if (rawCode === 'monthly_credit_limit_exceeded') {
-    return {
-      code: rawCode,
-      userMessage: 'Monthly credit limit reached. Please upgrade your plan or wait for the next reset.',
-      rawMessage,
-    };
-  }
-  if (combined.includes('unknown_tool') || combined.includes('unknown tool') || combined.includes('tool not found')) {
-    return {
-      code: 'unknown_tool',
-      userMessage: 'The assistant tried to use a tool that is unavailable in this environment.',
-      rawMessage,
-    };
-  }
-  if (combined.includes('invalid_json') || (combined.includes('tool call') && combined.includes('json'))) {
-    return {
-      code: 'invalid_tool_input',
-      userMessage: 'The AI generated an invalid tool call. Please retry your request.',
-      rawMessage,
-    };
-  }
-  if (combined.includes('timeout') || combined.includes('timed out')) {
-    return {
-      code: 'timeout',
-      userMessage: 'The request timed out before completion. Please try again.',
-      rawMessage,
-    };
-  }
-  if (combined.includes('network') || combined.includes('websocket') || combined.includes('fetch failed') || combined.includes('econn')) {
-    return {
-      code: 'network_error',
-      userMessage: 'Connection issue while talking to the AI service. Please retry in a moment.',
-      rawMessage,
-    };
-  }
-  return {
-    code: rawCode || 'agent_error',
-    userMessage: rawMessage || 'Something went wrong while processing your request.',
-    rawMessage,
-  };
-}
-
-const POPUP_ONLY_ERROR_CODES = new Set([
-  'monthly_credit_limit_exceeded',
-]);
-
-function getLoadedConversationTime(value: { created_at?: string; timestamp?: number } | null | undefined): number {
-  const direct = typeof value?.timestamp === 'number' ? value.timestamp : NaN;
-  if (Number.isFinite(direct)) return direct;
-  const parsed = Date.parse(String(value?.created_at || ''));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function repairLoadedConversationRows<T extends { role?: string; turn_index?: number; created_at?: string; timestamp?: number }>(rows: T[]): T[] {
-  const sorted = [...rows].sort((a, b) => {
-    const aTurn = Number(a?.turn_index);
-    const bTurn = Number(b?.turn_index);
-    const aHasTurn = Number.isFinite(aTurn);
-    const bHasTurn = Number.isFinite(bTurn);
-
-    if (aHasTurn || bHasTurn) {
-      if (aHasTurn && bHasTurn && aTurn !== bTurn) return aTurn - bTurn;
-      if (aHasTurn !== bHasTurn) return aHasTurn ? -1 : 1;
-    }
-
-    return getLoadedConversationTime(a) - getLoadedConversationTime(b);
-  });
-
-  const messageIndices = sorted
-    .map((row, index) => ({
-      index,
-      role: row?.role === 'assistant' || row?.role === 'user' ? row.role : null,
-    }))
-    .filter((item): item is { index: number; role: 'assistant' | 'user' } => item.role === 'assistant' || item.role === 'user');
-
-  if (messageIndices.length < 2 || messageIndices[0].role !== 'assistant' || messageIndices[1].role !== 'user') {
-    return sorted;
-  }
-
-  let checkedPairs = 0;
-  let reversedPairs = 0;
-  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
-    checkedPairs += 1;
-    if (messageIndices[i].role === 'assistant' && messageIndices[i + 1].role === 'user') {
-      reversedPairs += 1;
-    }
-  }
-
-  if (reversedPairs < Math.max(1, Math.ceil(checkedPairs / 2))) {
-    return sorted;
-  }
-
-  const repaired = [...sorted];
-  for (let i = 0; i + 1 < messageIndices.length; i += 2) {
-    const first = messageIndices[i];
-    const second = messageIndices[i + 1];
-    if (first.role === 'assistant' && second.role === 'user') {
-      [repaired[first.index], repaired[second.index]] = [repaired[second.index], repaired[first.index]];
-    }
-  }
-
-  return repaired;
 }
 
 interface Message {
@@ -343,8 +209,6 @@ interface Message {
   reasoningDuration?: number; // in seconds
   toolCalls?: ToolCall[]; // Tool calls made during this response
   streamChunks?: StreamChunk[]; // Interleaved chunks for display
-  usage?: Record<string, any>;
-  modelId?: string;
   timestamp?: number;
   contextPaths?: ContextPath[]; // Files/folders attached via @ mention
   modifiedFiles?: string[]; // Paths of files modified during this turn
@@ -402,7 +266,6 @@ interface ConversationTab {
   currentReasoning: string;
   currentToolCalls: ToolCall[]; // Tool calls for current streaming response
   currentStreamChunks: StreamChunk[]; // Interleaved chunks in order
-  liveUsage: { promptTokens: number; completionTokens: number; totalTokens: number; contextWindow?: number; modelId?: string } | null; // Live token usage updated mid-stream
   aiState: AIStatus;
   agentState: AgentState;
   lastError: { code: string; data?: any } | null;
@@ -438,7 +301,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentReasoning: '',
     currentToolCalls: [],
     currentStreamChunks: [],
-    liveUsage: null,
     aiState: { phase: 'idle', statusText: 'Idle' },
     agentState: { connected: false, connecting: false, status: 'disconnected' },
     lastError: null,
@@ -532,14 +394,10 @@ export function useAgent(options?: string | UseAgentOptions) {
     const targetTabId = activeTabIdRef.current;
     const nextMode = (typeof mode === 'string' && mode.trim()) ? mode.trim() : DEFAULT_TAB_CHAT_MODE;
     setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatMode: nextMode } : t));
-    // Persist to localStorage so it survives restart
-    try { localStorage.setItem('stuard.pref.chat_mode', JSON.stringify(nextMode)); } catch { }
   }, []);
   const setChatModels = useCallback((cfg: ChatModelsConfig) => {
     const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, chatModels: cloneChatModelsConfig(cfg || DEFAULT_TAB_CHAT_MODELS) } : t));
-    // Persist to localStorage so it survives restart
-    try { localStorage.setItem('stuard.pref.chat_models', JSON.stringify(cfg || DEFAULT_TAB_CHAT_MODELS)); } catch { }
   }, []);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -552,9 +410,6 @@ export function useAgent(options?: string | UseAgentOptions) {
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
   const streamingRef = useRef<boolean>(false);
   const stoppedRef = useRef<boolean>(false); // Track if user explicitly stopped - ignore further chunks until final
-  // Per-request stopped/streaming tracking so tabs don't bleed into each other
-  const stoppedByRequestRef = useRef<Set<string>>(new Set());
-  const streamingByRequestRef = useRef<Set<string>>(new Set());
   const streamingConversationIdRef = useRef<string | null>(null); // Track which conversation we're streaming to
   const streamingTabIdRef = useRef<string | null>(null); // Track which tab initiated the stream
   const pendingResponseTabsRef = useRef<string[]>([]); // Queue of tabs waiting for responses (FIFO) - legacy
@@ -566,6 +421,9 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const wrapperSequentialQueueRef = useRef<Map<string, string[]>>(new Map());
   const wrapperSequentialCounterRef = useRef<Map<string, number>>(new Map());
+  // chat_ui: maps AI SDK tool call id → bridge pending id, so submitToolOutput resolves the bridge
+  const chatUiLastTcIdRef = useRef<string | null>(null);
+  const chatUiBridgeMapRef = useRef<Map<string, string>>(new Map());
 
   const [pendingMemories, setPendingMemories] = useState<PendingMemory[]>([]);
   const [activeGenUITools, setActiveGenUITools] = useState<GenUIToolCall[]>([]);
@@ -580,8 +438,6 @@ export function useAgent(options?: string | UseAgentOptions) {
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
-  const turnCheckpointPromiseRef = useRef<Promise<string | null> | null>(null);
-  const activeSkillsCacheRef = useRef<any[]>([]);
 
   // File-modifying tool names
   const FILE_MODIFYING_TOOLS = new Set([
@@ -589,77 +445,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     'create_directory', 'edit_and_apply', 'edit_file', 'file_edit', 'patch_file',
     'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
   ]);
-
-  const ensureTurnCheckpoint = useCallback(async (): Promise<string | null> => {
-    if (turnCheckpointIdRef.current) {
-      return turnCheckpointIdRef.current;
-    }
-    if (turnCheckpointPromiseRef.current) {
-      return await turnCheckpointPromiseRef.current;
-    }
-
-    const promise = (async () => {
-      try {
-        if ((window as any).desktopAPI?.execTool) {
-          const cpResult = await (window as any).desktopAPI.execTool('checkpoint_create', { name: 'auto_turn' });
-          if (cpResult?.ok && cpResult?.id) {
-            turnCheckpointIdRef.current = cpResult.id;
-            return cpResult.id as string;
-          }
-        }
-      } catch (e) {
-        console.warn('[agent] Failed to create turn checkpoint:', e);
-      }
-      return null;
-    })();
-
-    turnCheckpointPromiseRef.current = promise;
-    const id = await promise;
-    if (turnCheckpointPromiseRef.current === promise) {
-      turnCheckpointPromiseRef.current = null;
-    }
-    return id;
-  }, []);
-
-  const mapActiveSkills = useCallback((skillsRes: any) => {
-    if (!skillsRes?.ok || !Array.isArray(skillsRes.skills)) {
-      return [];
-    }
-    return skillsRes.skills
-      .filter((s: any) => s?.isActive)
-      .slice(0, 20)
-      .map((s: any) => ({
-        id: String(s?.id || '').trim(),
-        name: String(s?.name || '').trim(),
-        description: String(s?.description || '').trim(),
-        trigger: String(s?.trigger || '').trim(),
-        icon: typeof s?.icon === 'string' ? s.icon : undefined,
-        color: typeof s?.color === 'string' ? s.color : undefined,
-        isActive: true,
-        steps: Array.isArray(s?.steps)
-          ? s.steps.slice(0, 30).map((step: any) => {
-            const toolName = String(step?.toolName || '').trim();
-            return {
-              id: String(step?.id || '').trim(),
-              type: String(step?.type || 'prompt').trim() || 'prompt',
-              label: String(step?.label || '').trim(),
-              content: String(step?.content || '').trim(),
-              ...(toolName ? { toolName } : {}),
-            };
-          }).filter((step: any) => step.id && step.type)
-          : [],
-      }))
-      .filter((s: any) => s.id && s.name);
-  }, []);
-
-  const refreshActiveSkillsCache = useCallback(async () => {
-    try {
-      const skillsRes = await window.desktopAPI?.skillsList?.().catch(() => null);
-      activeSkillsCacheRef.current = mapActiveSkills(skillsRes);
-    } catch {
-    }
-    return activeSkillsCacheRef.current;
-  }, [mapActiveSkills]);
 
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
@@ -676,15 +461,12 @@ export function useAgent(options?: string | UseAgentOptions) {
       currentReasoning: '',
       currentToolCalls: [],
       currentStreamChunks: [],
-      liveUsage: null,
       aiState: { phase: 'idle', statusText: 'Idle' },
       agentState: { connected: state.connected, connecting: state.connecting, status: state.status },
       lastError: null,
       hiddenState: createEmptyHiddenState(),
       ...tab
     };
-    tabsRef.current = [...tabsRef.current, newTab];
-    activeTabIdRef.current = id;
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(id);
     return id;
@@ -693,18 +475,10 @@ export function useAgent(options?: string | UseAgentOptions) {
   const closeTab = useCallback((id: string) => {
     // Clean up request tracking for the closed tab
     runningTabsRef.current.delete(id);
-    // Clean up session-scoped folder permissions for this tab
-    const agentHttp = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
-    fetch(`${agentHttp}/v1/folder-permissions/clear-session`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: id }),
-    }).catch(() => {});
     // Remove any requestId -> tabId mappings pointing to this tab
     for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
       if (tabId === id) {
         requestIdToTabRef.current.delete(reqId);
-        stoppedByRequestRef.current.delete(reqId);
-        streamingByRequestRef.current.delete(reqId);
         // Tell the server to stop any active stream for this request
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           try { wsRef.current.send(JSON.stringify({ type: 'stop', requestId: reqId })); } catch { }
@@ -771,45 +545,13 @@ export function useAgent(options?: string | UseAgentOptions) {
       const stopPayload: any = { type: 'stop' };
       if (targetRequestId) stopPayload.requestId = targetRequestId;
       wsRef.current.send(JSON.stringify(stopPayload));
-      // Mark this specific request as stopped so only its chunks are ignored (not other tabs)
-      if (targetRequestId) {
-        stoppedByRequestRef.current.add(targetRequestId);
-        streamingByRequestRef.current.delete(targetRequestId);
-      }
-      // Update only the target tab's AI state
-      setTabs(prev => prev.map(t =>
-        t.id === targetTabId ? { ...t, aiState: { phase: 'idle', statusText: 'Stopped' } } : t
-      ));
+      // Clear streaming state and mark as stopped to ignore further chunks
+      streamingRef.current = false;
+      stoppedRef.current = true;
+      setAI({ phase: 'idle', statusText: 'Stopped' });
       return true;
     } catch {
       return false;
-    }
-  }, []);
-
-  const cancelQueuedMessage = useCallback((msgId: string) => {
-    setQueuedMessages((prev) => {
-      const nextList = prev.filter(m => m.id !== msgId);
-      setQueueDepth(nextList.length);
-      queueDepthRef.current = nextList.length;
-      return nextList;
-    });
-
-    outboundQueueRef.current = outboundQueueRef.current.filter(m => m.id !== msgId);
-    pendingSendRef.current = pendingSendRef.current.filter(m => m.id !== msgId);
-
-    // If the queue is now empty and we were waiting for queued start, reset
-    if (queueDepthRef.current === 0) {
-      waitingQueuedStartRef.current = false;
-      // If we are not currently running anything, reset status
-      if (!runningTabsRef.current.has(activeTabIdRef.current)) {
-        setState((s) => ({ ...s, status: 'idle' }));
-        setAI((prev) => ({ ...prev, statusText: 'Online' }));
-      }
-    } else {
-      // Update queued count text if still queued
-      if (runningTabsRef.current.has(activeTabIdRef.current)) {
-        setAI((prev) => ({ ...prev, statusText: `Queued (${queueDepthRef.current})` }));
-      }
     }
   }, []);
 
@@ -848,13 +590,20 @@ export function useAgent(options?: string | UseAgentOptions) {
     await refreshPendingMemories();
   }, [execLocalTool, refreshPendingMemories]);
 
-  const submitToolOutput = useCallback(async (id: string, result: any) => {
+  const submitToolOutput = useCallback(async (tcId: string, result: any) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.warn('[agent] Cannot submit tool output: agent not connected');
       return;
     }
-    const payload = { type: 'tool_result', id, result };
-    wsRef.current.send(JSON.stringify(payload));
+    // chat_ui uses a bridge whose pending is keyed by its own generated id (different from the
+    // AI SDK's tool call id). Resolve via the mapped bridge id so the agent unblocks.
+    const bridgeId = chatUiBridgeMapRef.current.get(tcId);
+    if (bridgeId) {
+      wsRef.current.send(JSON.stringify({ type: 'tool_result', id: bridgeId, result }));
+      chatUiBridgeMapRef.current.delete(tcId);
+      return;
+    }
+    wsRef.current.send(JSON.stringify({ type: 'tool_result', id: tcId, result }));
   }, []);
 
   // Respond to a GenUI tool call (e.g., user clicked Confirm, selected a choice, etc.)
@@ -883,15 +632,14 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const deleteConversation = useCallback(async (id: string) => {
     try {
-      const agentEndpoints = resolveAgentEndpoints(customAgentUrl);
-      const result = await agentFetchJson(
-        agentEndpoints,
-        `/v1/memory/conversations/${encodeURIComponent(id)}`,
-        {
-          method: 'DELETE',
-          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
-        },
-      );
+      const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
+      const resp = await fetch(`${target}/memory/conversations/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      const result = await resp.json();
       if (result.ok) {
         // If the deleted conversation is in a tab, clear it or close it
         setTabs(prev => {
@@ -906,7 +654,6 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
-                liveUsage: null,
                 lastError: null
               };
             }
@@ -942,49 +689,48 @@ export function useAgent(options?: string | UseAgentOptions) {
     try {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-      // Dispatch all eligible queued items (one per tab that isn't already running)
-      const tabsToUpdate: string[] = [];
-      while (true) {
-        const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
-        if (nextIdx === -1) break;
+      // Find the next queued item for a tab that isn't already running
+      const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
+      if (nextIdx === -1) return;
 
-        const next = outboundQueueRef.current.splice(nextIdx, 1)[0];
-        if (!next) break;
+      const next = outboundQueueRef.current.splice(nextIdx, 1)[0];
+      if (!next) return;
 
-        const targetTabId = next.tabId;
+      const targetTabId = next.tabId;
 
-        // Generate a unique requestId to track this request/response pair
-        const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        requestIdToTabRef.current.set(requestId, targetTabId);
+      // Generate a unique requestId to track this request/response pair
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      requestIdToTabRef.current.set(requestId, targetTabId);
 
-        // Set tracking refs (last dispatched wins for legacy fallback)
-        streamingTabIdRef.current = targetTabId;
-        activeRequestIdRef.current = requestId;
-        pendingResponseTabsRef.current.push(targetTabId);
+      // Set tracking refs
+      streamingTabIdRef.current = targetTabId;
+      activeRequestIdRef.current = requestId;
+      // Add to pending response queue (legacy fallback)
+      pendingResponseTabsRef.current.push(targetTabId);
 
-        waitingQueuedStartRef.current = queuedMessagesRef.current.length > 0;
-        runningTabsRef.current.add(targetTabId);
+      // If there were queued items visible for this tab, mark that the next start should promote from queue
+      waitingQueuedStartRef.current = queuedMessagesRef.current.length > 0;
+      // Mark this tab as running
+      runningTabsRef.current.add(targetTabId);
 
-        const payload = { ...next.payload, requestId };
+      // Add requestId to payload for server to echo back
+      const payload = { ...next.payload, requestId };
 
-        stoppedByRequestRef.current.delete(requestId);
-        streamingByRequestRef.current.delete(requestId);
-        try { wsRef.current.send(JSON.stringify(payload)); } catch { }
+      // Reset stopped flag for new request
+      stoppedRef.current = false;
+      try { wsRef.current.send(JSON.stringify(payload)); } catch { }
 
-        tabsToUpdate.push(targetTabId);
-      }
+      // Update this specific tab's AI state
+      setTabs(prev => prev.map(t =>
+        t.id === targetTabId ? { ...t, aiState: { phase: 'routing', statusText: 'Thinking…' } } : t
+      ));
 
-      // Batch-update AI state for all dispatched tabs
-      if (tabsToUpdate.length > 0) {
-        const dispatched = new Set(tabsToUpdate);
-        setTabs(prev => prev.map(t =>
-          dispatched.has(t.id) ? { ...t, aiState: { phase: 'routing', statusText: 'Thinking…' } } : t
-        ));
-      }
+      // Try to send more messages for other tabs (parallel processing)
+      tryDequeueAndSend();
     } catch { }
   }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(() => {
     const ready = wsRef.current?.readyState;
     if (ready === WebSocket.OPEN || ready === WebSocket.CONNECTING) return;
 
@@ -992,19 +738,23 @@ export function useAgent(options?: string | UseAgentOptions) {
     setAI({ phase: 'connecting', statusText: 'Connecting…' });
 
     try {
-      const target = resolveAgentEndpoints(customAgentUrl).wsUrl;
-      // Append auth token to WS URL so the server can immediately register
-      // this connection for webhook delivery (Gmail Pub/Sub, Drive, etc.)
-      // without waiting for a chat message to be sent.
-      let wsUrl = target;
-      try {
-        const token = await getFastAccessToken();
-        if (token) {
-          const sep = wsUrl.includes('?') ? '&' : '?';
-          wsUrl = `${wsUrl}${sep}client=desktop&token=${encodeURIComponent(token)}`;
+      const w: any = window as any;
+      const hintedWs = String(w.__AGENT_WS__ || '').trim();
+      const hintedHttp = String(w.__AGENT_HTTP__ || '').trim();
+      const httpToWs = (httpUrl: string) => {
+        try {
+          let wsBase = httpUrl.replace(/\/+$/, '');
+          if (wsBase.startsWith('https://')) wsBase = 'wss://' + wsBase.slice('https://'.length);
+          else if (wsBase.startsWith('http://')) wsBase = 'ws://' + wsBase.slice('http://'.length);
+          if (!wsBase.endsWith('/ws')) wsBase = wsBase + '/ws';
+          return wsBase;
+        } catch {
+          return '';
         }
-      } catch { }
-      const ws = new WebSocket(wsUrl);
+      };
+      const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
+      const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
+      const ws = new WebSocket(target);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -1023,8 +773,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          // Suppress very high-frequency request/response spam in console.
-          if (msg.type !== 'progress' && msg.type !== 'request' && msg.type !== 'response') {
+          if (msg.type !== 'progress') {
             console.log('[agent] Received:', msg.type);
           }
 
@@ -1044,39 +793,12 @@ export function useAgent(options?: string | UseAgentOptions) {
             setTabs(prev => prev.map(t => t.id === id ? updater(t) : t));
           };
 
-          const setStreamingState = (fn: AgentState | ((prev: AgentState) => AgentState)) => {
-            updateStreamingTab(t => ({ ...t, agentState: typeof fn === 'function' ? fn(t.agentState) : fn }));
-          };
-
           const setStreamingAI = (fn: AIStatus | ((prev: AIStatus) => AIStatus)) => {
             updateStreamingTab(t => ({ ...t, aiState: typeof fn === 'function' ? fn(t.aiState) : fn }));
           };
 
-          const hasTrackedRequestId = typeof msg.requestId === 'string' && requestIdToTabRef.current.has(msg.requestId);
-          const isStrictlyRoutedStreamMessage = msg.type === 'progress' || msg.type === 'final' || msg.type === 'error' || msg.type === 'stopped';
-
-          if (isStrictlyRoutedStreamMessage && !hasTrackedRequestId) {
-            console.log('[agent] Ignoring untracked stream message:', msg.type, msg.requestId || '(no requestId)');
-            return;
-          }
-
           if (msg.type === 'handshake') {
             console.log('[agent] Handshake:', msg.message);
-            // Send auth message immediately so the server registers this connection
-            // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.)
-            (async () => {
-              try {
-                const token = await getFastAccessToken();
-                if (token && wsRef.current?.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(JSON.stringify({ type: 'auth', accessToken: token }));
-                }
-              } catch { }
-            })();
-          } else if (msg.type === 'auth_result') {
-            // Server confirmed webhook registration
-            if (msg.ok) {
-              console.log('[agent] Auth registered for webhooks', msg.queued > 0 ? `(${msg.queued} queued delivered)` : '');
-            }
           } else if (msg.type === 'webhook_trigger' || msg.type === 'provider_webhook') {
             // Cloud webhook received - forward to main process to trigger workflow
             console.log('[agent] Cloud webhook received:', msg.type, msg);
@@ -1090,14 +812,22 @@ export function useAgent(options?: string | UseAgentOptions) {
             // This is critical for the "Bridge" to work without blocking
             const { id, tool, args } = msg;
 
-            // ask_user tool: add to activeGenUITools for inline chat rendering
-            if (tool === 'ask_user') {
-              console.log('[agent] ask_user tool request received:', args);
-              setActiveGenUITools(prev => {
-                if (prev.some(t => t.id === id)) return prev;
-                return [...prev, { id, tool: 'ask_user', args, status: 'pending' }];
-              });
-              return; // Wait for respondToGenUI to send result back
+            // chat_ui renders inline in the message bubble (not via desktopAPI.execTool).
+            // The bridge pending id differs from the AI SDK's tc.id, so we map them here.
+            // submitToolOutput then resolves the bridge via the mapped id when user submits.
+            if (tool === 'chat_ui') {
+              const tcId = chatUiLastTcIdRef.current;
+              if (tcId) {
+                chatUiBridgeMapRef.current.set(tcId, id);
+              }
+              if (args?.blocking !== true) {
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({ type: 'tool_result', id, result: { ok: true, displayed: true } }));
+                }
+              }
+              // blocking=true: wait — user submits via ChatUIRenderer.onResult → submitToolOutput(tc.id)
+              // which looks up chatUiBridgeMapRef and sends tool_result with the bridge id.
+              return;
             }
 
             // If it's a GenUI tool, add to activeGenUITools for UI rendering
@@ -1111,11 +841,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                 return [...prev, { id, tool, args, status: 'pending' }];
               });
 
-              // For non-blocking tools, auto-respond immediately.
-              // chat_ui uses args.blocking to determine mode dynamically.
-              const isBlocking = BLOCKING_GENUI_TOOLS.has(tool)
-                || (tool === 'chat_ui' && args?.blocking === true);
-              if (!isBlocking) {
+              // For non-blocking tools, auto-respond immediately
+              if (!BLOCKING_GENUI_TOOLS.has(tool)) {
                 console.log('[agent] Auto-responding to non-blocking GenUI tool:', tool);
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
                   wsRef.current.send(JSON.stringify({
@@ -1135,16 +862,8 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (id && tool) {
               (async () => {
                 try {
-                  if (FILE_MODIFYING_TOOLS.has(String(tool)) && !turnCheckpointIdRef.current) {
-                    await ensureTurnCheckpoint();
-                  }
-
                   // Execute via Main process
-                  let result: any = {
-                    ok: false,
-                    error: 'unknown_tool',
-                    message: `Tool "${String(tool)}" is not available in this chat context.`,
-                  };
+                  let result = { ok: false, error: 'unknown_tool' };
 
                   // Handle simple client-side tools directly if needed, or delegate all to main
                   if (tool === 'get_local_time') {
@@ -1162,18 +881,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   } else {
                     // Delegate to main process
                     if ((window as any).desktopAPI?.execTool) {
-                      const execResult = await (window as any).desktopAPI.execTool(tool, args);
-                      result = execResult ?? {
-                        ok: false,
-                        error: 'tool_execution_failed',
-                        message: `Tool "${String(tool)}" returned no response.`,
-                      };
-                    } else {
-                      result = {
-                        ok: false,
-                        error: 'bridge_unavailable',
-                        message: 'Desktop bridge is unavailable, so local tools cannot run.',
-                      };
+                      result = await (window as any).desktopAPI.execTool(tool, args);
                     }
                   }
 
@@ -1183,15 +891,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   }
                 } catch (err: any) {
                   if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({
-                      type: 'tool_result',
-                      id,
-                      result: {
-                        ok: false,
-                        error: 'tool_execution_failed',
-                        message: String(err?.message || err),
-                      }
-                    }));
+                    wsRef.current.send(JSON.stringify({ type: 'tool_result', id, result: { ok: false, error: String(err.message || err) } }));
                   }
                 }
               })();
@@ -1199,6 +899,7 @@ export function useAgent(options?: string | UseAgentOptions) {
           } else if (msg.type === 'request' && msg.event && String(msg.event).startsWith('unified_tasks_')) {
             // Handle unified_tasks requests from agent (broadcasted to all connected clients)
             const { id, event, data } = msg;
+            console.log('[agent] Received unified_tasks request:', event, 'id=', id);
             (async () => {
               let result: any = { ok: false, error: 'unknown_event' };
               try {
@@ -1237,6 +938,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               } catch (e: any) {
                 result = { ok: false, error: String(e?.message || e) };
               }
+              console.log('[agent] Sending response for', id, ':', result?.ok ? 'ok' : result?.error);
               if (wsRef.current?.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ type: 'response', id, data: result }));
               }
@@ -1250,7 +952,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool' || prev.phase === 'responding') return prev;
                 return { phase: 'routing', model: typeof modelIndex === 'number' ? String(modelIndex) : undefined, statusText: 'Thinking…' };
               });
-              setStreamingState((s) => ({ ...s, status: s.status.startsWith('tool:') ? s.status : 'routing' }));
+              setState((s) => ({ ...s, status: s.status.startsWith('tool:') ? s.status : 'routing' }));
             } else if (evt.event === 'model') {
               const modelId = typeof evt.data?.modelId === 'string' ? evt.data.modelId : undefined;
               const tier = typeof evt.data?.tier === 'string' ? evt.data.tier : undefined;
@@ -1260,11 +962,9 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
             } else if (evt.event === 'start') {
               streamingConversationIdRef.current = conversationIdRef.current;
-              // Reset per-turn file tracking. Checkpoints are created lazily only
-              // when a file-modifying tool is actually invoked.
+              // Reset file tracking for new turn (checkpoint created lazily by backend on first file modification)
               modifiedFilesRef.current = new Set();
               turnCheckpointIdRef.current = null;
-              turnCheckpointPromiseRef.current = null;
               // Promote appropriate user message into chat when processing actually starts
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
                 const first = queuedMessagesRef.current[0];
@@ -1298,7 +998,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Processing…' };
               });
-              setStreamingState((s) => ({ ...s, status: 'processing' }));
+              setState((s) => ({ ...s, status: 'processing' }));
             } else if (evt.event === 'reasoning_start') {
               // Reasoning started - track timing
               console.log('[agent] Reasoning started');
@@ -1307,7 +1007,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Thinking…' };
               });
-              setStreamingState((s) => ({ ...s, status: 'reasoning' }));
+              setState((s) => ({ ...s, status: 'reasoning' }));
             } else if (evt.event === 'reasoning') {
               // Set start time if not set (in case reasoning_start wasn't received)
               if (!reasoningStartTimeRef.current) {
@@ -1346,22 +1046,17 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Thinking…' };
               });
-              setStreamingState((s) => ({ ...s, status: 'reasoning' }));
+              setState((s) => ({ ...s, status: 'reasoning' }));
             } else if (evt.event === 'reasoning_end') {
               // Reasoning ended
               console.log('[agent] Reasoning ended');
             } else if (evt.event === 'tool_event') {
-              // Ignore tool events if this specific request was stopped
-              const reqId = String(msg.requestId || '');
-              if (reqId && stoppedByRequestRef.current.has(reqId)) {
-                console.log('[agent] Ignoring tool_event after stop for request', reqId);
+              // Ignore tool events if we've explicitly stopped
+              if (stoppedRef.current) {
+                console.log('[agent] Ignoring tool_event after stop');
                 return;
               }
-              let tool = String(evt.data?.tool || 'tool');
-              // execute_tool is a wrapper — show the actual tool being executed
-              if (tool === 'execute_tool' && evt.data?.args?.tool_name) {
-                tool = String(evt.data.args.tool_name);
-              }
+              const tool = String(evt.data?.tool || 'tool');
               const toolStatus = evt.data?.status || '';
               const humanTool = humanizeToolName(tool);
               const normalizedStatus = typeof toolStatus === 'string' ? toolStatus.toLowerCase() : '';
@@ -1495,7 +1190,7 @@ export function useAgent(options?: string | UseAgentOptions) {
 
                     emitSyntheticTool(stepTool, syntheticId, 'called', evt.data?.args);
                     setStreamingAI({ phase: 'tool', tool: stepTool, toolStatus: 'running', statusText: `🔧 ${humanizeToolName(stepTool)} running…` });
-                    setStreamingState((s) => ({ ...s, status: `tool:running` }));
+                    setState((s) => ({ ...s, status: `tool:running` }));
                   } else if (normalizedStatus === 'step_completed' || normalizedStatus === 'step_error') {
                     const syntheticId = typeof isParallelIndex === 'number'
                       ? `wrap-${wrapperKey}:${isParallelIndex}`
@@ -1514,6 +1209,11 @@ export function useAgent(options?: string | UseAgentOptions) {
                   }
                 }
                 return;
+              }
+
+              // Track chat_ui's AI SDK tool call id so tool_request can map it to the bridge id
+              if (tool === 'chat_ui' && (normalizedStatus === 'called' || normalizedStatus === 'started') && evt.data?.toolCallId) {
+                chatUiLastTcIdRef.current = evt.data.toolCallId;
               }
 
               // Track tool calls in currentToolCalls array AND currentStreamChunks
@@ -1554,7 +1254,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                     const newStatus = normalizedStatus === 'completed' ? 'completed' : 'error';
                     const result = normalizedStatus === 'completed' ? d.result : undefined;
                     const error = normalizedStatus === 'completed' ? undefined : (d.error || d.result?.error || 'failed');
-
+                    
                     updateStreamingTab(t => {
                       // Find the matching tool call - prefer exact id match, fallback to tool name with pending status
                       const findMatch = (tc: ToolCall) =>
@@ -1578,7 +1278,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                           entries.slice(0, 50).forEach(([k, v]) => resultMap.set(k, v));
                         }
                         newHiddenState.toolResults = resultMap;
-
+                        
                         // Track terminal creation
                         if ((tool === 'start_terminal' || tool === 'run_terminal_command') && result?.terminalId) {
                           const termMap = new Map(t.hiddenState.terminals);
@@ -1637,6 +1337,22 @@ export function useAgent(options?: string | UseAgentOptions) {
                         )
                       };
                     });
+
+                    // Lazily fetch checkpoint ID on first file modification (backend creates it via ensure_active)
+                    if (FILE_MODIFYING_TOOLS.has(tool) && normalizedStatus === 'completed' && !turnCheckpointIdRef.current) {
+                      (async () => {
+                        try {
+                          if ((window as any).desktopAPI?.execTool) {
+                            const listResult = await (window as any).desktopAPI.execTool('checkpoint_list', {});
+                            if (listResult?.ok && listResult?.checkpoints?.length > 0) {
+                              turnCheckpointIdRef.current = listResult.checkpoints[0].id;
+                            }
+                          }
+                        } catch (e) {
+                          console.warn('[agent] Failed to get turn checkpoint:', e);
+                        }
+                      })();
+                    }
                   }
                 }
               } catch { }
@@ -1669,13 +1385,12 @@ export function useAgent(options?: string | UseAgentOptions) {
                 } else {
                   setStreamingAI({ phase: 'tool', tool, toolStatus, statusText: `🔧 ${humanTool} ${actionText}` });
                 }
-                setStreamingState((s) => ({ ...s, status: `tool:${toolStatus}` }));
+                setState((s) => ({ ...s, status: `tool:${toolStatus}` }));
               }
             } else if (evt.event === 'delta') {
-              // Ignore deltas if this specific request was stopped
-              const reqId = String(msg.requestId || '');
-              if (reqId && stoppedByRequestRef.current.has(reqId)) {
-                console.log('[agent] Ignoring delta after stop for request', reqId);
+              // Ignore deltas if we've explicitly stopped - the abort signal was sent
+              if (stoppedRef.current) {
+                console.log('[agent] Ignoring delta after stop');
                 return;
               }
               setStreamingAI((prev) => {
@@ -1685,7 +1400,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }
                 return { ...prev, phase: 'responding', statusText: 'Responding…' };
               });
-              setStreamingState((s) => ({ ...s, status: 'responding' }));
+              setState((s) => ({ ...s, status: 'responding' }));
               const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
               if (chunk) {
                 streamingRef.current = true;
@@ -1703,20 +1418,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                   return { ...t, currentResponse: newResponse, currentStreamChunks: chunks };
                 });
               }
-            } else if (evt.event === 'usage_update') {
-              // Live token usage update from server (emitted on each step finish + after compaction)
-              const d = evt.data || {};
-              const promptTokens = typeof d.promptTokens === 'number' ? d.promptTokens : 0;
-              const completionTokens = typeof d.completionTokens === 'number' ? d.completionTokens : 0;
-              const totalTokens = typeof d.totalTokens === 'number' ? d.totalTokens : promptTokens + completionTokens;
-              const contextWindow = typeof d.contextWindow === 'number' ? d.contextWindow : undefined;
-              const modelId = typeof d.modelId === 'string' ? d.modelId : undefined;
-              updateStreamingTab(t => ({
-                ...t,
-                liveUsage: { promptTokens, completionTokens, totalTokens, contextWindow, modelId },
-              }));
             } else {
-              setStreamingState((s) => ({ ...s, status: evt.event }));
+              setState((s) => ({ ...s, status: evt.event }));
             }
           } else if (msg.type === 'queued') {
             const pos = Number(msg.position || 0);
@@ -1739,17 +1442,11 @@ export function useAgent(options?: string | UseAgentOptions) {
               return nextList;
             });
             setStreamingAI((prev) => ({ ...prev, statusText: (Number.isFinite(pos) && pos > 0) ? `Queued (${pos})` : 'Queued' }));
-            setStreamingState((s) => ({ ...s, status: 'queued' }));
+            setState((s) => ({ ...s, status: 'queued' }));
           } else if (msg.type === 'final') {
             const result = msg.result || {};
             const isAborted = msg.aborted === true || result.finishReason === 'aborted';
             const text = result.response || result.text || '';
-            const finalUsage = result.usage && typeof result.usage === 'object' ? result.usage : undefined;
-            const finalModelId = typeof result.modelId === 'string'
-              ? result.modelId
-              : typeof msg.model === 'string'
-                ? msg.model
-                : undefined;
 
             // Calculate reasoning duration if we have a start time
             const reasoningDuration = reasoningStartTimeRef.current
@@ -1760,12 +1457,8 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
             streamingRef.current = false;
+            stoppedRef.current = false; // Reset stopped flag for next request
             reasoningStartTimeRef.current = null; // Reset for next message
-            // Clean up per-request tracking
-            if (msg.requestId) {
-              stoppedByRequestRef.current.delete(msg.requestId);
-              streamingByRequestRef.current.delete(msg.requestId);
-            }
 
             // Update tab with final message
             // For aborted messages, use currentResponse if available (more up-to-date than server text)
@@ -1780,7 +1473,6 @@ export function useAgent(options?: string | UseAgentOptions) {
             // Reset tracking for next turn
             modifiedFilesRef.current = new Set();
             turnCheckpointIdRef.current = null;
-            turnCheckpointPromiseRef.current = null;
 
             // Always commit accumulated work into a message - even when text is empty
             // but tools were called or chunks streamed, so users see what happened.
@@ -1788,18 +1480,6 @@ export function useAgent(options?: string | UseAgentOptions) {
               // For aborted, prefer the current streamed response over server text
               const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
               const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentReasoning;
-
-              // Finalize any tool calls still in 'called' status (they'd show perpetual spinners otherwise)
-              const finalizedToolCalls = t.currentToolCalls.map(tc =>
-                tc.status === 'called'
-                  ? { ...tc, status: (isAborted ? 'error' : 'completed') as 'error' | 'completed', error: isAborted ? 'Stopped' : undefined }
-                  : tc
-              );
-              const finalizedStreamChunks = t.currentStreamChunks.map(chunk =>
-                chunk.type === 'tool' && chunk.tool?.status === 'called'
-                  ? { ...chunk, tool: { ...chunk.tool, status: (isAborted ? 'error' : 'completed') as 'error' | 'completed', error: isAborted ? 'Stopped' : undefined } }
-                  : chunk
-              );
 
               // Commit a message if we have text OR if there was accumulated work (tool calls, reasoning, etc.)
               const shouldCommitMessage = displayText || hasAccumulatedWork;
@@ -1812,10 +1492,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                   text: (displayText || '') + (isAborted ? '\n\n*(Stopped)*' : ''),
                   reasoning: t.currentReasoning || undefined,
                   reasoningDuration: t.currentReasoning ? reasoningDuration : undefined,
-                  toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
-                  streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
-                  usage: finalUsage,
-                  modelId: finalModelId || t.aiState.model,
+                  toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+                  streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
                   timestamp: Date.now(),
                   aborted: isAborted,
                   modifiedFiles: turnModifiedFiles,
@@ -1825,12 +1503,11 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
-                liveUsage: null,
                 aiState: { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
               };
             });
 
-            setStreamingState((s) => ({ ...s, status: 'idle' }));
+            setState((s) => ({ ...s, status: 'idle' }));
 
             refreshPendingMemories();
 
@@ -1838,9 +1515,6 @@ export function useAgent(options?: string | UseAgentOptions) {
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
-              if (activeRequestIdRef.current === msg.requestId) {
-                activeRequestIdRef.current = null;
-              }
             }
             // Also remove from legacy FIFO queue if present
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
@@ -1890,8 +1564,6 @@ export function useAgent(options?: string | UseAgentOptions) {
           } else if (msg.type === 'error') {
             console.error('[agent] Error:', msg.message, 'code:', msg.code);
             const errorTabId = getTargetTabId();
-            const normalizedError = normalizeChatError({ code: msg.code, message: msg.message, data: msg.data });
-            const suppressInlineErrorMessage = POPUP_ONLY_ERROR_CODES.has(normalizedError.code);
 
             // Check for auth errors that require re-authentication
             const errorCode = msg.code || msg.message || '';
@@ -1918,86 +1590,42 @@ export function useAgent(options?: string | UseAgentOptions) {
                 setTabLastError(errorTabId, { code: 'session_expired', data: { requiresSignIn: true, message: 'Your session has expired. Please sign in again.' } });
               });
             } else {
-              setStreamingAI({ phase: 'error', message: normalizedError.userMessage, statusText: `Error: ${normalizedError.userMessage}` });
-              setTabLastError(errorTabId, {
-                code: normalizedError.code,
-                data: { ...(msg.data || {}), message: normalizedError.userMessage, rawMessage: normalizedError.rawMessage }
-              });
+              setStreamingAI({ phase: 'error', message: msg.message, statusText: `Error: ${msg.message}` });
+              setTabLastError(errorTabId, { code: String(msg.message || ''), data: msg.data });
             }
-            setStreamingState((s) => ({ ...s, status: 'error' }));
 
             // Preserve any accumulated tool calls, stream chunks, and partial text
             // by committing them as an error assistant message instead of discarding them.
             updateStreamingTab(t => {
               const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
-              const errorSuffix = `\n\n⚠️ *Error: ${normalizedError.userMessage}*`;
-
-              // Mark any tool calls still in 'called' status as 'error' so they don't show perpetual spinners
-              const finalizedToolCalls = t.currentToolCalls.map(tc =>
-                tc.status === 'called' ? { ...tc, status: 'error' as const, error: normalizedError.userMessage } : tc
-              );
-              const finalizedStreamChunks = t.currentStreamChunks.map(chunk =>
-                chunk.type === 'tool' && chunk.tool?.status === 'called'
-                  ? { ...chunk, tool: { ...chunk.tool, status: 'error' as const, error: normalizedError.userMessage } }
-                  : chunk
-              );
+              const errorSuffix = `\n\n⚠️ *Error: ${msg.message || 'Something went wrong'}*`;
 
               if (hasAccumulatedWork) {
-                const preservedText = (t.currentResponse || '').trim();
                 // Commit partial work as an assistant message so it's not lost
                 return {
                   ...t,
                   messages: [...t.messages, {
                     id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                     role: 'assistant',
-                    text: suppressInlineErrorMessage ? preservedText : preservedText + errorSuffix,
+                    text: (t.currentResponse || '').trim() + errorSuffix,
                     reasoning: t.currentReasoning || undefined,
-                    toolCalls: finalizedToolCalls.length > 0 ? finalizedToolCalls : undefined,
-                    streamChunks: finalizedStreamChunks.length > 0 ? finalizedStreamChunks : undefined,
+                    toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+                    streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
                     timestamp: Date.now(),
                   }],
                   currentResponse: '',
                   currentReasoning: '',
                   currentToolCalls: [],
                   currentStreamChunks: [],
-                  liveUsage: null,
                 };
               }
-              if (suppressInlineErrorMessage) {
-                return {
-                  ...t,
-                  currentResponse: '',
-                  currentReasoning: '',
-                  currentToolCalls: [],
-                  currentStreamChunks: [],
-                  liveUsage: null,
-                };
-              }
-              // No accumulated work - still commit a visible assistant error message
-              return {
-                ...t,
-                messages: [...t.messages, {
-                  id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                  role: 'assistant',
-                  text: `⚠️ ${normalizedError.userMessage}`,
-                  timestamp: Date.now(),
-                }],
-                currentResponse: '',
-                currentReasoning: '',
-                currentToolCalls: [],
-                currentStreamChunks: [],
-                liveUsage: null,
-              };
+              // No accumulated work - just clear streaming state
+              return { ...t, currentResponse: '', currentReasoning: '', currentToolCalls: [], currentStreamChunks: [] };
             });
             // Clean up request tracking and mark tab as no longer running
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
-              stoppedByRequestRef.current.delete(msg.requestId);
-              streamingByRequestRef.current.delete(msg.requestId);
-              if (activeRequestIdRef.current === msg.requestId) {
-                activeRequestIdRef.current = null;
-              }
             }
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
             if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
@@ -2041,8 +1669,6 @@ export function useAgent(options?: string | UseAgentOptions) {
         deltaBufferRef.current = '';
         streamingRef.current = false;
         stoppedRef.current = false;
-        stoppedByRequestRef.current.clear();
-        streamingByRequestRef.current.clear();
         runningTabsRef.current.clear();
         pendingResponseTabsRef.current = [];
         waitingQueuedStartRef.current = false;
@@ -2106,7 +1732,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         contextPaths: options.contextPaths,
       };
 
-      const targetTabId = activeTabIdRef.current;
+      const targetTabId = activeTabId;
       const isTabRunning = runningTabsRef.current.has(targetTabId);
 
       // Get active tab history BEFORE adding the new message
@@ -2133,14 +1759,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         ));
       }
 
-      if (!isTabRunning) {
-        setTabs(prev => prev.map(t =>
-          t.id === targetTabId ? { ...t, aiState: { phase: 'routing', statusText: wsReady ? 'Preparing...' : 'Connecting...' } } : t
-        ));
-      }
-
-      const accessTokenPromise = getFastAccessToken();
-      void refreshActiveSkillsCache();
+      // Use auth manager to get a fresh token (proactively refreshes if expiring soon)
+      const accessToken = await getValidAccessToken();
 
       const payload: any = {
         type: 'chat',
@@ -2165,24 +1785,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         if (!payload.context || typeof payload.context !== 'object') payload.context = {};
         // Removed deviceId injection from memory system
       } catch { }
-
-      // Send desktop-side connected integrations so the cloud loads the right tools
-      try {
-        const raw = localStorage.getItem('integrations.connected');
-        if (raw) {
-          const map = JSON.parse(raw);
-          const clientIntegrations = Object.keys(map).filter(k => map[k] === true);
-          if (clientIntegrations.length > 0) {
-            payload.clientIntegrations = clientIntegrations;
-          }
-        }
-      } catch { }
-
-      const activeSkills = activeSkillsCacheRef.current;
-      if (activeSkills.length > 0) {
-        payload.context.skills = activeSkills;
-      }
-
+      
       // Include hidden state context for AI (terminals, subagents, recent tool results)
       const hiddenState = currentTab?.hiddenState;
       if (hiddenState) {
@@ -2193,7 +1796,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         // Also send serializable summary for server-side processing
         payload.hiddenStateSummary = summarizeHiddenState(hiddenState);
       }
-
+      
       if (hist.length > 0) {
         payload.messages = hist;
       }
@@ -2204,11 +1807,9 @@ export function useAgent(options?: string | UseAgentOptions) {
         payload.conversationId = targetConversationId;
         payload.memory = { ...(payload.memory || {}), thread: targetConversationId };
       }
-      const shouldResetConversation = resetConversationNextRef.current || (!targetConversationId && (currentTab?.messages.length ?? 0) <= 1);
-      if (shouldResetConversation) {
+      if (resetConversationNextRef.current) {
         payload.resetConversation = true;
       }
-      const accessToken = await accessTokenPromise;
       if (accessToken) {
         payload.auth = { accessToken };
       }
@@ -2225,16 +1826,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       pendingSendRef.current.push(pendingItem);
 
       // If THIS TAB is currently running, mark status as queued for same-tab queuing
-      // and add to queuedMessages so the QueuePanel UI shows the queued item
-      if (isTabRunning && !isSilent) {
-        const newQueueItem = { id: userMsg.id, text: userMsg.text, timestamp: userMsg.timestamp! };
-        setQueuedMessages((prev) => {
-          const nextList = [...prev, newQueueItem];
-          queueDepthRef.current = nextList.length;
-          setQueueDepth(nextList.length);
-          return nextList;
-        });
-        waitingQueuedStartRef.current = true;
+      if (isTabRunning) {
         setAI((prev) => ({ ...prev, statusText: `Queued (${Math.max(1, queueDepthRef.current + 1)})` }));
         setState((s) => ({ ...s, status: 'queued' }));
       }
@@ -2292,10 +1884,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     setTabs(prev => prev.map(t =>
       t.id === tab.id ? { ...t, messages: truncated } : t
     ));
-    // Sync ref immediately so sendMessage reads the truncated history (setTabs is async)
-    tabsRef.current = tabsRef.current.map(t =>
-      t.id === tab.id ? { ...t, messages: truncated } : t
-    );
 
     // Resend with the new text, preserving original context
     await sendMessage({
@@ -2336,9 +1924,10 @@ export function useAgent(options?: string | UseAgentOptions) {
     }
   }, []);
 
-  const loadConversation = useCallback(async (id: string, titleHint?: string) => {
+  const loadConversation = useCallback(async (id: string) => {
     console.log('[useAgent] loadConversation called with id:', id);
 
+    // Check if already open
     const existing = tabsRef.current.find(t => t.serverId === id);
     if (existing) {
       console.log('[useAgent] Conversation already open, switching to tab:', existing.id);
@@ -2346,58 +1935,43 @@ export function useAgent(options?: string | UseAgentOptions) {
       return;
     }
 
-    const initialTitle = typeof titleHint === 'string' && titleHint.trim() ? titleHint.trim() : 'Loading…';
-    const openedTabId = addTab({ serverId: id, title: initialTitle, messages: [] });
+    // Open a tab immediately so the click always has visible effect,
+    // then hydrate messages/title in the background.
+    const openedTabId = addTab({ serverId: id, title: 'Chat', messages: [] });
     console.log('[useAgent] Created new tab:', openedTabId);
 
-    const agentEndpoints = resolveAgentEndpoints(customAgentUrl);
+    const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
     let loaded = false;
 
-    const buildLoadedMessages = (rows: any[]): { hist: Message[]; lastModelLabel?: string } => {
-      const orderedRows = repairLoadedConversationRows(rows);
-      let lastModelLabel: string | undefined;
-      const hist: Message[] = orderedRows.map((r: any) => {
-        const meta = r.metadata || {};
-        try {
-          const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
-            ? meta.modelId.trim()
-            : (typeof meta?.tier === 'string' && meta.tier.trim())
-              ? meta.tier.trim()
-              : undefined;
-          if (label) lastModelLabel = label;
-        } catch { }
-        return {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
-          text: String(r.content || ''),
-          reasoning: meta.reasoning,
-          reasoningDuration: meta.reasoningDuration,
-          toolCalls: meta.toolCalls,
-          streamChunks: meta.streamChunks,
-          usage: meta.usage && typeof meta.usage === 'object' ? meta.usage : undefined,
-          modelId: typeof meta?.modelId === 'string'
-            ? meta.modelId
-            : typeof meta?.tier === 'string'
-              ? meta.tier
-              : undefined,
-          contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
-          timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-        };
-      });
-      return { hist, lastModelLabel };
-    };
-
+    // Try local agent first (works offline, no auth required)
     try {
       console.log('[useAgent] Fetching messages from local agent for conversation:', id);
-      const json = await agentFetchJson(
-        agentEndpoints,
-        `/v1/memory/conversations/${encodeURIComponent(id)}/messages?limit=200`,
-        {
-          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
-        },
-      );
-      if (json.ok && Array.isArray(json.messages)) {
-        const { hist, lastModelLabel } = buildLoadedMessages(json.messages as any[]);
+      const resp = await fetch(`${target}/memory/conversations/${id}/messages?limit=200`);
+      const json = await resp.json();
+      if (json.ok && Array.isArray(json.messages) && json.messages.length > 0) {
+        let lastModelLabel: string | undefined;
+        const hist: Message[] = json.messages.map((r: any) => {
+          const meta = r.metadata || {};
+          try {
+            const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
+              ? meta.modelId.trim()
+              : (typeof meta?.tier === 'string' && meta.tier.trim())
+                ? meta.tier.trim()
+                : undefined;
+            if (label) lastModelLabel = label;
+          } catch { }
+          return {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
+            text: String(r.content || ''),
+            reasoning: meta.reasoning,
+            reasoningDuration: meta.reasoningDuration,
+            toolCalls: meta.toolCalls,
+            streamChunks: meta.streamChunks,
+            contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+            timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+          };
+        });
         console.log('[useAgent] Loaded', hist.length, 'messages from local agent');
         setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
         loaded = true;
@@ -2406,11 +1980,9 @@ export function useAgent(options?: string | UseAgentOptions) {
       console.warn('[useAgent] Local agent messages fetch failed, trying Supabase:', e);
     }
 
+    // Fallback to Supabase if local agent didn't have the conversation
     if (!loaded) {
       try {
-        // Always try Supabase fallback when local agent fails — reading
-        // conversation history should not be gated by sync_conversations pref
-        // (that pref controls writing new conversations to cloud, not reading).
         const sessionToken = await getValidAccessToken();
         if (sessionToken) {
           const { data, error } = await supabase
@@ -2420,7 +1992,29 @@ export function useAgent(options?: string | UseAgentOptions) {
             .order('created_at', { ascending: true })
             .limit(200);
           if (!error && Array.isArray(data)) {
-            const { hist, lastModelLabel } = buildLoadedMessages(data as any[]);
+            let lastModelLabel: string | undefined;
+            const hist: Message[] = (data as any[]).map((r: any) => {
+              const meta = r.metadata || {};
+              try {
+                const label = (typeof meta?.modelId === 'string' && meta.modelId.trim())
+                  ? meta.modelId.trim()
+                  : (typeof meta?.tier === 'string' && meta.tier.trim())
+                    ? meta.tier.trim()
+                    : undefined;
+                if (label) lastModelLabel = label;
+              } catch { }
+              return {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                role: (r.role === 'assistant' ? 'assistant' : r.role === 'system' ? 'system' : 'user'),
+                text: String(r.content || ''),
+                reasoning: meta.reasoning,
+                reasoningDuration: meta.reasoningDuration,
+                toolCalls: meta.toolCalls,
+                streamChunks: meta.streamChunks,
+                contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+                timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+              };
+            });
             console.log('[useAgent] Loaded', hist.length, 'messages from Supabase');
             setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
           }
@@ -2430,23 +2024,19 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
     }
 
+    // Load title — try local agent first, then Supabase
     try {
-      const convJson = await agentFetchJson(
-        agentEndpoints,
-        `/v1/memory/conversations/${encodeURIComponent(id)}`,
-        {
-          accessToken: agentEndpoints.usesVmRelay ? await getValidAccessToken() : null,
-        },
-      );
+      const convResp = await fetch(`${target}/memory/conversations/${id}`);
+      const convJson = await convResp.json();
       if (convJson.ok && convJson.conversation?.title) {
         const title = String(convJson.conversation.title).trim();
         if (title) {
           setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title } : t));
-          return;
+          return; // Got title from local agent, done
         }
       }
     } catch { }
-
+    // Fallback title from Supabase
     try {
       const sessionToken = await getValidAccessToken();
       if (sessionToken) {
@@ -2469,12 +2059,11 @@ export function useAgent(options?: string | UseAgentOptions) {
     connect();
     // Set up automatic token refresh
     const cleanupAutoRefresh = setupAutoRefresh();
-    void refreshActiveSkillsCache();
     return () => {
       disconnect();
       cleanupAutoRefresh();
     };
-  }, [connect, disconnect, refreshActiveSkillsCache]);
+  }, []);
 
   useEffect(() => {
     const bumpReconnect = () => {
@@ -2523,7 +2112,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentReasoning,
     currentToolCalls,
     currentStreamChunks,
-    liveUsage: activeTab?.liveUsage || null,
     sendMessage,
     stopGeneration,
     connect,
@@ -2540,7 +2128,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     rejectPendingMemory,
     queueDepth,
     queuedMessages,
-    cancelQueuedMessage,
     respondToApproval,
     lastError,
     chatMode,

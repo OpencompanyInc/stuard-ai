@@ -2,10 +2,11 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, getMainWindow } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
+import { settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
 import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "../services";
 import { setupSpeechIpc } from "./speech";
@@ -13,17 +14,15 @@ import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
-import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs } from "../settings";
+import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
 import { syncMainAuthSession } from "../services/auth-session";
 import {
   getMediaLibraryPrefs,
   getMediaLibrarySummary,
   importMediaPaths,
   listMediaLibraryItems,
-  registerLocalMedia,
   syncMediaLibrary,
   updateMediaLibraryPrefs,
-  deleteMediaItem,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 import { TOOL_REGISTRY } from "../tools/registry";
@@ -34,7 +33,6 @@ import {
   browserMirrorScroll,
   browserMirrorType,
 } from "../tools/handlers/browser-use";
-import { settleNotificationResponse } from "../tools/handlers/electron";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -106,6 +104,145 @@ function isPrivateOrInternalUrl(urlString: string): boolean {
     // If we can't parse the URL, block it to be safe
     return true;
   }
+}
+
+type BrowserUseChromeProfile = {
+  name: string;
+  path: string;
+};
+
+type BrowserUseChromeBrowser = {
+  browser: string;
+  userDataDir: string;
+  profiles: BrowserUseChromeProfile[];
+};
+
+type BrowserUseChromeSyncSettings = {
+  chromeSyncEnabled: boolean;
+  chromeSyncBrowserName?: string | null;
+  chromeSyncProfileName?: string | null;
+  chromeSyncProfilePath?: string | null;
+  chromeSyncUserDataDir?: string | null;
+};
+
+const DEFAULT_BROWSER_USE_SYNC_SETTINGS: BrowserUseChromeSyncSettings = {
+  chromeSyncEnabled: true,
+  chromeSyncBrowserName: 'Chrome',
+  chromeSyncProfileName: 'Default',
+  chromeSyncProfilePath: null,
+  chromeSyncUserDataDir: null,
+};
+
+function getBrowserUseCandidateUserDataDirs(): Array<{ browser: string; userDataDir: string }> {
+  const homeDir = app.getPath('home');
+  const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
+  const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
+
+  if (process.platform === 'win32') {
+    return [
+      { browser: 'Chrome', userDataDir: path.join(localAppData, 'Google', 'Chrome', 'User Data') },
+      { browser: 'Edge', userDataDir: path.join(localAppData, 'Microsoft', 'Edge', 'User Data') },
+      { browser: 'Brave', userDataDir: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') },
+      { browser: 'Chromium', userDataDir: path.join(localAppData, 'Chromium', 'User Data') },
+      { browser: 'Opera', userDataDir: path.join(appData, 'Opera Software', 'Opera Stable') },
+    ];
+  }
+
+  if (process.platform === 'darwin') {
+    return [
+      { browser: 'Chrome', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Google', 'Chrome') },
+      { browser: 'Edge', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Microsoft Edge') },
+      { browser: 'Brave', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser') },
+      { browser: 'Chromium', userDataDir: path.join(homeDir, 'Library', 'Application Support', 'Chromium') },
+    ];
+  }
+
+  return [
+    { browser: 'Chrome', userDataDir: path.join(homeDir, '.config', 'google-chrome') },
+    { browser: 'Edge', userDataDir: path.join(homeDir, '.config', 'microsoft-edge') },
+    { browser: 'Brave', userDataDir: path.join(homeDir, '.config', 'BraveSoftware', 'Brave-Browser') },
+    { browser: 'Chromium', userDataDir: path.join(homeDir, '.config', 'chromium') },
+  ];
+}
+
+function listProfilesInUserDataDir(userDataDir: string): BrowserUseChromeProfile[] {
+  try {
+    if (!fs.existsSync(userDataDir)) return [];
+
+    const entries = fs.readdirSync(userDataDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => name === 'Default' || /^Profile \d+$/i.test(name) || /^Person \d+$/i.test(name))
+      .map((name) => ({ name, path: path.join(userDataDir, name) }))
+      .filter((profile) => {
+        try {
+          return fs.existsSync(path.join(profile.path, 'Preferences'));
+        } catch {
+          return false;
+        }
+      });
+
+    return entries.sort((a, b) => {
+      if (a.name === 'Default') return -1;
+      if (b.name === 'Default') return 1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  } catch {
+    return [];
+  }
+}
+
+function listBrowserUseChromeProfilesLocal(): BrowserUseChromeBrowser[] {
+  return getBrowserUseCandidateUserDataDirs()
+    .map(({ browser, userDataDir }) => ({
+      browser,
+      userDataDir,
+      profiles: listProfilesInUserDataDir(userDataDir),
+    }))
+    .filter((entry) => entry.profiles.length > 0);
+}
+
+function getBrowserUseChromeSyncSettingsLocal(): BrowserUseChromeSyncSettings {
+  const settings = loadSettings();
+  const saved: BrowserUseChromeSyncSettings = {
+    chromeSyncEnabled: typeof settings.chromeSyncEnabled === 'boolean'
+      ? settings.chromeSyncEnabled
+      : DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncEnabled,
+    chromeSyncBrowserName: settings.chromeSyncBrowserName ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncBrowserName,
+    chromeSyncProfileName: settings.chromeSyncProfileName ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfileName,
+    chromeSyncProfilePath: settings.chromeSyncProfilePath ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfilePath,
+    chromeSyncUserDataDir: settings.chromeSyncUserDataDir ?? DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncUserDataDir,
+  };
+
+  const browsers = listBrowserUseChromeProfilesLocal();
+  const selectedBrowser = browsers.find((browser) =>
+    browser.browser === saved.chromeSyncBrowserName
+    || browser.userDataDir === saved.chromeSyncUserDataDir
+  ) || browsers[0];
+  const selectedProfile = selectedBrowser?.profiles.find((profile) =>
+    profile.path === saved.chromeSyncProfilePath
+    || profile.name === saved.chromeSyncProfileName
+  ) || selectedBrowser?.profiles[0];
+
+  return {
+    ...saved,
+    chromeSyncBrowserName: selectedBrowser?.browser || saved.chromeSyncBrowserName || DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncBrowserName,
+    chromeSyncProfileName: selectedProfile?.name || saved.chromeSyncProfileName || DEFAULT_BROWSER_USE_SYNC_SETTINGS.chromeSyncProfileName,
+    chromeSyncProfilePath: selectedProfile?.path || saved.chromeSyncProfilePath || null,
+    chromeSyncUserDataDir: selectedBrowser?.userDataDir || saved.chromeSyncUserDataDir || null,
+  };
+}
+
+function updateBrowserUseChromeSyncSettingsLocal(updates: Partial<BrowserUseChromeSyncSettings>): BrowserUseChromeSyncSettings {
+  const has = (key: keyof BrowserUseChromeSyncSettings) => Object.prototype.hasOwnProperty.call(updates, key);
+  saveSettings({
+    chromeSyncEnabled: has('chromeSyncEnabled') ? !!updates.chromeSyncEnabled : undefined,
+    chromeSyncBrowserName: has('chromeSyncBrowserName') ? (updates.chromeSyncBrowserName ?? null) : undefined,
+    chromeSyncProfileName: has('chromeSyncProfileName') ? (updates.chromeSyncProfileName ?? null) : undefined,
+    chromeSyncProfilePath: has('chromeSyncProfilePath') ? (updates.chromeSyncProfilePath ?? null) : undefined,
+    chromeSyncUserDataDir: has('chromeSyncUserDataDir') ? (updates.chromeSyncUserDataDir ?? null) : undefined,
+  });
+  return getBrowserUseChromeSyncSettingsLocal();
 }
 
 export function setupIpc() {
@@ -324,28 +461,6 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-  ipcMain.handle("media:delete", (_e, itemId: string, deleteFile?: boolean) => {
-    try {
-      return deleteMediaItem(String(itemId || ''), deleteFile !== false);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || 'failed') };
-    }
-  });
-  ipcMain.handle("media:registerPath", async (_e, filePath: string, opts?: { source?: string; tags?: string[] }) => {
-    try {
-      const target = String(filePath || '').trim();
-      if (!target) return { ok: false, error: 'invalid_path' };
-      const item = await registerLocalMedia({
-        filePath: target,
-        source: opts?.source || 'misc',
-        tags: opts?.tags,
-        linkOnly: true,
-      });
-      return { ok: true, id: item.id, localPath: item.localPath };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || 'failed') };
-    }
-  });
   ipcMain.handle("media:openPath", async (_e, targetPath: string) => {
     try {
       const target = String(targetPath || '').trim();
@@ -523,18 +638,9 @@ export function setupIpc() {
         duration,
       };
 
-      // Ensure the notification window exists before sending
-      openNotificationWindow();
       const notifWin = getNotificationWindow();
       if (notifWin && !notifWin.isDestroyed()) {
-        const send = () => {
-          try { notifWin.webContents.send('notification:show', config); } catch {}
-        };
-        if (notifWin.webContents.isLoading()) {
-          notifWin.webContents.once('did-finish-load', send);
-        } else {
-          send();
-        }
+        notifWin.webContents.send('notification:show', config);
       } else {
         // Fallback to native
         if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
@@ -548,27 +654,32 @@ export function setupIpc() {
     }
   });
 
-  ipcMain.handle('notification:respond', async (_e, payload: { responseId?: string; type?: 'submit' | 'cancel' | 'dismiss'; value?: string }) => {
-    try {
-      const settled = settleNotificationResponse(payload || {});
-      return settled ? { ok: true } : { ok: false, error: 'response_not_found' };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e || 'failed') };
-    }
-  });
-
-  // Relay permission responses from the notification window to the overlay window
-  ipcMain.on('permission:respond', (_e, data: { id: string; allow: boolean }) => {
-    if (!data?.id) return;
-    // Broadcast to all windows so the overlay picks it up via onPermissionResponse
-    for (const win of BrowserWindow.getAllWindows()) {
-      try { win.webContents.send('permission:response', data); } catch {}
-    }
-  });
-
   ipcMain.on('window:ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.setIgnoreMouseEvents(ignore, options);
+  });
+
+  // Notification overlay → main process → forward permission response to main app window
+  ipcMain.handle('notification:respondToPermission', (_e, payload: { id: string; allow: boolean }) => {
+    try {
+      const mainWin = getMainWindow();
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send('approval:response', { id: payload.id, allow: payload.allow });
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Notification overlay → main process → settle pending notification response (ask_user, etc.)
+  ipcMain.handle('notification:respondToNotification', (_e, payload: any) => {
+    try {
+      settleNotificationResponse(payload);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
   });
 
   // Logs
@@ -1017,6 +1128,17 @@ export function setupIpc() {
       direction === 'up' ? 'up' : 'down',
       typeof amount === 'number' ? amount : 300,
     );
+  });
+
+  // Browser-use Chrome sync settings
+  ipcMain.handle('browserUse:getChromeSyncSettings', () => {
+    return { ok: true, settings: getBrowserUseChromeSyncSettingsLocal() };
+  });
+  ipcMain.handle('browserUse:listChromeProfiles', () => {
+    return { ok: true, browsers: listBrowserUseChromeProfilesLocal() };
+  });
+  ipcMain.handle('browserUse:updateChromeSyncSettings', (_e, updates: Partial<BrowserUseChromeSyncSettings>) => {
+    return { ok: true, settings: updateBrowserUseChromeSyncSettingsLocal(updates || {}) };
   });
 
   // Proactive agent controls

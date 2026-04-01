@@ -665,6 +665,9 @@ interface WakeUpExecutionResult {
   newTasks: Array<{ title: string; instructions?: string; status?: string }>;
   usage?: any;
   modelId?: string;
+  sessionSummary?: string;
+  agentChannel?: string;
+  agentUrgency?: string;
 }
 
 async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutionResult> {
@@ -683,6 +686,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
     const chunks: string[] = [];
     let lastPublished = '';
     let lastPublishedAt = 0;
+    let capturedSessionSummary: string | undefined;
 
     const publishPartialResponse = (force = false) => {
       const partialResponse = chunks.join('').trim();
@@ -725,6 +729,18 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
         const msg = JSON.parse(raw.toString('utf8'));
         const toolRequest = extractAgentToolRequest(msg);
         if (toolRequest) {
+          // Intercept write_session_summary — capture it locally without forwarding to execTool
+          if (toolRequest.tool === 'write_session_summary') {
+            const a = toolRequest.args || {};
+            const parts: string[] = [];
+            if (a.user_activity) parts.push(`Activity: ${a.user_activity}`);
+            if (a.intervention) parts.push(`Intervention: ${a.intervention}`);
+            if (a.pattern_notes) parts.push(`Patterns: ${a.pattern_notes}`);
+            if (a.urgency_used) parts.push(`Urgency: ${a.urgency_used}`);
+            if (parts.length > 0) capturedSessionSummary = parts.join(' | ');
+            try { ws.send(JSON.stringify({ type: 'tool_result', id: toolRequest.id, result: { ok: true } })); } catch { }
+            return;
+          }
           const { execTool } = await import('../tools');
           const toolResult = await executeAgentToolRequest(toolRequest, toolCtx, execTool);
           try {
@@ -784,6 +800,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
             newTasks: [],
             usage: finalUsage,
             modelId: finalModelId,
+            sessionSummary: capturedSessionSummary,
           });
         }
         if (msg?.type === 'proactive_result') {
@@ -795,6 +812,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
             partialResponse: chunks.join('').trim() || undefined,
             taskUpdates: [],
             newTasks: [],
+            sessionSummary: capturedSessionSummary,
           });
         }
         if (msg?.type === 'error') {
@@ -1220,14 +1238,14 @@ async function executeWakeUp() {
     proactiveService.setLastWakeUp(new Date().toISOString());
     emitStage(logId, 'complete');
 
-    // Persist session summary from the agent (if available from cloud response)
-    if ((executionResult as any).sessionSummary) {
-      proactiveService.addSessionSummary((executionResult as any).sessionSummary);
+    // Persist session summary from the agent
+    if (executionResult.sessionSummary) {
+      proactiveService.addSessionSummary(executionResult.sessionSummary);
     }
 
     // Use agent's urgency-based channel choice if available, otherwise fall back to configured channels
-    const agentChannel = (executionResult as any).agentChannel;
-    const agentUrgency = (executionResult as any).agentUrgency;
+    const agentChannel = executionResult.agentChannel;
+    const agentUrgency = executionResult.agentUrgency;
 
     if (agentMessage) {
       let channels: string[] = config.notificationChannels || ['app'];

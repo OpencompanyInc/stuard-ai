@@ -44,13 +44,13 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
   selectedItem,
   onSelectedItemHandled,
 }) => {
-  // Auto-switch to tasks/browser/todo tab
   const [hasRunningAgents, setHasRunningAgents] = useState(false);
   const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
   const [hasTodoActivity, setHasTodoActivity] = useState(false);
   const agentAutoSwitchedRef = useRef(false);
   const browserAutoSwitchedRef = useRef(false);
   const todoAutoSwitchedRef = useRef(false);
+  const [hoveredTab, setHoveredTab] = useState<SidebarTabId | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +75,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     };
   }, []);
 
-  // Listen for browser activity
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = (window as any).desktopAPI?.onBrowserActivity?.((data: any) => {
@@ -99,7 +98,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     }
   }, [hasRunningAgents, activeTab, onTabChange]);
 
-  // Auto-switch to browser tab when agent uses browser
   useEffect(() => {
     if (hasBrowserActivity && !browserAutoSwitchedRef.current && activeTab !== 'browser') {
       browserAutoSwitchedRef.current = true;
@@ -110,7 +108,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     }
   }, [hasBrowserActivity, activeTab, onTabChange]);
 
-  // Listen for agent todo updates
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
     const handler = () => {
@@ -125,7 +122,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     };
   }, []);
 
-  // Auto-switch to todo tab when agent creates todo items
   useEffect(() => {
     if (hasTodoActivity && !todoAutoSwitchedRef.current && activeTab !== 'todo' && activeTab !== 'browser') {
       todoAutoSwitchedRef.current = true;
@@ -182,83 +178,111 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
         : "bg-theme-bg"
     )}>
       {/* Icon Rail */}
-      <div className="flex flex-col items-center w-[52px] shrink-0 py-3 gap-1 border-r border-theme/5 bg-theme-sidebar/50">
+      <div className="relative flex flex-col items-center w-[52px] shrink-0 py-2.5 gap-0.5 border-r border-theme/5">
         {/* Drag handle */}
         <div
-          className="flex items-center justify-center w-9 h-7 mb-1 text-theme-muted/40 cursor-grab"
+          className="flex items-center justify-center w-9 h-6 mb-1.5 text-theme-muted/30 cursor-grab active:cursor-grabbing"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <GripVertical className="w-4 h-4" />
+          <GripVertical className="w-3.5 h-3.5" />
         </div>
 
-        {SIDEBAR_TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          const showDot = (tab.id === 'tasks' && hasRunningAgents && !isActive)
-            || (tab.id === 'browser' && hasBrowserActivity && !isActive)
-            || (tab.id === 'todo' && hasTodoActivity && !isActive);
+        {/* Tab buttons */}
+        <div className="flex flex-col items-center gap-0.5 w-full px-1.5">
+          {SIDEBAR_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            const isHovered = hoveredTab === tab.id;
+            const showDot = (tab.id === 'tasks' && hasRunningAgents && !isActive)
+              || (tab.id === 'browser' && hasBrowserActivity && !isActive)
+              || (tab.id === 'todo' && hasTodoActivity && !isActive);
 
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className={clsx(
-                'relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150',
-                isActive
-                  ? 'bg-theme-card text-theme-fg shadow-sm ring-1 ring-theme/10'
-                  : 'text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60'
-              )}
-              title={tab.label}
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            >
-              <Icon className="w-[18px] h-[18px]" />
-              {showDot && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-theme-bg animate-pulse" />
-              )}
-            </button>
-          );
-        })}
+            return (
+              <div key={tab.id} className="relative group">
+                <button
+                  onClick={() => onTabChange(tab.id)}
+                  onMouseEnter={() => setHoveredTab(tab.id)}
+                  onMouseLeave={() => setHoveredTab(null)}
+                  className={clsx(
+                    'relative flex items-center justify-center w-full h-10 rounded-xl transition-all duration-200',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/60'
+                  )}
+                  title={tab.label}
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                >
+                  <Icon className={clsx(
+                    "transition-transform duration-200",
+                    isActive ? "w-[18px] h-[18px]" : "w-[17px] h-[17px]",
+                    isHovered && !isActive && "scale-110"
+                  )} />
+
+                  {/* Activity dot */}
+                  {showDot && (
+                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-theme-bg animate-pulse" />
+                  )}
+
+                  {/* Active indicator bar */}
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+                  )}
+                </button>
+
+                {/* Tooltip */}
+                <div className={clsx(
+                  "absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap pointer-events-none transition-all duration-150 z-50",
+                  "bg-theme-card text-theme-fg shadow-lg border border-theme/10",
+                  isHovered && !isActive ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-1"
+                )}>
+                  {tab.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Expand/Collapse */}
-        <button
-          onClick={handleExpand}
-          className="flex items-center justify-center w-10 h-10 rounded-xl text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all"
-          title={isExpanded ? "Collapse to sidebar" : "Expand to full window"}
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-        </button>
+        {/* Bottom actions */}
+        <div className="flex flex-col items-center gap-0.5 px-1.5 w-full">
+          <button
+            onClick={handleExpand}
+            className="flex items-center justify-center w-full h-9 rounded-xl text-theme-muted/60 hover:text-theme-fg hover:bg-theme-hover/60 transition-all duration-200"
+            title={isExpanded ? "Collapse to sidebar" : "Expand to full window"}
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
 
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="flex items-center justify-center w-10 h-10 rounded-xl text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
-          title="Close Sidebar"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <X className="w-4 h-4" />
-        </button>
+          <button
+            onClick={onClose}
+            className="flex items-center justify-center w-full h-9 rounded-xl text-theme-muted/60 hover:text-red-500 hover:bg-red-500/8 transition-all duration-200"
+            title="Close Sidebar"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Content Area */}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Content Header */}
         <div
-          className="flex items-center px-4 py-2.5 border-b border-theme/5 shrink-0"
+          className="flex items-center justify-between px-4 h-11 border-b border-theme/5 shrink-0"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {currentTab && (
               <>
-                <currentTab.icon className="w-4 h-4 text-theme-muted" />
-                <span className="text-sm font-semibold text-theme-fg">{currentTab.label}</span>
+                <currentTab.icon className="w-4 h-4 text-primary/70" />
+                <span className="text-[13px] font-bold text-theme-fg">{currentTab.label}</span>
               </>
             )}
             {((activeTab === 'tasks' && hasRunningAgents) || (activeTab === 'browser' && hasBrowserActivity) || (activeTab === 'todo' && hasTodoActivity)) && (
-              <span className="ml-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[10px] font-bold uppercase tracking-wider">
+              <span className="px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[9px] font-bold uppercase tracking-wider leading-none">
                 Active
               </span>
             )}

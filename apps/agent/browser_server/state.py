@@ -3,16 +3,19 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext, CDPSession, Page, Playwright
 
 # ---------------------------------------------------------------------------
 # Mutable globals
 # ---------------------------------------------------------------------------
 
-_context = None          # Playwright BrowserContext
-_page = None             # Active Playwright Page
-_playwright = None       # Playwright instance
-_cdp_session = None      # Reusable Playwright CDPSession (lazily created for raw CDP commands)
+_context: Optional["BrowserContext"] = None   # Playwright BrowserContext
+_page: Optional["Page"] = None               # Active Playwright Page
+_playwright: Optional["Playwright"] = None   # Playwright instance
+_cdp_session: Optional["CDPSession"] = None  # Reusable Playwright CDPSession (lazily created for raw CDP commands)
 _config: dict[str, Any] = {
     "mode": os.environ.get("STUARD_BROWSER_MODE", os.environ.get("BROWSER_USE_MODE", "headless")),  # headed | headless
     "profile": "default",

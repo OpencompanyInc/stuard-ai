@@ -441,7 +441,7 @@ export async function analyzeForAutoSkill(
   totalTokensUsed?: number
 ): Promise<AutoSkillDraft | null> {
   // Gate: minimum engagement — need enough back-and-forth to contain a teachable pattern
-  if (typeof totalTokensUsed === 'number' && totalTokensUsed < MIN_TOTAL_TOKENS) {
+  if (Number.isFinite(totalTokensUsed) && (totalTokensUsed as number) < MIN_TOTAL_TOKENS) {
     return null;
   }
 
@@ -455,7 +455,7 @@ export async function analyzeForAutoSkill(
   const transcript = buildTranscript(trimmed);
 
   // Skip very short transcripts (likely no real interaction)
-  if (transcript.length < 200) {
+  if (Number.isFinite(totalTokensUsed) && transcript.length < 200) {
     return null;
   }
 

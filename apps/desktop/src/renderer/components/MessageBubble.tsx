@@ -1487,6 +1487,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
   const hasReasoning = reasoning && reasoning.trim().length > 0;
   const hasToolCalls = toolCalls && toolCalls.length > 0;
   const hasStreamChunks = streamChunks && streamChunks.length > 0;
+  const inlineChatUiBubbleClass = "w-full max-w-[85%] mr-auto";
 
   return (
     <div className={clsx(
@@ -1594,9 +1595,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 if (isGenUI) {
                   const isCompleted = tc.status === 'completed' || tc.status === 'error';
                   const resultForTool = genUIResults[tc.id] || tc.result;
+                  const wrapperClassName = tc.tool === 'chat_ui' ? inlineChatUiBubbleClass : 'max-w-full';
 
                   return (
-                    <div key={`genui-${idx}`} className="max-w-full">
+                    <div key={`genui-${idx}`} className={wrapperClassName}>
                       <GenUIContainer
                         toolName={tc.tool}
                         args={tc.args || {}}
@@ -1977,4 +1979,3 @@ const MessageBubble = memo(MessageBubbleInner, (prevProps, nextProps) => {
 });
 
 export default MessageBubble;
-

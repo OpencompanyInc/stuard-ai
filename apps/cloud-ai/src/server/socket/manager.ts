@@ -199,7 +199,7 @@ export class SocketManager {
 
         const access = await checkAccess(authUser.userId);
         if (!access.allowed) {
-          this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } });
+          this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used, remaining: access.remaining } });
           return;
         }
         try { await incrementDailyRequestCounter(authUser.userId); } catch { }

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from aiohttp import web
 
@@ -19,10 +19,14 @@ def _clamp_int(value: Any, default: int, min_value: int, max_value: int) -> int:
     return n
 
 
-def _normalize_wait_until(value: Any) -> str:
+def _normalize_wait_until(value: Any) -> Literal["load", "domcontentloaded", "networkidle", "commit"]:
     v = str(value or "domcontentloaded").strip().lower()
-    if v in ("load", "domcontentloaded", "networkidle", "commit"):
-        return v
+    if v == "load":
+        return "load"
+    if v == "networkidle":
+        return "networkidle"
+    if v == "commit":
+        return "commit"
     return "domcontentloaded"
 
 

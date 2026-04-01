@@ -1,11 +1,53 @@
 """Browser lifecycle: initialization, page state, shutdown."""
 
 import asyncio
-from typing import Any, Optional
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
 from browser_server import state
 from browser_server.utils import _clamp_int, _normalize_wait_until, _is_allowed_url
 from browser_server.profile import _current_profile_dir
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext
+
+_SESSION_COOKIES_FILE = "stuard_session_cookies.json"
+
+
+def _save_session_cookies(profile_dir: Path, cookies: list[Any]) -> None:
+    """Persist session cookies (expires=-1) to a JSON file in the profile dir.
+
+    Chromium never writes these to its Cookies database because they're
+    designed to expire when the browser closes. We save them ourselves so
+    they survive browser restarts (mode switches, app restarts, etc.).
+    """
+    session_cookies = [c for c in cookies if c.get("expires", 0) == -1]
+    if not session_cookies:
+        return
+    try:
+        (profile_dir / _SESSION_COOKIES_FILE).write_text(
+            json.dumps(session_cookies), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _restore_session_cookies(profile_dir: Path, context: "BrowserContext") -> None:
+    """Synchronously schedule re-injection of saved session cookies into a new context.
+
+    Called right after launch_persistent_context so cookies are in place
+    before the first navigation occurs.
+    """
+    cookie_file = profile_dir / _SESSION_COOKIES_FILE
+    if not cookie_file.exists():
+        return
+    try:
+        cookies = json.loads(cookie_file.read_text(encoding="utf-8"))
+        if cookies:
+            asyncio.ensure_future(context.add_cookies(cookies))
+    except Exception:
+        pass
 
 
 async def _page_is_alive() -> bool:
@@ -263,16 +305,42 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-infobars",
+            # Hide automation signals that SSO providers (ForgeRock, Shibboleth, etc.)
+            # use to detect and block headless/automated browsers.
+            "--disable-blink-features=AutomationControlled",
         ]
+
+        # Use a realistic user agent so SSO providers can't fingerprint headless mode.
+        # Playwright's default headless UA contains "HeadlessChrome" which is a dead
+        # giveaway that triggers bot-detection on many SSO login flows.
+        user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        )
 
         state._context = await pw_instance.chromium.launch_persistent_context(
             str(profile_dir),
             headless=headless,
             args=launch_args,
             ignore_default_args=["--enable-automation"],
+            user_agent=user_agent,
             viewport={"width": 1280, "height": 900},
             no_viewport=False,
         )
+
+        # Patch navigator.webdriver at the page level — belt-and-suspenders on top of
+        # --disable-blink-features=AutomationControlled, since some SSO providers check
+        # this property directly and the flag alone isn't always reliable in persistent contexts.
+        await state._context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+
+        # Restore session cookies (expires=-1) that Chromium doesn't write to disk.
+        # Without this, sites like Canvas lose their auth state every time the browser
+        # restarts because their session cookies are never persisted by Chromium itself.
+        _restore_session_cookies(profile_dir, state._context)
+
         pages = state._context.pages
         state._page = pages[0] if pages else await state._context.new_page()
 
@@ -296,6 +364,14 @@ async def _close_browser():
     try:
         if state._cdp_session:
             await asyncio.wait_for(state._cdp_session.detach(), timeout=5.0)
+    except Exception:
+        pass
+
+    # Save session cookies before closing so they survive the restart.
+    try:
+        if state._context is not None:
+            cookies = await asyncio.wait_for(state._context.cookies(), timeout=3.0)
+            _save_session_cookies(_current_profile_dir(), cookies)
     except Exception:
         pass
 

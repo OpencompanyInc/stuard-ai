@@ -326,7 +326,8 @@ async function processMessage(
     const messages = [{ role: 'user' as const, content: userContent }];
 
     const result = await runWithSecrets({ userId }, async () => {
-      return (agent as any).generate(messages, { maxSteps: 10 });
+      const discordActiveTools: string[] | undefined = (agent as any).__activeToolNames;
+      return (agent as any).generate(messages, { maxSteps: 10, ...(discordActiveTools ? { activeTools: discordActiveTools } : {}) });
     });
 
     const replyText = String(result?.text || result?.content || '').trim();
