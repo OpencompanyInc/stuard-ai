@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { registerDynamicPricing } from '../pricing';
 
 type ModelsDevProviderEntry = {
   id?: string;
@@ -62,6 +63,7 @@ function writeText(res: ServerResponse, status: number, text: string, headers?: 
 const SUPPORTED_PROVIDERS = new Set(['openai', 'google', 'xai', 'deepseek', 'anthropic']);
 const MODELS_DEV_API = 'https://models.dev/api.json';
 const MODELS_DEV_LOGO_BASE = 'https://models.dev/logos/';
+const OPENROUTER_MODELS_API = 'https://openrouter.ai/api/v1/models?supported_parameters=tools';
 
 let _cache: {
   fetchedAtMs: number;
@@ -77,6 +79,79 @@ function isChatCapable(m: any): boolean {
   const inputArr = Array.isArray(input) ? input : [];
   const outputArr = Array.isArray(output) ? output : [];
   return inputArr.includes('text') && outputArr.includes('text');
+}
+
+// ── OpenRouter dynamic model fetching ──────────────────────────────────────
+
+interface OpenRouterApiModel {
+  id: string;
+  name: string;
+  context_length: number;
+  pricing: { prompt: string; completion: string };
+  top_provider?: { context_length: number; max_completion_tokens: number; is_moderated: boolean };
+  architecture?: { input_modalities: string[]; output_modalities: string[] };
+  supported_parameters?: string[];
+  expiration_date?: string | null;
+}
+
+function normalizeOpenRouterModel(raw: OpenRouterApiModel): NormalizedModel | null {
+  if (!raw?.id || raw.expiration_date) return null; // skip deprecated
+  const inputMods = Array.isArray(raw.architecture?.input_modalities) ? raw.architecture!.input_modalities : ['text'];
+  const outputMods = Array.isArray(raw.architecture?.output_modalities) ? raw.architecture!.output_modalities : ['text'];
+  if (!outputMods.includes('text')) return null; // only chat models
+  const params = Array.isArray(raw.supported_parameters) ? raw.supported_parameters : [];
+  const promptPrice = parseFloat(raw.pricing?.prompt || '0') * 1_000_000; // per-token → per-MTok
+  const completionPrice = parseFloat(raw.pricing?.completion || '0') * 1_000_000;
+  const reasoning = params.includes('reasoning') || params.includes('include_reasoning');
+  const toolCall = params.includes('tools');
+  const structuredOutput = params.includes('structured_outputs') || params.includes('response_format');
+
+  return {
+    id: `openrouter/${raw.id}`,
+    providerId: 'openrouter',
+    providerName: 'OpenRouter',
+    modelId: raw.id,
+    name: raw.name.replace(/^[^:]+:\s*/, ''), // strip "Provider: " prefix
+    reasoning,
+    toolCall,
+    structuredOutput,
+    attachment: inputMods.includes('image') || inputMods.includes('file'),
+    modalities: { input: inputMods, output: outputMods },
+    cost: { input: promptPrice, output: completionPrice },
+    limit: {
+      context: raw.top_provider?.context_length || raw.context_length || undefined,
+      output: raw.top_provider?.max_completion_tokens || undefined,
+    },
+  };
+}
+
+async function fetchOpenRouterModels(): Promise<NormalizedModel[]> {
+  try {
+    const resp = await fetch(OPENROUTER_MODELS_API);
+    if (!resp.ok) return [];
+    const json = await resp.json() as { data: OpenRouterApiModel[] };
+    if (!Array.isArray(json?.data)) return [];
+
+    // First pass: collect all paid model base IDs
+    const paidIds = new Set<string>();
+    for (const raw of json.data) {
+      if (!raw.id.endsWith(':free')) paidIds.add(raw.id);
+    }
+
+    const models: NormalizedModel[] = [];
+    for (const raw of json.data) {
+      // Skip :free variant only if a paid version of the same model exists
+      if (raw.id.endsWith(':free')) {
+        const baseId = raw.id.replace(/:free$/, '');
+        if (paidIds.has(baseId)) continue;
+      }
+      const m = normalizeOpenRouterModel(raw);
+      if (m) models.push(m);
+    }
+    return models;
+  } catch {
+    return [];
+  }
 }
 
 function normalizeProviderName(id: string, entry: ModelsDevProviderEntry): string {
@@ -196,6 +271,23 @@ async function fetchRegistry(): Promise<RegistryResponse> {
       // filter out embeddings / non-chat models
       if (!isChatCapable(m)) continue;
       models.push(m);
+    }
+  }
+
+  // ── Fetch OpenRouter models dynamically ──────────────────────────────
+  const orModels = await fetchOpenRouterModels();
+  if (orModels.length > 0) {
+    providers.push({
+      id: 'openrouter',
+      name: 'OpenRouter',
+      logoUrl: `/v1/models/logos/openrouter.svg`,
+    });
+    models.push(...orModels);
+    // Register pricing so billing can use real costs
+    for (const m of orModels) {
+      if (m.cost?.input != null && m.cost?.output != null) {
+        registerDynamicPricing(m.id, m.cost.input, m.cost.output);
+      }
     }
   }
 

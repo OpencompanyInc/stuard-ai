@@ -28,10 +28,10 @@ export const PLAN_CONFIG: Record<PlanType, {
   isRecurring: boolean;
   allModels: boolean;
 }> = {
-  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.45, isRecurring: false, allModels: false },
-  STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },   // 65%
-  PRO: { priceUsd: 45, budgetUsd: 31.50, isRecurring: true, allModels: true },     // 70%
-  POWER: { priceUsd: 100, budgetUsd: 75, isRecurring: true, allModels: true },      // 75%
+  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.50, isRecurring: false, allModels: false },
+  STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },
+  PRO: { priceUsd: 45, budgetUsd: 29.25, isRecurring: true, allModels: true },
+  POWER: { priceUsd: 100, budgetUsd: 65, isRecurring: true, allModels: true },
   BYOK: { priceUsd: 0, budgetUsd: Infinity, isRecurring: false, allModels: true },
 };
 
@@ -58,104 +58,10 @@ export const COMPUTE_TIER_CONFIG: Record<string, { machineType: string; vcpus: n
   power:   { machineType: 'e2-standard-8', vcpus: 8, memoryGb: 32, hourlyUsd: 0.268 },
 };
 
-export const DEFAULT_CLOUD_DISK_GB_BY_TIER: Record<string, number> = {
-  starter: 10,
-  basic: 20,
-  pro: 50,
-  power: 100,
-};
-
-export interface ComputeMachineSpec {
-  tier: string;
-  machineType: string;
-  vcpus: number;
-  memoryGb: number;
-  hourlyUsd: number;
-  custom: boolean;
-}
-
-const CUSTOM_E2_MACHINE_RE = /^e2-custom-(\d+)-(\d+)$/i;
-
-function estimateCustomHourlyUsd(vcpus: number): number {
-  return Number((vcpus * 0.034).toFixed(3));
-}
-
-export function resolveComputeMachineSpec(input: string): ComputeMachineSpec | null {
-  const rawValue = String(input || '').trim();
-  const value = rawValue.includes('/') ? rawValue.slice(rawValue.lastIndexOf('/') + 1) : rawValue;
-  if (!value) return null;
-
-  const directTier = COMPUTE_TIER_CONFIG[value];
-  if (directTier) {
-    return {
-      tier: value,
-      machineType: directTier.machineType,
-      vcpus: directTier.vcpus,
-      memoryGb: directTier.memoryGb,
-      hourlyUsd: directTier.hourlyUsd,
-      custom: false,
-    };
-  }
-
-  const tierEntry = Object.entries(COMPUTE_TIER_CONFIG).find(([, cfg]) => cfg.machineType === value);
-  if (tierEntry) {
-    const [tier, cfg] = tierEntry;
-    return {
-      tier,
-      machineType: cfg.machineType,
-      vcpus: cfg.vcpus,
-      memoryGb: cfg.memoryGb,
-      hourlyUsd: cfg.hourlyUsd,
-      custom: false,
-    };
-  }
-
-  const customMatch = value.match(CUSTOM_E2_MACHINE_RE);
-  if (customMatch) {
-    const vcpus = Number(customMatch[1]) || 0;
-    const memoryMb = Number(customMatch[2]) || 0;
-    const memoryGb = memoryMb / 1024;
-    if (vcpus > 0 && memoryGb > 0) {
-      return {
-        tier: 'custom',
-        machineType: value,
-        vcpus,
-        memoryGb,
-        hourlyUsd: estimateCustomHourlyUsd(vcpus),
-        custom: true,
-      };
-    }
-  }
-
-  return null;
-}
-
-export function estimateMachineCreditsPerHour(input: string): number {
-  const spec = resolveComputeMachineSpec(input);
-  return spec ? creditsFromUsd(spec.hourlyUsd) : 0;
-}
-
 export const STORAGE_PRICING = {
   hotPerGbMonthUsd: 0.10,   // pd-balanced persistent disk
   coldPerGbMonthUsd: 0.02,  // GCS standard class
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Messaging Pricing (per outbound message)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const MESSAGING_PRICING: Record<string, { perMessageUsd: number; label: string }> = {
-  telnyx:   { perMessageUsd: 0.004, label: 'Telnyx SMS' },
-  whatsapp: { perMessageUsd: 0.005, label: 'WhatsApp' },
-  discord:  { perMessageUsd: 0.001, label: 'Discord DM' },
-};
-
-/** Return credit cost for a single outbound message on the given provider. */
-export function messagingCreditCost(provider: string): number {
-  const entry = MESSAGING_PRICING[String(provider || '').toLowerCase()];
-  if (!entry) return 0;
-  return creditsFromUsd(entry.perMessageUsd);
-}
 
 /** Estimate compute cost in credits for a given tier over `hours` hours. */
 export function estimateComputeCostCredits(tier: string, hours: number): number {
@@ -170,7 +76,7 @@ export function estimateStorageCostCredits(hotGb: number, coldBytes: number, hou
   const coldGb = coldBytes / (1024 * 1024 * 1024);
   const hotUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd / hoursPerMonth) * hours;
   const coldUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd / hoursPerMonth) * hours;
-  return preciseCreditsFromUsd(hotUsd + coldUsd);
+  return creditsFromUsd(hotUsd + coldUsd);
 }
 
 function envNumber(key: string, def: number) {
@@ -184,6 +90,20 @@ function envNumber(key: string, def: number) {
  * All available models loaded from models.json
  */
 export const ALL_MODELS: ModelInfo[] = modelsData as any;
+
+/**
+ * Dynamic pricing cache for models fetched at runtime (e.g. OpenRouter).
+ * Maps model ID → { in, out } pricing per MTok USD.
+ */
+const _dynamicPricing = new Map<string, { in: number; out: number }>();
+
+/**
+ * Register dynamic pricing for models fetched from external APIs.
+ * Called by the models route when it fetches OpenRouter models.
+ */
+export function registerDynamicPricing(modelId: string, inPerMTok: number, outPerMTok: number): void {
+  _dynamicPricing.set(modelId, { in: inPerMTok, out: outPerMTok });
+}
 
 /**
  * Mapping for legacy model IDs to the new system
@@ -201,13 +121,13 @@ export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
     // Return the first one or a specific preferred one
-    if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
-    if (category === 'balanced') return 'openai/gpt-5-chat-latest';
-    if (category === 'smart') return 'google/gemini-3.1-pro-preview';
+    if (category === 'fast') return 'google/gemini-3-flash-preview';
+    if (category === 'balanced') return 'xai/grok-4-1-fast';
+    if (category === 'smart') return 'google/gemini-2.5-pro';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
-  return 'google/gemini-3.1-flash-lite-preview'; // Ultimate fallback
+  return 'google/gemini-3-flash-preview'; // Ultimate fallback
 }
 
 export function priceForModel(modelId: string): Price {
@@ -222,6 +142,16 @@ export function priceForModel(modelId: string): Price {
       inPerMTokUSD: envNumber(`PRICE_${envBase}_IN_PER_M_USD`, model.pricing.in),
       outPerMTokUSD: envNumber(`PRICE_${envBase}_OUT_PER_M_USD`, model.pricing.out),
       cachedInPerMTokUSD: envNumber(`PRICE_${envBase}_CACHED_IN_PER_M_USD`, model.pricing.cached),
+    };
+  }
+
+  // Check dynamic pricing (OpenRouter models fetched at runtime)
+  const dynamic = _dynamicPricing.get(resolvedId);
+  if (dynamic) {
+    return {
+      inPerMTokUSD: dynamic.in,
+      outPerMTokUSD: dynamic.out,
+      cachedInPerMTokUSD: dynamic.in * 0.1, // estimate cached at 10% of input
     };
   }
 
@@ -244,36 +174,12 @@ export function estimateCostUsd(model: string, promptTokens: number, completionT
 }
 
 export function creditsPerUsd(): number {
-  return envNumber('CREDITS_PER_USD', 33);
-}
-
-/**
- * Convert USD to credits without minimum-billable snapping.
- * This keeps metered storage aligned to its true hourly cost.
- */
-export function preciseCreditsFromUsd(usd: number): number {
-  const safe = Number(usd || 0);
-  if (!Number.isFinite(safe) || safe <= 0) return 0;
-  return Number((safe * creditsPerUsd()).toFixed(4));
-}
-
-/**
- * Snap a credit value UP to clean display-friendly steps.
- * Valid values: 0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, ...
- * Always rounds up so we never undercharge.
- * Any positive cost below 0.25 is the minimum billable unit (0.1).
- */
-export function snapCredits(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  // Anything under 0.25 is too small for a quarter-credit — use minimum 0.1
-  if (value < 0.25) return 0.1;
-  // Ceil to nearest 0.25 — never round down
-  return Math.ceil(value * 4) / 4;
+  return envNumber('CREDITS_PER_USD', 100);
 }
 
 export function creditsFromUsd(usd: number): number {
   const c = usd * creditsPerUsd();
-  return snapCredits(c);
+  return Math.max(0, Math.round(c));
 }
 
 function planKey(plan: string): string {
@@ -295,7 +201,7 @@ export function monthlyCreditLimitForPlan(plan: string): number {
 
   // Legacy plan support
   if (key === 'FREE') {
-    const freeUsd = envNumber('PLAN_FREE_PRICE_USD', 0.45);
+    const freeUsd = envNumber('PLAN_FREE_PRICE_USD', 0.5);
     return creditsFromUsd(freeUsd);
   }
   const priceKey = `PLAN_${key}_PRICE_USD`;
@@ -363,4 +269,89 @@ export function isModelAvailableForPlan(modelId: string, plan: string): boolean 
 export function getPlanConfig(plan: string) {
   const key = planKey(plan);
   return PLAN_CONFIG[key as PlanType] || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Precise Credits & Snap Rounding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Like creditsFromUsd but without rounding — returns full-precision float.
+ * Used for fractional hourly billing (storage, compute).
+ */
+export function preciseCreditsFromUsd(usd: number): number {
+  const c = usd * creditsPerUsd();
+  return Math.max(0, c);
+}
+
+/**
+ * Snap a credit value to user-friendly increments (never undercharge).
+ * ≤0 → 0, <0.25 → 0.1, otherwise ceil to nearest 0.25.
+ */
+export function snapCredits(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value < 0.25) return 0.1;
+  return Math.ceil(value * 4) / 4;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messaging Credit Cost
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MESSAGING_COST_USD: Record<string, number> = {
+  telnyx: 0.004,   // per SMS segment
+  whatsapp: 0.005, // per message
+  discord: 0,      // free
+};
+
+/**
+ * Returns the credit cost for a single message on the given platform.
+ */
+export function messagingCreditCost(platform: string): number {
+  const usd = MESSAGING_COST_USD[platform] ?? 0;
+  return snapCredits(usd * creditsPerUsd());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloud Compute Machine Specs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_CLOUD_DISK_GB_BY_TIER: Record<string, number> = {
+  starter: 10,
+  basic: 20,
+  pro: 50,
+  power: 100,
+};
+
+type MachineSpec = {
+  tier: string;
+  machineType: string;
+  vcpus: number;
+  memoryGb: number;
+  hourlyUsd: number;
+  custom?: boolean;
+};
+
+/**
+ * Resolve a machine-type string (or tier alias) to its full spec.
+ */
+export function resolveComputeMachineSpec(machineTypeOrTier: string): MachineSpec | null {
+  const key = String(machineTypeOrTier || '').toLowerCase();
+  // Direct tier lookup
+  const tier = COMPUTE_TIER_CONFIG[key];
+  if (tier) return { tier: key, ...tier };
+  // Reverse lookup by GCP machine type
+  for (const [t, cfg] of Object.entries(COMPUTE_TIER_CONFIG)) {
+    if (cfg.machineType === key) return { tier: t, ...cfg };
+  }
+  return null;
+}
+
+/**
+ * Estimate credits per hour for a given machine type/tier.
+ */
+export function estimateMachineCreditsPerHour(machineTypeOrTier: string): number {
+  const spec = resolveComputeMachineSpec(machineTypeOrTier);
+  if (!spec) return 0;
+  return creditsFromUsd(spec.hourlyUsd);
 }

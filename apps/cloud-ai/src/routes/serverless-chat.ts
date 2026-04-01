@@ -76,6 +76,9 @@ export async function handleServerlessChatRoutes(req: IncomingMessage, res: Serv
         source: 'api',
         attachments: body.attachments,
         extraContext: body.extraContext,
+        skills: Array.isArray(body.skills)
+          ? body.skills
+          : (Array.isArray(body?.context?.skills) ? body.context.skills : []),
       });
 
       writeJson(res, result.ok ? 200 : 500, result);

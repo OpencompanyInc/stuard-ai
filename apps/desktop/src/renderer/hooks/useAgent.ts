@@ -550,6 +550,9 @@ export function useAgent(options?: string | UseAgentOptions) {
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
   const streamingRef = useRef<boolean>(false);
   const stoppedRef = useRef<boolean>(false); // Track if user explicitly stopped - ignore further chunks until final
+  // Per-request stopped/streaming tracking so tabs don't bleed into each other
+  const stoppedByRequestRef = useRef<Set<string>>(new Set());
+  const streamingByRequestRef = useRef<Set<string>>(new Set());
   const streamingConversationIdRef = useRef<string | null>(null); // Track which conversation we're streaming to
   const streamingTabIdRef = useRef<string | null>(null); // Track which tab initiated the stream
   const pendingResponseTabsRef = useRef<string[]>([]); // Queue of tabs waiting for responses (FIFO) - legacy
@@ -764,10 +767,15 @@ export function useAgent(options?: string | UseAgentOptions) {
       const stopPayload: any = { type: 'stop' };
       if (targetRequestId) stopPayload.requestId = targetRequestId;
       wsRef.current.send(JSON.stringify(stopPayload));
-      // Clear streaming state and mark as stopped to ignore further chunks
-      streamingRef.current = false;
-      stoppedRef.current = true;
-      setAI({ phase: 'idle', statusText: 'Stopped' });
+      // Mark this specific request as stopped so only its chunks are ignored (not other tabs)
+      if (targetRequestId) {
+        stoppedByRequestRef.current.add(targetRequestId);
+        streamingByRequestRef.current.delete(targetRequestId);
+      }
+      // Update only the target tab's AI state
+      setTabs(prev => prev.map(t =>
+        t.id === targetTabId ? { ...t, aiState: { phase: 'idle', statusText: 'Stopped' } } : t
+      ));
       return true;
     } catch {
       return false;
@@ -929,7 +937,6 @@ export function useAgent(options?: string | UseAgentOptions) {
   const tryDequeueAndSend = useCallback(() => {
     try {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-      if (runningTabsRef.current.size > 0) return;
 
       // Find the next queued item for a tab that isn't already running
       const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
@@ -958,8 +965,9 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Add requestId to payload for server to echo back
       const payload = { ...next.payload, requestId };
 
-      // Reset stopped flag for new request
-      stoppedRef.current = false;
+      // Ensure this request starts clean (not marked as stopped from a prior attempt)
+      stoppedByRequestRef.current.delete(requestId);
+      streamingByRequestRef.current.delete(requestId);
       try { wsRef.current.send(JSON.stringify(payload)); } catch { }
 
       // Update this specific tab's AI state
@@ -1333,9 +1341,10 @@ export function useAgent(options?: string | UseAgentOptions) {
               // Reasoning ended
               console.log('[agent] Reasoning ended');
             } else if (evt.event === 'tool_event') {
-              // Ignore tool events if we've explicitly stopped
-              if (stoppedRef.current) {
-                console.log('[agent] Ignoring tool_event after stop');
+              // Ignore tool events if this specific request was stopped
+              const reqId = String(msg.requestId || '');
+              if (reqId && stoppedByRequestRef.current.has(reqId)) {
+                console.log('[agent] Ignoring tool_event after stop for request', reqId);
                 return;
               }
               let tool = String(evt.data?.tool || 'tool');
@@ -1653,9 +1662,10 @@ export function useAgent(options?: string | UseAgentOptions) {
                 setStreamingState((s) => ({ ...s, status: `tool:${toolStatus}` }));
               }
             } else if (evt.event === 'delta') {
-              // Ignore deltas if we've explicitly stopped - the abort signal was sent
-              if (stoppedRef.current) {
-                console.log('[agent] Ignoring delta after stop');
+              // Ignore deltas if this specific request was stopped
+              const reqId = String(msg.requestId || '');
+              if (reqId && stoppedByRequestRef.current.has(reqId)) {
+                console.log('[agent] Ignoring delta after stop for request', reqId);
                 return;
               }
               setStreamingAI((prev) => {
@@ -1740,8 +1750,12 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
             streamingRef.current = false;
-            stoppedRef.current = false; // Reset stopped flag for next request
             reasoningStartTimeRef.current = null; // Reset for next message
+            // Clean up per-request tracking
+            if (msg.requestId) {
+              stoppedByRequestRef.current.delete(msg.requestId);
+              streamingByRequestRef.current.delete(msg.requestId);
+            }
 
             // Update tab with final message
             // For aborted messages, use currentResponse if available (more up-to-date than server text)
@@ -1969,6 +1983,8 @@ export function useAgent(options?: string | UseAgentOptions) {
             const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
+              stoppedByRequestRef.current.delete(msg.requestId);
+              streamingByRequestRef.current.delete(msg.requestId);
               if (activeRequestIdRef.current === msg.requestId) {
                 activeRequestIdRef.current = null;
               }
@@ -2015,6 +2031,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         deltaBufferRef.current = '';
         streamingRef.current = false;
         stoppedRef.current = false;
+        stoppedByRequestRef.current.clear();
+        streamingByRequestRef.current.clear();
         runningTabsRef.current.clear();
         pendingResponseTabsRef.current = [];
         waitingQueuedStartRef.current = false;

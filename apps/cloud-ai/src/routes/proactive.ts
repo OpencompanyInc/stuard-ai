@@ -18,7 +18,7 @@ import { getModel } from '../agents/stuard/models';
 import { search_tools, get_tool_schema, execute_tool, initToolRegistry } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
+import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
@@ -667,10 +667,9 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     // Run agent within secrets context
     await runWithSecrets(secretBag, async () => {
       // Inject available skills summary into system prompt
-      const skillsSummary = getSkillsFromContext();
-      if (skillsSummary.length > 0) {
-        const skillLines = skillsSummary.map(s => `- ${s.name}: ${s.description || s.trigger}`);
-        systemPrompt += `\n\n## AVAILABLE SKILLS\nYou can use get_skill_info to get full details about any skill.\n${skillLines.join('\n')}`;
+      const skillsSection = buildAvailableSkillsPromptSection(getSkillsFromContext());
+      if (skillsSection) {
+        systemPrompt += `\n\n${skillsSection}`;
       }
 
       // Select model

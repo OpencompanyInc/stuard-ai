@@ -17,7 +17,7 @@ import { getModel } from '../agents/stuard/models';
 import { search_tools, get_tool_schema, execute_tool } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
-import { get_skill_info } from '../tools/skill-tools';
+import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -41,6 +41,7 @@ import { buildProviderModel } from '../utils/models';
 import { generateWithToolRecovery } from './proactive-utils';
 import { generateText } from 'ai';
 import type { ModelChoice } from '../router/model-router';
+import { runWithSecrets } from '../tools/bridge';
 
 // ─── Cloud-Only System Prompt ──────────────────────────────────────────────
 
@@ -270,6 +271,7 @@ export interface ServerlessAgentInput {
   attachments?: any[];
   /** Extra context (e.g., from phone, proactive message) */
   extraContext?: string;
+  skills?: any[];
 }
 
 export interface ServerlessAgentResult {
@@ -293,6 +295,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     source = 'sms',
     attachments,
     extraContext,
+    skills = [],
   } = input;
 
   let conversationId = input.conversationId || null;
@@ -332,14 +335,25 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
         .slice(0, -1) as any; // Remove last (current) message
     }
 
-    // 4. Build system prompt
-    let systemPrompt = buildCloudSyncSystemPrompt(knowledgeContext, {
-      syncMemories: syncPrefs.sync_memories,
-    });
-
-    if (extraContext) {
-      systemPrompt += `\n\n[ADDITIONAL CONTEXT]\n${extraContext}`;
+    const secretBag: Record<string, any> = { userId };
+    if (Array.isArray(skills) && skills.length > 0) {
+      secretBag.__skills = skills;
     }
+
+    const result = await runWithSecrets(secretBag, async () => {
+      // 4. Build system prompt
+      let systemPrompt = buildCloudSyncSystemPrompt(knowledgeContext, {
+        syncMemories: syncPrefs.sync_memories,
+      });
+
+      const skillsSection = buildAvailableSkillsPromptSection(getSkillsFromContext());
+      if (skillsSection) {
+        systemPrompt += `\n\n${skillsSection}`;
+      }
+
+      if (extraContext) {
+        systemPrompt += `\n\n[ADDITIONAL CONTEXT]\n${extraContext}`;
+      }
 
     // Note: SMS/WhatsApp sources get full responses here — truncation for
     // delivery happens in the telnyx/whatsapp route handlers AFTER this returns.
@@ -414,11 +428,13 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     }
 
     // 8. Generate response
-    const result = await generateWithToolRecovery({
+    return await generateWithToolRecovery({
       agent,
       baseMessages: messages,
       maxSteps: 8,
       maxRetries: 2,
+    });
+
     });
 
     const responseText = String(result?.text || '').trim();

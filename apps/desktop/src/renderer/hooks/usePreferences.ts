@@ -1,21 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const LS_PREFIX = "stuard.pref.";
-
-/** Debounced batch writer that flushes all pending pref changes to the main process. */
-const _pendingPrefWrites: Record<string, any> = {};
-let _prefFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-function queuePrefSync(key: string, value: any) {
-  _pendingPrefWrites[key] = value;
-  if (_prefFlushTimer) clearTimeout(_prefFlushTimer);
-  _prefFlushTimer = setTimeout(() => {
-    _prefFlushTimer = null;
-    const batch = { ..._pendingPrefWrites };
-    for (const k of Object.keys(_pendingPrefWrites)) delete _pendingPrefWrites[k];
-    try { (window as any).desktopAPI?.prefsSetMany?.(batch); } catch { }
-  }, 300);
-}
 
 export type ChatMode = 'auto' | string;
 
@@ -52,15 +37,12 @@ export interface ModelMeta {
   providerId?: string;
   logoUrl?: string;
   isReasoning: boolean;
-  supportsMultimodal?: boolean;
   contextWindow?: number;
   category: 'fast' | 'balanced' | 'smart' | 'research';
 }
 
 export const ALL_CHAT_MODEL_IDS: string[] = [
   'xai/grok-4',
-  'xai/grok-4.20-beta-0309-reasoning',
-  'xai/grok-4.20-beta-0309-non-reasoning',
   'xai/grok-4-1-fast',
   'xai/grok-4-1-fast-non-reasoning',
   'xai/grok-4-fast',
@@ -74,7 +56,6 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
   'google/gemini-2.5-flash-lite',
-  'google/gemini-3.1-flash-lite-preview',
   'google/gemini-2.5-pro',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
@@ -88,12 +69,11 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'openai/gpt-5-codex',
   'openai/gpt-5-mini',
   'openai/gpt-5-nano',
+  'openai/gpt-5-pro',
   'openai/gpt-5.1',
   'openai/gpt-5.1-chat-latest',
   'openai/gpt-5.1-codex',
   'openai/gpt-5.1-codex-mini',
-  'openai/gpt-5.4',
-  'openai/gpt-5.2',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'deepseek/deepseek-chat',
@@ -111,36 +91,18 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'perplexity/sonar-deep-research',
   'openai/o3-deep-research',
   'openai/o4-mini-deep-research',
-  // OpenRouter models
-  'openrouter/meta-llama/llama-4-maverick',
-  'openrouter/meta-llama/llama-4-scout',
-  'openrouter/meta-llama/llama-3.3-70b-instruct',
-  'openrouter/mistralai/mistral-large-latest',
-  'openrouter/mistralai/codestral-latest',
-  'openrouter/mistralai/mistral-small-latest',
-  'openrouter/qwen/qwen3-235b-a22b',
-  'openrouter/qwen/qwen3-30b-a3b',
-  'openrouter/cohere/command-a',
-  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct',
-  'openrouter/nousresearch/hermes-3-llama-3.1-405b',
 ];
 
 const REASONING_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-reasoner',
+  'openai/gpt-5-pro',
   'openai/gpt-5.1',
   'openai/gpt-5.1-chat-latest',
-  'openai/gpt-5.1-codex',
-  'openai/gpt-5.1-codex-mini',
-  'openai/gpt-5.4',
-  'openai/gpt-5.2',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5.3-codex',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
   'google/gemini-2.5-pro',
   'google/gemini-2.5-flash',
   'xai/grok-4',
-  'xai/grok-4.20-beta-0309-reasoning',
   'xai/grok-4-1-fast',
   'xai/grok-4-fast',
   'xai/grok-3',
@@ -152,8 +114,6 @@ const REASONING_MODEL_IDS = new Set<string>([
   'anthropic/claude-3-7-sonnet-latest',
   'anthropic/claude-sonnet-4-5',
   'anthropic/claude-opus-4-5',
-  'openrouter/meta-llama/llama-4-maverick',
-  'openrouter/qwen/qwen3-235b-a22b',
 ]);
 
 const CONTEXT_WINDOWS: Record<string, number> = {
@@ -162,19 +122,16 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'google/gemini-3-flash-preview': 1000000,
   'google/gemini-2.5-pro': 2000000,
   'google/gemini-2.5-flash': 1000000,
-  'google/gemini-3.1-flash-lite-preview': 1000000,
   'openai/gpt-5': 128000,
+  'openai/gpt-5-pro': 128000,
   'openai/gpt-5.1': 128000,
-  'openai/gpt-5.4': 1050000,
   'openai/gpt-4.1': 128000,
   'openai/gpt-4.1-mini': 128000,
   'openai/gpt-4o': 128000,
-  'openai/gpt-5.2': 400000,
+  'openai/gpt-4o-mini': 128000,
   'openai/gpt-5.2-codex': 700000,
   'openai/gpt-5.3-codex': 1000000,
   'xai/grok-4': 256000,
-  'xai/grok-4.20-beta-0309-reasoning': 2000000,
-  'xai/grok-4.20-beta-0309-non-reasoning': 2000000,
   'xai/grok-4-fast': 2000000,
   'xai/grok-3': 128000,
   'deepseek/deepseek-chat': 128000,
@@ -192,24 +149,10 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'perplexity/sonar-deep-research': 128000,
   'openai/o3-deep-research': 128000,
   'openai/o4-mini-deep-research': 128000,
-  // OpenRouter models
-  'openrouter/meta-llama/llama-4-maverick': 1000000,
-  'openrouter/meta-llama/llama-4-scout': 512000,
-  'openrouter/meta-llama/llama-3.3-70b-instruct': 128000,
-  'openrouter/mistralai/mistral-large-latest': 128000,
-  'openrouter/mistralai/codestral-latest': 256000,
-  'openrouter/mistralai/mistral-small-latest': 128000,
-  'openrouter/qwen/qwen3-235b-a22b': 128000,
-  'openrouter/qwen/qwen3-30b-a3b': 128000,
-  'openrouter/cohere/command-a': 256000,
-  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 128000,
-  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 128000,
 };
 
 const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
   'xai/grok-4': 'smart',
-  'xai/grok-4.20-beta-0309-reasoning': 'smart',
-  'xai/grok-4.20-beta-0309-non-reasoning': 'balanced',
   'xai/grok-4-1-fast': 'balanced',
   'xai/grok-4-1-fast-non-reasoning': 'balanced',
   'xai/grok-4-fast': 'balanced',
@@ -223,7 +166,6 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'google/gemini-3-flash-preview': 'fast',
   'google/gemini-2.5-flash': 'fast',
   'google/gemini-2.5-flash-lite': 'fast',
-  'google/gemini-3.1-flash-lite-preview': 'fast',
   'google/gemini-2.5-pro': 'smart',
   'google/gemini-3.1-pro-preview': 'smart',
   'google/gemini-3-pro-preview': 'smart',
@@ -237,14 +179,13 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'openai/gpt-5-codex': 'smart',
   'openai/gpt-5-mini': 'balanced',
   'openai/gpt-5-nano': 'fast',
+  'openai/gpt-5-pro': 'smart',
   'openai/gpt-5.1': 'smart',
   'openai/gpt-5.1-chat-latest': 'smart',
   'openai/gpt-5.1-codex': 'smart',
   'openai/gpt-5.1-codex-mini': 'balanced',
-  'openai/gpt-5.2': 'smart',
   'openai/gpt-5.2-codex': 'smart',
   'openai/gpt-5.3-codex': 'smart',
-  'openai/gpt-5.4': 'smart',
   'deepseek/deepseek-chat': 'fast',
   'deepseek/deepseek-reasoner': 'smart',
   'anthropic/claude-3-5-haiku-latest': 'fast',
@@ -260,18 +201,6 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'perplexity/sonar-deep-research': 'research',
   'openai/o3-deep-research': 'research',
   'openai/o4-mini-deep-research': 'research',
-  // OpenRouter models
-  'openrouter/meta-llama/llama-4-maverick': 'smart',
-  'openrouter/meta-llama/llama-4-scout': 'balanced',
-  'openrouter/meta-llama/llama-3.3-70b-instruct': 'balanced',
-  'openrouter/mistralai/mistral-large-latest': 'smart',
-  'openrouter/mistralai/codestral-latest': 'smart',
-  'openrouter/mistralai/mistral-small-latest': 'fast',
-  'openrouter/qwen/qwen3-235b-a22b': 'smart',
-  'openrouter/qwen/qwen3-30b-a3b': 'fast',
-  'openrouter/cohere/command-a': 'balanced',
-  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 'balanced',
-  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 'smart',
 };
 
 function humanizeProvider(p: string): string {
@@ -285,20 +214,6 @@ function humanizeProvider(p: string): string {
   if (s === 'openrouter') return 'OpenRouter';
   return p;
 }
-
-const FRIENDLY_MODEL_NAMES: Record<string, string> = {
-  'openrouter/meta-llama/llama-4-maverick': 'Llama 4 Maverick',
-  'openrouter/meta-llama/llama-4-scout': 'Llama 4 Scout',
-  'openrouter/meta-llama/llama-3.3-70b-instruct': 'Llama 3.3 70B',
-  'openrouter/mistralai/mistral-large-latest': 'Mistral Large',
-  'openrouter/mistralai/codestral-latest': 'Codestral',
-  'openrouter/mistralai/mistral-small-latest': 'Mistral Small',
-  'openrouter/qwen/qwen3-235b-a22b': 'Qwen3 235B',
-  'openrouter/qwen/qwen3-30b-a3b': 'Qwen3 30B',
-  'openrouter/cohere/command-a': 'Command A',
-  'openrouter/nvidia/llama-3.1-nemotron-70b-instruct': 'Nemotron 70B',
-  'openrouter/nousresearch/hermes-3-llama-3.1-405b': 'Hermes 3 405B',
-};
 
 function titleizeModelName(mid: string): string {
   try {
@@ -320,25 +235,11 @@ export const FALLBACK_MODELS: ModelMeta[] = ALL_CHAT_MODEL_IDS.map((id) => {
   const modelKey = parts.slice(1).join('/') || raw;
   const isNonReasoning = modelKey.includes('non-reasoning');
   const isReasoning = !isNonReasoning && REASONING_MODEL_IDS.has(raw);
-  // For OpenRouter models, show sub-provider as the provider label (e.g. "Meta" for meta-llama)
-  let displayProvider = humanizeProvider(providerKey);
-  if (providerKey === 'openrouter' && parts.length >= 3) {
-    const subProvider = parts[1] || '';
-    const subProviderMap: Record<string, string> = {
-      'meta-llama': 'Meta',
-      'mistralai': 'Mistral',
-      'qwen': 'Qwen',
-      'cohere': 'Cohere',
-      'nvidia': 'NVIDIA',
-      'nousresearch': 'Nous Research',
-    };
-    displayProvider = subProviderMap[subProvider] || subProvider.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }
   return {
     id: raw,
     providerId: providerKey,
-    provider: displayProvider,
-    name: FRIENDLY_MODEL_NAMES[raw] || titleizeModelName(modelKey),
+    provider: humanizeProvider(providerKey),
+    name: titleizeModelName(modelKey),
     isReasoning,
     contextWindow: CONTEXT_WINDOWS[raw],
     category: MODEL_CATEGORIES[raw] || 'balanced',
@@ -379,38 +280,10 @@ function getLS<T>(key: string, fallback: T): T {
   }
 }
 
-/** Map from localStorage key → main-process settings key */
-const LS_TO_SETTINGS_KEY: Record<string, string> = {
-  tone: 'tone',
-  tone_custom: 'toneCustom',
-  persona: 'persona',
-  onboarding_complete: 'onboardingComplete',
-  tour_complete: 'tourComplete',
-  first_session_complete: 'firstSessionComplete',
-  theme_mode: 'themeMode',
-  theme_dark: 'themeDarkShade',
-  theme_light: 'themeLightShade',
-  theme_text: 'themeText',
-  translucent_mode: 'translucentMode',
-  wakeword_enabled: 'wakewordEnabled',
-  terminal_enabled: 'terminalEnabled',
-  browser_enabled: 'browserEnabled',
-  screen_capture_invisible: 'screenCaptureInvisible',
-  chat_mode: 'chatMode',
-  chat_models: 'chatModels',
-  timezone: 'timezone',
-  timezone_override: 'timezoneOverride',
-};
-
 function setLS<T>(key: string, value: T) {
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch { }
-  // Also persist to main process settings file
-  const settingsKey = LS_TO_SETTINGS_KEY[key];
-  if (settingsKey) {
-    queuePrefSync(settingsKey, value);
-  }
 }
 
 export type TonePreset = "concise" | "friendly" | "formal" | "technical" | "custom";
@@ -431,13 +304,13 @@ export function usePreferences() {
   const [persona, setPersonaState] = useState<string>(() => getLS<string>("persona", ""));
   const [onboardingComplete, setOnboardingCompleteState] = useState<boolean>(() => getLS<boolean>("onboarding_complete", false));
   const [tourComplete, setTourCompleteState] = useState<boolean>(() => getLS<boolean>("tour_complete", false));
-  const [firstSessionComplete, setFirstSessionCompleteState] = useState<boolean>(() => getLS<boolean>("first_session_complete", false));
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => normalizeThemeMode(getLS<any>("theme_mode", "light")));
   const [themeDarkShade, setThemeDarkShadeState] = useState<string>(() => getLS<string>("theme_dark", "#0f172a"));
   const [themeLightShade, setThemeLightShadeState] = useState<string>(() => getLS<string>("theme_light", "#e2e8f0"));
   const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));
   const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
+  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.7));
   const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
@@ -448,77 +321,18 @@ export function usePreferences() {
   const [timezone, setTimezoneState] = useState<string>(() => getLS<string>('timezone', '') || detectedTz);
   const [timezoneOverride, setTimezoneOverrideState] = useState<boolean>(() => getLS<boolean>('timezone_override', false));
 
-  // ── Hydrate from main-process settings file on mount (restores after restart) ──
-  const hydratedRef = useRef(false);
-  useEffect(() => {
-    if (hydratedRef.current) return;
-    hydratedRef.current = true;
-    (async () => {
-      try {
-        const res = await (window as any).desktopAPI?.prefsGetAll?.();
-        if (!res?.ok || !res.prefs) return;
-        const p = res.prefs;
-        // Only hydrate if localStorage is empty for that key (first launch / cleared)
-        // OR always hydrate from the persistent file to ensure consistency
-        const apply = <T,>(lsKey: string, settingsVal: T | undefined, setter: (v: T) => void) => {
-          if (settingsVal !== undefined) {
-            // Persistent file wins – write to localStorage so they stay in sync
-            try { localStorage.setItem(LS_PREFIX + lsKey, JSON.stringify(settingsVal)); } catch { }
-            setter(settingsVal as T);
-          }
-        };
-        apply('tone', p.tone, setToneState);
-        apply('tone_custom', p.toneCustom, setCustomToneState);
-        apply('persona', p.persona, setPersonaState);
-        apply('onboarding_complete', p.onboardingComplete, setOnboardingCompleteState);
-        apply('tour_complete', p.tourComplete, setTourCompleteState);
-        apply('first_session_complete', p.firstSessionComplete, setFirstSessionCompleteState);
-        if (p.themeMode !== undefined) {
-          const mode = normalizeThemeMode(p.themeMode);
-          try { localStorage.setItem(LS_PREFIX + 'theme_mode', JSON.stringify(mode)); } catch { }
-          setThemeModeState(mode);
-        }
-        apply('theme_dark', p.themeDarkShade, setThemeDarkShadeState);
-        apply('theme_light', p.themeLightShade, setThemeLightShadeState);
-        apply('theme_text', p.themeText, setThemeTextState);
-        apply('translucent_mode', p.translucentMode, setTranslucentModeState);
-        apply('wakeword_enabled', p.wakewordEnabled, setWakewordEnabledState);
-        apply('terminal_enabled', p.terminalEnabled, setTerminalEnabledState);
-        apply('browser_enabled', p.browserEnabled, setBrowserEnabledState);
-        apply('screen_capture_invisible', p.screenCaptureInvisible, setScreenCaptureInvisibleState);
-        if (p.chatModels !== undefined) {
-          try { localStorage.setItem(LS_PREFIX + 'chat_models', JSON.stringify(p.chatModels)); } catch { }
-          setChatModelsState(p.chatModels);
-        }
-        if (p.chatMode !== undefined) {
-          const mode = normalizeChatMode(p.chatMode, p.chatModels ?? getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
-          try { localStorage.setItem(LS_PREFIX + 'chat_mode', JSON.stringify(mode)); } catch { }
-          setChatModeState(mode);
-        }
-        if (p.timezoneOverride !== undefined) {
-          try { localStorage.setItem(LS_PREFIX + 'timezone_override', JSON.stringify(p.timezoneOverride)); } catch { }
-          setTimezoneOverrideState(p.timezoneOverride);
-        }
-        if (p.timezone !== undefined && p.timezone) {
-          try { localStorage.setItem(LS_PREFIX + 'timezone', JSON.stringify(p.timezone)); } catch { }
-          setTimezoneState(p.timezone);
-        }
-      } catch { /* ignore – first launch or no desktopAPI */ }
-    })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => { setLS("tone", tone); }, [tone]);
   useEffect(() => { setLS("tone_custom", customTone); }, [customTone]);
   useEffect(() => { setLS("persona", persona); }, [persona]);
   useEffect(() => { setLS("onboarding_complete", onboardingComplete); }, [onboardingComplete]);
   useEffect(() => { setLS("tour_complete", tourComplete); }, [tourComplete]);
-  useEffect(() => { setLS("first_session_complete", firstSessionComplete); }, [firstSessionComplete]);
   useEffect(() => { setLS("theme_mode", themeMode); }, [themeMode]);
   useEffect(() => { setLS("theme_dark", themeDarkShade); }, [themeDarkShade]);
   useEffect(() => { setLS("theme_light", themeLightShade); }, [themeLightShade]);
   useEffect(() => { setLS("theme_text", themeText); }, [themeText]);
   useEffect(() => { setLS("translucent_mode", translucentMode); }, [translucentMode]);
   useEffect(() => { setLS("wakeword_enabled", wakewordEnabled); }, [wakewordEnabled]);
+  useEffect(() => { setLS("wakeword_sensitivity", wakewordSensitivity); }, [wakewordSensitivity]);
   useEffect(() => { setLS("terminal_enabled", terminalEnabled); }, [terminalEnabled]);
   useEffect(() => { setLS("browser_enabled", browserEnabled); }, [browserEnabled]);
   useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
@@ -568,13 +382,13 @@ export function usePreferences() {
           if (key === 'persona') setPersonaState(val ?? '');
           if (key === 'onboarding_complete') setOnboardingCompleteState(val ?? false);
           if (key === 'tour_complete') setTourCompleteState(val ?? false);
-          if (key === 'first_session_complete') setFirstSessionCompleteState(val ?? false);
           if (key === 'theme_mode') setThemeModeState(normalizeThemeMode(val));
           if (key === 'theme_dark') setThemeDarkShadeState(val ?? '#0f172a');
           if (key === 'theme_light') setThemeLightShadeState(val ?? '#e2e8f0');
           if (key === 'theme_text') setThemeTextState(val ?? 'white');
           if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
+          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.7);
           if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
@@ -594,13 +408,13 @@ export function usePreferences() {
   const setPersona = useCallback((v: string) => { setPersonaState(v); }, []);
   const setOnboardingComplete = useCallback((v: boolean) => { setOnboardingCompleteState(v); }, []);
   const setTourComplete = useCallback((v: boolean) => { setTourCompleteState(v); }, []);
-  const setFirstSessionComplete = useCallback((v: boolean) => { setFirstSessionCompleteState(v); }, []);
   const setThemeMode = useCallback((m: ThemeMode) => { setThemeModeState(normalizeThemeMode(m)); }, []);
   const setThemeDarkShade = useCallback((v: string) => { setThemeDarkShadeState(v); }, []);
   const setThemeLightShade = useCallback((v: string) => { setThemeLightShadeState(v); }, []);
   const setThemeText = useCallback((v: "white" | "black") => { setThemeTextState(v); }, []);
   const setTranslucentMode = useCallback((v: boolean) => { setTranslucentModeState(v); }, []);
   const setWakewordEnabled = useCallback((v: boolean) => { setWakewordEnabledState(v); }, []);
+  const setWakewordSensitivity = useCallback((v: number) => { setWakewordSensitivityState(Math.max(0.3, Math.min(0.95, v))); }, []);
   const setTerminalEnabled = useCallback((v: boolean) => { setTerminalEnabledState(v); }, []);
   const setBrowserEnabled = useCallback((v: boolean) => { setBrowserEnabledState(v); }, []);
   const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
@@ -620,8 +434,6 @@ export function usePreferences() {
     setOnboardingComplete,
     tourComplete,
     setTourComplete,
-    firstSessionComplete,
-    setFirstSessionComplete,
     themeMode,
     setThemeMode,
     themeDarkShade,
@@ -634,6 +446,8 @@ export function usePreferences() {
     setTranslucentMode,
     wakewordEnabled,
     setWakewordEnabled,
+    wakewordSensitivity,
+    setWakewordSensitivity,
     terminalEnabled,
     setTerminalEnabled,
     browserEnabled,

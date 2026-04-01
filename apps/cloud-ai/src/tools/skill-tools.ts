@@ -80,6 +80,25 @@ export function getSkillsFromContext(): SkillSummary[] {
   return [];
 }
 
+export function buildAvailableSkillsPromptSection(skills: SkillSummary[] = getSkillsFromContext()): string {
+  if (!Array.isArray(skills) || skills.length === 0) return '';
+
+  const skillLines = skills
+    .slice(0, MAX_SKILLS)
+    .map((skill) => {
+      const summary = safeText(skill.description || skill.trigger, 300);
+      return summary ? `- ${skill.name}: ${summary}` : `- ${skill.name}`;
+    });
+
+  if (skillLines.length === 0) return '';
+
+  return [
+    '## AVAILABLE SKILLS',
+    'You can use get_skill_info to get full details about any skill.',
+    ...skillLines,
+  ].join('\n');
+}
+
 export const get_skill_info = createTool({
   id: 'get_skill_info',
   description: 'Get full details of a user-defined skill by name or ID. Skills are guidance playbooks that describe recommended steps, tools to call, and arrangement for handling a request.',

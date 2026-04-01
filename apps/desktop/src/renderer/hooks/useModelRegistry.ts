@@ -4,6 +4,14 @@ import { FALLBACK_MODELS, ALL_CHAT_MODEL_IDS, type ModelMeta } from "./usePrefer
 
 const ALLOWED_MODEL_SET = new Set(ALL_CHAT_MODEL_IDS);
 
+/** Returns true if a model ID should pass through the allowlist filter. */
+function isModelAllowed(id: string): boolean {
+  if (ALLOWED_MODEL_SET.has(id)) return true;
+  // OpenRouter models are fetched dynamically — always allow them
+  if (id.startsWith('openrouter/')) return true;
+  return false;
+}
+
 const OVERRIDE_PROVIDER_LOGOS: Record<string, string> = {
   anthropic: 'https://models.dev/logos/anthropic.svg',
 };
@@ -113,8 +121,8 @@ export function useModelRegistry() {
     let raw = registry?.models;
     if (!Array.isArray(raw) || raw.length === 0) return FALLBACK_MODELS;
 
-    // Only allow models defined in ALL_CHAT_MODEL_IDS
-    raw = raw.filter(m => ALLOWED_MODEL_SET.has(m.id));
+    // Only allow models defined in ALL_CHAT_MODEL_IDS or from dynamic providers (openrouter)
+    raw = raw.filter(m => isModelAllowed(m.id));
 
     if (raw.length === 0) return FALLBACK_MODELS;
 
@@ -131,11 +139,6 @@ export function useModelRegistry() {
       isReasoning: typeof fallbackById.get(m.id)?.isReasoning === "boolean"
         ? !!fallbackById.get(m.id)?.isReasoning
         : !!m.reasoning,
-      supportsMultimodal: Array.isArray(m.modalities?.input) && (
-        m.modalities.input.includes('image') ||
-        m.modalities.input.includes('audio') ||
-        m.modalities.input.includes('video')
-      ),
       contextWindow: fallbackById.get(m.id)?.contextWindow ?? m.limit?.context,
       category: fallbackById.get(m.id)?.category || ((m.tier as any) || (m.reasoning ? "smart" : "balanced")),
     }));

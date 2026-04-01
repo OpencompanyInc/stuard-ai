@@ -147,7 +147,18 @@ function send(ws: WebSocket, data: unknown) {
 // Store active abort controllers by WebSocket
 const activeControllers = new WeakMap<WebSocket, AbortController>();
 
-export function abortAgent(ws: WebSocket): boolean {
+export function abortAgent(ws: WebSocket, requestId?: string): boolean {
+  // Try per-request abort first
+  if (requestId) {
+    const controller = (ws as any)[`__abort_${requestId}`] as AbortController | undefined;
+    if (controller) {
+      console.log(`[AgentRunner] Aborting agent stream (requestId=${requestId})`);
+      controller.abort();
+      delete (ws as any)[`__abort_${requestId}`];
+      return true;
+    }
+  }
+  // Fallback: abort the most recent request on this WS
   const controller = activeControllers.get(ws);
   if (controller) {
     console.log('[AgentRunner] Aborting agent stream');
@@ -158,7 +169,7 @@ export function abortAgent(ws: WebSocket): boolean {
   return false;
 }
 
-export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket): Promise<{ text: string } | null> {
+export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket, requestId?: string): Promise<{ text: string } | null> {
   const _rt0 = Date.now();
   const agentType = message.agent || 'stuard';
   let model = normalizeTier(message.model);
@@ -169,9 +180,21 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
   const conversationId = message.conversationId;
   let resultText = '';
 
-  // Create abort controller for this request
+  // Tag every outbound message with requestId so the client can route to the correct tab
+  const send = (target: WebSocket, data: unknown) => {
+    try {
+      const payload = (requestId && typeof data === 'object' && data !== null)
+        ? { ...(data as any), requestId }
+        : data;
+      target.send(JSON.stringify(payload));
+    } catch { }
+  };
+
+  // Create abort controller for this request (keyed by requestId when available)
   const abortController = new AbortController();
+  const abortKey = requestId || '__default';
   activeControllers.set(ws, abortController);
+  if (requestId) (ws as any)[`__abort_${requestId}`] = abortController;
 
   // 1. Auto-Routing Logic
   if (model === 'auto') {
@@ -516,7 +539,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 reasoningChunks++;
                 console.log('[AgentRunner] THINKING chunk:', chunk.type, chunk.payload?.text?.slice(0, 80) || chunk.textDelta?.slice(0, 80));
               }
-              const delta = handleStreamChunk(ws, chunk);
+              const delta = handleStreamChunk(ws, chunk, send);
               if (delta) fullText += delta;
             }
             console.log(`[AgentRunner] Stream complete: ${chunkCount} chunks, ${reasoningChunks} reasoning`);
@@ -794,6 +817,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     } finally {
       // Clean up abort controller
       activeControllers.delete(ws);
+      if (requestId) { try { delete (ws as any)[`__abort_${requestId}`]; } catch { } }
     }
   }, { userId, conversationId });
 
@@ -801,7 +825,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 }
 
 // Returns the text delta if any, so caller can accumulate
-function handleStreamChunk(ws: WebSocket, chunk: any): string {
+function handleStreamChunk(ws: WebSocket, chunk: any, sendFn?: (target: WebSocket, data: unknown) => void): string {
+  const _send = sendFn || send;
   try {
     // Debug: log all chunk types to see what's coming through
     if (chunk?.type) {
@@ -814,13 +839,13 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
 
     // Handle tool_event pass-through from nested tools
     if (chunk?.type === 'tool_event') {
-      send(ws, { type: 'progress', event: 'tool_event', data: chunk });
+      _send(ws, { type: 'progress', event: 'tool_event', data: chunk });
       return '';
     }
 
     // Legacy AI SDK toolCall shape
     if (chunk?.toolCall?.name) {
-      send(ws, {
+      _send(ws, {
         type: 'progress',
         event: 'tool_event',
         data: { tool: chunk.toolCall.name, status: 'called', args: chunk.toolCall.args }
@@ -830,7 +855,7 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
 
     // Legacy AI SDK toolResult shape
     if (chunk?.toolResult) {
-      send(ws, {
+      _send(ws, {
         type: 'progress',
         event: 'tool_event',
         data: {
@@ -848,7 +873,7 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       case 'text-delta': {
         const text = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
         if (text) {
-          send(ws, { type: 'progress', event: 'delta', data: { text } });
+          _send(ws, { type: 'progress', event: 'delta', data: { text } });
           return text;
         }
         break;
@@ -857,14 +882,14 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       // Reasoning events (for models that support it like o1, o3, Grok with reasoning)
       case 'reasoning-start': {
         console.log('[AgentRunner] reasoning-start received');
-        send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
+        _send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
         break;
       }
 
       case 'reasoning-delta': {
         const reasoning = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
         if (reasoning) {
-          send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoning } });
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoning } });
         }
         break;
       }
@@ -873,14 +898,14 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
         // Raw AI SDK reasoning chunk format (type: 'reasoning', textDelta: '...')
         const rawReasoning = chunk.textDelta || chunk.payload?.text || chunk.payload?.textDelta || '';
         if (rawReasoning) {
-          send(ws, { type: 'progress', event: 'reasoning', data: { text: rawReasoning } });
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: rawReasoning } });
         }
         break;
       }
 
       case 'reasoning-end': {
         console.log('[AgentRunner] reasoning-end received');
-        send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
+        _send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
         break;
       }
 
@@ -893,26 +918,26 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       // Gemini thinking events (different naming from reasoning)
       case 'thinking-start': {
         console.log('[AgentRunner] thinking-start received');
-        send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
+        _send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
         break;
       }
 
       case 'thinking-delta': {
         const thinking = chunk.payload?.text || chunk.textDelta || (typeof chunk.payload === 'string' ? chunk.payload : '');
         if (thinking) {
-          send(ws, { type: 'progress', event: 'reasoning', data: { text: thinking } });
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: thinking } });
         }
         break;
       }
 
       case 'thinking-end': {
         console.log('[AgentRunner] thinking-end received');
-        send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
+        _send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
         break;
       }
 
       case 'tool-call':
-        send(ws, {
+        _send(ws, {
           type: 'progress',
           event: 'tool_event',
           data: {
@@ -925,7 +950,7 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
         break;
 
       case 'tool-result':
-        send(ws, {
+        _send(ws, {
           type: 'progress',
           event: 'tool_event',
           data: {
@@ -938,7 +963,7 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
         break;
 
       case 'step-start':
-        send(ws, { type: 'progress', event: 'start', data: { stepId: chunk.payload?.stepId } });
+        _send(ws, { type: 'progress', event: 'start', data: { stepId: chunk.payload?.stepId } });
         break;
 
       case 'error': {
@@ -946,7 +971,7 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
         const errPayload = chunk.payload || {};
         const errMessage = errPayload.message || errPayload.error || 'Stream error';
         console.error('[AgentRunner] Error chunk received:', errMessage);
-        send(ws, {
+        _send(ws, {
           type: 'progress',
           event: 'tool_event',
           data: {
@@ -966,12 +991,12 @@ function handleStreamChunk(ws: WebSocket, chunk: any): string {
       default:
         // Handle plain string chunks
         if (typeof chunk === 'string' && chunk) {
-          send(ws, { type: 'progress', event: 'delta', data: { text: chunk } });
+          _send(ws, { type: 'progress', event: 'delta', data: { text: chunk } });
           return chunk;
         }
         // Handle textDelta property (AI SDK format)
         if (chunk?.textDelta) {
-          send(ws, { type: 'progress', event: 'delta', data: { text: chunk.textDelta } });
+          _send(ws, { type: 'progress', event: 'delta', data: { text: chunk.textDelta } });
           return chunk.textDelta;
         }
         break;

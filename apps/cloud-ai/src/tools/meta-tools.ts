@@ -1,8 +1,7 @@
-﻿import { createTool } from '@mastra/core/tools';
+import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
-import * as ocrTools from './ocr-tools';
 import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
 import * as outlookTools from './outlook-tools';
@@ -12,27 +11,20 @@ import * as redditTools from './reddit-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
-import * as metaSocialTools from './meta-social-tools';
-import * as whatsappTools from './whatsapp-tools';
-import * as telnyxTools from './telnyx-tools';
-import { generate_image } from './image-gen';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
-import * as cloudStorageTools from './cloud-storage-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
+import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
-import { resolveEmbedder } from '../utils/embeddings';
+import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories, getTool, type ToolLocation } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
-import { get_skill_info } from './skill-tools';
-import { ask_user } from './ask-user';
-
 import { zodToJsonSchema } from './zod-utils';
 
 const MEMORY_AI_TOOL_IDS = new Set([
@@ -44,9 +36,6 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'memory_extract_texts',
     'search_past_conversations',
     'get_conversation_context',
-    'browse_topic_collections',
-    'get_collection_detail',
-    'synthesize_collection',
     'list_user_spaces',
     'get_space_contents',
     'add_to_space',
@@ -55,6 +44,7 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'add_to_space_path',
     'get_space_tree',
     'create_space',
+    'get_memory_stats',
     'add_source_to_space',
     'add_note_to_space',
     'add_code_snippet_to_space',
@@ -64,37 +54,7 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'delete_space_item',
 ]);
 
-const MEMORY_AI_ALLOWLIST = new Set([
-    'search_past_conversations', 'get_conversation_context',
-    'browse_topic_collections', 'get_collection_detail', 'synthesize_collection',
-    // Space management tools â€” must be registered so search_tools/get_tool_schema/execute_tool can find them
-    'list_user_spaces', 'get_space_contents', 'add_to_space',
-    'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree',
-    'create_space',
-    'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space',
-    'link_conversation_to_space', 'find_or_create_space',
-    'update_space_item', 'delete_space_item',
-]);
-
-const LEGACY_BROWSER_EXTENSION_TOOL_IDS = new Set([
-   'browser_get_content',
-   'browser_click_element',
-   'browser_type_text',
-   'browser_find_text',
-   'browser_get_element_position',
-   'browser_find_clickable',
-   'browser_hover',
-   'browser_select_option',
-   'browser_press_key',
-   'browser_get_form_fields',
-   'browser_fill_form',
-   'browser_wait_for_element',
-   'browser_scroll_to',
-   'browser_get_page_info',
-   'browser_upload_file',
-   'browser_set_toggle',
-   'browser_execute_script',
- ]);
+const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
 
 let _syncPromise: Promise<void> | null = null;
 let _initialized = false;
@@ -162,6 +122,7 @@ registerTool(waitTool, 'Core');
 registerTool(runSequentialTool, 'Core');
 registerTool(runParallelTool, 'Core');
 registerTool(executeAgenticTask, 'Core');
+registerTool(routeToWorkflowAgent, 'Core', 'orchestration');
 
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
@@ -175,11 +136,11 @@ COMPONENT FIELD:
   - onClick={handler}, onChange={e => ...}
   - className="tailwind-classes" (full Tailwind CSS bundled offline)
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - useVar(name, default) â€” bridges React state to workflow variables. Auto-seeds from data args.
-  - stuard.submit(data) â€” submit data and close (resolves blocking)
-  - stuard.close() â€” close window
-  - stuard.callTool(name, args) â€” call any workflow tool (invisible, no canvas animation)
-  - stuard.callNode(nodeId, data) â€” call a SIBLING NODE by ID or label (see NODE-ROUTING below)
+  - useVar(name, default) — bridges React state to workflow variables. Auto-seeds from data args.
+  - stuard.submit(data) — submit data and close (resolves blocking)
+  - stuard.close() — close window
+  - stuard.callTool(name, args) — call any workflow tool (invisible, no canvas animation)
+  - stuard.callNode(nodeId, data) — call a SIBLING NODE by ID or label (see NODE-ROUTING below)
 
 NODE-ROUTING ARCHITECTURE (callNode):
   Instead of encoding all logic inside one custom_ui callTool() block, create STANDALONE
@@ -191,7 +152,7 @@ NODE-ROUTING ARCHITECTURE (callNode):
   2. Connect the custom_ui to each node with callNode wires:
        { from: "my_ui", to: "read_node", callNode: true }
      callNode wires render as DASHED TEAL lines with a plug icon.
-     They are NOT auto-traversed by the engine â€” they execute ON-DEMAND only.
+     They are NOT auto-traversed by the engine — they execute ON-DEMAND only.
   3. In the component, call nodes by ID or LABEL:
        const result = await stuard.callNode('read_node', { filePath: '/path/to/file' });
        // OR by label (case-insensitive, whitespace/underscore/hyphen agnostic):
@@ -206,24 +167,24 @@ NODE-ROUTING ARCHITECTURE (callNode):
     3. Normalized label match ("read_file" matches "Read File", "read-file", "Read_File")
 
   callNode vs callTool:
-    â€¢ callTool(name, args) â€” runs a tool INVISIBLY, no visual feedback in the canvas
-    â€¢ callNode(nodeId, data) â€” routes to a named SIBLING NODE in the same workflow.
-      Shows running â†’ completed animation on the teal wire. Uses {{caller.X}} templates.
+    • callTool(name, args) — runs a tool INVISIBLY, no visual feedback in the canvas
+    • callNode(nodeId, data) — routes to a named SIBLING NODE in the same workflow.
+      Shows running → completed animation on the teal wire. Uses {{caller.X}} templates.
 
   WIRE DEFINITION:
     { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
-    Always include callNode: true â€” without it the engine auto-traverses the wire.
+    Always include callNode: true — without it the engine auto-traverses the wire.
 
 FILE/FOLDER PICKER (native OS dialogs, no tkinter needed):
-  stuard.pickFile({ title, filters, multiple }) â†’ { canceled, filePaths }
-  stuard.pickFolder({ title, multiple }) â†’ { canceled, filePaths }
-  stuard.pickSavePath({ title, defaultPath, filters }) â†’ { canceled, filePath }
+  stuard.pickFile({ title, filters, multiple }) → { canceled, filePaths }
+  stuard.pickFolder({ title, multiple }) → { canceled, filePaths }
+  stuard.pickSavePath({ title, defaultPath, filters }) → { canceled, filePath }
 
-  Example â€” folder picker:
+  Example — folder picker:
     const result = await stuard.pickFolder({ title: 'Select Project' });
     if (!result.canceled) setWorkspace(result.filePaths[0]);
 
-  Example â€” file picker with filters:
+  Example — file picker with filters:
     const result = await stuard.pickFile({
       title: 'Select Image',
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'gif'] }],
@@ -241,105 +202,12 @@ CLIPBOARD:
 NOTIFICATIONS:
   stuard.notify('Title', 'Body text');
 
-MARKDOWN RENDERING:
-  Use the built-in <Markdown> component to render markdown as real React elements.
-  Powered by react-markdown + remark-gfm + remark-math + rehype-katex.
-  Supports: GFM tables, task lists, strikethrough, code blocks, AND LaTeX/KaTeX math.
-
-  Usage:
-    <Markdown>{markdownString}</Markdown>
-    <Markdown content={markdownString} />
-    <Markdown src={markdownString} dark />
-
-  Props:
-    - content / src / children: the markdown string to render
-    - dark: boolean â€” use dark-mode styles (auto-detected if body has .dark class)
-    - compact: boolean â€” tighter spacing for small containers
-    - className: additional CSS classes
-    - style: inline style object
-    GFM (tables, strikethrough, task lists, autolinks) is always enabled via remark-gfm.
-    Math rendering (KaTeX) is always enabled via remark-math + rehype-katex.
-
-  MATH / LATEX:
-    - Inline math: use single dollar signs: $E = mc^2$ or \\(E = mc^2\\)
-    - Block/display math: use double dollar signs on their own line:
-        $$
-        \\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}
-        $$
-    - All standard LaTeX math notation is supported (fractions, matrices, Greek letters, etc.)
-    - Math inherits color from the parent element â€” works on dark and light backgrounds.
-
-  CSS classes for the container:
-    - markdown-body â€” base styled container (applied automatically)
-    - markdown-dark â€” dark mode variant (use dark prop or add class)
-    - markdown-compact â€” tighter spacing for small containers
-
-  Example:
-    function App() {
-      const md = "# Physics\\n\\nThe equation $F = ma$ relates force to acceleration.\\n\\n$$\\\\sum_{i=1}^{n} F_i = m \\\\cdot a$$\\n\\n- Item 1\\n- Item 2\\n\\n\`\`\`js\\nconsole.log('hi');\\n\`\`\`";
-      return <Markdown dark>{md}</Markdown>;
-    }
-
-  Also available: <CodeBlock code={codeString} language="js" copyable />
-    Shows code with a copy button. Props: code/children, language/lang, copyable (default true).
-
-TYPOGRAPHY & FONTS:
-  30+ Google Fonts are loaded. Use font-family classes to switch fonts on any element:
-
-  Sans-serif: font-inter, font-poppins, font-roboto, font-open-sans, font-lato, font-montserrat,
-    font-raleway, font-dm-sans (or font-dm), font-jakarta (or font-plus-jakarta), font-manrope,
-    font-sora, font-archivo, font-nunito, font-quicksand, font-comfortaa, font-ibm (or font-ibm-plex),
-    font-outfit, font-grotesk (or font-space-grotesk)
-  Serif: font-playfair, font-merriweather, font-lora, font-source-serif, font-dm-serif
-  Display/Condensed: font-bebas (or font-bebas-neue), font-oswald
-  Handwriting/Script: font-caveat, font-dancing (or font-dancing-script), font-pacifico,
-    font-marker (or font-permanent-marker), font-satisfy
-  Monospace: font-mono, font-code, font-jetbrains, font-fira-code, font-source-code,
-    font-space-mono, font-ibm-mono
-  Generic stacks: font-system, font-serif-stack, font-mono-stack
-
-  Font sizes: text-2xs (10px), text-xs (12px), text-sm (14px), text-base (16px), text-lg (18px),
-    text-xl (20px), text-2xl (24px), text-3xl (30px), text-4xl (36px), text-5xl (48px),
-    text-6xl (60px), text-7xl (72px), text-8xl (96px), text-9xl (128px)
-  Fluid/responsive: text-fluid-sm, text-fluid-base, text-fluid-lg, text-fluid-xl,
-    text-fluid-2xl, text-fluid-3xl, text-fluid-hero (auto-scales with window size via clamp())
-
-  Font weights: font-thin (100), font-extralight (200), font-light (300), font-normal (400),
-    font-medium (500), font-semibold (600), font-bold (700), font-extrabold (800), font-black (900)
-  Font style: italic, not-italic
-  Letter spacing: tracking-tighter, tracking-tight, tracking-normal, tracking-wide,
-    tracking-wider, tracking-widest
-  Line height: leading-none (1), leading-tight (1.25), leading-snug (1.375), leading-normal (1.5),
-    leading-relaxed (1.625), leading-loose (2), leading-3 through leading-10
-  Text transform: uppercase, lowercase, capitalize, normal-case
-  Text decoration: underline, overline, line-through, no-underline, decoration-solid/double/dotted/dashed/wavy,
-    decoration-1/2/4 (thickness), underline-offset-1/2/4/8
-  Text alignment: text-left, text-center, text-right, text-justify
-  OpenType: tabular-nums, small-caps, all-small-caps, slashed-zero, oldstyle-nums, ordinal
-
-  Typography presets (one class = complete style):
-    heading-display â€” bold modern sans (Outfit), tight tracking
-    heading-serif â€” elegant serif (Playfair Display)
-    heading-editorial â€” editorial serif (DM Serif Display)
-    heading-condensed â€” uppercase condensed (Bebas Neue), great for hero text
-    body-readable â€” long-form serif (Merriweather), wide line-height
-    body-clean â€” UI body text (Inter)
-    body-friendly â€” rounded friendly feel (Nunito/Quicksand)
-    label-ui â€” small UI labels (Inter medium 13px)
-    caption â€” subtle gray small text
-    overline â€” uppercase spaced category labels
-    code-block â€” code with ligatures (JetBrains Mono)
-
 CRITICAL RULES:
   1. EVERY button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit/done/action buttons.
      A button without onClick does NOTHING and blocks the workflow forever.
   2. useVar auto-seeds from data: if data has {"name": "{{step1.json.name}}"}, useVar('name', '') returns it.
   3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
   4. Use standard Tailwind classes (bg-slate-950), not arbitrary values (bg-[#050510]).
-  5. When displaying AI-generated text, summaries, descriptions, or any content that may contain
-     markdown (headers, bold, lists, code blocks, links), ALWAYS use <Markdown dark>{text}</Markdown>
-     instead of rendering in a <p> or <span>. Raw text in a <p> tag shows asterisks/hashtags literally.
-     The Markdown component renders them as actual formatted headings, bold, lists, etc.
 
 MULTI-PAGE:
   Use useState for page navigation inside the component:
@@ -381,7 +249,10 @@ IMPORTANT: The component field is raw JavaScript/JSX, NOT a JSON string.
             invisible: z.boolean().optional().describe('Hide this window from screenshots and screen recordings (content protection)'),
         }).optional().describe('Window appearance configuration'),
     }),
-    execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – custom_ui requires the Stuard desktop app.');
+        return await execLocalTool('custom_ui', args);
+    }
 });
 
 const updateCustomUiTool = createTool({
@@ -393,7 +264,10 @@ const updateCustomUiTool = createTool({
         component: z.string().optional().describe('New React JSX component to replace current view'),
         css: z.string().optional().describe('New CSS to append'),
     }),
-    execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – update_custom_ui requires the Stuard desktop app.');
+        return await execLocalTool('update_custom_ui', args);
+    }
 });
 
 const notifyTool = createTool({
@@ -404,7 +278,10 @@ const notifyTool = createTool({
         body: z.string().optional(),
         severity: z.enum(['info', 'warning', 'error']).optional(),
     }),
-    execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – notify requires the Stuard desktop app.');
+        return await execLocalTool('notify', args);
+    }
 });
 
 const logTool = createTool({
@@ -415,23 +292,21 @@ const logTool = createTool({
         level: z.enum(['info', 'warn', 'error']).optional(),
         data: z.any().optional(),
     }),
-    execute: async () => { throw new Error("This tool is for workflow definitions only, not direct execution."); }
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – log requires the Stuard desktop app.');
+        return await execLocalTool('log', args);
+    }
 });
 
 registerTool(customUiTool, 'GUI');
 registerTool(updateCustomUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');
-registerTool(ask_user, 'Core');
 
 // Device Tools
 Object.values(deviceTools).forEach(t => {
     const name = (t as any)?.id || (t as any)?.name;
     if (!name) return;
-
-    if (LEGACY_BROWSER_EXTENSION_TOOL_IDS.has(name)) {
-        return;
-    }
 
     if (MEMORY_AI_TOOL_IDS.has(name) && !MEMORY_AI_ALLOWLIST.has(name)) {
         return;
@@ -441,13 +316,11 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         registerTool(t, 'FileSearch');
-    } else if (['list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'launch_application_or_uri'].includes(name)) {
-        registerTool(t, 'System', undefined, 'device');
-    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
+    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         registerTool(t, 'System');
     } else if (['get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'random_choice', 'get_env_var', 'get_system_info', 'hash_string', 'base64_encode', 'base64_decode', 'json_parse', 'json_stringify', 'sleep', 'regex_match', 'regex_replace'].includes(name)) {
         registerTool(t, 'Utils');
-    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_text', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
+    } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
         registerTool(t, 'GUI');
     } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
         registerTool(t, 'Media');
@@ -455,24 +328,22 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['mediapipe_status', 'mediapipe_setup', 'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection', 'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic', 'mediapipe_process_video'].includes(name)) {
         registerTool(t, 'MediaPipe');
-    } else if (name.startsWith('ollama_')) {
-        registerTool(t, 'Ollama');
     } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
         registerTool(t, 'Streaming');
     } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {
-        // Internal stream tools (prefixed with _) and deprecated stream_from_* â€” skip registration
+        // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
     } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
         registerTool(t, 'AI');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
-    } else if (['search_past_conversations', 'get_conversation_context', 'browse_topic_collections', 'get_collection_detail', 'synthesize_collection'].includes(name)) {
+    } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
         registerTool(t, 'Memory');
-    } else if (['list_user_spaces', 'get_space_contents', 'add_to_space', 'ensure_space_path', 'list_space_path', 'add_to_space_path', 'get_space_tree', 'create_space', 'add_source_to_space', 'add_note_to_space', 'add_code_snippet_to_space', 'link_conversation_to_space', 'find_or_create_space', 'update_space_item', 'delete_space_item'].includes(name)) {
-        registerTool(t, 'Spaces');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
         registerTool(t, 'Productivity');
+    } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
+        registerTool(t, 'Canvas');
     } else if (['workspace_read_file', 'workspace_write_file', 'workspace_delete_file', 'workspace_list_files', 'workspace_create_folder', 'workspace_get_info'].includes(name)) {
         registerTool(t, 'Workspace');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
@@ -490,18 +361,13 @@ Object.values(deviceTools).forEach(t => {
     }
 });
 
-// Skills
-registerTool(get_skill_info, 'Core');
-
 // Integration Tools
 registerTool(analyzeMediaTool, 'AI');
 registerTool(aiInferenceTool, 'AI');
-registerTool(generate_image, 'AI');
 registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
 
 Object.values(googleTools).forEach(t => registerTool(t, 'Google'));
-Object.values(ocrTools).forEach(t => registerTool(t, 'AI'));
 // Backward compatibility alias
 if (googleTools.gmail_send_message) {
     registerTool(googleTools.gmail_send_message, 'Google');
@@ -527,15 +393,6 @@ Object.values(redditTools).forEach(t => registerTool(t, 'Reddit'));
 Object.values(youtubeTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
 });
-Object.values(metaSocialTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
-});
-Object.values(whatsappTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
-});
-Object.values(telnyxTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
-});
 Object.values(marketplaceTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Marketplace');
 });
@@ -551,9 +408,6 @@ Object.values(webhookTools).forEach(t => {
 Object.values(httpTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
 });
-Object.values(cloudStorageTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations', 'cloud', 'cloud');
-});
 
 // 2. Meta Tools
 
@@ -561,7 +415,7 @@ export const search_tools = createTool({
     id: 'search_tools',
     description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Spaces', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Ollama', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
         query: z.string().optional(),
     }),
     outputSchema: z.object({
@@ -577,9 +431,8 @@ export const search_tools = createTool({
         const categories = getToolCategories();
 
         const keywordSearch = () => {
-            const results: Array<{ name: string; description: string; category: string; score: number }> = [];
-            const q = String(query || '').trim().toLowerCase();
-            const tokens = q.split(/[\s_\-]+/).map(t => t.trim()).filter(Boolean);
+            const results: Array<{ name: string; description: string; category: string }> = [];
+            const q = (query || '').toLowerCase();
 
             for (const [cat, names] of categories.entries()) {
                 if (category && cat !== category) continue;
@@ -589,42 +442,17 @@ export const search_tools = createTool({
                     if (!tool) continue;
 
                     const desc = tool.description || '';
-                    const haystack = `${name} ${desc}`.toLowerCase();
-
-                    let score = 0;
-                    if (q) {
-                        if (name.toLowerCase() === q) score += 100;
-                        if (name.toLowerCase().includes(q)) score += 40;
-                        if (desc.toLowerCase().includes(q)) score += 20;
-
-                        for (const token of tokens) {
-                            if (name.toLowerCase().includes(token)) score += 8;
-                            if (desc.toLowerCase().includes(token)) score += 4;
-                        }
-
-                        const missingToken = tokens.some(token => !haystack.includes(token));
-                        if (score === 0 || missingToken) continue;
-                    } else {
-                        score = 1;
-                    }
+                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
 
                     results.push({
                         name,
                         description: desc,
                         category: cat,
-                        score,
                     });
                 }
             }
 
-            results.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-            return {
-                tools: results.slice(0, 15).map(({ name, description, category }) => ({
-                    name,
-                    description,
-                    category,
-                })),
-            };
+            return { tools: results };
         };
 
         const supabase = getSupabaseService();
@@ -645,29 +473,34 @@ export const search_tools = createTool({
             const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
             const queryVector = embeddings[0];
 
-            const { data: rows, error } = await supabase.rpc('search_tools', {
-                query_embedding: queryVector,
-                match_threshold: 0.2,
-                match_count: 10,
-                filter_category: category || null,
-                filter_kind: null,
-                enabled_only: true,
-            });
+            // Fetch all tools (caching in memory would be better, but for <1000 tools this is fast enough)
+            const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
             if (error || !rows) throw error;
 
-            const top = (rows as any[]).slice(0, 10).map((t: any) => ({
+            let candidates = rows;
+            if (category) {
+                candidates = rows.filter((r: any) => r.category === category);
+            }
+
+            const withScores = candidates.map((r: any) => {
+                let vec = r.embedding;
+                if (typeof vec === 'string') {
+                    try { vec = JSON.parse(vec); } catch { }
+                }
+                const sim = Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1;
+                return { ...r, score: sim };
+            });
+
+            withScores.sort((a: any, b: any) => b.score - a.score);
+
+            // Return top 10
+            const top = withScores.slice(0, 10).map((t: any) => ({
                 name: t.name,
                 description: t.description,
                 category: t.category,
             }));
 
-            const keywordTop = keywordSearch().tools;
-            const merged = [...top, ...keywordTop];
-            const deduped = merged.filter((tool, index) =>
-                merged.findIndex(other => other.name === tool.name) === index
-            );
-
-            return { tools: deduped.slice(0, 15) };
+            return { tools: top };
 
         } catch (e) {
             console.warn('Vector search failed, falling back to keyword search', e);

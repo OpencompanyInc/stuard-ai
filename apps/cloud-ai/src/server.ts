@@ -26,6 +26,7 @@ import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatc
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
 import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
+import { buildAvailableSkillsPromptSection, getSkillsFromContext } from './tools/skill-tools';
 
 import { getAgentForQuery } from './agents/stuard/index';
 
@@ -393,6 +394,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     } catch { }
 
     const secretBag: any = { ...(secrets || {}) };
+    try {
+      const incomingSkills = Array.isArray((msg as any)?.context?.skills) ? (msg as any).context.skills : [];
+      if (incomingSkills.length > 0) {
+        secretBag.__skills = incomingSkills;
+      }
+    } catch { }
 
     // Run EVERYTHING in background (don't await) to allow parallel processing across tabs
     // This moves auth, routing, and agent setup into the non-blocking bridge context
@@ -892,6 +899,13 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
           if (contextParts.length > 0) {
             inputMessages = [{ role: 'system', content: contextParts.join(' | ') }, ...inputMessages];
+          }
+        } catch { }
+
+        try {
+          const skillsSection = buildAvailableSkillsPromptSection(getSkillsFromContext());
+          if (skillsSection) {
+            inputMessages = [{ role: 'system', content: skillsSection }, ...inputMessages];
           }
         } catch { }
 

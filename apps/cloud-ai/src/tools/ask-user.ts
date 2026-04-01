@@ -39,12 +39,16 @@ export const AskUserOutputSchema = z.object({
 // ── Lean schema sent to LLM (flat, no nesting → ~300 tok vs ~5200 tok) ──────
 
 export const AskUserInputSchema = z.object({
-  message: z.string(),
+  title: z.string().optional(),
+  message: z.string().optional(),
   type: z.enum(['confirm', 'choices', 'text']).optional(),
   options: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
-  title: z.string().optional(),
   placeholder: z.string().optional(),
-});
+  pages: z.array(AskUserPageSchema).min(1).optional(),
+}).refine(
+  (value) => Boolean(value.message) || Boolean(value.pages?.length),
+  { message: 'ask_user requires either a message or at least one page' },
+);
 
 export const ask_user = createTool({
   id: 'ask_user',

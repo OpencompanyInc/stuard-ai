@@ -589,6 +589,17 @@ const _FFMPEG_TIER_1_TOOLS = [
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
 
 const PROMPT_DIRECT_TOOLS = ['search_local_workflows', 'run_workflow'] as const;
+const DESKTOP_UI_DIRECT_TOOLS = ['custom_ui'] as const;
+
+function addDesktopUiTools(target: Record<string, any>, toolUniverse: Record<string, any>): void {
+  if (!hasClientBridge()) return;
+
+  for (const name of DESKTOP_UI_DIRECT_TOOLS) {
+    if ((toolUniverse as any)[name]) {
+      target[name] = (toolUniverse as any)[name];
+    }
+  }
+}
 
 // Semantic injection map is now DB-backed via tool_embeddings.semantic_groups.
 // See utils/tool-groups.ts for the runtime loader and cache.
@@ -699,6 +710,9 @@ export function getTools(
     }
   }
 
+  // Desktop-only UI tools should be directly callable when a bridge is active.
+  addDesktopUiTools(tools, toolUniverse);
+
   // Always add SIS discovery tools
   for (const name of SIS_META_TOOL_NAMES) {
     if ((toolUniverse as any)[name]) {
@@ -769,6 +783,8 @@ export async function getToolsForQuery(
   // Fast keyword matching against DB-stored semantic_groups.
   // e.g. "do this in terminal" → injects terminal_create, terminal_send_input, terminal_read
   // Integration tools (gmail_*, github_*, etc.) are gated by enabledIntegrations.
+  addDesktopUiTools(selected, toolUniverse);
+
   try {
     const injected = await getSemanticInjections(query, enabledIntegrations);
     for (const name of injected) {

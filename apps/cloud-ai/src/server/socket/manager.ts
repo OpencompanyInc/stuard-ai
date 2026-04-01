@@ -5,8 +5,6 @@ import { handleClientToolMessage, withClientBridge } from '../../tools/bridge';
 import { getTool } from '../../tools/tool-registry';
 import { normalizeMessages } from '../../utils/messages';
 import { verifyToken, checkAccess, incrementDailyRequestCounter, createConversation, addUserMessage, addAssistantMessage } from '../../supabase';
-import { verifyAccessToken, parseTokenInfo } from '../../auth';
-import { registerWebhookClient, deliverQueuedWebhooks } from '../../webhooks/dispatch';
 import { runAgent, abortAgent } from '../streaming/agent-runner';
 import { PING_INTERVAL_MS } from '../../utils/config';
 import { registerConnection, getDesktopWs, type ClientType } from '../../services/vm-bridge';
@@ -17,15 +15,13 @@ import { verifyVMToken } from '../../services/vm-tokens';
 const wsAlive = new WeakMap<WebSocket, boolean>();
 const wsQueues = new WeakMap<WebSocket, Array<any>>();
 const wsIsRunning = new WeakMap<WebSocket, boolean>();
+// Per-request tracking for parallel tab execution
+const wsRunningRequests = new WeakMap<WebSocket, Set<string>>();
 
-// Token verification cache – avoids re-hitting Supabase auth on every message
-const _tokenCache = new Map<string, { ts: number; user: { userId: string; email?: string } }>();
-const TOKEN_CACHE_TTL_MS = 60_000; // 60 seconds
-
-function getCachedToken(token: string): { userId: string; email?: string } | null {
-  const entry = _tokenCache.get(token);
-  if (entry && Date.now() - entry.ts < TOKEN_CACHE_TTL_MS) return entry.user;
-  return null;
+function getRunningRequests(ws: WebSocket): Set<string> {
+  let s = wsRunningRequests.get(ws);
+  if (!s) { s = new Set(); wsRunningRequests.set(ws, s); }
+  return s;
 }
 
 // Configuration
@@ -38,9 +34,9 @@ export class SocketManager {
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
-
+    
     this.wss.on('connection', this.handleConnection.bind(this));
-
+    
     // Setup heartbeat
     this.pingTimer = setInterval(() => {
       this.wss.clients.forEach((client: WebSocket) => {
@@ -88,7 +84,7 @@ export class SocketManager {
           }
         }
       }
-    } catch { }
+    } catch {}
 
     this.send(ws, { type: 'handshake', origin: 'cloud-ai', message: 'connected' });
     wsQueues.set(ws, []);
@@ -126,7 +122,7 @@ export class SocketManager {
         const userId = (ws as any).__userId;
         if (userId) {
           const action = kind.replace('terminal_', '') as 'open' | 'data' | 'resize' | 'close';
-          sendVMTerminalCommand(userId, action, msg).catch(() => { });
+          sendVMTerminalCommand(userId, action, msg).catch(() => {});
         }
       } catch { }
       return;
@@ -134,8 +130,9 @@ export class SocketManager {
 
     // Handle stop/abort request
     if (kind === 'stop' || kind === 'abort') {
-      const aborted = abortAgent(ws);
-      this.send(ws, { type: 'stopped', success: aborted });
+      const stopRequestId = msg?.requestId || undefined;
+      const aborted = abortAgent(ws, stopRequestId);
+      this.send(ws, { type: 'stopped', success: aborted, requestId: stopRequestId });
       return;
     }
 
@@ -146,53 +143,36 @@ export class SocketManager {
       return;
     }
 
-    // Handle explicit auth message: client sends {type:'auth', accessToken:'...'} to register
-    // for webhook delivery (Gmail Pub/Sub, Drive triggers, etc.) without needing to send a chat.
-    if (kind === 'auth') {
-      const token = String(msg?.accessToken || '').trim();
-      if (!token) {
-        this.send(ws, { type: 'auth_result', ok: false, error: 'missing_token' });
-        return;
-      }
-      try {
-        const authResult = await verifyAccessToken(token);
-        if (authResult?.success && authResult.userId) {
-          (ws as any).__userId = authResult.userId;
-          registerWebhookClient(authResult.userId, ws);
-          try {
-            const ct = (ws as any).__clientType || 'desktop';
-            if (ct !== 'vm-agent') registerConnection(ws, authResult.userId, 'desktop');
-          } catch { }
-          const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
-          this.send(ws, { type: 'auth_result', ok: true, queued: delivered });
-          writeLog('ws_auth_message', { userId: authResult.userId, delivered });
-        } else {
-          this.send(ws, { type: 'auth_result', ok: false, error: 'invalid_token' });
-        }
-      } catch (e: any) {
-        this.send(ws, { type: 'auth_result', ok: false, error: String(e?.message || 'auth_failed') });
-      }
-      return;
-    }
-
     if (kind !== 'chat') {
       this.send(ws, { type: 'error', message: `unknown type: ${kind}` });
       return;
     }
 
-    // Queue logic
+    // Queue logic — allow parallel requests from different tabs/conversations.
+    // Only queue if the SAME conversationId already has a running request.
+    const requestId = String(msg?.requestId || `sr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+    const convId = String(msg?.conversationId || '');
     try {
-      const runningNow = wsIsRunning.get(ws) === true;
-      if (runningNow) {
+      const running = getRunningRequests(ws);
+      // Queue only when the same conversation is already processing
+      if (convId && running.has(convId)) {
         const q = wsQueues.get(ws) || [];
         q.push(msg);
         wsQueues.set(ws, q);
         const messageText = String(msg?.text || '').slice(0, 120);
         const messageId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        this.send(ws, { type: 'queued', position: q.length, text: messageText, id: messageId });
+        this.send(ws, { type: 'queued', position: q.length, text: messageText, id: messageId, requestId });
         return;
       }
     } catch { }
+
+    // Scoped send that tags every message with requestId for client-side tab routing
+    const sendTagged = (data: unknown) => {
+      try {
+        const payload = typeof data === 'object' && data !== null ? { ...(data as any), requestId } : data;
+        ws.send(JSON.stringify(payload));
+      } catch { }
+    };
 
     // Auth & Processing
     const messages = normalizeMessages(msg);
@@ -202,49 +182,13 @@ export class SocketManager {
     }
 
     try {
-      const _t0 = Date.now();
       const accessToken = String(msg?.auth?.accessToken || '');
-
-      // Fast path: use cached token + parse JWT locally for userId
-      let authUser: { userId: string; email?: string } | null = null;
-      let access: { allowed: boolean; reason?: string; plan?: string; limit?: number; used?: number } | null = null;
-
-      if (accessToken) {
-        authUser = getCachedToken(accessToken);
-        if (authUser) {
-          // Token is cached & valid — only need access check (which also has its own cache)
-          access = await checkAccess(authUser.userId);
-          console.log(`[perf] auth(cached)+access: ${Date.now() - _t0}ms`);
-        } else {
-          // Parse JWT locally for userId so we can run verifyToken + checkAccess in parallel
-          const tokenInfo = parseTokenInfo(accessToken);
-          if (tokenInfo && tokenInfo.userId && !tokenInfo.isExpired) {
-            const [verified, accessResult] = await Promise.all([
-              verifyToken(accessToken),
-              checkAccess(tokenInfo.userId),
-            ]);
-            authUser = verified;
-            access = accessResult;
-          } else {
-            authUser = await verifyToken(accessToken);
-            if (authUser) {
-              access = await checkAccess(authUser.userId);
-            }
-          }
-          console.log(`[perf] auth+access(parallel): ${Date.now() - _t0}ms`);
-          // Cache successful verification
-          if (authUser) {
-            _tokenCache.set(accessToken, { ts: Date.now(), user: authUser });
-          }
-        }
-      }
-
+      const authUser = accessToken ? await verifyToken(accessToken) : null;
+      
       if (REQUIRE_AUTH && !authUser) {
         this.send(ws, { type: 'error', message: 'unauthorized' });
         return;
       }
-
-      const userId = authUser?.userId || null;
 
       if (authUser) {
         // Register connection for VM ↔ Desktop relay
@@ -253,16 +197,17 @@ export class SocketManager {
           registerConnection(ws, authUser.userId, clientType as ClientType);
         }
 
-        if (access && !access.allowed) {
+        const access = await checkAccess(authUser.userId);
+        if (!access.allowed) {
           this.send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } });
           return;
         }
-        // Fire-and-forget – don't block the request pipeline
-        incrementDailyRequestCounter(authUser.userId).catch(() => {});
+        try { await incrementDailyRequestCounter(authUser.userId); } catch { }
       }
 
       wsIsRunning.set(ws, true);
-
+      if (convId) getRunningRequests(ws).add(convId);
+      
       // Determine agent configuration from message
       const userText = msg.text || (messages[messages.length - 1] as any).content || '';
       const normalizeTier = (v: any) => {
@@ -278,35 +223,27 @@ export class SocketManager {
       const modelId = typeof msg?.modelId === 'string' ? String(msg.modelId).trim() : '';
       const chosenModelId = modelId || undefined;
       let conversationId = msg.conversationId || null;
+      const userId = authUser?.userId || null;
 
-      // SMS-originated chats must always persist regardless of sync_conversations pref
-      const hiddenCtx = String(msg.hiddenContext || '');
-      const isSmsChat = hiddenCtx.includes('[SMS MODE]') || hiddenCtx.includes('[PROACTIVE FOLLOW-UP]');
-      const forcePersist = isSmsChat;
-
-      const metaOpts = {
-        mode: modelName,
-        tier: modelName === 'auto' ? undefined : modelName,
-        modelId: chosenModelId,
-      };
-
-      // Fire off conversation creation/update concurrently – don't block agent start.
-      // We capture a promise so we can await the conversationId before storing the response.
-      let conversationPromise: Promise<string | null> | null = null;
+      // Create or continue conversation
       if (userId) {
         if (!conversationId) {
-          conversationPromise = createConversation(userId, userText, modelName, metaOpts, 'stuard', forcePersist)
-            .then((id) => {
-              if (id) {
-                conversationId = id;
-                this.send(ws, { type: 'conversation', conversationId: id });
-              }
-              return id;
-            })
-            .catch(() => null);
+          // New conversation
+          conversationId = await createConversation(userId, userText, modelName, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
+          if (conversationId) {
+            sendTagged({ type: 'conversation', conversationId });
+          }
         } else {
-          // Continuing conversation – store user message in background
-          addUserMessage(userId, conversationId, userText, metaOpts, forcePersist).catch(() => {});
+          // Continuing conversation - store user message
+          await addUserMessage(userId, conversationId, userText, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
         }
       }
 
@@ -321,11 +258,7 @@ export class SocketManager {
         history: messages.slice(0, -1),
         userId,
         conversationId,
-        context: {
-          ...(msg.context || {}),
-          // Pass through hiddenContext (e.g. SMS formatting instructions)
-          ...(msg.hiddenContext ? { hiddenContext: String(msg.hiddenContext) } : {}),
-        },
+        context: msg.context || {}
       };
 
       try {
@@ -336,37 +269,37 @@ export class SocketManager {
         if (isVmAgent && userId) {
           const desktopWs = getDesktopWs(userId);
           if (!desktopWs) {
-            this.send(ws, {
+            sendTagged({
               type: 'error',
               message: 'desktop_offline',
               detail: 'Stuard desktop app must be running for device tools.',
             });
             wsIsRunning.set(ws, false);
+            if (convId) getRunningRequests(ws).delete(convId);
             this.processNextInQueue(ws);
             return;
           }
-          result = await runAgent(ws, agentConfig as any, desktopWs);
+          result = await runAgent(ws, agentConfig as any, desktopWs, requestId);
         } else {
-          result = await runAgent(ws, agentConfig as any);
-        }
-
-        // Wait for conversationId if it was being created concurrently
-        if (conversationPromise) {
-          const resolvedId = await conversationPromise;
-          if (resolvedId) conversationId = resolvedId;
+          result = await runAgent(ws, agentConfig as any, undefined, requestId);
         }
 
         // Store assistant response
         if (userId && conversationId && result?.text) {
-          await addAssistantMessage(userId, conversationId, result.text, metaOpts, forcePersist);
+          await addAssistantMessage(userId, conversationId, result.text, {
+            mode: modelName,
+            tier: modelName === 'auto' ? undefined : modelName,
+            modelId: chosenModelId,
+          });
         }
       } finally {
         try { wsIsRunning.set(ws, false); } catch { }
+        try { if (convId) getRunningRequests(ws).delete(convId); } catch { }
         this.processNextInQueue(ws);
       }
 
     } catch (e: any) {
-      this.send(ws, { type: 'error', message: e?.message || String(e) });
+      sendTagged({ type: 'error', message: e?.message || String(e) });
     }
   }
 
