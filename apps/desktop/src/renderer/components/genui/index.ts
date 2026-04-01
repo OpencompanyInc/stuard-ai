@@ -39,6 +39,9 @@ export { FormWizard } from './FormWizard';
 // === Integrations ===
 export { IntegrationConnect } from './IntegrationConnect';
 
+// === Inline Chat UI ===
+export { ChatUIRenderer } from './ChatUIRenderer';
+
 // === Container ===
 export { GenUIContainer } from './GenUIContainer';
 export { GenUIErrorBoundary } from './GenUIErrorBoundary';

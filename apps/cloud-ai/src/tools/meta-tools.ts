@@ -298,8 +298,87 @@ const logTool = createTool({
     }
 });
 
+const chatUiTool = createTool({
+    id: 'chat_ui',
+    description: `Render a custom interactive React component inline in the chat conversation.
+Unlike custom_ui (which opens a separate window), chat_ui embeds the UI directly in the chat bubble.
+
+COMPONENT FIELD:
+  Define a function App() using JSX syntax. JSX is auto-transformed at render time.
+
+  - Standard React JSX: <div className="p-4">{expr}</div>
+  - Hooks: useState, useEffect, useRef, useMemo, useCallback
+  - Tailwind CSS classes available (dark mode via dark: prefix)
+  - stuard.submit(data) — submit data back to the agent (resolves blocking)
+  - stuard.close() — dismiss the UI without data
+
+BLOCKING vs NON-BLOCKING:
+  - blocking: true  → Agent pauses until the user interacts (submit/close). Use for forms, confirmations, selections.
+  - blocking: false → Agent continues immediately. UI stays rendered in chat as display-only. Use for dashboards, status displays, rich content.
+
+DESIGN SCHEME (auto-injected):
+  A \`designScheme\` object is available globally in your component:
+    designScheme.mode    — 'dark' | 'light'
+    designScheme.colors  — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input }
+
+  The <body> has class "dark" when in dark mode. Use Tailwind dark: classes for styling:
+    <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+
+  By default, background and text colors already match the host app — only override when needed.
+
+RULES:
+  1. EVERY action button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit buttons.
+  2. initialData is available globally, seeded from the data arg.
+  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
+  4. The component renders in a sandboxed iframe — no access to parent window or Node.js APIs.
+
+EXAMPLE (blocking form):
+  component: \`
+    function App() {
+      const [name, setName] = useState(initialData.name || '');
+      return (
+        <div className="p-4 space-y-3">
+          <h2 className="text-lg font-semibold">What's your name?</h2>
+          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600"
+            value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
+          <button onClick={() => stuard.submit({ name })}
+            className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">
+            Submit
+          </button>
+        </div>
+      );
+    }
+  \`
+
+EXAMPLE (non-blocking display):
+  component: \`
+    function App() {
+      return (
+        <div className="p-4">
+          <div className="text-sm text-slate-500 dark:text-slate-400">Status</div>
+          <div className="text-2xl font-bold">{initialData.status}</div>
+        </div>
+      );
+    }
+  \``,
+    inputSchema: z.object({
+        component: z.string().describe('React function component using JSX. Must define function App().'),
+        blocking: z.boolean().optional().default(false).describe('If true, agent waits for user interaction before continuing.'),
+        data: z.record(z.string(), z.any()).optional().describe('Initial data accessible as initialData in the component.'),
+        css: z.string().optional().describe('Additional CSS styles injected into the iframe.'),
+        height: z.number().optional().describe('Initial height in px (default auto-sizes to content, max 500).'),
+        title: z.string().optional().describe('Optional title bar shown above the component.'),
+    }),
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – chat_ui requires the Stuard desktop app.');
+        const timeout = args.blocking ? 600000 : 30000;
+        return await execLocalTool('chat_ui', args, undefined, timeout);
+    }
+});
+
 registerTool(customUiTool, 'GUI');
 registerTool(updateCustomUiTool, 'GUI');
+registerTool(chatUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');
 

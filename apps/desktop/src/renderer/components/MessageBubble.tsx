@@ -37,6 +37,8 @@ const GENUI_TOOL_NAMES = new Set([
   'draft_email',
   // Integrations
   'connect_integration',
+  // Inline custom React UI (blocking or non-blocking based on args)
+  'chat_ui',
 ]);
 
 // Tools that should be hidden from the chat UI (internal/silent tools)

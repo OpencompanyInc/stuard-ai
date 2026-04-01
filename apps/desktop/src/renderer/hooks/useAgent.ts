@@ -87,6 +87,8 @@ const GENUI_TOOL_NAMES = new Set([
   'show_colors',
   'show_progress',
   'show_form',
+  // Inline custom React UI (blocking/non-blocking determined by args.blocking)
+  'chat_ui',
 ]);
 
 // GenUI tools that block and wait for user interaction
@@ -701,6 +703,8 @@ export function useAgent(options?: string | UseAgentOptions) {
     for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
       if (tabId === id) {
         requestIdToTabRef.current.delete(reqId);
+        stoppedByRequestRef.current.delete(reqId);
+        streamingByRequestRef.current.delete(reqId);
         // Tell the server to stop any active stream for this request
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           try { wsRef.current.send(JSON.stringify({ type: 'stop', requestId: reqId })); } catch { }
@@ -938,42 +942,45 @@ export function useAgent(options?: string | UseAgentOptions) {
     try {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-      // Find the next queued item for a tab that isn't already running
-      const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
-      if (nextIdx === -1) return;
+      // Dispatch all eligible queued items (one per tab that isn't already running)
+      const tabsToUpdate: string[] = [];
+      while (true) {
+        const nextIdx = outboundQueueRef.current.findIndex(item => !runningTabsRef.current.has(item.tabId));
+        if (nextIdx === -1) break;
 
-      const next = outboundQueueRef.current.splice(nextIdx, 1)[0];
-      if (!next) return;
+        const next = outboundQueueRef.current.splice(nextIdx, 1)[0];
+        if (!next) break;
 
-      const targetTabId = next.tabId;
+        const targetTabId = next.tabId;
 
-      // Generate a unique requestId to track this request/response pair
-      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      requestIdToTabRef.current.set(requestId, targetTabId);
+        // Generate a unique requestId to track this request/response pair
+        const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        requestIdToTabRef.current.set(requestId, targetTabId);
 
-      // Set tracking refs
-      streamingTabIdRef.current = targetTabId;
-      activeRequestIdRef.current = requestId;
-      // Add to pending response queue (legacy fallback)
-      pendingResponseTabsRef.current.push(targetTabId);
+        // Set tracking refs (last dispatched wins for legacy fallback)
+        streamingTabIdRef.current = targetTabId;
+        activeRequestIdRef.current = requestId;
+        pendingResponseTabsRef.current.push(targetTabId);
 
-      // If there were queued items visible for this tab, mark that the next start should promote from queue
-      waitingQueuedStartRef.current = queuedMessagesRef.current.length > 0;
-      // Mark this tab as running
-      runningTabsRef.current.add(targetTabId);
+        waitingQueuedStartRef.current = queuedMessagesRef.current.length > 0;
+        runningTabsRef.current.add(targetTabId);
 
-      // Add requestId to payload for server to echo back
-      const payload = { ...next.payload, requestId };
+        const payload = { ...next.payload, requestId };
 
-      // Ensure this request starts clean (not marked as stopped from a prior attempt)
-      stoppedByRequestRef.current.delete(requestId);
-      streamingByRequestRef.current.delete(requestId);
-      try { wsRef.current.send(JSON.stringify(payload)); } catch { }
+        stoppedByRequestRef.current.delete(requestId);
+        streamingByRequestRef.current.delete(requestId);
+        try { wsRef.current.send(JSON.stringify(payload)); } catch { }
 
-      // Update this specific tab's AI state
-      setTabs(prev => prev.map(t =>
-        t.id === targetTabId ? { ...t, aiState: { phase: 'routing', statusText: 'Thinking…' } } : t
-      ));
+        tabsToUpdate.push(targetTabId);
+      }
+
+      // Batch-update AI state for all dispatched tabs
+      if (tabsToUpdate.length > 0) {
+        const dispatched = new Set(tabsToUpdate);
+        setTabs(prev => prev.map(t =>
+          dispatched.has(t.id) ? { ...t, aiState: { phase: 'routing', statusText: 'Thinking…' } } : t
+        ));
+      }
     } catch { }
   }, []);
 
@@ -1104,8 +1111,11 @@ export function useAgent(options?: string | UseAgentOptions) {
                 return [...prev, { id, tool, args, status: 'pending' }];
               });
 
-              // For non-blocking tools, auto-respond immediately
-              if (!BLOCKING_GENUI_TOOLS.has(tool)) {
+              // For non-blocking tools, auto-respond immediately.
+              // chat_ui uses args.blocking to determine mode dynamically.
+              const isBlocking = BLOCKING_GENUI_TOOLS.has(tool)
+                || (tool === 'chat_ui' && args?.blocking === true);
+              if (!isBlocking) {
                 console.log('[agent] Auto-responding to non-blocking GenUI tool:', tool);
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
                   wsRef.current.send(JSON.stringify({

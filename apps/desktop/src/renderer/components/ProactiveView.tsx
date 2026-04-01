@@ -32,6 +32,7 @@ const GENUI_TOOL_NAMES = new Set([
   'show_feedback_form', 'feedback_form',
   'show_form', 'form_wizard',
   'connect_integration', 'integration_connect', 'show_integrations',
+  'chat_ui',
 ]);
 import type {
   ProactiveConfig,

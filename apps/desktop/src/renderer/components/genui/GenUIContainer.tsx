@@ -22,6 +22,7 @@ import { FeedbackForm } from './FeedbackForm';
 import { FormWizard } from './FormWizard';
 import { IntegrationConnect } from './IntegrationConnect';
 import type { DropzoneFile } from './FileDropzone';
+import { ChatUIRenderer } from './ChatUIRenderer';
 import { GenUIErrorBoundary } from './GenUIErrorBoundary';
 
 export interface GenUIProps {
@@ -369,6 +370,21 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             connectedSlugs={safeArgs.connectedSlugs}
             disabled={disabled}
             onConnect={(slug) => onResult({ action: 'connect', slug })}
+          />
+        );
+
+      // === Inline Chat UI (custom React component) ===
+      case 'chat_ui':
+        return (
+          <ChatUIRenderer
+            component={safeArgs.component || ''}
+            data={safeArgs.data}
+            css={safeArgs.css}
+            height={safeArgs.height}
+            title={safeArgs.title}
+            onResult={onResult}
+            isCompleted={isCompleted}
+            result={result}
           />
         );
 

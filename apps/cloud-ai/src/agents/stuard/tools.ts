@@ -589,7 +589,7 @@ const _FFMPEG_TIER_1_TOOLS = [
 const SIS_ESSENTIAL_TOOLS = ['wait', 'run_sequential', 'run_parallel'] as const;
 
 const PROMPT_DIRECT_TOOLS = ['search_local_workflows', 'run_workflow'] as const;
-const DESKTOP_UI_DIRECT_TOOLS = ['custom_ui'] as const;
+const DESKTOP_UI_DIRECT_TOOLS = ['chat_ui'] as const;
 
 function addDesktopUiTools(target: Record<string, any>, toolUniverse: Record<string, any>): void {
   if (!hasClientBridge()) return;
