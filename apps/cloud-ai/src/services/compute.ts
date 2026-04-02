@@ -289,9 +289,22 @@ iptables -A INPUT -p tcp --dport 8765 ! -s 127.0.0.1 -j DROP 2>/dev/null || true
 chown -R stuard:stuard /opt/stuard /home/stuard
 chattr +i /opt/stuard/vm-agent-bundle.js 2>/dev/null || true
 
-# ── 8. Create and START Node.js agent service IMMEDIATELY ────────────────────
+# ── 8. Compute per-service memory limits based on total RAM ──────────────────
+# Scale conservatively: Node gets ~30% of RAM, Python gets ~40%, leaving room
+# for OS + tools. Minimum 384M/512M to avoid OOM on chat requests.
+TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_RAM_MB=$((TOTAL_RAM_KB / 1024))
+NODE_MEM_MB=$(( TOTAL_RAM_MB * 30 / 100 ))
+PYTHON_MEM_MB=$(( TOTAL_RAM_MB * 40 / 100 ))
+[ "$NODE_MEM_MB" -lt 384 ] && NODE_MEM_MB=384
+[ "$PYTHON_MEM_MB" -lt 512 ] && PYTHON_MEM_MB=512
+NODE_MEMORY_MAX="${NODE_MEM_MB}M"
+PYTHON_MEMORY_MAX="${PYTHON_MEM_MB}M"
+echo "[stuard] RAM=${TOTAL_RAM_MB}MB → Node=${NODE_MEMORY_MAX} Python=${PYTHON_MEMORY_MAX}"
+
+# ── 9. Create and START Node.js agent service IMMEDIATELY ────────────────────
 # This is the critical path — gets /health responding so cloud-ai knows we're alive.
-cat > /etc/systemd/system/stuard-agent.service <<'SVCEOF'
+cat > /etc/systemd/system/stuard-agent.service <<SVCEOF
 [Unit]
 Description=Stuard VM Agent (HTTP server)
 After=network-online.target
@@ -312,7 +325,7 @@ StandardError=journal
 SyslogIdentifier=stuard-agent
 
 LimitNOFILE=65536
-MemoryMax=512M
+MemoryMax=${NODE_MEMORY_MAX}
 
 [Install]
 WantedBy=multi-user.target
@@ -425,7 +438,7 @@ XVFBEOF
     chown -R stuard:stuard /opt/stuard/python-agent
 
     if [ -f "$PYAGENT_PATH/vm_main.py" ]; then
-      cat > /etc/systemd/system/stuard-python-agent.service <<'PYEOF'
+      cat > /etc/systemd/system/stuard-python-agent.service <<PYEOF
 [Unit]
 Description=Stuard Python Agent (local tool provider)
 After=network-online.target
@@ -437,6 +450,7 @@ EnvironmentFile=/opt/stuard/env
 Environment=STUARD_AGENT_MODE=vm
 Environment=STUARD_WS_HOST=127.0.0.1
 Environment=STUARD_WS_PORT=8765
+Environment=PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 ExecStart=/opt/stuard/python-agent/venv/bin/python vm_main.py
 WorkingDirectory=/opt/stuard/python-agent
 User=stuard
@@ -448,7 +462,7 @@ StandardError=journal
 SyslogIdentifier=stuard-python
 
 LimitNOFILE=65536
-MemoryMax=256M
+MemoryMax=${PYTHON_MEMORY_MAX}
 
 [Install]
 WantedBy=multi-user.target

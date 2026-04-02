@@ -159,14 +159,16 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
 
     return () => {
       disposed = true;
-      disposable?.dispose();
-      resizeDisp?.dispose();
-      resizeObs?.disconnect();
+      try { disposable?.dispose(); } catch {}
+      try { resizeDisp?.dispose(); } catch {}
+      try { resizeObs?.disconnect(); } catch {}
       // Close both the ref and the local reference (covers the race where
       // the async IIFE assigned to localWs but not yet to wsRef).
-      localWs?.close();
-      wsRef.current?.close();
-      term.dispose();
+      try { localWs?.close(); } catch {}
+      try { wsRef.current?.close(); } catch {}
+      // Wrap term.dispose() — WebglAddon can throw _isDisposed errors
+      // during cleanup which propagate to React's error boundary.
+      try { term.dispose(); } catch {}
       xtermRef.current = null;
       fitRef.current = null;
       wsRef.current = null;

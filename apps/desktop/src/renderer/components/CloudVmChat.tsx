@@ -5,45 +5,20 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import {
-  Send, Loader2, StopCircle, Trash2, Bot, User, WifiOff,
-  ShieldCheck, ShieldAlert, Check, X, Terminal as TerminalIcon,
-  FileEdit, AlertTriangle, ChevronDown, Copy,
+  Send, Loader2, Trash2, Bot, User, WifiOff,
+  Check, ChevronDown, Copy,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 
-const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
+const CLOUD_AI_HTTP = ((window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082').replace(/\/+$/, '');
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: number;
-}
-
-interface ApprovalRequest {
-  id: string;
-  tool: string;
-  args?: Record<string, any>;
-  description?: string;
-}
-
-const TOOL_RISK: Record<string, 'high' | 'medium' | 'low'> = {
-  run_command: 'high',
-  write_file: 'medium',
-  terminal_create: 'medium',
-  terminal_send_input: 'medium',
-  terminal_send_raw: 'medium',
-  terminal_send_keys: 'medium',
-  terminal_destroy: 'low',
-};
-
-function getToolIcon(tool: string) {
-  if (tool.startsWith('terminal_')) return TerminalIcon;
-  if (tool === 'write_file') return FileEdit;
-  if (tool.includes('command')) return TerminalIcon;
-  return AlertTriangle;
 }
 
 function normalizeMarkdownSpacing(input: string): string {
@@ -54,14 +29,6 @@ function normalizeMarkdownSpacing(input: string): string {
     return part.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
   });
   return normalized.join('```');
-}
-
-function buildVmWsUrl(): string {
-  const base = String(CLOUD_AI_HTTP).replace(/\/+$/, '');
-  if (base.startsWith('https://')) {
-    return `wss://${base.slice('https://'.length)}/ws`;
-  }
-  return `ws://${base.replace(/^http:\/\//, '')}/ws`;
 }
 
 // Markdown components for assistant messages
@@ -151,17 +118,13 @@ function useMarkdownComponents() {
 export function CloudVmChat({ engine, className }: { engine: any; className?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
-  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
+  const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [showModelPicker, setShowModelPicker] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const streamTextRef = useRef('');
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const mdComponents = useMarkdownComponents();
 
@@ -195,164 +158,11 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamText, pendingApprovals, scrollToBottom]);
-
-  const connect = useCallback(async () => {
-    if (!isRunning) return;
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
-
-    let token: string | null = null;
-    try {
-      const { data } = await supabase.auth.getSession();
-      token = data?.session?.access_token || null;
-    } catch {}
-
-    setStatus('connecting');
-    const wsUrl = buildVmWsUrl();
-    const urlWithAuth = token ? `${wsUrl}?token=${encodeURIComponent(token)}` : wsUrl;
-    const ws = new WebSocket(urlWithAuth);
-
-    ws.onopen = () => {
-      setStatus('connected');
-      if (token) {
-        ws.send(JSON.stringify({ type: 'auth', accessToken: token }));
-      }
-    };
-
-    ws.onclose = () => {
-      setStatus('idle');
-      wsRef.current = null;
-    };
-
-    ws.onerror = () => {
-      setStatus('error');
-      wsRef.current = null;
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        if (msg.type === 'handshake') return;
-
-        if (msg.type === 'progress') {
-          const evt = msg as { event: string; data: any };
-
-          if (evt.event === 'start') {
-            setStreaming(true);
-            streamTextRef.current = '';
-            setStreamText('');
-          } else if (evt.event === 'delta') {
-            const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
-            if (chunk) {
-              streamTextRef.current += chunk;
-              setStreamText(streamTextRef.current);
-            }
-          } else if (evt.event === 'tool_event') {
-            const toolData = evt.data || {};
-            if (toolData.status === 'approval_required') {
-              const approval: ApprovalRequest = {
-                id: toolData.id || `approval-${Date.now()}`,
-                tool: toolData.tool || 'unknown',
-                args: toolData.args,
-                description: toolData.description,
-              };
-              setPendingApprovals((prev) => [...prev, approval]);
-            }
-          }
-        } else if (msg.type === 'final') {
-          const result = msg.result || {};
-          const text = result.response || result.text || streamTextRef.current || '';
-
-          if (text.trim()) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `assistant-${Date.now()}`,
-                role: 'assistant',
-                text: text.trim(),
-                timestamp: Date.now(),
-              },
-            ]);
-          }
-
-          setStreaming(false);
-          setStreamText('');
-          streamTextRef.current = '';
-        } else if (msg.type === 'error') {
-          const errText = msg.message || msg.error || 'Unknown error';
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `error-${Date.now()}`,
-              role: 'assistant',
-              text: `Error: ${errText}`,
-              timestamp: Date.now(),
-            },
-          ]);
-          setStreaming(false);
-          setStreamText('');
-          streamTextRef.current = '';
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    wsRef.current = ws;
-  }, [isRunning]);
-
-  useEffect(() => {
-    if (isRunning) {
-      connect();
-    } else {
-      wsRef.current?.close();
-      wsRef.current = null;
-      setStatus('idle');
-    }
-    return () => {
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-      wsRef.current = null;
-    };
-  }, [isRunning, connect]);
-
-  const respondToApproval = useCallback((id: string, allow: boolean) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'approval_response', id, allow }));
-    }
-    setPendingApprovals((prev) => prev.filter((a) => a.id !== id));
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `perm-${Date.now()}`,
-        role: 'system',
-        text: allow ? `Approved: ${id}` : `Denied: ${id}`,
-        timestamp: Date.now(),
-      },
-    ]);
-  }, []);
+  }, [messages, loading, scrollToBottom]);
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || streaming) return;
-
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      await connect();
-      await new Promise((r) => setTimeout(r, 1000));
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `error-${Date.now()}`,
-            role: 'assistant',
-            text: 'Could not connect to the VM agent. Make sure the engine is running.',
-            timestamp: Date.now(),
-          },
-        ]);
-        return;
-      }
-    }
+    if (!text || loading || !isRunning) return;
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -362,36 +172,69 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
+    setLoading(true);
 
-    const history = [...messages, userMsg].slice(-30).map((m) => ({
-      role: m.role === 'system' ? 'assistant' : m.role,
-      content: m.text,
-    }));
-
-    const payload: any = {
-      type: 'chat',
-      text,
-      context: {},
-      attachments: [],
-      messages: history,
-      clientIntegrations: ['browser_use'],
-    };
-
-    // Attach selected model
-    if (selectedModel && selectedModel !== 'auto') {
-      payload.modelId = selectedModel;
-    }
+    const abort = new AbortController();
+    abortRef.current = abort;
 
     try {
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data?.session?.access_token;
-      if (accessToken) {
-        payload.auth = { accessToken };
-      }
-    } catch {}
+      let token = '';
+      try {
+        const { data } = await supabase.auth.getSession();
+        token = data?.session?.access_token || '';
+      } catch {}
 
-    wsRef.current.send(JSON.stringify(payload));
-  }, [input, streaming, messages, connect, selectedModel]);
+      const chatBody: any = {
+        message: text,
+        model: selectedModel !== 'auto' ? selectedModel : undefined,
+      };
+      if (conversationIdRef.current) {
+        chatBody.conversationId = conversationIdRef.current;
+      }
+
+      const resp = await fetch(`${CLOUD_AI_HTTP}/v1/vm/relay`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ path: '/agent/chat', body: chatBody }),
+        signal: abort.signal,
+      });
+
+      const data = await resp.json() as any;
+      const result = data?.result || data;
+      const replyText = String(result?.text || result?.response || '').trim();
+
+      if (result?.conversationId) {
+        conversationIdRef.current = result.conversationId;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          text: replyText || (data?.ok === false ? `Error: ${result?.error || 'unknown'}` : 'No response'),
+          timestamp: Date.now(),
+        },
+      ]);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          text: `Error: ${e?.message || 'Failed to reach VM agent'}`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } finally {
+      setLoading(false);
+      abortRef.current = null;
+    }
+  }, [input, loading, isRunning, selectedModel]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -403,20 +246,11 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
     [sendMessage],
   );
 
-  const handleStop = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'stop' }));
-    }
-    setStreaming(false);
-    setStreamText('');
-    streamTextRef.current = '';
-  }, []);
-
   const handleClear = useCallback(() => {
+    abortRef.current?.abort();
     setMessages([]);
-    setStreamText('');
-    streamTextRef.current = '';
-    setPendingApprovals([]);
+    setLoading(false);
+    conversationIdRef.current = null;
   }, []);
 
   // Render markdown content
@@ -513,18 +347,7 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
 
           {/* Status dot */}
           <div className="flex items-center gap-1.5 text-xs text-theme-muted">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                status === 'connected'
-                  ? 'bg-green-500'
-                  : status === 'connecting'
-                    ? 'bg-yellow-500 animate-pulse'
-                    : status === 'error'
-                      ? 'bg-red-500'
-                      : 'bg-gray-400',
-              )}
-            />
+            <span className={clsx('w-2 h-2 rounded-full', loading ? 'bg-yellow-500 animate-pulse' : 'bg-green-500')} />
           </div>
           <button onClick={handleClear} className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors" title="Clear chat">
             <Trash2 className="w-3.5 h-3.5" />
@@ -535,7 +358,7 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0 bg-theme-bg/30">
         <div className="px-4 py-3 space-y-4">
-          {messages.length === 0 && !streaming && pendingApprovals.length === 0 && (
+          {messages.length === 0 && !loading && (
             <div className="flex flex-col items-center justify-center py-16 text-theme-muted/40">
               <Bot className="w-10 h-10 mb-3" />
               <p className="text-sm font-semibold">Chat with your VM agent</p>
@@ -543,123 +366,42 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
             </div>
           )}
 
-          {messages.map((msg) => {
-            if (msg.role === 'system') {
-              const isApproved = msg.text.startsWith('Approved:');
-              return (
-                <div key={msg.id} className="flex justify-center">
-                  <div className={clsx(
-                    'flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold',
-                    isApproved ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500',
-                  )}>
-                    {isApproved ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-                    {msg.text}
-                  </div>
+          {messages.map((msg) => (
+            <div key={msg.id} className={clsx('flex gap-2.5', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bot className="w-4 h-4 text-primary" />
                 </div>
-              );
-            }
-
-            return (
-              <div key={msg.id} className={clsx('flex gap-2.5', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                {msg.role === 'assistant' && (
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Bot className="w-4 h-4 text-primary" />
-                  </div>
+              )}
+              <div
+                className={clsx(
+                  'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
+                  msg.role === 'user'
+                    ? 'bg-primary text-primary-fg whitespace-pre-wrap break-words'
+                    : 'bg-theme-card/50 text-theme-fg border border-theme/5 prose-vm',
                 )}
-                <div
-                  className={clsx(
-                    'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-fg whitespace-pre-wrap break-words'
-                      : 'bg-theme-card/50 text-theme-fg border border-theme/5 prose-vm',
-                  )}
-                >
-                  {msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text}
-                </div>
-                {msg.role === 'user' && (
-                  <div className="w-7 h-7 rounded-full bg-theme-hover/60 flex items-center justify-center shrink-0 mt-0.5">
-                    <User className="w-4 h-4 text-theme-muted" />
-                  </div>
-                )}
+              >
+                {msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text}
               </div>
-            );
-          })}
-
-          {/* Pending approval requests */}
-          {pendingApprovals.map((approval) => {
-            const risk = TOOL_RISK[approval.tool] || 'medium';
-            const ToolIcon = getToolIcon(approval.tool);
-            const riskColors = {
-              high: { bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-500', badge: 'bg-red-500' },
-              medium: { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-500', badge: 'bg-amber-500' },
-              low: { bg: 'bg-blue-500/10', border: 'border-blue-500/20', text: 'text-blue-500', badge: 'bg-blue-500' },
-            };
-            const colors = riskColors[risk];
-
-            return (
-              <div key={approval.id} className={clsx('rounded-2xl border p-4', colors.bg, colors.border)}>
-                <div className="flex items-start gap-3">
-                  <div className={clsx('w-8 h-8 rounded-xl flex items-center justify-center shrink-0', colors.bg)}>
-                    <ToolIcon className={clsx('w-4 h-4', colors.text)} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-bold text-theme-fg">Permission Required</span>
-                      <span className={clsx('text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full text-white', colors.badge)}>
-                        {risk}
-                      </span>
-                    </div>
-                    <div className="text-xs text-theme-muted mb-2">
-                      {approval.description || `The agent wants to use ${approval.tool}`}
-                    </div>
-                    <div className="text-[11px] font-mono bg-black/10 rounded-lg px-2.5 py-1.5 text-theme-fg/80 mb-3 break-all">
-                      <span className="text-theme-muted">tool:</span> {approval.tool}
-                      {approval.args?.command && (
-                        <>
-                          <br />
-                          <span className="text-theme-muted">cmd:</span> {String(approval.args.command).slice(0, 200)}
-                        </>
-                      )}
-                      {approval.args?.path && (
-                        <>
-                          <br />
-                          <span className="text-theme-muted">path:</span> {String(approval.args.path).slice(0, 200)}
-                        </>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => respondToApproval(approval.id, true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-bold hover:bg-green-700 transition-colors"
-                      >
-                        <Check className="w-3 h-3" /> Allow
-                      </button>
-                      <button
-                        onClick={() => respondToApproval(approval.id, false)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600/10 text-red-500 text-xs font-bold hover:bg-red-600/20 transition-colors"
-                      >
-                        <X className="w-3 h-3" /> Deny
-                      </button>
-                    </div>
-                  </div>
+              {msg.role === 'user' && (
+                <div className="w-7 h-7 rounded-full bg-theme-hover/60 flex items-center justify-center shrink-0 mt-0.5">
+                  <User className="w-4 h-4 text-theme-muted" />
                 </div>
-              </div>
-            );
-          })}
+              )}
+            </div>
+          ))}
 
-          {/* Streaming response */}
-          {streaming && (
+          {/* Loading indicator */}
+          {loading && (
             <div className="flex gap-2.5 justify-start">
               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
                 <Bot className="w-4 h-4 text-primary" />
               </div>
-              <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-theme-card/50 text-theme-fg border border-theme/5 prose-vm">
-                {streamText ? renderMarkdown(streamText) : (
-                  <span className="flex items-center gap-2 text-theme-muted">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Thinking...
-                  </span>
-                )}
+              <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-theme-card/50 border border-theme/5">
+                <span className="flex items-center gap-2 text-theme-muted">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Thinking...
+                </span>
               </div>
             </div>
           )}
@@ -678,25 +420,19 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
             rows={1}
             className="flex-1 resize-none bg-theme-hover/40 rounded-xl px-4 py-2.5 text-sm text-theme-fg placeholder-theme-muted/50 outline-none focus:ring-2 focus:ring-primary/20 max-h-32 overflow-y-auto transition-shadow"
             style={{ minHeight: '40px' }}
-            disabled={streaming}
+            disabled={loading}
           />
-          {streaming ? (
-            <button onClick={handleStop} className="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors" title="Stop">
-              <StopCircle className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              onClick={sendMessage}
-              disabled={!input.trim()}
-              className={clsx(
-                'p-2.5 rounded-xl transition-colors',
-                input.trim() ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
-              )}
-              title="Send"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            onClick={sendMessage}
+            disabled={!input.trim() || loading}
+            className={clsx(
+              'p-2.5 rounded-xl transition-colors',
+              input.trim() && !loading ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
+            )}
+            title="Send"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </button>
         </div>
       </div>
     </div>

@@ -114,9 +114,7 @@ hidden_imports.extend([
 ])
 
 # Data files to bundle
-datas = [
-    (os.path.join('app', 'data', 'wakeword', 'kws_weights.npz'), os.path.join('app', 'data', 'wakeword')),
-]
+datas = []
 
 # Collect binaries for sounddevice (needs libportaudio)
 binaries = []

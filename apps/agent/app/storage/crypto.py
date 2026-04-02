@@ -19,6 +19,7 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 
 import keyring
+import keyring.errors
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -77,41 +78,82 @@ def _get_keyring_backend_name() -> str:
     return type(backend).__name__
 
 
+# ─── File-based fallback for headless environments (e.g. Linux VMs) ───────────
+
+_KEY_FILE_DIR = os.path.join(os.path.expanduser("~"), ".stuard", "keys")
+
+
+def _file_key_path(account: str) -> str:
+    return os.path.join(_KEY_FILE_DIR, f"{account}.key")
+
+
+def _file_get(account: str) -> Optional[str]:
+    path = _file_key_path(account)
+    try:
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                return f.read().strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def _file_set(account: str, value: str) -> None:
+    os.makedirs(_KEY_FILE_DIR, mode=0o700, exist_ok=True)
+    path = _file_key_path(account)
+    with open(path, "w") as f:
+        f.write(value)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _keyring_get(account: str) -> Optional[str]:
+    try:
+        return keyring.get_password(SERVICE_NAME, account)
+    except (keyring.errors.NoKeyringError, Exception):
+        return _file_get(account)
+
+
+def _keyring_set(account: str, value: str) -> None:
+    try:
+        keyring.set_password(SERVICE_NAME, account, value)
+    except (keyring.errors.NoKeyringError, Exception):
+        _file_set(account, value)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def get_device_key() -> bytes:
     """
-    Get or create the device master key from OS keychain.
-    
-    - Windows: Uses Windows Credential Manager (DPAPI-backed)
-    - macOS: Uses Keychain
-    - Linux: Uses Secret Service (GNOME Keyring, KWallet, etc.)
+    Get or create the device master key from OS keychain, with file-based
+    fallback for headless Linux environments (e.g. GCE VMs) where no keyring
+    backend is available.
     """
-    # Try to get existing key
-    stored = keyring.get_password(SERVICE_NAME, DEVICE_KEY_ACCOUNT)
-    
+    stored = _keyring_get(DEVICE_KEY_ACCOUNT)
+
     if stored:
         return base64.b64decode(stored)
-    
-    # Generate new device key
+
     device_key = secrets.token_bytes(KEY_SIZE)
-    
-    # Store in OS keychain
-    keyring.set_password(SERVICE_NAME, DEVICE_KEY_ACCOUNT, base64.b64encode(device_key).decode('utf-8'))
-    
+    _keyring_set(DEVICE_KEY_ACCOUNT, base64.b64encode(device_key).decode('utf-8'))
+
     print(f"[crypto] Created new device key using {_get_keyring_backend_name()}")
     return device_key
 
 
 def get_salt() -> bytes:
     """Get or create the encryption salt."""
-    stored = keyring.get_password(SERVICE_NAME, SALT_ACCOUNT)
-    
+    stored = _keyring_get(SALT_ACCOUNT)
+
     if stored:
         return base64.b64decode(stored)
-    
-    # Generate new salt
+
     salt = secrets.token_bytes(16)
-    keyring.set_password(SERVICE_NAME, SALT_ACCOUNT, base64.b64encode(salt).decode('utf-8'))
-    
+    _keyring_set(SALT_ACCOUNT, base64.b64encode(salt).decode('utf-8'))
+
     return salt
 
 

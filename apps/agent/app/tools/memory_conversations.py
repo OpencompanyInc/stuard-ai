@@ -172,15 +172,19 @@ async def message_add(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id")
         role = args.get("role")
         content = args.get("content")
-        
+
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
         if not role:
             return {"ok": False, "error": "missing role"}
         if not content:
             return {"ok": False, "error": "missing content"}
-        
+
         db = get_memory_db()
+        # Auto-create the conversation if it doesn't exist (e.g. fresh DB, or
+        # conversationId passed from Node agent that pre-dates the current DB).
+        if not db.get_conversation(conversation_id):
+            db.create_conversation(conversation_id=conversation_id)
         msg = db.add_message(
             conversation_id=conversation_id,
             role=role,
