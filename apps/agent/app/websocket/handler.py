@@ -125,9 +125,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     pass
 
             elif kind == "stop" or kind == "abort":
-                # Cancel all active chat tasks to stop streaming
+                stop_request_id = str(msg.get("requestId") or "").strip() or None
+                # Cancel all active chat/tool tasks to stop streaming and any in-flight tool work
                 cancelled_count = 0
                 for task in list(session.active_chat_tasks):
+                    try:
+                        if not task.done():
+                            task.cancel()
+                            cancelled_count += 1
+                    except Exception:
+                        pass
+                for task in list(session.active_tool_tasks):
                     try:
                         if not task.done():
                             task.cancel()
@@ -152,7 +160,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                         pass
                 session.pending_approvals.clear()
                 logger.info("stop_requested cancelled=%d", cancelled_count)
-                await session.send_json({"type": "stopped", "success": cancelled_count > 0})
+                await session.send_json({"type": "stopped", "success": cancelled_count > 0}, request_id=stop_request_id)
 
             elif kind == "auth":
                 # Desktop client sends auth after handshake for webhook registration.

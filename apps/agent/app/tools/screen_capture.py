@@ -30,6 +30,22 @@ _active_audio_recordings: Dict[str, Dict[str, Any]] = {}
 _sessions_lock = threading.Lock()
 
 
+def _requested_audio_device_matches(requested: Any, index: int, name: str) -> bool:
+    """Return True when a requested device selector matches a device."""
+    if requested is None:
+        return False
+    if isinstance(requested, int):
+        return index == requested
+    raw = str(requested).strip()
+    if not raw:
+        return False
+    if raw.isdigit():
+        return index == int(raw)
+    requested_lower = raw.lower()
+    name_lower = str(name or "").lower()
+    return requested_lower == name_lower or requested_lower in name_lower
+
+
 def _normalize_silence_threshold(value: float) -> float:
     """Convert silence threshold to RMS (0.0-1.0).
     
@@ -175,7 +191,7 @@ async def capture_screen(
     fps = int(args.get("fps") or 30)
     quality = str(args.get("quality") or "medium").strip().lower()
     explicit_path = str(args.get("filePath") or "").strip()
-    session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
+    session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip() or str(uuid.uuid4())[:8]
     max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
     silence_threshold_raw = float(args.get("silenceThreshold") or 5)
     silence_threshold = _normalize_silence_threshold(silence_threshold_raw)
@@ -589,7 +605,7 @@ async def stop_screen_capture(
     emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
 ) -> Dict[str, Any]:
     """Stop an active screen capture session."""
-    session_id = str(args.get("sessionId") or "").strip()
+    session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip()
     if not session_id:
         raise ValueError("sessionId is required")
 
@@ -741,7 +757,7 @@ async def capture_system_audio(
     duration_ms = _duration_param(args, "duration", "durationMs", 5000)
     device = args.get("device")
     explicit_path = str(args.get("filePath") or "").strip()
-    session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
+    session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip() or str(uuid.uuid4())[:8]
     max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
     output_format = str(args.get("format") or "wav").strip().lower()
     silence_threshold_raw = float(args.get("silenceThreshold") or 5)
@@ -782,6 +798,7 @@ async def capture_system_audio(
     recording_info: Dict[str, Any] = {
         "path": path,
         "format": output_format,
+        "device": device,
         "started_at": time.time(),
         "completed": False,
         "error": None,
@@ -816,7 +833,19 @@ async def capture_system_audio(
             raise RuntimeError(f"Failed to initialize system audio stream: {e}")
 
     def _background_audio_work():
-        _capture_system_audio_worker(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id=stream_id)
+        _capture_system_audio_worker(
+            path,
+            duration_ms,
+            stop_event,
+            session_id,
+            emit,
+            loop,
+            recording_info,
+            silence_threshold,
+            silence_duration_ms,
+            stream_id=stream_id,
+            device=device,
+        )
 
     # For until_stop/stream mode, start in background and return immediately
     # NOTE: silence mode is NOT included here — it must block until silence is detected
@@ -876,7 +905,7 @@ async def stop_system_audio(
     emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
 ) -> Dict[str, Any]:
     """Stop an active system audio capture session."""
-    session_id = str(args.get("sessionId") or "").strip()
+    session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip()
     if not session_id:
         raise ValueError("sessionId is required")
 
@@ -909,6 +938,7 @@ async def stop_system_audio(
                 pass
 
         with _sessions_lock:
+            _active_audio_sessions.pop(session_id, None)
             _active_audio_recordings.pop(session_id, None)
 
     if emit:
@@ -1063,15 +1093,16 @@ def _capture_system_audio_worker(
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
     stream_id: Optional[str] = None,
+    device: Any = None,
 ) -> None:
     """Worker function for capturing system audio."""
     plat = platform.system()
 
     if plat == "Windows":
-        _capture_wasapi_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id)
+        _capture_wasapi_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id, device)
     else:
         # For macOS/Linux, try to use sounddevice with a virtual device
-        _capture_generic_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id)
+        _capture_generic_loopback(path, duration_ms, stop_event, session_id, emit, loop, recording_info, silence_threshold, silence_duration_ms, stream_id, device)
 
 
 def _capture_wasapi_loopback(
@@ -1085,6 +1116,7 @@ def _capture_wasapi_loopback(
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
     stream_id: Optional[str] = None,
+    device: Any = None,
 ) -> None:
     """Capture system audio using WASAPI loopback on Windows."""
     try:
@@ -1094,6 +1126,8 @@ def _capture_wasapi_loopback(
     except ImportError:
         if recording_info:
             recording_info["error"] = "pyaudiowpatch not installed"
+        with _sessions_lock:
+            _active_audio_sessions.pop(session_id, None)
         return
 
     print(f"[system_audio] Starting WASAPI loopback capture for session '{session_id}'")
@@ -1109,23 +1143,66 @@ def _capture_wasapi_loopback(
             stream_mod = None
 
     try:
-        # Find loopback device
-        wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
-        default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
-
         loopback_device = None
-        for i in range(p.get_device_count()):
-            try:
-                device = p.get_device_info_by_index(i)
-                if device.get("isLoopbackDevice") and default_speakers["name"] in device.get("name", ""):
-                    loopback_device = device
-                    break
-            except Exception:
-                continue
+        requested_device = device
+
+        if requested_device is not None and str(requested_device).strip():
+            requested_name = ""
+            requested_index: Optional[int] = None
+            if isinstance(requested_device, int):
+                requested_index = requested_device
+            else:
+                raw = str(requested_device).strip()
+                if raw.isdigit():
+                    requested_index = int(raw)
+                else:
+                    requested_name = raw.lower()
+
+            if requested_index is not None:
+                try:
+                    candidate = p.get_device_info_by_index(requested_index)
+                    if candidate.get("isLoopbackDevice"):
+                        loopback_device = candidate
+                    else:
+                        candidate_name = str(candidate.get("name", ""))
+                        for i in range(p.get_device_count()):
+                            try:
+                                maybe_loopback = p.get_device_info_by_index(i)
+                                if maybe_loopback.get("isLoopbackDevice") and candidate_name and candidate_name in str(maybe_loopback.get("name", "")):
+                                    loopback_device = maybe_loopback
+                                    break
+                            except Exception:
+                                continue
+                except Exception:
+                    loopback_device = None
+            else:
+                for i in range(p.get_device_count()):
+                    try:
+                        maybe_loopback = p.get_device_info_by_index(i)
+                        if maybe_loopback.get("isLoopbackDevice") and requested_name in str(maybe_loopback.get("name", "")).lower():
+                            loopback_device = maybe_loopback
+                            break
+                    except Exception:
+                        continue
+        else:
+            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+            default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+
+            for i in range(p.get_device_count()):
+                try:
+                    candidate = p.get_device_info_by_index(i)
+                    if candidate.get("isLoopbackDevice") and default_speakers["name"] in candidate.get("name", ""):
+                        loopback_device = candidate
+                        break
+                except Exception:
+                    continue
 
         if not loopback_device:
             if recording_info:
-                recording_info["error"] = "No loopback device found"
+                if requested_device is not None and str(requested_device).strip():
+                    recording_info["error"] = f"Requested loopback device not found: {requested_device}"
+                else:
+                    recording_info["error"] = "No loopback device found"
             return
 
         # Open stream using CALLBACK mode so the main loop never blocks.
@@ -1298,6 +1375,8 @@ def _capture_wasapi_loopback(
             recording_info["error"] = str(e)
     finally:
         p.terminate()
+        with _sessions_lock:
+            _active_audio_sessions.pop(session_id, None)
 
 
 def _find_loopback_device_linux() -> Optional[int]:
@@ -1378,6 +1457,7 @@ def _capture_generic_loopback(
     silence_threshold: float = 0.01,
     silence_duration_ms: int = 2000,
     stream_id: Optional[str] = None,
+    device: Any = None,
 ) -> None:
     """Generic loopback capture for macOS/Linux using sounddevice."""
     try:
@@ -1387,50 +1467,67 @@ def _capture_generic_loopback(
     except ImportError:
         if recording_info:
             recording_info["error"] = "sounddevice/soundfile not installed"
+        with _sessions_lock:
+            _active_audio_sessions.pop(session_id, None)
         return
 
     plat = platform.system()
     print(f"[system_audio] Starting generic loopback capture for session '{session_id}' on {plat}")
-
-    # Platform-specific device discovery
-    loopback_device = None
-    if plat == "Darwin":  # macOS
-        loopback_device = _find_loopback_device_macos()
-        if loopback_device is None:
-            error_msg = (
-                "No virtual audio device found. To capture system audio on macOS:\n"
-                "1. Install BlackHole: brew install blackhole-2ch\n"
-                "2. Open Audio MIDI Setup (Applications > Utilities)\n"
-                "3. Create a Multi-Output Device with your speakers + BlackHole\n"
-                "4. Set the Multi-Output Device as your system output\n"
-                "More info: https://github.com/ExistentialAudio/BlackHole"
-            )
-            print(f"[system_audio] {error_msg}")
-            if recording_info:
-                recording_info["error"] = error_msg
-            return
-    else:  # Linux
-        loopback_device = _find_loopback_device_linux()
-        if loopback_device is None:
-            error_msg = (
-                "No PulseAudio/PipeWire monitor source found. Ensure:\n"
-                "1. PulseAudio or PipeWire is running\n"
-                "2. You have audio output active (play some audio)\n"
-                "3. Run: pactl list sources | grep -i monitor"
-            )
-            print(f"[system_audio] {error_msg}")
-            if recording_info:
-                recording_info["error"] = error_msg
-            return
-
-    # Log which device we're using
     try:
-        device_info = sd.query_devices(loopback_device)
-        print(f"[system_audio] Using loopback device: {device_info.get('name', 'unknown')}")
-    except Exception:
-        pass
+        # Platform-specific device discovery
+        loopback_device = None
+        if device is not None and str(device).strip():
+            for i, dev in enumerate(sd.query_devices()):
+                name = str(dev.get("name", ""))
+                max_in = int(dev.get("max_input_channels", 0))
+                if max_in <= 0:
+                    continue
+                if _requested_audio_device_matches(device, i, name):
+                    loopback_device = i
+                    break
 
-    try:
+            if loopback_device is None:
+                error_msg = f"Requested audio device not found: {device}"
+                print(f"[system_audio] {error_msg}")
+                if recording_info:
+                    recording_info["error"] = error_msg
+                return
+        elif plat == "Darwin":  # macOS
+            loopback_device = _find_loopback_device_macos()
+            if loopback_device is None:
+                error_msg = (
+                    "No virtual audio device found. To capture system audio on macOS:\n"
+                    "1. Install BlackHole: brew install blackhole-2ch\n"
+                    "2. Open Audio MIDI Setup (Applications > Utilities)\n"
+                    "3. Create a Multi-Output Device with your speakers + BlackHole\n"
+                    "4. Set the Multi-Output Device as your system output\n"
+                    "More info: https://github.com/ExistentialAudio/BlackHole"
+                )
+                print(f"[system_audio] {error_msg}")
+                if recording_info:
+                    recording_info["error"] = error_msg
+                return
+        else:  # Linux
+            loopback_device = _find_loopback_device_linux()
+            if loopback_device is None:
+                error_msg = (
+                    "No PulseAudio/PipeWire monitor source found. Ensure:\n"
+                    "1. PulseAudio or PipeWire is running\n"
+                    "2. You have audio output active (play some audio)\n"
+                    "3. Run: pactl list sources | grep -i monitor"
+                )
+                print(f"[system_audio] {error_msg}")
+                if recording_info:
+                    recording_info["error"] = error_msg
+                return
+
+        # Log which device we're using
+        try:
+            device_info = sd.query_devices(loopback_device)
+            print(f"[system_audio] Using loopback device: {device_info.get('name', 'unknown')}")
+        except Exception:
+            pass
+
         device_info = sd.query_devices(loopback_device)
         samplerate = int(device_info.get("default_samplerate", 44100))
         channels = min(int(device_info.get("max_input_channels", 2)), 2)
@@ -1571,3 +1668,6 @@ def _capture_generic_loopback(
         print(f"[system_audio] Error: {e}")
         if recording_info:
             recording_info["error"] = str(e)
+    finally:
+        with _sessions_lock:
+            _active_audio_sessions.pop(session_id, None)

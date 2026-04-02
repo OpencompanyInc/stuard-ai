@@ -4,18 +4,9 @@ export * from "./file-indexing";
 export * from "./app-discovery";
 export * from "./app-search";
 export * from "./browser-server";
-export * from "./icon-cache";
 export * from "./unified-tasks";
 export * from "./offline-calendar";
-export * from "./auth-session";
-export { startSmsInbox, stopSmsInbox, getSmsInboxStatus } from "./sms-inbox";
 export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
-export {
-  startProactiveScheduler,
-  stopProactiveScheduler,
-  handleProactiveReply,
-  triggerManualWakeUp,
-  isProactiveSchedulerRunning,
-} from "./proactive-scheduler";
+export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
 export { proactiveService } from "./proactive-service";
-export { startCloudWebhooks, stopCloudWebhooks } from "./cloud-webhooks";
+export { triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "./proactive-scheduler";

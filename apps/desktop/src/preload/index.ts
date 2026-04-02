@@ -114,6 +114,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   },
+  mediaList: () => ipcRenderer.invoke('media:list'),
+  mediaSummary: () => ipcRenderer.invoke('media:summary'),
+  mediaGetPrefs: () => ipcRenderer.invoke('media:getPrefs'),
+  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud' }) => ipcRenderer.invoke('media:updatePrefs', updates),
+  mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
+  mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
+  mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
+  mediaDelete: (itemId: string, deleteFile = true) => ipcRenderer.invoke('media:delete', itemId, deleteFile),
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
@@ -487,4 +495,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
   skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
+
+  // Auth session sync (required for SMS inbox realtime subscription in main process)
+  syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
 });

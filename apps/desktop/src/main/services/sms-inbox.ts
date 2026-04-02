@@ -138,6 +138,66 @@ function getLocalAgentWsUrl(): string {
   return 'ws://127.0.0.1:8765/ws';
 }
 
+function getLocalAgentHttpUrl(): string {
+  const ws = getLocalAgentWsUrl().replace(/\/ws$/, '');
+  return ws.replace(/^wss?:\/\//, (m) => m.startsWith('wss') ? 'https://' : 'http://');
+}
+
+/**
+ * After runSmsTurn completes, save the conversation turn to the local Python agent's
+ * encrypted SQLite so it appears in the desktop conversation history and title search —
+ * the same pipeline a normal desktop chat message goes through.
+ *
+ * cloud-ai tries to do this via the WS bridge, but runSmsTurn closes the WS immediately
+ * on receiving `final`, so the bridge is gone when cloud-ai tries to call message_add.
+ * We call the local agent HTTP API directly instead.
+ */
+async function ingestSmsConversationLocally(input: {
+  conversationId: string;
+  userText: string;
+  assistantText: string;
+  preferredModel: string;
+  provider: string;
+  isNewConversation: boolean;
+}): Promise<void> {
+  const base = getLocalAgentHttpUrl();
+  const exec = async (tool: string, args: any): Promise<void> => {
+    try {
+      await net.fetch(`${base}/tools/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool, args }),
+      });
+    } catch { }
+  };
+
+  const title = input.isNewConversation
+    ? String(input.userText || '').slice(0, 60).trim() || 'SMS conversation'
+    : undefined;
+
+  // Ensure conversation row exists (idempotent — returns existing if already there)
+  await exec('conversation_create', {
+    conversation_id: input.conversationId,
+    model: input.preferredModel,
+    source: 'stuard',
+    ...(title ? { title } : {}),
+  });
+
+  // Save the user message then assistant response
+  await exec('message_add', {
+    conversation_id: input.conversationId,
+    role: 'user',
+    content: input.userText,
+    metadata: { source: input.provider },
+  });
+  await exec('message_add', {
+    conversation_id: input.conversationId,
+    role: 'assistant',
+    content: input.assistantText,
+    metadata: { source: input.provider },
+  });
+}
+
 function getCloudAiWsUrl(): string {
   if (process.env.CLOUD_AI_WS) return String(process.env.CLOUD_AI_WS).trim();
   const http = getCloudAiUrl().replace(/\/+$/, '');
@@ -248,12 +308,13 @@ function buildSmsHiddenContext(mode: SmsMode, proactiveMessage?: string | null):
   const modeMarker = mode === 'proactive' ? '[PROACTIVE FOLLOW-UP]' : '[MOBILE MESSAGE]';
   const contextLine = mode === 'proactive'
     ? 'Context: the user is replying to a proactive check-in. Stay in that context unless they clearly change topic.'
-    : 'Context: the user is chatting with you from their phone (SMS/WhatsApp). Respond fully and naturally — your response will be saved to conversation history and the user can view the full version on desktop. A condensed version will be sent back over SMS automatically.';
+    : 'Context: the user is chatting with you from their phone via SMS/WhatsApp.';
   const lines = [
     modeMarker,
-    'The user sent this message from their mobile device.',
-    'Respond fully as you would for any desktop conversation — use markdown, detailed explanations, and complete answers.',
-    'Be warm, helpful, and thorough.',
+    'The user sent this message from their mobile device via SMS or WhatsApp.',
+    'IMPORTANT: Do NOT use markdown, LaTeX, bullet points, headers, bold/italic formatting, or code blocks.',
+    'Write in plain text only — short, clear sentences. No asterisks, underscores, hashes, backticks, or any other formatting syntax.',
+    'Be concise and direct. Your reply will be sent as a text message.',
     contextLine,
   ];
   if (mode === 'proactive' && proactiveMessage) {
@@ -473,7 +534,7 @@ async function runSmsTurn(input: {
   proactiveMessage?: string | null;
   provider?: string | null;
   attachments?: any[];
-}): Promise<{ replyText: string; conversationId: string | null }> {
+}): Promise<{ replyText: string; fullReplyText: string; conversationId: string | null }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token) throw new Error('desktop_auth_missing');
@@ -616,13 +677,12 @@ async function runSmsTurn(input: {
 
       if (type === 'final') {
         const result = msg?.result || {};
-        const replyText = truncateForSms(stripMarkdownForSms(
-          String(result?.text || result?.response || '').trim(),
-        ), input.provider);
+        const fullReplyText = String(result?.text || result?.response || '').trim();
+        const replyText = truncateForSms(stripMarkdownForSms(fullReplyText), input.provider);
         const nextConversationId = msg?.conversationId
           ? String(msg.conversationId)
           : conversationId;
-        finish(() => resolve({ replyText, conversationId: nextConversationId || null }));
+        finish(() => resolve({ replyText, fullReplyText, conversationId: nextConversationId || null }));
         return;
       }
 
@@ -726,6 +786,19 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
   });
   if (!turn.replyText) throw new Error('sms_empty_agent_reply');
+
+  // Ingest into local SQLite so this conversation appears in desktop history + title search.
+  // Done fire-and-forget — local storage failures must not block the SMS reply.
+  if (turn.conversationId) {
+    void ingestSmsConversationLocally({
+      conversationId: turn.conversationId,
+      userText: incomingText,
+      assistantText: turn.fullReplyText || turn.replyText,
+      preferredModel: effectiveState.preferred_model,
+      provider: itemProvider,
+      isNewConversation: !effectiveState.conversation_id,
+    }).catch((e) => logger.warn('[sms-inbox] Local ingest failed:', e?.message));
+  }
 
   await submitSmsReply({
     queueItemId: item.id,

@@ -62,6 +62,18 @@ export class MediaProcessor {
       }
     }
 
+    // Add video references (not downloaded inline — too large for MMS carrier limits)
+    for (const p of processed) {
+      if (p.original.mediaType === 'video') {
+        const mime = p.mimeType || 'video';
+        if (p.videoUrl) {
+          textParts.push(`[Video received (${mime}): ${p.videoUrl}]`);
+        } else {
+          textParts.push(`[Video received (${mime}) — URL unavailable]`);
+        }
+      }
+    }
+
     // Add failure descriptions
     textParts.push(...failures);
 
@@ -74,6 +86,18 @@ export class MediaProcessor {
 
   /** Process a single media item: fetch + classify + transform */
   private static async processOne(item: InboundMedia, opts?: ProcessOptions): Promise<ProcessedMedia> {
+    // Video: skip the download entirely — files are too large for inline processing
+    // and MMS carrier limits (~1.5MB) make round-tripping video impractical.
+    // Record the URL so the agent can at least acknowledge it or link to it.
+    if (item.mediaType === 'video') {
+      return {
+        original: item,
+        buffer: undefined,
+        mimeType: item.mimeType,
+        videoUrl: item.source === 'url' ? item.ref : undefined,
+      };
+    }
+
     const { buffer, mimeType } = await fetchMedia(item);
     const effectiveMime = mimeType || item.mimeType;
 
@@ -98,12 +122,11 @@ export class MediaProcessor {
             result.transcriptDuration = t.duration;
           } catch (e: any) {
             console.error('[media-processor] Transcription failed:', e?.message);
-            result.transcript = undefined; // let caller know it failed via absence
+            result.transcript = undefined;
           }
         }
         break;
       }
-      // video: too large for inline — rely on caption text
       // document: attached as file below
     }
 
@@ -126,12 +149,14 @@ export class MediaProcessor {
           }
           break;
         case 'document':
-          out.push({
-            type: 'file',
-            name: p.original.filename || 'document',
-            mimeType: p.mimeType,
-            data: `data:${p.mimeType};base64,${p.buffer.toString('base64')}`,
-          });
+          if (p.buffer) {
+            out.push({
+              type: 'file',
+              name: p.original.filename || 'document',
+              mimeType: p.mimeType,
+              data: `data:${p.mimeType};base64,${p.buffer.toString('base64')}`,
+            });
+          }
           break;
         // audio: transcript is in supplementaryText, no need to attach binary
         // video: not attached inline (too large)

@@ -102,6 +102,10 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   // Streaming / capture
   capture_media: ['record', 'screen record', 'capture', 'audio record'],
   stop_capture: ['record', 'screen record', 'capture'],
+  capture_screen: ['record', 'screen record', 'capture', 'screen recording'],
+  stop_screen_capture: ['record', 'screen record', 'capture', 'stop recording'],
+  capture_system_audio: ['system audio', 'audio capture', 'loopback', 'record audio'],
+  stop_system_audio: ['system audio', 'audio capture', 'loopback', 'stop recording'],
   list_active_captures: ['record', 'capture'],
   stream_create: ['stream', 'streaming'],
   stream_close: ['stream', 'streaming'],

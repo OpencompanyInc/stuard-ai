@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useStorage, type StoragePlan, type UploadProgress, type StorageInfo, type CloudFileEntry } from '../hooks/useStorage';
 import { FileExplorer } from './FileExplorer';
+import { MediaLibraryView } from './MediaLibraryView';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -222,7 +223,7 @@ function DropZone({ onFiles, uploading }: { onFiles: (files: File[]) => void; up
 // Tabs
 // ─────────────────────────────────────────────────────────────────────────────
 
-type StorageTab = 'overview' | 'files' | 'sync' | 'plans';
+type StorageTab = 'overview' | 'media' | 'files' | 'sync' | 'plans';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Files Tab Sub-Component
@@ -440,7 +441,7 @@ export function StorageView() {
             </div>
             Storage
           </h2>
-          <p className="text-sm text-theme-muted mt-1">Manage your hot disk and cloud storage</p>
+          <p className="text-sm text-theme-muted mt-1">Manage your hot disk, cloud storage, and media library</p>
         </div>
         <button
           onClick={refresh}
@@ -470,6 +471,7 @@ export function StorageView() {
       <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl w-fit">
         {[
           { id: 'overview' as StorageTab, label: 'Overview', icon: HardDrive },
+          { id: 'media' as StorageTab, label: 'Media', icon: Image },
           { id: 'files' as StorageTab, label: 'Files', icon: FolderOpen },
           { id: 'sync' as StorageTab, label: 'Sync', icon: ArrowUpDown },
           { id: 'plans' as StorageTab, label: 'Plans', icon: Crown },
@@ -572,6 +574,9 @@ export function StorageView() {
           </div>
         </div>
       )}
+
+      {/* ── Media Tab ─────────────────────────────────────────────────────── */}
+      {tab === 'media' && <MediaLibraryView />}
 
       {/* ── Files Tab ─────────────────────────────────────────────────────── */}
       {tab === 'files' && (

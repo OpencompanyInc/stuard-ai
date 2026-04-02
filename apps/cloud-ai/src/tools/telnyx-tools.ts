@@ -200,14 +200,18 @@ function inferMimeFromFilename(filename: string): string {
   return map[ext] || 'application/octet-stream';
 }
 
+// MMS carrier limit — most US carriers reject media > 1.5MB.
+// We use a 1.4MB soft limit to stay safely under that.
+const MMS_MAX_BYTES = 1.4 * 1024 * 1024;
+
 export const telnyx_send_mms = createTool({
   id: 'telnyx_send_mms',
-  description: "Send an MMS message with an image or media file to the user's verified phone number. Provide EITHER a public media_url, OR a local file path, OR base64 data. Local files and base64 data are automatically uploaded to get a public URL.",
+  description: "Send an MMS message with an image or audio file to the user's verified phone number. Provide EITHER a public media_url, OR a local file path, OR base64 data. Local files and base64 data are automatically uploaded. NOTE: MMS carrier limit is ~1.4MB — images and short audio clips are fine. For larger files (videos, long audio), the file is uploaded and a download link is sent via SMS instead.",
   inputSchema: z.object({
-    media_url: z.string().optional().describe('Public URL of the media file to send (image, gif, video, etc.). Use this if you already have a public URL.'),
+    media_url: z.string().optional().describe('Public URL of the media file to send. Use this if you already have a public URL.'),
     path: z.string().optional().describe('Local file path on the user\'s machine (e.g. C:\\Users\\me\\photo.jpg). The file will be uploaded automatically.'),
     data: z.string().optional().describe('Base64-encoded media data. Must also provide mimeType when using this.'),
-    mimeType: z.string().optional().describe('MIME type of the base64 data (e.g. image/png, video/mp4). Required when using data.'),
+    mimeType: z.string().optional().describe('MIME type of the base64 data (e.g. image/png, audio/mpeg). Required when using data.'),
     message: z.string().default('').describe('Optional text message to include with the media.'),
   }),
   outputSchema: z.object({
@@ -215,6 +219,8 @@ export const telnyx_send_mms = createTool({
     messageId: z.string().optional(),
     to: z.string().optional(),
     mediaUrl: z.string().optional(),
+    /** true if the file was too large for MMS and a download link was sent via SMS instead */
+    sentAsLink: z.boolean().optional(),
     error: z.string().optional(),
   }),
   execute: async (input, execCtx: any) => {
@@ -223,6 +229,8 @@ export const telnyx_send_mms = createTool({
       const phone = await getVerifiedPhone(userId);
 
       let resolvedUrl = input.media_url || '';
+      let uploadedBuffer: Buffer | null = null;
+      let uploadedMime = '';
 
       // If a local file path is provided, read it via bridge and upload
       if (!resolvedUrl && input.path) {
@@ -232,25 +240,55 @@ export const telnyx_send_mms = createTool({
           throw new Error(`Could not read file at path: ${input.path}`);
         }
         const originalFilename = input.path.replace(/\\/g, '/').split('/').pop() || 'media_file';
-        const contentType = input.mimeType || inferMimeFromFilename(originalFilename);
-        const buffer = Buffer.from(fileData, 'base64');
+        uploadedMime = input.mimeType || inferMimeFromFilename(originalFilename);
+        uploadedBuffer = Buffer.from(fileData, 'base64');
         const filename = `mms_${randomUUID().slice(0, 8)}_${originalFilename}`;
-        const uploadResult = await uploadUserFileBuffer(userId, filename, buffer, contentType, 'mms-media', 'public');
+        const uploadResult = await uploadUserFileBuffer(userId, filename, uploadedBuffer, uploadedMime, 'mms-media', 'public');
         resolvedUrl = uploadResult.url;
       }
 
       // If base64 data is provided directly, upload it
       if (!resolvedUrl && input.data) {
-        const mime = input.mimeType || 'image/png';
-        const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+        uploadedMime = input.mimeType || 'image/png';
+        const ext = uploadedMime.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
         const filename = `mms_${randomUUID().slice(0, 8)}.${ext}`;
-        const buffer = Buffer.from(input.data, 'base64');
-        const uploadResult = await uploadUserFileBuffer(userId, filename, buffer, mime, 'mms-media', 'public');
+        uploadedBuffer = Buffer.from(input.data, 'base64');
+        const uploadResult = await uploadUserFileBuffer(userId, filename, uploadedBuffer, uploadedMime, 'mms-media', 'public');
         resolvedUrl = uploadResult.url;
       }
 
       if (!resolvedUrl) {
         throw new Error('No media provided. Supply one of: media_url (public URL), path (local file), or data (base64).');
+      }
+
+      // Size guard: if we have the buffer and it exceeds the MMS carrier limit,
+      // fall back to sending a plain SMS with the download link instead.
+      if (uploadedBuffer && uploadedBuffer.length > MMS_MAX_BYTES) {
+        const sizeMB = (uploadedBuffer.length / 1e6).toFixed(1);
+        const caption = String(input.message || '').trim();
+        const linkText = caption
+          ? `${caption}\n\nFile is ${sizeMB}MB (too large for MMS). Download: ${resolvedUrl}`
+          : `Your file is ${sizeMB}MB — too large to send via MMS. Download here: ${resolvedUrl}`;
+
+        const smsBody: any = {
+          from: TELNYX_FROM_NUMBER,
+          to: phone,
+          text: linkText.slice(0, 1600),
+        };
+        if (TELNYX_MESSAGING_PROFILE_ID) smsBody.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
+        const smsResult = await telnyxRequest('/messages', 'POST', smsBody);
+
+        const credits = messagingCreditCost('telnyx');
+        if (credits > 0) {
+          debitCredits(userId, {
+            sourceType: 'messaging:telnyx',
+            sourceRef: `mms_link:${smsResult?.data?.id || Date.now()}`,
+            credits,
+            amountUsd: 0.004,
+            metadata: { provider: 'telnyx', tool: 'telnyx_send_mms', fallback: 'link' },
+          }).catch((e: any) => console.error('[telnyx-tools] credit deduction failed:', e?.message));
+        }
+        return { ok: true, messageId: smsResult?.data?.id || '', to: phone, mediaUrl: resolvedUrl, sentAsLink: true };
       }
 
       const body: any = {

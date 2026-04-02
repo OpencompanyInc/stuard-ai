@@ -738,10 +738,44 @@ export async function syncMediaLibrary(itemIds?: string[]) {
 
 export async function registerIncomingMessagingMedia(provider: string, attachments: any[]) {
   const safeProvider = String(provider || 'telnyx').trim().toLowerCase() || 'telnyx';
+  const classification = safeProvider === 'telnyx' ? 'Telnyx MMS' : 'WhatsApp media';
   const imported: MediaLibraryItem[] = [];
 
   for (const attachment of attachments || []) {
     try {
+      const mimeType = String(
+        attachment?.mimeType ||
+        attachment?.contentType ||
+        attachment?.type ||
+        ''
+      ).trim() || null;
+
+      // AttachmentPayload from MediaProcessor uses a `data` field (base64 data URI).
+      // Decode it, write to a temp file, then register as local media.
+      const dataField = String(attachment?.data || '').trim();
+      if (dataField.startsWith('data:')) {
+        const commaIdx = dataField.indexOf(',');
+        if (commaIdx !== -1) {
+          const effectiveMime = mimeType || dataField.slice(5, commaIdx).replace(/;base64$/, '') || 'application/octet-stream';
+          const ext = effectiveMime.split('/')[1]?.split(';')[0] || 'bin';
+          const baseName = String(attachment?.name || attachment?.filename || `mms-media.${ext}`).trim();
+          const targetDir = ensureDirForSource('message-media', new Date());
+          const targetPath = path.join(targetDir, `${timestampSlug()}-${sanitizeFileName(baseName)}`);
+          const buf = Buffer.from(dataField.slice(commaIdx + 1), 'base64');
+          fs.writeFileSync(targetPath, buf);
+          imported.push(await registerLocalMedia({
+            filePath: targetPath,
+            source: 'message-media',
+            toolName: 'incoming_media',
+            mimeType: effectiveMime,
+            classification,
+            tags: ['message-media', safeProvider],
+            metadata: { provider: safeProvider, attachment },
+          }));
+        }
+        continue;
+      }
+
       const ref = extractAttachmentUrl(attachment);
       if (!ref) continue;
 
@@ -752,25 +786,15 @@ export async function registerIncomingMessagingMedia(provider: string, attachmen
         path.basename(ref.split('?')[0] || 'message-media.bin')
       ).trim();
 
-      const mimeType = String(
-        attachment?.mimeType ||
-        attachment?.contentType ||
-        attachment?.type ||
-        ''
-      ).trim() || null;
-
       if (looksLikeUrl(ref)) {
         imported.push(await registerRemoteMedia({
           url: ref,
           fileName,
           mimeType,
           source: 'message-media',
-          classification: safeProvider === 'telnyx' ? 'Telnyx MMS' : 'WhatsApp media',
+          classification,
           tags: ['message-media', safeProvider],
-          metadata: {
-            provider: safeProvider,
-            attachment,
-          },
+          metadata: { provider: safeProvider, attachment },
           downloadToLibrary: true,
         }));
       } else if (fs.existsSync(ref)) {
@@ -779,12 +803,9 @@ export async function registerIncomingMessagingMedia(provider: string, attachmen
           source: 'message-media',
           toolName: 'incoming_media',
           mimeType,
-          classification: safeProvider === 'telnyx' ? 'Telnyx MMS' : 'WhatsApp media',
+          classification,
           tags: ['message-media', safeProvider],
-          metadata: {
-            provider: safeProvider,
-            attachment,
-          },
+          metadata: { provider: safeProvider, attachment },
         }));
       }
     } catch (error) {

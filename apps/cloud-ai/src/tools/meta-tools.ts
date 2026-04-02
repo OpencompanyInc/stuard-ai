@@ -14,6 +14,11 @@ import * as ttsTools from './tts-tools';
 import * as feedbackTools from './feedback-tools';
 import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
+import * as telnyxTools from './telnyx-tools';
+import * as whatsappTools from './whatsapp-tools';
+import * as metaSocialTools from './meta-social-tools';
+import * as cloudStorageTools from './cloud-storage-tools';
+import * as proactiveTaskTools from './proactive-task-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -430,7 +435,20 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Utils');
     } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
         registerTool(t, 'GUI');
-    } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
+    } else if ([
+        'capture_media',
+        'stop_capture',
+        'list_active_captures',
+        'describe_media_capture_capabilities',
+        'capture_screen',
+        'stop_screen_capture',
+        'describe_screen_capture_capabilities',
+        'capture_system_audio',
+        'stop_system_audio',
+        'describe_system_audio_capabilities',
+        'stream_speech',
+        'stop_stream_speech',
+    ].includes(name)) {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
@@ -513,6 +531,21 @@ Object.values(webhookTools).forEach(t => {
 });
 Object.values(httpTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(telnyxTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(whatsappTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(metaSocialTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(cloudStorageTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+});
+Object.values(proactiveTaskTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Productivity');
 });
 
 // 2. Meta Tools

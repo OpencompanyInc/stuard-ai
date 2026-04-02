@@ -163,9 +163,19 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                     from .tools import handle_cloud_tool_request
                     # Spawn as concurrent task so multiple tool_requests run in parallel
                     # (cloud-ai fires them via Promise.all but this loop is sequential)
-                    asyncio.create_task(
+                    tool_task = asyncio.create_task(
                         handle_cloud_tool_request(cdata, session, cws, request_id=rid)
                     )
+                    session.active_tool_tasks.add(tool_task)
+                    def _cleanup_tool(_t: asyncio.Task) -> None:
+                        try:
+                            session.active_tool_tasks.discard(_t)
+                        except Exception:
+                            pass
+                    try:
+                        tool_task.add_done_callback(_cleanup_tool)
+                    except Exception:
+                        pass
 
                 elif ctype == "final":
                     logger.info("cloud_final model=%s", cdata.get("model"))

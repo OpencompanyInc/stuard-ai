@@ -609,11 +609,13 @@ export default function App() {
       const { data } = await supabase.auth.getSession();
       setSignedIn(!!data?.session);
       setAccessToken(data?.session?.access_token || null);
+      try { await window.desktopAPI?.syncAuthSession?.(data?.session ?? null); } catch { }
       try { const s = await window.desktopAPI.updatesGetState(); if (s && typeof s.status === 'string') setUpdateState(s as any); } catch { }
     })();
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSignedIn(!!session);
       setAccessToken(session?.access_token || null);
+      try { window.desktopAPI?.syncAuthSession?.(session ?? null); } catch { }
     });
     const unsubUpd = window.desktopAPI?.onUpdatesState?.((s: any) => { try { if (s && typeof s.status === 'string') setUpdateState(s); } catch { } });
     return () => { try { subscription.unsubscribe(); } catch { }; try { (typeof unsubUpd === 'function') && unsubUpd(); } catch { } };

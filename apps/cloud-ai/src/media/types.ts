@@ -19,7 +19,8 @@ export interface InboundMedia {
 /** Result of processing a single media item */
 export interface ProcessedMedia {
   original: InboundMedia;
-  buffer: Buffer;
+  /** Raw bytes — undefined for video (skipped to avoid large download) */
+  buffer: Buffer | undefined;
   mimeType: string;
   /** base64 data URI for images */
   base64DataUri?: string;
@@ -27,6 +28,8 @@ export interface ProcessedMedia {
   transcript?: string;
   transcriptLanguage?: string;
   transcriptDuration?: number;
+  /** For video items: the original URL (not downloaded inline) */
+  videoUrl?: string;
 }
 
 /** Attachment format accepted by the cloud WS chat handler */

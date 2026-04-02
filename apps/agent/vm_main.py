@@ -134,6 +134,7 @@ async def handle_connection(ws: WebSocketServerProtocol) -> None:
                 except Exception:
                     pass
             elif kind == "stop" or kind == "abort":
+                stop_request_id = str(msg.get("requestId") or "").strip() or None
                 cancelled_count = 0
                 for task in list(session.active_chat_tasks):
                     try:
@@ -142,8 +143,32 @@ async def handle_connection(ws: WebSocketServerProtocol) -> None:
                             cancelled_count += 1
                     except Exception:
                         pass
+                for task in list(session.active_tool_tasks):
+                    try:
+                        if not task.done():
+                            task.cancel()
+                            cancelled_count += 1
+                    except Exception:
+                        pass
+                for fut in list(session.pending_client_tool_results.values()):
+                    try:
+                        if not fut.done():
+                            fut.cancel()
+                    except Exception:
+                        pass
+                session.pending_client_tool_results.clear()
+                for fut in list(session.pending_approvals.values()):
+                    try:
+                        if not fut.done():
+                            fut.cancel()
+                    except Exception:
+                        pass
+                session.pending_approvals.clear()
                 logger.info("stop_requested cancelled=%d", cancelled_count)
-                await ws.send(json.dumps({"type": "stopped", "success": cancelled_count > 0}))
+                stopped_payload = {"type": "stopped", "success": cancelled_count > 0}
+                if stop_request_id:
+                    stopped_payload["requestId"] = stop_request_id
+                await ws.send(json.dumps(stopped_payload))
             elif kind == "auth":
                 await ws.send(json.dumps({"type": "auth_result", "ok": True, "queued": 0}))
             elif kind == "ping":

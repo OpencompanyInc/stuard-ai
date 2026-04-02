@@ -337,8 +337,9 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   // Legacy setters (update active tab)
   const setMessages = (fn: Message[] | ((prev: Message[]) => Message[])) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) {
+      if (t.id === targetTabId) {
         const newMsgs = typeof fn === 'function' ? fn(t.messages) : fn;
         return { ...t, messages: newMsgs };
       }
@@ -346,8 +347,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   };
   const setCurrentResponse = (fn: string | ((prev: string) => string)) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) {
+      if (t.id === targetTabId) {
         const newResp = typeof fn === 'function' ? fn(t.currentResponse) : fn;
         return { ...t, currentResponse: newResp };
       }
@@ -355,8 +357,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   };
   const setCurrentReasoning = (fn: string | ((prev: string) => string)) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) {
+      if (t.id === targetTabId) {
         const newReas = typeof fn === 'function' ? fn(t.currentReasoning) : fn;
         return { ...t, currentReasoning: newReas };
       }
@@ -364,8 +367,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   };
   const setAI = (fn: AIStatus | ((prev: AIStatus) => AIStatus)) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) {
+      if (t.id === targetTabId) {
         const newAi = typeof fn === 'function' ? fn(t.aiState) : fn;
         return { ...t, aiState: newAi };
       }
@@ -373,8 +377,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   };
   const setState = (fn: AgentState | ((prev: AgentState) => AgentState)) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) {
+      if (t.id === targetTabId) {
         const newState = typeof fn === 'function' ? fn(t.agentState) : fn;
         return { ...t, agentState: newState };
       }
@@ -382,8 +387,9 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   };
   const setConversationId = (id: string | null) => {
+    const targetTabId = activeTabIdRef.current;
     setTabs(prev => prev.map(t => {
-      if (t.id === activeTabId) return { ...t, serverId: id };
+      if (t.id === targetTabId) return { ...t, serverId: id };
       return t;
     }));
   };
@@ -446,6 +452,11 @@ export function useAgent(options?: string | UseAgentOptions) {
     'run_command', 'run_python_script', 'run_node_script',
   ]);
 
+  const releaseTabRun = useCallback((tabId: string) => {
+    pendingResponseTabsRef.current = pendingResponseTabsRef.current.filter(t => t !== tabId);
+    runningTabsRef.current.delete(tabId);
+  }, []);
+
   // Tab Management
   const addTab = useCallback((tab: Partial<ConversationTab> = {}) => {
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -474,7 +485,7 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const closeTab = useCallback((id: string) => {
     // Clean up request tracking for the closed tab
-    runningTabsRef.current.delete(id);
+    releaseTabRun(id);
     // Remove any requestId -> tabId mappings pointing to this tab
     for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
       if (tabId === id) {
@@ -485,8 +496,6 @@ export function useAgent(options?: string | UseAgentOptions) {
         }
       }
     }
-    // Remove from pending response queue
-    pendingResponseTabsRef.current = pendingResponseTabsRef.current.filter(t => t !== id);
     // Remove any outbound queue items for this tab
     outboundQueueRef.current = outboundQueueRef.current.filter(item => item.tabId !== id);
     pendingSendRef.current = pendingSendRef.current.filter(item => item.tabId !== id);
@@ -499,7 +508,8 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
       return next;
     });
-  }, [activeTabId]);
+    tryDequeueAndSend();
+  }, [activeTabId, releaseTabRun]);
 
   const switchTab = useCallback((id: string) => {
     if (tabsRef.current.some(t => t.id === id)) {
@@ -548,12 +558,22 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Clear streaming state and mark as stopped to ignore further chunks
       streamingRef.current = false;
       stoppedRef.current = true;
-      setAI({ phase: 'idle', statusText: 'Stopped' });
+      releaseTabRun(targetTabId);
+      setTabs(prev => prev.map(t => (
+        t.id === targetTabId
+          ? {
+              ...t,
+              aiState: { ...t.aiState, phase: 'idle', statusText: 'Stopped' },
+              agentState: { ...t.agentState, status: 'idle' },
+            }
+          : t
+      )));
+      tryDequeueAndSend();
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [releaseTabRun]);
 
   const execLocalTool = useCallback(async (tool: string, args: any): Promise<any> => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -1439,6 +1459,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               const nextList = [...prev, { id: queueId, text: fullText, timestamp: ts }];
               const nd = nextList.length;
               queueDepthRef.current = nd;
+              setQueueDepth(nd);
               return nextList;
             });
             setStreamingAI((prev) => ({ ...prev, statusText: (Number.isFinite(pos) && pos > 0) ? `Queued (${pos})` : 'Queued' }));
@@ -1525,6 +1546,9 @@ export function useAgent(options?: string | UseAgentOptions) {
           } else if (msg.type === 'stopped') {
             // Server acknowledged the stop request
             console.log('[agent] Stream stopped by server:', msg.success);
+            const stoppedTabId = getTargetTabId();
+            releaseTabRun(stoppedTabId);
+            tryDequeueAndSend();
             // Clear streaming state - the 'final' message with aborted=true will follow
             streamingRef.current = false;
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
@@ -1672,6 +1696,8 @@ export function useAgent(options?: string | UseAgentOptions) {
         runningTabsRef.current.clear();
         pendingResponseTabsRef.current = [];
         waitingQueuedStartRef.current = false;
+        setQueueDepth(0);
+        setQueuedMessages([]);
         // Clean up tracking maps to prevent memory leaks
         requestIdToTabRef.current.clear();
         activeRequestIdRef.current = null;

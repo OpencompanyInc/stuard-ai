@@ -1,17 +1,14 @@
 import { app, globalShortcut, protocol } from "electron";
 import fs from "node:fs";
-import os from "node:os";
 import path from "path";
 import { Readable } from "node:stream";
 import { initEnv } from "./env";
-import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, refreshAppCache, startReminderScheduler, stopReminderScheduler, startProactiveScheduler, stopProactiveScheduler, startCloudWebhooks, stopCloudWebhooks, startSmsInbox, stopSmsInbox } from "./services/index";
-import { loadSettings } from "./settings";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer, refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc } from "./tools/index";
-import { canPrewarmBrowserUseOnStartup, prewarmBrowserUseServer } from "./tools/handlers/browser-use";
 import logger from "./utils/logger";
 
 initEnv();
@@ -52,63 +49,6 @@ function setupSingleInstance() {
 
 app.setAppUserModelId("Stuard AI");
 setupSingleInstance();
-
-const RECENT_BOOT_GRACE_MS = 5 * 60 * 1000;
-const startupTimers = new Set<NodeJS.Timeout>();
-let isShuttingDown = false;
-
-function getStartupDelayProfile() {
-  const uptimeMs = Math.max(0, Math.round(os.uptime() * 1000));
-  const recentSystemBoot = uptimeMs > 0 && uptimeMs < RECENT_BOOT_GRACE_MS;
-
-  return {
-    uptimeMs,
-    recentSystemBoot,
-    agentDelayMs: recentSystemBoot ? 2000 : 400,
-    workflowDelayMs: recentSystemBoot ? 4000 : 1000,
-    cloudDelayMs: recentSystemBoot ? 15000 : 5000,
-    appDiscoveryDelayMs: recentSystemBoot ? 45000 : 15000,
-    browserPrewarmDelayMs: recentSystemBoot ? 180000 : 45000,
-    indexingDelayMs: recentSystemBoot ? 120000 : 30000,
-  };
-}
-
-function shouldPrewarmBrowserUse(): boolean {
-  try {
-    const settings = loadSettings();
-    return settings.browserEnabled === true && canPrewarmBrowserUseOnStartup();
-  } catch {
-    return false;
-  }
-}
-
-function clearStartupTimers() {
-  for (const timer of startupTimers) {
-    try { clearTimeout(timer); } catch { }
-  }
-  startupTimers.clear();
-}
-
-function deferStartupTask(
-  label: string,
-  delayMs: number,
-  task: () => void | Promise<void>,
-) {
-  const timer = setTimeout(async () => {
-    startupTimers.delete(timer);
-    if (isShuttingDown) return;
-
-    try {
-      logger.info(`Running deferred startup task: ${label}`);
-      await task();
-      logger.info(`Deferred startup task complete: ${label}`);
-    } catch (e) {
-      logger.error(`Deferred startup task failed: ${label}`, e);
-    }
-  }, Math.max(0, Math.round(delayMs)));
-
-  startupTimers.add(timer);
-}
 
 // Migrate workflows from old dev path (@stuardai/desktop) to unified path (Stuard AI)
 function migrateDevWorkflows() {
@@ -281,10 +221,6 @@ app.whenReady().then(async () => {
   logger.info("Log file:", logger.getLogPath());
   logger.info("App ready, initializing...");
 
-  const startupProfile = getStartupDelayProfile();
-  logger.info("System uptime (ms):", startupProfile.uptimeMs);
-  logger.info("Recent system boot detected:", startupProfile.recentSystemBoot);
-
   try {
     logger.info("Initializing updates...");
     initUpdates();
@@ -294,39 +230,41 @@ app.whenReady().then(async () => {
   }
 
   try {
-    logger.info("Setting up IPC...");
-    setupIpc();
-    logger.info("IPC setup complete");
+    logger.info("Starting agent...");
+    await startAgentIfNeeded();
+    logger.info("Agent start requested");
   } catch (e) {
-    logger.error("Failed to setup IPC:", e);
+    logger.error("Failed to start agent:", e);
   }
 
   try {
-    logger.info("Initializing custom UI IPC...");
-    const agentWsUrl = String(process.env.AGENT_WS || process.env.AGENT_WS_URL || '').trim() || 'ws://127.0.0.1:8765/ws';
-    const cloudAiUrl = String(
-      process.env.CLOUD_AI_HTTP ||
-      process.env.CLOUD_PUBLIC_URL ||
-      process.env.VITE_CLOUD_AI_URL ||
-      process.env.CLOUD_AI_URL ||
-      'http://localhost:8082'
-    ).trim().replace(/\/+$/, '');
-
-    initCustomUiIpc(() => ({
-      agentWsUrl,
-      cloudAiUrl,
-      logFn: (msg: string) => {
-        try { logger.info(`[custom_ui] ${msg}`); } catch { }
-      },
-    }));
-    logger.info("Custom UI IPC initialized");
+    logger.info("Starting local webhook server...");
+    startLocalWebhookServer();
+    logger.info("Webhook server started");
   } catch (e) {
-    logger.error("Failed to initialize custom UI IPC:", e);
+    logger.error("Failed to start webhook server:", e);
+  }
+
+  try {
+    logger.info("Starting browser extension server...");
+    startBrowserExtensionServer();
+    logger.info("Browser extension server started");
+  } catch (e) {
+    logger.error("Failed to start browser extension server:", e);
+  }
+
+try {
+    logger.info("Running stuards autostart...");
+    stuards_autostart();
+    logger.info("Stuards autostart done");
+  } catch (e) {
+    logger.error("Failed stuards autostart:", e);
   }
 
   try {
     logger.info("Creating window...");
     createWindow();
+    openNotificationWindow();
     logger.info("Window created");
   } catch (e) {
     logger.error("Failed to create window:", e);
@@ -349,63 +287,83 @@ app.whenReady().then(async () => {
   }
 
   try {
-    startReminderScheduler();
-    logger.info("Reminder scheduler started");
+    logger.info("Setting up IPC...");
+    setupIpc();
+    logger.info("IPC setup complete");
   } catch (e) {
-    logger.error("Failed to start reminder scheduler:", e);
+    logger.error("Failed to setup IPC:", e);
   }
 
   try {
-    startProactiveScheduler();
-    logger.info("Proactive scheduler started");
+    logger.info("Initializing custom UI IPC...");
+    // Initialize custom UI IPC with a function to get the router context
+    const agentWsUrl = String(process.env.AGENT_WS || process.env.AGENT_WS_URL || '').trim() || 'ws://127.0.0.1:8765/ws';
+    const cloudAiUrl = String(
+      process.env.CLOUD_AI_HTTP ||
+      process.env.CLOUD_PUBLIC_URL ||
+      process.env.VITE_CLOUD_AI_URL ||
+      ''
+    ).trim().replace(/\/+$/, '');
+
+    initCustomUiIpc(() => ({
+      agentWsUrl,
+      cloudAiUrl,
+      logFn: (msg: string) => {
+        try { logger.info(`[custom_ui] ${msg}`); } catch { }
+      },
+    }));
+    logger.info("Custom UI IPC initialized");
   } catch (e) {
-    logger.error("Failed to start proactive scheduler:", e);
+    logger.error("Failed to initialize custom UI IPC:", e);
   }
 
   // Note: The window will auto-show after the renderer finishes loading
   // via the 'did-finish-load' handler in window.ts. This ensures
   // the transparent overlay is visible (has content painted) when shown.
 
-  logger.info("=== Initialization complete ===");
-
-  deferStartupTask("start agent", startupProfile.agentDelayMs, async () => {
-    await startAgentIfNeeded();
-  });
-
-  deferStartupTask("start local webhook server", startupProfile.agentDelayMs, () => {
-    startLocalWebhookServer();
-  });
-
-  deferStartupTask("stuards autostart", startupProfile.workflowDelayMs, () => {
-    stuards_autostart();
-  });
-
-  deferStartupTask("workflows autostart", startupProfile.workflowDelayMs, async () => {
-    await workflows_autostart();
-  });
-
-  deferStartupTask("start cloud webhooks", startupProfile.cloudDelayMs, () => {
-    startCloudWebhooks();
-  });
-
-  deferStartupTask("start SMS inbox", startupProfile.cloudDelayMs, () => {
-    startSmsInbox();
-  });
-
-  deferStartupTask("background app discovery", startupProfile.appDiscoveryDelayMs, async () => {
-    await refreshAppCache();
-  });
-
-  if (shouldPrewarmBrowserUse()) {
-    deferStartupTask("browser-use prewarm", startupProfile.browserPrewarmDelayMs, async () => {
-      await prewarmBrowserUseServer();
-    });
-  } else {
-    logger.info("Browser-use prewarm skipped (browser integration disabled or packaged service unavailable)");
+  // Run workflows autostart AFTER window, shortcuts, and IPC are fully initialized
+  // This ensures globalShortcut is ready for workflow hotkeys
+  try {
+    logger.info("Running workflows autostart...");
+    workflows_autostart();
+    logger.info("Workflows autostart done");
+  } catch (e) {
+    logger.error("Failed workflows autostart:", e);
   }
 
-  deferStartupTask("background file indexing", startupProfile.indexingDelayMs, async () => {
-    await runStartupIndexing();
+  logger.info("=== Initialization complete ===");
+
+  // Start the offline reminder scheduler (works without internet)
+  try {
+    startReminderScheduler();
+    logger.info("Reminder scheduler started");
+  } catch (e) {
+    logger.error("Failed to start reminder scheduler:", e);
+  }
+
+  // Start SMS inbox queue consumer (picks up messages routed to desktop)
+  try {
+    startSmsInbox();
+    logger.info("SMS inbox started");
+  } catch (e) {
+    logger.error("Failed to start SMS inbox:", e);
+  }
+
+  // Run file indexing in the background after a short delay
+  // This allows the agent to fully initialize first
+  setTimeout(async () => {
+    try {
+      logger.info("Starting background file indexing...");
+      await runStartupIndexing();
+      logger.info("Background file indexing complete");
+    } catch (e) {
+      logger.error("Background file indexing failed:", e);
+    }
+  }, 5000); // 5 second delay to let agent fully start
+
+  // Discover installed applications immediately (no agent dependency)
+  refreshAppCache().catch((e) => {
+    logger.warn("Background app discovery failed:", e);
   });
 });
 
@@ -415,18 +373,14 @@ app.on("browser-window-focus", () => {
 });
 
 app.on("will-quit", () => {
-  isShuttingDown = true;
   logger.info("App quitting...");
-  clearStartupTimers();
   globalShortcut.unregisterAll();
   disposeUpdates();
   stopAllAgents();
   stopReminderScheduler();
-  stopProactiveScheduler();
-  stopCloudWebhooks();
   stopSmsInbox();
   // Flush any debounced variable saves before exit
-  try { require('./workflow-variables').saveVariablesSync(); } catch { }
+  try { require('./workflow-variables').saveVariablesSync(); } catch {}
   logger.info("Cleanup complete");
 });
 

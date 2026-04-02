@@ -834,8 +834,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               const slashHandled = await handleSmsSlashCommand(userId, fromPhone, trimmedLower);
               if (slashHandled) {
                 // Slash command was handled — don't route to agent
-                sendJson(res, 200, { ok: true });
-                return true;
+                // Response already sent above (fast ack), just stop processing.
+                return;
               }
             }
 
@@ -931,8 +931,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               }
             }
 
-            // ── Cloud serverless handler (no VM or desktop needed) ──────
-            if (!handled && (effectiveTarget === 'cloud' || (effectiveTarget === 'vm' && !vmRunning))) {
+            // ── Cloud serverless handler (fallback for all targets) ──────
+            if (!handled) {
               try {
                 const cloudResult = await runServerlessAgent({
                   userId,

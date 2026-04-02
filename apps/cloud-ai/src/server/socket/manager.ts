@@ -222,6 +222,7 @@ export class SocketManager {
       const modelName = normalizeTier(msg.model || 'balanced');
       const modelId = typeof msg?.modelId === 'string' ? String(msg.modelId).trim() : '';
       const chosenModelId = modelId || undefined;
+      const forcePersist = !!msg.forcePersist;
       let conversationId = msg.conversationId || null;
       const userId = authUser?.userId || null;
 
@@ -233,7 +234,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, 'stuard', forcePersist);
           if (conversationId) {
             sendTagged({ type: 'conversation', conversationId });
           }
@@ -243,7 +244,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, forcePersist);
         }
       }
 
@@ -290,7 +291,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
-          });
+          }, forcePersist);
         }
       } finally {
         try { wsIsRunning.set(ws, false); } catch { }

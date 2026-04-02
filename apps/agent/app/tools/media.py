@@ -1055,7 +1055,7 @@ async def stop_capture(
     Returns:
         { ok, sessionId, wasActive, filePath?, stoppedBy?, busInfo? }
     """
-    session_id = str(args.get("sessionId") or "").strip()
+    session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip()
     if not session_id:
         raise ValueError("sessionId is required")
     
@@ -1068,7 +1068,31 @@ async def stop_capture(
         recording_info = _active_recordings.get(session_id)
         was_active = stop_event is not None
         print(f"[stop_capture] Found event: {stop_event is not None}, recording_info: {recording_info is not None}")
-    
+
+    if not was_active and not recording_info:
+        try:
+            from . import screen_capture as _screen_capture
+
+            with _screen_capture._sessions_lock:
+                has_system_audio = (
+                    session_id in _screen_capture._active_audio_sessions
+                    or session_id in _screen_capture._active_audio_recordings
+                )
+                has_screen_capture = (
+                    session_id in _screen_capture._active_screen_sessions
+                    or session_id in _screen_capture._active_screen_recordings
+                )
+
+            if has_system_audio:
+                print(f"[stop_capture] Delegating system audio stop for session {session_id}")
+                return await _screen_capture.stop_system_audio({"sessionId": session_id}, emit)
+
+            if has_screen_capture:
+                print(f"[stop_capture] Delegating screen capture stop for session {session_id}")
+                return await _screen_capture.stop_screen_capture({"sessionId": session_id}, emit)
+        except Exception as e:
+            print(f"[stop_capture] Delegation check failed for session '{session_id}': {e}")
+
     # Check if this is a bus-based capture
     if recording_info and recording_info.get("bus_mode"):
         print(f"[stop_capture] Handling bus-based capture for session {session_id}")
