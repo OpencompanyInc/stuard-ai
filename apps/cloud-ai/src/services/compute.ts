@@ -778,11 +778,12 @@ export class GCEComputeProvider implements IComputeProvider {
       accessConfigs: [{ name: 'External NAT', type: 'ONE_TO_ONE_NAT' }],
     }];
 
-    // Minimal scopes — VM uses signed URLs for GCS, no direct bucket access needed.
-    // Only logging + monitoring for basic VM telemetry.
+    // Scopes: logging/monitoring for telemetry, read-only storage as fallback
+    // if signed URL generation fails during provisioning.
     const vmScopes = [
       'https://www.googleapis.com/auth/logging.write',
       'https://www.googleapis.com/auth/monitoring.write',
+      'https://www.googleapis.com/auth/devstorage.read_only',
     ];
     const serviceAccounts = GCP_VM_SERVICE_ACCOUNT
       ? [{ email: GCP_VM_SERVICE_ACCOUNT, scopes: vmScopes }]

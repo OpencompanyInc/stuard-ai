@@ -86,6 +86,13 @@ declare global {
       listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
       pickFiles: (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; data?: string; mimeType?: string }>; error?: string }>;
       pickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ ok: boolean; folders?: Array<{ path: string }>; error?: string }>;
+      chatUiPickFile: (options?: { title?: string; filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      chatUiPickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      chatUiPickSavePath: (options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; filePath?: string }>;
+      chatUiReadFile: (filePath: string, encoding?: string) => Promise<string>;
+      chatUiWriteFile: (filePath: string, content: string) => Promise<void>;
+      chatUiClipboardWrite: (text: string) => Promise<void>;
+      chatUiClipboardRead: () => Promise<string>;
       mediaList: () => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
       mediaSummary: () => Promise<{ ok: boolean; summary?: MediaLibrarySummary; error?: string }>;
       mediaGetPrefs: () => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
@@ -170,6 +177,8 @@ declare global {
       fileIndexGetScanStatus: () => Promise<{ ok: boolean; isScanning?: boolean; currentRootId?: string | null; lastProgress?: any }>;
       onFileIndexScanProgress: (cb: (data: { rootId: string; path: string; progress: any }) => void) => () => void;
       onFileIndexStatus: (cb: (data: { status: string; totalRoots?: number; completedRoots?: number; currentPath?: string; error?: string }) => void) => () => void;
+
+      notify: (titleOrConfig: string | { title?: string; body?: string; message?: string; variant?: string; position?: string; duration?: number }, body?: string) => Promise<{ ok: boolean; error?: string }>;
 
       // Billing (Polar)
       billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;

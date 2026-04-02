@@ -493,8 +493,12 @@ export async function generateVMAssetUrls(): Promise<{
     if (bundleExists) {
       const [url] = await bundleFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
       agentBundleUrl = rewriteSignedUrl(url);
+    } else {
+      console.warn('[cold-storage] agent/vm-agent-bundle.js not found in bucket');
     }
-  } catch {}
+  } catch (e) {
+    console.error('[cold-storage] Failed to generate signed URL for agent bundle:', e);
+  }
 
   try {
     const pyFile = bucket.file('agent/stuard-python-agent.tar.gz');
@@ -503,7 +507,9 @@ export async function generateVMAssetUrls(): Promise<{
       const [url] = await pyFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
       pythonAgentUrl = rewriteSignedUrl(url);
     }
-  } catch {}
+  } catch (e) {
+    console.error('[cold-storage] Failed to generate signed URL for python agent:', e);
+  }
 
   return { agentBundleUrl, pythonAgentUrl };
 }
