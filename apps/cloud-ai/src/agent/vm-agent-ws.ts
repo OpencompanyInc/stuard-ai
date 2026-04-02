@@ -58,12 +58,15 @@ export function getAgentWs(): Promise<WebSocket> {
       try {
         const msg = JSON.parse(String(data));
         const id = msg.id || msg.requestId;
-        if (id && _agentPendingRequests.has(id)) {
-          const pending = _agentPendingRequests.get(id)!;
-          clearTimeout(pending.timer);
-          _agentPendingRequests.delete(id);
-          pending.resolve(msg);
-        }
+        if (!id || !_agentPendingRequests.has(id)) return;
+        // Only resolve on terminal messages — skip progress/delta/routing
+        // events which arrive before the actual result.
+        const t = String(msg.type || '').toLowerCase();
+        if (t === 'progress' || t === 'delta' || t === 'routing' || t === 'tool_event') return;
+        const pending = _agentPendingRequests.get(id)!;
+        clearTimeout(pending.timer);
+        _agentPendingRequests.delete(id);
+        pending.resolve(msg);
       } catch { /* non-JSON message, ignore */ }
     });
     ws.on('close', () => {
@@ -91,7 +94,7 @@ export async function sendToAgent(msg: Record<string, any>, timeoutMs = 120_000)
     }, timeoutMs);
 
     _agentPendingRequests.set(id, { resolve, timer });
-    ws.send(JSON.stringify({ ...msg, id }));
+    ws.send(JSON.stringify({ ...msg, id, requestId: id }));
   });
 }
 

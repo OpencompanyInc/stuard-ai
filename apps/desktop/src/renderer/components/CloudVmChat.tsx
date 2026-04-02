@@ -203,19 +203,26 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
       });
 
       const data = await resp.json() as any;
+      console.log('[CloudVmChat] relay response (status=%d):', resp.status, JSON.stringify(data).slice(0, 2000));
       const result = data?.result || data;
-      const replyText = String(result?.text || result?.response || '').trim();
+      // The VM agent wraps cloud-ai's result inside result.result, so drill in
+      const inner = result?.result || result;
+      const replyText = String(inner?.text || inner?.response || result?.text || result?.response || '').trim();
 
-      if (result?.conversationId) {
-        conversationIdRef.current = result.conversationId;
+      if (result?.conversationId || inner?.conversationId) {
+        conversationIdRef.current = result.conversationId || inner.conversationId;
       }
+
+      // Surface errors from any level of the response nesting
+      const hasError = data?.ok === false || result?.ok === false || inner?.ok === false;
+      const errorMsg = result?.error || inner?.error || data?.error || 'unknown';
 
       setMessages((prev) => [
         ...prev,
         {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          text: replyText || (data?.ok === false ? `Error: ${result?.error || 'unknown'}` : 'No response'),
+          text: replyText || (hasError ? `Error: ${errorMsg}` : 'No response'),
           timestamp: Date.now(),
         },
       ]);
