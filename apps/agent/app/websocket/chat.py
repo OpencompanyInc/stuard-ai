@@ -31,7 +31,7 @@ def _get_vm_client_integrations() -> List[str]:
     return integrations
 
 async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
-    request_id = msg.get("requestId")
+    request_id = msg.get("requestId") or msg.get("id")
     if not isinstance(request_id, str) or not request_id.strip():
         request_id = None
 
