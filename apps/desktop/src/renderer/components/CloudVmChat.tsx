@@ -59,9 +59,9 @@ function normalizeMarkdownSpacing(input: string): string {
 function buildVmWsUrl(): string {
   const base = String(CLOUD_AI_HTTP).replace(/\/+$/, '');
   if (base.startsWith('https://')) {
-    return `wss://${base.slice('https://'.length)}/vm/ws`;
+    return `wss://${base.slice('https://'.length)}/ws`;
   }
-  return `ws://${base.replace(/^http:\/\//, '')}/vm/ws`;
+  return `ws://${base.replace(/^http:\/\//, '')}/ws`;
 }
 
 // Markdown components for assistant messages
