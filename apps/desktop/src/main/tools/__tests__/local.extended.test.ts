@@ -113,15 +113,13 @@ describe('calcToolTimeout - Extended Tests', () => {
     });
   });
 
-  describe('run_command / run_system_command', () => {
+  describe('run_command', () => {
     it('should use custom timeoutMs with 15s buffer', () => {
       expect(calcToolTimeout('run_command', { timeoutMs: 60000 })).toBe(75000);
-      expect(calcToolTimeout('run_system_command', { timeoutMs: 60000 })).toBe(75000);
     });
 
     it('should return 5 min default', () => {
       expect(calcToolTimeout('run_command', {})).toBe(300000);
-      expect(calcToolTimeout('run_system_command', {})).toBe(300000);
     });
 
     it('should cap at 600s', () => {

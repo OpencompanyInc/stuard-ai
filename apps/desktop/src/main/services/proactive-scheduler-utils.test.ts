@@ -80,14 +80,14 @@ describe('local proactive prompt helpers', () => {
     });
     expect(prompt).toContain('Draft email');
     expect(prompt).toContain('ptask_1');
-    expect(prompt).toContain('ACTION REQUIRED');
-    expect(prompt).toContain('proactive_task_update');
+    expect(prompt).toContain('Task board: 1 queued, 0 in-progress.');
+    expect(prompt).toContain('Work on these silently.');
     expect(prompt).toContain('notification');
   });
 
   it('handles empty task list gracefully', () => {
     const prompt = buildLocalProactivePrompt({ tasks: [] });
-    expect(prompt).toContain('No proactive tasks');
+    expect(prompt).toContain('No tasks. Focus on reading the room');
   });
 
   it('puts directive instructions and skills into hidden context', () => {
@@ -100,7 +100,7 @@ describe('local proactive prompt helpers', () => {
     expect(hidden).toContain('[PROACTIVE MODE]');
     expect(hidden).toContain('proactive_task_update');
     expect(hidden).toContain('web_search');
-    expect(hidden).toContain('ACTUALLY DO THE WORK');
+    expect(hidden).toContain('DO THE WORK');
     expect(hidden).toContain('Email Helper');
   });
 });
