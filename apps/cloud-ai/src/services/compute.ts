@@ -298,9 +298,9 @@ NODE_MEM_MB=$(( TOTAL_RAM_MB * 30 / 100 ))
 PYTHON_MEM_MB=$(( TOTAL_RAM_MB * 40 / 100 ))
 [ "$NODE_MEM_MB" -lt 384 ] && NODE_MEM_MB=384
 [ "$PYTHON_MEM_MB" -lt 512 ] && PYTHON_MEM_MB=512
-NODE_MEMORY_MAX="${NODE_MEM_MB}M"
-PYTHON_MEMORY_MAX="${PYTHON_MEM_MB}M"
-echo "[stuard] RAM=${TOTAL_RAM_MB}MB → Node=${NODE_MEMORY_MAX} Python=${PYTHON_MEMORY_MAX}"
+NODE_MEMORY_MAX="\${NODE_MEM_MB}M"
+PYTHON_MEMORY_MAX="\${PYTHON_MEM_MB}M"
+echo "[stuard] RAM=\${TOTAL_RAM_MB}MB → Node=\${NODE_MEMORY_MAX} Python=\${PYTHON_MEMORY_MAX}"
 
 # ── 9. Create and START Node.js agent service IMMEDIATELY ────────────────────
 # This is the critical path — gets /health responding so cloud-ai knows we're alive.
@@ -325,7 +325,7 @@ StandardError=journal
 SyslogIdentifier=stuard-agent
 
 LimitNOFILE=65536
-MemoryMax=${NODE_MEMORY_MAX}
+MemoryMax=\${NODE_MEMORY_MAX}
 
 [Install]
 WantedBy=multi-user.target
@@ -462,7 +462,7 @@ StandardError=journal
 SyslogIdentifier=stuard-python
 
 LimitNOFILE=65536
-MemoryMax=${PYTHON_MEMORY_MAX}
+MemoryMax=\${PYTHON_MEMORY_MAX}
 
 [Install]
 WantedBy=multi-user.target
