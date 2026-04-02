@@ -35,6 +35,18 @@ const pendingInboundCalls = new Map<string, { fromNumber: string; answeredAt: nu
 // Track call direction from call.initiated (Telnyx may not include direction in later events)
 const callDirectionCache = new Map<string, string>();
 
+// ── Inbound message dedup (prevents double-processing on Telnyx webhook retries) ──
+// Telnyx uses at-least-once delivery. If our response takes >30s, it retries.
+// We track recent provider_message_ids so the second delivery is a no-op.
+const _recentMsgIds = new Set<string>();
+function _markMsgProcessed(id: string): void {
+  _recentMsgIds.add(id);
+  setTimeout(() => _recentMsgIds.delete(id), 120_000); // forget after 2 min
+}
+function _isMsgDuplicate(id: string): boolean {
+  return _recentMsgIds.has(id);
+}
+
 // Cache proactive call config keyed by callControlId
 // Supports: streaming bridge (bidirectional AI), ElevenLabs audio playback, or Telnyx TTS fallback
 const proactiveCallCache = new Map<string, {
@@ -755,8 +767,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
   // Configure this URL in the Telnyx portal as the messaging webhook:
   //   POST /webhooks/telnyx/sms
   if (req.method === 'POST' && pathname === '/webhooks/telnyx/sms') {
+    let _smsRawBody = '';
+    try { _smsRawBody = await readBody(req); } catch (e: any) {
+      console.error('[telnyx] Failed to read SMS webhook body:', e?.message);
+    }
+    // Respond 200 immediately — Telnyx expects fast ack. Processing continues async.
+    sendJson(res, 200, { ok: true });
+    (async () => {
     try {
-      const payload = JSON.parse(await readBody(req));
+      const payload = JSON.parse(_smsRawBody);
       const eventType: string = payload?.data?.event_type || '';
 
       if (eventType === 'message.received') {
@@ -771,6 +790,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           payload?.data?.id ||
           '',
         ).trim() || null;
+
+        // Dedup: skip if this message was already processed (Telnyx retry or dual delivery)
+        if (providerMessageId) {
+          if (_isMsgDuplicate(providerMessageId)) {
+            console.warn('[telnyx] Skipping duplicate inbound SMS:', providerMessageId);
+            return;
+          }
+          _markMsgProcessed(providerMessageId);
+        }
 
         if (fromPhone && (rawText || hasMedia)) {
           // Process media attachments if present (MMS sent to SMS webhook)
@@ -985,7 +1013,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     } catch (e: any) {
       console.error('[telnyx] Incoming SMS webhook error:', e?.message || e);
     }
-    sendJson(res, 200, { ok: true });
+    })().catch((e: any) => console.error('[telnyx] SMS webhook async error:', e?.message));
     return true;
   }
 
@@ -1013,8 +1041,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
   // ── MMS webhook (Telnyx sends inbound MMS/media messages here) ────────────
   if (req.method === 'POST' && pathname === '/webhooks/telnyx/mms') {
+    let _mmsRawBody = '';
+    try { _mmsRawBody = await readBody(req); } catch (e: any) {
+      console.error('[telnyx] Failed to read MMS webhook body:', e?.message);
+    }
+    // Respond 200 immediately — Telnyx expects fast ack. Processing continues async.
+    sendJson(res, 200, { ok: true });
+    (async () => {
     try {
-      const body = JSON.parse(await readBody(req));
+      const body = JSON.parse(_mmsRawBody);
       const eventType: string = body?.data?.event_type || '';
 
       if (eventType === 'message.received') {
@@ -1024,7 +1059,17 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         const text: string = payload?.text || '';
         const providerMessageId = String(payload?.id || '').trim() || null;
 
-        if (from && mediaItems.length > 0) {
+        // Dedup: skip if this message was already processed (Telnyx retry or dual delivery)
+        if (providerMessageId) {
+          if (_isMsgDuplicate(providerMessageId)) {
+            console.warn('[telnyx] Skipping duplicate inbound MMS:', providerMessageId);
+            return;
+          }
+          _markMsgProcessed(providerMessageId);
+        }
+
+        // Accept text-only MMS too (mediaItems may be empty if Telnyx sends text via MMS webhook)
+        if (from && (mediaItems.length > 0 || text)) {
           const userId = await findUserIdByPhone(from);
           if (userId) {
             const [smsState, engine] = await Promise.all([
@@ -1173,7 +1218,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
     } catch (e: any) {
       console.error('[telnyx] MMS webhook error:', e?.message || e);
     }
-    sendJson(res, 200, { ok: true });
+    })().catch((e: any) => console.error('[telnyx] MMS webhook async error:', e?.message));
     return true;
   }
 

@@ -32,6 +32,13 @@ export interface UserSettings {
   semanticIndexKinds?: string[];
   /** File extensions to exclude from semantic indexing */
   semanticExcludeExtensions?: string[];
+
+  // ── Browser-use Chrome sync settings ──
+  chromeSyncEnabled?: boolean;
+  chromeSyncBrowserName?: string | null;
+  chromeSyncProfileName?: string | null;
+  chromeSyncProfilePath?: string | null;
+  chromeSyncUserDataDir?: string | null;
 }
 
 export function getSettingsPath(): string {

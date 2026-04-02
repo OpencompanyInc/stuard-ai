@@ -155,6 +155,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'gmail_send': { kind: 'cloud' }, // Alias for gmail_send_message
   'gmail_send_message': { kind: 'cloud' },
   'gmail_list_messages': { kind: 'cloud' },
+  'gmail_search_messages': { kind: 'cloud' },
   'gmail_get_message_brief': { kind: 'cloud' },
   'gmail_get_message_full': { kind: 'cloud' },
   'gmail_get_messages_brief': { kind: 'cloud' },

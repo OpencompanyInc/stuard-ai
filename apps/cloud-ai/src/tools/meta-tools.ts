@@ -300,63 +300,92 @@ const logTool = createTool({
 
 const chatUiTool = createTool({
     id: 'chat_ui',
-    description: `Render a custom interactive React component inline in the chat conversation.
-Unlike custom_ui (which opens a separate window), chat_ui embeds the UI directly in the chat bubble.
+    description: `Render a custom React component inline in the chat. Use this as the DEFAULT way to display any structured data, results, or visual content — tables, stats, file lists, JSON, charts, dashboards, code output, search results, comparisons, etc. Prefer this over plain text whenever the response has structure worth visualizing.
+
+WHEN TO USE (non-blocking, blocking: false):
+  - Showing query results, file listings, search hits, API responses
+  - Displaying stats, metrics, comparisons, or summaries
+  - Rendering tables, cards, timelines, or any structured output
+  - Visualizing data the user will want to scan or interact with
+
+WHEN TO USE (blocking, blocking: true):
+  - Custom input not covered by ask_confirmation / show_choices / show_form
+  - Multi-step flows that need dynamic state between steps
 
 COMPONENT FIELD:
-  Define a function App() using JSX syntax. JSX is auto-transformed at render time.
+  Define a function App() using JSX. Auto-transformed via Sucrase.
 
-  - Standard React JSX: <div className="p-4">{expr}</div>
+  - Standard JSX: <div className="p-4">{expr}</div>
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - Tailwind CSS classes available (dark mode via dark: prefix)
-  - stuard.submit(data) — submit data back to the agent (resolves blocking)
-  - stuard.close() — dismiss the UI without data
+  - Tailwind CSS (dark mode via dark: prefix)
+  - initialData — global object seeded from the data arg
+  - stuard.submit(data) — return data to agent and close (blocking only)
+  - stuard.close() — dismiss without data
 
-BLOCKING vs NON-BLOCKING:
-  - blocking: true  → Agent pauses until the user interacts (submit/close). Use for forms, confirmations, selections.
-  - blocking: false → Agent continues immediately. UI stays rendered in chat as display-only. Use for dashboards, status displays, rich content.
-
-DESIGN SCHEME (auto-injected):
-  A \`designScheme\` object is available globally in your component:
+DESIGN:
+  A \`designScheme\` global is auto-injected:
     designScheme.mode    — 'dark' | 'light'
     designScheme.colors  — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input }
 
-  The <body> has class "dark" when in dark mode. Use Tailwind dark: classes for styling:
-    <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-
-  By default, background and text colors already match the host app — only override when needed.
+  <body> has class "dark" in dark mode. Use Tailwind dark: variants.
+  Background/text already match the host app — only override when intentional.
 
 RULES:
-  1. EVERY action button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit buttons.
-  2. initialData is available globally, seeded from the data arg.
-  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
-  4. The component renders in a sandboxed iframe — no access to parent window or Node.js APIs.
+  1. Every submit/action button MUST have onClick.
+  2. Use JSX style objects: style={{color:'red'}} not style="color:red".
+  3. Sandboxed iframe — no parent window or Node.js access.
 
-EXAMPLE (blocking form):
+EXAMPLE — data table (non-blocking):
+  data: { rows: [{name:"Alice",score:92},{name:"Bob",score:87}] }
   component: \`
     function App() {
-      const [name, setName] = useState(initialData.name || '');
+      const { rows } = initialData;
       return (
-        <div className="p-4 space-y-3">
-          <h2 className="text-lg font-semibold">What's your name?</h2>
-          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600"
-            value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
-          <button onClick={() => stuard.submit({ name })}
-            className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">
-            Submit
-          </button>
+        <div className="p-3 space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Results</div>
+          {rows.map((r, i) => (
+            <div key={i} className="flex justify-between px-3 py-2 rounded bg-slate-800 text-sm">
+              <span>{r.name}</span>
+              <span className="text-indigo-400 font-mono">{r.score}</span>
+            </div>
+          ))}
         </div>
       );
     }
   \`
 
-EXAMPLE (non-blocking display):
+EXAMPLE — stat cards (non-blocking):
+  data: { used: "4.2 GB", free: "11.8 GB", files: 1340 }
   component: \`
     function App() {
+      const { used, free, files } = initialData;
+      const stats = [["Used", used, "text-amber-400"], ["Free", free, "text-emerald-400"], ["Files", files, "text-indigo-400"]];
       return (
-        <div className="p-4">
-          <div className="text-sm text-slate-500 dark:text-slate-400">Status</div>
-          <div className="text-2xl font-bold">{initialData.status}</div>
+        <div className="p-3 grid grid-cols-3 gap-2">
+          {stats.map(([label, val, color]) => (
+            <div key={label} className="rounded-lg bg-slate-800 p-3 text-center">
+              <div className={\`text-xl font-bold \${color}\`}>{val}</div>
+              <div className="text-xs text-slate-400 mt-1">{label}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+  \`
+
+EXAMPLE — blocking input:
+  component: \`
+    function App() {
+      const [val, setVal] = useState('');
+      return (
+        <div className="p-4 space-y-3">
+          <p className="text-sm">{initialData.prompt}</p>
+          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600 text-sm"
+            value={val} onChange={e => setVal(e.target.value)} placeholder="Type here..." />
+          <button onClick={() => stuard.submit({ value: val })}
+            className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm font-medium">
+            Submit
+          </button>
         </div>
       );
     }
@@ -421,8 +450,6 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
         registerTool(t, 'Productivity');
-    } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
-        registerTool(t, 'Canvas');
     } else if (['workspace_read_file', 'workspace_write_file', 'workspace_delete_file', 'workspace_list_files', 'workspace_create_folder', 'workspace_get_info'].includes(name)) {
         registerTool(t, 'Workspace');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {

@@ -49,6 +49,7 @@ vi.mock('../../router/model-router', () => {
 vi.mock('../../tools/bridge', () => {
   return {
     withClientBridge: vi.fn((_ws: any, fn: any) => fn()),
+    getBridgeSecrets: vi.fn(() => undefined),
   };
 });
 

@@ -342,6 +342,7 @@ label: 'ElevenLabs Voice',
     items: [
       { k: 'cloud.tool', t: 'gmail_send_message', label: 'Send Email', icon: Send, args: { to: [], subject: '', body: '', contentType: 'text/plain', from: '', profile: '' } },
       { k: 'cloud.tool', t: 'gmail_list_messages', label: 'List Messages', icon: Inbox, args: { maxResults: 10, profile: '' } },
+      { k: 'cloud.tool', t: 'gmail_search_messages', label: 'Search Messages', icon: Search, args: { query: '', maxResults: 10, profile: '' } },
       { k: 'cloud.tool', t: 'gmail_list_recent_brief', label: 'Recent Messages (Brief)', icon: List, args: { maxResults: 5, profile: '' } },
       { k: 'cloud.tool', t: 'gmail_get_message_brief', label: 'Get Message Brief', icon: Mail, args: { id: '', profile: '' } },
       { k: 'cloud.tool', t: 'gmail_get_message_full', label: 'Get Message Full', icon: FileText, args: { id: '', profile: '' } },

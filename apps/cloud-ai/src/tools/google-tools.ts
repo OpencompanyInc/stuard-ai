@@ -406,6 +406,22 @@ export const gmail_list_messages = createTool({
   },
 });
 
+export const gmail_search_messages = createTool({
+  id: 'gmail_search_messages',
+  description: 'Search Gmail messages using Gmail search syntax. Compatibility alias for gmail_list_messages that requires a query string.',
+  inputSchema: z.object({
+    query: z.string().min(1).describe('Gmail search query, for example: from:alice@example.com newer_than:7d has:attachment'),
+    labelIds: z.array(z.string()).optional(),
+    maxResults: z.number().int().min(1).max(100).default(5),
+    includeSpamTrash: z.boolean().optional(),
+    profile: profileField,
+  }),
+  execute: async (inputData, context) => {
+    const { query, ...rest } = inputData as any;
+    return gmail_list_messages.execute?.({ ...rest, q: query }, context as any);
+  },
+});
+
 export const calendar_list_events = createTool({
   id: 'calendar_list_events',
   description: 'List events from a Google Calendar. Requires calendar.events or calendar.readonly.',

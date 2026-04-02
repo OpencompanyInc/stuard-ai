@@ -19,7 +19,7 @@ import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
+import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
 import { waitTool } from '../tools/wait';
 import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
@@ -358,8 +358,10 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     // Note: SMS/WhatsApp sources get full responses here — truncation for
     // delivery happens in the telnyx/whatsapp route handlers AFTER this returns.
     // This keeps the stored conversation history complete for desktop viewing.
-    if (source === 'sms' || source === 'mms') {
-      systemPrompt += '\n\n**Source**: The user sent this message via SMS. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over SMS automatically.';
+    if (source === 'sms') {
+      systemPrompt += '\n\n**Source**: The user sent this message via SMS. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over SMS automatically. Use telnyx_send_sms if you need to send a follow-up text or telnyx_send_voice_note for an audio reply.';
+    } else if (source === 'mms') {
+      systemPrompt += '\n\n**Source**: The user sent this message via MMS. They may have included images, voice notes, or other media — check the message attachments. You have vision capabilities and can see any images sent. Respond fully and naturally. Use telnyx_send_mms to send an image back if it would be more helpful than text (e.g. charts, annotated photos, visual answers). Use telnyx_send_voice_note for audio replies. Use telnyx_send_sms for plain text. The text reply will also be saved to conversation history for desktop viewing.';
     } else if (source === 'whatsapp') {
       systemPrompt += '\n\n**Source**: The user sent this message via WhatsApp. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over WhatsApp automatically.';
     } else if (source === 'call') {
@@ -381,6 +383,8 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       run_sequential: runSequentialTool,
       run_parallel: runParallelTool,
       telnyx_send_sms,
+      telnyx_send_mms,
+      telnyx_send_voice_note,
       telnyx_voice_call,
       whatsapp_send_message,
     };

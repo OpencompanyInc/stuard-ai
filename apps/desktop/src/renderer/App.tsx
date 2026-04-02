@@ -560,20 +560,6 @@ export default function App() {
             setApprovalPrompt((curr) => (curr && curr.id === id ? null : curr));
           }
 
-          // Canvas Actions
-          if (toolName === 'canvas_manager') {
-            const kind = String(d.kind || '');
-            if (kind === 'canvas_action') {
-              const action = String(d.action || '');
-              if (action === 'clear') await window.desktopAPI.canvasClear();
-              else if (action === 'create') d.canvas?.id && await window.desktopAPI.canvasCreate(d.canvas);
-              else if (action === 'update') d.canvas?.id && await window.desktopAPI.canvasUpdate(d.canvas);
-              else if (action === 'delete') d.id && await window.desktopAPI.canvasDelete(String(d.id));
-              else if (action === 'show') d.id && await window.desktopAPI.canvasShow(String(d.id));
-              else if (action === 'hide') d.id && await window.desktopAPI.canvasHide(String(d.id));
-              else if (action === 'focus') d.id && await window.desktopAPI.canvasFocus(String(d.id));
-            }
-          }
         }
 
         // Notifications - Handled by NotificationController
@@ -703,7 +689,7 @@ export default function App() {
   };
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'spaces' | 'canvas' | 'terminal'>('spaces');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'>('spaces');
 
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
@@ -1071,7 +1057,7 @@ export default function App() {
     }
     setInternalSidebarOpen(false);
   }, [overlayMode]);
-  const handleSwitchSidebarTab = useCallback((tab: 'spaces' | 'canvas' | 'terminal') => setActiveSidebarTab(tab), []);
+  const handleSwitchSidebarTab = useCallback((tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => setActiveSidebarTab(tab), []);
 
   const handleClosePalette = useCallback(() => setShowPalette(false), []);
   const handleCloseHotkeys = useCallback(() => setShowHotkeys(false), []);

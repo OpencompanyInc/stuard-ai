@@ -56,8 +56,9 @@ export class MediaProcessor {
     // Add transcriptions
     for (const p of processed) {
       if (p.transcript) {
-        const label = p.original.caption ? `Voice note (${p.original.caption})` : 'Voice note';
-        textParts.push(`[${label} transcription]: "${p.transcript}"`);
+        // Caption (text sent alongside the audio) is already in the caller's message text —
+        // just label it as a voice note transcription to avoid duplicating the caption here.
+        textParts.push(`[Voice note transcription]: "${p.transcript}"`);
       }
     }
 

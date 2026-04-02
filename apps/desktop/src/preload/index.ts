@@ -50,13 +50,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
-  // Sidebar window (unified Spaces, Canvas, Terminal)
-  openSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
+  openSidebar: (options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
-  toggleSidebar: (options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebar: (options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
   toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
   isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
-  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'canvas' | 'terminal' }) => void) => {
+  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
@@ -151,26 +151,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   agentStop: (id: string) => ipcRenderer.invoke('agent:stop', id),
   agentList: () => ipcRenderer.invoke('agent:list'),
 
-  // Canvas windows (separate Electron BrowserWindows)
-  canvasCreate: (item: any) => ipcRenderer.invoke('canvas:create', item),
-  canvasUpdate: (item: any) => ipcRenderer.invoke('canvas:update', item),
-  canvasDelete: (id: string) => ipcRenderer.invoke('canvas:delete', id),
-  canvasShow: (id: string) => ipcRenderer.invoke('canvas:show', id),
-  canvasHide: (id: string) => ipcRenderer.invoke('canvas:hide', id),
-  canvasFocus: (id: string) => ipcRenderer.invoke('canvas:focus', id),
-  canvasClear: () => ipcRenderer.invoke('canvas:clear'),
-  canvasList: () => ipcRenderer.invoke('canvas:list'),
-  // Board window lifecycle events
-  onBoardInit: (cb: (data: any) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('board:init', handler);
-    return () => { try { ipcRenderer.off('board:init', handler); } catch { } };
-  },
-  onBoardUpdate: (cb: (data: any) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('board:update', handler);
-    return () => { try { ipcRenderer.off('board:update', handler); } catch { } };
-  },
   // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
   customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
   // Transform JSX component code (for UI builder preview)

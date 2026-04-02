@@ -617,7 +617,7 @@ export function createWindow() {
           let height = Math.max(constraints.minH, Math.min(constraints.maxH, prefs.height));
 
           // If internal sidebar was open, add its width back
-          if (internalSidebarOpen && currentMode !== 'sidebar') {
+          if (internalSidebarOpen) {
             width = Math.min(width + INTERNAL_SIDEBAR_WIDTH, constraints.maxW + INTERNAL_SIDEBAR_WIDTH);
           }
 
@@ -882,7 +882,7 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
 }
 
 // Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
-export function openSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+export function openSidebarWindow(options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
 
   if (sidebarWin && !sidebarWin.isDestroyed()) {
@@ -982,7 +982,7 @@ export function closeSidebarWindow() {
   try { sidebarWin?.close(); } catch { }
 }
 
-export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'canvas' | 'terminal'; expanded?: boolean }) {
+export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
     openSidebarWindow(options);
     return;

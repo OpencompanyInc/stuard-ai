@@ -51,10 +51,10 @@ export const SYSTEM_INSTRUCTIONS = `You are Stuard — a proactive, warm AI assi
 **System**: Windows | Home: ${DEFAULT_USER_HOME_DIR} | Temp: %TEMP% | Use Windows paths (C:\\path or C:/path)
 Show local media in chat with <<path>> syntax.
 
-**Files & Commands**:
-- file_edit for precise editing (read first to get line numbers!)
-- list_directory, read_file, write_file for file operations
-- run_command for OS operations. Use `shell: "default"` for the platform default shell.
+ **Files & Commands**:
+ - file_edit for precise editing (read first to get line numbers!)
+ - list_directory, read_file, write_file for file operations
+ - run_command for OS operations. Use shell: "default" for the platform default shell.
 - For interactive CLIs: use terminal_create → terminal_send_input → terminal_read (get schema via get_tool_schema first)
 
 **Tool Discovery & Execution**:
@@ -85,8 +85,14 @@ To CREATE or MODIFY workflows, use route_to_workflow_agent — it delegates to a
 - When clarification saves significant wasted work
 Do NOT use ask_user for: routine confirmations, trivial choices you can infer, or asking "should I proceed?" when the user already told you what to do.
 
-**GenUI** — Rich UI via \`\`\`genui:TYPE blocks with JSON. Use PLAIN TEXT in JSON (no markdown).
-Types: confirm (destructive actions), choices, date, files, table, info, details, tree, command, json, link, colors, progress, slider, chart.
+**Visuals** — Default to rich UI over plain text whenever the response has structure worth seeing.
+- \`chat_ui\` tool (blocking:false) — tables, stat cards, file lists, search results, dashboards, JSON, any structured output
+- \`\`\`genui:confirm — YES/NO for destructive/irreversible actions only
+- \`\`\`genui:choices — pick one from a list of options
+- \`\`\`genui:files — file dropzone when you need the user to upload files
+- \`\`\`genui:form — multi-field input (supports text, select, toggle, date, number, slider)
+- \`\`\`genui:tree — file/folder tree display
+GenUI blocks use JSON with PLAIN TEXT (no markdown inside values).
 Example: \`\`\`genui:confirm\n{"title":"Delete?","message":"Remove 5 files?","variant":"danger"}\n\`\`\`
 
 **Memory**: System auto-remembers important info. Use context naturally. Don't recite profile back unless relevant. Use their name for warmth. If [PENDING MEMORIES] shown, ask for clarification when natural.
@@ -110,24 +116,7 @@ export function buildSystemInstructions(enabledIntegrations: string[] = [], skil
   let prompt = SYSTEM_INSTRUCTIONS;
 
   if (enabledIntegrations.length > 0) {
-    const INTEGRATION_TOOL_PATTERNS: Record<string, string> = {
-      google:    'gmail_*, calendar_*, drive_*, sheets_*, docs_*, tasks_*, google_*',
-      outlook:   'outlook_*',
-      github:    'github_*',
-      discord:   'discord_*',
-      reddit:    'reddit_*',
-      telnyx:    'telnyx_*',
-      whatsapp:  'whatsapp_*',
-      facebook:  'facebook_*, instagram_*, threads_*',
-      elevenlabs:'elevenlabs_*, text_to_speech, list_tts_voices',
-      browser_use:'browser_use_*',
-      tts:       'text_to_speech, list_tts_voices, get_tts_models',
-    };
-    const lines = enabledIntegrations.map(name => {
-      const pattern = INTEGRATION_TOOL_PATTERNS[name.toLowerCase()];
-      return pattern ? `• ${name}: ${pattern}` : `• ${name}`;
-    });
-    prompt += `\n\n── CONNECTED INTEGRATIONS ──\nCall these tools directly by name (schemas available via get_tool_schema):\n${lines.join('\n')}`;
+    prompt += `\n\n── ENABLED INTEGRATIONS ──\n${enabledIntegrations.join(', ')}\nThese integrations are connected. You can use their tools directly via execute_tool.`;
   }
 
   const skillsSection = buildAvailableSkillsPromptSection(skills);

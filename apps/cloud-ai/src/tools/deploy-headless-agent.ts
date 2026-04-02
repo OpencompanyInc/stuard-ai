@@ -356,14 +356,13 @@ async function runHeadlessTask(
     const bridgeWsNow = getBridgeWs();
     const hasDesktopBridge = bridgeWsNow && bridgeWsNow.readyState === (bridgeWsNow as any).OPEN;
 
-    const agent = getHeadlessAgent({
+    const agent = getHeadlessAgent(
       model,
       enabledIntegrations,
       mcpTools,
-      allowedTools: allowedForAgent,
+      allowedForAgent,
       customSystemPrompt,
-      vmMode: !hasDesktopBridge,
-    });
+    );
 
     // Prepare provider options
     const providerOptions: any = {};
