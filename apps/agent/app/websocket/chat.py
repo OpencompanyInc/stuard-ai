@@ -47,6 +47,15 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     hidden_context = msg.get("hiddenContext") or None
     hidden_state_summary = msg.get("hiddenStateSummary") or None
 
+    # Merge memoryContext (built by Node vm-agent from local knowledge DB)
+    # into hiddenContext so cloud-ai injects it into the system prompt.
+    memory_context = msg.get("memoryContext") or None
+    if isinstance(memory_context, str) and memory_context.strip():
+        if isinstance(hidden_context, str) and hidden_context.strip():
+            hidden_context = memory_context.strip() + "\n\n" + hidden_context.strip()
+        else:
+            hidden_context = memory_context.strip()
+
     try:
         # Increase max_size to avoid 1 MiB default limit (1009 errors) when receiving tool events
         ws_url = CLOUD_WS if CLOUD_WS.endswith("/ws") else (CLOUD_WS.rstrip("/") + "/ws")

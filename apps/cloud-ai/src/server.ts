@@ -1312,7 +1312,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
             // Knowledge Graph Ingestion - extract and store knowledge from conversation
-            try {
+            // Skip for VM chats — the VM agent handles its own knowledge ingestion locally
+            const isVMChat = !!(msg as any)?.context?.isVM;
+            if (!isVMChat) try {
               const { ingestConversationTurn } = await import('./knowledge');
               // Run ingestion in background (don't block response)
               // Pass the full conversation thread so the model has context for updates

@@ -203,19 +203,22 @@ export function CloudVmChat({ engine, className }: { engine: any; className?: st
       });
 
       const data = await resp.json() as any;
-      console.log('[CloudVmChat] relay response (status=%d):', resp.status, JSON.stringify(data).slice(0, 2000));
-      const result = data?.result || data;
-      // The VM agent wraps cloud-ai's result inside result.result, so drill in
-      const inner = result?.result || result;
-      const replyText = String(inner?.text || inner?.response || result?.text || result?.response || '').trim();
+      // Response nesting: relay { ok, status, result } → VM { ok, result } → agent { type, result: { text } }
+      // Drill through all layers to find the text
+      const relay = data?.result || data;
+      const vm = relay?.result || relay;
+      const agent = vm?.result || vm;
+      const replyText = String(
+        agent?.text || agent?.response ||
+        vm?.text || vm?.response ||
+        relay?.text || relay?.response || ''
+      ).trim();
 
-      if (result?.conversationId || inner?.conversationId) {
-        conversationIdRef.current = result.conversationId || inner.conversationId;
-      }
+      const cid = vm?.conversationId || relay?.conversationId || agent?.conversationId;
+      if (cid) conversationIdRef.current = cid;
 
-      // Surface errors from any level of the response nesting
-      const hasError = data?.ok === false || result?.ok === false || inner?.ok === false;
-      const errorMsg = result?.error || inner?.error || data?.error || 'unknown';
+      const hasError = data?.ok === false || relay?.ok === false || vm?.ok === false;
+      const errorMsg = relay?.error || vm?.error || agent?.error || data?.error || 'unknown';
 
       setMessages((prev) => [
         ...prev,
