@@ -19,6 +19,10 @@ on:
         description: 'Build Desktop App'
         type: boolean
         default: true
+      deploy_vm:
+        description: 'Build & upload VM agent bundles'
+        type: boolean
+        default: false
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -92,7 +96,7 @@ jobs:
     name: VM Agent Bundles
     runs-on: ubuntu-latest
     needs: ci-checks
-    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
     permissions:
       contents: read
       id-token: write

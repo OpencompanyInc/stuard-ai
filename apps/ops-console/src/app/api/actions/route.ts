@@ -247,12 +247,13 @@ async function triggerWorkflowWithFallback(
   return { ok: false, error: errors.join(' | ') || 'Workflow trigger failed' };
 }
 
-function formatTargets(targets?: { website?: boolean; cloud?: boolean; desktop?: boolean }) {
+function formatTargets(targets?: { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean }) {
   if (!targets) return 'all targets';
   const enabled: string[] = [];
   if (targets.website) enabled.push('website');
   if (targets.cloud) enabled.push('cloud');
   if (targets.desktop) enabled.push('desktop');
+  if (targets.vm) enabled.push('vm');
   if (!enabled.length) return 'no targets selected';
   return enabled.join(', ');
 }
@@ -476,7 +477,7 @@ export async function POST(req: Request) {
       case 'ship-to-beta': {
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const sourceBranch = String(payload.sourceBranch || payload.branch || current).trim() || current;
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
+        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
 
@@ -507,6 +508,7 @@ export async function POST(req: Request) {
                 deploy_cloud: Boolean(targets?.cloud ?? true),
                 deploy_website: Boolean(targets?.website ?? true),
                 build_desktop: Boolean(targets?.desktop ?? true),
+                deploy_vm: Boolean(targets?.vm ?? false),
               },
             },
             {
@@ -517,6 +519,7 @@ export async function POST(req: Request) {
                 deploy_cloud: Boolean(targets?.cloud ?? true),
                 deploy_website: Boolean(targets?.website ?? true),
                 build_desktop: Boolean(targets?.desktop ?? true),
+                deploy_vm: Boolean(targets?.vm ?? false),
               },
             },
             {
@@ -528,6 +531,7 @@ export async function POST(req: Request) {
                 deploy_cloud: Boolean(targets?.cloud ?? true),
                 deploy_website: Boolean(targets?.website ?? true),
                 build_desktop: Boolean(targets?.desktop ?? true),
+                deploy_vm: Boolean(targets?.vm ?? false),
               },
             },
           ],
@@ -552,7 +556,7 @@ export async function POST(req: Request) {
 
       // 3. STAGING (staging) ------------------------------------------------
       case 'ship-to-staging': {
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
+        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();
@@ -571,13 +575,14 @@ export async function POST(req: Request) {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
             build_desktop: String(targets?.desktop ?? true),
+            deploy_vm: String(targets?.vm ?? false),
           },
           github
         );
 
         if (!workflowResult.ok) {
-          return NextResponse.json({ 
-            error: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}` 
+          return NextResponse.json({
+            error: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}`
           }, { status: 502 });
         }
 
@@ -588,7 +593,7 @@ export async function POST(req: Request) {
       case 'ship-to-prod':
       case 'release-production': {
         const version = String(payload.version || '').trim();
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean } | undefined;
+        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
         const targetLabel = formatTargets(targets);
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();
@@ -612,6 +617,7 @@ export async function POST(req: Request) {
             deploy_cloud: String(targets?.cloud ?? true),
             deploy_website: String(targets?.website ?? true),
             build_desktop: String(targets?.desktop ?? true),
+            deploy_vm: String(targets?.vm ?? false),
           },
           github
         );

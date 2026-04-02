@@ -66,9 +66,9 @@ export default function DeployTab({ status, onAction, loading, deployments, late
   const [checkoutBranch, setCheckoutBranch] = useState('');
   const [pushAutoCommit, setPushAutoCommit] = useState(false);
   const [selectedBetaBranch, setSelectedBetaBranch] = useState('');
-  const [betaTargets, setBetaTargets] = useState({ website: true, cloud: true, desktop: true });
-  const [stagingTargets, setStagingTargets] = useState({ website: true, cloud: true, desktop: true });
-  const [prodTargets, setProdTargets] = useState({ website: true, cloud: true, desktop: true });
+  const [betaTargets, setBetaTargets] = useState({ website: true, cloud: true, desktop: true, vm: false });
+  const [stagingTargets, setStagingTargets] = useState({ website: true, cloud: true, desktop: true, vm: false });
+  const [prodTargets, setProdTargets] = useState({ website: true, cloud: true, desktop: true, vm: false });
 
   // Version control state
   const [versions, setVersions] = useState<VersionsData | null>(null);
@@ -559,7 +559,7 @@ export default function DeployTab({ status, onAction, loading, deployments, late
   );
 }
 
-type DeployTargets = { website: boolean; cloud: boolean; desktop: boolean };
+type DeployTargets = { website: boolean; cloud: boolean; desktop: boolean; vm: boolean };
 
 function TargetCheckboxes({ targets, onChange }: { targets: DeployTargets; onChange: (updater: (prev: DeployTargets) => DeployTargets) => void }) {
   return (
@@ -568,6 +568,7 @@ function TargetCheckboxes({ targets, onChange }: { targets: DeployTargets; onCha
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.website} onChange={() => onChange((p) => ({ ...p, website: !p.website }))} className="rounded" /> Website</label>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.cloud} onChange={() => onChange((p) => ({ ...p, cloud: !p.cloud }))} className="rounded" /> Cloud API</label>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.desktop} onChange={() => onChange((p) => ({ ...p, desktop: !p.desktop }))} className="rounded" /> Desktop</label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={targets.vm} onChange={() => onChange((p) => ({ ...p, vm: !p.vm }))} className="rounded" /> VM Agents</label>
     </div>
   );
 }
