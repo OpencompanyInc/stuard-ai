@@ -33,6 +33,9 @@ export interface UserSettings {
   /** File extensions to exclude from semantic indexing */
   semanticExcludeExtensions?: string[];
 
+  // ── Credits settings ──
+  autoRefillCredits?: boolean;
+
   // ── Browser-use Chrome sync settings ──
   chromeSyncEnabled?: boolean;
   chromeSyncBrowserName?: string | null;
@@ -103,6 +106,7 @@ const RENDERER_PREF_KEYS = new Set<string>([
   'browserEnabled', 'screenCaptureInvisible', 'onboardingComplete',
   'tourComplete', 'timezoneOverride', 'semanticIndexKinds',
   'semanticExcludeExtensions',
+  'autoRefillCredits',
 ]);
 
 /** Return all persisted renderer preferences. */

@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets, execLocalTool } from './bridge';
+import { getResolvedBridgeSecrets } from './device/shared';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
 import { messagingCreditCost } from '../pricing';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
@@ -17,7 +18,7 @@ import {
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
 async function requireUserId(): Promise<string> {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   return userId;

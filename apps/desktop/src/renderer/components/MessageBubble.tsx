@@ -1022,6 +1022,101 @@ interface AssistantTraceStepData {
   nested?: boolean;
 }
 
+const TOOL_GROUP_LABELS: Record<string, { singular: string; plural: string }> = {
+  list_directory: { singular: 'Listed directory', plural: 'Listed {n} directories' },
+  read_file: { singular: 'Read file', plural: 'Read {n} files' },
+  file_read: { singular: 'Read file', plural: 'Read {n} files' },
+  write_file: { singular: 'Wrote file', plural: 'Wrote {n} files' },
+  file_edit: { singular: 'Edited file', plural: 'Edited {n} files' },
+  search_local_workflows: { singular: 'Searched workflows', plural: 'Searched {n} workflows' },
+  web_search: { singular: 'Searched the web', plural: 'Ran {n} web searches' },
+  scrape_url: { singular: 'Scraped URL', plural: 'Scraped {n} URLs' },
+  glob: { singular: 'Searched files', plural: 'Ran {n} file searches' },
+  grep: { singular: 'Searched code', plural: 'Ran {n} code searches' },
+  run_command: { singular: 'Ran command', plural: 'Ran {n} commands' },
+  capture_screen: { singular: 'Captured screen', plural: 'Captured {n} screenshots' },
+  browser_use_screenshot: { singular: 'Took screenshot', plural: 'Took {n} screenshots' },
+  browser_use_navigate: { singular: 'Navigated', plural: 'Navigated {n} pages' },
+  browser_use_click: { singular: 'Clicked element', plural: 'Clicked {n} elements' },
+};
+
+function getGroupLabel(toolName: string, count: number): string {
+  const entry = TOOL_GROUP_LABELS[toolName];
+  if (!entry) {
+    const humanized = humanizeToolName(toolName);
+    return count === 1 ? humanized : `${humanized} ×${count}`;
+  }
+  return count === 1 ? entry.singular : entry.plural.replace('{n}', String(count));
+}
+
+const CollapsibleToolGroup: React.FC<{
+  toolName: string;
+  steps: { step: AssistantTraceStepData; idx: number }[];
+  totalSteps: number;
+}> = ({ toolName, steps, totalSteps }) => {
+  const [expanded, setExpanded] = useState(false);
+  const allComplete = steps.every(({ step }) => step.status === 'complete');
+  const anyActive = steps.some(({ step }) => step.status === 'active');
+  const groupStatus: TraceStatus = anyActive ? 'active' : allComplete ? 'complete' : 'pending';
+  const label = getGroupLabel(toolName, steps.length);
+
+  return (
+    <div>
+      <ChainOfThoughtStep
+        status={groupStatus}
+        isLast={steps[steps.length - 1].idx === totalSteps - 1 && !expanded}
+        label={
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-left"
+            onClick={() => setExpanded(!expanded)}
+          >
+            <ChevronRight
+              className={clsx(
+                'h-3 w-3 shrink-0 transition-transform duration-150',
+                expanded && 'rotate-90',
+              )}
+              style={{ color: 'color-mix(in srgb, var(--foreground-muted) 50%, transparent)' }}
+            />
+            {groupStatus === 'active' ? (
+              <Shimmer as="span" duration={2} spread={3}>{label}</Shimmer>
+            ) : (
+              <span>{label}</span>
+            )}
+          </button>
+        }
+      />
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="overflow-hidden ml-3 border-l-[1.5px] pl-3"
+            style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 15%, transparent)' }}
+          >
+            {steps.map(({ step, idx }) => (
+              <ChainOfThoughtStep
+                key={step.id}
+                status={step.status}
+                isLast={idx === totalSteps - 1}
+                label={step.status === 'active' ? (
+                  <Shimmer as="span" duration={2} spread={3}>{step.label}</Shimmer>
+                ) : step.label}
+              >
+                {step.kind === 'tool' && step.tool ? (
+                  <ToolTraceContent tool={step.tool} />
+                ) : null}
+              </ChainOfThoughtStep>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1363,6 +1458,12 @@ function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
   return isStreaming ? 'active' : 'pending';
 }
 
+function isDelegatedToolCall(tool: ToolCall): boolean {
+  if (tool.nested) return true;
+  if (typeof tool.subagentId === 'string' && tool.subagentId.trim().length > 0) return true;
+  return typeof tool.id === 'string' && tool.id.startsWith('subagent:');
+}
+
 const AssistantTracePanel: React.FC<{
   reasoning?: string;
   reasoningDuration?: number;
@@ -1409,7 +1510,7 @@ const AssistantTracePanel: React.FC<{
             label: tc.description || humanizeToolName(tc.tool),
             status: mapTraceStatus(tc, isStreaming),
             tool: tc,
-            nested: tc.nested,
+            nested: isDelegatedToolCall(tc),
           });
         }
       });
@@ -1436,7 +1537,7 @@ const AssistantTracePanel: React.FC<{
           label: tool.description || humanizeToolName(tool.tool),
           status: mapTraceStatus(tool, isStreaming),
           tool,
-          nested: tool.nested,
+          nested: isDelegatedToolCall(tool),
         });
       });
 
@@ -1461,57 +1562,119 @@ const AssistantTracePanel: React.FC<{
       </ChainOfThoughtHeader>
 
       <ChainOfThoughtContent>
-        {traceSteps.map((step, idx) => {
-          const stepNode = (
-            <ChainOfThoughtStep
-              key={step.id}
-              status={step.status}
-              isLast={idx === traceSteps.length - 1}
-              label={
-                step.status === 'active' ? (
-                  <Shimmer as="span" duration={2} spread={3}>
-                    {step.label}
-                  </Shimmer>
-                ) : (
-                  step.label
-                )
+        {(() => {
+          // Build display items: group consecutive same-tool calls, separate nested vs orchestrator
+          type DisplayItem =
+            | { type: 'step'; step: AssistantTraceStepData; idx: number; nested: boolean }
+            | { type: 'tool-group'; toolName: string; steps: { step: AssistantTraceStepData; idx: number }[]; nested: boolean };
+
+          const items: DisplayItem[] = [];
+          let i = 0;
+          while (i < traceSteps.length) {
+            const step = traceSteps[i];
+            const isNested = Boolean(step.nested);
+
+            // Try to group consecutive tool steps with the same tool name and same nesting level
+            if (step.kind === 'tool' && step.tool) {
+              const toolName = step.tool.tool;
+              const groupSteps: { step: AssistantTraceStepData; idx: number }[] = [{ step, idx: i }];
+              let j = i + 1;
+              while (j < traceSteps.length) {
+                const next = traceSteps[j];
+                if (next.kind === 'tool' && next.tool?.tool === toolName && Boolean(next.nested) === isNested) {
+                  groupSteps.push({ step: next, idx: j });
+                  j++;
+                } else {
+                  break;
+                }
               }
-            >
-              {step.kind === 'reasoning' && step.content ? (
-                <div
-                  className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
-                  style={{
-                    backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
-                    color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
-                  }}
-                >
-                  {step.content}
-                </div>
-              ) : null}
-
-              {step.kind === 'tool' && step.tool ? (
-                <ToolTraceContent tool={step.tool} />
-              ) : null}
-            </ChainOfThoughtStep>
-          );
-
-          if (step.nested) {
-            return (
-              <div
-                key={step.id}
-                className="ml-6 rounded-xl border-l-2 pl-4 pr-2 py-2"
-                style={{
-                  borderColor: 'color-mix(in srgb, var(--foreground-muted) 20%, transparent)',
-                  backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 16%, transparent)',
-                }}
-              >
-                {stepNode}
-              </div>
-            );
+              if (groupSteps.length >= 2) {
+                items.push({ type: 'tool-group', toolName, steps: groupSteps, nested: isNested });
+              } else {
+                items.push({ type: 'step', step, idx: i, nested: isNested });
+              }
+              i = j;
+            } else {
+              items.push({ type: 'step', step, idx: i, nested: isNested });
+              i++;
+            }
           }
 
-          return stepNode;
-        })}
+          // Group consecutive items by nested flag for indentation
+          type NestGroup = { nested: boolean; items: DisplayItem[] };
+          const nestGroups: NestGroup[] = [];
+          for (const item of items) {
+            const last = nestGroups[nestGroups.length - 1];
+            if (last && last.nested === item.nested) {
+              last.items.push(item);
+            } else {
+              nestGroups.push({ nested: item.nested, items: [item] });
+            }
+          }
+
+          const renderItem = (item: DisplayItem, key: string) => {
+            if (item.type === 'tool-group') {
+              return (
+                <CollapsibleToolGroup
+                  key={key}
+                  toolName={item.toolName}
+                  steps={item.steps}
+                  totalSteps={traceSteps.length}
+                />
+              );
+            }
+            const { step, idx } = item;
+            return (
+              <ChainOfThoughtStep
+                key={step.id}
+                status={step.status}
+                isLast={idx === traceSteps.length - 1}
+                label={
+                  step.status === 'active' ? (
+                    <Shimmer as="span" duration={2} spread={3}>{step.label}</Shimmer>
+                  ) : step.label
+                }
+              >
+                {step.kind === 'reasoning' && step.content ? (
+                  <div
+                    className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                    style={{
+                      backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                      color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                    }}
+                  >
+                    {step.content}
+                  </div>
+                ) : null}
+                {step.kind === 'tool' && step.tool ? (
+                  <ToolTraceContent tool={step.tool} />
+                ) : null}
+              </ChainOfThoughtStep>
+            );
+          };
+
+          return nestGroups.map((group, gIdx) => {
+            const rendered = group.items.map((item, iIdx) =>
+              renderItem(item, `${gIdx}-${iIdx}`)
+            );
+
+            if (group.nested) {
+              return (
+                <div
+                  key={`nested-${gIdx}`}
+                  className="ml-5 border-l-[1.5px] pl-4 py-1"
+                  style={{
+                    borderColor: 'color-mix(in srgb, var(--foreground-muted) 18%, transparent)',
+                  }}
+                >
+                  {rendered}
+                </div>
+              );
+            }
+
+            return <React.Fragment key={`group-${gIdx}`}>{rendered}</React.Fragment>;
+          });
+        })()}
       </ChainOfThoughtContent>
     </ChainOfThought>
   );

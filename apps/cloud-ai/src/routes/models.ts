@@ -154,6 +154,58 @@ async function fetchOpenRouterModels(): Promise<NormalizedModel[]> {
   }
 }
 
+function getCachedBaseRegistry(): Pick<RegistryResponse, 'providers' | 'models'> {
+  return {
+    providers: (_cache.registry?.providers || []).filter((p) => p.id !== 'openrouter'),
+    models: (_cache.registry?.models || []).filter((m) => m.providerId !== 'openrouter'),
+  };
+}
+
+function getCachedOpenRouterModels(): NormalizedModel[] {
+  return (_cache.registry?.models || []).filter((m) => m.providerId === 'openrouter');
+}
+
+function buildModelsDevRegistry(json: Record<string, ModelsDevProviderEntry>): Pick<RegistryResponse, 'providers' | 'models'> {
+  const providers: RegistryResponse['providers'] = [];
+  const models: NormalizedModel[] = [];
+
+  for (const providerId of Object.keys(json || {})) {
+    if (!SUPPORTED_PROVIDERS.has(providerId)) continue;
+    const entry = json[providerId];
+    const providerName = normalizeProviderName(providerId, entry);
+    providers.push({
+      id: providerId,
+      name: providerName,
+      // proxy through our server so desktop doesn't depend on models.dev directly
+      logoUrl: `/v1/models/logos/${encodeURIComponent(providerId)}.svg`,
+    });
+
+    const rawModels = entry?.models && typeof entry.models === 'object' ? entry.models : {};
+    for (const rawModelId of Object.keys(rawModels)) {
+      const m = normalizeModel(providerId, providerName, rawModelId, (rawModels as any)[rawModelId]);
+      // filter out embeddings / non-chat models
+      if (!isChatCapable(m)) continue;
+      models.push(m);
+    }
+  }
+
+  return { providers, models };
+}
+
+function addOpenRouterRegistry(models: NormalizedModel[], providers: RegistryResponse['providers']) {
+  if (models.length === 0) return;
+  providers.push({
+    id: 'openrouter',
+    name: 'OpenRouter',
+    logoUrl: `/v1/models/logos/openrouter.svg`,
+  });
+  for (const m of models) {
+    if (m.cost?.input != null && m.cost?.output != null) {
+      registerDynamicPricing(m.id, m.cost.input, m.cost.output);
+    }
+  }
+}
+
 function normalizeProviderName(id: string, entry: ModelsDevProviderEntry): string {
   const n = String(entry?.name || '').trim();
   if (n) return n;
@@ -238,57 +290,41 @@ async function fetchRegistry(): Promise<RegistryResponse> {
   const now = Date.now();
   if (_cache.registry && now - _cache.fetchedAtMs < CACHE_TTL_MS) return _cache.registry;
 
-  const headers: Record<string, string> = {};
-  if (_cache.etag) headers['If-None-Match'] = _cache.etag;
+  let etag = _cache.etag;
+  let providers: RegistryResponse['providers'] = [];
+  let models: NormalizedModel[] = [];
 
-  const resp = await fetch(MODELS_DEV_API, { headers });
-  if (resp.status === 304 && _cache.registry) {
-    _cache.fetchedAtMs = now;
-    return _cache.registry;
-  }
-  if (!resp.ok) throw new Error(`models_dev_fetch_failed_${resp.status}`);
+  try {
+    const headers: Record<string, string> = {};
+    if (_cache.etag) headers['If-None-Match'] = _cache.etag;
 
-  const etag = resp.headers.get('etag') || undefined;
-  const json = (await resp.json()) as Record<string, ModelsDevProviderEntry>;
-
-  const providers: RegistryResponse['providers'] = [];
-  const models: NormalizedModel[] = [];
-
-  for (const providerId of Object.keys(json || {})) {
-    if (!SUPPORTED_PROVIDERS.has(providerId)) continue;
-    const entry = json[providerId];
-    const providerName = normalizeProviderName(providerId, entry);
-    providers.push({
-      id: providerId,
-      name: providerName,
-      // proxy through our server so desktop doesn't depend on models.dev directly
-      logoUrl: `/v1/models/logos/${encodeURIComponent(providerId)}.svg`,
-    });
-
-    const rawModels = entry?.models && typeof entry.models === 'object' ? entry.models : {};
-    for (const rawModelId of Object.keys(rawModels)) {
-      const m = normalizeModel(providerId, providerName, rawModelId, (rawModels as any)[rawModelId]);
-      // filter out embeddings / non-chat models
-      if (!isChatCapable(m)) continue;
-      models.push(m);
+    const resp = await fetch(MODELS_DEV_API, { headers });
+    if (resp.status === 304 && _cache.registry) {
+      ({ providers, models } = getCachedBaseRegistry());
+    } else {
+      if (!resp.ok) throw new Error(`models_dev_fetch_failed_${resp.status}`);
+      etag = resp.headers.get('etag') || undefined;
+      const json = (await resp.json()) as Record<string, ModelsDevProviderEntry>;
+      ({ providers, models } = buildModelsDevRegistry(json));
     }
+  } catch {
+    ({ providers, models } = getCachedBaseRegistry());
   }
 
   // ── Fetch OpenRouter models dynamically ──────────────────────────────
-  const orModels = await fetchOpenRouterModels();
+  const freshOpenRouterModels = await fetchOpenRouterModels();
+  const orModels = freshOpenRouterModels.length > 0 ? freshOpenRouterModels : getCachedOpenRouterModels();
   if (orModels.length > 0) {
-    providers.push({
-      id: 'openrouter',
-      name: 'OpenRouter',
-      logoUrl: `/v1/models/logos/openrouter.svg`,
-    });
+    addOpenRouterRegistry(orModels, providers);
     models.push(...orModels);
-    // Register pricing so billing can use real costs
-    for (const m of orModels) {
-      if (m.cost?.input != null && m.cost?.output != null) {
-        registerDynamicPricing(m.id, m.cost.input, m.cost.output);
-      }
+  }
+
+  if (models.length === 0) {
+    if (_cache.registry) {
+      _cache.fetchedAtMs = now;
+      return _cache.registry;
     }
+    throw new Error('models_registry_unavailable');
   }
 
   const tiers = pickTiers(models);

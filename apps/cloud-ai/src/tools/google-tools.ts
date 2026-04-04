@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getExternalAccount, upsertExternalAccount, listExternalAccounts } from '../supabase';
 import { getBridgeSecrets } from './bridge';
+import { getResolvedBridgeSecrets } from './device/shared';
 import { PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL, GOOGLE_CLIENT_ID as CFG_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET as CFG_GOOGLE_CLIENT_SECRET } from '../utils/config';
 import { refreshGoogleTokenIfNeeded } from '../routes/integrations/google-shared';
 
@@ -18,9 +19,13 @@ const profileField = z.string().optional().describe(
 );
 
 async function requireUserId(): Promise<string> {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
-  if (!userId) throw new Error('missing_user_context');
+  if (!userId) {
+    const keys = secrets ? Object.keys(secrets) : [];
+    console.warn('[google-tools] missing_user_context — bridge secrets keys:', keys.join(',') || '(none)', '| secrets defined:', !!secrets);
+    throw new Error('missing_user_context');
+  }
   return userId;
 }
 
@@ -33,7 +38,7 @@ async function requireUserId(): Promise<string> {
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
   try {
-    const secrets = getBridgeSecrets();
+    const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
     return (secrets as any)?.googleProfile || (secrets as any)?.profile || undefined;
   } catch { return undefined; }
 }
@@ -72,9 +77,15 @@ const SCOPE_HIERARCHY: Record<string, string[]> = {
 };
 
 async function ensureConnectedAndScopes(required: string[], profileLabel?: string) {
-  const secrets = getBridgeSecrets();
-  const userId = String((secrets as any)?.userId || '');
-  if (!userId) return { ok: false, error: 'missing_user_context' } as const;
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch (error: any) {
+    if (String(error?.message || error) === 'missing_user_context') {
+      return { ok: false, error: 'missing_user_context' } as const;
+    }
+    throw error;
+  }
   const profile = resolveProfile(profileLabel);
   const acc = await getExternalAccount(userId, 'google', profile);
   if (!acc) {

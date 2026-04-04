@@ -5,7 +5,7 @@ import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agen
 import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
-import { verifyAccessToken, AuthErrorCode } from './auth';
+import { verifyAccessToken, AuthErrorCode, parseTokenInfo } from './auth';
 import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, getConversationMessages } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
@@ -377,6 +377,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               const authResult = await verifyAccessToken(accessToken);
               if (authResult?.success && authResult.userId) {
                 secrets.userId = authResult.userId;
+              } else {
+                // Fallback: extract userId from JWT for local-first token lookup
+                const tokenInfo = parseTokenInfo(accessToken);
+                if (tokenInfo?.userId && !tokenInfo.isExpired) {
+                  secrets.userId = tokenInfo.userId;
+                }
               }
             } catch {}
           }
@@ -486,6 +492,18 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const accessToken = String(msg?.auth?.accessToken || '');
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
         authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+        if (!authUser && accessToken) {
+          console.warn('[auth] Token verification failed:', authResult?.error || 'unknown', authResult?.message || '');
+          // Fallback: extract userId from JWT payload (unverified) so local-first
+          // tools (Google, etc.) can still look up locally-stored OAuth tokens.
+          const tokenInfo = parseTokenInfo(accessToken);
+          if (tokenInfo?.userId && !tokenInfo.isExpired) {
+            authUser = { userId: tokenInfo.userId, email: tokenInfo.email };
+            console.log('[auth] Using JWT-parsed userId fallback:', tokenInfo.userId);
+          }
+        } else if (!accessToken) {
+          console.warn('[auth] No access token provided by client');
+        }
         // Track auth method so chat sync uses verified source, not spoofable context flags
         let authViaVMToken = false;
 

@@ -1084,6 +1084,143 @@ export async function debitCredits(userId: string, input: CreditDebitInput): Pro
   }
 }
 
+// ── Usage Breakdown & Transaction History ──────────────────────────────────
+
+export interface UsageBreakdownItem {
+  category: string;
+  credits: number;
+  costUsd: number;
+  count: number;
+}
+
+/**
+ * Get usage breakdown by category for the current billing period.
+ * Categories: inference, subagent, compute, messaging, etc.
+ */
+export async function getUsageBreakdown(userId: string, since?: Date): Promise<UsageBreakdownItem[]> {
+  if (!supabaseService) return [];
+  const monthStart = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  try {
+    // Query usage_events grouped by source type
+    const { data: usageRows } = await supabaseService
+      .from('usage_events')
+      .select('model, cost_usd, credit_cost, raw')
+      .eq('user_id', userId)
+      .gte('created_at', monthStart.toISOString());
+
+    // Also query compute billing events
+    const { data: computeRows } = await supabaseService
+      .from('compute_billing_events')
+      .select('event_type, credits_deducted, details')
+      .eq('user_id', userId)
+      .gte('billing_hour', monthStart.toISOString());
+
+    // Also query credit_transactions for messaging debits
+    const { data: txRows } = await supabaseService
+      .from('credit_transactions')
+      .select('source_type, credits, amount_usd')
+      .eq('user_id', userId)
+      .eq('entry_type', 'debit')
+      .gte('created_at', monthStart.toISOString());
+
+    const breakdown = new Map<string, UsageBreakdownItem>();
+    const getOrCreate = (cat: string): UsageBreakdownItem => {
+      if (!breakdown.has(cat)) breakdown.set(cat, { category: cat, credits: 0, costUsd: 0, count: 0 });
+      return breakdown.get(cat)!;
+    };
+
+    // Process usage_events (inference, subagent calls)
+    for (const row of usageRows || []) {
+      const raw = row.raw && typeof row.raw === 'object' ? row.raw as any : {};
+      const sourceType = raw.sourceType || raw.source_type || 'inference';
+      const category = sourceType === 'subagent' ? 'subagent' : 'inference';
+      const item = getOrCreate(category);
+      item.credits += Number(row.credit_cost) || 0;
+      item.costUsd += Number(row.cost_usd) || 0;
+      item.count++;
+    }
+
+    // Process compute billing events
+    for (const row of computeRows || []) {
+      const eventType = String(row.event_type || 'compute');
+      const category = eventType.includes('storage') ? 'storage' : 'compute';
+      const item = getOrCreate(category);
+      item.credits += Number(row.credits_deducted) || 0;
+      // Estimate USD from credits
+      const rate = creditsPerUsd();
+      item.costUsd += rate > 0 ? (Number(row.credits_deducted) || 0) / rate : 0;
+      item.count++;
+    }
+
+    // Process messaging debits from credit_transactions
+    for (const row of txRows || []) {
+      const st = String(row.source_type || '');
+      if (['telnyx', 'whatsapp', 'sms', 'messaging'].some(k => st.includes(k))) {
+        const item = getOrCreate('messaging');
+        item.credits += Number(row.credits) || 0;
+        item.costUsd += Number(row.amount_usd) || 0;
+        item.count++;
+      }
+    }
+
+    return Array.from(breakdown.values()).sort((a, b) => b.credits - a.credits);
+  } catch (e: any) {
+    console.error('[supabase] getUsageBreakdown error:', e?.message);
+    return [];
+  }
+}
+
+export interface CreditTransaction {
+  id: string;
+  entryType: string;
+  sourceType: string;
+  sourceRef: string;
+  credits: number;
+  amountUsd: number | null;
+  metadata: any;
+  createdAt: string;
+}
+
+/**
+ * Get recent credit transactions for a user (debits and grants).
+ */
+export async function getCreditTransactions(
+  userId: string,
+  limit = 50,
+  offset = 0,
+): Promise<{ transactions: CreditTransaction[]; total: number }> {
+  if (!supabaseService) return { transactions: [], total: 0 };
+  try {
+    const { count } = await supabaseService
+      .from('credit_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const { data } = await supabaseService
+      .from('credit_transactions')
+      .select('id, entry_type, source_type, source_ref, credits, amount_usd, metadata, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    const transactions: CreditTransaction[] = (data || []).map((r: any) => ({
+      id: r.id,
+      entryType: r.entry_type,
+      sourceType: r.source_type,
+      sourceRef: r.source_ref || '',
+      credits: Number(r.credits) || 0,
+      amountUsd: r.amount_usd != null ? Number(r.amount_usd) : null,
+      metadata: r.metadata || {},
+      createdAt: r.created_at,
+    }));
+
+    return { transactions, total: count || 0 };
+  } catch (e: any) {
+    console.error('[supabase] getCreditTransactions error:', e?.message);
+    return { transactions: [], total: 0 };
+  }
+}
+
 type SmsMode = 'agent' | 'proactive';
 type ModelTier = 'fast' | 'balanced' | 'smart' | 'research';
 type AgentTarget = 'desktop' | 'vm' | 'auto' | 'cloud';

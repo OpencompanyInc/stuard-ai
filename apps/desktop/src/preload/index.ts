@@ -275,6 +275,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
   getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
   setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
+  getPrefs: () => ipcRenderer.invoke('prefs:getAll'),
+  setPrefs: (prefs: Record<string, any>) => ipcRenderer.invoke('prefs:setMany', prefs),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
   onThemeUpdated: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);

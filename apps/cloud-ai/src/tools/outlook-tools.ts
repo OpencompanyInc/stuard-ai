@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getExternalAccessToken } from '../supabase';
 import { getBridgeSecrets } from './bridge';
+import { getResolvedBridgeSecrets } from './device/shared';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -13,7 +14,7 @@ const profileField = z.string().optional().describe(
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
   try {
-    const secrets = getBridgeSecrets();
+    const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
     return (secrets as any)?.outlookProfile || (secrets as any)?.profile || undefined;
   } catch { return undefined; }
 }
@@ -49,7 +50,7 @@ async function graphFetchBinary(path: string, accessToken: string): Promise<Buff
 }
 
 async function requireOutlookToken(profileLabel?: string): Promise<string> {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   const profile = resolveProfile(profileLabel);

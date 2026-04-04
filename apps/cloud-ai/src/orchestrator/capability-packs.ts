@@ -79,7 +79,7 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Rules
 
 1. Always proceed step-by-step — one action, then verify.
-2. If you need user credentials, decisions, or information not on the page, call ask_orchestrator.
+2. If you need user credentials, decisions, or information not on the page, call ask_orchestrator once. It blocks and returns the answer.
 3. When done, call return_control with a clear summary.
 4. Never guess URLs or passwords.`;
 
@@ -136,7 +136,7 @@ RULES:
 2. For multi-file operations, plan the sequence first.
 3. Use glob/grep to find files instead of guessing paths.
 4. For long-running commands, use terminal_create for interactive PTY access.
-5. If you need information or decisions from the user/orchestrator, call ask_orchestrator.
+5. If you need information or decisions from the user/orchestrator, call ask_orchestrator once. It blocks and returns the answer.
 6. When done, call return_control with a summary of files changed and commands run.`;
 
 export const FILE_OPS_PACK: CapabilityPack = {
@@ -178,7 +178,7 @@ RULES:
 2. Use search_tools + get_tool_schema to discover available tools and their exact arguments.
 3. Never invent tool names — always verify via search_tools.
 4. Use inspect_workflow to understand current topology before modifying.
-5. If you need information from the user/orchestrator, call ask_orchestrator.
+5. If you need information from the user/orchestrator, call ask_orchestrator once. It blocks and returns the answer.
 6. When done, call return_control with a summary of what was created or modified.`;
 
 export const WORKFLOW_PACK: CapabilityPack = {
@@ -211,7 +211,7 @@ RULES:
 1. Use get_tool_schema to discover exact parameters before calling any tool.
 2. Handle pagination and error responses gracefully.
 3. Summarize results concisely — don't dump raw API responses.
-4. If you need user credentials, preferences, or decisions, call ask_orchestrator.
+4. If you need user credentials, preferences, or decisions, call ask_orchestrator once. It blocks and returns the answer.
 5. When done, call return_control with a clear summary.`;
 }
 

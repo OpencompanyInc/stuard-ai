@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getExternalAccount, upsertExternalAccount } from '../supabase';
 import { getBridgeSecrets } from './bridge';
+import { getResolvedBridgeSecrets } from './device/shared';
 import { REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET } from '../utils/config';
 
 const REDDIT_API = 'https://oauth.reddit.com';
@@ -13,13 +14,13 @@ const profileField = z.string().optional().describe(
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
   try {
-    const secrets = getBridgeSecrets();
+    const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
     return (secrets as any)?.redditProfile || (secrets as any)?.profile || undefined;
   } catch { return undefined; }
 }
 
 function requireUserId(): string {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   return userId;

@@ -101,6 +101,7 @@ export interface ToolCall {
   timestamp: number;
   description?: string;
   nested?: boolean;
+  subagentId?: string;
 }
 
 export interface PendingMemory {
@@ -987,36 +988,59 @@ export function useAgent(options?: string | UseAgentOptions) {
               updateStreamingTab(t => {
                 const subagentMap = new Map(t.hiddenState.subagents);
                 const existing = subagentMap.get(subagentId);
+                let activeSubagent = existing;
                 let nextToolCalls = t.currentToolCalls;
                 let nextChunks = t.currentStreamChunks;
+                if (!activeSubagent && msg.type === 'subagent_event' && msg.event !== 'started') {
+                  let delegateSubagent = '';
+                  for (let i = t.currentToolCalls.length - 1; i >= 0; i--) {
+                    const toolCall = t.currentToolCalls[i];
+                    if (toolCall.tool === 'delegate' && toolCall.status === 'called') {
+                      delegateSubagent = typeof toolCall.args?.subagent === 'string'
+                        ? humanizeToolName(toolCall.args.subagent)
+                        : '';
+                      break;
+                    }
+                  }
+                  activeSubagent = {
+                    taskId: subagentId,
+                    objective: String(msg.data?.label || msg.data?.kind || delegateSubagent || 'subagent'),
+                    status: 'running',
+                    createdAt: now,
+                    steps: [],
+                    reasoning: '',
+                  };
+                  subagentMap.set(subagentId, activeSubagent);
+                }
                 if (msg.type === 'subagent_event' && msg.event === 'started') {
-                  subagentMap.set(subagentId, {
+                  activeSubagent = {
                     taskId: subagentId,
                     objective: msg.data?.label || msg.data?.kind || 'subagent',
                     status: 'running',
                     createdAt: now,
                     steps: [],
                     reasoning: '',
-                  });
+                  };
+                  subagentMap.set(subagentId, activeSubagent);
                 } else if (msg.type === 'subagent_complete') {
-                  if (existing) {
+                  if (activeSubagent) {
                     subagentMap.set(subagentId, {
-                      ...existing,
+                      ...activeSubagent,
                       status: msg.ok ? 'completed' : 'failed',
                       result: msg.result,
                     });
                   }
-                } else if (msg.type === 'subagent_event' && msg.event === 'error' && existing) {
-                  subagentMap.set(subagentId, { ...existing, status: 'failed' });
-                } else if (msg.type === 'subagent_event' && msg.event === 'completed' && existing) {
-                  subagentMap.set(subagentId, { ...existing, status: 'completed' });
-                } else if (msg.type === 'subagent_event' && existing) {
+                } else if (msg.type === 'subagent_event' && msg.event === 'error' && activeSubagent) {
+                  subagentMap.set(subagentId, { ...activeSubagent, status: 'failed' });
+                } else if (msg.type === 'subagent_event' && msg.event === 'completed' && activeSubagent) {
+                  subagentMap.set(subagentId, { ...activeSubagent, status: 'completed' });
+                } else if (msg.type === 'subagent_event' && activeSubagent) {
                   // Accumulate live delegation steps: reasoning, tool calls, deltas
                   const event = msg.event;
                   const data = msg.data || {};
-                  const steps = Array.isArray(existing.steps) ? [...existing.steps] : [];
-                  let reasoning = existing.reasoning || '';
-                  const subagentLabel = String(existing.objective || 'Subagent');
+                  const steps = Array.isArray(activeSubagent.steps) ? [...activeSubagent.steps] : [];
+                  let reasoning = activeSubagent.reasoning || '';
+                  const subagentLabel = String(activeSubagent.objective || 'Subagent');
 
                   if (event === 'reasoning' || event === 'reasoning_start') {
                     const text = typeof data.text === 'string' ? data.text : '';
@@ -1056,6 +1080,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                         timestamp: now,
                         description: nestedDescription,
                         nested: true,
+                        subagentId,
                       };
                       nextToolCalls = [...nextToolCalls];
                       const existingNestedIdx = nextToolCalls.findIndex((tc) => tc.id === nestedToolId);
@@ -1121,7 +1146,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                     }
                   }
 
-                  subagentMap.set(subagentId, { ...existing, steps, reasoning });
+                  subagentMap.set(subagentId, { ...activeSubagent, steps, reasoning });
 
                   // Update the active delegate tool call with live status text
                   const delegateIdx = t.currentToolCalls.findIndex(
@@ -1319,6 +1344,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                       newHiddenState.subagents = subagentMap;
                     }
                   }
+                  const delegateAwaitingReply = toolName === 'delegate'
+                    && (result?.awaitingReply === true || result?.completed === false || !!result?.question);
                   if (result?.terminalId && (result?.status === 'exited' || result?.done === true)) {
                     const termMap = new Map(t.hiddenState.terminals);
                     const existing = termMap.get(result.terminalId);
@@ -1333,7 +1360,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   }
                   const completionKey = result?.taskId || result?.subagentId;
                   if (completionKey && (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled'
-                    || (result?.ok !== undefined && toolName === 'delegate'))) {
+                    || (result?.ok !== undefined && toolName === 'delegate' && !delegateAwaitingReply))) {
                     const subagentMap = new Map(t.hiddenState.subagents);
                     const existing = subagentMap.get(completionKey);
                     if (existing) {

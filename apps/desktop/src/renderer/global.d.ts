@@ -182,6 +182,10 @@ declare global {
 
       notify: (titleOrConfig: string | { title?: string; body?: string; message?: string; variant?: string; position?: string; duration?: number }, body?: string) => Promise<{ ok: boolean; error?: string }>;
 
+      // Preferences
+      getPrefs: () => Promise<{ ok: boolean; prefs?: Record<string, any>; error?: string }>;
+      setPrefs: (prefs: Record<string, any>) => Promise<{ ok: boolean; error?: string }>;
+
       // Billing (Polar)
       billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
       billingGetCustomer: (email: string) => Promise<{ ok: boolean; customer?: { id: string; email: string; subscriptions: Array<{ id: string; status: string; productId: string; productName: string; currentPeriodEnd?: string }>; orders: Array<{ id: string; amount: number; currency: string; createdAt: string }> }; error?: string }>;

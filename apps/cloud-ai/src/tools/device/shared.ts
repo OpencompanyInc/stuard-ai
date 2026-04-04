@@ -81,6 +81,11 @@ export function setActiveBridge(ws: any, secrets?: Record<string, any>) {
     secrets,
   };
   _activeBridgeScopes.push(scope);
+  // Also maintain a globalThis-level secrets ref that survives ALL async context
+  // breaks (ALS, promise boundaries, Mastra internals, module duplication).
+  if (secrets && (secrets as any).userId) {
+    (globalThis as any).__stuardActiveBridgeSecrets = secrets;
+  }
   console.log(`[bridge-scope] SET scope #${_activeBridgeScopes.length} | ws=${!!ws} readyState=${ws?.readyState ?? 'N/A'} userId=${secrets?.userId?.slice(0, 8) || 'none'}`);
   return scope;
 }
@@ -89,6 +94,10 @@ export function setActiveBridge(ws: any, secrets?: Record<string, any>) {
 export function clearActiveBridge(scope?: ActiveBridgeScope | symbol) {
   if (!scope) {
     _activeBridgeScopes.length = 0;
+    // Only clear globalThis ref if no scopes remain
+    if (_activeBridgeScopes.length === 0) {
+      delete (globalThis as any).__stuardActiveBridgeSecrets;
+    }
     return;
   }
 
@@ -97,11 +106,51 @@ export function clearActiveBridge(scope?: ActiveBridgeScope | symbol) {
   if (index >= 0) {
     _activeBridgeScopes.splice(index, 1);
   }
+  // Update globalThis to the most recent remaining scope's secrets, or clear it
+  if (_activeBridgeScopes.length === 0) {
+    delete (globalThis as any).__stuardActiveBridgeSecrets;
+  } else {
+    // Point to the most recent scope with userId
+    for (let i = _activeBridgeScopes.length - 1; i >= 0; i--) {
+      if (_activeBridgeScopes[i]?.secrets?.userId) {
+        (globalThis as any).__stuardActiveBridgeSecrets = _activeBridgeScopes[i].secrets;
+        break;
+      }
+    }
+  }
 }
 
 /** Check if a bridge is available (ALS or module-level fallback). */
 function hasAnyBridge(): boolean {
   return !!getResolvedBridgeContext();
+}
+
+/**
+ * Get bridge secrets with full fallback chain (ALS → scoped ALS → module-level stack).
+ * Use this instead of getBridgeSecrets() when ALS propagation may be broken
+ * (e.g. inside Mastra's tool execution pipeline).
+ */
+export function getResolvedBridgeSecrets(): Record<string, any> | undefined {
+  const alsSecrets = getBridgeSecrets();
+  if (alsSecrets && Object.keys(alsSecrets).length > 0) return alsSecrets;
+
+  const resolved = getResolvedBridgeContext()?.secrets;
+  if (resolved && Object.keys(resolved).length > 0) return resolved;
+
+  // Last resort: scan module-level stack for ANY entry with secrets,
+  // regardless of WS state (WS may have closed after secrets were captured).
+  for (let i = _activeBridgeScopes.length - 1; i >= 0; i--) {
+    const scope = _activeBridgeScopes[i];
+    if (scope?.secrets && Object.keys(scope.secrets).length > 0) return scope.secrets;
+  }
+
+  // Ultimate fallback: globalThis store that survives all async context breaks.
+  const globalSecrets = (globalThis as any).__stuardActiveBridgeSecrets;
+  if (globalSecrets && typeof globalSecrets === 'object' && globalSecrets.userId) {
+    return globalSecrets;
+  }
+
+  return undefined;
 }
 
 function injectLocalToolInput(

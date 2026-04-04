@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { mediaGalleryDir } from '../utils/platform';
 import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets } from './bridge';
+import { getResolvedBridgeSecrets } from './device/shared';
 import { waSendText, waSendMedia, waSendReaction, waMarkRead, waUploadMediaFromUrl, waGetMediaUrl } from '../routes/integrations/whatsapp';
 import { messagingCreditCost } from '../pricing';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
@@ -13,7 +14,7 @@ import { uploadUserFileBuffer } from '../services/cold-storage';
 import { fetchFromWhatsApp, transcribeAudio } from '../media';
 
 async function requireUserId(): Promise<string> {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecrets();
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   return userId;
