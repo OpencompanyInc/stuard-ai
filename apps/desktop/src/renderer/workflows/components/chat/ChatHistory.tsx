@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import clsx from "clsx";
-import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Zap, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check } from "lucide-react";
+import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { ReasoningBlock } from "../../../components/ReasoningBlock";
@@ -341,25 +341,8 @@ const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any
   const resultFailed = evt.result && evt.result.ok === false;
   const resultError = evt.result?.error;
 
-  const statusColor =
-    resultFailed ? 'text-amber-600' :
-      evt.status === 'completed' ? 'text-emerald-600' :
-        evt.status === 'error' || evt.status === 'failed' ? 'text-red-600' :
-          'text-indigo-600';
-
   const isRunning =
     !resultFailed && evt.status !== 'completed' && evt.status !== 'error' && evt.status !== 'failed';
-
-  const statusIcon =
-    isModify && isRunning ? (
-      <span className="inline-flex items-center justify-center">
-        <RotateCw className="w-3 h-3 animate-spin" />
-      </span>
-    ) :
-      resultFailed ? <AlertCircle className="w-3 h-3" /> :
-        evt.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> :
-          evt.status === 'error' || evt.status === 'failed' ? <X className="w-3 h-3" /> :
-            <RotateCw className="w-3 h-3" />;
 
   if (isModify) {
     return (
@@ -375,40 +358,47 @@ const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any
   }
 
   return (
-    <div className={`mb-3 rounded-xl border ${resultFailed ? 'border-amber-500/30 bg-amber-500/10' : 'wf-border-subtle wf-bg-sunken'} shadow-sm overflow-hidden transition-all group`}>
-      <div className={`px-3 py-2 ${resultFailed ? 'bg-amber-500/20' : 'wf-bg-overlay'} flex items-center justify-between`}>
-        <div className="flex items-center gap-2">
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm ${resultFailed ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'wf-bg-overlay text-indigo-400 wf-border-subtle'}`}>
-            <Zap className="w-3 h-3" />
-          </div>
-          <span className="text-[11px] font-semibold wf-fg">{formatToolName(rawTool || evt.tool)}</span>
-        </div>
-        <span className={`text-[10px] font-medium flex items-center gap-1.5 opacity-80 ${statusColor}`}>
-          {statusIcon}
+    <div className="mb-2 group">
+      <div className="flex items-center gap-2 py-1">
+        <span
+          className="block w-1.5 h-1.5 shrink-0 rounded-full"
+          style={{
+            backgroundColor: resultFailed
+              ? '#f59e0b'
+              : evt.status === 'completed' ? 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 40%, transparent)'
+              : evt.status === 'error' || evt.status === 'failed' ? '#ef4444'
+              : 'color-mix(in srgb, var(--foreground, #fff) 40%, transparent)',
+          }}
+        />
+        <span
+          className="text-[12px] leading-5"
+          style={{ color: 'color-mix(in srgb, var(--foreground, #fff) 68%, transparent)' }}
+        >
+          {formatToolName(rawTool || evt.tool)}
         </span>
+        {isRunning && (
+          <RotateCw className="w-3 h-3 animate-spin" style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 50%, transparent)' }} />
+        )}
       </div>
 
-      <div className="px-3 py-2 hidden group-hover:block transition-all border-t wf-border-subtle">
-        {resultFailed && resultError && (
-          <div className="mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded text-amber-400 text-[11px] flex gap-2">
-            <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold">Error:</span> {resultError}
-            </div>
-          </div>
-        )}
-        <div className="text-[10px] font-mono wf-fg-muted whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-minimal">
-          {JSON.stringify(args, null, 2)}
+      {resultFailed && resultError && (
+        <div
+          className="ml-3.5 mt-1 rounded-lg px-3 py-2 text-[11px] flex gap-2"
+          style={{ backgroundColor: 'color-mix(in srgb, #f59e0b 8%, transparent)', color: '#f59e0b' }}
+        >
+          <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+          <span>{resultError}</span>
         </div>
-        {evt.result && (() => {
-          const filePaths = extractFilePaths(evt.result);
-          return filePaths.length > 0 ? (
-            <div className="flex flex-col gap-0.5 mt-2">
-              {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
-            </div>
-          ) : null;
-        })()}
-      </div>
+      )}
+
+      {evt.result && (() => {
+        const filePaths = extractFilePaths(evt.result);
+        return filePaths.length > 0 ? (
+          <div className="flex flex-col gap-0.5 ml-3.5 mt-1">
+            {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
+          </div>
+        ) : null;
+      })()}
     </div>
   );
 };

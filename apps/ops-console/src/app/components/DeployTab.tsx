@@ -75,7 +75,7 @@ export default function DeployTab({ status, onAction, loading, deployments, late
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [bumpType, setBumpType] = useState<BumpType>('patch');
   const [bumpApps, setBumpApps] = useState<Record<string, boolean>>({
-    desktop: true, website: true, 'cloud-ai': true, 'ops-console': true, 'browser-extension': true,
+    desktop: true, website: true, 'cloud-ai': true, 'ops-console': true,
   });
   const [autoCommit, setAutoCommit] = useState(true);
   const [autoTag, setAutoTag] = useState(true);
@@ -141,7 +141,6 @@ export default function DeployTab({ status, onAction, loading, deployments, late
   const websiteVer = versions?.apps.find(a => a.key === 'website')?.version || status.versions?.website || '—';
   const cloudVer = versions?.apps.find(a => a.key === 'cloud-ai')?.version || status.versions?.cloud || '—';
   const opsVer = versions?.apps.find(a => a.key === 'ops-console')?.version || '—';
-  const extVer = versions?.apps.find(a => a.key === 'browser-extension')?.version || '—';
   const latestTag = versions?.git?.latestTag || status.latestTag || null;
 
   return (

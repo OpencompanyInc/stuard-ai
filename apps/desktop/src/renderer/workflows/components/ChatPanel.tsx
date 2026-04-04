@@ -681,27 +681,8 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
   const resultFailed = evt.result && evt.result.ok === false;
   const resultError = evt.result?.error;
 
-  const statusColor =
-    resultFailed ? 'text-amber-600' :
-      evt.status === 'completed' ? 'text-emerald-600' :
-        evt.status === 'error' || evt.status === 'failed' ? 'text-red-600' :
-          'text-indigo-600';
-
   const isRunning =
     !resultFailed && evt.status !== 'completed' && evt.status !== 'error' && evt.status !== 'failed';
-
-  const statusIcon =
-    isWorkflowTool && isRunning ? (
-      <span className="inline-flex items-center justify-center">
-        <RotateCw className="w-3 h-3 animate-spin" />
-      </span>
-    ) :
-      resultFailed ? <AlertCircle className="w-3 h-3" /> :
-        evt.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> :
-          evt.status === 'error' || evt.status === 'failed' ? <X className="w-3 h-3" /> :
-            <RotateCw className="w-3 h-3" />;
-
-  const statusText = resultFailed ? 'failed' : (evt.status || 'running');
 
   // Specialized display for workflow tools
   if (isWorkflowTool) {
@@ -812,66 +793,52 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
   };
 
   const summary = evt.result ? getToolSummary(evt.tool, args, evt.result) : null;
-  const [showDetails, setShowDetails] = React.useState(false);
 
   return (
-    <div className={`mb-3 rounded-lg border ${resultFailed ? 'border-amber-200 bg-amber-50/30' : 'border-white/[0.08] bg-white/[0.04]'} shadow-sm overflow-hidden transition-all`}>
-      <div 
-        className={`px-3 py-2 ${resultFailed ? 'bg-amber-50' : 'bg-slate-50/50'} flex items-center justify-between cursor-pointer hover:bg-slate-100/50 transition-colors`}
-        onClick={() => setShowDetails(!showDetails)}
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] border shadow-sm shrink-0 ${resultFailed ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white/[0.04] text-indigo-600 border-white/[0.08]'}`}>
-            <Zap className="w-3 h-3" />
-          </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-[11px] font-semibold text-white/80">{formatToolName(rawTool || evt.tool)}</span>
-            {summary && (
-              <span className={`text-[10px] truncate ${resultFailed ? 'text-amber-600' : 'text-white/50'}`}>
-                {summary}
-              </span>
-            )}
-          </div>
-        </div>
-        <span className={`text-[10px] font-medium flex items-center gap-1.5 opacity-80 shrink-0 ${statusColor}`}>
-          {statusIcon}
+    <div className="mb-2">
+      <div className="flex items-center gap-2 py-1">
+        <span
+          className="block w-1.5 h-1.5 shrink-0 rounded-full"
+          style={{
+            backgroundColor: resultFailed
+              ? '#f59e0b'
+              : evt.status === 'completed' ? 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 40%, transparent)'
+              : evt.status === 'error' || evt.status === 'failed' ? '#ef4444'
+              : 'color-mix(in srgb, var(--foreground, #fff) 40%, transparent)',
+          }}
+        />
+        <span
+          className="text-[12px] leading-5"
+          style={{ color: 'color-mix(in srgb, var(--foreground, #fff) 68%, transparent)' }}
+        >
+          {formatToolName(rawTool || evt.tool)}
         </span>
+        {summary && (
+          <span className="text-[10px] text-theme-muted truncate">{summary}</span>
+        )}
+        {isRunning && (
+          <RotateCw className="w-3 h-3 animate-spin" style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 50%, transparent)' }} />
+        )}
       </div>
 
-      {showDetails && (
-        <div className="px-3 py-2 border-t border-white/[0.04] bg-slate-50/30">
-          {resultFailed && resultError && (
-            <div className="mb-2 p-2 bg-amber-50 border border-amber-100 rounded text-amber-800 text-[11px] flex gap-2">
-              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-semibold">Error:</span> {resultError}
-              </div>
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider">Args</div>
-            <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
-              {JSON.stringify(args, null, 2)}
-            </div>
-            {evt.result && (() => {
-              const filePaths = extractFilePaths(evt.result);
-              return (
-                <>
-                  <div className="text-[9px] font-semibold text-white/40 uppercase tracking-wider mt-2">Result</div>
-                  {filePaths.length > 0 && (
-                    <div className="flex flex-col gap-0.5">
-                      {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
-                    </div>
-                  )}
-                  <div className="text-[10px] font-mono text-white/70 whitespace-pre-wrap break-all max-h-24 overflow-y-auto scrollbar-light bg-white/[0.04] rounded p-2 border border-white/[0.04]">
-                    {JSON.stringify(evt.result, null, 2)}
-                  </div>
-                </>
-              );
-            })()}
-          </div>
+      {resultFailed && resultError && (
+        <div
+          className="ml-3.5 mt-1 rounded-lg px-3 py-2 text-[11px] flex gap-2"
+          style={{ backgroundColor: 'color-mix(in srgb, #f59e0b 8%, transparent)', color: '#f59e0b' }}
+        >
+          <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+          <span>{resultError}</span>
         </div>
       )}
+
+      {evt.result && (() => {
+        const filePaths = extractFilePaths(evt.result);
+        return filePaths.length > 0 ? (
+          <div className="flex flex-col gap-0.5 ml-3.5 mt-1">
+            {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
+          </div>
+        ) : null;
+      })()}
     </div>
   );
 };

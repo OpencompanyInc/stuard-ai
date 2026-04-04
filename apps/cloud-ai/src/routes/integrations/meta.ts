@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
+import { pushOAuthTokensToVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -415,6 +416,9 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
         profileLabel: verified.profileLabel,
         accountEmail: cfg.formatAccountLabel(profile),
       });
+
+      // Auto-sync OAuth tokens to running VM (fire-and-forget)
+      pushOAuthTokensToVM(verified.userId).catch(() => {});
 
       redirect(res, `${WEBSITE_BASE_URL}/integrations/success?provider=${encodeURIComponent(cfg.provider)}&profile=${encodeURIComponent(verified.profileLabel)}`);
       return true;

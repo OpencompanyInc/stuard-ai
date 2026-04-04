@@ -104,7 +104,11 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
 
     const kind = String(msg?.type || '').toLowerCase();
 
-    if (kind === 'terminal_data' && msg.data) {
+    if (kind === 'terminal_ping') {
+      try {
+        ws.send(JSON.stringify({ type: 'terminal_pong', ts: Date.now() }));
+      } catch {}
+    } else if (kind === 'terminal_data' && msg.data) {
       // Forward keystrokes to VM
       await sendVMTerminalCommand(userId, 'data', {
         sessionId,

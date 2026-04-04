@@ -115,6 +115,7 @@ interface ChatViewProps {
   // Edit & Revert
   onEditMessage?: (messageId: string, newText: string) => void;
   onRevertFiles?: (messageId: string) => void;
+  onRedoFiles?: (messageId: string) => void;
 
   // Pending memory approvals
   pendingMemories?: Array<{
@@ -193,6 +194,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onAskUserRespond,
   onEditMessage,
   onRevertFiles,
+  onRedoFiles,
   pendingMemories = [],
   onConfirmPendingMemory,
   onRejectPendingMemory,
@@ -601,6 +603,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}
                       onRevertFiles={onRevertFiles}
+                      onRedoFiles={onRedoFiles}
                     />
                   </>
                 )}
@@ -808,6 +811,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}
                       onRevertFiles={onRevertFiles}
+                      onRedoFiles={onRedoFiles}
                     />
                   </>
                 )}

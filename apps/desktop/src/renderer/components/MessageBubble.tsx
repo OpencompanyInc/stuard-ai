@@ -7,13 +7,20 @@ import rehypeKatex from 'rehype-katex';
 import clsx from 'clsx';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import 'katex/dist/katex.min.css';
-import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, X, Send } from 'lucide-react';
+import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
 import { AudioPlayer } from './AudioPlayer';
 import { LinkPreview } from './LinkPreview';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
+import { Shimmer } from './ai-elements/Shimmer';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from './ai-elements/ChainOfThought';
 
 // GenUI tools that render interactive UI components
 const GENUI_TOOL_NAMES = new Set([
@@ -72,6 +79,8 @@ const HIDDEN_TOOL_NAMES = new Set([
   // Internal meta-tools (invisible to user)
   'get_tool_schema',
   'search_tools',
+  // Orchestrator reply tool (invisible to user)
+  'reply_to_subagent',
   // ask_user renders inline prompt, not a tool pill
   'ask_user',
   // GenUI display tools (rendered as UI, don't need pill)
@@ -97,8 +106,14 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
     ? String(tool.args.objective).slice(0, 80) + (String(tool.args.objective).length > 80 ? '…' : '')
     : null;
 
+  // For delegate tool, show the subagent kind and live status
+  const isDelegation = resolvedToolName === 'delegate';
+  const delegationLabel = isDelegation
+    ? `${humanizeToolName(tool.args?.subagent || 'subagent')} agent`
+    : null;
+
   // Use description from tool if available, objective for subagent tools, otherwise humanize tool name
-  const displayText = subagentObjective || tool.description || humanizeToolName(resolvedToolName);
+  const displayText = delegationLabel || subagentObjective || tool.description || humanizeToolName(resolvedToolName);
 
   // Filter out internal IDs from display data
   const filterInternalIds = (obj: any): any => {
@@ -388,7 +403,8 @@ interface MessageBubbleProps {
   modifiedFiles?: string[];
   checkpointId?: string;
   reverted?: boolean;
-  onRevertFiles?: (messageId: string) => void;
+  onRevertFiles?: (messageId: string) => boolean | void | Promise<boolean | void>;
+  onRedoFiles?: (messageId: string) => boolean | void | Promise<boolean | void>;
 }
 
 // Convert local file path to local-file:// URL for Electron (custom protocol)
@@ -928,6 +944,7 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   const isImage = IMAGE_EXTS.has(ext);
   const isAudio = AUDIO_EXTS.has(ext);
   const fileName = filePath.split(/[/\\]/).pop() || filePath;
+  const kindLabel = isImage ? 'image' : isAudio ? 'audio' : ext ? ext.toUpperCase() : 'file';
 
   const copyPath = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -947,36 +964,36 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   };
 
   return (
-    <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-md px-2 py-1.5 my-0.5 group/fp">
-      <span className="text-[10px] text-gray-500 shrink-0">
-        {isImage ? '🖼' : isAudio ? '🔊' : '📄'}
+    <div className="my-0.5 flex items-center gap-2 rounded-lg border border-theme/10 bg-transparent px-2.5 py-1.5">
+      <span className="shrink-0 rounded-full border border-theme/10 px-1.5 py-0.5 text-[9px] font-medium text-theme-muted">
+        {kindLabel}
       </span>
-      <span className="text-[10px] font-medium text-gray-700 truncate max-w-[200px]" title={filePath}>
+      <span className="max-w-[200px] truncate text-[10px] font-medium text-theme-fg/85" title={filePath}>
         {fileName}
       </span>
-      <div className="flex items-center gap-0.5 ml-auto shrink-0">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">
         <button
           onClick={openFile}
-          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
           title="Open file"
         >
-          <ExternalLink className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+          <ExternalLink className="h-3 w-3" />
         </button>
         <button
           onClick={revealInFolder}
-          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
           title="Show in folder"
         >
-          <Folder className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+          <Folder className="h-3 w-3" />
         </button>
         <button
           onClick={copyPath}
-          className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
           title="Copy path"
         >
           {copied
-            ? <Check className="w-3 h-3 text-green-600" />
-            : <Copy className="w-3 h-3 text-gray-500 hover:text-gray-700" />
+            ? <Check className="h-3 w-3 text-green-600" />
+            : <Copy className="h-3 w-3" />
           }
         </button>
       </div>
@@ -992,6 +1009,513 @@ function humanizeToolName(tool: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
 }
+
+type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
+
+interface AssistantTraceStepData {
+  id: string;
+  kind: 'reasoning' | 'tool';
+  label: string;
+  status: TraceStatus;
+  content?: string;
+  tool?: ToolCall;
+  nested?: boolean;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function filterToolPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => filterToolPayload(item))
+      .filter((item) => item !== null && item !== undefined);
+    return items.length > 0 ? items : null;
+  }
+
+  if (isPlainRecord(value)) {
+    const filtered: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (/^(id|.*_id|.*Id|session.*|conversation.*|description)$/i.test(key)) {
+        continue;
+      }
+      const next = filterToolPayload(entry);
+      if (next !== null && next !== undefined) {
+        filtered[key] = next;
+      }
+    }
+    return Object.keys(filtered).length > 0 ? filtered : null;
+  }
+
+  return value;
+}
+
+function truncatePreviewText(text: string, max = 96): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+}
+
+function summarizePreviewValue(value: unknown): string {
+  if (typeof value === 'string') return truncatePreviewText(value, 88);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.length === 1 ? '1 item' : `${value.length} items`;
+  if (isPlainRecord(value)) {
+    if (typeof value.status === 'string') return truncatePreviewText(value.status, 64);
+    if (typeof value.path === 'string') return truncatePreviewText(value.path, 72);
+    const count = Object.keys(value).length;
+    return count === 1 ? '1 field' : `${count} fields`;
+  }
+  return 'No data';
+}
+
+function shouldShowRawDetails(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 5 || value.some((item) => typeof item === 'object' && item !== null);
+  }
+
+  if (isPlainRecord(value)) {
+    const entries = Object.values(value);
+    return (
+      Object.keys(value).length > 5 ||
+      entries.some((entry) => {
+        if (typeof entry === 'string') return entry.length > 140;
+        return Array.isArray(entry) || isPlainRecord(entry);
+      })
+    );
+  }
+
+  return false;
+}
+
+const PreviewBadge: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <div
+    className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px]"
+    style={{
+      backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 50%, transparent)',
+      color: 'var(--foreground)',
+    }}
+  >
+    <span className="text-theme-muted">{label}:</span>
+    <span className="truncate font-medium">{value}</span>
+  </div>
+);
+
+function extractSearchSources(result: unknown): Array<{ title: string; url: string; snippet?: string }> | null {
+  if (!result || typeof result !== 'object') return null;
+  const obj = result as Record<string, unknown>;
+
+  let items: unknown[] | null = null;
+  if (Array.isArray(obj.results)) items = obj.results;
+  else if (Array.isArray(obj.sources)) items = obj.sources;
+  else if (Array.isArray(obj.data)) items = obj.data;
+  else if (Array.isArray(result)) items = result as unknown[];
+
+  if (!items || items.length === 0) return null;
+
+  const sources = items
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && typeof (item as any).url === 'string')
+    .map((item) => ({
+      title: typeof item.title === 'string' ? item.title : '',
+      url: item.url as string,
+      snippet: typeof item.snippet === 'string' ? item.snippet : undefined,
+    }));
+
+  return sources.length > 0 ? sources : null;
+}
+
+function faviconUrl(siteUrl: string): string {
+  try {
+    const host = new URL(siteUrl).hostname;
+    return `https://www.google.com/s2/favicons?sz=32&domain=${host}`;
+  } catch {
+    return '';
+  }
+}
+
+const WebSearchSources: React.FC<{
+  query?: string;
+  sources: Array<{ title: string; url: string }>;
+}> = ({ query, sources }) => (
+  <div className="space-y-2">
+    {query ? (
+      <div
+        className="text-[12px] leading-relaxed"
+        style={{ color: 'color-mix(in srgb, var(--foreground) 60%, transparent)' }}
+      >
+        {query}
+      </div>
+    ) : null}
+    <div className="flex flex-wrap gap-1.5">
+      {sources.slice(0, 8).map((source) => {
+        let hostname = '';
+        try { hostname = new URL(source.url).hostname.replace(/^www\./, ''); } catch { hostname = source.url; }
+        return (
+          <a
+            key={source.url}
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium text-theme-muted transition-opacity hover:opacity-80"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 55%, transparent)',
+            }}
+            title={source.title || hostname}
+          >
+            <img
+              src={faviconUrl(source.url)}
+              alt=""
+              className="h-3 w-3 rounded-sm"
+              loading="lazy"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+            {hostname}
+          </a>
+        );
+      })}
+      {sources.length > 8 && (
+        <span className="self-center text-[10px] text-theme-muted">+{sources.length - 8} more</span>
+      )}
+    </div>
+  </div>
+);
+
+const ToolPayloadPreview: React.FC<{
+  data: unknown;
+  emptyLabel: string;
+  toolName?: string;
+  toolArgs?: unknown;
+}> = ({ data, emptyLabel, toolName, toolArgs }) => {
+  const filtered = filterToolPayload(data);
+
+  if (toolName === 'web_search' && filtered) {
+    const sources = extractSearchSources(filtered);
+    if (sources) {
+      let query: string | undefined;
+      if (toolArgs && typeof toolArgs === 'object') {
+        const args = toolArgs as Record<string, unknown>;
+        if (typeof args.query === 'string') query = args.query;
+        else if (typeof args.search_term === 'string') query = args.search_term;
+        else if (typeof args.q === 'string') query = args.q;
+      }
+      return <WebSearchSources query={query} sources={sources} />;
+    }
+  }
+
+  if (filtered === null || filtered === undefined) {
+    return (
+      <div className="text-[11px] text-theme-muted">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  if (typeof filtered === 'string') {
+    if (isFilePath(filtered)) {
+      return <FilePathActions filePath={filtered} />;
+    }
+
+    return (
+      <div
+        className="rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+          color: 'color-mix(in srgb, var(--foreground) 75%, transparent)',
+        }}
+      >
+        {truncatePreviewText(filtered, 300)}
+      </div>
+    );
+  }
+
+  if (typeof filtered === 'number' || typeof filtered === 'boolean') {
+    return <PreviewBadge label="Value" value={String(filtered)} />;
+  }
+
+  if (Array.isArray(filtered)) {
+    if (filtered.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {filtered.slice(0, 6).map((item, index) => (
+            <PreviewBadge key={`${String(item)}-${index}`} label={`Item ${index + 1}`} value={String(item)} />
+          ))}
+          {filtered.length > 6 ? (
+            <span className="text-[10px] text-theme-muted">+{filtered.length - 6} more</span>
+          ) : null}
+        </div>
+      );
+    }
+  }
+
+  const filePaths = extractFilePaths(filtered);
+  const rows: Array<{ key: string; value: string }> = [];
+  const longText: Array<{ key: string; value: string }> = [];
+
+  if (Array.isArray(filtered)) {
+    rows.push({ key: 'items', value: String(filtered.length) });
+  } else if (isPlainRecord(filtered)) {
+    for (const [key, value] of Object.entries(filtered)) {
+      if (isFilePath(value)) continue;
+
+      if (typeof value === 'string' && value.length > 120 && longText.length === 0) {
+        longText.push({ key, value });
+        continue;
+      }
+
+      rows.push({ key, value: summarizePreviewValue(value) });
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {filePaths.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {filePaths.map((filePath) => (
+            <FilePathActions key={filePath} filePath={filePath} />
+          ))}
+        </div>
+      ) : null}
+
+      {longText.map((entry) => (
+        <div
+          key={entry.key}
+          className="rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+            color: 'color-mix(in srgb, var(--foreground) 75%, transparent)',
+          }}
+        >
+          <div className="mb-1 text-[10px] text-theme-muted">
+            {humanizeToolName(entry.key)}
+          </div>
+          <div className="whitespace-pre-wrap break-words">
+            {truncatePreviewText(entry.value, 240)}
+          </div>
+        </div>
+      ))}
+
+      {rows.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {rows.slice(0, 6).map((row) => (
+            <PreviewBadge
+              key={`${row.key}-${row.value}`}
+              label={humanizeToolName(row.key)}
+              value={row.value}
+            />
+          ))}
+          {rows.length > 6 ? (
+            <span className="text-[10px] text-theme-muted">+{rows.length - 6} more</span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
+  if (tool.status === 'error') {
+    const errorText =
+      typeof tool.error === 'string'
+        ? tool.error
+        : JSON.stringify(tool.error || 'Tool failed', null, 2);
+
+    return (
+      <div className="rounded-lg px-3 py-2 text-[11px] leading-relaxed text-red-500/90 whitespace-pre-wrap break-words"
+        style={{ backgroundColor: 'color-mix(in srgb, var(--destructive) 8%, transparent)' }}
+      >
+        {errorText}
+      </div>
+    );
+  }
+
+  if (tool.status === 'completed') {
+    return (
+      <ToolPayloadPreview
+        data={tool.result}
+        toolName={tool.tool}
+        toolArgs={tool.args}
+        emptyLabel=""
+      />
+    );
+  }
+
+  return null;
+};
+
+function summarizeReasoningLabel(content: string): string {
+  const plain = content
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!plain) return 'Planning next moves';
+
+  const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
+  const summary = truncatePreviewText(sentence, 72);
+  return summary.split(' ').length >= 2 ? summary : 'Planning next moves';
+}
+
+function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
+  if (tool.status === 'completed') return 'complete';
+  if (tool.status === 'error') return 'error';
+  if (tool.status === 'running') return 'active';
+  return isStreaming ? 'active' : 'pending';
+}
+
+const AssistantTracePanel: React.FC<{
+  reasoning?: string;
+  reasoningDuration?: number;
+  toolCalls?: ToolCall[];
+  streamChunks?: StreamChunk[];
+  isStreaming?: boolean;
+  defaultOpen?: boolean;
+}> = ({
+  reasoning,
+  reasoningDuration,
+  toolCalls,
+  streamChunks,
+  isStreaming,
+  defaultOpen,
+}) => {
+  const traceSteps = useMemo<AssistantTraceStepData[]>(() => {
+    const steps: AssistantTraceStepData[] = [];
+
+    if (streamChunks && streamChunks.length > 0) {
+      const lastReasoningIndex = streamChunks.reduce((lastIndex, chunk, index) => (
+        chunk.type === 'reasoning' ? index : lastIndex
+      ), -1);
+
+      streamChunks.forEach((chunk, index) => {
+        if (chunk.type === 'reasoning') {
+          steps.push({
+            id: `reasoning-${index}`,
+            kind: 'reasoning',
+            label: summarizeReasoningLabel(chunk.content),
+            status: isStreaming && index === lastReasoningIndex ? 'active' : 'complete',
+            content: chunk.content,
+            nested: chunk.nested,
+          });
+          return;
+        }
+
+        if (chunk.type === 'tool') {
+          const tc = chunk.tool;
+          if (HIDDEN_TOOL_NAMES.has(tc.tool) || GENUI_TOOL_NAMES.has(tc.tool)) return;
+
+          steps.push({
+            id: tc.id || `tool-${index}`,
+            kind: 'tool',
+            label: tc.description || humanizeToolName(tc.tool),
+            status: mapTraceStatus(tc, isStreaming),
+            tool: tc,
+            nested: tc.nested,
+          });
+        }
+      });
+
+      return steps;
+    }
+
+    if (reasoning && reasoning.trim().length > 0) {
+      steps.push({
+        id: 'reasoning-fallback',
+        kind: 'reasoning',
+        label: summarizeReasoningLabel(reasoning),
+        status: 'complete',
+        content: reasoning,
+      });
+    }
+
+    (toolCalls || [])
+      .filter((tool) => !HIDDEN_TOOL_NAMES.has(tool.tool) && !GENUI_TOOL_NAMES.has(tool.tool))
+      .forEach((tool, index) => {
+        steps.push({
+          id: tool.id || `tool-fallback-${index}`,
+          kind: 'tool',
+          label: tool.description || humanizeToolName(tool.tool),
+          status: mapTraceStatus(tool, isStreaming),
+          tool,
+          nested: tool.nested,
+        });
+      });
+
+    return steps;
+  }, [isStreaming, reasoning, streamChunks, toolCalls]);
+
+  if (traceSteps.length === 0) return null;
+
+  const headerLabel = isStreaming
+    ? 'Thinking...'
+    : reasoningDuration
+      ? `Thought for ${formatDuration(reasoningDuration)}`
+      : 'Thought';
+
+  return (
+    <ChainOfThought
+      defaultOpen={Boolean(defaultOpen)}
+      className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]"
+    >
+      <ChainOfThoughtHeader>
+        <span className="text-[13px] text-theme-muted">{headerLabel}</span>
+      </ChainOfThoughtHeader>
+
+      <ChainOfThoughtContent>
+        {traceSteps.map((step, idx) => {
+          const stepNode = (
+            <ChainOfThoughtStep
+              key={step.id}
+              status={step.status}
+              isLast={idx === traceSteps.length - 1}
+              label={
+                step.status === 'active' ? (
+                  <Shimmer as="span" duration={2} spread={3}>
+                    {step.label}
+                  </Shimmer>
+                ) : (
+                  step.label
+                )
+              }
+            >
+              {step.kind === 'reasoning' && step.content ? (
+                <div
+                  className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                  style={{
+                    backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                    color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                  }}
+                >
+                  {step.content}
+                </div>
+              ) : null}
+
+              {step.kind === 'tool' && step.tool ? (
+                <ToolTraceContent tool={step.tool} />
+              ) : null}
+            </ChainOfThoughtStep>
+          );
+
+          if (step.nested) {
+            return (
+              <div
+                key={step.id}
+                className="ml-6 rounded-xl border-l-2 pl-4 pr-2 py-2"
+                style={{
+                  borderColor: 'color-mix(in srgb, var(--foreground-muted) 20%, transparent)',
+                  backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 16%, transparent)',
+                }}
+              >
+                {stepNode}
+              </div>
+            );
+          }
+
+          return stepNode;
+        })}
+      </ChainOfThoughtContent>
+    </ChainOfThought>
+  );
+};
 
 function normalizeMarkdownSpacing(input: string): string {
   const raw = String(input || '').replace(/\r\n/g, '\n');
@@ -1016,14 +1540,14 @@ function processCustomMarkdown(text: string): string {
   );
 }
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles }) => {
-  const [reasoningExpanded, setReasoningExpanded] = useState(false);
-  const reasoningRef = useRef<HTMLDivElement>(null);
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles, onRedoFiles }) => {
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(text);
   const [isReverting, setIsReverting] = useState(false);
+  const [isRedoing, setIsRedoing] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<{ type: 'reverted' | 'redone'; count: number } | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Focus textarea when entering edit mode
@@ -1065,11 +1589,29 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     if (!messageId || !onRevertFiles || isReverting) return;
     setIsReverting(true);
     try {
-      await onRevertFiles(messageId);
+      const ok = await onRevertFiles(messageId);
+      if (ok) {
+        setActionFeedback({ type: 'reverted', count: modifiedFiles?.length || 0 });
+        setTimeout(() => setActionFeedback(null), 3000);
+      }
     } finally {
       setIsReverting(false);
     }
-  }, [messageId, onRevertFiles, isReverting]);
+  }, [messageId, onRevertFiles, isReverting, modifiedFiles]);
+
+  const handleRedo = useCallback(async () => {
+    if (!messageId || !onRedoFiles || isRedoing) return;
+    setIsRedoing(true);
+    try {
+      const ok = await onRedoFiles(messageId);
+      if (ok) {
+        setActionFeedback({ type: 'redone', count: modifiedFiles?.length || 0 });
+        setTimeout(() => setActionFeedback(null), 3000);
+      }
+    } finally {
+      setIsRedoing(false);
+    }
+  }, [messageId, onRedoFiles, isRedoing, modifiedFiles]);
 
   const handleCopy = useCallback(() => {
     try {
@@ -1080,13 +1622,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       console.error('Failed to copy text:', err);
     }
   }, [text]);
-
-  // Auto-scroll reasoning when expanded and streaming
-  useEffect(() => {
-    if (reasoningExpanded && reasoningRef.current && isStreaming) {
-      reasoningRef.current.scrollTop = reasoningRef.current.scrollHeight;
-    }
-  }, [reasoning, reasoningExpanded, isStreaming]);
 
   const markdownComponents = useMemo(() => ({
     p: ({ children, ...props }: any) => {
@@ -1442,59 +1977,27 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
   const hasReasoning = reasoning && reasoning.trim().length > 0;
   const hasToolCalls = toolCalls && toolCalls.length > 0;
   const hasStreamChunks = streamChunks && streamChunks.length > 0;
+  const hasTraceSteps = role === 'assistant' && (
+    hasReasoning ||
+    hasToolCalls ||
+    Boolean(streamChunks?.some((chunk) => chunk.type === 'reasoning' || chunk.type === 'tool'))
+  );
   const inlineChatUiBubbleClass = "w-full max-w-[85%] mr-auto";
 
   return (
     <div className={clsx(
       "flex flex-col w-full mb-5 group/msg"
     )}>
-      {/* Reasoning indicator - only shown when no streamChunks (reasoning shown inline in streamChunks) */}
-      {role === 'assistant' && hasReasoning && !hasStreamChunks && (
-        <button
-          onClick={() => setReasoningExpanded(!reasoningExpanded)}
-          className="flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-500 transition-colors mb-1.5 ml-1 select-none pl-1"
-        >
-          <ChevronRight
-            className={clsx(
-              "w-3 h-3 transition-transform duration-200",
-              reasoningExpanded && "rotate-90"
-            )}
-          />
-          <span className="italic font-medium">
-            {reasoningDuration
-              ? `Thought for ${formatDuration(reasoningDuration)}`
-              : 'Reasoning'
-            }
-          </span>
-        </button>
+      {role === 'assistant' && hasTraceSteps && (
+        <AssistantTracePanel
+          reasoning={reasoning}
+          reasoningDuration={reasoningDuration}
+          toolCalls={toolCalls}
+          streamChunks={streamChunks}
+          isStreaming={isStreaming}
+          defaultOpen={Boolean(isStreaming || !text.trim())}
+        />
       )}
-
-      {/* Expanded reasoning content - only shown when no streamChunks */}
-      <AnimatePresence initial={false}>
-        {role === 'assistant' && hasReasoning && !hasStreamChunks && reasoningExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            className="w-full max-w-[85%] md:max-w-[55%] overflow-hidden mb-3"
-          >
-            <div
-              ref={reasoningRef}
-              className="pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
-            >
-              <div className="text-[12px] text-theme-muted leading-relaxed py-1 prose prose-sm max-w-none prose-p:my-1 prose-headings:text-theme-fg prose-headings:font-bold prose-headings:text-xs prose-code:text-primary prose-code:bg-theme-hover prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-theme-fg prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
-                <ReactMarkdown
-                  remarkPlugins={[remarkMath, remarkGfm]}
-                  rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                >
-                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(reasoning || '')))}
-                </ReactMarkdown>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
 
       {/* Context paths indicator for user messages */}
@@ -1523,28 +2026,14 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
           <>
             {/* Render interleaved stream chunks */}
             {streamChunks.map((chunk, idx) => {
-              if (chunk.type === 'reasoning') {
-                // Check if this is the last reasoning chunk (for live timer)
-                const isLastReasoning = !streamChunks.slice(idx + 1).some(c => c.type === 'reasoning');
-                return (
-                  <InlineReasoningBlock
-                    key={`r-${idx}`}
-                    content={chunk.content}
-                    isStreaming={isStreaming}
-                    isLastReasoning={isLastReasoning}
-                    finalDuration={!isStreaming && isLastReasoning ? reasoningDuration : undefined}
-                  />
-                );
-              }
+              if (chunk.type === 'reasoning') return null;
               if (chunk.type === 'tool') {
                 const tc = chunk.tool;
                 const isGenUI = GENUI_TOOL_NAMES.has(tc.tool);
                 const isHidden = HIDDEN_TOOL_NAMES.has(tc.tool);
 
                 // Skip hidden tools (don't render anything)
-                if (isHidden && !isGenUI) {
-                  return null;
-                }
+                if (isHidden && !isGenUI) return null;
 
                 // Render GenUI components inline
                 if (isGenUI) {
@@ -1570,8 +2059,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   );
                 }
 
-                // Standard tool pill for non-GenUI tools
-                return <ToolCallPill key={`t-${idx}`} tool={tc} />;
+                return null;
               }
               // Text chunk
               if (chunk.type === 'text') {
@@ -1825,7 +2313,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 )}
               </div>
             )}
-            {/* Copy + Revert buttons for assistant messages */}
+            {/* Copy + Revert/Redo buttons for assistant messages */}
             {role === 'assistant' && !isStreaming && (
               <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/bubble:opacity-100 transition-opacity">
                 <button
@@ -1847,11 +2335,40 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     <span>{isReverting ? 'Reverting...' : `Revert ${modifiedFiles.length} file(s)`}</span>
                   </button>
                 )}
-                {reverted && (
-                  <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-[10px] text-emerald-700 font-bold uppercase tracking-widest border border-emerald-200">
-                    <CheckCircle className="w-3 h-3" />
-                    <span>Reverted</span>
-                  </span>
+                {reverted && modifiedFiles && modifiedFiles.length > 0 && checkpointId && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-[10px] text-emerald-700 font-bold uppercase tracking-widest border border-emerald-200">
+                      <CheckCircle className="w-3 h-3" />
+                      <span>Reverted</span>
+                    </span>
+                    {onRedoFiles && messageId && (
+                      <button
+                        onClick={handleRedo}
+                        disabled={isRedoing}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-[10px] text-blue-700 hover:text-blue-800 transition-all font-bold uppercase tracking-widest border border-blue-200 disabled:opacity-50"
+                        title={`Re-apply ${modifiedFiles.length} file change(s)`}
+                      >
+                        {isRedoing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Redo2 className="w-3 h-3" />}
+                        <span>{isRedoing ? 'Re-applying...' : 'Redo'}</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+                {actionFeedback && (
+                  <motion.span
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    className={clsx(
+                      "flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold",
+                      actionFeedback.type === 'reverted'
+                        ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
+                        : "bg-blue-50 text-blue-600 border border-blue-200"
+                    )}
+                  >
+                    {actionFeedback.type === 'reverted' ? <Undo2 className="w-3 h-3" /> : <Redo2 className="w-3 h-3" />}
+                    {actionFeedback.count} file(s) {actionFeedback.type}
+                  </motion.span>
                 )}
               </div>
             )}
@@ -1882,12 +2399,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 <span
                   key={i}
                   className={clsx(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border",
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border transition-colors",
                     reverted
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-600 line-through decoration-emerald-400/50"
                       : "bg-amber-50 border-amber-200 text-amber-700"
                   )}
-                  title={f}
+                  title={reverted ? `${f} (reverted)` : f}
                 >
                   <FileText className="w-3 h-3" />
                   <span className="truncate max-w-[120px]">{fileName}</span>
@@ -1897,7 +2414,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
             })}
           </div>
         )}
-        {role === 'assistant' && !hasStreamChunks && hasToolCalls && (
+        {role === 'assistant' && !hasStreamChunks && hasToolCalls && !hasTraceSteps && (
           <div className="flex flex-wrap gap-2 mt-1">
             {toolCalls
               .filter(tc => !HIDDEN_TOOL_NAMES.has(tc.tool))
@@ -1916,11 +2433,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
 
 // Memoized export for performance - only re-renders when props actually change
 const MessageBubble = memo(MessageBubbleInner, (prevProps, nextProps) => {
-  // For streaming messages, always re-render
   if (prevProps.isStreaming || nextProps.isStreaming) {
     return false;
   }
-  // For non-streaming messages, only re-render if content changed
   return (
     prevProps.text === nextProps.text &&
     prevProps.role === nextProps.role &&
@@ -1929,7 +2444,8 @@ const MessageBubble = memo(MessageBubbleInner, (prevProps, nextProps) => {
     prevProps.toolCalls === nextProps.toolCalls &&
     prevProps.streamChunks === nextProps.streamChunks &&
     prevProps.reverted === nextProps.reverted &&
-    prevProps.messageId === nextProps.messageId
+    prevProps.messageId === nextProps.messageId &&
+    prevProps.onRedoFiles === nextProps.onRedoFiles
   );
 });
 

@@ -48,6 +48,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     # Filesystem Checkpoints
     "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),
     "checkpoint_restore": ("system", "Restore files from a checkpoint"),
+    "checkpoint_redo": ("system", "Re-apply previously reverted file changes"),
     "checkpoint_list": ("system", "List available checkpoints"),
 
     # Clipboard
@@ -406,6 +407,7 @@ _HANDLERS = {
     # Filesystem Checkpoints
     "checkpoint_create": fs.checkpoint_create,
     "checkpoint_restore": fs.checkpoint_restore,
+    "checkpoint_redo": fs.checkpoint_redo,
     "checkpoint_list": fs.checkpoint_list,
 
     # Clipboard

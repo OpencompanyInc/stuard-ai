@@ -89,6 +89,13 @@ export const checkpoint_restore = makeLocalTool(
   z.object({ ok: z.boolean(), restored: z.number(), errors: z.array(z.string()) })
 );
 
+export const checkpoint_redo = makeLocalTool(
+  'checkpoint_redo',
+  'Re-apply file changes that were previously reverted from a checkpoint.',
+  z.object({ id: z.string().describe('Checkpoint ID whose revert should be undone.') }),
+  z.object({ ok: z.boolean(), restored: z.number(), errors: z.array(z.string()) })
+);
+
 export const checkpoint_list = makeLocalTool(
   'checkpoint_list',
   'List available filesystem checkpoints.',

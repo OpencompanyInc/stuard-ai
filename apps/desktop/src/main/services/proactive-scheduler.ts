@@ -160,6 +160,7 @@ function ensureAgentWs(): Promise<WebSocket> {
     try {
       const url = getAgentWsUrl();
       const ws = new WebSocket(url);
+      ws.setMaxListeners(0);
       const to = setTimeout(() => {
         try { ws.terminate(); } catch { }
         agentReady = null;

@@ -22,7 +22,6 @@ const MANAGED_APPS = [
   { key: 'website', name: 'Website', dir: 'apps/website' },
   { key: 'cloud-ai', name: 'Cloud AI', dir: 'apps/cloud-ai' },
   { key: 'ops-console', name: 'Ops Console', dir: 'apps/ops-console' },
-  { key: 'browser-extension', name: 'Browser Extension', dir: 'apps/browser-extension' },
 ];
 
 function readPkgVersion(relDir: string): string | null {

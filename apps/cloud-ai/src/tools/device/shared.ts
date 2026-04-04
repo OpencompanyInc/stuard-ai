@@ -1,15 +1,169 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { execLocalTool, getBridgeSecrets, hasClientBridge } from '../bridge';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { execLocalTool, getBridgeSecrets, hasClientBridge, getBridgeWs, withClientBridge } from '../bridge';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { resolve as pathResolve } from 'node:path';
 
 export { execLocalTool, getBridgeSecrets, hasClientBridge };
+
+type ActiveBridgeContext = {
+  ws: any;
+  secrets?: Record<string, any>;
+};
+
+export type LocalToolSpec = {
+  timeoutMs?: number | ((ctx: any) => number);
+  noFallback: boolean;
+};
+
+// ── Module-level bridge fallback ────────────────────────────────────────────
+// Mastra's agent.stream/generate breaks AsyncLocalStorage propagation,
+// so wrapToolWithBridge cannot reliably re-enter the ALS context for tools.
+// This module-level store provides a reliable fallback: set it before running
+// a subagent, and makeLocalTool will use it when ALS returns nothing.
+const activeBridgeALS = new AsyncLocalStorage<ActiveBridgeContext>();
+type ActiveBridgeScope = ActiveBridgeContext & { id: symbol };
+const _activeBridgeScopes: ActiveBridgeScope[] = [];
+
+function getScopedBridgeContext(): ActiveBridgeContext | undefined {
+  try {
+    return activeBridgeALS.getStore();
+  } catch {
+    return undefined;
+  }
+}
+
+function getFallbackBridgeScope(): ActiveBridgeScope | undefined {
+  if (_activeBridgeScopes.length > 0) {
+    const states = _activeBridgeScopes.map(s => s?.ws?.readyState ?? -1);
+    console.log(`[bridge-scope] GET fallback | scopes=${_activeBridgeScopes.length} readyStates=[${states.join(',')}]`);
+  }
+  for (let i = _activeBridgeScopes.length - 1; i >= 0; i--) {
+    const scope = _activeBridgeScopes[i];
+    if (scope?.ws && scope.ws.readyState === 1) return scope;
+  }
+  return undefined;
+}
+
+function getResolvedBridgeContext(): ActiveBridgeContext | undefined {
+  const bridgeWs = getBridgeWs();
+  if (bridgeWs?.readyState === 1) {
+    return { ws: bridgeWs, secrets: getBridgeSecrets() };
+  }
+
+  const scoped = getScopedBridgeContext();
+  if (scoped?.ws?.readyState === 1) {
+    return scoped;
+  }
+
+  const fallback = getFallbackBridgeScope();
+  if (fallback) {
+    return { ws: fallback.ws, secrets: fallback.secrets };
+  }
+
+  return undefined;
+}
+
+export function withActiveBridgeContext<T>(
+  ws: any,
+  secrets: Record<string, any> | undefined,
+  fn: () => Promise<T> | T,
+): Promise<T> | T {
+  return activeBridgeALS.run({ ws, secrets }, fn as any);
+}
+
+/** Set the active bridge WS for tool dispatch (call before subagent execution). */
+export function setActiveBridge(ws: any, secrets?: Record<string, any>) {
+  const scope: ActiveBridgeScope = {
+    id: Symbol('activeBridgeScope'),
+    ws,
+    secrets,
+  };
+  _activeBridgeScopes.push(scope);
+  console.log(`[bridge-scope] SET scope #${_activeBridgeScopes.length} | ws=${!!ws} readyState=${ws?.readyState ?? 'N/A'} userId=${secrets?.userId?.slice(0, 8) || 'none'}`);
+  return scope;
+}
+
+/** Clear the active bridge (call after subagent completes). */
+export function clearActiveBridge(scope?: ActiveBridgeScope | symbol) {
+  if (!scope) {
+    _activeBridgeScopes.length = 0;
+    return;
+  }
+
+  const scopeId = typeof scope === 'symbol' ? scope : scope.id;
+  const index = _activeBridgeScopes.findIndex((entry) => entry.id === scopeId);
+  if (index >= 0) {
+    _activeBridgeScopes.splice(index, 1);
+  }
+}
+
+/** Check if a bridge is available (ALS or module-level fallback). */
+function hasAnyBridge(): boolean {
+  return !!getResolvedBridgeContext();
+}
+
+function injectLocalToolInput(
+  id: string,
+  inputData: any,
+  secrets?: Record<string, any>,
+) {
+  if (!id.startsWith('browser_use_')) return inputData;
+  const base = inputData && typeof inputData === 'object' ? { ...(inputData as any) } : {};
+  const injectedSessionId = String(base.session_id || secrets?.browserUseSessionId || '').trim();
+  if (injectedSessionId) {
+    base.session_id = injectedSessionId;
+  }
+  return base;
+}
+
+export function getLocalToolSpec(tool: any): LocalToolSpec | undefined {
+  if (!tool || typeof tool !== 'object') return undefined;
+  return (tool as any).__localToolSpec as LocalToolSpec | undefined;
+}
+
+export async function execLocalToolWithCapturedBridge(
+  id: string,
+  inputData: any,
+  writer: any,
+  spec: LocalToolSpec,
+  bridgeContext: ActiveBridgeContext,
+): Promise<any> {
+  const effectiveInput = injectLocalToolInput(id, inputData, bridgeContext?.secrets);
+  const resolvedTimeout = typeof spec.timeoutMs === 'function'
+    ? (spec.timeoutMs as any)(effectiveInput)
+    : spec.timeoutMs;
+
+  if (bridgeContext?.ws && bridgeContext.ws.readyState === 1) {
+    return await withClientBridge(
+      bridgeContext.ws,
+      async () => execLocalTool(
+        id,
+        effectiveInput as any,
+        writer as any,
+        typeof resolvedTimeout === 'number' ? resolvedTimeout : undefined,
+        { noFallback: spec.noFallback },
+      ),
+      bridgeContext.secrets,
+    );
+  }
+
+  return await execLocalTool(
+    id,
+    effectiveInput as any,
+    writer as any,
+    typeof resolvedTimeout === 'number' ? resolvedTimeout : undefined,
+    { noFallback: spec.noFallback },
+  );
+}
 
 /**
  * Route a tool call to the user's VM agent via HTTP when no desktop bridge is available.
  * This allows browser_use_* and other device tools to run headlessly on the VM.
  */
 async function execViaVM(toolId: string, args: any, timeoutMs: number): Promise<any> {
-  const secrets = getBridgeSecrets();
+  const secrets = getBridgeSecrets() || getResolvedBridgeContext()?.secrets;
   const userId = secrets?.userId;
   if (!userId) return null; // no user context — can't route to VM
 
@@ -28,6 +182,127 @@ async function execViaVM(toolId: string, args: any, timeoutMs: number): Promise<
   }
 }
 
+// ── Local browser server direct HTTP fallback ───────────────────────────────
+const LOCAL_BROWSER_HOST = process.env.STUARD_BROWSER_HOST || '127.0.0.1';
+const LOCAL_BROWSER_PORT = Number(process.env.STUARD_BROWSER_PORT || process.env.BROWSER_USE_PORT || '18082');
+const LOCAL_BROWSER_URL = `http://${LOCAL_BROWSER_HOST}:${LOCAL_BROWSER_PORT}`;
+const LOCAL_BROWSER_AUTH_TOKEN = process.env.STUARD_BROWSER_AUTH_TOKEN || process.env.BROWSER_USE_AUTH_TOKEN || '';
+
+let _browserServerProcess: ChildProcess | null = null;
+let _browserServerStarting: Promise<boolean> | null = null;
+
+/** Check if the local browser server is reachable. */
+async function isBrowserServerRunning(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const headers: Record<string, string> = {};
+    if (LOCAL_BROWSER_AUTH_TOKEN) headers['x-stuard-browser-token'] = LOCAL_BROWSER_AUTH_TOKEN;
+    const resp = await fetch(`${LOCAL_BROWSER_URL}/status`, { signal: controller.signal, headers });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Try to start the local Python browser server if not already running. */
+async function ensureBrowserServer(): Promise<boolean> {
+  if (await isBrowserServerRunning()) return true;
+  if (_browserServerStarting) return _browserServerStarting;
+
+  _browserServerStarting = (async () => {
+    try {
+      // Resolve the browser_server_main.py entry point
+      const agentDir = pathResolve(__dirname, '..', '..', '..', '..', 'agent');
+      const mainScript = pathResolve(agentDir, 'browser_server_main.py');
+
+      const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+      const env: Record<string, string> = {
+        ...process.env as Record<string, string>,
+        STUARD_BROWSER_MODE: 'headed',
+        STUARD_BROWSER_PORT: String(LOCAL_BROWSER_PORT),
+        STUARD_BROWSER_HOST: LOCAL_BROWSER_HOST,
+      };
+      if (LOCAL_BROWSER_AUTH_TOKEN) {
+        env.STUARD_BROWSER_AUTH_TOKEN = LOCAL_BROWSER_AUTH_TOKEN;
+      }
+
+      console.log(`[local-browser] Starting browser server: ${pythonBin} ${mainScript}`);
+      _browserServerProcess = spawn(pythonBin, [mainScript], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false,
+        ...(process.platform === 'win32' ? { windowsHide: true } : {}),
+      });
+
+      _browserServerProcess.on('exit', (code) => {
+        console.log(`[local-browser] Browser server exited with code ${code}`);
+        _browserServerProcess = null;
+      });
+      _browserServerProcess.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString().trim();
+        if (text) console.warn(`[local-browser:stderr] ${text}`);
+      });
+
+      // Wait for the server to become reachable (up to 15s)
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (await isBrowserServerRunning()) {
+          console.log('[local-browser] Browser server is ready');
+          return true;
+        }
+      }
+      console.warn('[local-browser] Browser server did not start in time');
+      return false;
+    } catch (e) {
+      console.warn('[local-browser] Failed to start browser server:', e);
+      return false;
+    } finally {
+      _browserServerStarting = null;
+    }
+  })();
+
+  return _browserServerStarting;
+}
+
+/**
+ * Execute a browser_use_* tool by calling the local browser server HTTP API directly.
+ * Falls back to starting the server if not already running.
+ */
+async function execViaLocalBrowser(toolId: string, args: any, timeoutMs: number): Promise<any> {
+  const serverReady = await ensureBrowserServer();
+  if (!serverReady) return null;
+
+  const rawAction = toolId.replace('browser_use_', '');
+  // Map underscored tool names to hyphenated server endpoints where they differ
+  const action = rawAction === 'execute_script' ? 'execute-script' : rawAction;
+  const method = action === 'status' ? 'GET' : 'POST';
+  const url = `${LOCAL_BROWSER_URL}/${action}`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (LOCAL_BROWSER_AUTH_TOKEN) headers['x-stuard-browser-token'] = LOCAL_BROWSER_AUTH_TOKEN;
+
+    const fetchOpts: RequestInit = { method, headers, signal: controller.signal };
+    if (method === 'POST') fetchOpts.body = JSON.stringify(args || {});
+
+    const resp = await fetch(url, fetchOpts);
+    clearTimeout(timer);
+    const data: any = await resp.json();
+    if (!data?.ok) {
+      console.warn(`[local-browser] ${toolId} → ${method} ${url} returned:`, JSON.stringify(data).slice(0, 300));
+    }
+    return data;
+  } catch (e: any) {
+    console.warn(`[local-browser] ${toolId} → ${method} ${url} failed:`, e?.message || e);
+    return { ok: false, error: `local_browser_error: ${e?.message || e}` };
+  }
+}
+
 export function makeLocalTool(
   id: string,
   description: string,
@@ -37,35 +312,53 @@ export function makeLocalTool(
   options?: { noFallback?: boolean },
 ) {
   const noFallback = options?.noFallback ?? false;
-  return createTool({
+  const localToolSpec: LocalToolSpec = { timeoutMs, noFallback };
+  const tool = createTool({
     id,
     description,
     inputSchema,
     outputSchema: outputSchema || z.any(),
     execute: async (inputData, { writer }) => {
-      const effectiveInput = (() => {
-        if (!id.startsWith('browser_use_')) return inputData;
-        const base = inputData && typeof inputData === 'object' ? { ...(inputData as any) } : {};
-        const secrets = getBridgeSecrets();
-        const injectedSessionId = String(base.session_id || secrets?.browserUseSessionId || '').trim();
-        if (injectedSessionId) {
-          base.session_id = injectedSessionId;
-        }
-        return base;
-      })();
+      const bridgeContext = getResolvedBridgeContext();
+      const effectiveInput = injectLocalToolInput(id, inputData, bridgeContext?.secrets);
 
       // Desktop bridge available — use it (fastest path)
-      if (hasClientBridge()) {
-        const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
-        return await execLocalTool(id, effectiveInput as any, writer as any, typeof t === 'number' ? t : undefined, { noFallback });
+      // Check both ALS-based bridge and module-level fallback (for subagent context where ALS is broken)
+      const hasBridge = !!bridgeContext;
+      if (id.startsWith('browser_use_')) {
+        const scopedBridge = getScopedBridgeContext();
+        const fallbackBridge = getFallbackBridgeScope();
+        const source = hasClientBridge()
+          ? 'als'
+          : scopedBridge?.ws?.readyState === 1
+            ? 'scoped'
+            : fallbackBridge?.ws?.readyState === 1
+              ? 'fallback'
+              : 'none';
+        console.log(
+          `[makeLocalTool:${id}] hasBridge=${hasBridge} source=${source} ws=${!!bridgeContext?.ws} readyState=${bridgeContext?.ws?.readyState ?? 'N/A'}`,
+        );
+      }
+      if (hasBridge) {
+        return await execLocalToolWithCapturedBridge(id, inputData, writer, localToolSpec, bridgeContext!);
       }
 
-      // No desktop bridge — try routing to VM for tools that can run headless
+      // No desktop bridge — try routing to VM, then local browser server
       if (noFallback && id.startsWith('browser_use_')) {
         const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
-        const vmResult = await execViaVM(id, effectiveInput, typeof t === 'number' ? t : 60000);
+        const effectiveTimeout = typeof t === 'number' ? t : 60000;
+
+        // Try VM fallback first
+        console.warn(`[makeLocalTool:${id}] No bridge — trying VM fallback`);
+        const vmResult = await execViaVM(id, effectiveInput, effectiveTimeout);
         if (vmResult !== null) return vmResult;
-        return { ok: false, error: `No desktop or VM available. ${id} requires a running Stuard desktop app or cloud VM.` };
+
+        // Try local browser server (direct HTTP to localhost:18082)
+        console.warn(`[makeLocalTool:${id}] No VM — trying local browser server`);
+        const localResult = await execViaLocalBrowser(id, effectiveInput, effectiveTimeout);
+        if (localResult !== null) return localResult;
+
+        return { ok: false, error: `No desktop, VM, or local browser server available. ${id} requires a running Stuard desktop app, cloud VM, or local browser server.` };
       }
 
       if (noFallback) {
@@ -76,4 +369,6 @@ export function makeLocalTool(
       return await execLocalTool(id, effectiveInput as any, writer as any, typeof t === 'number' ? t : undefined, { noFallback });
     },
   });
+  (tool as any).__localToolSpec = localToolSpec;
+  return tool;
 }

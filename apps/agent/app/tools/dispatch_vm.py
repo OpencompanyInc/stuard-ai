@@ -63,6 +63,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "grep": ("system", "Search text in files (regex or literal)"),
     "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),
     "checkpoint_restore": ("system", "Restore files from a checkpoint"),
+    "checkpoint_redo": ("system", "Re-apply previously reverted file changes"),
     "checkpoint_list": ("system", "List available checkpoints"),
 
     # ── Utilities ────────────────────────────────────────────────────────────
@@ -531,17 +532,21 @@ _BROWSER_USE_URL = os.environ.get("BROWSER_USE_URL", "http://127.0.0.1:18082")
 _BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "")
 
 
-async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
-    """POST to the local browser_use_server.py and return the JSON response."""
+async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float = 60.0, method: str = "POST") -> Dict[str, Any]:
+    """Send request to the local browser server and return the JSON response."""
     import urllib.request
     import urllib.error
 
     url = f"{_BROWSER_USE_URL}{endpoint}"
-    data = json.dumps(body).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
+    headers = {}
     if _BROWSER_USE_TOKEN:
         headers["x-stuard-browser-token"] = _BROWSER_USE_TOKEN
-    req = urllib.request.Request(url, data=data, headers=headers)
+    if method == "GET":
+        req = urllib.request.Request(url, headers=headers, method="GET")
+    else:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, headers=headers)
 
     loop = asyncio.get_event_loop()
     try:
@@ -566,12 +571,14 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
 
 
 async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> Dict[str, Any]:
-    """Generic handler — strips the browser_use_ prefix and POSTs to /api/<action>."""
+    """Generic handler — strips the browser_use_ prefix and routes to /<action>."""
     action = tool_name.replace("browser_use_", "", 1) if tool_name else ""
     if not action:
         return {"ok": False, "error": "missing browser_use action"}
     timeout = float(args.pop("timeout", 60000)) / 1000.0 if "timeout" in args else 60.0
-    return await _browser_use_call(f"/api/{action}", args, timeout=max(timeout, 5.0))
+    # /status is a GET endpoint; everything else is POST
+    method = "GET" if action == "status" else "POST"
+    return await _browser_use_call(f"/{action}", args, timeout=max(timeout, 5.0), method=method)
 
 
 # ── Desktop-only tools (stubbed) ────────────────────────────────────────────
@@ -638,6 +645,7 @@ _HANDLERS.update({
     "grep": fs.grep,
     "checkpoint_create": fs.checkpoint_create,
     "checkpoint_restore": fs.checkpoint_restore,
+    "checkpoint_redo": fs.checkpoint_redo,
     "checkpoint_list": fs.checkpoint_list,
 
     # Utilities

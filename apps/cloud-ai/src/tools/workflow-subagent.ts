@@ -3,6 +3,10 @@
  *
  * Allows any agent (e.g. Stuard) to delegate workflow creation/modification
  * tasks to the specialized Workflow Architect agent mid-conversation.
+ *
+ * Now uses the generic orchestrator subagent runtime. Falls back to the
+ * legacy Workflow Agent path when the orchestrator is disabled so
+ * existing behavior is preserved.
  */
 
 import { createTool } from '@mastra/core/tools';
@@ -11,6 +15,9 @@ import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../agents/workflow-age
 import { generateWithToolRecovery } from '../routes/proactive-utils';
 import { safeToolWrite } from './bridge';
 import { writeLog } from '../utils/logger';
+import { runSubagent } from '../orchestrator/subagent-runtime';
+
+const USE_ORCHESTRATOR = process.env.USE_ORCHESTRATOR === '1';
 
 export const routeToWorkflowAgent = createTool({
   id: 'route_to_workflow_agent',
@@ -44,6 +51,18 @@ export const routeToWorkflowAgent = createTool({
   execute: async ({ instruction, context, timeoutMs }) => {
     writeLog('route_to_workflow_agent_start', { instruction, hasContext: !!context });
 
+    // ── New path: use generic subagent runtime ──
+    if (USE_ORCHESTRATOR) {
+      const runId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const result = await runSubagent({
+        request: { kind: 'workflow', instruction, context, timeoutMs },
+        runId,
+        parentRunId: runId,
+      });
+      return { ok: result.ok, result: result.result, error: result.error };
+    }
+
+    // ── Legacy path: direct Workflow Agent ──
     const agent = getWorkflowAgent();
 
     let prompt = instruction;

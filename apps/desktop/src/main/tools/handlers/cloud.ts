@@ -234,6 +234,17 @@ async function execAgentToolBridged(tool: string, args: any, ctx: RouterContext)
         return;
       }
 
+      // Relay subagent protocol messages to renderer
+      if (type === 'subagent_event' || type === 'subagent_question' || type === 'subagent_answer' || type === 'subagent_complete') {
+        try {
+          const { BrowserWindow } = require('electron');
+          for (const win of BrowserWindow.getAllWindows()) {
+            try { win.webContents.send('subagent:message', msg); } catch {}
+          }
+        } catch {}
+        return;
+      }
+
       // Ignore handshake and other messages
     });
   });

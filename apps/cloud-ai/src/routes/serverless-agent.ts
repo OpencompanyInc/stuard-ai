@@ -12,17 +12,35 @@
 
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
+import { createRequire } from 'node:module';
 import { z } from 'zod';
 import { getModel } from '../agents/stuard/models';
-import { search_tools, get_tool_schema, execute_tool } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call } from '../tools/telnyx-tools';
-import { whatsapp_send_message } from '../tools/whatsapp-tools';
 import { waitTool } from '../tools/wait';
 import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
+
+// Lazy imports to break circular: meta-tools → whatsapp-tools → whatsapp route → serverless-agent → meta-tools
+const _require = createRequire(import.meta.url);
+let _metaTools: { search_tools: any; get_tool_schema: any; execute_tool: any } | undefined;
+function getMetaTools() {
+  if (!_metaTools) {
+    const mod = _require('../tools/meta-tools');
+    _metaTools = { search_tools: mod.search_tools, get_tool_schema: mod.get_tool_schema, execute_tool: mod.execute_tool };
+  }
+  return _metaTools!;
+}
+
+let _whatsappSendMessage: any;
+function getWhatsappSendMessage() {
+  if (!_whatsappSendMessage) {
+    _whatsappSendMessage = _require('../tools/whatsapp-tools').whatsapp_send_message;
+  }
+  return _whatsappSendMessage;
+}
 import { getDefaultModelForCategory } from '../pricing';
 import {
   createConversation,
@@ -371,12 +389,13 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     // 5. Build tools (cloud-only subset)
     const cloudMemorySearch = createCloudMemorySearchTool(userId);
 
+    const metaTools = getMetaTools();
     const tools: Record<string, any> = {
       web_search,
       scrape_url,
-      search_tools,
-      get_tool_schema,
-      execute_tool,
+      search_tools: metaTools.search_tools,
+      get_tool_schema: metaTools.get_tool_schema,
+      execute_tool: metaTools.execute_tool,
       get_skill_info,
       search_past_conversations: cloudMemorySearch,
       wait: waitTool,
@@ -386,7 +405,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       telnyx_send_mms,
       telnyx_send_voice_note,
       telnyx_voice_call,
-      whatsapp_send_message,
+      whatsapp_send_message: getWhatsappSendMessage(),
     };
 
     if (deployHeadlessAgent) {

@@ -281,8 +281,9 @@ export function useCloudEngine() {
         console.warn('[cloud-engine] Agent data sync failed:', syncResult.error);
       }
 
-      // 3. Also sync OAuth tokens
+      // 3. Also sync OAuth tokens and browser cookies
       cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
+      cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
 
       return syncResult;
     } catch (e: any) {

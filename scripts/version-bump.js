@@ -22,7 +22,6 @@ const APPS = [
   { key: 'website', dir: 'apps/website' },
   { key: 'cloud-ai', dir: 'apps/cloud-ai' },
   { key: 'ops-console', dir: 'apps/ops-console' },
-  { key: 'browser-extension', dir: 'apps/browser-extension' },
 ];
 
 const ROOT = path.resolve(__dirname, '..');

@@ -15,6 +15,10 @@ import {
   getRecentWithinBudget,
   pruneToolOutputs,
 } from '../../memory/context-compactor';
+import { getOrchestratorAgent } from '../../orchestrator';
+import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
+
+const USE_ORCHESTRATOR = process.env.USE_ORCHESTRATOR === '1';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -163,6 +167,12 @@ function send(ws: WebSocket, data: unknown) {
 const activeControllers = new WeakMap<WebSocket, AbortController>();
 
 export function abortAgent(ws: WebSocket, requestId?: string): boolean {
+  // Also abort any running delegated subagents
+  const subagentsCancelled = abortAllRunningSubagents();
+  if (subagentsCancelled > 0) {
+    console.log(`[AgentRunner] Aborted ${subagentsCancelled} running subagent(s)`);
+  }
+
   // Try per-request abort first
   if (requestId) {
     const controller = (ws as any)[`__abort_${requestId}`] as AbortController | undefined;
@@ -181,7 +191,7 @@ export function abortAgent(ws: WebSocket, requestId?: string): boolean {
     activeControllers.delete(ws);
     return true;
   }
-  return false;
+  return subagentsCancelled > 0;
 }
 
 export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket, requestId?: string): Promise<{ text: string } | null> {
@@ -271,8 +281,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'
           ? getSkillAgent(chosenModelId)
-          : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId, skills);
-      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms`);
+          : USE_ORCHESTRATOR
+            ? getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills)
+            : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId, skills);
+      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${USE_ORCHESTRATOR && agentType === 'stuard'})`);
 
       // Build context prefix for paths
       let contextPrefix = '';

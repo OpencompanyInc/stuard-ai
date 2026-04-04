@@ -103,6 +103,8 @@ declare global {
       mediaDelete: (itemId: string, deleteFile?: boolean) => Promise<{ ok: boolean; id?: string; error?: string }>;
       onShow: (cb: () => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
+      onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => () => void;
+      onVMStreamEvent: (cb: (data: any) => void) => () => void;
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
@@ -225,6 +227,9 @@ declare global {
       onProactiveProgress: (cb: (data: any) => void) => () => void;
       onProactiveCheckin: (cb: (data: any) => void) => () => void;
       proactiveReply: (payload: { wakeUpId: string; text: string }) => Promise<{ ok: boolean; error?: string }>;
+
+      // Subagent protocol events from orchestrator
+      onSubagentMessage: (cb: (msg: any) => void) => () => void;
 
       // Global Hotkey
       setGlobalHotkey: (accelerator: string) => Promise<{ ok: boolean; error?: string }>;

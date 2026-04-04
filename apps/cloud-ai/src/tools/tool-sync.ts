@@ -283,13 +283,6 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   reddit_comment: ['reply on reddit', 'reddit comment', 'respond on reddit', 'comment reddit'],
 
   // Browser
-  browser_get_content: ['webpage', 'scrape', 'extract', 'page content', 'web page'],
-  browser_click_element: ['click button', 'interact', 'automate click'],
-  browser_type_text: ['type in browser', 'fill input', 'enter text'],
-  browser_find_text: ['search page', 'find on page'],
-  browser_fill_form: ['fill form', 'submit form', 'form automation'],
-  browser_execute_script: ['run javascript', 'execute js', 'browser script'],
-
   // Files
   read_file: ['open file', 'view file', 'file content'],
   write_file: ['save file', 'create file', 'write to file'],

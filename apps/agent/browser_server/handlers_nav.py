@@ -3,7 +3,10 @@ import asyncio
 from aiohttp import web
 
 from browser_server import state
-from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _normalize_wait_until, _is_allowed_url
+from browser_server.utils import (
+    _safe_json, _ok, _err, _clamp_int, _normalize_wait_until, _is_allowed_url,
+    _resolve_selector_target,
+)
 from browser_server.lifecycle import (
     _ensure_browser, _get_page_url, _get_page_title,
     _evaluate, _goto, _wait_for_selector,
@@ -40,13 +43,13 @@ async def handle_navigate(req: web.Request) -> web.Response:
 
 async def handle_click(req: web.Request) -> web.Response:
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     text = str(body.get("text", "")).strip()
     exact = bool(body.get("exact", False))
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     if not selector and not text:
-        return _err("selector or text is required")
+        return _err("selector, elementId, or text is required")
 
     async with state._lock:
         ok, err = await _ensure_browser()
@@ -57,7 +60,11 @@ async def handle_click(req: web.Request) -> web.Response:
             if selector:
                 clicked = await _cdp_click_selector(selector)
                 if clicked:
-                    return _ok({"clicked": selector, "method": "cdp_selector"})
+                    return _ok({
+                        "clicked": selector,
+                        "elementId": element_id or None,
+                        "method": "cdp_selector",
+                    })
 
             # Strategy 2: CDP mouse click by text — find element via JS, get coords, click via CDP
             if text:
@@ -228,9 +235,13 @@ async def handle_click(req: web.Request) -> web.Response:
                     selector,
                 )
                 if clicked == "clicked":
-                    return _ok({"clicked": selector, "method": "js_selector"})
+                    return _ok({
+                        "clicked": selector,
+                        "elementId": element_id or None,
+                        "method": "js_selector",
+                    })
 
-            target_desc = selector or text
+            target_desc = f"elementId={element_id}" if element_id else (selector or text)
             return _err(f"Click failed: no element found matching '{target_desc}'")
         except Exception as e:
             return _err(f"Click failed: {e}")
@@ -238,7 +249,7 @@ async def handle_click(req: web.Request) -> web.Response:
 
 async def handle_type(req: web.Request) -> web.Response:
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     text = str(body.get("text", ""))
     clear = body.get("clear", True)
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
@@ -258,7 +269,11 @@ async def handle_type(req: web.Request) -> web.Response:
                     await asyncio.sleep(0.05)
                     typed = await _cdp_type_text(text)
                 if typed:
-                    return _ok({"typed": len(text), "method": "cdp_type"})
+                    return _ok({
+                        "typed": len(text),
+                        "elementId": element_id or None,
+                        "method": "cdp_type",
+                    })
 
             # Strategy 2: CDP keyboard into currently focused element
             if not selector:
@@ -325,7 +340,11 @@ async def handle_type(req: web.Request) -> web.Response:
             )
 
             if isinstance(result, dict) and result.get("status") == "ok":
-                return _ok({"typed": len(text), "method": "js_enhanced"})
+                return _ok({
+                    "typed": len(text),
+                    "elementId": element_id or None,
+                    "method": "js_enhanced",
+                })
             detail = result.get("detail", "Unknown error") if isinstance(result, dict) else str(result)
             return _err(f"Type failed: {detail}")
         except Exception as e:
@@ -335,7 +354,7 @@ async def handle_type(req: web.Request) -> web.Response:
 async def handle_press_key(req: web.Request) -> web.Response:
     body = await _safe_json(req)
     key = str(body.get("key", "")).strip()
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     if not key:
         return _err("key is required")
     if len(key) > 64:
@@ -358,12 +377,14 @@ async def handle_press_key(req: web.Request) -> web.Response:
                     selector,
                 )
                 if focused != "ok":
+                    if element_id:
+                        return _err(f"Press key failed: elementId not found: {element_id}")
                     return _err(f"Press key failed: selector not found: {selector}")
 
             # CDP key press (handles modifiers like Control+a)
             pressed = await _cdp_press_key(key)
             if pressed:
-                return _ok({"key": key})
+                return _ok({"key": key, "elementId": element_id or None})
 
             # Fallback: JS key dispatch
             dispatched = await _evaluate(

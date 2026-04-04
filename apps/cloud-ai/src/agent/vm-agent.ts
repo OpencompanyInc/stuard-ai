@@ -28,7 +28,7 @@
  */
 
 import http from 'http';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { createHmac, timingSafeEqual } from 'crypto';
 import fs from 'fs';
 import { Readable } from 'stream';
@@ -113,6 +113,24 @@ function verifyBearerToken(authHeader: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Mint a short-lived HMAC token so the Python agent can authenticate
+ * with cloud-ai on behalf of this VM's user. Self-contained to avoid
+ * pulling in vm-tokens.ts (and its transitive deps) into the bundle.
+ */
+function mintLocalVMToken(secret: string, userId: string): string {
+  const payload = JSON.stringify({
+    userId,
+    instanceName: 'vm-chat',
+    nonce: randomBytes(8).toString('hex'),
+    iat: Date.now(),
+    exp: Date.now() + 300_000, // 5 minutes
+  });
+  const encoded = Buffer.from(payload).toString('base64url');
+  const sig = createHmac('sha256', secret).update(encoded).digest('base64url');
+  return `${encoded}.${sig}`;
 }
 
 function authHeaderFromRequest(req: http.IncomingMessage): string | undefined {
@@ -316,6 +334,14 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'get_oauth_token':
       return getOAuthToken(args);
 
+    // ── Chat Sync (desktop→VM) ──────────────────────────────────────────
+    case 'chat_sync':
+      return handleChatSync(args);
+
+    // ── Browser Profile Sync (desktop→VM) ────────────────────────────────
+    case 'sync_browser_profile':
+      return syncBrowserProfile(args);
+
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -348,6 +374,12 @@ async function handleAgentChat(args: any): Promise<any> {
     }, 10_000).catch(() => {});
 
     // Forward chat to Python agent via WebSocket
+    // Include a signed HMAC token so the Python agent can authenticate
+    // with cloud-ai on behalf of this VM's user (enables integration tools)
+    const vmAuth = VM_SECRET && USER_ID
+      ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
+      : undefined;
+
     const result = await sendToAgent({
       type: 'chat',
       message,
@@ -359,6 +391,7 @@ async function handleAgentChat(args: any): Promise<any> {
         ...(args.context || {}),
       },
       memoryContext,
+      ...(vmAuth ? { auth: vmAuth } : {}),
     }, 180_000); // 3 min timeout for chat
 
     // Store assistant response and process turn (mirrors desktop's post-response flow)
@@ -896,6 +929,69 @@ function getOAuthToken(args: any): any {
 
 // Load tokens on startup
 loadOAuthTokens();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Browser Profile Sync (desktop→VM) — syncs default browser profile (cookies)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BROWSER_PROFILE_DIR = process.env.STUARD_BROWSER_PROFILE_DIR || '/home/stuard/browser-profiles';
+
+function syncBrowserProfile(args: any): any {
+  const profile = String(args.profile || 'default');
+  const cookies = args.cookies; // array of CDP cookie objects
+
+  if (!Array.isArray(cookies)) {
+    return { ok: false, error: 'cookies must be an array' };
+  }
+
+  const profileDir = `${BROWSER_PROFILE_DIR}/${profile}`;
+  try {
+    fs.mkdirSync(profileDir, { recursive: true });
+
+    // Write cookie backup in the same format the browser server expects
+    // (stuard_cookies.json — restored on browser launch via CDP Network.setCookies)
+    const cookiePath = `${profileDir}/stuard_cookies.json`;
+    fs.writeFileSync(cookiePath, JSON.stringify(cookies), 'utf-8');
+
+    console.log(`[vm-agent] Synced ${cookies.length} cookies to browser profile "${profile}"`);
+    return { ok: true, profile, cookieCount: cookies.length };
+  } catch (e: any) {
+    console.error('[vm-agent] Failed to sync browser profile:', e?.message);
+    return { ok: false, error: String(e?.message || 'sync_failed') };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Sync (desktop→VM) — receives conversation updates from cloud-ai
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleChatSync(args: any): any {
+  const { action, conversationId, data } = args || {};
+  if (!conversationId) return { ok: false, error: 'missing_conversation_id' };
+
+  // Forward to Python agent's local memory store so conversations stay in sync
+  if (action === 'new_message' || action === 'new_conversation') {
+    const role = data?.role || 'assistant';
+    const content = data?.content || '';
+    if (content) {
+      sendToAgent({
+        type: 'tool_exec',
+        tool: 'message_add',
+        args: { conversation_id: conversationId, role, content },
+      }, 10_000).catch(() => {});
+    }
+  }
+
+  if (action === 'title_update' && data?.title) {
+    sendToAgent({
+      type: 'tool_exec',
+      tool: 'conversation_title_set',
+      args: { conversation_id: conversationId, title: data.title },
+    }, 10_000).catch(() => {});
+  }
+
+  return { ok: true, action, conversationId };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapshot Helpers (hardened — no shell interpolation)

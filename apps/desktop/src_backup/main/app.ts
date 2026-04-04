@@ -3,7 +3,7 @@ import path from "path";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, startBrowserExtensionServer } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import logger from "./utils/logger";
@@ -80,14 +80,6 @@ app.whenReady().then(async () => {
     logger.info("Webhook server started");
   } catch (e) {
     logger.error("Failed to start webhook server:", e);
-  }
-
-  try {
-    logger.info("Starting browser extension server...");
-    startBrowserExtensionServer();
-    logger.info("Browser extension server started");
-  } catch (e) {
-    logger.error("Failed to start browser extension server:", e);
   }
 
   try {

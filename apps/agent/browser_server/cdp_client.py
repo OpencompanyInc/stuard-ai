@@ -13,6 +13,7 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -56,6 +57,47 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+# ---------------------------------------------------------------------------
+# Profile lock cleanup (prevents exit code 21 = PROFILE_IN_USE)
+# ---------------------------------------------------------------------------
+
+def _clean_profile_locks(profile_dir: str) -> None:
+    """Remove stale Chrome lock files left behind by crashed instances."""
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"):
+        lock = os.path.join(profile_dir, name)
+        try:
+            if os.path.islink(lock):
+                os.unlink(lock)
+            elif os.path.isfile(lock):
+                os.remove(lock)
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+
+
+def _kill_chrome_for_profile(profile_dir: str) -> None:
+    """Kill orphan Chrome/Edge processes still holding the lock on this profile."""
+    norm = os.path.normpath(profile_dir)
+    try:
+        if os.name == "nt":
+            safe_path = norm.replace("'", "''")
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process -Filter "
+                 "\"Name LIKE 'chrome%' OR Name LIKE 'msedge%'\" | "
+                 f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{safe_path}') }} | "
+                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                capture_output=True, timeout=10,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+        else:
+            subprocess.run(
+                ["pkill", "-f", f"--user-data-dir={norm}"],
+                capture_output=True, timeout=5,
+            )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +251,7 @@ class CDPBrowser:
         self._port: int = 0
         self._pages: dict[str, CDPConnection] = {}  # target_id → connection
         self._active_id: Optional[str] = None
+        self._browser_ws_url: Optional[str] = None
 
     @property
     def active_page(self) -> Optional[CDPConnection]:
@@ -232,13 +275,15 @@ class CDPBrowser:
     ) -> CDPConnection:
         """Launch Chrome and return a CDPConnection to the first page."""
         chrome = _find_chrome()
-        self._port = _free_port()
         os.makedirs(profile_dir, exist_ok=True)
         os.makedirs(os.path.join(profile_dir, "Default"), exist_ok=True)
 
-        args = [
+        _clean_profile_locks(profile_dir)
+
+        base_args = [
             chrome,
-            f"--remote-debugging-port={self._port}",
+            # port placeholder at index 1 — filled per attempt
+            "",
             f"--user-data-dir={profile_dir}",
             "--profile-directory=Default",
             f"--window-size={width},{height}",
@@ -249,18 +294,40 @@ class CDPBrowser:
             "--disable-infobars",
             "--disable-blink-features=AutomationControlled",
             "--disable-features=RendererCodeIntegrity",
+            "--disable-background-networking",
+            "--disable-component-update",
         ]
         if headless:
-            args.append("--headless=new")
+            base_args.append("--headless=new")
         if user_agent:
-            args.append(f"--user-agent={user_agent}")
+            base_args.append(f"--user-agent={user_agent}")
 
-        self._process = subprocess.Popen(
-            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        last_err: Exception | None = None
+        for attempt in range(2):
+            self._port = _free_port()
+            args = list(base_args)
+            args[1] = f"--remote-debugging-port={self._port}"
 
-        # Wait for Chrome to expose the debug endpoint
-        targets = await self._wait_for_targets()
+            self._process = subprocess.Popen(
+                args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+            try:
+                targets = await self._wait_for_targets()
+                break  # success
+            except RuntimeError as e:
+                rc = self._process.returncode if self._process else None
+                if rc == 21 and attempt == 0:
+                    # Exit code 21 = PROFILE_IN_USE — kill orphan Chrome and retry
+                    print("[browser-server] Profile locked (exit code 21), killing orphan Chrome and retrying...", flush=True)
+                    _kill_chrome_for_profile(profile_dir)
+                    _clean_profile_locks(profile_dir)
+                    await asyncio.sleep(1.0)
+                    last_err = e
+                    continue
+                raise
+        else:
+            raise RuntimeError(f"Chrome failed to start after retry: {last_err}")
 
         for target in list(targets):
             if self._is_ignored_startup_target(target):
@@ -268,6 +335,12 @@ class CDPBrowser:
                     await self._http_json("GET", f"/json/close/{target['id']}")
                 except Exception:
                     pass
+
+        try:
+            version = await self._http_json("GET", "/json/version")
+            self._browser_ws_url = str(version.get("webSocketDebuggerUrl", "") or "")
+        except Exception:
+            self._browser_ws_url = None
 
         # Grab first real page, or create one.
         page_target = next(
@@ -324,46 +397,84 @@ class CDPBrowser:
     # -- shutdown ------------------------------------------------------------
 
     async def close(self) -> None:
+        await self._request_browser_close()
+        await self._wait_for_process_exit(timeout=8.0)
+
         target_ids = list(self._pages.keys())
         for target_id in target_ids:
-            try:
-                await self.close_target(target_id)
-            except Exception:
-                pass
-        self._pages.clear()
-        self._active_id = None
-
-        try:
-            remaining_targets = await self.list_targets()
-            for target in remaining_targets:
+            conn = self._pages.pop(target_id, None)
+            if conn:
                 try:
-                    await self._http_json("GET", f"/json/close/{target['id']}")
+                    await conn.close()
                 except Exception:
                     pass
-        except Exception:
-            pass
+        self._active_id = None
 
-        if self._process:
+        if self._process and self._process.poll() is None:
             try:
-                self._process.wait(timeout=2)
-            except Exception:
-                try:
-                    self._process.terminate()
-                    self._process.wait(timeout=5)
-                except Exception:
+                remaining_targets = await self.list_targets()
+                for target in remaining_targets:
                     try:
-                        self._process.kill()
+                        await self._http_json("GET", f"/json/close/{target['id']}")
                     except Exception:
                         pass
-            self._process = None
+            except Exception:
+                pass
+
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+            await self._wait_for_process_exit(timeout=5.0)
+
+        if self._process and self._process.poll() is None:
+            try:
+                self._process.kill()
+            except Exception:
+                pass
+            await self._wait_for_process_exit(timeout=2.0)
+
+        self._process = None
+        self._browser_ws_url = None
 
     # -- internals -----------------------------------------------------------
 
-    async def _wait_for_targets(self, timeout: float = 15.0) -> list[dict]:
+    async def _request_browser_close(self) -> None:
+        """Ask Chrome to shut down cleanly so profile data is flushed to disk."""
+        if not self._browser_ws_url or not self._process or self._process.poll() is not None:
+            return
+
+        conn = CDPConnection()
+        try:
+            await conn.connect(self._browser_ws_url)
+            try:
+                await asyncio.wait_for(conn.send("Browser.close"), timeout=1.5)
+            except Exception:
+                # Chrome usually closes the websocket before replying when it
+                # accepts Browser.close, so a timeout/error here is normal.
+                pass
+        except Exception:
+            pass
+        finally:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+
+    async def _wait_for_process_exit(self, timeout: float) -> bool:
+        if not self._process:
+            return True
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            if self._process.poll() is not None:
+                return True
+            await asyncio.sleep(0.1)
+        return self._process.poll() is not None
+
+    async def _wait_for_targets(self, timeout: float = 10.0) -> list[dict]:
         deadline = asyncio.get_event_loop().time() + timeout
         last_err = None
         while asyncio.get_event_loop().time() < deadline:
-            # Check Chrome process hasn't crashed
             if self._process and self._process.poll() is not None:
                 raise RuntimeError(
                     f"Chrome exited immediately with code {self._process.returncode}"
@@ -372,7 +483,7 @@ class CDPBrowser:
                 return await self._http_json("GET", "/json/list")
             except Exception as e:
                 last_err = e
-                await asyncio.sleep(0.15)
+                await asyncio.sleep(0.08)
         raise TimeoutError(f"Chrome did not start within {timeout}s: {last_err}")
 
     async def _http_json(self, method: str, path: str) -> Any:

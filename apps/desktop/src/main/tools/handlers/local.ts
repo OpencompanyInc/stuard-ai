@@ -13,6 +13,7 @@ function ensureAgentWs(url: string): Promise<WebSocket> {
   agentReady = new Promise<WebSocket>((resolve, reject) => {
     try {
       const ws = new WebSocket(url);
+      ws.setMaxListeners(0);
       const timeout = setTimeout(() => {
         try { ws.terminate(); } catch {}
         reject(new Error('agent_ws_timeout'));

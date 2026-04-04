@@ -202,7 +202,7 @@ export default function App() {
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
-    editMessage, revertFiles
+    editMessage, revertFiles, redoFiles
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
   // Listen for approval responses from notification overlay (when permission was handled out-of-app)
@@ -257,9 +257,34 @@ export default function App() {
     };
   }, []);
 
-  // Listen for chat messages from browser extension
+  // Listen for chat sync events from VM (pushed via cloud-ai)
   useEffect(() => {
-    const unsub = (window as any).desktopAPI?.onBrowserExtensionChat?.((data: { text: string; messageId: string; pageContext?: any }) => {
+    const unsub = (window as any).desktopAPI?.onChatSyncEvent?.((event: any) => {
+      if (!event?.conversationId) return;
+      if (event.action === 'new_conversation' || event.action === 'new_message') {
+        // Refresh conversation list so new/updated conversations appear
+        setConvList(prev => {
+          // If conversation already exists, bump it to the top
+          const existing = prev.find(c => String(c.id) === String(event.conversationId));
+          if (existing) {
+            return [{ ...existing, created_at: event.timestamp || existing.created_at }, ...prev.filter(c => String(c.id) !== String(event.conversationId))];
+          }
+          // New conversation — prepend it
+          return [{ id: event.conversationId, title: event.data?.title || 'New conversation', created_at: event.timestamp }, ...prev].slice(0, 20);
+        });
+      } else if (event.action === 'title_update' && event.data?.title) {
+        setConvList(prev => prev.map(c =>
+          String(c.id) === String(event.conversationId)
+            ? { ...c, title: event.data.title }
+            : c
+        ));
+      }
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, []);
+
+  /* Legacy browser extension bridge removed.
+    const unsub = undefined;
       if (data?.text) {
         // Inject page context into the message
         const contextNote = data.pageContext?.url
@@ -272,7 +297,7 @@ export default function App() {
       }
     });
     return () => { try { unsub?.(); } catch {} };
-  }, [sendMessage]);
+  */
 
   // Listen for resize events from main process
   useEffect(() => {
@@ -1428,6 +1453,7 @@ export default function App() {
                     onGenUIResponse={handleGenUIResponse}
                     onEditMessage={editMessage}
                     onRevertFiles={revertFiles}
+                    onRedoFiles={redoFiles}
                     pendingMemories={pendingMemories}
                     onConfirmPendingMemory={confirmPendingMemory}
                     onRejectPendingMemory={rejectPendingMemory}

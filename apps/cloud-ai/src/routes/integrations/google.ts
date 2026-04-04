@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
+import { pushOAuthTokensToVM } from '../cloud-engine';
 import { authenticateHttpLegacy, requireAuth, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
-import { handleGoogleNativeTriggerRoutes } from './google-native-triggers';
 
 // ---------------------------------------------------------------------------
 // Granular scope mapping — each target gets ONLY its own scopes.
@@ -27,8 +27,6 @@ function scopesForTarget(target: string): string[] {
 const normalize = (str: string) => str.split(/[ ,]+/).map(s => s.trim()).filter(Boolean);
 
 export async function handleGoogleRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
-  if (await handleGoogleNativeTriggerRoutes(req, res, parsedUrl)) return true;
-
   // Status - prefer header auth, but allow legacy query param for migration
   if (req.method === 'GET' && parsedUrl.pathname === '/integrations/google/status') {
     try {
@@ -278,6 +276,8 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
         res.end();
         return true;
       }
+      // Auto-sync OAuth tokens to running VM (fire-and-forget)
+      pushOAuthTokensToVM(userId).catch(() => {});
       res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=google&profile=${encodeURIComponent(profileLabel)}`, 'Cache-Control': 'no-store' });
       res.end();
       return true;

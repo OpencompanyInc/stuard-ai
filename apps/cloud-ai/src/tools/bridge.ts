@@ -100,6 +100,19 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
   const type = String(msg?.type || '').toLowerCase();
   const id = String(msg?.id || '').trim();
   if (!id) return;
+
+  // ── Subagent protocol messages ──
+  // These are forwarded to any registered subagent event listeners.
+  if (type === 'subagent_event' || type === 'subagent_question' || type === 'subagent_answer' || type === 'subagent_complete') {
+    const listeners = subagentListeners.get(ws);
+    if (listeners) {
+      for (const listener of listeners) {
+        try { listener(msg); } catch {}
+      }
+    }
+    return;
+  }
+
   const pend = getPending(ws).get(id);
   if (!pend) return;
   if (type === 'tool_event') {
@@ -118,6 +131,31 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
     getPending(ws).delete(id);
     pend.resolve(msg.result);
     return;
+  }
+}
+
+// ── Subagent event listeners ──
+// Allow modules to subscribe to subagent protocol messages on a given WS.
+type SubagentListener = (msg: any) => void;
+const subagentListeners = new WeakMap<WebSocket, Set<SubagentListener>>();
+
+export function onSubagentMessage(ws: WebSocket, listener: SubagentListener): () => void {
+  let set = subagentListeners.get(ws);
+  if (!set) {
+    set = new Set();
+    subagentListeners.set(ws, set);
+  }
+  set.add(listener);
+  return () => { set?.delete(listener); };
+}
+
+/**
+ * Send a subagent protocol message to the client WS.
+ */
+export function sendSubagentMessage(msg: { type: string; subagentId: string; [key: string]: any }): void {
+  const store = bridgeALS.getStore();
+  if (store?.ws && store.ws.readyState === WebSocket.OPEN) {
+    send(store.ws, msg);
   }
 }
 

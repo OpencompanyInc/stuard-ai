@@ -7,6 +7,9 @@ from typing import Any, Literal
 from aiohttp import web
 
 
+INTERACTIVE_ID_ATTR = "data-stuard-interactive-id"
+
+
 def _clamp_int(value: Any, default: int, min_value: int, max_value: int) -> int:
     try:
         n = int(value)
@@ -57,6 +60,29 @@ async def _safe_json(req: web.Request) -> dict[str, Any]:
         return {}
     except Exception:
         return {}
+
+
+def _normalize_interactive_element_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch in ("-", "_"))
+    return safe[:80]
+
+
+def _interactive_selector(element_id: Any) -> str:
+    safe = _normalize_interactive_element_id(element_id)
+    if not safe:
+        return ""
+    return f'[{INTERACTIVE_ID_ATTR}="{safe}"]'
+
+
+def _resolve_selector_target(body: dict[str, Any], selector_key: str = "selector") -> tuple[str, str]:
+    selector = str(body.get(selector_key, "") or "").strip()
+    element_id = _normalize_interactive_element_id(body.get("element_id") or body.get("elementId"))
+    if not selector and element_id:
+        selector = _interactive_selector(element_id)
+    return selector, element_id
 
 
 def _jsonable_cookie(cookie: Any) -> dict[str, Any]:

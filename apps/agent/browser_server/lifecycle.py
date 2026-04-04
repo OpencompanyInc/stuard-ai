@@ -11,49 +11,82 @@ from browser_server.utils import _clamp_int, _normalize_wait_until, _is_allowed_
 from browser_server.profile import _current_profile_dir
 from browser_server.cdp_client import CDPBrowser
 
-_SESSION_COOKIES_FILE = "stuard_session_cookies.json"
+_COOKIE_BACKUP_FILE = "stuard_cookies.json"
+_LEGACY_SESSION_COOKIES_FILE = "stuard_session_cookies.json"
+_COOKIE_RESTORE_FIELDS = {
+    "name",
+    "value",
+    "url",
+    "domain",
+    "path",
+    "secure",
+    "httpOnly",
+    "sameSite",
+    "expires",
+    "priority",
+    "sameParty",
+    "sourceScheme",
+    "sourcePort",
+    "partitionKey",
+}
 
 
 # ---------------------------------------------------------------------------
-# Session cookie persistence (Chromium never writes expires=-1 to disk)
+# Cookie persistence backup. This protects auth/session state across mode
+# switches when Chrome has not fully flushed the profile to disk yet.
 # ---------------------------------------------------------------------------
 
-def _save_session_cookies(profile_dir: Path, cookies: list[dict]) -> None:
-    """Persist session cookies to a JSON file so they survive browser restarts."""
-    session_cookies = [c for c in cookies if c.get("expires", 0) == -1 or c.get("session", False)]
-    if not session_cookies:
-        return
+def _save_cookie_backup(profile_dir: Path, cookies: list[dict]) -> None:
+    """Persist the current cookie jar so restarts can restore it if needed."""
+    backup_file = profile_dir / _COOKIE_BACKUP_FILE
     try:
-        (profile_dir / _SESSION_COOKIES_FILE).write_text(
-            json.dumps(session_cookies), encoding="utf-8"
-        )
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        if cookies:
+            backup_file.write_text(json.dumps(cookies), encoding="utf-8")
+        else:
+            backup_file.unlink(missing_ok=True)
+            (profile_dir / _LEGACY_SESSION_COOKIES_FILE).unlink(missing_ok=True)
     except Exception:
         pass
 
 
-async def _restore_session_cookies(profile_dir: Path) -> None:
-    """Re-inject saved session cookies via CDP Network.setCookies."""
-    cookie_file = profile_dir / _SESSION_COOKIES_FILE
+def _cookie_params_for_restore(cookie: dict[str, Any]) -> dict[str, Any] | None:
+    if not cookie.get("name"):
+        return None
+
+    restored: dict[str, Any] = {
+        key: value
+        for key, value in cookie.items()
+        if key in _COOKIE_RESTORE_FIELDS and value not in (None, "")
+    }
+    if "expires" in restored:
+        try:
+            if float(restored["expires"]) <= 0:
+                restored.pop("expires", None)
+        except Exception:
+            restored.pop("expires", None)
+    if "path" not in restored:
+        restored["path"] = "/"
+    if "url" not in restored and "domain" not in restored:
+        return None
+    return restored
+
+
+async def _restore_cookie_backup(profile_dir: Path) -> None:
+    """Re-inject saved cookies via CDP Network.setCookies."""
+    cookie_file = profile_dir / _COOKIE_BACKUP_FILE
+    if not cookie_file.exists():
+        cookie_file = profile_dir / _LEGACY_SESSION_COOKIES_FILE
     if not cookie_file.exists():
         return
     try:
         cookies = json.loads(cookie_file.read_text(encoding="utf-8"))
         if cookies and state._page and state._page.is_connected:
-            cdp_cookies = []
-            for c in cookies:
-                cc: dict[str, Any] = {
-                    "name": c.get("name", ""),
-                    "value": c.get("value", ""),
-                    "domain": c.get("domain", ""),
-                    "path": c.get("path", "/"),
-                }
-                if c.get("secure"):
-                    cc["secure"] = True
-                if c.get("httpOnly"):
-                    cc["httpOnly"] = True
-                if c.get("sameSite"):
-                    cc["sameSite"] = c["sameSite"]
-                cdp_cookies.append(cc)
+            cdp_cookies = [
+                restored
+                for restored in (_cookie_params_for_restore(c) for c in cookies)
+                if restored
+            ]
             if cdp_cookies:
                 await state._page.send("Network.setCookies", {"cookies": cdp_cookies})
     except Exception:
@@ -507,8 +540,8 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
         state._viewport_cache["w"] = 1280
         state._viewport_cache["h"] = 900
 
-        # Restore session cookies that Chromium doesn't persist
-        await _restore_session_cookies(profile_dir)
+        # Restore cookies after launch so auth survives fast mode switches.
+        await _restore_cookie_backup(profile_dir)
 
         mode_label = "headless" if headless else "headed"
         print(f"[browser-server] Launched {mode_label} Chrome via CDP (profile: {profile_dir})", flush=True)
@@ -524,16 +557,18 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
         return False, f"Chrome launch failed: {err}"
 
 
-async def _close_browser() -> None:
-    """Save session cookies and shut down Chrome."""
-    # Save session cookies before closing
+async def _close_browser(profile_dir: Path | None = None) -> None:
+    """Save cookies and shut down Chrome."""
+    target_profile_dir = profile_dir or _current_profile_dir()
+
+    # Save the full cookie jar before closing.
     try:
         if state._page and state._page.is_connected:
             result = await asyncio.wait_for(
                 state._page.send("Network.getAllCookies"), timeout=3.0
             )
             cookies = result.get("cookies", [])
-            _save_session_cookies(_current_profile_dir(), cookies)
+            _save_cookie_backup(target_profile_dir, cookies)
     except Exception:
         pass
 

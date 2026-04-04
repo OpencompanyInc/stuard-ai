@@ -68,7 +68,6 @@ export default function VersionTab({
     website: true,
     'cloud-ai': true,
     'ops-console': true,
-    'browser-extension': true,
   });
   const [bumpAll, setBumpAll] = useState(true);
   const [autoCommit, setAutoCommit] = useState(true);

@@ -49,25 +49,6 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'smart_bring_window_to_foreground': { kind: 'electron' },
   'set_window_bounds': { kind: 'electron' },
 
-  // Browser control tools
-  'browser_get_content': { kind: 'electron' },
-  'browser_click_element': { kind: 'electron' },
-  'browser_type_text': { kind: 'electron' },
-  'browser_find_text': { kind: 'electron' },
-  'browser_get_element_position': { kind: 'electron' },
-  'browser_find_clickable': { kind: 'electron' },
-  'browser_hover': { kind: 'electron' },
-  'browser_select_option': { kind: 'electron' },
-  'browser_press_key': { kind: 'electron' },
-  'browser_get_form_fields': { kind: 'electron' },
-  'browser_fill_form': { kind: 'electron' },
-  'browser_wait_for_element': { kind: 'electron' },
-  'browser_scroll_to': { kind: 'electron' },
-  'browser_get_page_info': { kind: 'electron' },
-  'browser_execute_script': { kind: 'electron' },
-  'browser_upload_file': { kind: 'electron' },
-  'browser_set_toggle': { kind: 'electron' },
-
   // Variable management tools (electron-native)
   'set_variable': { kind: 'electron' },
   'get_variable': { kind: 'electron' },
@@ -306,9 +287,6 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'browser_use_fill_form': { kind: 'electron' },
   'browser_use_upload_file': { kind: 'electron' },
   'browser_use_wait_for': { kind: 'electron' },
-
-  // Browser status (extension-based)
-  'browser_status': { kind: 'electron' },
 
   // Cloud Storage (GCS upload/download with public/private visibility)
   'cloud_storage_upload': { kind: 'cloud' },

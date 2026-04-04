@@ -15,6 +15,7 @@ import { mintVMToken } from './vm-tokens';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 export const VM_AGENT_PORT = 7400;
+export const VM_COMMANDABLE_STATUSES = new Set(['running', 'provisioning', 'starting']);
 
 /** Fallback secret used only in dev mode when no DB record exists. */
 const DEV_FALLBACK_SECRET = 'dev-vm-token-secret';
@@ -67,7 +68,7 @@ export async function resolveVMAddress(userId: string): Promise<string | null> {
 
   // Look up engine record
   const engine = await getCloudEngine(userId);
-  if (!engine || engine.status !== 'running') return null;
+  if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) return null;
 
   // Use stored external_ip first
   let ip = engine.external_ip || null;

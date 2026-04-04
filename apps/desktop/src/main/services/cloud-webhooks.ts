@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { net } from 'electron';
+import { net, BrowserWindow } from 'electron';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
 import { getMainAccessToken } from './auth-session';
@@ -128,6 +128,32 @@ async function connect() {
                     handleCloudWebhookEvent(msg);
                 } else if (msg.type === 'tool_request') {
                     handleToolRequest(msg, ws!);
+                } else if (msg.type === 'chat_sync') {
+                    logger.info(`[cloud-webhooks] Chat sync: ${msg.action} conv=${msg.conversationId} from=${msg.source}`);
+                    try {
+                        for (const win of BrowserWindow.getAllWindows()) {
+                            try { win.webContents.send('chat:sync-event', msg); } catch { }
+                        }
+                    } catch { }
+                } else if (msg.vmMirror && (msg.type === 'progress' || msg.type === 'final' || msg.type === 'conversation' || msg.type === 'title')) {
+                    // VM stream mirror — relay real-time streaming events to renderer
+                    try {
+                        for (const win of BrowserWindow.getAllWindows()) {
+                            try { win.webContents.send('vm:stream-event', msg); } catch { }
+                        }
+                    } catch { }
+                } else if (
+                    msg.type === 'subagent_event' ||
+                    msg.type === 'subagent_question' ||
+                    msg.type === 'subagent_answer' ||
+                    msg.type === 'subagent_complete'
+                ) {
+                    // Relay subagent protocol messages to renderer for UI updates
+                    try {
+                        for (const win of BrowserWindow.getAllWindows()) {
+                            try { win.webContents.send('subagent:message', msg); } catch { }
+                        }
+                    } catch { }
                 } else if (msg.type === 'handshake') {
                     // Check for token and auth if we haven't already
                     getAuthToken().then(token => {

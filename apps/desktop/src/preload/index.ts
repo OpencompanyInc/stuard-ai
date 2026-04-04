@@ -315,17 +315,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('speech:stopped', handler);
     return () => { try { ipcRenderer.off('speech:stopped', handler); } catch { } };
   },
-  // Browser Extension
-  onBrowserExtensionStatus: (cb: (status: { connected: boolean; clients: number }) => void) => {
-    const handler = (_e: any, status: any) => cb(status);
-    ipcRenderer.on('browser-extension:status', handler);
-    return () => { try { ipcRenderer.off('browser-extension:status', handler); } catch { } };
-  },
-  onBrowserExtensionChat: (cb: (data: { text: string; messageId: string; pageContext?: any }) => void) => {
-    const handler = (_e: any, data: any) => cb(data);
-    ipcRenderer.on('browser-extension:chat', handler);
-    return () => { try { ipcRenderer.off('browser-extension:chat', handler); } catch { } };
-  },
   // Tools
   execTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
   execLocalTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
@@ -335,6 +324,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, id: any) => cb(id);
     ipcRenderer.on('overlay:open-chat', handler);
     return () => { try { ipcRenderer.off('overlay:open-chat', handler); } catch { } };
+  },
+  onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('chat:sync-event', handler);
+    return () => { try { ipcRenderer.off('chat:sync-event', handler); } catch { } };
+  },
+  onVMStreamEvent: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('vm:stream-event', handler);
+    return () => { try { ipcRenderer.off('vm:stream-event', handler); } catch { } };
   },
   onDashboardNavigate: (cb: (data: { tab: string }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
@@ -510,6 +509,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
   skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
+
+  // Subagent protocol events from orchestrator
+  onSubagentMessage: (cb: (msg: any) => void) => {
+    const handler = (_e: any, msg: any) => cb(msg);
+    ipcRenderer.on('subagent:message', handler);
+    return () => { try { ipcRenderer.off('subagent:message', handler); } catch { } };
+  },
 
   // Auth session sync (required for SMS inbox realtime subscription in main process)
   syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),

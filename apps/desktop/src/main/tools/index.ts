@@ -13,34 +13,15 @@ import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile,
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
-import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse } from './handlers/browser-use';
+import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse, shutdownAllBrowserUseServers } from './handlers/browser-use';
 import { captureToolMedia, registerLocalMedia } from '../services/media-library';
-import {
-  execBrowserGetContent,
-  execBrowserClickElement,
-  execBrowserTypeText,
-  execBrowserFindText,
-  execBrowserGetElementPosition,
-  execBrowserFindClickable,
-  execBrowserHover,
-  execBrowserSelectOption,
-  execBrowserPressKey,
-  execBrowserGetFormFields,
-  execBrowserFillForm,
-  execBrowserWaitForElement,
-  execBrowserScrollTo,
-  execBrowserGetPageInfo,
-  execBrowserExecuteScript,
-  execBrowserUploadFile,
-  execBrowserSetToggle,
-  execBrowserStatus,
-} from './handlers/browser';
 
 export * from './registry';
 export * from './types';
 export * from './handlers/local'; // for calcToolTimeout
 export { execCloudTool } from './handlers/cloud';
 export { execCustomUi, execCloseCustomUi, initCustomUiIpc } from './handlers/electron';
+export { shutdownAllBrowserUseServers } from './handlers/browser-use';
 
 function normalizeCommandTool(toolName: string, args: any): { toolName: string; args: any } {
   if (toolName !== 'run_system_command') {
@@ -255,26 +236,6 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'terminal_read') return execTerminalRead(args, ctx);
       if (toolName === 'terminal_wait_for') return execTerminalWaitFor(args, ctx);
       if (toolName === 'terminal_destroy') return execTerminalDestroy(args, ctx);
-
-      // Browser tools
-      if (toolName === 'browser_status') return execBrowserStatus(args, ctx);
-      if (toolName === 'browser_get_content') return execBrowserGetContent(args, ctx);
-      if (toolName === 'browser_click_element') return execBrowserClickElement(args, ctx);
-      if (toolName === 'browser_type_text') return execBrowserTypeText(args, ctx);
-      if (toolName === 'browser_find_text') return execBrowserFindText(args, ctx);
-      if (toolName === 'browser_get_element_position') return execBrowserGetElementPosition(args, ctx);
-      if (toolName === 'browser_find_clickable') return execBrowserFindClickable(args, ctx);
-      if (toolName === 'browser_hover') return execBrowserHover(args, ctx);
-      if (toolName === 'browser_select_option') return execBrowserSelectOption(args, ctx);
-      if (toolName === 'browser_press_key') return execBrowserPressKey(args, ctx);
-      if (toolName === 'browser_get_form_fields') return execBrowserGetFormFields(args, ctx);
-      if (toolName === 'browser_fill_form') return execBrowserFillForm(args, ctx);
-      if (toolName === 'browser_wait_for_element') return execBrowserWaitForElement(args, ctx);
-      if (toolName === 'browser_scroll_to') return execBrowserScrollTo(args, ctx);
-      if (toolName === 'browser_get_page_info') return execBrowserGetPageInfo(args, ctx);
-      if (toolName === 'browser_upload_file') return execBrowserUploadFile(args, ctx);
-      if (toolName === 'browser_set_toggle') return execBrowserSetToggle(args, ctx);
-      if (toolName === 'browser_execute_script') return execBrowserExecuteScript(args, ctx);
 
       // Ollama (Local AI) tools
       if (toolName === 'ollama_status') return execOllamaStatus(args, ctx);

@@ -89,6 +89,7 @@ CHECKPOINT_DIR = os.environ.get(
 
 class CheckpointManager:
     _active_id: str | None = None
+    _redo_stack: list[str] = []
     
     @classmethod
     def set_active(cls, id: str):
@@ -108,10 +109,11 @@ class CheckpointManager:
             if os.path.exists(mp):
                 try:
                     with open(mp, "r") as f:
-                        res.append(json.load(f))
-                except:
+                        data = json.load(f)
+                    data["canRedo"] = name in cls._redo_stack
+                    res.append(data)
+                except Exception:
                     pass
-        # Sort by timestamp desc
         res.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
         return res
 
@@ -125,17 +127,18 @@ class CheckpointManager:
             "id": id,
             "timestamp": ts,
             "name": name,
-            "files": {} # path -> {action: 'create'|'modify'|'delete', backup: str}
+            "files": {},
         }
         with open(os.path.join(path, "manifest.json"), "w") as f:
             json.dump(manifest, f)
         
         cls._active_id = id
+        cls._redo_stack = []
         return id
 
     @classmethod
-    def cleanup_old(cls, max_age_hours: int = 24, max_count: int = 10):
-        """Remove old checkpoints to save disk space."""
+    def cleanup_old(cls, max_age_hours: int = 24, max_count: int = 15):
+        """Remove old checkpoints to save disk space, preserving redo entries."""
         if not os.path.exists(CHECKPOINT_DIR):
             return
         
@@ -148,39 +151,35 @@ class CheckpointManager:
             cp_ts = cp.get("timestamp", 0)
             age = now - cp_ts
             
-            # Keep the latest few regardless of age
-            if i < 3:
+            if i < 5:
                 continue
             
-            # Remove if too old or too many
+            if cp_id in cls._redo_stack:
+                continue
+            
             if age > max_age_secs or i >= max_count:
                 try:
                     cp_path = os.path.join(CHECKPOINT_DIR, cp_id)
                     if os.path.exists(cp_path):
                         shutil.rmtree(cp_path)
-                except:
+                except Exception:
                     pass
 
     @classmethod
     def ensure_active(cls) -> str:
         """Auto-create a checkpoint if none is active. Returns the active checkpoint ID."""
-        # Periodic cleanup
         cls.cleanup_old()
         
         if cls._active_id:
-            # Verify it still exists
             cp_path = os.path.join(CHECKPOINT_DIR, cls._active_id)
             if os.path.exists(cp_path):
                 return cls._active_id
-        # Create a new auto-checkpoint
         return cls.create("auto")
 
     @classmethod
     def record_change(cls, file_path: str, operation: str = "modify"):
-        # Auto-create checkpoint if none exists
         cls.ensure_active()
         
-        # operation: 'modify' (includes delete), 'create' (new file)
         if not cls._active_id:
             return
             
@@ -192,20 +191,17 @@ class CheckpointManager:
         try:
             with open(manifest_path, "r") as f:
                 manifest = json.load(f)
-        except:
+        except Exception:
             return
 
         file_path = os.path.abspath(file_path)
         
-        # If already tracked, ignore (we only care about the state *at* checkpoint start)
         if file_path in manifest["files"]:
             return
             
         entry = {"action": operation, "path": file_path}
         
         if os.path.exists(file_path) and operation != "create":
-            # Back up original content
-            # Use base64 of path to avoid directory structure issues
             backup_name = base64.urlsafe_b64encode(file_path.encode()).decode()
             backup_file = os.path.join(cp_path, backup_name)
             try:
@@ -231,6 +227,68 @@ class CheckpointManager:
             json.dump(manifest, f)
 
     @classmethod
+    def _snapshot_current_state(cls, manifest: Dict[str, Any], cp_path: str) -> str:
+        """Capture current (post-change) state of tracked files so we can redo later."""
+        ts = int(time.time())
+        redo_id = f"{ts}_{uuid.uuid4().hex[:8]}_redo"
+        redo_path = os.path.join(CHECKPOINT_DIR, redo_id)
+        os.makedirs(redo_path, exist_ok=True)
+        
+        redo_manifest = {
+            "id": redo_id,
+            "timestamp": ts,
+            "name": "redo",
+            "source_checkpoint": manifest.get("id", ""),
+            "files": {},
+        }
+        
+        for path, info in manifest["files"].items():
+            action = info.get("action")
+            redo_entry: Dict[str, Any] = {"path": path}
+            
+            try:
+                if action == "create":
+                    if os.path.exists(path):
+                        backup_name = base64.urlsafe_b64encode(path.encode()).decode()
+                        backup_file = os.path.join(redo_path, backup_name)
+                        if os.path.isdir(path):
+                            shutil.copytree(path, backup_file)
+                            redo_entry["backup"] = backup_name
+                            redo_entry["backup_type"] = "dir"
+                        else:
+                            shutil.copy2(path, backup_file)
+                            redo_entry["backup"] = backup_name
+                            redo_entry["backup_type"] = "file"
+                        redo_entry["action"] = "restore"
+                    else:
+                        redo_entry["action"] = "delete"
+                elif action == "modify":
+                    if os.path.exists(path):
+                        backup_name = base64.urlsafe_b64encode(path.encode()).decode()
+                        backup_file = os.path.join(redo_path, backup_name)
+                        if os.path.isdir(path):
+                            shutil.copytree(path, backup_file)
+                            redo_entry["backup"] = backup_name
+                            redo_entry["backup_type"] = "dir"
+                        else:
+                            shutil.copy2(path, backup_file)
+                            redo_entry["backup"] = backup_name
+                            redo_entry["backup_type"] = "file"
+                        redo_entry["action"] = "restore"
+                    else:
+                        redo_entry["action"] = "delete"
+            except Exception as e:
+                print(f"Redo snapshot failed for {path}: {e}")
+                continue
+            
+            redo_manifest["files"][path] = redo_entry
+        
+        with open(os.path.join(redo_path, "manifest.json"), "w") as f:
+            json.dump(redo_manifest, f)
+        
+        return redo_id
+
+    @classmethod
     def restore(cls, id: str) -> Dict[str, Any]:
         cp_path = os.path.join(CHECKPOINT_DIR, id)
         manifest_path = os.path.join(cp_path, "manifest.json")
@@ -239,23 +297,30 @@ class CheckpointManager:
             
         with open(manifest_path, "r") as f:
             manifest = json.load(f)
+        
+        redo_id = None
+        try:
+            redo_id = cls._snapshot_current_state(manifest, cp_path)
+        except Exception as e:
+            print(f"Warning: failed to create redo snapshot: {e}")
             
         restored = []
         errors = []
+        skipped = []
         
-        # Process files
         for path, info in manifest["files"].items():
             try:
                 action = info.get("action")
                 if action == "create":
-                    # It was created, so delete it
                     if os.path.exists(path):
                         if os.path.isdir(path):
                             shutil.rmtree(path)
                         else:
                             os.remove(path)
+                        restored.append(path)
+                    else:
+                        skipped.append(path)
                 elif action == "modify" and "backup" in info:
-                    # It was modified/deleted, restore from backup
                     backup_path = os.path.join(cp_path, info["backup"])
                     backup_type = info.get("backup_type") or "file"
                     if os.path.exists(backup_path):
@@ -270,16 +335,109 @@ class CheckpointManager:
                                 os.makedirs(parent, exist_ok=True)
                             shutil.copytree(backup_path, path)
                         else:
-                            # Ensure dir exists
                             d = os.path.dirname(path)
                             if d and not os.path.exists(d):
                                 os.makedirs(d, exist_ok=True)
                             shutil.copy2(backup_path, path)
-                restored.append(path)
+                        restored.append(path)
+                    else:
+                        errors.append(f"{path}: backup file missing")
+                elif action == "modify" and "backup" not in info:
+                    skipped.append(path)
             except Exception as e:
                 errors.append(f"{path}: {e}")
-                
-        return {"ok": True, "restored": len(restored), "errors": errors}
+        
+        if redo_id:
+            if id not in cls._redo_stack:
+                cls._redo_stack.append(id)
+
+        return {
+            "ok": True,
+            "restored": len(restored),
+            "restored_files": restored,
+            "skipped": len(skipped),
+            "errors": errors,
+            "redo_id": redo_id,
+            "can_redo": bool(redo_id),
+        }
+
+    @classmethod
+    def redo(cls, checkpoint_id: str) -> Dict[str, Any]:
+        """Re-apply changes that were previously reverted for a given checkpoint."""
+        redo_entries = []
+        if not os.path.exists(CHECKPOINT_DIR):
+            raise ValueError("No redo data found")
+        
+        for name in os.listdir(CHECKPOINT_DIR):
+            mp = os.path.join(CHECKPOINT_DIR, name, "manifest.json")
+            if os.path.exists(mp):
+                try:
+                    with open(mp, "r") as f:
+                        data = json.load(f)
+                    if data.get("source_checkpoint") == checkpoint_id:
+                        redo_entries.append(data)
+                except Exception:
+                    pass
+        
+        if not redo_entries:
+            raise ValueError(f"No redo data for checkpoint {checkpoint_id}")
+        
+        redo_entries.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+        redo = redo_entries[0]
+        redo_id = redo["id"]
+        redo_path = os.path.join(CHECKPOINT_DIR, redo_id)
+        
+        restored = []
+        errors = []
+        
+        for path, info in redo["files"].items():
+            try:
+                action = info.get("action")
+                if action == "restore" and "backup" in info:
+                    backup_path = os.path.join(redo_path, info["backup"])
+                    backup_type = info.get("backup_type") or "file"
+                    if os.path.exists(backup_path):
+                        if backup_type == "dir":
+                            if os.path.exists(path):
+                                if os.path.isdir(path):
+                                    shutil.rmtree(path)
+                                else:
+                                    os.remove(path)
+                            parent = os.path.dirname(path)
+                            if parent and not os.path.exists(parent):
+                                os.makedirs(parent, exist_ok=True)
+                            shutil.copytree(backup_path, path)
+                        else:
+                            d = os.path.dirname(path)
+                            if d and not os.path.exists(d):
+                                os.makedirs(d, exist_ok=True)
+                            shutil.copy2(backup_path, path)
+                        restored.append(path)
+                elif action == "delete":
+                    if os.path.exists(path):
+                        if os.path.isdir(path):
+                            shutil.rmtree(path)
+                        else:
+                            os.remove(path)
+                        restored.append(path)
+            except Exception as e:
+                errors.append(f"{path}: {e}")
+        
+        if checkpoint_id in cls._redo_stack:
+            cls._redo_stack.remove(checkpoint_id)
+        
+        try:
+            if os.path.exists(redo_path):
+                shutil.rmtree(redo_path)
+        except Exception:
+            pass
+        
+        return {
+            "ok": True,
+            "restored": len(restored),
+            "restored_files": restored,
+            "errors": errors,
+        }
 
 async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     p = str(args.get("path") or ".").strip()
@@ -690,7 +848,6 @@ async def checkpoint_restore(args: Dict[str, Any]) -> Dict[str, Any]:
     if not cid:
         cid = CheckpointManager.get_active()
         if not cid:
-             # Try to find latest
              checkpoints = CheckpointManager.list_checkpoints()
              if checkpoints:
                  cid = checkpoints[0]["id"]
@@ -699,6 +856,13 @@ async def checkpoint_restore(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("No checkpoint specified or found")
         
     res = CheckpointManager.restore(cid)
+    return res
+
+async def checkpoint_redo(args: Dict[str, Any]) -> Dict[str, Any]:
+    cid = str(args.get("id") or args.get("checkpoint_id") or "")
+    if not cid:
+        raise ValueError("No checkpoint ID specified for redo")
+    res = CheckpointManager.redo(cid)
     return res
 
 async def checkpoint_list(args: Dict[str, Any]) -> Dict[str, Any]:

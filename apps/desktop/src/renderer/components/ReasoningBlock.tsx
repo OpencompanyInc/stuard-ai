@@ -8,7 +8,6 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { convertLatexDelims, escapeCurrencyDollars } from "../utils/text";
 
-// Normalize markdown spacing for cleaner rendering
 function normalizeMarkdownSpacing(input: string): string {
     const raw = String(input || '').replace(/\r\n/g, '\n');
     const parts = raw.split('```');
@@ -26,11 +25,10 @@ interface ReasoningBlockProps {
     isOpen: boolean;
     onToggle: () => void;
     isComplete?: boolean;
-    startTime?: number; // timestamp when thinking started
-    duration?: number; // pre-calculated duration in seconds (for history)
+    startTime?: number;
+    duration?: number;
 }
 
-// Format seconds to human readable
 function formatDuration(seconds: number): string {
     if (seconds < 60) return `${Math.floor(seconds)}s`;
     const mins = Math.floor(seconds / 60);
@@ -45,14 +43,11 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
     const autoCollapseRef = useRef<NodeJS.Timeout | null>(null);
     const [autoCollapsed, setAutoCollapsed] = useState(false);
 
-    // If duration is provided (history), use it directly and skip timer
     const hasPredefinedDuration = duration !== undefined && duration > 0;
 
-    // Track elapsed time (only if not pre-defined)
     useEffect(() => {
         if (isComplete || hasPredefinedDuration) return;
         
-        // Use provided startTime or create our own
         if (!internalStartRef.current) {
             internalStartRef.current = startTime || Date.now();
         }
@@ -65,7 +60,6 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
         return () => clearInterval(interval);
     }, [isComplete, startTime, hasPredefinedDuration]);
 
-    // Capture final elapsed time when complete
     useEffect(() => {
         if (isComplete && internalStartRef.current && !hasPredefinedDuration) {
             const start = internalStartRef.current;
@@ -73,7 +67,6 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
         }
     }, [isComplete, hasPredefinedDuration]);
 
-    // Auto-collapse after 4s of content flowing
     useEffect(() => {
         if (isOpen && !isComplete && !autoCollapsed && text.length > 30) {
             autoCollapseRef.current = setTimeout(() => {
@@ -84,7 +77,6 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
         return () => { if (autoCollapseRef.current) clearTimeout(autoCollapseRef.current); };
     }, [isOpen, isComplete, autoCollapsed, text, onToggle]);
 
-    // Auto-scroll when streaming
     useEffect(() => {
         if (isOpen && contentRef.current && !isComplete) {
             contentRef.current.scrollTop = contentRef.current.scrollHeight;
@@ -101,28 +93,30 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
         onToggle();
     };
 
+    const headerLabel = isComplete
+        ? `Thought for ${formatDuration(elapsed)}`
+        : `Thinking ${formatDuration(elapsed)}`;
+
     return (
         <div className="mb-2">
-            {/* Collapsed: Minimal "Thinking for Xs" chip */}
             <button
                 onClick={handleToggle}
-                className="group flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-500 transition-colors select-none"
+                className="group flex items-center gap-1.5 py-1 text-[12px] transition-colors select-none"
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 80%, transparent)' }}
             >
-                <ChevronRight 
-                    className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} 
+                <ChevronRight
+                    className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
+                    style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 50%, transparent)' }}
                 />
-                <span className="italic font-medium">
-                    {isComplete 
-                        ? `Thought for ${formatDuration(elapsed)}`
-                        : `Thinking ${formatDuration(elapsed)}`
-                    }
-                </span>
+                <span>{headerLabel}</span>
                 {!isComplete && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                    <span
+                        className="w-1.5 h-1.5 rounded-full animate-pulse"
+                        style={{ backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 60%, transparent)' }}
+                    />
                 )}
             </button>
 
-            {/* Expanded: Greyed-out streaming text */}
             <AnimatePresence initial={false}>
                 {isOpen && (
                     <motion.div
@@ -134,18 +128,24 @@ export const ReasoningBlock = ({ text, isOpen, onToggle, isComplete, startTime, 
                     >
                         <div
                             ref={contentRef}
-                            className="mt-1.5 pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
+                            className="mt-1 pl-4 max-h-36 overflow-y-auto scrollbar-none"
+                            style={{ borderLeft: '1px solid color-mix(in srgb, var(--foreground-muted, #a6a6a6) 18%, transparent)' }}
                         >
-                            <div className="text-[12px] text-neutral-400 leading-relaxed font-light prose prose-sm max-w-none prose-p:my-1 prose-headings:text-neutral-500 prose-headings:font-semibold prose-headings:text-xs prose-code:text-violet-500 prose-code:bg-violet-50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-neutral-500 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:bg-slate-800 prose-pre:text-slate-100 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px]">
+                            <div
+                                className="text-[12px] leading-relaxed font-light prose prose-sm max-w-none prose-p:my-1 prose-headings:font-semibold prose-headings:text-xs prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px]"
+                                style={{ color: 'color-mix(in srgb, var(--foreground, #fff) 55%, transparent)' }}
+                            >
                                 <ReactMarkdown
                                     remarkPlugins={[remarkMath, remarkGfm]}
                                     rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                                 >
                                     {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
                                 </ReactMarkdown>
-                                {/* Blinking cursor while streaming */}
                                 {!isComplete && (
-                                    <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
+                                    <span
+                                        className="inline-block w-[2px] h-3 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full"
+                                        style={{ backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 40%, transparent)' }}
+                                    />
                                 )}
                             </div>
                         </div>

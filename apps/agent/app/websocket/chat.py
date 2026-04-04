@@ -211,6 +211,13 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                     evt.pop("type", None)
                     await session.progress("tool_event", evt, request_id=rid)
 
+                elif ctype in ("subagent_event", "subagent_question", "subagent_answer", "subagent_complete"):
+                    # Relay subagent protocol messages to the desktop client.
+                    # The desktop UI uses these for richer task lifecycle updates.
+                    payload = dict(cdata)
+                    payload["type"] = ctype
+                    await session.send_json(payload, request_id=rid)
+
                 elif ctype == "error":
                     logger.warning("cloud_error message=%s", cdata.get("message"))
                     await session.send_json({"type": "error", "message": cdata.get("message") or "cloud error"}, request_id=rid)

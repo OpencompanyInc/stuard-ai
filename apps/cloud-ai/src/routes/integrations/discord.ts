@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
+import { pushOAuthTokensToVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -241,6 +242,8 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         res.end();
         return true;
       }
+      // Auto-sync OAuth tokens to running VM (fire-and-forget)
+      pushOAuthTokensToVM(userId).catch(() => {});
       // Include the bot's user ID in the redirect so the frontend can show a "Chat with bot" link
       const botClient = await getDiscordBotClientSafe();
       const botUserId = botClient?.user?.id || DISCORD_CLIENT_ID || '';

@@ -2,6 +2,13 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
 import { Send, Loader2, MessageSquare, RotateCcw } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { Shimmer } from './ai-elements/Shimmer';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from './ai-elements/ChainOfThought';
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
 
@@ -13,7 +20,17 @@ interface CloudChatPanelProps {
 type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
+  reasoning?: string;
+  toolCalls?: Array<{ tool: string; status: string; args?: any; result?: any }>;
 };
+
+function humanizeToolName(tool: string): string {
+  return tool
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+}
 
 async function sendAgentChat(
   message: string,
@@ -48,9 +65,97 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Streaming state (from VM stream mirror via IPC)
+  const [streamText, setStreamText] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [isReasoning, setIsReasoning] = useState(false);
+  const [streamTools, setStreamTools] = useState<Array<{ tool: string; status: string }>>([]);
+  const streamReceivedFinal = useRef(false);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, loading, streamText, streamReasoning, streamTools]);
+
+  // Listen for VM stream mirror events via IPC
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onVMStreamEvent?.((event: any) => {
+      if (!event?.vmMirror) return;
+
+      if (event.type === 'progress') {
+        const ev = event.event;
+        const data = event.data || {};
+
+        switch (ev) {
+          case 'start':
+            // Stream starting — clear any previous stream state
+            setStreamText('');
+            setStreamReasoning('');
+            setStreamTools([]);
+            setIsReasoning(false);
+            break;
+
+          case 'delta':
+            if (data.text) {
+              setStreamText(prev => prev + data.text);
+            }
+            break;
+
+          case 'reasoning_start':
+          case 'reasoning':
+            setIsReasoning(true);
+            if (data.text) {
+              setStreamReasoning(prev => prev + data.text);
+            }
+            break;
+
+          case 'reasoning_end':
+            setIsReasoning(false);
+            break;
+
+          case 'tool_event':
+            if (data.tool) {
+              setStreamTools(prev => {
+                const existing = prev.findIndex(t => t.tool === data.tool && t.status === 'called');
+                if (data.status === 'completed' && existing >= 0) {
+                  return prev.map((t, i) => i === existing ? { ...t, status: 'completed' } : t);
+                }
+                if (data.status === 'called') {
+                  return [...prev, { tool: data.tool, status: 'called' }];
+                }
+                return prev;
+              });
+            }
+            break;
+        }
+      } else if (event.type === 'final') {
+        // Streaming complete — finalize the message from stream data
+        streamReceivedFinal.current = true;
+        const finalText = event.result?.text || streamText || '';
+        const finalReasoning = streamReasoning || undefined;
+
+        if (finalText) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: finalText,
+            reasoning: finalReasoning,
+          }]);
+        }
+
+        if (event.conversationId) {
+          setConversationId(event.conversationId);
+        }
+
+        // Clear streaming state
+        setStreamText('');
+        setStreamReasoning('');
+        setStreamTools([]);
+        setIsReasoning(false);
+      } else if (event.type === 'conversation' && event.conversationId) {
+        setConversationId(event.conversationId);
+      }
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, [streamText, streamReasoning]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -59,22 +164,42 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
+    streamReceivedFinal.current = false;
+
+    // Clear stream state for new message
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setIsReasoning(false);
 
     try {
       const res = await sendAgentChat(text, conversationId || undefined);
-      if (res.ok && res.text) {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
-        if (res.conversationId) setConversationId(res.conversationId);
+
+      // Only use HTTP response as fallback if streaming didn't deliver the final message
+      if (!streamReceivedFinal.current) {
+        if (res.ok && res.text) {
+          setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
+          if (res.conversationId) setConversationId(res.conversationId);
+        } else {
+          setMessages(prev => [
+            ...prev,
+            { role: 'assistant', content: res.error || 'Failed to get a response.' },
+          ]);
+        }
       } else {
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: res.error || 'Failed to get a response.' },
-        ]);
+        // Streaming already delivered the final — just update conversationId if needed
+        if (res.conversationId) setConversationId(res.conversationId);
       }
     } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error.' }]);
+      if (!streamReceivedFinal.current) {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error.' }]);
+      }
     } finally {
       setLoading(false);
+      setStreamText('');
+      setStreamReasoning('');
+      setStreamTools([]);
+      setIsReasoning(false);
       inputRef.current?.focus();
     }
   }, [input, loading, conversationId]);
@@ -88,6 +213,8 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
     );
   }
 
+  const hasStreamContent = streamText || streamReasoning || streamTools.length > 0 || isReasoning;
+
   return (
     <div className={clsx('flex flex-col h-full', className)}>
       {/* Messages */}
@@ -100,34 +227,127 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={clsx(
-                'max-w-[85%] px-2.5 py-1.5 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap',
-                msg.role === 'user'
-                  ? 'bg-primary text-primary-fg rounded-br-sm'
-                  : 'bg-theme-card/50 border border-theme/10 text-theme-fg rounded-bl-sm',
+            <div className="max-w-[85%]">
+              {/* Reasoning block */}
+              {msg.role === 'assistant' && msg.reasoning && (
+                <ChainOfThought className="mb-1">
+                  <ChainOfThoughtHeader>
+                    <span className="text-[11px] text-theme-muted">Thought</span>
+                  </ChainOfThoughtHeader>
+                  <ChainOfThoughtContent>
+                    <ChainOfThoughtStep
+                      label="Reasoning"
+                      status="complete"
+                      isLast
+                    >
+                      <div
+                        className="scrollbar-none max-h-28 overflow-y-auto rounded-lg px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
+                        style={{
+                          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                          color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                        }}
+                      >
+                        {msg.reasoning}
+                      </div>
+                    </ChainOfThoughtStep>
+                  </ChainOfThoughtContent>
+                </ChainOfThought>
               )}
-            >
-              {msg.content}
+              <div
+                className={clsx(
+                  'px-2.5 py-1.5 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap',
+                  msg.role === 'user'
+                    ? 'bg-primary text-primary-fg rounded-br-sm'
+                    : 'bg-theme-card/50 border border-theme/10 text-theme-fg rounded-bl-sm',
+                )}
+              >
+                {msg.content}
+              </div>
             </div>
           </div>
         ))}
-        {loading && (
+
+        {/* Live streaming indicator */}
+        {loading && hasStreamContent && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%]">
+              {(isReasoning || streamReasoning || streamTools.length > 0) && (() => {
+                const allSteps = [
+                  ...(isReasoning || streamReasoning ? [{ type: 'reasoning' as const }] : []),
+                  ...streamTools.map((t, i) => ({ type: 'tool' as const, tool: t, idx: i })),
+                ];
+                return (
+                  <ChainOfThought defaultOpen className="mb-2">
+                    <ChainOfThoughtHeader>
+                      <Shimmer as="span" className="text-[11px] text-theme-muted" duration={1.8} spread={3}>
+                        Thinking...
+                      </Shimmer>
+                    </ChainOfThoughtHeader>
+                    <ChainOfThoughtContent>
+                      {allSteps.map((step, si) => {
+                        if (step.type === 'reasoning') {
+                          return (
+                            <ChainOfThoughtStep
+                              key="reasoning"
+                              label={
+                                isReasoning ? (
+                                  <Shimmer as="span" duration={2} spread={3}>Reasoning</Shimmer>
+                                ) : 'Reasoning'
+                              }
+                              status={isReasoning ? 'active' : 'complete'}
+                              isLast={si === allSteps.length - 1}
+                            >
+                              {streamReasoning ? (
+                                <div
+                                  className="scrollbar-none max-h-28 overflow-y-auto rounded-lg px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
+                                  style={{
+                                    backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                                    color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                                  }}
+                                >
+                                  {streamReasoning}
+                                </div>
+                              ) : null}
+                            </ChainOfThoughtStep>
+                          );
+                        }
+                        const t = step.tool!;
+                        return (
+                          <ChainOfThoughtStep
+                            key={`${t.tool}-${step.idx}`}
+                            label={t.status === 'completed' ? humanizeToolName(t.tool) : (
+                              <Shimmer as="span" duration={2} spread={3}>
+                                {humanizeToolName(t.tool)}
+                              </Shimmer>
+                            )}
+                            status={t.status === 'completed' ? 'complete' : 'active'}
+                            isLast={si === allSteps.length - 1}
+                          />
+                        );
+                      })}
+                    </ChainOfThoughtContent>
+                  </ChainOfThought>
+                );
+              })()}
+              {/* Live text */}
+              {streamText && (
+                <div className="bg-theme-card/50 border border-theme/10 rounded-xl rounded-bl-sm px-2.5 py-1.5 text-[11px] leading-relaxed whitespace-pre-wrap text-theme-fg">
+                  {streamText}
+                  <span className="inline-block w-1 h-3 bg-theme-muted/50 animate-pulse ml-0.5 rounded-sm" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Simple loading dots when no stream events yet */}
+        {loading && !hasStreamContent && (
           <div className="flex justify-start">
             <div className="bg-theme-card/50 border border-theme/10 rounded-xl rounded-bl-sm px-3 py-2">
               <div className="flex gap-1 items-center">
-                <span
-                  className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce"
-                  style={{ animationDelay: '0ms' }}
-                />
-                <span
-                  className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce"
-                  style={{ animationDelay: '150ms' }}
-                />
-                <span
-                  className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce"
-                  style={{ animationDelay: '300ms' }}
-                />
+                <span className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 bg-theme-muted/50 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>

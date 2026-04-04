@@ -5,7 +5,9 @@ import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
 import { getUserComputeUsage, catchUpBilling } from '../services/compute-billing';
-import { sendVMCommand, pingVMAgent } from '../services/vm-command';
+import { sendVMCommand, pingVMAgent, VM_COMMANDABLE_STATUSES } from '../services/vm-command';
+import { getDesktopWs } from '../services/vm-bridge';
+import { execLocalTool, withClientBridge } from '../tools/bridge';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -18,6 +20,100 @@ const PROVISION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 // Prevent double-click / rapid-fire provision requests per user
 const _activeProvisions = new Set<string>();
+
+/**
+ * Push all OAuth tokens to a user's reachable VM.
+ * Fire-and-forget — safe to call even if the VM isn't running.
+ */
+export async function pushOAuthTokensToVM(userId: string): Promise<void> {
+  try {
+    const engine = await getCloudEngine(userId);
+    if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) return;
+    const accounts = await listExternalAccounts(userId);
+    const tokens = accounts
+      .filter(a => a.access_token && a.access_token !== 'verified')
+      .map(a => ({
+        provider: a.provider,
+        profileLabel: a.profile_label,
+        isDefault: a.is_default,
+        accessToken: a.access_token,
+        refreshToken: a.refresh_token || null,
+        expiresAt: a.expires_at || null,
+        scopes: a.scopes || [],
+        accountEmail: a.account_email || null,
+      }));
+    if (tokens.length > 0) {
+      const result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 15_000);
+      if (!result.ok) {
+        console.warn('[oauth-sync] Auto-push to VM failed:', result.error || 'store_oauth_tokens_failed');
+      }
+    }
+  } catch (e: any) {
+    console.warn('[oauth-sync] Auto-push to VM failed:', e?.message);
+  }
+}
+
+/**
+ * Sync default browser profile (cookies) from desktop to VM.
+ * Requests cookies from the desktop's browser server via WebSocket,
+ * then pushes them to the VM's browser profile directory.
+ * Fire-and-forget — safe to call even if desktop is offline.
+ */
+export async function pushBrowserProfileToVM(userId: string): Promise<void> {
+  try {
+    const engine = await getCloudEngine(userId);
+    if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) return;
+
+    // Request cookies from desktop's browser server
+    const desktopWs = getDesktopWs(userId);
+    if (!desktopWs) {
+      console.log('[browser-sync] Desktop offline, skipping browser profile sync');
+      return;
+    }
+
+    const exportResult = await withClientBridge(desktopWs, async () => {
+      return execLocalTool(
+        'browser_use_cookies',
+        { action: 'export', session_id: 'default' },
+        undefined,
+        15_000,
+        { silent: true, noFallback: true },
+      );
+    }) as any;
+
+    if (!exportResult?.ok || !Array.isArray(exportResult?.cookies)) {
+      console.log('[browser-sync] Desktop cookie export unavailable:', exportResult?.error || 'no_cookies');
+      return;
+    }
+
+    const cookies = exportResult.cookies;
+    const result = await sendVMCommand(userId, 'sync_browser_profile', {
+      profile: 'default',
+      cookies,
+    }, 15_000);
+
+    if (result.ok) {
+      console.log(`[browser-sync] Synced ${cookies.length} cookies to VM for user ${userId}`);
+    } else {
+      console.warn('[browser-sync] Failed to sync browser profile to VM:', result.error || 'sync_browser_profile_failed');
+    }
+  } catch (e: any) {
+    console.warn('[browser-sync] Browser profile sync failed:', e?.message);
+  }
+}
+
+async function syncRuntimeStateToVM(userId: string): Promise<void> {
+  const results = await Promise.allSettled([
+    pushOAuthTokensToVM(userId),
+    pushBrowserProfileToVM(userId),
+  ]);
+
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.warn('[cloud-engine] Runtime sync task failed:', result.reason?.message || result.reason);
+    }
+  }
+}
 
 // In-memory provision progress tracking — cleared once provisioning completes
 export type ProvisionStep = 'vm_creating' | 'vm_created' | 'waiting_ip' | 'waiting_agent' | 'restoring_data' | 'syncing_agent' | 'syncing_integrations' | 'finalizing' | 'done';
@@ -297,25 +393,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
             // 3. Push OAuth tokens to VM so integrations work
             setProvisionStep(user.userId, 'syncing_integrations');
             try {
-              const accounts = await listExternalAccounts(user.userId);
-              const tokens = accounts
-                .filter(a => a.access_token && a.access_token !== 'verified')
-                .map(a => ({
-                  provider: a.provider,
-                  profileLabel: a.profile_label,
-                  isDefault: a.is_default,
-                  accessToken: a.access_token,
-                  refreshToken: a.refresh_token || null,
-                  expiresAt: a.expires_at || null,
-                  scopes: a.scopes || [],
-                  accountEmail: a.account_email || null,
-                }));
-              if (tokens.length > 0) {
-                await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
-                console.log(`[cloud-engine] Synced ${tokens.length} OAuth tokens to VM for user`, user.userId);
-              }
+              await syncRuntimeStateToVM(user.userId);
             } catch (e: any) {
-              console.warn('[cloud-engine] Post-provision OAuth sync error:', e?.message);
+              console.warn('[cloud-engine] Post-provision integration sync error:', e?.message);
             }
           } else {
             console.warn('[cloud-engine] VM not ready after provision, skipping restore for user', user.userId);
@@ -470,26 +550,11 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           console.warn('[cloud-engine] Agent data sync on start failed:', e?.message);
         }
 
-        // 3. Push OAuth tokens
+        // 3. Push OAuth tokens + browser cookies
         try {
-          const accounts = await listExternalAccounts(user.userId);
-          const tokens = accounts
-            .filter(a => a.access_token && a.access_token !== 'verified')
-            .map(a => ({
-              provider: a.provider,
-              profileLabel: a.profile_label,
-              isDefault: a.is_default,
-              accessToken: a.access_token,
-              refreshToken: a.refresh_token || null,
-              expiresAt: a.expires_at || null,
-              scopes: a.scopes || [],
-              accountEmail: a.account_email || null,
-            }));
-          if (tokens.length > 0) {
-            await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
-          }
+          await syncRuntimeStateToVM(user.userId);
         } catch (e: any) {
-          console.warn('[cloud-engine] OAuth sync on start failed:', e?.message);
+          console.warn('[cloud-engine] Integration sync on start failed:', e?.message);
         }
       } else {
         console.warn('[cloud-engine] VM not ready for restore, skipping');
@@ -792,6 +857,31 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     } catch (e: any) {
       console.error('[cloud-engine] sync-oauth error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_oauth_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/sync-browser-profile-to-vm ────────────────────
+  // Pushes the desktop browser cookie backup to the running VM browser profile
+  if (method === 'POST' && path === '/v1/cloud-engine/sync-browser-profile-to-vm') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const engine = await getCloudEngine(user.userId);
+      if (!engine || engine.status !== 'running') {
+        json(res, 409, { ok: false, error: 'engine_not_running' });
+        return true;
+      }
+      if (!getDesktopWs(user.userId)) {
+        json(res, 409, { ok: false, error: 'desktop_offline' });
+        return true;
+      }
+
+      await pushBrowserProfileToVM(user.userId);
+      json(res, 200, { ok: true });
+    } catch (e: any) {
+      console.error('[cloud-engine] sync-browser-profile error:', e?.message);
+      json(res, 500, { ok: false, error: 'sync_browser_profile_failed', message: e?.message || 'failed' });
     }
     return true;
   }

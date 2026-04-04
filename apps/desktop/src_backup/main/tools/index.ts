@@ -6,23 +6,6 @@ import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, exec
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execInvokeWorkflow, execTestRunSteps } from './handlers/workflow';
-import {
-  execBrowserGetContent,
-  execBrowserClickElement,
-  execBrowserTypeText,
-  execBrowserFindText,
-  execBrowserGetElementPosition,
-  execBrowserFindClickable,
-  execBrowserHover,
-  execBrowserSelectOption,
-  execBrowserPressKey,
-  execBrowserGetFormFields,
-  execBrowserFillForm,
-  execBrowserWaitForElement,
-  execBrowserScrollTo,
-  execBrowserGetPageInfo,
-  execBrowserExecuteScript,
-} from './handlers/browser';
 
 export * from './registry';
 export * from './types';
@@ -71,23 +54,6 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'terminal_read') return execTerminalRead(args, ctx);
       if (toolName === 'terminal_wait_for') return execTerminalWaitFor(args, ctx);
       if (toolName === 'terminal_destroy') return execTerminalDestroy(args, ctx);
-
-      // Browser tools
-      if (toolName === 'browser_get_content') return execBrowserGetContent(args, ctx);
-      if (toolName === 'browser_click_element') return execBrowserClickElement(args, ctx);
-      if (toolName === 'browser_type_text') return execBrowserTypeText(args, ctx);
-      if (toolName === 'browser_find_text') return execBrowserFindText(args, ctx);
-      if (toolName === 'browser_get_element_position') return execBrowserGetElementPosition(args, ctx);
-      if (toolName === 'browser_find_clickable') return execBrowserFindClickable(args, ctx);
-      if (toolName === 'browser_hover') return execBrowserHover(args, ctx);
-      if (toolName === 'browser_select_option') return execBrowserSelectOption(args, ctx);
-      if (toolName === 'browser_press_key') return execBrowserPressKey(args, ctx);
-      if (toolName === 'browser_get_form_fields') return execBrowserGetFormFields(args, ctx);
-      if (toolName === 'browser_fill_form') return execBrowserFillForm(args, ctx);
-      if (toolName === 'browser_wait_for_element') return execBrowserWaitForElement(args, ctx);
-      if (toolName === 'browser_scroll_to') return execBrowserScrollTo(args, ctx);
-      if (toolName === 'browser_get_page_info') return execBrowserGetPageInfo(args, ctx);
-      if (toolName === 'browser_execute_script') return execBrowserExecuteScript(args, ctx);
 
       return { ok: false, error: `unknown_electron_tool: ${toolName}` };
 

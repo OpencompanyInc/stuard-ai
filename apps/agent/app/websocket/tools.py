@@ -41,9 +41,6 @@ CLIENT_TOOLS = {
     "update_custom_ui",
     "close_custom_ui",
     "play_audio",
-    "browser_get_content",
-    "browser_click_element",
-    "browser_type_text",
     # Workflow execution tools (must run on desktop IPC)
     "invoke_workflow",
     "run_automation",

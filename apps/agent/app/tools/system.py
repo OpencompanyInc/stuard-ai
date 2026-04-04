@@ -115,10 +115,6 @@ def _collect_path_snapshot(root: str, max_entries: int = COMMAND_CHECKPOINT_MAX_
 
 
 def _start_command_checkpoint(cwd: Optional[str]) -> Optional[Dict[str, Any]]:
-    # Only checkpoint when an explicit cwd is provided.
-    # Without an explicit cwd, os.getcwd() could be the user's home dir or a
-    # PyInstaller temp dir — walking those with os.walk blocks the event loop
-    # for minutes on large directory trees (AppData, node_modules, etc.).
     if not isinstance(cwd, str) or not cwd.strip():
         return None
 
@@ -129,14 +125,20 @@ def _start_command_checkpoint(cwd: Optional[str]) -> Optional[Dict[str, Any]]:
     if not _is_safe_path(root):
         return None
 
-    snap = _collect_path_snapshot(root)
-    for fp in snap["files"].keys():
-        try:
-            CheckpointManager.record_change(fp, "modify")
-        except Exception:
-            continue
-
-    return snap
+    try:
+        snap = _collect_path_snapshot(root)
+        if snap.get("truncated"):
+            print(f"[checkpoint] Warning: directory tree at {root} was truncated, some files may not be tracked")
+        
+        for fp in snap["files"].keys():
+            try:
+                CheckpointManager.record_change(fp, "modify")
+            except Exception:
+                continue
+        return snap
+    except Exception as e:
+        print(f"[checkpoint] Failed to create command checkpoint for {root}: {e}")
+        return None
 
 
 def _finish_command_checkpoint(before: Optional[Dict[str, Any]]) -> None:
@@ -147,27 +149,49 @@ def _finish_command_checkpoint(before: Optional[Dict[str, Any]]) -> None:
     if not root:
         return
 
-    after = _collect_path_snapshot(root)
-    before_files = set(before.get("files", {}).keys())
-    after_files = set(after.get("files", {}).keys())
-    created_files = after_files - before_files
+    try:
+        after = _collect_path_snapshot(root)
+        before_files = set(before.get("files", {}).keys())
+        after_files = set(after.get("files", {}).keys())
+        created_files = after_files - before_files
 
-    before_dirs = set(before.get("dirs", set()))
-    after_dirs = set(after.get("dirs", set()))
-    created_dirs = after_dirs - before_dirs
+        before_dirs = set(before.get("dirs", set()))
+        after_dirs = set(after.get("dirs", set()))
+        created_dirs = after_dirs - before_dirs
 
-    for fp in created_files:
-        try:
-            CheckpointManager.record_change(fp, "create")
-        except Exception:
-            continue
+        modified_files = set()
+        for fp in before_files & after_files:
+            before_stat = before["files"].get(fp)
+            after_stat = after["files"].get(fp)
+            if before_stat and after_stat and before_stat != after_stat:
+                modified_files.add(fp)
 
-    # Delete deepest directories first on restore
-    for dp in sorted(created_dirs, key=len, reverse=True):
-        try:
-            CheckpointManager.record_change(dp, "create")
-        except Exception:
-            continue
+        deleted_files = before_files - after_files
+        for fp in deleted_files:
+            try:
+                CheckpointManager.record_change(fp, "modify")
+            except Exception:
+                continue
+
+        for fp in modified_files:
+            try:
+                CheckpointManager.record_change(fp, "modify")
+            except Exception:
+                continue
+
+        for fp in created_files:
+            try:
+                CheckpointManager.record_change(fp, "create")
+            except Exception:
+                continue
+
+        for dp in sorted(created_dirs, key=len, reverse=True):
+            try:
+                CheckpointManager.record_change(dp, "create")
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[checkpoint] Failed to finalize command checkpoint: {e}")
 
 
 def _append_terminal_chunk(terminal_id: str, stream: str, text: str) -> None:

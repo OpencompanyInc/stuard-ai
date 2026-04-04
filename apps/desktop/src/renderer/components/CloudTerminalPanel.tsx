@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import { supabase } from '../lib/supabaseClient';
 
 const CLOUD_AI_WS = ((window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082').replace(/^http/, 'ws');
+const TERMINAL_HEARTBEAT_MS = 20_000;
 
 interface CloudTerminalPanelProps {
   engine: { status: string; user_id?: string };
@@ -23,7 +24,6 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
   useEffect(() => {
     if (engine.status !== 'running' || !termRef.current) return;
 
-    // Init xterm
     const term = new Terminal({
       fontSize: 12,
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
@@ -39,7 +39,6 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
     term.loadAddon(fit);
     term.open(termRef.current);
 
-    // GPU-accelerated rendering
     try {
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
@@ -52,19 +51,35 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
     xtermRef.current = term;
     fitRef.current = fit;
 
-    // Connect WS to /terminal endpoint (not /ws — that's the chat handler)
     let disposed = false;
     let disposable: { dispose: () => void } | null = null;
     let resizeDisp: { dispose: () => void } | null = null;
     let resizeObs: ResizeObserver | null = null;
-    // Track WS locally so cleanup can close it even if the async IIFE
-    // hasn't assigned to wsRef yet.
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let localWs: WebSocket | null = null;
 
-    /** Safe write — no-op once the terminal has been disposed. */
     const safeWrite = (data: string) => {
       if (disposed) return;
       try { term.write(data); } catch {}
+    };
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    const startHeartbeat = (ws: WebSocket) => {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => {
+        if (!disposed && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'terminal_ping',
+            ts: Date.now(),
+          }));
+        }
+      }, TERMINAL_HEARTBEAT_MS);
     };
 
     (async () => {
@@ -75,18 +90,19 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
       } catch {}
       if (disposed) return;
 
-      // Connect to /terminal — the relay auto-opens a PTY on the VM
       const wsUrl = `${CLOUD_AI_WS}/terminal?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
       localWs = ws;
       wsRef.current = ws;
 
-      // If cleanup already ran while we were awaiting the token, close immediately.
-      if (disposed) { ws.close(); return; }
+      if (disposed) {
+        ws.close();
+        return;
+      }
 
       ws.onopen = () => {
         if (disposed) return;
-        // Terminal relay auto-opens the PTY session on connect — no need to send terminal_open
+        startHeartbeat(ws);
         safeWrite('\x1b[90mConnecting to VM terminal...\x1b[0m\r\n');
       };
 
@@ -99,6 +115,8 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
             safeWrite('\x1b[90mConnected.\x1b[0m\r\n');
           } else if (msg.type === 'terminal_data' && msg.data) {
             safeWrite(msg.data);
+          } else if (msg.type === 'terminal_pong') {
+            // Keepalive acknowledgement only.
           } else if (msg.type === 'terminal_idle_timeout') {
             safeWrite('\r\n\x1b[90m[Session timed out due to inactivity]\x1b[0m\r\n');
             setConnected(false);
@@ -109,10 +127,15 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
         } catch {}
       };
 
-      ws.onclose = () => { if (!disposed) setConnected(false); };
-      ws.onerror = () => { if (!disposed) setConnected(false); };
+      ws.onclose = () => {
+        stopHeartbeat();
+        if (!disposed) setConnected(false);
+      };
+      ws.onerror = () => {
+        stopHeartbeat();
+        if (!disposed) setConnected(false);
+      };
 
-      // Clipboard: Ctrl+V paste, Ctrl+C copy (when selected), right-click paste
       const sendInput = (text: string) => {
         if (!disposed && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'terminal_data', data: text }));
@@ -162,12 +185,9 @@ export const CloudTerminalPanel: React.FC<CloudTerminalPanelProps> = ({ engine, 
       try { disposable?.dispose(); } catch {}
       try { resizeDisp?.dispose(); } catch {}
       try { resizeObs?.disconnect(); } catch {}
-      // Close both the ref and the local reference (covers the race where
-      // the async IIFE assigned to localWs but not yet to wsRef).
+      stopHeartbeat();
       try { localWs?.close(); } catch {}
       try { wsRef.current?.close(); } catch {}
-      // Wrap term.dispose() — WebglAddon can throw _isDisposed errors
-      // during cleanup which propagate to React's error boundary.
       try { term.dispose(); } catch {}
       xtermRef.current = null;
       fitRef.current = null;

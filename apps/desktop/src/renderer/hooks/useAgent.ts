@@ -99,7 +99,8 @@ export interface ToolCall {
   result?: any;
   error?: any;
   timestamp: number;
-  description?: string; // User-friendly description of what the tool is doing
+  description?: string;
+  nested?: boolean;
 }
 
 export interface PendingMemory {
@@ -116,15 +117,23 @@ export interface PendingMemory {
 
 // Stream chunk types for interleaved display
 export type StreamChunk =
-| { type: 'text'; content: string }
-| { type: 'reasoning'; content: string }
+| { type: 'text'; content: string; nested?: boolean }
+| { type: 'reasoning'; content: string; nested?: boolean }
 | { type: 'tool'; tool: ToolCall };
 
 // Hidden state for AI context - tracks IDs and tool results that should be remembered
 // This is NOT rendered in the UI but sent to the AI for context continuity
 export interface HiddenState {
   terminals: Map<string, { terminalId: string; command: string; status: 'running' | 'exited' | 'error'; exitCode?: number; createdAt: number; }>;
-  subagents: Map<string, { taskId: string; objective: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; result?: any; createdAt: number; }>;
+  subagents: Map<string, {
+    taskId: string;
+    objective: string;
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    result?: any;
+    createdAt: number;
+    steps?: any[];
+    reasoning?: string;
+  }>;
   toolResults: Map<string, { toolCallId: string; tool: string; args: any; result: any; timestamp: number; }>;
   lastUpdated: number;
 }
@@ -214,6 +223,7 @@ interface Message {
   modifiedFiles?: string[]; // Paths of files modified during this turn
   checkpointId?: string; // Checkpoint ID for reverting file changes
   reverted?: boolean; // Whether file changes have been reverted
+  redoId?: string; // Redo ID to re-apply reverted changes
   aborted?: boolean; // Whether the message was stopped/aborted
 }
 
@@ -441,7 +451,8 @@ export function useAgent(options?: string | UseAgentOptions) {
   const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean }>>([]);
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
-  const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
+  const reasoningStartTimeRef = useRef<number | null>(null);
+  const finalizedRequestIds = useRef<Set<string>>(new Set());
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
 
@@ -963,6 +974,192 @@ export function useAgent(options?: string | UseAgentOptions) {
                 wsRef.current.send(JSON.stringify({ type: 'response', id, data: result }));
               }
             })();
+          } else if (
+            msg.type === 'subagent_event' ||
+            msg.type === 'subagent_question' ||
+            msg.type === 'subagent_answer' ||
+            msg.type === 'subagent_complete'
+          ) {
+            // Orchestrator subagent protocol messages — update hidden state for context
+            const subagentId = String(msg.subagentId || '');
+            if (subagentId) {
+              const now = Date.now();
+              updateStreamingTab(t => {
+                const subagentMap = new Map(t.hiddenState.subagents);
+                const existing = subagentMap.get(subagentId);
+                let nextToolCalls = t.currentToolCalls;
+                let nextChunks = t.currentStreamChunks;
+                if (msg.type === 'subagent_event' && msg.event === 'started') {
+                  subagentMap.set(subagentId, {
+                    taskId: subagentId,
+                    objective: msg.data?.label || msg.data?.kind || 'subagent',
+                    status: 'running',
+                    createdAt: now,
+                    steps: [],
+                    reasoning: '',
+                  });
+                } else if (msg.type === 'subagent_complete') {
+                  if (existing) {
+                    subagentMap.set(subagentId, {
+                      ...existing,
+                      status: msg.ok ? 'completed' : 'failed',
+                      result: msg.result,
+                    });
+                  }
+                } else if (msg.type === 'subagent_event' && msg.event === 'error' && existing) {
+                  subagentMap.set(subagentId, { ...existing, status: 'failed' });
+                } else if (msg.type === 'subagent_event' && msg.event === 'completed' && existing) {
+                  subagentMap.set(subagentId, { ...existing, status: 'completed' });
+                } else if (msg.type === 'subagent_event' && existing) {
+                  // Accumulate live delegation steps: reasoning, tool calls, deltas
+                  const event = msg.event;
+                  const data = msg.data || {};
+                  const steps = Array.isArray(existing.steps) ? [...existing.steps] : [];
+                  let reasoning = existing.reasoning || '';
+                  const subagentLabel = String(existing.objective || 'Subagent');
+
+                  if (event === 'reasoning' || event === 'reasoning_start') {
+                    const text = typeof data.text === 'string' ? data.text : '';
+                    if (text) {
+                      const chunkText = reasoning
+                        ? text
+                        : `${subagentLabel}\n${text}`;
+                      reasoning += text;
+                      nextChunks = [...nextChunks];
+                      const lastChunk = nextChunks[nextChunks.length - 1];
+                      if (lastChunk?.type === 'reasoning' && lastChunk.nested) {
+                        nextChunks[nextChunks.length - 1] = {
+                          type: 'reasoning',
+                          content: lastChunk.content + chunkText,
+                          nested: true,
+                        };
+                      } else {
+                        nextChunks.push({ type: 'reasoning', content: chunkText, nested: true });
+                      }
+                    }
+                  } else if (event === 'reasoning_end') {
+                    if (reasoning) {
+                      steps.push({ type: 'reasoning', content: reasoning, timestamp: now });
+                      reasoning = '';
+                    }
+                  } else if (event === 'tool_call') {
+                    steps.push({ type: 'tool_call', tool: data.tool, toolCallId: data.toolCallId, args: data.args, timestamp: now });
+                    const nestedTool = String(data.tool || '').trim();
+                    if (nestedTool) {
+                      const nestedToolId = String(data.toolCallId || `subagent:${subagentId}:${nestedTool}:${steps.length}`);
+                      const nestedDescription = `${subagentLabel}: ${humanizeToolName(nestedTool)}`;
+                      const nestedCall: ToolCall = {
+                        id: nestedToolId,
+                        tool: nestedTool,
+                        status: 'called',
+                        args: data.args,
+                        timestamp: now,
+                        description: nestedDescription,
+                        nested: true,
+                      };
+                      nextToolCalls = [...nextToolCalls];
+                      const existingNestedIdx = nextToolCalls.findIndex((tc) => tc.id === nestedToolId);
+                      if (existingNestedIdx >= 0) {
+                        nextToolCalls[existingNestedIdx] = {
+                          ...nextToolCalls[existingNestedIdx],
+                          ...nestedCall,
+                        };
+                      } else {
+                        nextToolCalls.push(nestedCall);
+                      }
+                      nextChunks = [...nextChunks];
+                      const existingChunkIdx = nextChunks.findIndex((chunk) => chunk.type === 'tool' && chunk.tool.id === nestedToolId);
+                      if (existingChunkIdx >= 0) {
+                        nextChunks[existingChunkIdx] = { type: 'tool', tool: nestedCall };
+                      } else {
+                        nextChunks.push({ type: 'tool', tool: nestedCall });
+                      }
+                    }
+                  } else if (event === 'tool_result') {
+                    // Update the matching tool_call step with its result
+                    let callIdx = -1;
+                    for (let i = steps.length - 1; i >= 0; i--) {
+                      const step = steps[i] as any;
+                      if (step?.type === 'tool_call' && step.toolCallId === data.toolCallId) {
+                        callIdx = i;
+                        break;
+                      }
+                    }
+                    if (callIdx >= 0) {
+                      steps[callIdx] = { ...steps[callIdx], result: data.result, status: 'completed' };
+                    } else {
+                      steps.push({ type: 'tool_result', tool: data.tool, toolCallId: data.toolCallId, result: data.result, timestamp: now });
+                    }
+                    const nestedTool = String(data.tool || '').trim();
+                    const nestedToolId = String(data.toolCallId || '');
+                    const toolMatch = (tc: ToolCall) =>
+                      (nestedToolId && tc.id === nestedToolId) ||
+                      (nestedTool && tc.tool === nestedTool && tc.status === 'called');
+                    const nestedStatus: ToolCall['status'] = data.result?.ok === false ? 'error' : 'completed';
+                    const nestedError = nestedStatus === 'error'
+                      ? (data.result?.error || 'failed')
+                      : undefined;
+                    if (nestedTool || nestedToolId) {
+                      nextToolCalls = nextToolCalls.map((tc) => (
+                        toolMatch(tc)
+                          ? { ...tc, status: nestedStatus, result: data.result, error: nestedError }
+                          : tc
+                      ));
+                      nextChunks = nextChunks.map((chunk) => (
+                        chunk.type === 'tool' && toolMatch(chunk.tool)
+                          ? { type: 'tool', tool: { ...chunk.tool, status: nestedStatus, result: data.result, error: nestedError } }
+                          : chunk
+                      ));
+                    }
+                  } else if (event === 'delta') {
+                    // Accumulate text on the last delta step or create a new one
+                    const lastStep = steps[steps.length - 1];
+                    if (lastStep?.type === 'delta') {
+                      steps[steps.length - 1] = { ...lastStep, content: (lastStep.content || '') + (data.text || '') };
+                    } else {
+                      steps.push({ type: 'delta', content: data.text || '', timestamp: now });
+                    }
+                  }
+
+                  subagentMap.set(subagentId, { ...existing, steps, reasoning });
+
+                  // Update the active delegate tool call with live status text
+                  const delegateIdx = t.currentToolCalls.findIndex(
+                    (tc: any) => tc.tool === 'delegate' && tc.status === 'called'
+                  );
+                  if (delegateIdx >= 0) {
+                    const updatedCalls = [...nextToolCalls];
+                    let liveStatus = '';
+                    if (event === 'tool_call') liveStatus = data.tool ? `Using ${data.tool.replace(/_/g, ' ')}` : '';
+                    else if (event === 'reasoning' || event === 'reasoning_start') liveStatus = 'Thinking…';
+                    else if (event === 'delta') liveStatus = 'Responding…';
+                    if (liveStatus) {
+                      updatedCalls[delegateIdx] = { ...updatedCalls[delegateIdx], description: liveStatus };
+                    }
+                    const updatedChunks = nextChunks.map((chunk) => (
+                      chunk.type === 'tool' && chunk.tool.id === updatedCalls[delegateIdx]?.id
+                        ? { type: 'tool' as const, tool: updatedCalls[delegateIdx] }
+                        : chunk
+                    ));
+                    return {
+                      ...t,
+                      currentToolCalls: updatedCalls,
+                      currentStreamChunks: updatedChunks,
+                      hiddenState: { ...t.hiddenState, subagents: subagentMap, lastUpdated: now },
+                    };
+                  }
+                }
+                return {
+                  ...t,
+                  currentToolCalls: nextToolCalls,
+                  currentStreamChunks: nextChunks,
+                  hiddenState: { ...t.hiddenState, subagents: subagentMap, lastUpdated: now },
+                };
+              });
+            }
+            // Forward as progress event for UI handlers
+            const evt: ProgressEvent = { event: msg.type, data: msg };
+            progressHandlersRef.current.forEach((fn) => { try { fn(evt); } catch { } });
           } else if (msg.type === 'progress') {
             const evt = msg as { event: string; data: any };
 
@@ -1108,13 +1305,14 @@ export function useAgent(options?: string | UseAgentOptions) {
                       newHiddenState.terminals = termMap;
                     }
                   }
-                  if (toolName === 'subagent_create' || toolName === 'run_subagent' || toolName === 'spawn_agent') {
-                    const taskId = result?.taskId || result?.id || args?.taskId;
+                  if (toolName === 'subagent_create' || toolName === 'run_subagent' || toolName === 'spawn_agent'
+                    || toolName === 'delegate') {
+                    const taskId = result?.taskId || result?.subagentId || result?.id || args?.taskId;
                     if (taskId) {
                       const subagentMap = new Map(t.hiddenState.subagents);
                       subagentMap.set(taskId, {
                         taskId,
-                        objective: args?.objective || args?.prompt || '',
+                        objective: args?.objective || args?.instruction || args?.prompt || '',
                         status: 'running',
                         createdAt: now,
                       });
@@ -1133,13 +1331,16 @@ export function useAgent(options?: string | UseAgentOptions) {
                       newHiddenState.terminals = termMap;
                     }
                   }
-                  if (result?.taskId && (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled')) {
+                  const completionKey = result?.taskId || result?.subagentId;
+                  if (completionKey && (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled'
+                    || (result?.ok !== undefined && toolName === 'delegate'))) {
                     const subagentMap = new Map(t.hiddenState.subagents);
-                    const existing = subagentMap.get(result.taskId);
+                    const existing = subagentMap.get(completionKey);
                     if (existing) {
-                      subagentMap.set(result.taskId, {
+                      const finalStatus = result?.ok === true ? 'completed' : result?.ok === false ? 'failed' : (result?.status || 'completed');
+                      subagentMap.set(completionKey, {
                         ...existing,
-                        status: result.status,
+                        status: finalStatus,
                         result: result?.result,
                       });
                       newHiddenState.subagents = subagentMap;
@@ -1465,11 +1666,17 @@ export function useAgent(options?: string | UseAgentOptions) {
             setStreamingAI((prev) => ({ ...prev, statusText: (Number.isFinite(pos) && pos > 0) ? `Queued (${pos})` : 'Queued' }));
             setState((s) => ({ ...s, status: 'queued' }));
           } else if (msg.type === 'final') {
+            const rid = msg.requestId || '';
+            if (rid && finalizedRequestIds.current.has(rid)) {
+              console.warn('[agent] Duplicate final ignored for requestId:', rid);
+              return;
+            }
+            if (rid) finalizedRequestIds.current.add(rid);
+
             const result = msg.result || {};
             const isAborted = msg.aborted === true || result.finishReason === 'aborted';
             const text = result.response || result.text || '';
 
-            // Calculate reasoning duration if we have a start time
             const reasoningDuration = reasoningStartTimeRef.current
               ? (Date.now() - reasoningStartTimeRef.current) / 1000
               : undefined;
@@ -1918,7 +2125,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     });
   }, [sendMessage]);
 
-  // Revert file changes made during a specific assistant message turn
   const revertFiles = useCallback(async (messageId: string): Promise<boolean> => {
     const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
     if (!tab) return false;
@@ -1930,13 +2136,14 @@ export function useAgent(options?: string | UseAgentOptions) {
       if (!(window as any).desktopAPI?.execTool) return false;
       const result = await (window as any).desktopAPI.execTool('checkpoint_restore', { id: msg.checkpointId });
       if (result?.ok) {
-        // Mark the message as reverted
         setTabs(prev => prev.map(t =>
           t.id === tab.id
             ? {
               ...t,
               messages: t.messages.map(m =>
-                m.id === messageId ? { ...m, reverted: true } : m
+                m.id === messageId
+                  ? { ...m, reverted: true, redoId: result.redo_id || undefined }
+                  : m
               )
             }
             : t
@@ -1946,6 +2153,38 @@ export function useAgent(options?: string | UseAgentOptions) {
       return false;
     } catch (e) {
       console.error('[agent] Failed to revert files:', e);
+      return false;
+    }
+  }, []);
+
+  const redoFiles = useCallback(async (messageId: string): Promise<boolean> => {
+    const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!tab) return false;
+
+    const msg = tab.messages.find(m => m.id === messageId);
+    if (!msg || !msg.checkpointId || !msg.reverted) return false;
+
+    try {
+      if (!(window as any).desktopAPI?.execTool) return false;
+      const result = await (window as any).desktopAPI.execTool('checkpoint_redo', { id: msg.checkpointId });
+      if (result?.ok) {
+        setTabs(prev => prev.map(t =>
+          t.id === tab.id
+            ? {
+              ...t,
+              messages: t.messages.map(m =>
+                m.id === messageId
+                  ? { ...m, reverted: false, redoId: undefined }
+                  : m
+              )
+            }
+            : t
+        ));
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('[agent] Failed to redo files:', e);
       return false;
     }
   }, []);
@@ -1998,8 +2237,13 @@ export function useAgent(options?: string | UseAgentOptions) {
             timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
           };
         });
-        console.log('[useAgent] Loaded', hist.length, 'messages from local agent');
-        setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+        const deduped = hist.filter((m, i) => {
+          if (i === 0) return true;
+          const prev = hist[i - 1];
+          return !(m.role === prev.role && m.text === prev.text);
+        });
+        console.log('[useAgent] Loaded', deduped.length, 'messages from local agent (deduped from', hist.length, ')');
+        setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: deduped, aiState: { ...t.aiState, model: lastModelLabel } } : t));
         loaded = true;
       }
     } catch (e) {
@@ -2041,8 +2285,13 @@ export function useAgent(options?: string | UseAgentOptions) {
                 timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
               };
             });
-            console.log('[useAgent] Loaded', hist.length, 'messages from Supabase');
-            setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+            const deduped = hist.filter((m, i) => {
+              if (i === 0) return true;
+              const prev = hist[i - 1];
+              return !(m.role === prev.role && m.text === prev.text);
+            });
+            console.log('[useAgent] Loaded', deduped.length, 'messages from Supabase (deduped from', hist.length, ')');
+            setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: deduped, aiState: { ...t.aiState, model: lastModelLabel } } : t));
           }
         }
       } catch (e) {
@@ -2169,6 +2418,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     // Edit & Revert
     editMessage,
     revertFiles,
+    redoFiles,
     // GenUI support
     activeGenUITools,
     respondToGenUI,

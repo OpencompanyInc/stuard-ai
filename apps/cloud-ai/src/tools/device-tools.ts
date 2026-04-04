@@ -65,27 +65,6 @@ export {
   read_terminal,
 } from './device/system';
 
-// Browser Interactions (Extension)
-export {
-  browser_get_content,
-  browser_click_element,
-  browser_type_text,
-  browser_find_text,
-  browser_get_element_position,
-  browser_find_clickable,
-  browser_hover,
-  browser_select_option,
-  browser_press_key,
-  browser_get_form_fields,
-  browser_fill_form,
-  browser_wait_for_element,
-  browser_scroll_to,
-  browser_get_page_info,
-  browser_upload_file,
-  browser_set_toggle,
-  browser_execute_script,
-} from './device/browser';
-
 // Interactive PTY terminal (Electron/node-pty)
 export {
   terminal_create,
@@ -166,6 +145,7 @@ export {
   delete_file,
   checkpoint_create,
   checkpoint_restore,
+  checkpoint_redo,
   checkpoint_list,
 } from './device/filesystem';
 

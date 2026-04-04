@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
+import { pushOAuthTokensToVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
@@ -177,6 +178,8 @@ export async function handleGithubRoutes(req: IncomingMessage, res: ServerRespon
         res.end();
         return true;
       }
+      // Auto-sync OAuth tokens to running VM (fire-and-forget)
+      pushOAuthTokensToVM(userId).catch(() => {});
       res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=github&profile=${encodeURIComponent(profileLabel)}`, 'Cache-Control': 'no-store' });
       res.end();
       return true;

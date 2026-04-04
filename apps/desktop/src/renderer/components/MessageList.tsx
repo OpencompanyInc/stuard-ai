@@ -13,6 +13,7 @@ import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 import { DiscoverTips } from '../workflows/components/DiscoverTips';
 import { useDiscovery } from '../hooks/useDiscovery';
+import { Shimmer } from './ai-elements/Shimmer';
 
 // Performance constants
 const INITIAL_MESSAGES_TO_RENDER = 10; // Start with last 10 messages
@@ -62,6 +63,7 @@ interface MessageListProps {
   onGenUIResponse?: (component: string, result: any) => void;
   onEditMessage?: (messageId: string, newText: string) => void;
   onRevertFiles?: (messageId: string) => void;
+  onRedoFiles?: (messageId: string) => void;
 }
 
 // Format seconds to human readable
@@ -138,11 +140,11 @@ const ThinkingIndicator: React.FC<{
         <ChevronRight
           className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
         />
-        <span className="italic font-medium">
-          {hasReasoning
-            ? (expanded ? `Thinking ${formatDuration(elapsed)}` : `Thinking ${formatDuration(elapsed)}`)
-            : `Thinking ${formatDuration(elapsed)}`
-          }
+        <span className="inline-flex items-center gap-1.5 italic font-medium">
+          <Shimmer as="span" duration={1.8} spread={3}>
+            Planning next moves
+          </Shimmer>
+          <span className="text-neutral-400">{formatDuration(elapsed)}</span>
         </span>
         <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
       </button>
@@ -231,6 +233,7 @@ const MessageList: React.FC<MessageListProps> = ({
   onGenUIResponse,
   onEditMessage,
   onRevertFiles,
+  onRedoFiles,
 }) => {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -376,6 +379,7 @@ const MessageList: React.FC<MessageListProps> = ({
               checkpointId={m.checkpointId}
               reverted={m.reverted}
               onRevertFiles={onRevertFiles}
+              onRedoFiles={onRedoFiles}
             />
           ))}
           {/* Streaming response with interleaved content */}
@@ -421,4 +425,3 @@ const MessageList: React.FC<MessageListProps> = ({
 };
 
 export default MessageList;
-

@@ -160,21 +160,8 @@ async function checkPythonAvailable(): Promise<boolean> {
   return ok;
 }
 
-async function checkBrowserUseInstalled(): Promise<boolean> {
-  const { ok } = await runCmd(getPythonCmd(), ['-c', 'import playwright; print("ok")'], 15000);
-  return ok;
-}
-
-async function checkPlaywrightChromium(): Promise<boolean> {
-  // Verify the Chromium binary actually exists, not just that the pip package imports
-  const { ok } = await runCmd(getPythonCmd(), ['-c',
-    'from playwright.sync_api import sync_playwright\n' +
-    'p = sync_playwright().start()\n' +
-    'exe = p.chromium.executable_path\n' +
-    'p.stop()\n' +
-    'import os; assert os.path.exists(exe), f"Missing: {exe}"\n' +
-    'print("ok")',
-  ], 20000);
+async function checkBrowserServerDeps(): Promise<boolean> {
+  const { ok } = await runCmd(getPythonCmd(), ['-c', 'import aiohttp; print("ok")'], 10000);
   return ok;
 }
 
@@ -182,75 +169,29 @@ async function checkPlaywrightChromium(): Promise<boolean> {
 let _installCheckResult: { ok: boolean; error?: string; step?: string } | null = null;
 
 export async function installBrowserUse(): Promise<{ ok: boolean; error?: string; step?: string }> {
-  // Return cached result if we already verified everything is installed
   if (_installCheckResult?.ok) return { ok: true };
 
-  // If we have a packaged binary, we only need to ensure Chromium is available
-  // (the binary bundles Python + playwright + aiohttp already)
   const exe = getServerExecutable();
+
+  // Packed binary bundles Python + aiohttp — no external deps needed.
+  // The browser server uses system Chrome/Edge via CDP, not Playwright's Chromium.
   if (exe.isPacked) {
-    console.log('[browser-use] Using packaged binary — skipping Python/pip checks');
-    // Still need Chromium browser binary (not bundled due to size)
-    const hasPython = await checkPythonAvailable();
-    if (hasPython) {
-      const hasChromium = await checkPlaywrightChromium();
-      if (!hasChromium) {
-        // Try to install Chromium using the bundled playwright inside the binary
-        const pw = await runCmd(exe.binary, ['--install-chromium'], 300000);
-        if (!pw.ok) {
-          // Fall back to system Python's playwright
-          const pwFallback = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
-          if (!pwFallback.ok) {
-            return { ok: false, error: 'Chromium browser not installed. Run: python -m playwright install chromium', step: 'playwright' };
-          }
-        }
-      }
-    }
     _installCheckResult = { ok: true };
     return { ok: true };
   }
 
-  // Fallback: Python script mode — need full Python + pip setup
+  // Python script mode — need Python + aiohttp
   if (!(await checkPythonAvailable())) {
     return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.', step: 'python' };
   }
 
-  // Check if pip packages are installed
-  const hasPipPackages = await checkBrowserUseInstalled();
-
-  if (!hasPipPackages) {
-    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'playwright', 'aiohttp', 'cryptography'], 300000);
+  if (!(await checkBrowserServerDeps())) {
+    const pip = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', 'aiohttp'], 120000);
     if (!pip.ok) {
-      return { ok: false, error: `Failed to install dependencies: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
+      return { ok: false, error: `Failed to install aiohttp: ${pip.stderr.slice(0, 300)}`, step: 'pip' };
     }
-  }
-
-  // Always verify Chromium binary exists (pip package can be installed without the browser)
-  const hasChromium = await checkPlaywrightChromium();
-  if (!hasChromium) {
-    let pw = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
-    if (!pw.ok) {
-      // If the playwright driver is corrupted (missing cli.js), force reinstall the pip package
-      const combinedErr = (pw.stderr + pw.stdout).toLowerCase();
-      if (combinedErr.includes('cannot find module') || combinedErr.includes('cli.js') || combinedErr.includes('err_module')) {
-        console.warn('[browser-use] Playwright driver corrupted, force-reinstalling...');
-        await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 30000);
-        const reinstall = await runCmd(getPythonCmd(), ['-m', 'pip', 'install', '--force-reinstall', 'playwright'], 300000);
-        if (!reinstall.ok) {
-          return { ok: false, error: `Failed to reinstall playwright: ${reinstall.stderr.slice(0, 300)}`, step: 'playwright-reinstall' };
-        }
-        pw = await runCmd(getPythonCmd(), ['-m', 'playwright', 'install', 'chromium'], 300000);
-        if (!pw.ok) {
-          return { ok: false, error: `Failed to install Chromium after reinstall: ${pw.stderr.slice(0, 300)}`, step: 'playwright' };
-        }
-      } else {
-        return { ok: false, error: `Failed to install Chromium browser: ${pw.stderr.slice(0, 300)}`, step: 'playwright' };
-      }
-    }
-    // Verify it actually worked
-    const verify = await checkPlaywrightChromium();
-    if (!verify) {
-      return { ok: false, error: 'Chromium browser binary not found after install. Try running: python -m playwright install chromium', step: 'playwright-verify' };
+    if (!(await checkBrowserServerDeps())) {
+      return { ok: false, error: 'aiohttp not available after install. Check your Python environment.', step: 'pip-verify' };
     }
   }
 
@@ -259,15 +200,9 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
 }
 
 export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: string }> {
-  // Clear cached install check so next setup actually verifies
   _installCheckResult = null;
 
   await stopAllBrowserUseServers();
-
-  const hasPython = await checkPythonAvailable();
-  if (!hasPython) return { ok: true };
-
-  const pip1 = await runCmd(getPythonCmd(), ['-m', 'pip', 'uninstall', '-y', 'playwright'], 60000);
 
   const profileDir = getProfileRootDir();
   try {
@@ -275,10 +210,6 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
       fs.rmSync(profileDir, { recursive: true, force: true });
     }
   } catch {}
-
-  if (!pip1.ok) {
-    return { ok: false, error: 'Failed to uninstall packages.' };
-  }
 
   return { ok: true };
 }
@@ -462,8 +393,8 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
       earlyStderr += msg + '\n';
     });
 
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 500));
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 200));
 
       if (!runtime.process || runtime.process.exitCode !== null) {
         const errMsg = earlyStderr.trim().slice(0, 400) || 'Server crashed on startup';
@@ -477,7 +408,7 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
       }
     }
 
-    const errMsg = earlyStderr.trim().slice(0, 400) || 'Server did not respond within 15 seconds';
+    const errMsg = earlyStderr.trim().slice(0, 400) || 'Server did not respond within 10 seconds';
     return { ok: false, error: errMsg };
   } catch (err: any) {
     return { ok: false, error: err.message || 'Failed to start browser server' };
@@ -486,6 +417,23 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
 
 export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok: boolean }> {
   const runtime = await getRuntime(sessionId);
+
+  // Ask the server to close Chrome gracefully before we kill the process.
+  // Without this, TerminateProcess (Windows) kills the server instantly and
+  // the Chrome child process is orphaned.
+  if (runtime.ready && runtime.process && !runtime.process.killed) {
+    try {
+      await browserUseFetch('/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        timeoutMs: 4000,
+      }, sessionId);
+    } catch {}
+    // Give Chrome a moment to exit after Browser.close
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
   if (runtime.process && !runtime.process.killed) {
     try { runtime.process.kill(); } catch {}
     runtime.process = null;
@@ -496,14 +444,45 @@ export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok:
 }
 
 async function stopAllBrowserUseServers(): Promise<void> {
+  // Send /close to all servers in parallel so Chrome instances shut down concurrently
   await Promise.all(Array.from(browserUseRuntimes.values()).map(async (runtime) => {
+    if (runtime.ready && runtime.process && !runtime.process.killed) {
+      try {
+        const headers = new Headers();
+        headers.set(BROWSER_USE_AUTH_HEADER, BROWSER_USE_AUTH_TOKEN);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+          await fetch(`${getBrowserUseHost(runtime)}/close`, {
+            method: 'POST',
+            headers,
+            body: '{}',
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {}
+    }
+  }));
+
+  // Brief wait for Chrome processes to exit
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Now force-kill any remaining server processes
+  for (const runtime of browserUseRuntimes.values()) {
     if (runtime.process && !runtime.process.killed) {
       try { runtime.process.kill(); } catch {}
     }
     runtime.process = null;
     runtime.ready = false;
     runtime.setupPromise = null;
-  }));
+  }
+}
+
+/** Gracefully shut down all browser servers and their Chrome instances. */
+export async function shutdownAllBrowserUseServers(): Promise<void> {
+  await stopAllBrowserUseServers();
 }
 
 async function isBrowserUseAlive(sessionId = 'default'): Promise<boolean> {
@@ -631,7 +610,7 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
   }
 
   const hasPython = await checkPythonAvailable();
-  const installed = hasPython ? await checkBrowserUseInstalled() : false;
+  const installed = hasPython ? await checkBrowserServerDeps() : false;
 
   return {
     ok: true,
@@ -735,6 +714,7 @@ export async function execBrowserUseClick(args: any, _ctx: RouterContext): Promi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text,
         exact: args?.exact,
@@ -755,6 +735,7 @@ export async function execBrowserUseType(args: any, _ctx: RouterContext): Promis
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text ?? '',
         clear: args?.clear,
@@ -779,6 +760,7 @@ export async function execBrowserUsePressKey(args: any, _ctx: RouterContext): Pr
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         key,
+        elementId: args?.elementId,
         selector: args?.selector,
       }),
     }, sessionId);
@@ -814,6 +796,7 @@ export async function execBrowserUseContent(args: any, _ctx: RouterContext): Pro
       body: JSON.stringify({
         mode: args?.mode,
         max_length: args?.max_length,
+        viewport_only: args?.viewport_only,
         wait_for_selector: args?.wait_for_selector,
         wait_timeout: args?.wait_timeout,
       }),
@@ -890,6 +873,7 @@ export async function execBrowserUseHover(args: any, _ctx: RouterContext): Promi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text,
         timeout: args?.timeout,
@@ -909,6 +893,7 @@ export async function execBrowserUseSelectOption(args: any, _ctx: RouterContext)
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        elementId: args?.elementId,
         selector: args?.selector,
         value: args?.value,
         label: args?.label,
@@ -931,6 +916,7 @@ export async function execBrowserUseGetDropdownOptions(args: any, _ctx: RouterCo
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        elementId: args?.elementId,
         selector: args?.selector,
         timeout: args?.timeout,
       }),
@@ -951,6 +937,10 @@ export async function execBrowserUseGetInteractiveElements(args: any, _ctx: Rout
       body: JSON.stringify({
         wait_for_selector: args?.wait_for_selector,
         wait_timeout: args?.wait_timeout,
+        viewport_only: args?.viewport_only,
+        include_selectors: args?.include_selectors,
+        include_forms: args?.include_forms,
+        max_elements: args?.max_elements,
       }),
       timeoutMs: 15000,
     }, sessionId);

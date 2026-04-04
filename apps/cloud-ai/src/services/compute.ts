@@ -130,6 +130,11 @@ STUARD_VM_AGENT_URL=http://127.0.0.1:7400
 DISPLAY=:99
 TZ=${userTimezone || 'UTC'}
 STUARD_USER_TIMEZONE=${userTimezone || 'UTC'}
+CHROME_PATH=/usr/bin/chromium
+STUARD_BROWSER_MODE=headless
+STUARD_BROWSER_HOST=127.0.0.1
+STUARD_BROWSER_PORT=18082
+STUARD_BROWSER_PROFILE_DIR=/home/stuard/browser-profiles
 ENVEOF
 
 # Also write to /etc/environment so interactive shells see them
@@ -484,26 +489,43 @@ PYEOF
     fi
     echo "[stuard-bg] Python agent setup complete"
 
-    # Start browser_use_server.py in headless mode for browser automation
+    # Start browser server (CDP-based, no Playwright) in headless mode
     if [ -f "$PYAGENT_PATH/browser_use_server.py" ]; then
-      # Install playwright + chromium for headless browser support
-      "$PYAGENT_PATH/venv/bin/pip" install --quiet --no-cache-dir playwright browser-use 2>&1 | tail -3
-      "$PYAGENT_PATH/venv/bin/python" -m playwright install chromium 2>&1 | tail -3
-      "$PYAGENT_PATH/venv/bin/python" -m playwright install-deps chromium 2>&1 | tail -3
+      # Browser server uses pure CDP with system chromium — no Playwright needed.
+      # Only requires aiohttp + cryptography (already in requirements).
+      # Ensure the default browser profile directory exists.
+      mkdir -p /home/stuard/browser-profiles/default
+      chown -R stuard:stuard /home/stuard/browser-profiles
 
-      cat > /etc/systemd/system/stuard-browser-use.service <<'BUEOF'
+      # Verify chromium is available for the CDP client
+      CHROME_BIN=""
+      for bin in chromium chromium-browser google-chrome google-chrome-stable; do
+        if command -v "$bin" >/dev/null 2>&1; then
+          CHROME_BIN="$(command -v "$bin")"
+          break
+        fi
+      done
+      if [ -z "$CHROME_BIN" ]; then
+        echo "[stuard-bg] WARNING: No Chrome/Chromium binary found — browser tools will not work"
+      else
+        echo "[stuard-bg] Chrome/Chromium found at $CHROME_BIN"
+      fi
+
+      cat > /etc/systemd/system/stuard-browser-use.service <<BUEOF
 [Unit]
-Description=Stuard Browser Use Server (headless)
-After=stuard-python-agent.service
+Description=Stuard Browser Server (headless CDP)
+After=stuard-python-agent.service stuard-xvfb.service
 Wants=stuard-python-agent.service
 
 [Service]
 Type=simple
 EnvironmentFile=/opt/stuard/env
 Environment=DISPLAY=:99
-Environment=BROWSER_USE_HOST=127.0.0.1
-Environment=BROWSER_USE_PORT=18082
-Environment=BROWSER_USE_MODE=headless
+Environment=CHROME_PATH=\${CHROME_BIN:-/usr/bin/chromium}
+Environment=STUARD_BROWSER_MODE=headless
+Environment=STUARD_BROWSER_HOST=127.0.0.1
+Environment=STUARD_BROWSER_PORT=18082
+Environment=STUARD_BROWSER_PROFILE_DIR=/home/stuard/browser-profiles
 ExecStart=/opt/stuard/python-agent/venv/bin/python browser_use_server.py
 WorkingDirectory=/opt/stuard/python-agent
 User=stuard
@@ -520,7 +542,7 @@ BUEOF
       systemctl daemon-reload
       systemctl enable stuard-browser-use
       systemctl start stuard-browser-use
-      echo "[stuard-bg] Browser use server started on :18082 (headless)"
+      echo "[stuard-bg] Browser server started on :18082 (headless CDP, chrome=$CHROME_BIN)"
     fi
   else
     echo "[stuard-bg] Warning: Python agent not available"

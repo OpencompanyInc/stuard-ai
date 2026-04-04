@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
+const TERMINAL_HEARTBEAT_MS = 20_000;
 
 /**
  * WebSocket hook for cloud terminal I/O.
@@ -25,11 +26,32 @@ export function useCloudTerminal() {
     const wsUrl = CLOUD_API_URL.replace(/^http/, 'ws') + `/terminal?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+    let heartbeatTimer: number | null = null;
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    const startHeartbeat = () => {
+      stopHeartbeat();
+      heartbeatTimer = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'terminal_ping',
+            ts: Date.now(),
+          }));
+        }
+      }, TERMINAL_HEARTBEAT_MS);
+    };
 
     ws.onopen = () => {
       // The terminal relay authenticates + opens the PTY automatically.
       // Keep these values around for future protocol expansion if needed.
       void opts;
+      startHeartbeat();
     };
 
     ws.onmessage = (ev) => {
@@ -40,6 +62,8 @@ export function useCloudTerminal() {
           setSessionId(msg.sessionId || msg.terminalId || null);
         } else if (msg.type === 'terminal_data' && onDataRef.current) {
           onDataRef.current(msg.data);
+        } else if (msg.type === 'terminal_pong') {
+          // Keepalive acknowledgement only.
         } else if (msg.type === 'terminal_idle_timeout' || msg.type === 'terminal_closed') {
           setConnected(false);
           onClosedRef.current?.();
@@ -50,16 +74,19 @@ export function useCloudTerminal() {
     };
 
     ws.onclose = () => {
+      stopHeartbeat();
       setConnected(false);
       setSessionId(null);
       onClosedRef.current?.();
     };
 
     ws.onerror = () => {
+      stopHeartbeat();
       setConnected(false);
     };
 
     return () => {
+      stopHeartbeat();
       ws.close();
       if (wsRef.current === ws) wsRef.current = null;
     };

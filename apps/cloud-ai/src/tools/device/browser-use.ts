@@ -1,6 +1,66 @@
 import { z } from 'zod';
 import { makeLocalTool } from './shared';
 
+const browserViewportSchema = z.object({
+  width: z.number(),
+  height: z.number(),
+  scrollX: z.number(),
+  scrollY: z.number(),
+  pageWidth: z.number(),
+  pageHeight: z.number(),
+  topRatio: z.number(),
+  bottomRatio: z.number(),
+  atTop: z.boolean(),
+  atBottom: z.boolean(),
+});
+
+const browserScrollContainerSchema = z.object({
+  scrollTop: z.number(),
+  scrollLeft: z.number(),
+  scrollHeight: z.number(),
+  scrollWidth: z.number(),
+  clientHeight: z.number(),
+  clientWidth: z.number(),
+  atTop: z.boolean(),
+  atBottom: z.boolean(),
+});
+
+const interactiveElementSchema = z.object({
+  index: z.number(),
+  elementId: z.string(),
+  controlType: z.string(),
+  tag: z.string(),
+  selector: z.string().optional(),
+  type: z.string().optional(),
+  role: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  label: z.string().optional(),
+  text: z.string().optional(),
+  placeholder: z.string().optional(),
+  value: z.string().optional(),
+  selectedText: z.string().optional(),
+  popupRole: z.string().optional(),
+  optionCount: z.number().optional(),
+  href: z.string().optional(),
+  checked: z.boolean().optional(),
+  expanded: z.boolean().optional(),
+  disabled: z.boolean().optional(),
+  required: z.boolean().optional(),
+  readonly: z.boolean().optional(),
+  accept: z.string().optional(),
+  multiple: z.boolean().optional(),
+  iconOnly: z.boolean().optional(),
+});
+
+const interactiveFormSchema = z.object({
+  selector: z.string().optional(),
+  action: z.string().optional(),
+  method: z.string().optional(),
+  name: z.string().optional(),
+  fieldElementIds: z.array(z.string()).optional(),
+});
+
 // ─── browser_use_status ─────────────────────────────────────────────────────
 
 export const browser_use_status = makeLocalTool(
@@ -96,8 +156,9 @@ export const browser_use_navigate = makeLocalTool(
 
 export const browser_use_click = makeLocalTool(
   'browser_use_click',
-  'Click an element on the current page. Identify by CSS selector or visible text. For best results, call browser_use_get_interactive_elements first to discover available elements and their exact selectors. Uses multiple click strategies including Playwright native click, text matching, role-based matching, and label matching for maximum reliability.',
+  'Click an element on the current page. Prefer passing elementId from browser_use_get_interactive_elements for the leanest, most reliable targeting. CSS selector and visible text are still supported as fallbacks.',
   z.object({
+    elementId: z.string().optional().describe('Element ID returned by browser_use_get_interactive_elements'),
     selector: z.string().optional().describe('CSS selector of the element to click'),
     text: z.string().optional().describe('Visible text of the element to click (alternative to selector)'),
     exact: z.boolean().optional().describe('Require exact text match when using text (default: false)'),
@@ -106,6 +167,7 @@ export const browser_use_click = makeLocalTool(
   z.object({
     ok: z.boolean(),
     clicked: z.string().optional(),
+    elementId: z.string().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -116,8 +178,9 @@ export const browser_use_click = makeLocalTool(
 
 export const browser_use_type = makeLocalTool(
   'browser_use_type',
-  'Type text into an input field or the active element. Can clear existing content before typing. Works with React, Vue, Angular and other frameworks. For best results, specify a CSS selector (use browser_use_get_interactive_elements to discover them). If no selector is given, types into the currently focused element.',
+  'Type text into an input field or the active element. Prefer elementId from browser_use_get_interactive_elements so you can target the current viewport snapshot without hauling full selectors around. If no target is given, types into the currently focused element.',
   z.object({
+    elementId: z.string().optional().describe('Element ID returned by browser_use_get_interactive_elements'),
     selector: z.string().optional().describe('CSS selector of the input field (if omitted, types into focused element)'),
     text: z.string().describe('Text to type'),
     clear: z.boolean().optional().describe('Clear existing content before typing (default: true)'),
@@ -126,6 +189,7 @@ export const browser_use_type = makeLocalTool(
   z.object({
     ok: z.boolean(),
     typed: z.number().optional(),
+    elementId: z.string().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -136,14 +200,16 @@ export const browser_use_type = makeLocalTool(
 
 export const browser_use_press_key = makeLocalTool(
   'browser_use_press_key',
-  'Press a keyboard key in the browser (for example Enter, Tab, Escape, ArrowDown). Optionally focus an element first using a CSS selector.',
+  'Press a keyboard key in the browser (for example Enter, Tab, Escape, ArrowDown). Optionally focus an element first using elementId or a CSS selector.',
   z.object({
     key: z.string().describe('Key to press, for example "Enter", "Tab", "Escape", "ArrowDown"'),
+    elementId: z.string().optional().describe('Optional element ID to focus before pressing the key'),
     selector: z.string().optional().describe('Optional CSS selector to focus before pressing the key'),
   }),
   z.object({
     ok: z.boolean(),
     key: z.string().optional(),
+    elementId: z.string().optional(),
     error: z.string().optional(),
   }),
   10000,
@@ -176,10 +242,11 @@ export const browser_use_screenshot = makeLocalTool(
 
 export const browser_use_content = makeLocalTool(
   'browser_use_content',
-  'Get the text or HTML content visible in the current viewport. Use browser_use_scroll to see more of the page. For interactive elements, prefer browser_use_get_interactive_elements instead.',
+  'Get a viewport-first content snapshot from the current page. Text mode preserves headings and visible tables in a compact, readable format and returns scroll metadata so the model can decide whether to scroll next.',
   z.object({
     mode: z.enum(['text', 'html']).optional().describe('Content mode: "text" for readable text (default), "html" for raw HTML'),
     max_length: z.number().optional().describe('Maximum content length in characters (default: 15000)'),
+    viewport_only: z.boolean().optional().describe('Limit extraction to the visible viewport (default: true)'),
     wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before extracting content'),
     wait_timeout: z.number().optional().describe('Wait timeout in ms for wait_for_selector (default: 5000)'),
   }),
@@ -188,7 +255,13 @@ export const browser_use_content = makeLocalTool(
     url: z.string().optional(),
     title: z.string().optional(),
     content: z.string().optional(),
+    contentLength: z.number().optional(),
     mode: z.string().optional(),
+    scanScope: z.string().optional(),
+    viewport: browserViewportSchema.optional(),
+    blockCount: z.number().optional(),
+    tableCount: z.number().optional(),
+    truncated: z.boolean().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -199,7 +272,7 @@ export const browser_use_content = makeLocalTool(
 
 export const browser_use_scroll = makeLocalTool(
   'browser_use_scroll',
-  'Scroll the page or a specific element in any direction.',
+  'Scroll the page or a specific element in any direction. Returns fresh viewport or container scroll metrics so the model can tell whether more content remains.',
   z.object({
     direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction (default: "down")'),
     amount: z.number().optional().describe('Pixels to scroll (default: 500)'),
@@ -209,6 +282,10 @@ export const browser_use_scroll = makeLocalTool(
     ok: z.boolean(),
     direction: z.string().optional(),
     amount: z.number().optional(),
+    target: z.string().optional(),
+    selector: z.string().optional(),
+    viewport: browserViewportSchema.optional(),
+    container: browserScrollContainerSchema.optional(),
     error: z.string().optional(),
   }),
   5000,
@@ -279,8 +356,9 @@ export const browser_use_cookies = makeLocalTool(
 
 export const browser_use_hover = makeLocalTool(
   'browser_use_hover',
-  'Hover over an element on the page. Useful for revealing tooltips, dropdown menus, or hover-triggered content. Identify by CSS selector or visible text.',
+  'Hover over an element on the page. Useful for revealing tooltips, dropdown menus, or hover-triggered content. Prefer elementId from browser_use_get_interactive_elements when available.',
   z.object({
+    elementId: z.string().optional().describe('Element ID returned by browser_use_get_interactive_elements'),
     selector: z.string().optional().describe('CSS selector of the element to hover over'),
     text: z.string().optional().describe('Visible text of the element to hover over'),
     timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
@@ -288,6 +366,7 @@ export const browser_use_hover = makeLocalTool(
   z.object({
     ok: z.boolean(),
     hovered: z.string().optional(),
+    elementId: z.string().optional(),
     method: z.string().optional(),
     error: z.string().optional(),
   }),
@@ -301,7 +380,8 @@ export const browser_use_select_option = makeLocalTool(
   'browser_use_select_option',
   'Select an option from a dropdown or searchable combobox. Use this only AFTER you have already inspected the page and, for dropdowns, read the available options first. The correct sequence is: browser_use_get_interactive_elements -> browser_use_get_dropdown_options -> reason about the returned options -> browser_use_select_option. Do NOT call get_dropdown_options and select_option in parallel. Pass the exact text/value returned by get_dropdown_options whenever possible. For searchable dropdowns, provide the "search" parameter after first inspecting the control/options. Works with native <select> elements, custom listbox/combobox dropdowns, and searchable autocomplete inputs (React Select, MUI Autocomplete, Headless UI, etc.).',
   z.object({
-    selector: z.string().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
+    elementId: z.string().optional().describe('Element ID returned by browser_use_get_interactive_elements'),
+    selector: z.string().optional().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
     value: z.string().optional().describe('Option value attribute to select'),
     label: z.string().optional().describe('Option visible text to select (case-insensitive partial match)'),
     index: z.number().optional().describe('Option index to select (0-based)'),
@@ -312,6 +392,7 @@ export const browser_use_select_option = makeLocalTool(
     ok: z.boolean(),
     selected: z.any().optional(),
     text: z.string().optional(),
+    elementId: z.string().optional(),
     method: z.string().optional(),
     error: z.string().optional(),
   }),
@@ -325,12 +406,14 @@ export const browser_use_get_dropdown_options = makeLocalTool(
   'browser_use_get_dropdown_options',
   'Read all available options from a dropdown or select element WITHOUT selecting anything. This is the required first step before selecting from a dropdown. Use the sequence: browser_use_get_interactive_elements -> browser_use_get_dropdown_options -> reason about the returned options -> browser_use_select_option. Do NOT call this in parallel with browser_use_select_option. For native <select> elements, reads options directly. For custom dropdowns (React Select, MUI, Headless UI, etc.), clicks to open, reads the visible options, then closes the dropdown. Returns the full list of options with their text and value so you can choose the exact text/value to pass into browser_use_select_option.',
   z.object({
-    selector: z.string().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
+    elementId: z.string().optional().describe('Element ID returned by browser_use_get_interactive_elements'),
+    selector: z.string().optional().describe('CSS selector of the dropdown control (select, input, button, or combobox element)'),
     timeout: z.number().optional().describe('Timeout in ms for custom dropdowns to open (default: 5000)'),
   }),
   z.object({
     ok: z.boolean(),
     type: z.string().optional().describe('Either "native_select" or "custom_dropdown"'),
+    elementId: z.string().optional(),
     options: z.array(z.object({
       text: z.string(),
       value: z.string(),
@@ -350,55 +433,28 @@ export const browser_use_get_dropdown_options = makeLocalTool(
 
 export const browser_use_get_interactive_elements = makeLocalTool(
   'browser_use_get_interactive_elements',
-  'Get all interactive elements on the current page — inputs, buttons, links, dropdowns, file inputs, checkboxes, etc. Returns their CSS selectors, labels, control types, current values, visible dropdown options when available, and form associations. ALWAYS call this before filling forms or clicking buttons so you know exactly what elements are available and what selectors to use.',
+  'Get a compact, viewport-first scan of interactive elements on the current page. Returns stable elementIds for the current snapshot so follow-up click/type/select/upload calls can target elements without carrying bulky selectors. This is the default discovery step before acting on a page.',
   z.object({
     wait_for_selector: z.string().optional().describe('Optional CSS selector to wait for before scanning the page'),
     wait_timeout: z.number().optional().describe('Wait timeout in ms (default: 3000)'),
+    viewport_only: z.boolean().optional().describe('Limit the scan to the current viewport (default: true)'),
+    include_selectors: z.boolean().optional().describe('Include CSS selectors in the response for debugging or fallback targeting (default: false)'),
+    include_forms: z.boolean().optional().describe('Include compact form groupings when visible (default: true)'),
+    max_elements: z.number().optional().describe('Maximum number of returned elements after visual-order sorting (default: 80)'),
   }),
   z.object({
     ok: z.boolean(),
     url: z.string().optional(),
     title: z.string().optional(),
-    elements: z.array(z.object({
-      index: z.number(),
-      tag: z.string(),
-      selector: z.string(),
-      type: z.string().optional(),
-      controlType: z.string().optional(),
-      role: z.string().optional(),
-      name: z.string().optional(),
-      id: z.string().optional(),
-      text: z.string().optional(),
-      href: z.string().optional(),
-      label: z.string().optional(),
-      placeholder: z.string().optional(),
-      value: z.string().optional(),
-      selectedText: z.string().optional(),
-      expanded: z.boolean().optional(),
-      popupRole: z.string().optional(),
-      optionCount: z.number().optional(),
-      checked: z.boolean().optional(),
-      disabled: z.boolean().optional(),
-      required: z.boolean().optional(),
-      readonly: z.boolean().optional(),
-      accept: z.string().optional(),
-      multiple: z.boolean().optional(),
-      hidden: z.boolean().optional(),
-      options: z.array(z.object({
-        value: z.string(),
-        text: z.string(),
-        selected: z.boolean(),
-      })).optional(),
-    })).optional(),
-    forms: z.array(z.object({
-      selector: z.string(),
-      action: z.string().optional(),
-      method: z.string().optional(),
-      name: z.string().optional(),
-      fieldIndices: z.array(z.number()).optional(),
-    })).optional(),
+    elements: z.array(interactiveElementSchema).optional(),
+    forms: z.array(interactiveFormSchema).optional(),
+    counts: z.record(z.string(), z.number()).optional(),
+    scanScope: z.string().optional(),
+    viewport: browserViewportSchema.optional(),
     elementCount: z.number().optional(),
     formCount: z.number().optional(),
+    truncated: z.boolean().optional(),
+    totalFound: z.number().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -409,11 +465,12 @@ export const browser_use_get_interactive_elements = makeLocalTool(
 
 export const browser_use_fill_form = makeLocalTool(
   'browser_use_fill_form',
-  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns (including searchable comboboxes), checkboxes, radios, toggle switches, and file inputs.',
+  'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns, toggles, and file inputs. Array items can target fields by elementId from browser_use_get_interactive_elements.',
   z.object({
     fields: z.union([
       z.record(z.string(), z.string()),
       z.array(z.object({
+        elementId: z.string().optional(),
         selector: z.string().optional(),
         name: z.string().optional(),
         value: z.string(),
@@ -439,8 +496,9 @@ export const browser_use_fill_form = makeLocalTool(
 
 export const browser_use_upload_file = makeLocalTool(
   'browser_use_upload_file',
-  'Upload a local file from disk into a browser file input. Pass a local file path and optionally a selector for the file input or its associated upload control.',
+  'Upload a local file from disk into a browser file input. Pass a local file path and optionally an elementId or selector for the visible upload control or associated file input.',
   z.object({
+    elementId: z.string().optional().describe('Optional element ID returned by browser_use_get_interactive_elements'),
     selector: z.string().optional().describe('Optional CSS selector of the file input, upload button, label, or container associated with the file input'),
     filePath: z.string().describe('Absolute or workspace-relative path to the local file on disk'),
     timeout: z.number().optional().describe('Timeout in ms (default: 5000)'),
@@ -448,6 +506,7 @@ export const browser_use_upload_file = makeLocalTool(
   z.object({
     ok: z.boolean(),
     uploaded: z.boolean().optional(),
+    elementId: z.string().optional(),
     filePath: z.string().optional(),
     fileName: z.string().optional(),
     selector: z.string().optional(),

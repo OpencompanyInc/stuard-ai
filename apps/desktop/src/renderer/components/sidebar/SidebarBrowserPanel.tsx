@@ -228,9 +228,8 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
 
   const handleLaunch = useCallback(async () => {
     await runAction('Launching browser...', async () => {
-      // Only switch to headless if the browser isn't already running.
-      // Switching modes while a session is active can break SSO auth cookies
-      // (the SSO provider detects the new browser context and forces re-login).
+      // Only force the default launch mode when the browser is currently off.
+      // If it is already running, keep the active mode/profile untouched.
       if (!status?.running) {
         await api?.execTool?.('browser_use_configure', {
           mode: 'headless',

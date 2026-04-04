@@ -5,7 +5,10 @@ from typing import Any
 from aiohttp import web
 
 from browser_server import state
-from browser_server.utils import _safe_json, _ok, _err, _clamp_int
+from browser_server.utils import (
+    _safe_json, _ok, _err, _clamp_int,
+    _resolve_selector_target, INTERACTIVE_ID_ATTR,
+)
 from browser_server.lifecycle import (
     _ensure_browser, _get_page_url, _get_page_title,
     _evaluate, _wait_for_selector, _smart_wait_for_element,
@@ -19,6 +22,47 @@ async def _get_cdp_session():
     if state._page is not None and state._page.is_connected:
         return state._page
     return None
+
+
+async def _get_page_viewport_metrics() -> dict[str, Any]:
+    result = await _evaluate(
+        """() => {
+          const width = Math.max(window.innerWidth || 0, document.documentElement?.clientWidth || 0);
+          const height = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0);
+          const scrollX = Math.max(window.scrollX || window.pageXOffset || 0, 0);
+          const scrollY = Math.max(window.scrollY || window.pageYOffset || 0, 0);
+          const pageWidth = Math.max(
+            document.documentElement?.scrollWidth || 0,
+            document.body?.scrollWidth || 0,
+            width
+          );
+          const pageHeight = Math.max(
+            document.documentElement?.scrollHeight || 0,
+            document.body?.scrollHeight || 0,
+            height
+          );
+          const maxScrollY = Math.max(pageHeight - height, 0);
+          const topRatio = maxScrollY > 0 ? Number((scrollY / maxScrollY).toFixed(4)) : 0;
+          const bottomRatio = pageHeight > 0 ? Number((Math.min(scrollY + height, pageHeight) / pageHeight).toFixed(4)) : 1;
+          return {
+            width,
+            height,
+            scrollX,
+            scrollY,
+            pageWidth,
+            pageHeight,
+            topRatio,
+            bottomRatio,
+            atTop: scrollY <= 4,
+            atBottom: scrollY + height >= pageHeight - 4,
+          };
+        }"""
+    )
+    if isinstance(result, dict):
+        state._viewport_cache["w"] = int(result.get("width", state._viewport_cache["w"]) or state._viewport_cache["w"])
+        state._viewport_cache["h"] = int(result.get("height", state._viewport_cache["h"]) or state._viewport_cache["h"])
+        return result
+    return {}
 
 
 async def _cdp_click_element_by_selector(selector: str) -> bool:
@@ -801,19 +845,19 @@ async def _upload_local_file(selector: str, file_path: str, timeout: int = 5000)
 
 async def handle_hover(req: web.Request) -> web.Response:
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     text = str(body.get("text", "")).strip()
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     if not selector and not text:
-        return _err("selector or text is required")
+        return _err("selector, elementId, or text is required")
 
     async with state._lock:
         ok, err = await _ensure_browser()
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            target = selector or text
+            target = f"elementId={element_id}" if element_id else (selector or text)
             result = await _evaluate(
                 """([sel, needle]) => {
                   let el = sel ? document.querySelector(sel) : null;
@@ -845,7 +889,7 @@ async def handle_hover(req: web.Request) -> web.Response:
                 text,
             )
             if result == "hovered":
-                return _ok({"hovered": target, "method": "js_hover"})
+                return _ok({"hovered": target, "elementId": element_id or None, "method": "js_hover"})
             return _err(f"Hover failed: element not found for '{target}'")
         except Exception as e:
             return _err(f"Hover failed: {e}")
@@ -853,7 +897,7 @@ async def handle_hover(req: web.Request) -> web.Response:
 
 async def handle_select_option(req: web.Request) -> web.Response:
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     value = body.get("value")
     label = body.get("label")
     index = body.get("index")
@@ -865,7 +909,7 @@ async def handle_select_option(req: web.Request) -> web.Response:
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     if not selector:
-        return _err("selector is required for select_option")
+        return _err("selector or elementId is required for select_option")
     if value is None and label is None and index is None and search is None:
         return _err("One of value, label, index, or search is required")
 
@@ -879,6 +923,7 @@ async def handle_select_option(req: web.Request) -> web.Response:
                 return _ok({
                     "selected": result.get("selected"),
                     "text": result.get("text"),
+                    "elementId": element_id or None,
                     "method": result.get("method", "dropdown"),
                     "options": result.get("options"),
                 })
@@ -896,11 +941,11 @@ async def handle_select_option(req: web.Request) -> web.Response:
 async def handle_get_dropdown_options(req: web.Request) -> web.Response:
     """Read the available options from a dropdown WITHOUT selecting anything."""
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     if not selector:
-        return _err("selector is required for get_dropdown_options")
+        return _err("selector or elementId is required for get_dropdown_options")
 
     async with state._lock:
         ok, err = await _ensure_browser()
@@ -943,6 +988,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
                 opts = result.get("options", []) if isinstance(result, dict) else []
                 return _ok({
                     "type": "native_select",
+                    "elementId": element_id or None,
                     "options": opts,
                     "optionCount": len(opts),
                     "selectedIndex": result.get("selectedIndex", -1) if isinstance(result, dict) else -1,
@@ -1004,6 +1050,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
 
             return _ok({
                 "type": "custom_dropdown",
+                "elementId": element_id or None,
                 "options": options,
                 "optionCount": len(options),
             })
@@ -1021,16 +1068,33 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
         try:
             wait_selector = str(body.get("wait_for_selector", "")).strip()
             wait_timeout = _clamp_int(body.get("wait_timeout", 3000), 3000, 500, 30000)
+            viewport_only = False if body.get("viewport_only", True) is False else True
+            include_selectors = bool(body.get("include_selectors", False))
+            include_forms = False if body.get("include_forms", True) is False else True
+            max_elements = _clamp_int(body.get("max_elements", 80), 80, 10, 200)
             if wait_selector:
                 await _wait_for_selector(wait_selector, timeout=wait_timeout)
 
             result = await _evaluate(
-                """() => {
-                  const elements = [];
+                """([viewportOnly, includeSelectors, includeForms, maxElements, markerAttr]) => {
+                  document.querySelectorAll('[' + markerAttr + ']').forEach(el => el.removeAttribute(markerAttr));
+                  const records = [];
                   const forms = [];
+                  const counts = {};
+                  const vpW = window.innerWidth || document.documentElement.clientWidth;
+                  const vpH = window.innerHeight || document.documentElement.clientHeight;
 
                   function tagNameOf(node) {
                     return String(node?.tagName || '').toLowerCase();
+                  }
+
+                  function normalizeText(value, maxLen = 160) {
+                    const text = String(value || '')
+                      .replace(/\\u00a0/g, ' ')
+                      .replace(/\\s+/g, ' ')
+                      .trim();
+                    if (!text) return '';
+                    return text.length > maxLen ? text.slice(0, maxLen - 3) + '...' : text;
                   }
 
                   function getSelector(el) {
@@ -1071,6 +1135,8 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   }
 
                   function textOf(el) {
+                    const nestedAlt = el?.querySelector?.('img[alt]')?.getAttribute?.('alt');
+                    const nestedSvgTitle = el?.querySelector?.('svg title')?.textContent;
                     return [
                       el?.innerText,
                       el?.textContent,
@@ -1078,31 +1144,39 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       el?.getAttribute?.('title'),
                       el?.getAttribute?.('placeholder'),
                       el?.getAttribute?.('aria-valuetext'),
-                    ].filter(Boolean).map((part) => String(part).trim()).find(Boolean) || '';
+                      el?.getAttribute?.('value'),
+                      el?.getAttribute?.('alt'),
+                      nestedAlt,
+                      nestedSvgTitle,
+                    ].filter(Boolean).map((part) => normalizeText(part, 200)).find(Boolean) || '';
                   }
 
                   function getLabel(el) {
                     if (el.id) {
                       const label = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-                      if (label) return (label.innerText || label.textContent || '').trim();
+                      if (label) return normalizeText(label.innerText || label.textContent || '', 200);
                     }
                     const parentLabel = el.closest?.('label');
                     if (parentLabel) {
-                      const text = (parentLabel.innerText || parentLabel.textContent || '').trim();
+                      const text = normalizeText(parentLabel.innerText || parentLabel.textContent || '', 200);
                       const inputVal = ('value' in el && el.value) ? el.value : '';
-                      return text.replace(inputVal, '').trim();
+                      return normalizeText(text.replace(inputVal, ''), 200);
                     }
                     const ariaLabel = el.getAttribute('aria-label');
-                    if (ariaLabel) return ariaLabel.trim();
+                    if (ariaLabel) return normalizeText(ariaLabel, 200);
                     const labelledBy = el.getAttribute('aria-labelledby');
                     if (labelledBy) {
                       const labelEl = document.getElementById(labelledBy);
-                      if (labelEl) return (labelEl.innerText || labelEl.textContent || '').trim();
+                      if (labelEl) return normalizeText(labelEl.innerText || labelEl.textContent || '', 200);
                     }
+                    const imgAlt = el.querySelector?.('img[alt]')?.getAttribute?.('alt');
+                    if (imgAlt) return normalizeText(imgAlt, 200);
+                    const svgTitle = el.querySelector?.('svg title')?.textContent;
+                    if (svgTitle) return normalizeText(svgTitle, 200);
                     const prev = el.previousElementSibling;
                     const prevTag = tagNameOf(prev);
                     if (prev && (prevTag === 'label' || prevTag === 'span' || prevTag === 'div')) {
-                      const t = (prev.innerText || prev.textContent || '').trim();
+                      const t = normalizeText(prev.innerText || prev.textContent || '', 80);
                       if (t && t.length < 80) return t;
                     }
                     return '';
@@ -1113,6 +1187,45 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                     const r = el.getBoundingClientRect();
                     const s = window.getComputedStyle(el);
                     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+                  }
+
+                  function inViewport(el) {
+                    if (!viewportOnly) return true;
+                    if (!el?.getBoundingClientRect) return false;
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 && r.height === 0) return false;
+                    if (r.bottom < 0 || r.top > vpH) return false;
+                    if (r.right < 0 || r.left > vpW) return false;
+                    return true;
+                  }
+
+                  function isCandidateVisible(el) {
+                    return isVisible(el) && inViewport(el);
+                  }
+
+                  function isLikelyInteractive(el) {
+                    const tag = tagNameOf(el);
+                    const role = String(el.getAttribute?.('role') || '').toLowerCase();
+                    const tabindex = el.getAttribute?.('tabindex');
+                    const s = window.getComputedStyle(el);
+                    return (
+                      ['input', 'textarea', 'select', 'button', 'a'].includes(tag)
+                      || !!el.onclick
+                      || role === 'button'
+                      || role === 'link'
+                      || role === 'tab'
+                      || role === 'menuitem'
+                      || role === 'checkbox'
+                      || role === 'radio'
+                      || role === 'switch'
+                      || role === 'combobox'
+                      || role === 'listbox'
+                      || role === 'searchbox'
+                      || role === 'textbox'
+                      || el.getAttribute?.('contenteditable') === 'true'
+                      || (tabindex != null && tabindex !== '-1')
+                      || s.cursor === 'pointer'
+                    );
                   }
 
                   function popupFor(el) {
@@ -1144,43 +1257,37 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       || (!!popup && ['button', 'div', 'span', 'input'].includes(tag));
                     if (!isDropdown) return { isDropdown: false };
 
-                    let options = [];
                     let selectedText = '';
                     let currentValue = '';
+                    let optionCount = 0;
 
                     if (tag === 'select') {
                       currentValue = el.value || '';
                       const selectedOption = el.options && el.options[el.selectedIndex];
-                      selectedText = selectedOption ? (selectedOption.text || '').trim() : '';
-                      options = Array.from(el.options || []).slice(0, 30).map((opt) => ({
-                        value: opt.value || '',
-                        text: (opt.text || '').trim(),
-                        selected: !!opt.selected,
-                      }));
+                      selectedText = selectedOption ? normalizeText(selectedOption.text || '', 200) : '';
+                      optionCount = Array.from(el.options || []).length;
                     } else {
-                      options = popup
+                      optionCount = popup
                         ? Array.from(popup.querySelectorAll('[role="option"], [role="menuitemradio"], [role="menuitemcheckbox"], [data-value], [aria-selected], li'))
                             .filter((candidate) => isVisible(candidate))
-                            .map((candidate) => ({
-                              value: String(candidate.getAttribute('data-value') || candidate.getAttribute('value') || '').trim(),
-                              text: textOf(candidate).substring(0, 200),
-                              selected: candidate.getAttribute('aria-selected') === 'true' || candidate.getAttribute('aria-checked') === 'true',
-                            }))
-                            .filter((opt) => opt.text || opt.value)
-                            .slice(0, 30)
-                        : [];
+                            .filter((candidate) => {
+                              const t = textOf(candidate);
+                              const v = normalizeText(candidate.getAttribute('data-value') || candidate.getAttribute('value') || '', 200);
+                              return t || v;
+                            }).length
+                        : 0;
                       const activeId = el.getAttribute?.('aria-activedescendant') || '';
                       if (activeId) {
                         const activeEl = document.getElementById(activeId);
                         if (activeEl) selectedText = textOf(activeEl);
                       }
                       if (!selectedText) {
-                        selectedText = String(el.getAttribute?.('aria-valuetext') || '').trim();
+                        selectedText = normalizeText(el.getAttribute?.('aria-valuetext') || '', 200);
                       }
                       if (!selectedText && (role === 'combobox' || tag === 'button')) {
-                        selectedText = textOf(el).substring(0, 200);
+                        selectedText = textOf(el);
                       }
-                      currentValue = String(el.getAttribute?.('data-value') || el.getAttribute?.('value') || '').trim();
+                      currentValue = normalizeText(el.getAttribute?.('data-value') || el.getAttribute?.('value') || '', 160);
                     }
 
                     const expandedAttr = el.getAttribute?.('aria-expanded');
@@ -1188,14 +1295,13 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       isDropdown: true,
                       expanded: expandedAttr == null ? undefined : expandedAttr === 'true',
                       popupRole: popup?.getAttribute?.('role') || popupHint || '',
-                      options,
-                      optionCount: options.length,
+                      optionCount,
                       selectedText,
                       value: currentValue,
                     };
                   }
 
-                  const interactiveSelectors = 'input, textarea, select, button, a[href], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="switch"], [role="combobox"], [role="listbox"], [role="searchbox"], [role="textbox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [contenteditable="true"]';
+                  const interactiveSelectors = 'input, textarea, select, button, a[href], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="switch"], [role="combobox"], [role="listbox"], [role="searchbox"], [role="textbox"], [aria-haspopup="listbox"], [aria-haspopup="menu"], [contenteditable="true"], [tabindex]:not([tabindex="-1"]), [onclick]';
                   const all = Array.from(new Set(Array.from(document.querySelectorAll(interactiveSelectors))));
 
                   for (const el of all) {
@@ -1213,96 +1319,139 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       const visible = isVisible(el);
                       const isFileInput = tag === 'input' && type === 'file';
                       const dropdownMeta = getDropdownMeta(el);
+                      const ancestor = el.parentElement?.closest?.(interactiveSelectors);
 
-                      if (!visible && !isFileInput) continue;
+                      if (!visible) continue;
+                      if (!isCandidateVisible(el)) continue;
+                      if (ancestor && ancestor !== el && isLikelyInteractive(ancestor) && isCandidateVisible(ancestor)) continue;
+                      if (!isLikelyInteractive(el) && !dropdownMeta.isDropdown && !isFileInput) continue;
 
-                      const entry = {
-                        index: elements.length,
-                        tag,
-                        selector: getSelector(el),
-                      };
+                      let controlType = 'other';
+                      if (isFileInput) controlType = 'file';
+                      else if (dropdownMeta.isDropdown) controlType = 'dropdown';
+                      else if (type === 'checkbox' || type === 'radio' || ['checkbox', 'radio', 'switch'].includes(role)) controlType = 'toggle';
+                      else if (tag === 'a' || role === 'link') controlType = 'link';
+                      else if (role === 'tab') controlType = 'tab';
+                      else if (tag === 'button' || role === 'button' || role === 'menuitem') controlType = 'button';
+                      else if (['input', 'textarea'].includes(tag) || ['textbox', 'searchbox', 'combobox'].includes(role) || el.getAttribute?.('contenteditable') === 'true') controlType = 'text';
 
-                      if (!visible) entry.hidden = true;
+                      const entry = { controlType, tag };
+                      if (includeSelectors) entry.selector = getSelector(el);
+
                       if (type) entry.type = type;
                       if (role) entry.role = role;
-                      if (name) entry.name = name;
-                      if (id) entry.id = id;
 
                       const text = textOf(el);
-                      if ((['button', 'a'].includes(tag) || ['button', 'link', 'tab', 'menuitem'].includes(role) || dropdownMeta.isDropdown) && text) {
-                        entry.text = text.substring(0, 200);
-                      }
-                      if (tag === 'a') entry.href = el.getAttribute?.('href') || '';
-
                       const label = getLabel(el);
-                      if (label) entry.label = label.substring(0, 200);
-                      if (placeholder) entry.placeholder = placeholder;
+                      const iconOnly = !label && !text && !!el.querySelector?.('svg, img, [class*="icon"], [data-icon]');
+                      if (!label && !text && !placeholder && !name && !id && controlType === 'other' && !iconOnly) continue;
+                      if (label) entry.label = label;
+                      if (text && text !== label) entry.text = text;
+                      if (placeholder) entry.placeholder = normalizeText(placeholder, 160);
+                      if (!label && name) entry.name = normalizeText(name, 120);
+                      if (!label && id) entry.id = normalizeText(id, 120);
+                      if (iconOnly) entry.iconOnly = true;
 
-                      if (isFileInput) {
-                        entry.controlType = 'file';
+                      if (controlType == 'file') {
                         entry.accept = el.getAttribute?.('accept') || '';
                         if (el.multiple) entry.multiple = true;
-                      } else if (dropdownMeta.isDropdown) {
-                        entry.controlType = 'dropdown';
-                        if (dropdownMeta.value) entry.value = String(dropdownMeta.value).substring(0, 500);
-                        if (dropdownMeta.selectedText) entry.selectedText = String(dropdownMeta.selectedText).substring(0, 200);
+                      } else if (controlType === 'dropdown') {
+                        if (dropdownMeta.value) entry.value = normalizeText(dropdownMeta.value, 160);
+                        if (dropdownMeta.selectedText) entry.selectedText = normalizeText(dropdownMeta.selectedText, 160);
                         if (dropdownMeta.popupRole) entry.popupRole = dropdownMeta.popupRole;
                         if (typeof dropdownMeta.expanded === 'boolean') entry.expanded = dropdownMeta.expanded;
                         if (dropdownMeta.optionCount) entry.optionCount = dropdownMeta.optionCount;
-                        if (dropdownMeta.options?.length) entry.options = dropdownMeta.options;
-                      } else if (type === 'checkbox' || type === 'radio' || ['checkbox', 'radio', 'switch'].includes(role)) {
-                        entry.controlType = 'toggle';
+                      } else if (controlType === 'toggle') {
                         entry.checked = !!el.checked || el.getAttribute?.('aria-checked') === 'true';
-                      } else if (['input', 'textarea'].includes(tag) || ['textbox', 'searchbox', 'combobox'].includes(role)) {
-                        entry.controlType = 'text';
-                        entry.value = String(el.value || '').substring(0, 500);
+                      } else if (controlType === 'text') {
+                        entry.value = normalizeText(el.value || el.textContent || '', 160);
+                      } else if (controlType === 'link') {
+                        entry.href = normalizeText(el.getAttribute?.('href') || '', 240);
                       }
 
                       if (disabled) entry.disabled = true;
                       if (required) entry.required = true;
                       if (readonly) entry.readonly = true;
-
-                      elements.push(entry);
+                      const rect = el.getBoundingClientRect();
+                      records.push({
+                        el,
+                        top: rect.top,
+                        left: rect.left,
+                        entry,
+                      });
                     } catch (err) {
                       continue;
                     }
                   }
 
-                  const allForms = document.querySelectorAll('form');
-                  for (const form of allForms) {
-                    if (!isVisible(form)) continue;
-                    const formEntry = {
-                      selector: getSelector(form),
-                      action: form.action || '',
-                      method: (form.method || 'GET').toUpperCase(),
-                      name: form.name || form.id || '',
-                      fieldIndices: [],
-                    };
-                    for (const field of form.elements) {
-                      const idx = elements.findIndex(e => {
-                        try { return document.querySelector(e.selector) === field; } catch { return false; }
-                      });
-                      if (idx >= 0) formEntry.fieldIndices.push(idx);
+                  records.sort((a, b) => {
+                    const topDiff = Math.abs(a.top - b.top) > 4 ? a.top - b.top : 0;
+                    if (topDiff !== 0) return topDiff;
+                    return a.left - b.left;
+                  });
+
+                  const limited = records.slice(0, maxElements);
+                  limited.forEach((record, idx) => {
+                    const elementId = 'e' + (idx + 1);
+                    record.entry.elementId = elementId;
+                    record.entry.index = idx;
+                    record.el.setAttribute(markerAttr, elementId);
+                    counts[record.entry.controlType] = (counts[record.entry.controlType] || 0) + 1;
+                  });
+
+                  if (includeForms) {
+                    const allForms = document.querySelectorAll('form');
+                    for (const form of allForms) {
+                      if (!isVisible(form) || !inViewport(form)) continue;
+                      const fieldElementIds = limited
+                        .filter((record) => form.contains(record.el))
+                        .map((record) => record.entry.elementId);
+                      if (fieldElementIds.length === 0) continue;
+                      const formEntry = {
+                        fieldElementIds,
+                        method: (form.method || 'GET').toUpperCase(),
+                      };
+                      if (includeSelectors) formEntry.selector = getSelector(form);
+                      if (form.action) formEntry.action = form.action;
+                      if (form.name || form.id) formEntry.name = normalizeText(form.name || form.id || '', 120);
+                      forms.push(formEntry);
                     }
-                    forms.push(formEntry);
                   }
 
-                  return { elements, forms };
-                }"""
+                  return {
+                    elements: limited.map((record) => record.entry),
+                    forms,
+                    counts,
+                    totalFound: records.length,
+                    truncated: records.length > limited.length,
+                  };
+                }""",
+                viewport_only,
+                include_selectors,
+                include_forms,
+                max_elements,
+                INTERACTIVE_ID_ATTR,
             )
 
             url = await _get_page_url()
             title = await _get_page_title()
             elements = result.get("elements", []) if isinstance(result, dict) else []
             forms_data = result.get("forms", []) if isinstance(result, dict) else []
+            counts = result.get("counts", {}) if isinstance(result, dict) else {}
+            viewport = await _get_page_viewport_metrics()
 
             return _ok({
                 "url": url,
                 "title": title,
                 "elements": elements,
                 "forms": forms_data,
+                "counts": counts,
+                "scanScope": "viewport" if viewport_only else "page",
+                "viewport": viewport,
                 "elementCount": len(elements),
                 "formCount": len(forms_data),
+                "truncated": bool(result.get("truncated", False)) if isinstance(result, dict) else False,
+                "totalFound": int(result.get("totalFound", len(elements)) or len(elements)) if isinstance(result, dict) else len(elements),
             })
         except Exception as e:
             return _err(f"Get interactive elements failed: {e}")
@@ -1315,7 +1464,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
     form_selector = str(body.get("form_selector", "")).strip()
 
     if not fields or not isinstance(fields, (dict, list)):
-        return _err("fields is required (object mapping selector/name to value, or array of {selector, value})")
+        return _err("fields is required (object mapping selector/name to value, or array of {selector|elementId|name, value})")
 
     async with state._lock:
         ok, err = await _ensure_browser()
@@ -1331,16 +1480,20 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                     field_list.append({"selector": key, "value": val, "type": "text"})
             else:
                 for item in fields:
-                    if isinstance(item, dict) and ("selector" in item or "name" in item):
-                        sel = item.get("selector") or f'[name="{item.get("name")}"]'
+                    if isinstance(item, dict) and ("selector" in item or "elementId" in item or "element_id" in item or "name" in item):
+                        sel, item_element_id = _resolve_selector_target(item)
+                        if not sel and item.get("name"):
+                            sel = f'[name="{item.get("name")}"]'
                         field_list.append({
                             "selector": sel,
+                            "elementId": item_element_id or None,
                             "value": item.get("value", ""),
                             "type": str(item.get("type", "text") or "text").lower(),
                         })
 
             for field in field_list:
                 sel = field["selector"]
+                field_target = f"elementId={field['elementId']}" if field.get("elementId") else sel
                 raw_val = field.get("value", "")
                 val = "" if raw_val is None else str(raw_val)
                 field_type = str(field.get("type", "text") or "text").lower()
@@ -1403,9 +1556,9 @@ async def handle_fill_form(req: web.Request) -> web.Response:
                             if fill_ok:
                                 filled += 1
                             else:
-                                errors.append(f"Field not found: {sel}")
+                                errors.append(f"Field not found: {field_target}")
                 except Exception as e:
-                    errors.append(f"{sel}: {str(e)[:100]}")
+                    errors.append(f"{field_target}: {str(e)[:100]}")
 
             submitted = False
             if submit and filled > 0:
@@ -1441,7 +1594,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
 
 async def handle_upload_file(req: web.Request) -> web.Response:
     body = await _safe_json(req)
-    selector = str(body.get("selector", "")).strip()
+    selector, element_id = _resolve_selector_target(body)
     file_path = str(body.get("file_path") or body.get("filePath") or body.get("path") or "").strip()
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
@@ -1454,6 +1607,8 @@ async def handle_upload_file(req: web.Request) -> web.Response:
             return _err(err or "Browser init failed", status=500)
         try:
             result = await _upload_local_file(selector, file_path, timeout=timeout)
+            if element_id:
+                result["elementId"] = element_id
             return _ok(result)
         except Exception as e:
             return _err(f"Upload file failed: {e}")

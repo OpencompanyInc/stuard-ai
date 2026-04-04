@@ -3,7 +3,6 @@ export * from "./updates";
 export * from "./file-indexing";
 export * from "./app-discovery";
 export * from "./app-search";
-export * from "./browser-server";
 export * from "./unified-tasks";
 export * from "./offline-calendar";
 export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
