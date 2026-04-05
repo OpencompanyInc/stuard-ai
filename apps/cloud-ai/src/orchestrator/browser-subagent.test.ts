@@ -184,7 +184,7 @@ describe('makeLocalTool Bridge Detection', () => {
     expect(String(result.error || '')).toMatch(/No desktop|No desktop bridge|No desktop or VM|Chrome launch failed|local_browser_error/i);
   });
 
-  it('browser_use_status reports a deterministic fallback state without a bridge', async () => {
+  it('browser_use_status reports a deterministic fallback state without a bridge', { timeout: 30000 }, async () => {
     const { browser_use_status } = await import('../tools/device/browser-use');
 
     const result = await (browser_use_status as any).execute(

@@ -89,7 +89,6 @@ export const BROWSER_PACK: CapabilityPack = {
   toolNames: [...BROWSER_TOOLS],
   systemPrompt: BROWSER_SYSTEM_PROMPT,
   maxSteps: 40,
-  timeoutMs: 300_000,
 };
 
 // ─── File Operations & Compute ───────────────────────────────────────────────
@@ -243,7 +242,6 @@ export const WORKFLOW_PACK: CapabilityPack = {
   toolNames: [...WORKFLOW_TOOLS],
   systemPrompt: WORKFLOW_SYSTEM_PROMPT,
   maxSteps: 60,
-  timeoutMs: 120_000,
 };
 
 // ─── Integration Groups ─────────────────────────────────────────────────────

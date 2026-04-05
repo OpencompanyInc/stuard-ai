@@ -89,7 +89,7 @@ describe('Capability Packs', () => {
     expect(BROWSER_PACK.toolNames).toContain('browser_use_click');
     expect(BROWSER_PACK.toolNames).toContain('browser_use_content');
     expect(BROWSER_PACK.maxSteps).toBe(40);
-    expect(BROWSER_PACK.timeoutMs).toBe(300_000);
+    expect(BROWSER_PACK.timeoutMs).toBeUndefined();
   });
 
   it('file_ops pack has the expected tools', async () => {
@@ -111,7 +111,7 @@ describe('Capability Packs', () => {
     expect(WORKFLOW_PACK.toolNames).toContain('search_tools');
     expect(WORKFLOW_PACK.toolNames).toContain('get_tool_schema');
     expect(WORKFLOW_PACK.maxSteps).toBe(60);
-    expect(WORKFLOW_PACK.timeoutMs).toBe(120_000);
+    expect(WORKFLOW_PACK.timeoutMs).toBeUndefined();
   });
 
   it('resolveIntegrationTools returns matching tools by prefix', async () => {
