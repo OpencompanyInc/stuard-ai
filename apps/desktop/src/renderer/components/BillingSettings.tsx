@@ -69,6 +69,7 @@ interface UsageLogEntry {
   chatName: string | null;
   conversationId: string | null;
   sourceType: string;
+  subagentKind: string | null;
   credits: number;
   costUsd: number;
   promptTokens: number;
@@ -120,15 +121,23 @@ const CATEGORY_CONFIG: Record<
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   inference: "Chat",
-  subagent: "Browser Agent",
+  subagent: "Subagent",
   browser_use: "Browser Agent",
   browser: "Browser Agent",
+  file_ops: "File Agent",
+  workflow: "Workflow Agent",
   delegation: "Delegated Agent",
+  google: "Google Agent",
+  outlook: "Outlook Agent",
+  github: "GitHub Agent",
+  meta: "Meta Agent",
+  discord: "Discord Agent",
+  reddit: "Reddit Agent",
   compute: "Cloud Compute",
   storage: "Storage",
   messaging: "Messaging",
   telnyx: "SMS",
-  whatsapp: "WhatsApp",
+  whatsapp: "WhatsApp Agent",
   sms: "SMS",
 };
 
@@ -725,25 +734,27 @@ export const BillingSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {usageLogs.map((log) => {
+                    const isSubagent = !!log.subagentKind || log.sourceType === "subagent";
                     const sourceLabel =
                       SOURCE_TYPE_LABELS[log.sourceType] ||
-                      log.sourceType.charAt(0).toUpperCase() +
-                        log.sourceType.slice(1);
-                    const sourceCategory =
-                      log.sourceType === "subagent" ||
-                      log.sourceType === "browser_use" ||
-                      log.sourceType === "browser" ||
-                      log.sourceType === "delegation"
-                        ? "subagent"
-                        : log.sourceType === "compute"
-                        ? "compute"
-                        : log.sourceType === "storage"
-                        ? "storage"
-                        : ["telnyx", "whatsapp", "sms", "messaging"].includes(
-                            log.sourceType
-                          )
-                        ? "messaging"
-                        : "inference";
+                      (isSubagent
+                        ? "Subagent"
+                        : log.sourceType.charAt(0).toUpperCase() +
+                          log.sourceType.slice(1));
+                    const sourceCategory = isSubagent
+                      ? "subagent"
+                      : log.sourceType === "compute"
+                      ? "compute"
+                      : log.sourceType === "storage"
+                      ? "storage"
+                      : [
+                          "telnyx",
+                          "whatsapp",
+                          "sms",
+                          "messaging",
+                        ].includes(log.sourceType)
+                      ? "messaging"
+                      : "inference";
                     const catConfig = CATEGORY_CONFIG[sourceCategory] || {
                       hex: "#9ca3af",
                     };

@@ -285,11 +285,11 @@ export function preciseCreditsFromUsd(usd: number): number {
 
 /**
  * Snap a credit value to user-friendly increments (never undercharge).
- * ≤0 → 0, <0.25 → 0.1, otherwise ceil to nearest 0.25.
+ * ≤0 → 0, ≤0.1 → 0.1, otherwise ceil to nearest 0.25.
  */
 export function snapCredits(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 0;
-  if (value < 0.25) return 0.1;
+  if (value <= 0.1) return 0.1;
   return Math.ceil(value * 4) / 4;
 }
 

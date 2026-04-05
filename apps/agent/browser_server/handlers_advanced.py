@@ -68,18 +68,37 @@ async def _get_page_viewport_metrics() -> dict[str, Any]:
 async def _cdp_click_element_by_selector(selector: str) -> bool:
     """Click an element by CSS selector using CDP mouse events.
 
+    Searches the main document first, then same-origin iframes.
     Uses JS to find the element and get its bounding rect, then dispatches
     real CDP Input.dispatchMouseEvent at the element's center coordinates.
     Falls back to JS el.click() if coordinate-based click fails.
     """
     coords = await _evaluate(
         """(sel) => {
-          const el = document.querySelector(sel);
+          let el = document.querySelector(sel);
+          let iframeEl = null;
+          if (!el) {
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+              try {
+                const doc = iframe.contentDocument;
+                if (!doc) continue;
+                el = doc.querySelector(sel);
+                if (el) { iframeEl = iframe; break; }
+              } catch(e) {}
+            }
+          }
           if (!el) return null;
+          if (iframeEl) iframeEl.scrollIntoView({ block: 'center', inline: 'center' });
           el.scrollIntoView({ block: 'center', inline: 'center' });
           const r = el.getBoundingClientRect();
           if (r.width === 0 && r.height === 0) return null;
-          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+          let x = r.left + r.width / 2, y = r.top + r.height / 2;
+          if (iframeEl) {
+            const ir = iframeEl.getBoundingClientRect();
+            x += ir.left; y += ir.top;
+          }
+          return { x, y };
         }""",
         selector,
     )
@@ -100,10 +119,15 @@ async def _cdp_click_element_by_selector(selector: str) -> bool:
                 return True
             except Exception:
                 pass
-    # Last resort: JS click
     result = await _evaluate(
         """(sel) => {
-          const el = document.querySelector(sel);
+          let el = document.querySelector(sel);
+          if (!el) {
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+              try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+            }
+          }
           if (el) { el.click(); return true; }
           return false;
         }""",
@@ -861,18 +885,32 @@ async def handle_hover(req: web.Request) -> web.Response:
             result = await _evaluate(
                 """([sel, needle]) => {
                   let el = sel ? document.querySelector(sel) : null;
+                  if (!el && sel) {
+                    const iframes = document.querySelectorAll('iframe');
+                    for (const iframe of iframes) {
+                      try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                    }
+                  }
                   if (!el && needle) {
-                    const all = document.querySelectorAll('*');
-                    for (const candidate of all) {
-                      const t = (candidate.innerText || candidate.textContent || '').trim();
-                      if (t && t.toLowerCase().includes(needle.toLowerCase())) {
-                        const r = candidate.getBoundingClientRect();
-                        const s = window.getComputedStyle(candidate);
-                        if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden') {
-                          el = candidate;
-                          break;
+                    const searchDocs = [document];
+                    document.querySelectorAll('iframe').forEach(iframe => {
+                      try { if (iframe.contentDocument) searchDocs.push(iframe.contentDocument); } catch(e) {}
+                    });
+                    for (const doc of searchDocs) {
+                      const all = doc.querySelectorAll('*');
+                      for (const candidate of all) {
+                        const t = (candidate.innerText || candidate.textContent || '').trim();
+                        if (t && t.toLowerCase().includes(needle.toLowerCase())) {
+                          const w = candidate.ownerDocument?.defaultView || window;
+                          const r = candidate.getBoundingClientRect();
+                          const s = w.getComputedStyle(candidate);
+                          if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden') {
+                            el = candidate;
+                            break;
+                          }
                         }
                       }
+                      if (el) break;
                     }
                   }
                   if (!el) return 'not_found';
@@ -1384,6 +1422,166 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                     }
                   }
 
+                  // ── Iframe scanning: find interactive elements inside same-origin iframes ──
+                  try {
+                    const __iframes = document.querySelectorAll('iframe');
+                    let __fIdx = 0;
+                    for (const __iframe of __iframes) {
+                      let __iDoc, __iWin;
+                      try {
+                        __iDoc = __iframe.contentDocument;
+                        __iWin = __iframe.contentWindow;
+                        if (!__iDoc || !__iWin) continue;
+                        void __iDoc.documentElement;
+                      } catch(e) { continue; }
+
+                      __fIdx++;
+                      const __ir = __iframe.getBoundingClientRect();
+                      if (__ir.width < 10 || __ir.height < 10) continue;
+                      try {
+                        const __is = window.getComputedStyle(__iframe);
+                        if (__is.display === 'none' || __is.visibility === 'hidden' || __is.opacity === '0') continue;
+                      } catch(e) { continue; }
+                      if (viewportOnly && (__ir.bottom < 0 || __ir.top > vpH || __ir.right < 0 || __ir.left > vpW)) continue;
+
+                      __iframe.setAttribute('data-stuard-frame-idx', String(__fIdx));
+
+                      try {
+                        const __iAll = Array.from(new Set(Array.from(__iDoc.querySelectorAll(interactiveSelectors))));
+                        for (const el of __iAll) {
+                          try {
+                            const tag = tagNameOf(el);
+                            if (!tag) continue;
+                            const type = String(el.getAttribute?.('type') || '').toLowerCase();
+                            const role = el.getAttribute?.('role') || '';
+                            const name = el.getAttribute?.('name') || '';
+                            const id = el.id || '';
+                            const placeholder = el.getAttribute?.('placeholder') || '';
+                            const disabled = !!el.disabled || el.getAttribute?.('aria-disabled') === 'true';
+                            const required = !!el.required || el.getAttribute?.('aria-required') === 'true';
+                            const rdonly = !!el.readOnly || el.getAttribute?.('aria-readonly') === 'true';
+
+                            const r = el.getBoundingClientRect();
+                            let s;
+                            try { s = __iWin.getComputedStyle(el); } catch(e) { continue; }
+                            if (r.width === 0 && r.height === 0) continue;
+                            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
+
+                            const absTop = __ir.top + r.top;
+                            const absLeft = __ir.left + r.left;
+                            if (viewportOnly) {
+                              if (absTop + r.height < 0 || absTop > vpH) continue;
+                              if (absLeft + r.width < 0 || absLeft > vpW) continue;
+                            }
+
+                            const __isInteractive = (
+                              ['input', 'textarea', 'select', 'button', 'a'].includes(tag)
+                              || !!el.onclick
+                              || ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'searchbox', 'textbox'].includes(role)
+                              || el.getAttribute?.('contenteditable') === 'true'
+                              || (el.getAttribute?.('tabindex') != null && el.getAttribute?.('tabindex') !== '-1')
+                              || s.cursor === 'pointer'
+                            );
+                            const isFileInput = tag === 'input' && type === 'file';
+                            if (!__isInteractive && !isFileInput) continue;
+
+                            const ancestor = el.parentElement?.closest?.(interactiveSelectors);
+                            if (ancestor && ancestor !== el) {
+                              try {
+                                const aS = __iWin.getComputedStyle(ancestor);
+                                const aR = ancestor.getBoundingClientRect();
+                                if (aR.width > 0 && aR.height > 0 && aS.display !== 'none' && aS.visibility !== 'hidden') {
+                                  const aTag = tagNameOf(ancestor);
+                                  if (['input', 'textarea', 'select', 'button', 'a'].includes(aTag)) continue;
+                                }
+                              } catch(e) {}
+                            }
+
+                            let controlType = 'other';
+                            if (isFileInput) controlType = 'file';
+                            else if (tag === 'select' || role === 'combobox' || role === 'listbox'
+                              || ['listbox', 'menu'].includes(el.getAttribute?.('aria-haspopup') || '')) controlType = 'dropdown';
+                            else if (type === 'checkbox' || type === 'radio' || ['checkbox', 'radio', 'switch'].includes(role)) controlType = 'toggle';
+                            else if (tag === 'a' || role === 'link') controlType = 'link';
+                            else if (role === 'tab') controlType = 'tab';
+                            else if (tag === 'button' || role === 'button' || role === 'menuitem') controlType = 'button';
+                            else if (['input', 'textarea'].includes(tag) || ['textbox', 'searchbox', 'combobox'].includes(role) || el.getAttribute?.('contenteditable') === 'true') controlType = 'text';
+
+                            const text = textOf(el);
+
+                            let label = '';
+                            if (el.id) {
+                              const labelEl = __iDoc.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+                              if (labelEl) label = normalizeText(labelEl.innerText || labelEl.textContent || '', 200);
+                            }
+                            if (!label) {
+                              const parentLabel = el.closest?.('label');
+                              if (parentLabel) {
+                                const lt = normalizeText(parentLabel.innerText || parentLabel.textContent || '', 200);
+                                const iv = ('value' in el && el.value) ? el.value : '';
+                                label = normalizeText(lt.replace(iv, ''), 200);
+                              }
+                            }
+                            if (!label) label = normalizeText(el.getAttribute?.('aria-label') || '', 200);
+                            if (!label) {
+                              const lbId = el.getAttribute?.('aria-labelledby');
+                              if (lbId) {
+                                const lbEl = __iDoc.getElementById(lbId);
+                                if (lbEl) label = normalizeText(lbEl.innerText || lbEl.textContent || '', 200);
+                              }
+                            }
+                            if (!label) {
+                              const imgAlt = el.querySelector?.('img[alt]')?.getAttribute?.('alt');
+                              if (imgAlt) label = normalizeText(imgAlt, 200);
+                            }
+                            if (!label) {
+                              const svgTitle = el.querySelector?.('svg title')?.textContent;
+                              if (svgTitle) label = normalizeText(svgTitle, 200);
+                            }
+                            if (!label) {
+                              const prev = el.previousElementSibling;
+                              const prevTag = tagNameOf(prev);
+                              if (prev && (prevTag === 'label' || prevTag === 'span' || prevTag === 'div')) {
+                                const pt = normalizeText(prev.innerText || prev.textContent || '', 80);
+                                if (pt && pt.length < 80) label = pt;
+                              }
+                            }
+
+                            const iconOnly = !label && !text && !!el.querySelector?.('svg, img, [class*="icon"], [data-icon]');
+                            if (!label && !text && !placeholder && !name && !id && controlType === 'other' && !iconOnly) continue;
+
+                            const entry = { controlType, tag, inFrame: true, frameIdx: __fIdx };
+                            if (type) entry.type = type;
+                            if (role) entry.role = role;
+                            if (label) entry.label = label;
+                            if (text && text !== label) entry.text = text;
+                            if (placeholder) entry.placeholder = normalizeText(placeholder, 160);
+                            if (!label && name) entry.name = normalizeText(name, 120);
+                            if (!label && id) entry.id = normalizeText(id, 120);
+                            if (iconOnly) entry.iconOnly = true;
+
+                            if (controlType === 'file') {
+                              entry.accept = el.getAttribute?.('accept') || '';
+                              if (el.multiple) entry.multiple = true;
+                            } else if (controlType === 'toggle') {
+                              entry.checked = !!el.checked || el.getAttribute?.('aria-checked') === 'true';
+                            } else if (controlType === 'text') {
+                              entry.value = normalizeText(el.value || el.textContent || '', 160);
+                            } else if (controlType === 'link') {
+                              entry.href = normalizeText(el.getAttribute?.('href') || '', 240);
+                            }
+
+                            if (disabled) entry.disabled = true;
+                            if (required) entry.required = true;
+                            if (rdonly) entry.readonly = true;
+
+                            records.push({ el, top: absTop, left: absLeft, entry });
+                          } catch(err) { continue; }
+                        }
+                      } catch(e) { /* iframe scan failed */ }
+                    }
+                  } catch(e) { /* global iframe scan error */ }
+
                   records.sort((a, b) => {
                     const topDiff = Math.abs(a.top - b.top) > 4 ? a.top - b.top : 0;
                     if (topDiff !== 0) return topDiff;
@@ -1392,7 +1590,10 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
 
                   const limited = records.slice(0, maxElements);
                   limited.forEach((record, idx) => {
-                    const elementId = 'e' + (idx + 1);
+                    const isFrame = record.entry.inFrame && record.entry.frameIdx;
+                    const elementId = isFrame
+                      ? 'f' + record.entry.frameIdx + 'e' + (idx + 1)
+                      : 'e' + (idx + 1);
                     record.entry.elementId = elementId;
                     record.entry.index = idx;
                     record.el.setAttribute(markerAttr, elementId);
@@ -1400,7 +1601,14 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                   });
 
                   if (includeForms) {
-                    const allForms = document.querySelectorAll('form');
+                    const formDocs = [document];
+                    try {
+                      document.querySelectorAll('iframe').forEach(iframe => {
+                        try { if (iframe.contentDocument) formDocs.push(iframe.contentDocument); } catch(e) {}
+                      });
+                    } catch(e) {}
+                    for (const fDoc of formDocs) {
+                    const allForms = fDoc.querySelectorAll('form');
                     for (const form of allForms) {
                       if (!isVisible(form) || !inViewport(form)) continue;
                       const fieldElementIds = limited
@@ -1415,6 +1623,7 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
                       if (form.action) formEntry.action = form.action;
                       if (form.name || form.id) formEntry.name = normalizeText(form.name || form.id || '', 120);
                       forms.push(formEntry);
+                    }
                     }
                   }
 

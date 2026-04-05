@@ -20,6 +20,7 @@ import { writeLog } from '../utils/logger';
 
 const POLL_INTERVAL_MS = 100;    // poll VM for output every 100ms
 const MAX_IDLE_MS = 10 * 60_000; // close after 10 min idle
+const WS_PING_MS = 25_000;      // protocol-level ping to keep proxies/LBs alive
 
 export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessage) {
   // Authenticate from query param
@@ -76,6 +77,13 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
     }
   };
 
+  // WebSocket-level ping to keep intermediate proxies / load balancers alive
+  const wsPingTimer = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.ping(); } catch {}
+    }
+  }, WS_PING_MS);
+
   // Pull any initial shell prompt/output immediately after opening the PTY.
   await pollOutput();
 
@@ -127,6 +135,7 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
   });
 
   function cleanup() {
+    clearInterval(wsPingTimer);
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;

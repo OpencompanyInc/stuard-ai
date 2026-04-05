@@ -437,6 +437,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
   emitToClient('started', { kind: request.kind, label: request.kind });
 
+  let streamUsage: any = null;
+
   try {
     // Only create a timeout promise if timeoutMs > 0 (0 = no timeout)
     const timeoutPromise = timeoutMs > 0
@@ -462,7 +464,6 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     let fullText = '';
     let allToolCalls: any[] = [];
     let returnControlResult = '';
-    let streamUsage: any = null;
 
     while (attempt <= MAX_RETRIES) {
       const messages = toolErrorHistory.length > 0
@@ -610,7 +611,22 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
         // ── Bill subagent usage ──
         const resolvedModelId = modelId || (typeof model === 'string' ? model : 'balanced');
-        const usageData = streamUsage || {};
+        // Aggregate usage from steps as fallback when streamUsage is empty
+        let usageData = streamUsage || {};
+        if ((!usageData.promptTokens && !usageData.prompt_tokens && !usageData.inputTokens) && steps.length > 0) {
+          let aggPrompt = 0, aggCompletion = 0, aggTotal = 0;
+          for (const step of steps) {
+            const su = (step as any)?.usage;
+            if (su) {
+              aggPrompt += Number(su.promptTokens || su.prompt_tokens || su.inputTokens || 0);
+              aggCompletion += Number(su.completionTokens || su.completion_tokens || su.outputTokens || 0);
+              aggTotal += Number(su.totalTokens || su.total_tokens || 0);
+            }
+          }
+          if (aggPrompt > 0 || aggCompletion > 0) {
+            usageData = { promptTokens: aggPrompt, completionTokens: aggCompletion, totalTokens: aggTotal || (aggPrompt + aggCompletion) };
+          }
+        }
         const promptTokens = Number(usageData.promptTokens || usageData.prompt_tokens || usageData.inputTokens || 0);
         const completionTokens = Number(usageData.completionTokens || usageData.completion_tokens || usageData.outputTokens || 0);
         const totalTokens = Number(usageData.totalTokens || usageData.total_tokens || 0) || (promptTokens + completionTokens);
@@ -675,6 +691,27 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
     const isAborted = localAbort.signal.aborted || error?.message === 'Subagent aborted';
+
+    // Bill partial usage on abort/error so credits are not silently lost
+    const resolvedModel = modelId || (typeof model === 'string' ? model : 'balanced');
+    const partialUserId = bridgeSecrets?.userId;
+    const partialPt = Number(streamUsage?.promptTokens || streamUsage?.prompt_tokens || streamUsage?.inputTokens || 0);
+    const partialCt = Number(streamUsage?.completionTokens || streamUsage?.completion_tokens || streamUsage?.outputTokens || 0);
+    if (partialUserId && (partialPt > 0 || partialCt > 0)) {
+      try {
+        await logUsageEvent(partialUserId, null, resolvedModel, {
+          promptTokens: partialPt,
+          completionTokens: partialCt,
+          totalTokens: partialPt + partialCt,
+          sourceType: 'subagent',
+          subagentKind: request.kind,
+          subagentId,
+          partial: true,
+        });
+      } catch (e: any) {
+        console.error(`[subagent:${subagentId}] failed to log partial usage:`, e?.message);
+      }
+    }
 
     if (isAborted) {
       writeLog('subagent_aborted', { subagentId, durationMs });

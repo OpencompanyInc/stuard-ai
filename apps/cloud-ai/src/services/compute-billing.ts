@@ -9,7 +9,6 @@ import {
   getActiveCloudEngines,
   getStorageUsage,
   insertBillingEvent,
-  logUsageEvent,
   updateCloudEngineStatus,
   type CloudEngine,
 } from '../supabase';
@@ -69,14 +68,6 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
         machineType,
         hourlyUsd,
       }, billingHour);
-
-      // Log to usage_events for analytics only — credits already debited above
-      await logUsageEvent(userId, null, 'cloud_compute', {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        costUsd: 0,
-      });
     }
   }
 

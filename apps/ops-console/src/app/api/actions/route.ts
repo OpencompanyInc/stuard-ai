@@ -247,7 +247,9 @@ async function triggerWorkflowWithFallback(
   return { ok: false, error: errors.join(' | ') || 'Workflow trigger failed' };
 }
 
-function formatTargets(targets?: { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean }) {
+type DeployTargets = { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean };
+
+function formatTargets(targets?: DeployTargets) {
   if (!targets) return 'all targets';
   const enabled: string[] = [];
   if (targets.website) enabled.push('website');
@@ -477,7 +479,7 @@ export async function POST(req: Request) {
       case 'ship-to-beta': {
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const sourceBranch = String(payload.sourceBranch || payload.branch || current).trim() || current;
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
+        const targets = payload.targets as DeployTargets | undefined;
         const targetLabel = formatTargets(targets);
         const github = getGithubConfig();
 
@@ -556,7 +558,7 @@ export async function POST(req: Request) {
 
       // 3. STAGING (staging) ------------------------------------------------
       case 'ship-to-staging': {
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
+        const targets = payload.targets as DeployTargets | undefined;
         const targetLabel = formatTargets(targets);
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();
@@ -581,8 +583,8 @@ export async function POST(req: Request) {
         );
 
         if (!workflowResult.ok) {
-          return NextResponse.json({
-            error: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}`
+          return NextResponse.json({ 
+            error: `Pushed ${current}, but staging workflow trigger failed: ${workflowResult.error}` 
           }, { status: 502 });
         }
 
@@ -593,7 +595,7 @@ export async function POST(req: Request) {
       case 'ship-to-prod':
       case 'release-production': {
         const version = String(payload.version || '').trim();
-        const targets = payload.targets as { website?: boolean; cloud?: boolean; desktop?: boolean; vm?: boolean } | undefined;
+        const targets = payload.targets as DeployTargets | undefined;
         const targetLabel = formatTargets(targets);
         const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
         const github = getGithubConfig();

@@ -84,36 +84,51 @@ async def handle_click(req: web.Request) -> web.Response:
                               el.getAttribute('alt'),
                             ].filter(Boolean).map(t => t.trim()).join(' ');
                           };
-                          const all = document.querySelectorAll('*');
+                          const searchScopes = [{ doc: document, offX: 0, offY: 0 }];
+                          try {
+                            document.querySelectorAll('iframe').forEach(iframe => {
+                              try {
+                                const iDoc = iframe.contentDocument;
+                                if (!iDoc) return;
+                                const ir = iframe.getBoundingClientRect();
+                                searchScopes.push({ doc: iDoc, win: iframe.contentWindow, offX: ir.left, offY: ir.top });
+                              } catch(e) {}
+                            });
+                          } catch(e) {}
                           const matches = [];
-                          for (const el of all) {
-                            const t = textOf(el);
-                            if (!t) continue;
-                            const isMatch = exact
-                              ? t === needle
-                              : t.toLowerCase().includes(String(needle).toLowerCase());
-                            if (!isMatch) continue;
-                            const r = el.getBoundingClientRect();
-                            const s = window.getComputedStyle(el);
-                            if (r.width === 0 && r.height === 0) continue;
-                            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
-                            let score = 0;
-                            const tag = el.tagName.toLowerCase();
-                            if (['button','a','input','select','textarea'].includes(tag)) score += 100;
-                            if (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') score += 90;
-                            if (el.onclick || el.getAttribute('onclick')) score += 80;
-                            if (el.getAttribute('tabindex')) score += 50;
-                            if (s.cursor === 'pointer') score += 40;
-                            score -= Math.abs(t.length - needle.length) * 0.1;
-                            matches.push({ el, score, r });
+                          for (const scope of searchScopes) {
+                            const all = scope.doc.querySelectorAll('*');
+                            const w = scope.win || window;
+                            for (const el of all) {
+                              const t = textOf(el);
+                              if (!t) continue;
+                              const isMatch = exact
+                                ? t === needle
+                                : t.toLowerCase().includes(String(needle).toLowerCase());
+                              if (!isMatch) continue;
+                              const r = el.getBoundingClientRect();
+                              let s;
+                              try { s = w.getComputedStyle(el); } catch(e) { continue; }
+                              if (r.width === 0 && r.height === 0) continue;
+                              if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
+                              let score = 0;
+                              const tag = el.tagName.toLowerCase();
+                              if (['button','a','input','select','textarea'].includes(tag)) score += 100;
+                              if (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') score += 90;
+                              if (el.onclick || el.getAttribute('onclick')) score += 80;
+                              if (el.getAttribute('tabindex')) score += 50;
+                              if (s.cursor === 'pointer') score += 40;
+                              score -= Math.abs(t.length - needle.length) * 0.1;
+                              matches.push({ el, score, r, offX: scope.offX, offY: scope.offY });
+                            }
                           }
                           if (matches.length > 0) {
                             matches.sort((a, b) => b.score - a.score);
-                            const target = matches[0].el;
-                            target.scrollIntoView({ block: 'center', inline: 'center' });
+                            const best = matches[0];
+                            best.el.scrollIntoView({ block: 'center', inline: 'center' });
                             setTimeout(() => {
-                              const r = target.getBoundingClientRect();
-                              resolve({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+                              const r = best.el.getBoundingClientRect();
+                              resolve({ x: r.left + r.width / 2 + best.offX, y: r.top + r.height / 2 + best.offY });
                             }, 50);
                             return;
                           }
@@ -155,28 +170,40 @@ async def handle_click(req: web.Request) -> web.Response:
                               el.getAttribute('alt'),
                             ].filter(Boolean).map(t => t.trim()).join(' ');
                           };
-                          const all = document.querySelectorAll('*');
+                          const searchScopes = [{ doc: document, win: window }];
+                          try {
+                            document.querySelectorAll('iframe').forEach(iframe => {
+                              try {
+                                const iDoc = iframe.contentDocument;
+                                if (iDoc) searchScopes.push({ doc: iDoc, win: iframe.contentWindow || window });
+                              } catch(e) {}
+                            });
+                          } catch(e) {}
                           const matches = [];
-                          for (const el of all) {
-                            const t = textOf(el);
-                            if (!t) continue;
-                            const isMatch = exact
-                              ? t === needle
-                              : t.toLowerCase().includes(String(needle).toLowerCase());
-                            if (!isMatch) continue;
-                            const r = el.getBoundingClientRect();
-                            const s = window.getComputedStyle(el);
-                            if (r.width === 0 && r.height === 0) continue;
-                            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
-                            let score = 0;
-                            const tag = el.tagName.toLowerCase();
-                            if (['button','a','input','select','textarea'].includes(tag)) score += 100;
-                            if (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') score += 90;
-                            if (el.onclick || el.getAttribute('onclick')) score += 80;
-                            if (el.getAttribute('tabindex')) score += 50;
-                            if (s.cursor === 'pointer') score += 40;
-                            score -= Math.abs(t.length - needle.length) * 0.1;
-                            matches.push({ el, score });
+                          for (const scope of searchScopes) {
+                            const all = scope.doc.querySelectorAll('*');
+                            for (const el of all) {
+                              const t = textOf(el);
+                              if (!t) continue;
+                              const isMatch = exact
+                                ? t === needle
+                                : t.toLowerCase().includes(String(needle).toLowerCase());
+                              if (!isMatch) continue;
+                              const r = el.getBoundingClientRect();
+                              let s;
+                              try { s = scope.win.getComputedStyle(el); } catch(e) { continue; }
+                              if (r.width === 0 && r.height === 0) continue;
+                              if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
+                              let score = 0;
+                              const tag = el.tagName.toLowerCase();
+                              if (['button','a','input','select','textarea'].includes(tag)) score += 100;
+                              if (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link') score += 90;
+                              if (el.onclick || el.getAttribute('onclick')) score += 80;
+                              if (el.getAttribute('tabindex')) score += 50;
+                              if (s.cursor === 'pointer') score += 40;
+                              score -= Math.abs(t.length - needle.length) * 0.1;
+                              matches.push({ el, score });
+                            }
                           }
                           if (matches.length > 0) {
                             matches.sort((a, b) => b.score - a.score);
@@ -186,7 +213,8 @@ async def handle_click(req: web.Request) -> web.Response:
                               const r = target.getBoundingClientRect();
                               const cx = r.left + r.width / 2;
                               const cy = r.top + r.height / 2;
-                              const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+                              const w = target.ownerDocument?.defaultView || window;
+                              const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: w };
                               target.dispatchEvent(new PointerEvent('pointerdown', opts));
                               target.dispatchEvent(new MouseEvent('mousedown', opts));
                               target.dispatchEvent(new PointerEvent('pointerup', opts));
@@ -213,17 +241,24 @@ async def handle_click(req: web.Request) -> web.Response:
                 if clicked == "clicked":
                     return _ok({"clicked": text, "method": "js_enhanced"})
 
-            # Strategy 4: JS selector click as last resort
+            # Strategy 4: JS selector click as last resort (searches iframes too)
             if selector:
                 clicked = await _evaluate(
                     """(sel) => {
-                      const el = document.querySelector(sel);
+                      let el = document.querySelector(sel);
+                      if (!el) {
+                        const iframes = document.querySelectorAll('iframe');
+                        for (const iframe of iframes) {
+                          try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                        }
+                      }
                       if (!el) return 'not_found';
                       el.scrollIntoView({ block: 'center', inline: 'center' });
                       const r = el.getBoundingClientRect();
                       const cx = r.left + r.width / 2;
                       const cy = r.top + r.height / 2;
-                      const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+                      const w = el.ownerDocument?.defaultView || window;
+                      const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: w };
                       el.dispatchEvent(new PointerEvent('pointerdown', opts));
                       el.dispatchEvent(new MouseEvent('mousedown', opts));
                       el.dispatchEvent(new PointerEvent('pointerup', opts));
@@ -288,6 +323,12 @@ async def handle_type(req: web.Request) -> web.Response:
             result = await _evaluate(
                 """([value, clearFirst, sel]) => {
                   let el = sel ? document.querySelector(sel) : document.activeElement;
+                  if (!el && sel) {
+                    const iframes = document.querySelectorAll('iframe');
+                    for (const iframe of iframes) {
+                      try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                    }
+                  }
                   if (!el) return { status: 'no_element', detail: 'No element found' };
 
                   const tag = el.tagName.toLowerCase();
@@ -369,7 +410,13 @@ async def handle_press_key(req: web.Request) -> web.Response:
             if selector:
                 focused = await _evaluate(
                     """(sel) => {
-                      const el = document.querySelector(sel);
+                      let el = document.querySelector(sel);
+                      if (!el) {
+                        const iframes = document.querySelectorAll('iframe');
+                        for (const iframe of iframes) {
+                          try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                        }
+                      }
                       if (!el) return 'not_found';
                       if (typeof el.focus === 'function') el.focus();
                       return 'ok';

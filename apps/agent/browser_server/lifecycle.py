@@ -246,9 +246,16 @@ async def _wait_for_selector(selector: str, timeout: int = 5000) -> bool:
         try:
             found = await _evaluate(
                 """(sel) => {
-                  const el = document.querySelector(String(sel));
+                  let el = document.querySelector(String(sel));
+                  if (!el) {
+                    const iframes = document.querySelectorAll('iframe');
+                    for (const iframe of iframes) {
+                      try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                    }
+                  }
                   if (!el) return false;
-                  const style = window.getComputedStyle(el);
+                  const w = el.ownerDocument?.defaultView || window;
+                  const style = w.getComputedStyle(el);
                   if (!style) return true;
                   const hidden = style.display === 'none' || style.visibility === 'hidden';
                   const r = el.getBoundingClientRect();
@@ -285,10 +292,17 @@ async def _smart_wait_for_element(selector: str = "", text: str = "", timeout: i
             if selector:
                 found = await _evaluate(
                     """(sel) => {
-                        const el = document.querySelector(sel);
+                        let el = document.querySelector(sel);
+                        if (!el) {
+                            const iframes = document.querySelectorAll('iframe');
+                            for (const iframe of iframes) {
+                                try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+                            }
+                        }
                         if (!el) return false;
+                        const w = el.ownerDocument?.defaultView || window;
                         const r = el.getBoundingClientRect();
-                        const s = window.getComputedStyle(el);
+                        const s = w.getComputedStyle(el);
                         return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
                     }""",
                     selector,
@@ -298,13 +312,22 @@ async def _smart_wait_for_element(selector: str = "", text: str = "", timeout: i
             if text:
                 found = await _evaluate(
                     """(needle) => {
-                        const all = document.querySelectorAll('*');
-                        for (const el of all) {
-                            const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim();
-                            if (t && t.toLowerCase().includes(String(needle).toLowerCase())) {
-                                const r = el.getBoundingClientRect();
-                                const s = window.getComputedStyle(el);
-                                if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden') return true;
+                        const searchDocs = [document];
+                        try {
+                            document.querySelectorAll('iframe').forEach(iframe => {
+                                try { if (iframe.contentDocument) searchDocs.push(iframe.contentDocument); } catch(e) {}
+                            });
+                        } catch(e) {}
+                        for (const doc of searchDocs) {
+                            const all = doc.querySelectorAll('*');
+                            for (const el of all) {
+                                const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim();
+                                if (t && t.toLowerCase().includes(String(needle).toLowerCase())) {
+                                    const w = el.ownerDocument?.defaultView || window;
+                                    const r = el.getBoundingClientRect();
+                                    const s = w.getComputedStyle(el);
+                                    if (r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden') return true;
+                                }
                             }
                         }
                         return false;
@@ -341,15 +364,36 @@ async def _cdp_click_at(x: float, y: float, click_count: int = 1) -> None:
 
 
 async def _cdp_click_selector(selector: str) -> bool:
-    """Find an element by CSS, scroll it into view, and click via CDP mouse."""
+    """Find an element by CSS, scroll it into view, and click via CDP mouse.
+
+    Searches the main document first, then same-origin iframes.
+    """
     coords = await _evaluate(
         """(sel) => {
-          const el = document.querySelector(sel);
+          let el = document.querySelector(sel);
+          let iframeEl = null;
+          if (!el) {
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+              try {
+                const doc = iframe.contentDocument;
+                if (!doc) continue;
+                el = doc.querySelector(sel);
+                if (el) { iframeEl = iframe; break; }
+              } catch(e) {}
+            }
+          }
           if (!el) return null;
+          if (iframeEl) iframeEl.scrollIntoView({ block: 'center', inline: 'center' });
           el.scrollIntoView({ block: 'center', inline: 'center' });
           const r = el.getBoundingClientRect();
           if (r.width === 0 && r.height === 0) return null;
-          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+          let x = r.left + r.width / 2, y = r.top + r.height / 2;
+          if (iframeEl) {
+            const ir = iframeEl.getBoundingClientRect();
+            x += ir.left; y += ir.top;
+          }
+          return { x, y };
         }""",
         selector,
     )
@@ -360,10 +404,15 @@ async def _cdp_click_selector(selector: str) -> bool:
             return True
         except Exception:
             pass
-    # Last resort: JS click
     result = await _evaluate(
         """(sel) => {
-          const el = document.querySelector(sel);
+          let el = document.querySelector(sel);
+          if (!el) {
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+              try { el = iframe.contentDocument?.querySelector(sel); if (el) break; } catch(e) {}
+            }
+          }
           if (el) { el.click(); return true; }
           return false;
         }""",
@@ -555,6 +604,48 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
             pass
         state._browser = state._page = None
         return False, f"Chrome launch failed: {err}"
+
+
+async def _get_child_frames() -> list[dict]:
+    """Get child frames (iframes) with their CDP execution context IDs."""
+    if state._page is None:
+        return []
+    try:
+        result = await state._page.send("Page.getFrameTree")
+        frames: list[dict] = []
+
+        def _collect(tree: dict, depth: int = 0) -> None:
+            for child in tree.get("childFrames", []):
+                f = child.get("frame", {})
+                fid = f.get("id", "")
+                frames.append({
+                    "frameId": fid,
+                    "url": f.get("url", ""),
+                    "name": f.get("name", ""),
+                    "contextId": state._page._frame_contexts.get(fid),
+                })
+                _collect(child, depth + 1)
+
+        _collect(result.get("frameTree", {}))
+        return frames
+    except Exception:
+        return []
+
+
+async def _evaluate_in_frame(frame_id: str, js_arrow_fn: str, *args: Any) -> Any:
+    """Evaluate JS in a child frame's execution context."""
+    if state._page is None:
+        return ""
+    ctx_id = state._page._frame_contexts.get(frame_id)
+    if ctx_id is None:
+        return ""
+    try:
+        coro = state._page.evaluate_in_context(ctx_id, js_arrow_fn, *args)
+        return await asyncio.wait_for(coro, timeout=30.0)
+    except asyncio.TimeoutError:
+        return ""
+    except Exception:
+        return ""
 
 
 async def _close_browser(profile_dir: Path | None = None) -> None:

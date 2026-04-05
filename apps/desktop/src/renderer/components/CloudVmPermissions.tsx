@@ -40,7 +40,15 @@ function buildVmWsUrl(): string {
   return `ws://${base.replace(/^http:\/\//, '')}/vm/ws`;
 }
 
-export function CloudVmPermissions({ engine, className }: { engine: any; className?: string }) {
+export function CloudVmPermissions({
+  engine,
+  className,
+  variant = 'default',
+}: {
+  engine: any;
+  className?: string;
+  variant?: 'default' | 'workspace';
+}) {
   const [config, setConfig] = useState<PermissionsConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -261,7 +269,9 @@ export function CloudVmPermissions({ engine, className }: { engine: any; classNa
                 'p-4 rounded-2xl border-2 text-left transition-all duration-200',
                 config.mode === m.id
                   ? `${m.border} ${m.bg} shadow-lg`
-                  : 'border-theme/10 bg-theme-card/30 hover:border-theme/20',
+                  : variant === 'workspace'
+                    ? 'border-theme/10 bg-theme-card/20 hover:border-theme/20'
+                    : 'border-theme/10 bg-theme-card/30 hover:border-theme/20',
               )}
             >
               <m.icon className={clsx('w-5 h-5 mb-2', config.mode === m.id ? m.color : 'text-theme-muted')} />
@@ -293,7 +303,9 @@ export function CloudVmPermissions({ engine, className }: { engine: any; classNa
                     'w-full flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 text-left',
                     isApproved
                       ? 'border-green-500/20 bg-green-500/5'
-                      : 'border-theme/10 bg-theme-card/20 hover:border-theme/20',
+                      : variant === 'workspace'
+                        ? 'border-theme/10 bg-theme-card/10 hover:border-theme/20'
+                        : 'border-theme/10 bg-theme-card/20 hover:border-theme/20',
                   )}
                 >
                   <tool.icon className={clsx('w-4 h-4 shrink-0', isApproved ? 'text-green-500' : 'text-theme-muted')} />
@@ -358,7 +370,11 @@ export function CloudVmPermissions({ engine, className }: { engine: any; classNa
       )}
 
       {/* Info box */}
-      <div className="rounded-2xl border border-theme/10 bg-theme-card/20 p-4">
+      <div className={clsx(
+        variant === 'workspace'
+          ? 'dashboard-card p-4'
+          : 'rounded-2xl border border-theme/10 bg-theme-card/20 p-4',
+      )}>
         <div className="flex items-start gap-3">
           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
           <div className="text-xs text-theme-muted leading-relaxed">

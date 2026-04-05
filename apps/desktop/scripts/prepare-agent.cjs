@@ -155,18 +155,10 @@ function main() {
     console.warn(`[prepare-agent] Agent binary: NOT FOUND (will use Python fallback in dev)`);
   }
 
-  // 2. Browser server binary
-  const browserCopied = copyServiceBinary(distDir, outDir, {
-    winName: "stuard-browser.exe",
-    macName: "stuard-browser-macos",
-    linuxName: "stuard-browser-linux",
-    destName: process.platform === "win32" ? "stuard-browser.exe" : "stuard-browser",
-  });
-  if (browserCopied) {
-    console.log(`[prepare-agent] Browser binary: OK`);
-  } else {
-    console.warn(`[prepare-agent] Browser binary: NOT FOUND (will use Python fallback)`);
-  }
+  // 2. Browser server binary — no longer bundled in the app.
+  // Downloaded on demand from R2 to userData/integrations/browser/ at runtime.
+  const browserCopied = false;
+  console.log(`[prepare-agent] Browser binary: SKIPPED (downloaded on demand from R2)`);
 
   // 3. MediaPipe service binary (optional — not all builds include it)
   const mediapipeCopied = copyServiceBinary(distDir, outDir, {

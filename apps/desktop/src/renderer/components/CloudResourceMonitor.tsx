@@ -13,6 +13,7 @@ interface CloudResourceMonitorProps {
     net_tx: number;
   };
   expanded?: boolean;
+  variant?: 'default' | 'workspace';
 }
 
 function fmt(bytes: number): string {
@@ -33,12 +34,15 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
-export const CloudResourceMonitor: React.FC<CloudResourceMonitorProps> = ({ metrics, expanded }) => {
+export const CloudResourceMonitor: React.FC<CloudResourceMonitorProps> = ({
+  metrics,
+  expanded,
+  variant = 'default',
+}) => {
   const ramPct = metrics.ram_total > 0 ? (metrics.ram_used / metrics.ram_total) * 100 : 0;
   const diskPct = metrics.disk_total > 0 ? (metrics.disk_used / metrics.disk_total) * 100 : 0;
 
   if (!expanded) {
-    // Compact: single row of mini widgets
     return (
       <div className="grid grid-cols-4 gap-1.5">
         <MiniStat icon={Cpu} label="CPU" value={`${metrics.cpu.toFixed(0)}%`} color="text-blue-500" />
@@ -49,7 +53,50 @@ export const CloudResourceMonitor: React.FC<CloudResourceMonitorProps> = ({ metr
     );
   }
 
-  // Expanded: full cards with progress bars
+  if (variant === 'workspace') {
+    return (
+      <div className="grid grid-cols-2 gap-4">
+        <WorkspaceMetricCard
+          icon={Cpu}
+          label="CPU Load"
+          value={`${metrics.cpu.toFixed(1)}%`}
+          detail="Processor usage"
+          pct={metrics.cpu}
+          color="bg-blue-500"
+          iconColor="text-blue-400"
+        />
+        <WorkspaceMetricCard
+          icon={MemoryStick}
+          label="Memory"
+          value={`${fmt(metrics.ram_used)} / ${fmt(metrics.ram_total)}`}
+          detail={`${ramPct.toFixed(0)}% allocated`}
+          pct={ramPct}
+          color="bg-violet-500"
+          iconColor="text-violet-400"
+        />
+        <WorkspaceMetricCard
+          icon={HardDrive}
+          label="Storage"
+          value={`${fmt(metrics.disk_used)} / ${fmt(metrics.disk_total)}`}
+          detail={`${diskPct.toFixed(0)}% used`}
+          pct={diskPct}
+          color="bg-amber-500"
+          iconColor="text-amber-400"
+        />
+        <WorkspaceMetricCard
+          icon={Wifi}
+          label="Network"
+          value={`↓ ${fmt(metrics.net_rx)}`}
+          detail={`↑ ${fmt(metrics.net_tx)}`}
+          pct={0}
+          color="bg-emerald-500"
+          iconColor="text-emerald-400"
+          hideBar
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <StatCard
@@ -110,6 +157,33 @@ function StatCard({ icon: Icon, label, value, pct, color, iconColor, hideBar }: 
           <span className="text-[10px] font-bold text-theme-fg">{label}</span>
         </div>
         <span className="text-[10px] text-theme-muted font-mono">{value}</span>
+      </div>
+      {!hideBar && <ProgressBar pct={pct} color={color} />}
+    </div>
+  );
+}
+
+function WorkspaceMetricCard({ icon: Icon, label, value, detail, pct, color, iconColor, hideBar }: {
+  icon: any;
+  label: string;
+  value: string;
+  detail: string;
+  pct: number;
+  color: string;
+  iconColor: string;
+  hideBar?: boolean;
+}) {
+  return (
+    <div className="dashboard-card p-5 space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-theme-muted">{label}</div>
+          <div className="mt-2 text-xl font-semibold text-theme-fg">{value}</div>
+          <div className="mt-1 text-xs text-theme-muted">{detail}</div>
+        </div>
+        <div className="rounded-xl border border-theme/10 bg-theme-card/40 p-2.5">
+          <Icon className={clsx('h-4 w-4', iconColor)} />
+        </div>
       </div>
       {!hideBar && <ProgressBar pct={pct} color={color} />}
     </div>

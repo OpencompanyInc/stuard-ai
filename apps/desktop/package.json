@@ -31,6 +31,7 @@
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-slider": "^1.3.6",
     "@supabase/supabase-js": "^2.45.4",
+    "@types/three": "^0.183.1",
     "anser": "^1.4.10",
     "chokidar": "^3.5.3",
     "class-variance-authority": "^0.7.1",
@@ -64,6 +65,7 @@
     "simplebar-react": "^3.2.5",
     "sucrase": "^3.35.1",
     "tailwind-merge": "^3.4.0",
+    "three": "^0.183.2",
     "uiohook-napi": "^1.5.4",
     "uuid": "^9.0.1",
     "ws": "^8.17.0"

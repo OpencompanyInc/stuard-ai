@@ -1636,3 +1636,24 @@ body {
 .rotate-x-minus-10 {
   transform: rotateX(-10deg);
 }
+
+/* Cloud runtime workspace — inherits dashboard theme tokens */
+.cloud-runtime-tree-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: var(--foreground-muted);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.cloud-runtime-tree-row:hover {
+  color: var(--foreground);
+  background: var(--dashboard-hover);
+}
+.cloud-runtime-tree-row-active {
+  color: var(--foreground);
+  background: var(--dashboard-sidebar-item-active);
+}

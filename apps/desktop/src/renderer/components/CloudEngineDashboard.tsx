@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import {
-  Cloud, Server, Terminal, FolderOpen, Activity, Power, PowerOff, Trash2,
+  Cloud, Server, Activity, Power, Trash2,
   RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
-  Download, Upload, Sparkles, Zap, Shield, ChevronDown, ChevronUp,
+  Download, Upload, Sparkles, Zap, Shield,
   CreditCard, Camera, RotateCcw, Plus, X, Rocket, Play, Square,
-  ScrollText, AlertCircle, CheckCircle2, Circle, MessageCircle
+  ScrollText, AlertCircle, CheckCircle2, Circle,
 } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
@@ -13,8 +13,7 @@ import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
 import { CloudVmPermissions } from './CloudVmPermissions';
-
-type DashTab = 'overview' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots' | 'deploys' | 'chat' | 'permissions';
+import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -72,11 +71,10 @@ export function CloudEngineDashboard() {
   const {
     engine, loading, error, metrics, billing, snapshots, deployments,
     provision, start, stop, destroy, listFiles, readFile, refresh,
-    createSnapshot, restoreSnapshot, deleteSnapshot, fetchSnapshots,
+    createSnapshot, restoreSnapshot, deleteSnapshot,
     createDeployment, stopDeployment, restartDeployment, deleteDeployment,
     getDeployLogs, fetchDeployments,
   } = useCloudEngine();
-  const [tab, setTab] = useState<DashTab>('overview');
   const [selectedPlan, setSelectedPlan] = useState('pro');
   const [customMode, setCustomMode] = useState(false);
   const [customCpu, setCustomCpu] = useState(2);
@@ -103,6 +101,7 @@ export function CloudEngineDashboard() {
     };
 
     return (
+      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       <div className="animate-in fade-in duration-500">
         {/* Hero */}
         <div className="mb-10">
@@ -271,13 +270,14 @@ export function CloudEngineDashboard() {
         </button>
         <p className="text-center text-[10px] text-theme-muted mt-3">You can stop or delete your engine at any time. Credits are only used while running.</p>
       </div>
+      </div>
     );
   }
 
   // ─── Loading ────────────────────────────────────────────────────────
   if (loading && !engine) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
+      <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
           <span className="text-sm text-theme-muted font-medium">Loading your cloud engine...</span>
@@ -290,6 +290,9 @@ export function CloudEngineDashboard() {
 
   // ─── Provisioning Progress View ─────────────────────────────────────
   if (engine.status === 'provisioning') {
+    const ScrollWrapper = ({ children }: { children: React.ReactNode }) => (
+      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">{children}</div>
+    );
     const PROVISION_STEPS = [
       { key: 'vm_creating',          label: 'Creating your machine',       detail: 'Spinning up a dedicated VM in the cloud' },
       { key: 'vm_created',           label: 'Machine created',             detail: 'Your VM is ready, configuring network...' },
@@ -306,9 +309,9 @@ export function CloudEngineDashboard() {
     const progress = Math.max(0, Math.min(100, ((currentIdx + 1) / PROVISION_STEPS.length) * 100));
 
     return (
+      <ScrollWrapper>
       <div className="animate-in fade-in duration-500">
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
-          {/* Main card */}
           <div className="w-full max-w-lg">
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
@@ -385,6 +388,7 @@ export function CloudEngineDashboard() {
           </div>
         </div>
       </div>
+      </ScrollWrapper>
     );
   }
 
@@ -393,6 +397,7 @@ export function CloudEngineDashboard() {
   const isBooting = engine.status === 'running' && (engine.health_status === 'unreachable' || engine.health_status === 'unknown') && !metrics;
   if (isBooting) {
     return (
+      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       <div className="animate-in fade-in duration-500">
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
           <div className="w-full max-w-md text-center">
@@ -436,29 +441,168 @@ export function CloudEngineDashboard() {
           </div>
         </div>
       </div>
+      </div>
     );
   }
 
-  const statusColor = engine.status === 'running' ? 'text-green-500' : engine.status === 'stopped' ? 'text-amber-500' : 'text-red-500';
-  const statusBgColor = engine.status === 'running' ? 'bg-green-500' : engine.status === 'stopped' ? 'bg-amber-500' : 'bg-red-500';
-  const statusLabel = engine.status === 'running' ? 'Running' : engine.status === 'stopped' ? 'Paused' : engine.status;
+  const handlePause = async () => {
+    setActionLoading('stop');
+    await stop();
+    setActionLoading(null);
+  };
 
-  const dashTabs: { id: DashTab; label: string; icon: any }[] = [
-    { id: 'overview', label: 'Overview', icon: Server },
-    { id: 'terminal', label: 'Terminal', icon: Terminal },
-    { id: 'files', label: 'Files', icon: FolderOpen },
-    { id: 'monitoring', label: 'Monitoring', icon: Activity },
-    { id: 'billing', label: 'Billing', icon: CreditCard },
-    { id: 'snapshots', label: 'Snapshots', icon: Camera },
-    { id: 'deploys', label: 'Deploys', icon: Rocket },
-    { id: 'chat', label: 'Chat', icon: MessageCircle },
-    { id: 'permissions', label: 'Permissions', icon: Shield },
-  ];
+  const handleDelete = () => {
+    if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) {
+      destroy();
+    }
+  };
 
-  // ─── Engine Dashboard ──────────────────────────────────────────────
+  const overviewPanel = (
+    <div className="custom-scrollbar h-full overflow-y-auto p-6">
+      <div className="grid grid-cols-12 gap-4">
+        <div className="dashboard-card p-5 col-span-5 space-y-4">
+          <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider">Machine</h3>
+          <div className="space-y-3">
+            <InfoRow icon={Server} label="Name" value={engine.instance_name} />
+            <InfoRow icon={Globe} label="Region" value={engine.zone} />
+            <InfoRow icon={Cpu} label="Plan" value={engine.tier} capitalize />
+            <InfoRow icon={Cpu} label="Machine" value={engine.vcpus && engine.ram_gb ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB RAM` : '—'} />
+            <InfoRow icon={HardDrive} label="Storage" value={`${engine.disk_size_gb} GB`} />
+            {engine.external_ip && <InfoRow icon={Globe} label="Address" value={engine.external_ip} mono />}
+            <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />
+          </div>
+        </div>
+
+        <div className="dashboard-card p-5 col-span-7">
+          <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Performance</h3>
+          {metrics ? (
+            <div className="space-y-4">
+              <MetricBar label="CPU" value={metrics.cpu} unit={`${Math.round(metrics.cpu)}%`} color="primary" />
+              <MetricBar label="Memory" value={(metrics.ram_used / metrics.ram_total) * 100} unit={`${(metrics.ram_used / 1e9).toFixed(1)} / ${(metrics.ram_total / 1e9).toFixed(1)} GB`} color="violet" />
+              <MetricBar label="Storage" value={(metrics.disk_used / metrics.disk_total) * 100} unit={`${(metrics.disk_used / 1e9).toFixed(1)} / ${(metrics.disk_total / 1e9).toFixed(1)} GB`} color="amber" />
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <Upload className="w-3.5 h-3.5 text-green-500" />
+                  <span className="text-theme-muted">Upload:</span>
+                  <span className="font-bold text-theme-fg">{formatBytes(metrics.net_tx)}/s</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="text-theme-muted">Download:</span>
+                  <span className="font-bold text-theme-fg">{formatBytes(metrics.net_rx)}/s</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-theme-muted">
+              <Loader2 className="w-5 h-5 animate-spin mb-2" />
+              <span className="text-xs">Loading performance data...</span>
+            </div>
+          )}
+        </div>
+
+        <div className="dashboard-card p-5 col-span-12">
+          <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <StatusPill label="AI Agent" connected={engine.health_status === 'healthy'} detail={engine.health_status === 'healthy' ? 'Connected and ready' : 'Not connected'} />
+            <StatusPill label="Heartbeat" connected={!!engine.last_heartbeat_at} detail={engine.last_heartbeat_at ? `Last: ${new Date(engine.last_heartbeat_at).toLocaleTimeString()}` : 'Waiting...'} />
+            <StatusPill label="Network" connected={!!engine.external_ip} detail={engine.external_ip || 'Assigning...'} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const monitoringPanel = (
+    <div className="custom-scrollbar h-full overflow-y-auto p-6">
+      {metrics ? (
+        <CloudResourceMonitor metrics={metrics} expanded variant="workspace" />
+      ) : (
+        <div className="dashboard-card p-8 flex flex-col items-center justify-center py-20 text-theme-muted">
+          <Loader2 className="w-6 h-6 animate-spin mb-3" />
+          <span className="text-sm">Collecting data...</span>
+        </div>
+      )}
+    </div>
+  );
+
+  if (engine.status === 'running') {
+    return (
+      <div className="h-full">
+      <CloudRuntimeWorkspace
+        engine={engine}
+        pauseLoading={actionLoading === 'stop'}
+        onPause={handlePause}
+        onRefresh={refresh}
+        onDelete={handleDelete}
+        explorer={
+          <CloudFileBrowser
+            engine={engine}
+            listFiles={listFiles}
+            readFile={readFile}
+            className="w-full h-full"
+            variant="explorer"
+          />
+        }
+        terminal={
+          <CloudTerminalPanel
+            engine={engine}
+            className="w-full h-full"
+            variant="workspace"
+          />
+        }
+        views={{
+          chat: <CloudVmChat engine={engine} className="h-full" variant="workspace" />,
+          overview: overviewPanel,
+          monitoring: monitoringPanel,
+          billing: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <BillingTab billing={billing} engine={engine} />
+            </div>
+          ),
+          snapshots: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <SnapshotsTab
+                snapshots={snapshots}
+                createSnapshot={createSnapshot}
+                restoreSnapshot={restoreSnapshot}
+                deleteSnapshot={deleteSnapshot}
+              />
+            </div>
+          ),
+          deploys: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <DeploysTab
+                deployments={deployments}
+                engineRunning
+                createDeployment={createDeployment}
+                stopDeployment={stopDeployment}
+                restartDeployment={restartDeployment}
+                deleteDeployment={deleteDeployment}
+                getDeployLogs={getDeployLogs}
+                refreshDeployments={fetchDeployments}
+              />
+            </div>
+          ),
+          permissions: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <CloudVmPermissions engine={engine} variant="workspace" />
+            </div>
+          ),
+        }}
+      />
+      </div>
+    );
+  }
+
+  // ─── Stopped / Other States → Overview with controls ─────────────
+  const statusColor = engine.status === 'stopped' ? 'text-amber-500' : 'text-red-500';
+  const statusBgColor = engine.status === 'stopped' ? 'bg-amber-500' : 'bg-red-500';
+  const statusLabel = engine.status === 'stopped' ? 'Paused' : engine.status;
+
   return (
+    <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
     <div className="animate-in fade-in duration-500">
-      {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Engine</h1>
@@ -475,26 +619,14 @@ export function CloudEngineDashboard() {
           <button onClick={refresh} className="p-2.5 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-all" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-          {engine.status === 'stopped' && (
-            <button
-              onClick={async () => { setActionLoading('start'); await start(); setActionLoading(null); }}
-              disabled={actionLoading === 'start'}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600/10 text-green-600 text-xs font-black hover:bg-green-600/20 transition-all disabled:opacity-50"
-            >
-              {actionLoading === 'start' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
-              Resume
-            </button>
-          )}
-          {engine.status === 'running' && (
-            <button
-              onClick={async () => { setActionLoading('stop'); await stop(); setActionLoading(null); }}
-              disabled={actionLoading === 'stop'}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600/10 text-amber-500 text-xs font-black hover:bg-amber-600/20 transition-all disabled:opacity-50"
-            >
-              {actionLoading === 'stop' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
-              Pause
-            </button>
-          )}
+          <button
+            onClick={async () => { setActionLoading('start'); await start(); setActionLoading(null); }}
+            disabled={actionLoading === 'start'}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600/10 text-green-600 text-xs font-black hover:bg-green-600/20 transition-all disabled:opacity-50"
+          >
+            {actionLoading === 'start' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+            Resume
+          </button>
           <button
             onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600/10 text-red-500 text-xs font-black hover:bg-red-600/20 transition-all"
@@ -508,141 +640,31 @@ export function CloudEngineDashboard() {
         <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm font-medium">{error}</div>
       )}
 
-      {/* Sub-tabs */}
-      <div className="flex items-center gap-1 mb-6 p-1 bg-theme-hover/40 rounded-2xl w-fit">
-        {dashTabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={clsx(
-            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all duration-200',
-            tab === t.id ? 'bg-theme-card text-primary shadow-sm' : 'text-theme-muted hover:text-theme-fg'
-          )}>
-            <t.icon className="w-3.5 h-3.5" /> {t.label}
-          </button>
-        ))}
+      <div className="grid grid-cols-2 gap-6">
+        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6 space-y-4">
+          <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider">Your Machine</h3>
+          <div className="space-y-3">
+            <InfoRow icon={Server} label="Name" value={engine.instance_name} />
+            <InfoRow icon={Globe} label="Region" value={engine.zone} />
+            <InfoRow icon={Cpu} label="Plan" value={engine.tier} capitalize />
+            <InfoRow icon={Cpu} label="Machine" value={engine.vcpus && engine.ram_gb ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB RAM` : '—'} />
+            <InfoRow icon={HardDrive} label="Storage" value={`${engine.disk_size_gb} GB`} />
+            {engine.external_ip && <InfoRow icon={Globe} label="Address" value={engine.external_ip} mono />}
+            <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />
+          </div>
+        </div>
+        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6">
+          <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
+          <div className="flex flex-col gap-4">
+            <StatusPill label="AI Agent" connected={false} detail="Engine paused" />
+            <StatusPill label="Network" connected={false} detail={engine.external_ip || 'No IP assigned'} />
+          </div>
+          <div className="mt-6 p-4 rounded-xl bg-theme-hover/30 text-center">
+            <p className="text-xs text-theme-muted">Resume your engine to access chat, terminal, files, and more.</p>
+          </div>
+        </div>
       </div>
-
-      {/* Tab Content */}
-      {tab === 'overview' && (
-        <div className="grid grid-cols-2 gap-6">
-          <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6 space-y-4">
-            <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider">Your Machine</h3>
-            <div className="space-y-3">
-              <InfoRow icon={Server} label="Name" value={engine.instance_name} />
-              <InfoRow icon={Globe} label="Region" value={engine.zone} />
-              <InfoRow icon={Cpu} label="Plan" value={engine.tier} capitalize />
-              <InfoRow
-                icon={Cpu}
-                label="Machine"
-                value={engine.vcpus && engine.ram_gb ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB RAM` : '—'}
-              />
-              <InfoRow icon={HardDrive} label="Storage" value={`${engine.disk_size_gb} GB`} />
-              {engine.external_ip && <InfoRow icon={Globe} label="Address" value={engine.external_ip} mono />}
-              <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6">
-            <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Performance</h3>
-            {metrics ? (
-              <div className="space-y-4">
-                <MetricBar label="CPU" value={metrics.cpu} unit={`${Math.round(metrics.cpu)}%`} color="primary" />
-                <MetricBar label="Memory" value={(metrics.ram_used / metrics.ram_total) * 100} unit={`${(metrics.ram_used / 1e9).toFixed(1)} / ${(metrics.ram_total / 1e9).toFixed(1)} GB`} color="violet" />
-                <MetricBar label="Storage" value={(metrics.disk_used / metrics.disk_total) * 100} unit={`${(metrics.disk_used / 1e9).toFixed(1)} / ${(metrics.disk_total / 1e9).toFixed(1)} GB`} color="amber" />
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="flex items-center gap-2 text-xs">
-                    <Upload className="w-3.5 h-3.5 text-green-500" />
-                    <span className="text-theme-muted">Upload:</span>
-                    <span className="font-bold text-theme-fg">{formatBytes(metrics.net_tx)}/s</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <Download className="w-3.5 h-3.5 text-blue-500" />
-                    <span className="text-theme-muted">Download:</span>
-                    <span className="font-bold text-theme-fg">{formatBytes(metrics.net_rx)}/s</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-theme-muted">
-                {engine.status === 'running' ? (
-                  <><Loader2 className="w-5 h-5 animate-spin mb-2" /><span className="text-xs">Loading performance data...</span></>
-                ) : (
-                  <><WifiOff className="w-5 h-5 mb-2 opacity-40" /><span className="text-xs">Resume your engine to see performance data</span></>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="col-span-2 rounded-2xl bg-theme-card/30 border border-theme/10 p-6">
-            <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
-            <div className="flex items-center gap-6">
-              <StatusPill label="AI Agent" connected={engine.health_status === 'healthy'} detail={engine.health_status === 'healthy' ? 'Connected & ready' : 'Not connected'} />
-              <StatusPill label="Heartbeat" connected={!!engine.last_heartbeat_at} detail={engine.last_heartbeat_at ? `Last: ${new Date(engine.last_heartbeat_at).toLocaleTimeString()}` : 'Waiting...'} />
-              <StatusPill label="Network" connected={!!engine.external_ip} detail={engine.external_ip || 'Assigning...'} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'terminal' && (
-        <div className="rounded-2xl border border-theme/10 overflow-hidden" style={{ height: 'calc(100vh - 280px)' }}>
-          <CloudTerminalPanel engine={engine} className="w-full h-full" />
-        </div>
-      )}
-
-      {tab === 'files' && (
-        <div className="rounded-2xl border border-theme/10 overflow-hidden" style={{ height: 'calc(100vh - 280px)' }}>
-          <CloudFileBrowser engine={engine} listFiles={listFiles} readFile={readFile} className="w-full h-full" />
-        </div>
-      )}
-
-      {tab === 'monitoring' && (
-        <div className="rounded-2xl border border-theme/10 p-6" style={{ minHeight: 'calc(100vh - 280px)' }}>
-          {metrics ? (
-            <CloudResourceMonitor metrics={metrics} expanded />
-          ) : (
-            <div className="flex flex-col items-center justify-center py-20 text-theme-muted">
-              {engine.status === 'running' ? (
-                <><Loader2 className="w-6 h-6 animate-spin mb-3" /><span className="text-sm">Collecting data...</span></>
-              ) : (
-                <><Activity className="w-6 h-6 mb-3 opacity-40" /><span className="text-sm">Resume your engine to see monitoring data</span></>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'billing' && (
-        <BillingTab billing={billing} engine={engine} />
-      )}
-
-      {tab === 'snapshots' && (
-        <SnapshotsTab
-          snapshots={snapshots}
-          createSnapshot={createSnapshot}
-          restoreSnapshot={restoreSnapshot}
-          deleteSnapshot={deleteSnapshot}
-        />
-      )}
-
-      {tab === 'deploys' && (
-        <DeploysTab
-          deployments={deployments}
-          engineRunning={engine.status === 'running'}
-          createDeployment={createDeployment}
-          stopDeployment={stopDeployment}
-          restartDeployment={restartDeployment}
-          deleteDeployment={deleteDeployment}
-          getDeployLogs={getDeployLogs}
-          refreshDeployments={fetchDeployments}
-        />
-      )}
-
-      {tab === 'chat' && (
-        <CloudVmChat engine={engine} className="h-[calc(100vh-280px)]" />
-      )}
-
-      {tab === 'permissions' && (
-        <CloudVmPermissions engine={engine} />
-      )}
+    </div>
     </div>
   );
 }
@@ -654,22 +676,21 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
   const planInfo = PLANS.find(p => p.id === tier);
 
   return (
-    <div className="space-y-6">
-      {/* Credit Usage Cards */}
+    <div className="space-y-4">
       <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
+        <div className="dashboard-card p-5 !border-blue-500/20 bg-blue-500/5">
           <CreditCard className="w-5 h-5 text-blue-400 mb-2" />
           <div className="text-[10px] text-theme-muted font-bold uppercase tracking-wider">Total Credits Used</div>
           <div className="text-2xl font-black text-theme-fg mt-1">{(billing?.total_credits_used ?? 0).toFixed(2)}</div>
           <div className="text-[10px] text-theme-muted mt-0.5">this billing period</div>
         </div>
-        <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-5">
+        <div className="dashboard-card p-5 !border-purple-500/20 bg-purple-500/5">
           <Cpu className="w-5 h-5 text-purple-400 mb-2" />
           <div className="text-[10px] text-theme-muted font-bold uppercase tracking-wider">Compute</div>
           <div className="text-2xl font-black text-theme-fg mt-1">{(billing?.compute_credits ?? 0).toFixed(2)}</div>
           <div className="text-[10px] text-theme-muted mt-0.5">credits for VM runtime</div>
         </div>
-        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5">
+        <div className="dashboard-card p-5 !border-amber-500/20 bg-amber-500/5">
           <HardDrive className="w-5 h-5 text-amber-400 mb-2" />
           <div className="text-[10px] text-theme-muted font-bold uppercase tracking-wider">Storage</div>
           <div className="text-2xl font-black text-theme-fg mt-1">{(billing?.storage_credits ?? 0).toFixed(2)}</div>
@@ -677,9 +698,8 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
         </div>
       </div>
 
-      {/* Current Plan */}
-      <div className="rounded-2xl border border-theme/10 bg-theme-card/30 p-6">
-        <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Current Plan</h3>
+      <div className="dashboard-card p-5">
+        <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Current Plan</h3>
         <div className="grid grid-cols-4 gap-4">
           <div>
             <div className="text-[10px] text-theme-muted">Tier</div>
@@ -700,9 +720,8 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
         </div>
       </div>
 
-      {/* Pricing Reference */}
-      <div className="rounded-2xl border border-theme/10 bg-theme-card/30 p-6">
-        <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Pricing Reference</h3>
+      <div className="dashboard-card p-5">
+        <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Pricing Reference</h3>
         <div className="grid grid-cols-4 gap-3">
           {PLANS.map(p => (
             <div
@@ -772,8 +791,7 @@ function SnapshotsTab({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Create Snapshot */}
+    <div className="space-y-4">
       <div className="flex gap-3">
         <div className="flex-1">
           <input
@@ -795,9 +813,8 @@ function SnapshotsTab({
         </button>
       </div>
 
-      {/* Snapshot List */}
       {snapshots.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-theme-muted">
+        <div className="dashboard-card p-8 flex flex-col items-center justify-center py-16 text-theme-muted">
           <Camera className="w-8 h-8 mb-3 opacity-30" />
           <div className="text-sm font-bold">No snapshots yet</div>
           <div className="text-xs mt-1">Create one to save your VM state</div>
@@ -807,7 +824,7 @@ function SnapshotsTab({
           {snapshots.map(snap => (
             <div
               key={snap.id}
-              className="flex items-center justify-between p-4 rounded-2xl border border-theme/10 bg-theme-card/30 hover:border-theme/20 transition-all"
+              className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -885,7 +902,7 @@ function MetricBar({ label, value, unit, color }: { label: string; value: number
 
 function StatusPill({ label, connected, detail }: { label: string; connected: boolean; detail: string }) {
   return (
-    <div className="flex items-center gap-3 p-3 rounded-xl bg-theme-hover/30 flex-1">
+    <div className="flex items-center gap-3 rounded-2xl border border-theme/10 bg-theme-card/20 p-4 flex-1">
       <div className={clsx('w-2.5 h-2.5 rounded-full', connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-400')} />
       <div>
         <div className="text-xs font-bold text-theme-fg">{label}</div>
@@ -1044,8 +1061,7 @@ function DeploysTab({
   const kindEmoji: Record<string, string> = { workflow: '🔄', script: '📜', project: '📦' };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-black text-theme-fg">Deployments</h3>
@@ -1067,16 +1083,15 @@ function DeploysTab({
       </div>
 
       {!engineRunning && (
-        <div className="p-6 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-center">
+        <div className="dashboard-card p-6 bg-amber-500/5 !border-amber-500/20 text-center">
           <Rocket className="w-8 h-8 text-amber-500 mx-auto mb-2 opacity-60" />
           <p className="text-sm font-bold text-amber-500">Engine not running</p>
           <p className="text-xs text-theme-muted mt-1">Start your Cloud Engine to deploy and manage workloads</p>
         </div>
       )}
 
-      {/* Create Form */}
       {showCreate && (
-        <div className="rounded-2xl border border-primary/20 bg-theme-card/50 p-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+        <div className="dashboard-card p-6 !border-primary/20 bg-theme-card/50 space-y-4 animate-in slide-in-from-top-2 duration-200">
           <h4 className="text-sm font-black text-theme-fg flex items-center gap-2">
             <Rocket className="w-4 h-4 text-primary" /> New Deployment
           </h4>
@@ -1183,9 +1198,8 @@ function DeploysTab({
         </div>
       )}
 
-      {/* Deployment List */}
       {deployments.length === 0 && !showCreate && (
-        <div className="p-12 rounded-2xl border border-theme/10 bg-theme-card/20 text-center">
+        <div className="dashboard-card p-12 text-center">
           <Rocket className="w-10 h-10 text-theme-muted mx-auto mb-3 opacity-30" />
           <p className="text-sm font-bold text-theme-muted">No deployments yet</p>
           <p className="text-xs text-theme-muted/70 mt-1">Deploy a workflow, script, or project to your Cloud Engine</p>
@@ -1201,7 +1215,7 @@ function DeploysTab({
 
             return (
               <div key={dep.id}>
-                <div className="flex items-center justify-between p-4 rounded-2xl border border-theme/10 bg-theme-card/30 hover:border-theme/20 transition-all">
+                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-base">{kindEmoji[dep.kind] || '📄'}</span>

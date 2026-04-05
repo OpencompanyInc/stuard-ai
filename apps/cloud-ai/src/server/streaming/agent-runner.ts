@@ -1,6 +1,6 @@
 
 import { WebSocket } from 'ws';
-import { getAgent as getStuardAgent } from '../../agents/stuard-agent';
+
 import { getSkillsFromContext } from '../../tools/skill-tools';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
@@ -17,8 +17,7 @@ import {
 } from '../../memory/context-compactor';
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
-
-const USE_ORCHESTRATOR = process.env.USE_ORCHESTRATOR === '1';
+import { logUsageEvent } from '../../supabase';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -281,10 +280,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'
           ? getSkillAgent(chosenModelId)
-          : USE_ORCHESTRATOR
-            ? getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills)
-            : getStuardAgent(model as ModelChoice, undefined, integrations, {}, chosenModelId, skills);
-      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${USE_ORCHESTRATOR && agentType === 'stuard'})`);
+          : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills);
+      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
 
       // Build context prefix for paths
       let contextPrefix = '';
@@ -733,6 +730,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         usage,
       });
 
+      // Persist usage to billing
+      if (userId && usage) {
+        try {
+          await logUsageEvent(userId, conversationId || null, chosenModelId || model, usage);
+        } catch (e: any) {
+          console.error('[AgentRunner] Failed to log usage:', e?.message);
+        }
+      }
+
       resultText = fullText;
 
     } catch (error: any) {
@@ -745,6 +751,14 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)', modelId: chosenModelId || model },
           aborted: true
         });
+        // Bill partial usage even on abort
+        if (userId && usage) {
+          try {
+            await logUsageEvent(userId, conversationId || null, chosenModelId || model, usage);
+          } catch (e: any) {
+            console.error('[AgentRunner] Failed to log aborted usage:', e?.message);
+          }
+        }
         resultText = fullText || '(Stopped)';
       } else {
         console.error('[AgentRunner] Error:', error);

@@ -1,6 +1,7 @@
 """Pure utility functions shared across the browser server modules."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -75,6 +76,20 @@ def _interactive_selector(element_id: Any) -> str:
     if not safe:
         return ""
     return f'[{INTERACTIVE_ID_ATTR}="{safe}"]'
+
+
+_FRAME_ELEMENT_RE = re.compile(r'^f(\d+)(e\d+.*)$')
+
+
+def _parse_frame_element_id(element_id: str) -> tuple[int, str] | None:
+    """Parse a frame-qualified element ID like 'f1e3' into (frame_idx, inner_id).
+
+    Returns None if not a frame-qualified element.
+    """
+    m = _FRAME_ELEMENT_RE.match(element_id)
+    if m:
+        return int(m.group(1)), m.group(2)
+    return None
 
 
 def _resolve_selector_target(body: dict[str, Any], selector_key: str = "selector") -> tuple[str, str]:

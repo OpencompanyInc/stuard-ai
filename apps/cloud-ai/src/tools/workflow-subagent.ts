@@ -4,20 +4,13 @@
  * Allows any agent (e.g. Stuard) to delegate workflow creation/modification
  * tasks to the specialized Workflow Architect agent mid-conversation.
  *
- * Now uses the generic orchestrator subagent runtime. Falls back to the
- * legacy Workflow Agent path when the orchestrator is disabled so
- * existing behavior is preserved.
+ * Uses the generic orchestrator subagent runtime.
  */
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../agents/workflow-agent';
-import { generateWithToolRecovery } from '../routes/proactive-utils';
-import { safeToolWrite } from './bridge';
 import { writeLog } from '../utils/logger';
 import { runSubagent } from '../orchestrator/subagent-runtime';
-
-const USE_ORCHESTRATOR = process.env.USE_ORCHESTRATOR === '1';
 
 export const routeToWorkflowAgent = createTool({
   id: 'route_to_workflow_agent',
@@ -51,49 +44,12 @@ export const routeToWorkflowAgent = createTool({
   execute: async ({ instruction, context, timeoutMs }) => {
     writeLog('route_to_workflow_agent_start', { instruction, hasContext: !!context });
 
-    // ── New path: use generic subagent runtime ──
-    if (USE_ORCHESTRATOR) {
-      const runId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const result = await runSubagent({
-        request: { kind: 'workflow', instruction, context, timeoutMs },
-        runId,
-        parentRunId: runId,
-      });
-      return { ok: result.ok, result: result.result, error: result.error };
-    }
-
-    // ── Legacy path: direct Workflow Agent ──
-    const agent = getWorkflowAgent();
-
-    let prompt = instruction;
-    if (context) {
-      prompt += `\n\nAdditional context:\n${context}`;
-    }
-
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Workflow subagent timed out')), timeoutMs);
-      });
-
-      const runPromise = generateWithToolRecovery({
-        agent: agent as any,
-        baseMessages: [
-          { role: 'system', content: WORKFLOW_SYSTEM_PROMPT },
-          { role: 'user', content: prompt },
-        ],
-        maxSteps: 60,
-        maxRetries: 3,
-      });
-
-      const response: any = await Promise.race([runPromise, timeoutPromise]);
-      const text = response?.text || '';
-
-      writeLog('route_to_workflow_agent_done', { ok: true, textLength: text.length });
-
-      return { ok: true, result: text };
-    } catch (error: any) {
-      writeLog('route_to_workflow_agent_error', { error: error.message });
-      return { ok: false, error: error.message || 'Workflow subagent failed' };
-    }
+    const runId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const result = await runSubagent({
+      request: { kind: 'workflow', instruction, context, timeoutMs },
+      runId,
+      parentRunId: runId,
+    });
+    return { ok: result.ok, result: result.result, error: result.error };
   },
 });

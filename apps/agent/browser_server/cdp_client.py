@@ -81,16 +81,48 @@ def _kill_chrome_for_profile(profile_dir: str) -> None:
     norm = os.path.normpath(profile_dir)
     try:
         if os.name == "nt":
-            safe_path = norm.replace("'", "''")
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-CimInstance Win32_Process -Filter "
-                 "\"Name LIKE 'chrome%' OR Name LIKE 'msedge%'\" | "
-                 f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{safe_path}') }} | "
-                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
-                capture_output=True, timeout=10,
-                creationflags=0x08000000,  # CREATE_NO_WINDOW
-            )
+            # Use WMIC (faster than PowerShell) to find Chrome/Edge using this profile dir.
+            # Falls back to PowerShell if WMIC isn't available.
+            found_pids: list[str] = []
+            try:
+                result = subprocess.run(
+                    ["wmic", "process", "where",
+                     "Name like 'chrome%' or Name like 'msedge%'",
+                     "get", "ProcessId,CommandLine", "/format:csv"],
+                    capture_output=True, timeout=8, text=True,
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
+                )
+                for line in result.stdout.splitlines():
+                    if norm.lower().replace("\\", "\\\\") in line.lower() or norm.lower() in line.lower():
+                        parts = line.strip().rstrip(",").split(",")
+                        pid = parts[-1].strip() if parts else ""
+                        if pid.isdigit():
+                            found_pids.append(pid)
+            except Exception:
+                pass
+
+            if found_pids:
+                for pid in found_pids:
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/PID", pid, "/F"],
+                            capture_output=True, timeout=5,
+                            creationflags=0x08000000,
+                        )
+                    except Exception:
+                        pass
+            else:
+                # Fallback: PowerShell
+                safe_path = norm.replace("'", "''")
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     "Get-CimInstance Win32_Process -Filter "
+                     "\"Name LIKE 'chrome%' OR Name LIKE 'msedge%'\" | "
+                     f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{safe_path}') }} | "
+                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                    capture_output=True, timeout=10,
+                    creationflags=0x08000000,
+                )
         else:
             subprocess.run(
                 ["pkill", "-f", f"--user-data-dir={norm}"],
@@ -119,6 +151,7 @@ class CDPConnection:
         self._pending: dict[int, asyncio.Future] = {}
         self._listener: Optional[asyncio.Task] = None
         self._closed = False
+        self._frame_contexts: dict[str, int] = {}  # frameId → executionContextId
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -213,7 +246,58 @@ class CDPConnection:
 
         return obj.get("value")
 
+    async def evaluate_in_context(self, context_id: int, expression: str, *args: Any) -> Any:
+        """Evaluate a JS function/expression in a specific execution context (e.g., iframe)."""
+        if len(args) == 0:
+            js = f"({expression})()"
+        elif len(args) == 1:
+            js = f"({expression})({json.dumps(args[0], default=str)})"
+        else:
+            js = f"({expression})({json.dumps(list(args), default=str)})"
+
+        result = await self.send("Runtime.evaluate", {
+            "expression": js,
+            "contextId": context_id,
+            "returnByValue": True,
+            "awaitPromise": True,
+            "userGesture": True,
+        })
+
+        if result.get("exceptionDetails"):
+            exc = result["exceptionDetails"]
+            text = exc.get("text", "")
+            if "exception" in exc:
+                text = exc["exception"].get("description", text)
+            raise RuntimeError(f"JS exception: {text}")
+
+        obj = result.get("result", {})
+        if obj.get("subtype") == "error":
+            raise RuntimeError(obj.get("description", "JS evaluation error"))
+
+        return obj.get("value")
+
     # -- background listener -------------------------------------------------
+
+    def _handle_event(self, data: dict) -> None:
+        """Process CDP push events — frame context tracking for iframe support."""
+        method = data.get("method", "")
+        params = data.get("params", {})
+        if method == "Runtime.executionContextCreated":
+            ctx = params.get("context", {})
+            ctx_id = ctx.get("id")
+            aux = ctx.get("auxData") or {}
+            frame_id = aux.get("frameId", "")
+            if ctx_id and frame_id and aux.get("isDefault", False):
+                self._frame_contexts[frame_id] = ctx_id
+        elif method == "Runtime.executionContextDestroyed":
+            destroyed_id = params.get("executionContextId")
+            if destroyed_id:
+                self._frame_contexts = {
+                    fid: cid for fid, cid in self._frame_contexts.items()
+                    if cid != destroyed_id
+                }
+        elif method == "Runtime.executionContextsCleared":
+            self._frame_contexts.clear()
 
     async def _listen(self) -> None:
         try:
@@ -223,8 +307,8 @@ class CDPConnection:
                     mid = data.get("id")
                     if mid is not None and mid in self._pending:
                         self._pending.pop(mid).set_result(data)
-                    # Events (no "id") are silently ignored — we poll state
-                    # instead of relying on push events for simplicity.
+                    elif "method" in data:
+                        self._handle_event(data)
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break
         except asyncio.CancelledError:
@@ -278,6 +362,11 @@ class CDPBrowser:
         os.makedirs(profile_dir, exist_ok=True)
         os.makedirs(os.path.join(profile_dir, "Default"), exist_ok=True)
 
+        # Pre-emptively kill any orphan Chrome holding this profile open.
+        # Without this, headed Chrome detects the existing instance, delegates
+        # to it, and exits with code 0 — causing a confusing startup failure.
+        _kill_chrome_for_profile(profile_dir)
+        await asyncio.sleep(0.3)
         _clean_profile_locks(profile_dir)
 
         base_args = [
@@ -291,9 +380,10 @@ class CDPBrowser:
             "--no-default-browser-check",
             "--no-startup-window",
             "--hide-crash-restore-bubble",
+            "--disable-session-crashed-bubble",
             "--disable-infobars",
             "--disable-blink-features=AutomationControlled",
-            "--disable-features=RendererCodeIntegrity",
+            "--disable-features=RendererCodeIntegrity,MediaRouter",
             "--disable-background-networking",
             "--disable-component-update",
         ]
@@ -302,24 +392,37 @@ class CDPBrowser:
         if user_agent:
             base_args.append(f"--user-agent={user_agent}")
 
+        creation_flags = 0
+        if os.name == "nt" and headless:
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
         last_err: Exception | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             self._port = _free_port()
             args = list(base_args)
             args[1] = f"--remote-debugging-port={self._port}"
 
             self._process = subprocess.Popen(
                 args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
             )
 
             try:
                 targets = await self._wait_for_targets()
                 break  # success
-            except RuntimeError as e:
+            except (RuntimeError, TimeoutError) as e:
                 rc = self._process.returncode if self._process else None
-                if rc == 21 and attempt == 0:
-                    # Exit code 21 = PROFILE_IN_USE — kill orphan Chrome and retry
-                    print("[browser-server] Profile locked (exit code 21), killing orphan Chrome and retrying...", flush=True)
+                if attempt < 2 and rc in (0, 21, None):
+                    # Exit code 0 = Chrome delegated to an existing instance and exited
+                    # Exit code 21 = PROFILE_IN_USE
+                    # None = process still running but not responding (timeout)
+                    label = f"exit code {rc}" if rc is not None else "timeout"
+                    print(f"[browser-server] Chrome startup failed ({label}), killing orphans and retrying (attempt {attempt + 1}/3)...", flush=True)
+                    if self._process and self._process.poll() is None:
+                        try:
+                            self._process.kill()
+                        except Exception:
+                            pass
                     _kill_chrome_for_profile(profile_dir)
                     _clean_profile_locks(profile_dir)
                     await asyncio.sleep(1.0)
@@ -327,7 +430,7 @@ class CDPBrowser:
                     continue
                 raise
         else:
-            raise RuntimeError(f"Chrome failed to start after retry: {last_err}")
+            raise RuntimeError(f"Chrome failed to start after 3 attempts: {last_err}")
 
         for target in list(targets):
             if self._is_ignored_startup_target(target):

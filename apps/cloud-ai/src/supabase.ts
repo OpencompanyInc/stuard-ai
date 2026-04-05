@@ -1176,6 +1176,7 @@ export interface UsageLogEntry {
   chatName: string | null;
   conversationId: string | null;
   sourceType: string;
+  subagentKind: string | null;
   credits: number;
   costUsd: number;
   promptTokens: number;
@@ -1197,19 +1198,21 @@ export async function getUsageLogs(
   try {
     const monthStart = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-    // Count total
+    // Count total (exclude zero-credit/zero-token junk rows)
     const { count } = await supabaseService
       .from('usage_events')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
-      .gte('created_at', monthStart.toISOString());
+      .gte('created_at', monthStart.toISOString())
+      .or('credit_cost.gt.0,total_tokens.gt.0,prompt_tokens.gt.0');
 
-    // Fetch usage events
+    // Fetch usage events (exclude zero-credit/zero-token junk)
     const { data: rows } = await supabaseService
       .from('usage_events')
       .select('id, model, conversation_id, cost_usd, credit_cost, prompt_tokens, completion_tokens, total_tokens, raw, created_at')
       .eq('user_id', userId)
       .gte('created_at', monthStart.toISOString())
+      .or('credit_cost.gt.0,total_tokens.gt.0,prompt_tokens.gt.0')
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -1231,12 +1234,14 @@ export async function getUsageLogs(
     const logs: UsageLogEntry[] = (rows as any[]).map(r => {
       const raw = r.raw && typeof r.raw === 'object' ? r.raw : {};
       const sourceType = raw.sourceType || raw.source_type || 'inference';
+      const subagentKind = raw.subagentKind || null;
       return {
         id: r.id,
         model: r.model || 'unknown',
         chatName: r.conversation_id ? (convTitles.get(r.conversation_id) || null) : null,
         conversationId: r.conversation_id || null,
-        sourceType,
+        sourceType: subagentKind || sourceType,
+        subagentKind,
         credits: Number(r.credit_cost) || 0,
         costUsd: Number(r.cost_usd) || 0,
         promptTokens: Number(r.prompt_tokens) || 0,

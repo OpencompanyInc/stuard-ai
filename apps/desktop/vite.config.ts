@@ -13,7 +13,6 @@ export default defineConfig(() => ({
     fs: {
       allow: [
         resolve(__dirname, ".."),
-        resolve(__dirname, "../.."),
         resolve(__dirname, "../website/assets"),
       ],
     },
@@ -21,7 +20,7 @@ export default defineConfig(() => ({
   build: {
     outDir: resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
-    minify: "terser" as const,
+    minify: "terser",
     terserOptions: {
       compress: {
         drop_console: true,
@@ -30,6 +29,7 @@ export default defineConfig(() => ({
       },
       mangle: {
         toplevel: true,
+        properties: { regex: /^_/ },
       },
       format: { comments: false },
     },
@@ -38,10 +38,12 @@ export default defineConfig(() => ({
         index: resolve(__dirname, "src/renderer/index.html"),
         dashboard: resolve(__dirname, "src/renderer/dashboard.html"),
         onboarding: resolve(__dirname, "src/renderer/onboarding.html"),
+        board: resolve(__dirname, "src/renderer/board.html"),
         workflows: resolve(__dirname, "src/renderer/workflows.html"),
         spaces: resolve(__dirname, "src/renderer/spaces.html"),
         sidebar: resolve(__dirname, "src/renderer/sidebar.html"),
         notification: resolve(__dirname, "src/renderer/notification.html"),
+        voicetest: resolve(__dirname, "src/renderer/voicetest.html"),
       },
     },
   },

@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import net from 'net';
 import { randomBytes } from 'crypto';
+import { pipeline } from 'stream/promises';
 import { RouterContext } from '../types';
 import { isDev } from '../../env';
 
@@ -11,6 +12,8 @@ const BROWSER_USE_PORT = 18082;
 const BROWSER_USE_DEFAULT_HOST = 'http://localhost';
 const BROWSER_USE_AUTH_HEADER = 'x-stuard-browser-token';
 const BROWSER_USE_AUTH_TOKEN = process.env.BROWSER_USE_AUTH_TOKEN || randomBytes(24).toString('hex');
+
+const DEFAULT_SERVICES_BASE_URL = 'https://updates.stuard.ai/services';
 
 type BrowserUseRuntime = {
   sessionId: string;
@@ -165,7 +168,91 @@ async function checkBrowserServerDeps(): Promise<boolean> {
   return ok;
 }
 
-// Cache installation check results to avoid repeated slow Python subprocess calls
+function getIntegrationsDir(): string {
+  return path.join(app.getPath('userData'), 'integrations', 'browser');
+}
+
+function getIntegrationsBinaryPath(): string {
+  const binaryName = process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser';
+  return path.join(getIntegrationsDir(), binaryName);
+}
+
+function getUpdateChannel(): string {
+  const ch = (process.env.UPDATE_CHANNEL || '').toLowerCase();
+  if (ch === 'beta' || ch === 'staging' || ch === 'stable') return ch;
+  return 'beta';
+}
+
+function getServicePlatform(): string {
+  if (process.platform === 'win32') return 'windows';
+  if (process.platform === 'darwin') {
+    return process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64';
+  }
+  return 'linux';
+}
+
+function getServiceBinaryName(): string {
+  if (process.platform === 'win32') return 'stuard-browser.exe';
+  if (process.platform === 'darwin') return 'stuard-browser-macos';
+  return 'stuard-browser-linux';
+}
+
+function getServiceDownloadUrl(): string {
+  const base = process.env.STUARD_SERVICES_URL || DEFAULT_SERVICES_BASE_URL;
+  const channel = getUpdateChannel();
+  const platform = getServicePlatform();
+  const binaryName = getServiceBinaryName();
+  return `${base}/${channel}/${platform}/latest/${binaryName}`;
+}
+
+async function downloadBrowserBinary(): Promise<{ ok: boolean; error?: string }> {
+  const destPath = getIntegrationsBinaryPath();
+  const destDir = path.dirname(destPath);
+
+  try { fs.mkdirSync(destDir, { recursive: true }); } catch {}
+
+  const tmpPath = destPath + '.download';
+  const url = getServiceDownloadUrl();
+  console.log(`[browser-server] Downloading from ${url}...`);
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      return { ok: false, error: `Download failed: HTTP ${resp.status} from ${url}` };
+    }
+    if (!resp.body) {
+      return { ok: false, error: 'Download failed: empty response body' };
+    }
+
+    const fileStream = fs.createWriteStream(tmpPath);
+    const { Readable } = require('stream');
+    const readable = Readable.fromWeb(resp.body);
+    await pipeline(readable, fileStream);
+
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tmpPath, 0o755);
+    }
+
+    fs.renameSync(tmpPath, destPath);
+    console.log(`[browser-server] Downloaded to ${destPath}`);
+    return { ok: true };
+  } catch (err: any) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    return { ok: false, error: `Download failed: ${err?.message || err}` };
+  }
+}
+
+function isBrowserBinaryInstalled(): boolean {
+  const integrationsBin = getIntegrationsBinaryPath();
+  if (fs.existsSync(integrationsBin)) return true;
+
+  const binaryName = process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser';
+  const resourceBin = path.join(process.resourcesPath, 'agent', binaryName);
+  if (fs.existsSync(resourceBin)) return true;
+
+  return false;
+}
+
 let _installCheckResult: { ok: boolean; error?: string; step?: string } | null = null;
 
 export async function installBrowserUse(): Promise<{ ok: boolean; error?: string; step?: string }> {
@@ -173,14 +260,21 @@ export async function installBrowserUse(): Promise<{ ok: boolean; error?: string
 
   const exe = getServerExecutable();
 
-  // Packed binary bundles Python + aiohttp — no external deps needed.
-  // The browser server uses system Chrome/Edge via CDP, not Playwright's Chromium.
   if (exe.isPacked) {
+    if (fs.existsSync(exe.binary)) {
+      _installCheckResult = { ok: true };
+      return { ok: true };
+    }
+    // Packed binary expected but missing — download it
+    const dl = await downloadBrowserBinary();
+    if (!dl.ok) {
+      return { ok: false, error: dl.error || 'Failed to download browser server', step: 'download' };
+    }
     _installCheckResult = { ok: true };
     return { ok: true };
   }
 
-  // Python script mode — need Python + aiohttp
+  // Dev mode: Python script fallback
   if (!(await checkPythonAvailable())) {
     return { ok: false, error: 'Python is not installed. Please install Python 3.11+ from python.org first.', step: 'python' };
   }
@@ -211,18 +305,31 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
     }
   } catch {}
 
+  const integrationsDir = getIntegrationsDir();
+  try {
+    if (fs.existsSync(integrationsDir)) {
+      fs.rmSync(integrationsDir, { recursive: true, force: true });
+    }
+  } catch {}
+
   return { ok: true };
 }
 
 /**
  * Resolve the browser server executable or script.
- * In dev, prefer Python source scripts. In packaged builds, prefer bundled binaries.
- * Set STUARD_USE_PACKAGED_SERVICES=1 to test the packaged binary from a dev build.
+ *
+ * Resolution order for packaged builds:
+ *   1. Integrations dir (userData/integrations/browser/) — downloaded on demand
+ *   2. Bundled in app resources (resources/agent/)      — legacy fallback
+ *   3. Monorepo dist/ (dev builds)
+ *
+ * In dev mode, prefer Python source scripts unless STUARD_USE_PACKAGED_SERVICES=1.
  */
 function getServerExecutable(): BrowserServerExecutable {
   const binaryName = process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser';
   const preferPackaged = shouldPreferPackagedServices();
 
+  const integrationsBin = getIntegrationsBinaryPath();
   const resourceBin = path.join(process.resourcesPath, 'agent', binaryName);
   const distBin = path.join(app.getAppPath(), '..', '..', 'dist', binaryName);
   const devScript = path.join(app.getAppPath(), '..', 'agent', 'browser_server_main.py');
@@ -231,7 +338,7 @@ function getServerExecutable(): BrowserServerExecutable {
   const pythonCmd = getPythonCmd();
 
   const scriptCandidates = [devScript, resourceScript, altScript];
-  const binaryCandidates = preferPackaged ? [resourceBin, distBin] : [];
+  const binaryCandidates = preferPackaged ? [integrationsBin, resourceBin, distBin] : [];
 
   for (const candidate of binaryCandidates) {
     if (fs.existsSync(candidate)) {
@@ -258,22 +365,32 @@ function getServerExecutable(): BrowserServerExecutable {
     }
   }
 
-  const fallback = preferPackaged ? resourceBin : devScript;
+  // Nothing found on disk — return the integrations path as target
+  // (installBrowserUse will download it before startBrowserUseServer runs)
+  if (preferPackaged) {
+    return {
+      binary: integrationsBin,
+      args: [],
+      cwd: path.dirname(integrationsBin),
+      displayPath: integrationsBin,
+      isPacked: true,
+    };
+  }
+
   return {
-    binary: preferPackaged ? fallback : pythonCmd,
-    args: preferPackaged ? [] : [fallback],
-    cwd: path.dirname(fallback),
-    displayPath: fallback,
-    isPacked: preferPackaged,
-    needsPathLookup: !preferPackaged,
+    binary: pythonCmd,
+    args: [devScript],
+    cwd: path.dirname(devScript),
+    displayPath: devScript,
+    isPacked: false,
+    needsPathLookup: true,
   };
 }
 
 export function canPrewarmBrowserUseOnStartup(): boolean {
   try {
-    const exe = getServerExecutable();
-    if (!exe.isPacked) return false;
-    return fs.existsSync(exe.binary);
+    if (!shouldPreferPackagedServices()) return false;
+    return isBrowserBinaryInstalled();
   } catch {
     return false;
   }
@@ -303,6 +420,33 @@ async function killPortProcess(port: number): Promise<void> {
       }
     } catch {}
   }
+}
+
+async function killOrphanChromeForProfile(profileDir: string): Promise<void> {
+  try {
+    if (process.platform === 'win32') {
+      const norm = profileDir.replace(/\//g, '\\');
+      // Use WMIC to find Chrome/Edge processes using this profile directory
+      const { ok, stdout } = await runCmd('wmic', [
+        'process', 'where', "Name like 'chrome%' or Name like 'msedge%'",
+        'get', 'ProcessId,CommandLine', '/format:csv',
+      ], 8000);
+      if (!ok || !stdout) return;
+      const pids: string[] = [];
+      for (const line of stdout.split('\n')) {
+        if (line.toLowerCase().includes(norm.toLowerCase())) {
+          const parts = line.trim().replace(/,+$/, '').split(',');
+          const pid = parts[parts.length - 1]?.trim();
+          if (pid && /^\d+$/.test(pid)) pids.push(pid);
+        }
+      }
+      for (const pid of pids) {
+        await runCmd('taskkill', ['/PID', pid, '/F'], 5000);
+      }
+    } else {
+      await runCmd('pkill', ['-f', `--user-data-dir=${profileDir}`], 5000);
+    }
+  } catch {}
 }
 
 async function ensureBrowserPageOpen(sessionId = 'default', {} = {}): Promise<{ ok: boolean; error?: string }> {
@@ -338,9 +482,14 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
   }
 
   await killPortProcess(runtime.port);
+
+  // Kill any orphan Chrome holding the profile lock — this is the main cause
+  // of "Chrome exited immediately with code 0" on headed mode startup.
+  await killOrphanChromeForProfile(getProfileDir(sessionId));
+
   await new Promise((r) => setTimeout(r, 500));
 
-  const exe = getServerExecutable();
+  let exe = getServerExecutable();
   const profileDir = getProfileDir(sessionId);
 
   if (exe.needsPathLookup) {
@@ -351,7 +500,17 @@ export async function startBrowserUseServer(sessionId = 'default', {} = {}): Pro
       return { ok: false, error: `Browser server script not found: ${exe.displayPath}` };
     }
   } else if (!fs.existsSync(exe.binary)) {
-    return { ok: false, error: `Browser server not found: ${exe.displayPath}` };
+    // Binary missing — attempt on-demand download
+    if (exe.isPacked) {
+      const dl = await downloadBrowserBinary();
+      if (!dl.ok) {
+        return { ok: false, error: dl.error || `Browser server not found: ${exe.displayPath}` };
+      }
+      exe = getServerExecutable();
+    }
+    if (!fs.existsSync(exe.binary)) {
+      return { ok: false, error: `Browser server not found: ${exe.displayPath}` };
+    }
   }
 
   let earlyStderr = '';
@@ -440,6 +599,12 @@ export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok:
   }
   runtime.ready = false;
   runtime.setupPromise = null;
+
+  // Kill any orphan Chrome that survived the graceful close
+  try {
+    await killOrphanChromeForProfile(getProfileDir(sessionId));
+  } catch {}
+
   return { ok: true };
 }
 
@@ -477,6 +642,14 @@ async function stopAllBrowserUseServers(): Promise<void> {
     runtime.process = null;
     runtime.ready = false;
     runtime.setupPromise = null;
+  }
+
+  // Kill any orphan Chrome instances that survived the graceful shutdown.
+  // This prevents "Chrome exited immediately with code 0" on next startup.
+  for (const runtime of browserUseRuntimes.values()) {
+    try {
+      await killOrphanChromeForProfile(getProfileDir(runtime.sessionId));
+    } catch {}
   }
 }
 
@@ -609,8 +782,13 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
     } catch {}
   }
 
-  const hasPython = await checkPythonAvailable();
-  const installed = hasPython ? await checkBrowserServerDeps() : false;
+  const binaryInstalled = isBrowserBinaryInstalled();
+  let installed = binaryInstalled;
+  let hasPython = false;
+  if (!binaryInstalled) {
+    hasPython = await checkPythonAvailable();
+    installed = hasPython ? await checkBrowserServerDeps() : false;
+  }
 
   return {
     ok: true,
@@ -618,6 +796,8 @@ export async function execBrowserUseStatus(args: any, _ctx: RouterContext): Prom
     running: false,
     serverAlive: false,
     hasPython,
+    binaryInstalled,
+    integrationsPath: getIntegrationsDir(),
     mode: 'headed',
     profile: 'default',
     profileDir: String(getProfileDir(sessionId)),
@@ -633,7 +813,7 @@ export async function execBrowserUseConfigure(args: any, _ctx: RouterContext): P
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mode: args?.mode,
-        profile: args?.profile,
+        profile: 'default', // always use default profile
       }),
     }, sessionId);
     if (!resp.ok) {

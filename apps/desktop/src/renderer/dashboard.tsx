@@ -1089,7 +1089,7 @@ function DashboardApp() {
     title: tab.charAt(0).toUpperCase() + tab.slice(1),
     subtitle: 'Manage your Stuard workspace from a single dashboard.',
   };
-  const showGlobalHeader = !['integrations', 'settings', 'proactive'].includes(tab);
+  const showGlobalHeader = !['integrations', 'settings', 'proactive', 'cloud'].includes(tab);
   const showRefresh = showGlobalHeader && !['planner', 'memories', 'media'].includes(tab);
 
 
@@ -1187,6 +1187,10 @@ function DashboardApp() {
             {tab === 'memories' ? (
               <div className="flex-1 overflow-hidden animate-in fade-in duration-500">
                 <MemoriesView />
+              </div>
+            ) : tab === 'cloud' ? (
+              <div className="flex-1 min-h-0 overflow-hidden animate-in fade-in duration-500">
+                <CloudEngineDashboard />
               </div>
             ) : (
               <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
@@ -1326,10 +1330,6 @@ function DashboardApp() {
                               handleSaveTonePersona={handleSaveTonePersona}
                               setOnboardingComplete={setOnboardingComplete}
                             />
-                          )}
-
-                          {tab === 'cloud' && (
-                            <CloudEngineDashboard />
                           )}
 
                           {tab === 'media' && (

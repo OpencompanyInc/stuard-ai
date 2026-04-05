@@ -51,16 +51,16 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Lint (Cloud)
-        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
         run: pnpm turbo run lint --filter=@stuardai/cloud-ai
       - name: Typecheck (Cloud)
-        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
         run: pnpm turbo run typecheck --filter=@stuardai/cloud-ai
       - name: Build (Cloud)
-        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
         run: pnpm turbo run build --filter=@stuardai/cloud-ai
       - name: Unit Tests (Cloud)
-        if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
         run: pnpm turbo run test --filter=@stuardai/cloud-ai
 
       - name: Lint (Website)
@@ -96,7 +96,7 @@ jobs:
     name: VM Agent Bundles
     runs-on: ubuntu-latest
     needs: ci-checks
-    if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
+    if: ${{ github.event.inputs.deploy_vm == 'true' }}
     permissions:
       contents: read
       id-token: write
@@ -144,7 +144,7 @@ jobs:
   deploy-beta-backend:
     name: Cloud AI (Beta)
     runs-on: ubuntu-latest
-    needs: [ci-checks, build-vm-agents]
+    needs: ci-checks
     if: ${{ github.event.inputs.deploy_cloud == 'true' }}
     permissions:
       contents: read

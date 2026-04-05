@@ -589,7 +589,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
         git_commit_sha: git_commit_sha || null,
         git_tag: git_tag || null,
         triggered_by: 'ops-console',
-        targets: targets || { website: true, cloud: true, desktop: true },
+        targets: targets || { website: true, cloud: true, desktop: true, vm: false },
         workflow_run_url: workflow_run_url || null,
         workflow_run_id: workflow_run_id || null,
         metadata: metadata || {},

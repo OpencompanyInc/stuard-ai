@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "path";
 import { Readable } from "node:stream";
 import { initEnv } from "./env";
-import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow, openVoiceTestWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
-import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
+import { initCustomUiIpc } from "./tools/index";
 import logger from "./utils/logger";
 
 initEnv();
@@ -245,6 +245,14 @@ app.whenReady().then(async () => {
     logger.error("Failed to start webhook server:", e);
   }
 
+  try {
+    logger.info("Starting browser extension server...");
+    // startBrowserExtensionServer(); // TODO: export missing from services
+    logger.info("Browser extension server started");
+  } catch (e) {
+    logger.error("Failed to start browser extension server:", e);
+  }
+
 try {
     logger.info("Running stuards autostart...");
     stuards_autostart();
@@ -257,6 +265,7 @@ try {
     logger.info("Creating window...");
     createWindow();
     openNotificationWindow();
+    openVoiceTestWindow(); // TODO: remove — dev testing only
     logger.info("Window created");
   } catch (e) {
     logger.error("Failed to create window:", e);
@@ -364,10 +373,7 @@ app.on("browser-window-focus", () => {
   // no-op
 });
 
-let _quitting = false;
-app.on("will-quit", (e) => {
-  if (_quitting) return;
-  _quitting = true;
+app.on("will-quit", () => {
   logger.info("App quitting...");
   globalShortcut.unregisterAll();
   disposeUpdates();
@@ -376,14 +382,7 @@ app.on("will-quit", (e) => {
   stopSmsInbox();
   // Flush any debounced variable saves before exit
   try { require('./workflow-variables').saveVariablesSync(); } catch {}
-  // Shut down browser servers and their Chrome instances before exit
-  e.preventDefault();
-  shutdownAllBrowserUseServers()
-    .catch(() => {})
-    .finally(() => {
-      logger.info("Cleanup complete");
-      app.exit(0);
-    });
+  logger.info("Cleanup complete");
 });
 
 app.on("window-all-closed", () => {

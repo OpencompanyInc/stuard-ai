@@ -720,6 +720,101 @@ function handleProactiveTaskDelete(args: any): any {
 
 const AGENT_DATA_DIR = process.env.AGENT_DATA_DIR || '/home/stuard/agent-data';
 const GCS_BUCKET = process.env.STUARD_GCS_BUCKET || '';
+const CLOUD_AI_URL = process.env.CLOUD_AI_URL || '';
+
+// ── Agent Data Change Detection ──────────────────────────────────────────────
+// Track file modification times to avoid syncing when nothing changed.
+const SYNC_INTERVAL_MS = 5 * 60_000; // 5 minutes
+const DB_FILES_TO_WATCH = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'memory.db-wal'];
+const _lastSyncMtimes = new Map<string, number>();
+let _syncInFlight = false;
+
+/** Check if any agent data files have been modified since last sync. */
+function hasAgentDataChanged(): boolean {
+  try {
+    for (const name of DB_FILES_TO_WATCH) {
+      const filePath = `${AGENT_DATA_DIR}/${name}`;
+      if (!fs.existsSync(filePath)) continue;
+      const mtime = fs.statSync(filePath).mtimeMs;
+      const prev = _lastSyncMtimes.get(name);
+      if (prev === undefined || mtime > prev) return true;
+    }
+    // Also check lancedb directory
+    const lanceDir = `${process.env.STUARD_VM_ROOT || '/home/stuard'}/lancedb`;
+    if (fs.existsSync(lanceDir)) {
+      const stat = fs.statSync(lanceDir);
+      const prev = _lastSyncMtimes.get('lancedb');
+      if (prev === undefined || stat.mtimeMs > prev) return true;
+    }
+  } catch { /* stat failure — assume changed */ return true; }
+  return false;
+}
+
+/** Snapshot current mtimes so we know what we last synced. */
+function snapshotMtimes(): void {
+  try {
+    for (const name of DB_FILES_TO_WATCH) {
+      const filePath = `${AGENT_DATA_DIR}/${name}`;
+      if (fs.existsSync(filePath)) {
+        _lastSyncMtimes.set(name, fs.statSync(filePath).mtimeMs);
+      }
+    }
+    const lanceDir = `${process.env.STUARD_VM_ROOT || '/home/stuard'}/lancedb`;
+    if (fs.existsSync(lanceDir)) {
+      _lastSyncMtimes.set('lancedb', fs.statSync(lanceDir).mtimeMs);
+    }
+  } catch {}
+}
+
+/**
+ * Notify cloud-ai that the VM has uploaded new agent data.
+ * Cloud-ai will relay this to the desktop if online.
+ */
+async function notifyAgentDataUploaded(): Promise<void> {
+  if (!CLOUD_AI_URL || !VM_SECRET || !USER_ID) return;
+  try {
+    const payload = JSON.stringify({
+      userId: USER_ID, instanceName: 'vm-agent-sync',
+      nonce: Date.now().toString(36), iat: Date.now(), exp: Date.now() + 300_000,
+    });
+    const encodedPayload = Buffer.from(payload).toString('base64url');
+    const signature = createHmac('sha256', VM_SECRET).update(encodedPayload).digest('base64url');
+    const vmToken = `${encodedPayload}.${signature}`;
+
+    await fetch(`${CLOUD_AI_URL}/v1/cloud-engine/vm/agent-data-updated`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: USER_ID, vmToken }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (e: any) {
+    console.warn('[vm-agent] Failed to notify cloud-ai of agent data upload:', e?.message);
+  }
+}
+
+/**
+ * Periodic auto-sync: detect changes → upload to GCS → notify cloud-ai.
+ * Runs every SYNC_INTERVAL_MS. Skips if no changes or sync already in flight.
+ */
+async function periodicAgentDataSync(): Promise<void> {
+  if (_syncInFlight) return;
+  if (!hasAgentDataChanged()) return;
+
+  _syncInFlight = true;
+  try {
+    const result = await syncAgentData({ direction: 'upload' });
+    if (result.ok) {
+      snapshotMtimes();
+      console.log(`[vm-agent] Auto-synced agent data (${result.bytes} bytes)`);
+      // Notify cloud-ai so it can tell the desktop
+      await notifyAgentDataUploaded();
+    }
+  } catch (e: any) {
+    console.warn('[vm-agent] Periodic sync failed:', e?.message);
+  } finally {
+    _syncInFlight = false;
+  }
+}
 
 /** Request signed GCS URLs from the cloud-ai backend (VM → backend auth via HMAC). */
 async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: string } | null> {
@@ -759,7 +854,7 @@ async function syncAgentData(args: any): Promise<any> {
 
     const archivePath = `/tmp/agent-data-sync-${Date.now()}.tar.gz`;
     try {
-      execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 120_000 });
+      execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 300_000 });
       const stats = fs.statSync(archivePath);
 
       // Get signed upload URL (from command args, or request from backend)
@@ -773,13 +868,16 @@ async function syncAgentData(args: any): Promise<any> {
         return { ok: false, error: 'no_upload_url' };
       }
 
-      // Upload directly to GCS via signed URL
-      const archiveData = fs.readFileSync(archivePath);
+      // Stream upload to GCS via signed URL — never buffer full archive in memory
       const resp = await fetch(uploadUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/gzip' },
-        body: archiveData,
-        signal: AbortSignal.timeout(120_000),
+        headers: {
+          'Content-Type': 'application/gzip',
+          'Content-Length': String(stats.size),
+        },
+        body: fs.createReadStream(archivePath) as any,
+        duplex: 'half' as any,
+        signal: AbortSignal.timeout(600_000),
       });
       try { fs.unlinkSync(archivePath); } catch {}
       if (!resp.ok) return { ok: false, error: `gcs_upload_http_${resp.status}` };
@@ -802,15 +900,15 @@ async function syncAgentData(args: any): Promise<any> {
     const tempPath = `/tmp/agent-data-download-${Date.now()}.tar.gz`;
     const extractDir = `/tmp/agent-data-extract-${Date.now()}`;
     try {
-      // Download from GCS via signed URL
-      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
+      // Stream download from GCS — never buffer full archive in memory
+      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(600_000) });
       if (!resp.ok) return { ok: false, error: `download_http_${resp.status}` };
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      fs.writeFileSync(tempPath, buffer);
+      if (!resp.body) return { ok: false, error: 'download_empty_body' };
+      await pipeline(Readable.fromWeb(resp.body as any), fs.createWriteStream(tempPath));
 
       fs.mkdirSync(extractDir, { recursive: true });
       fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
-      execFileSync('tar', ['-xzf', tempPath, '-C', extractDir], { timeout: 120_000 });
+      execFileSync('tar', ['-xzf', tempPath, '-C', extractDir], { timeout: 300_000 });
 
       // Handle new archive format (agent/knowledge.db, lancedb/..., workflow.db)
       const extractedAgentDir = `${extractDir}/agent`;
@@ -834,7 +932,7 @@ async function syncAgentData(args: any): Promise<any> {
       const extractedLancedb = `${extractDir}/lancedb`;
       if (fs.existsSync(extractedLancedb)) {
         const vmLancedb = `${process.env.STUARD_VM_ROOT || '/home/stuard'}/lancedb`;
-        execFileSync('cp', ['-a', extractedLancedb, vmLancedb], { timeout: 30_000 });
+        execFileSync('cp', ['-a', extractedLancedb, vmLancedb], { timeout: 120_000 });
         console.log(`[vm-agent] LanceDB embeddings restored to ${vmLancedb}`);
       }
 
@@ -1517,15 +1615,12 @@ export function startAgent(): void {
       }
     }, 3600_000);
 
-    // Periodic agent database sync to GCS (every 30 minutes)
-    if (GCS_BUCKET) {
-      setInterval(() => {
-        syncAgentData({ direction: 'upload' }).then((r) => {
-          if (r.ok) console.log(`[vm-agent] Auto-synced agent data (${r.bytes} bytes)`);
-        }).catch(() => {});
-      }, 1800_000);
-      console.log('[vm-agent] Agent data auto-sync: every 30 min');
-    }
+    // Periodic agent database sync to GCS — change-detection based (every 5 min)
+    // Only uploads when knowledge.db/memory.db/lancedb have actually changed,
+    // then notifies cloud-ai so it can relay to the desktop for bidirectional sync.
+    snapshotMtimes(); // baseline after initial restore
+    setInterval(() => periodicAgentDataSync(), SYNC_INTERVAL_MS);
+    console.log(`[vm-agent] Agent data auto-sync: every ${SYNC_INTERVAL_MS / 60_000} min (change-detection)`);
   });
 
   // Graceful shutdown

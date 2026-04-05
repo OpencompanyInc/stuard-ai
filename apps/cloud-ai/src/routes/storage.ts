@@ -187,5 +187,30 @@ export async function handleStorageRoutes(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  // ── GET /v1/storage/agent-data-url ────────────────────────────────────
+  // Authenticated: get signed upload + download URLs for agent data (knowledge.db, memory.db).
+  // Used by desktop to push/pull agent databases directly to/from GCS.
+  if (method === 'GET' && path === '/v1/storage/agent-data-url') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const { generateAgentDataUploadUrl, generateAgentDataDownloadUrl } = await import('../services/cold-storage');
+      const [uploadResult, downloadResult] = await Promise.all([
+        generateAgentDataUploadUrl(user.userId),
+        generateAgentDataDownloadUrl(user.userId),
+      ]);
+      json(res, 200, {
+        ok: true,
+        uploadUrl: uploadResult.uploadUrl,
+        downloadUrl: downloadResult?.downloadUrl || null,
+        objectName: uploadResult.objectName,
+      });
+    } catch (e: any) {
+      console.error('[storage] agent-data-url error:', e?.message);
+      json(res, 500, { ok: false, error: 'agent_data_url_failed' });
+    }
+    return true;
+  }
+
   return false;
 }

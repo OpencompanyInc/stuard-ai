@@ -188,15 +188,18 @@ describe('pricing module', () => {
       expect(snapCredits(-5)).toBe(0);
     });
 
-    it('should snap small positive values to 0.1 minimum', () => {
+    it('should keep tiny positive values at the 0.1 minimum', () => {
       expect(snapCredits(0.01)).toBe(0.1);
       expect(snapCredits(0.05)).toBe(0.1);
       expect(snapCredits(0.1)).toBe(0.1);
-      expect(snapCredits(0.132)).toBe(0.1);  // Telnyx SMS
-      expect(snapCredits(0.165)).toBe(0.1);  // WhatsApp
     });
 
-    it('should ceil to nearest 0.25 for values >= 0.25 (never undercharge)', () => {
+    it('should ceil to the next quarter-credit step once above 0.1', () => {
+      expect(snapCredits(0.101)).toBe(0.25);
+      expect(snapCredits(0.132)).toBe(0.25);  // Telnyx SMS
+      expect(snapCredits(0.165)).toBe(0.25);  // WhatsApp
+      expect(snapCredits(0.18)).toBe(0.25);
+      expect(snapCredits(0.24)).toBe(0.25);
       expect(snapCredits(0.25)).toBe(0.25);
       expect(snapCredits(0.26)).toBe(0.5);
       expect(snapCredits(0.30)).toBe(0.5);
@@ -238,11 +241,11 @@ describe('pricing module', () => {
       expect(creditsFromUsd(0.134)).toBe(4.5);
     });
 
-    it('should snap cheap services to 0.1 minimum', () => {
-      // Telnyx SMS: $0.004 * 33 = 0.132 → 0.1
-      expect(creditsFromUsd(0.004)).toBe(0.1);
-      // WhatsApp: $0.005 * 33 = 0.165 → 0.1
-      expect(creditsFromUsd(0.005)).toBe(0.1);
+    it('should round cheap services above 0.1 credits up to 0.25', () => {
+      // Telnyx SMS: $0.004 * 33 = 0.132 → 0.25
+      expect(creditsFromUsd(0.004)).toBe(0.25);
+      // WhatsApp: $0.005 * 33 = 0.165 → 0.25
+      expect(creditsFromUsd(0.005)).toBe(0.25);
     });
 
     it('should return 0 for negative values', () => {

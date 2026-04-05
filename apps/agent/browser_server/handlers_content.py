@@ -304,9 +304,37 @@ async def handle_content(req: web.Request) -> web.Response:
                       sanitizeAttributes(root, clone);
                       prune(root, clone);
 
-                      const html = root === document.body || root === document.documentElement
+                      let html = root === document.body || root === document.documentElement
                         ? clone.innerHTML
                         : clone.outerHTML;
+
+                      // ── Iframe HTML extraction ──
+                      try {
+                        const __iframes = document.querySelectorAll('iframe');
+                        for (const __iframe of __iframes) {
+                          let __iDoc;
+                          try {
+                            __iDoc = __iframe.contentDocument;
+                            if (!__iDoc) continue;
+                            void __iDoc.documentElement;
+                          } catch(e) { continue; }
+
+                          const __ir = __iframe.getBoundingClientRect();
+                          if (__ir.width < 10 || __ir.height < 10) continue;
+
+                          const __iRoot = __iDoc.querySelector('article') || __iDoc.querySelector('main')
+                            || __iDoc.querySelector('[role="main"]') || __iDoc.body;
+                          if (!__iRoot) continue;
+
+                          const __iClone = __iRoot.cloneNode(true);
+                          // Light pruning of noise elements
+                          __iClone.querySelectorAll(NOISE).forEach(n => n.remove());
+                          const __iHtml = __iRoot === __iDoc.body ? __iClone.innerHTML : __iClone.outerHTML;
+                          if (__iHtml && __iHtml.length > 20) {
+                            html += '\\n<!-- iframe content -->\\n' + __iHtml;
+                          }
+                        }
+                      } catch(e) {}
 
                       return html
                         .replace(/>\\s+</g, '><')
@@ -344,9 +372,10 @@ async def handle_content(req: web.Request) -> web.Response:
                       }
 
                       function isVisible(el) {
-                        if (!(el instanceof Element)) return false;
+                        if (!el || !el.getBoundingClientRect) return false;
                         const r = el.getBoundingClientRect();
-                        const s = window.getComputedStyle(el);
+                        const w = el.ownerDocument?.defaultView || window;
+                        const s = w.getComputedStyle(el);
                         if (r.width === 0 && r.height === 0) return false;
                         if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity || '1') === 0) return false;
                         return true;
@@ -362,7 +391,7 @@ async def handle_content(req: web.Request) -> web.Response:
                       }
 
                       function isNoise(el) {
-                        if (!(el instanceof Element)) return false;
+                        if (!el || !el.matches) return false;
                         if (el.matches(NOISE)) return true;
                         return !!el.closest(NOISE);
                       }
@@ -380,7 +409,7 @@ async def handle_content(req: web.Request) -> web.Response:
                       }
 
                       function renderTable(table) {
-                        if (!(table instanceof HTMLTableElement) || !isVisible(table) || !inViewport(table) || isNoise(table)) return '';
+                        if (!table || String(table.tagName || '').toLowerCase() !== 'table' || !isVisible(table) || !inViewport(table) || isNoise(table)) return '';
                         const rowEls = Array.from(table.querySelectorAll('tr')).filter((row) => isVisible(row) && inViewport(row));
                         if (rowEls.length === 0) return '';
                         const rawRows = rowEls
@@ -463,6 +492,82 @@ async def handle_content(req: web.Request) -> web.Response:
                         const fallback = normalizeText(root.innerText || root.textContent || '', 4000);
                         if (fallback) blocks.push(fallback);
                       }
+
+                      // ── Iframe content extraction ──
+                      try {
+                        const __iframes = document.querySelectorAll('iframe');
+                        for (const __iframe of __iframes) {
+                          if (blocks.length >= MAX_BLOCKS) break;
+                          let __iDoc, __iWin;
+                          try {
+                            __iDoc = __iframe.contentDocument;
+                            __iWin = __iframe.contentWindow;
+                            if (!__iDoc || !__iWin) continue;
+                            void __iDoc.documentElement;
+                          } catch(e) { continue; }
+
+                          const __ir = __iframe.getBoundingClientRect();
+                          if (__ir.width < 10 || __ir.height < 10) continue;
+                          try {
+                            const __is = window.getComputedStyle(__iframe);
+                            if (__is.display === 'none' || __is.visibility === 'hidden') continue;
+                          } catch(e) { continue; }
+
+                          if (VIEWPORT_ONLY && (__ir.bottom < 0 || __ir.top > vpH || __ir.right < 0 || __ir.left > vpW)) continue;
+
+                          const __iRoot = __iDoc.querySelector('article') || __iDoc.querySelector('main')
+                            || __iDoc.querySelector('[role="main"]') || __iDoc.querySelector('#content')
+                            || __iDoc.querySelector('.content') || __iDoc.body;
+                          if (!__iRoot) continue;
+
+                          const blocksBefore = blocks.length;
+
+                          for (const el of Array.from(__iRoot.querySelectorAll(BLOCK_SELECTOR))) {
+                            if (blocks.length >= MAX_BLOCKS) break;
+                            const tag = String(el.tagName || '').toLowerCase();
+                            if (!tag) continue;
+                            try {
+                              const __s = __iWin.getComputedStyle(el);
+                              if (__s.display === 'none' || __s.visibility === 'hidden') continue;
+                            } catch(e) { continue; }
+                            try { if (el.matches(NOISE) || el.closest(NOISE)) continue; } catch(e) {}
+                            if (tag !== 'table' && el.closest('table')) continue;
+                            if (['div', 'section', 'article'].includes(tag) && hasBlockChildren(el)) continue;
+                            if (['button', 'input', 'textarea', 'select', 'option'].includes(tag)) continue;
+
+                            let text = '';
+                            if (tag === 'table') {
+                              text = renderTable(el);
+                              if (!text) continue;
+                              tableCount += 1;
+                            } else {
+                              text = normalizeText(el.innerText || el.textContent || '', ['pre', 'code'].includes(tag) ? 800 : 400);
+                              if (!text) continue;
+                              if (['div', 'section', 'article'].includes(tag) && text.length < 24) continue;
+                              if (/^h[1-6]$/.test(tag)) text = '#'.repeat(Number(tag.slice(1))) + ' ' + text;
+                              else if (tag === 'li') text = '- ' + text;
+                              else if (tag === 'blockquote') text = '> ' + text;
+                              else if (tag === 'pre' || tag === 'code') text = '```\\n' + text + '\\n```';
+                            }
+
+                            const key = text.toLowerCase();
+                            if (seen.has(key)) continue;
+                            seen.add(key);
+                            blocks.push(text);
+                          }
+
+                          if (blocks.length === blocksBefore) {
+                            const __fallback = normalizeText(__iRoot.innerText || __iRoot.textContent || '', 4000);
+                            if (__fallback && __fallback.length > 20) {
+                              const key = __fallback.toLowerCase().slice(0, 200);
+                              if (!seen.has(key)) {
+                                seen.add(key);
+                                blocks.push(__fallback);
+                              }
+                            }
+                          }
+                        }
+                      } catch(e) {}
 
                       return {
                         content: blocks.join('\\n\\n').replace(/\\n{3,}/g, '\\n\\n').trim(),

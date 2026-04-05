@@ -28,10 +28,7 @@ import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
 // Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
-import { getAgentForQuery } from './agents/stuard/index';
 import { getOrchestratorAgent } from './orchestrator';
-
-const _USE_ORCHESTRATOR = process.env.USE_ORCHESTRATOR === '1';
 
 import { startVMHealthMonitor } from './services/vm-health';
 import { registerConnection, getDesktopWs } from './services/vm-bridge';
@@ -840,34 +837,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             return;
           }
         } else {
-          // ─── Parallel embedding + tool ranking pipeline ───────────────
-          // Always attempt embedding-based tool ranking. The embedding is
-          // memoized and reused by knowledge/memory retrieval later, so
-          // this is essentially free. Falls back to static Tier 1 if
-          // embedding or Supabase is unavailable.
-          let rankedToolNames: string[] | undefined;
-
-          if (prompt) {
-            try {
-              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
-              if (queryEmbedding && queryEmbedding.length > 0) {
-                const topN = Number(process.env.SIS_RANKED_TOPN || '5');
-                rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
-                if (process.env.SIS_DEBUG === '1') {
-                  console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
-                }
-              }
-            } catch (e: any) {
-              // Graceful fallback — static Tier 1 tools still loaded
-              if (process.env.SIS_DEBUG === '1') {
-                console.warn('[tool-rank] Ranking failed, using static Tier 1:', e.message);
-              }
-            }
-          }
-
-          agent = _USE_ORCHESTRATOR
-            ? getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId)
-            : await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
+          agent = getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId);
         }
 
         let conversationCreatedNow = false;

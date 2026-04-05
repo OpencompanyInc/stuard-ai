@@ -14,6 +14,7 @@ let sidebarWin: BrowserWindow | null = null;
 let spacesWin: BrowserWindow | null = null; // Legacy alias
 let dashboardWin: BrowserWindow | null = null;
 let notificationWin: BrowserWindow | null = null;
+let voiceTestWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidebarExpanded = false;
 
@@ -306,7 +307,7 @@ export function getPreloadPath() {
   return fallback;
 }
 
-export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" | "notification" = "index") {
+export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" | "notification" | "voicetest" = "index") {
   if (isDev) return `http://localhost:5173/${entry}.html`;
   return `file://${path.join(__dirname, `../../renderer/${entry}.html`)}`;
 }
@@ -717,6 +718,82 @@ export function openOnboardingWindow() {
 
 export function closeOnboardingWindow() {
   try { onboardingWin?.close(); } catch { }
+}
+
+export function openVoiceTestWindow() {
+  if (voiceTestWin && !voiceTestWin.isDestroyed()) {
+    voiceTestWin.show();
+    voiceTestWin.focus();
+    voiceTestWin.moveTop();
+    return;
+  }
+
+  const WIDTH = 480;
+  const HEIGHT = 700;
+
+  voiceTestWin = new BrowserWindow({
+    width: WIDTH,
+    height: HEIGHT,
+    minWidth: 400,
+    minHeight: 550,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: true,
+    resizable: true,
+    movable: true,
+    minimizable: true,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    useContentSize: true,
+    titleBarStyle: 'hidden',
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      devTools: true,
+    },
+    backgroundColor: "#00000000",
+  });
+
+  voiceTestWin.setMenu(null);
+  if (screenCaptureInvisibleEnabled) {
+    try { voiceTestWin.setContentProtection(true); } catch {}
+  }
+
+  const { workArea } = screen.getPrimaryDisplay();
+  const x = Math.round(workArea.x + (workArea.width - WIDTH) / 2);
+  const y = Math.round(workArea.y + (workArea.height - HEIGHT) / 2);
+  voiceTestWin.setPosition(x, y);
+
+  voiceTestWin.once('ready-to-show', () => {
+    voiceTestWin?.show();
+    voiceTestWin?.focus();
+  });
+
+  if (isDev) {
+    voiceTestWin.loadURL(getRendererUrl("voicetest"));
+  } else {
+    const candidates = [
+      path.join(__dirname, "../renderer/voicetest.html"),
+      path.join(__dirname, "../../renderer/voicetest.html"),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        voiceTestWin.loadFile(p);
+        break;
+      }
+    }
+  }
+
+  voiceTestWin.on("closed", () => { voiceTestWin = null; });
+}
+
+export function closeVoiceTestWindow() {
+  try { voiceTestWin?.close(); } catch { }
 }
 
 export function openDashboardWindow(options?: { tab?: string }) {

@@ -43,9 +43,16 @@ export async function pushOAuthTokensToVM(userId: string): Promise<void> {
         accountEmail: a.account_email || null,
       }));
     if (tokens.length > 0) {
-      const result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 15_000);
+      // Retry once with increased timeout — token payloads are small but
+      // the VM may be under load during provisioning
+      let result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 30_000);
       if (!result.ok) {
-        console.warn('[oauth-sync] Auto-push to VM failed:', result.error || 'store_oauth_tokens_failed');
+        console.warn('[oauth-sync] First push attempt failed, retrying:', result.error);
+        await new Promise(r => setTimeout(r, 2000));
+        result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 30_000);
+        if (!result.ok) {
+          console.warn('[oauth-sync] Auto-push to VM failed after retry:', result.error || 'store_oauth_tokens_failed');
+        }
       }
     }
   } catch (e: any) {
@@ -376,26 +383,45 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
               console.log('[cloud-engine] Post-provision workspace restore complete for user', user.userId);
             }
 
-            // 2. Explicitly sync agent databases (knowledge.db, memory.db) from GCS
-            // The startup script also tries this via gsutil, but belt-and-suspenders
+            // 2. Sync agent databases + OAuth tokens + browser cookies in parallel
+            //    Agent data sync gets generous timeout (10 min) and retries for large DBs.
+            //    OAuth/browser sync runs alongside — no dependency between them.
             setProvisionStep(user.userId, 'syncing_agent');
-            try {
-              const agentSyncResult = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
-              if (agentSyncResult.ok) {
-                console.log('[cloud-engine] Post-provision agent data sync complete for user', user.userId);
-              } else {
-                console.warn('[cloud-engine] Post-provision agent data sync failed:', agentSyncResult.error);
-              }
-            } catch (e: any) {
-              console.warn('[cloud-engine] Post-provision agent data sync error:', e?.message);
-            }
+            const [agentSyncSettled, integrationSyncSettled] = await Promise.allSettled([
+              // Agent data sync with retry (up to 3 attempts, exponential backoff)
+              (async () => {
+                let lastErr = '';
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  if (attempt > 0) {
+                    await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 2000));
+                    console.log(`[cloud-engine] Agent data sync retry ${attempt + 1} for user ${user.userId}`);
+                  }
+                  try {
+                    const result = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 10 * 60_000);
+                    if (result.ok) {
+                      console.log('[cloud-engine] Post-provision agent data sync complete for user', user.userId);
+                      return;
+                    }
+                    lastErr = result.error || 'sync_failed';
+                  } catch (e: any) {
+                    lastErr = e?.message || 'sync_error';
+                  }
+                  console.warn(`[cloud-engine] Agent data sync attempt ${attempt + 1} failed:`, lastErr);
+                }
+                console.error('[cloud-engine] Agent data sync failed after 3 attempts:', lastErr);
+              })(),
+              // OAuth tokens + browser cookies (with step update)
+              (async () => {
+                setProvisionStep(user.userId, 'syncing_integrations');
+                await syncRuntimeStateToVM(user.userId);
+              })(),
+            ]);
 
-            // 3. Push OAuth tokens to VM so integrations work
-            setProvisionStep(user.userId, 'syncing_integrations');
-            try {
-              await syncRuntimeStateToVM(user.userId);
-            } catch (e: any) {
-              console.warn('[cloud-engine] Post-provision integration sync error:', e?.message);
+            if (agentSyncSettled.status === 'rejected') {
+              console.warn('[cloud-engine] Post-provision agent sync rejected:', agentSyncSettled.reason?.message);
+            }
+            if (integrationSyncSettled.status === 'rejected') {
+              console.warn('[cloud-engine] Post-provision integration sync rejected:', integrationSyncSettled.reason?.message);
             }
           } else {
             console.warn('[cloud-engine] VM not ready after provision, skipping restore for user', user.userId);
@@ -516,18 +542,29 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         }
       } catch { /* non-fatal */ }
 
-      // Wait for VM agent to be reachable before restoring (max 60s)
+      // Wait for VM agent to be reachable before restoring (max 120s for cold-start VMs)
       let vmReady = false;
-      for (let i = 0; i < 12; i++) {
-        try {
-          const pingResp = await fetch(`http://${externalIp}:7400/health`, { 
-            signal: AbortSignal.timeout(5000) 
-          });
-          if (pingResp.ok) {
-            vmReady = true;
-            break;
-          }
-        } catch { /* retry */ }
+      for (let i = 0; i < 24; i++) {
+        // Re-fetch IP if not yet available (may change after stop/start)
+        if (!externalIp) {
+          try {
+            externalIp = await provider.getVMExternalIP(engine.instance_name, engine.zone);
+            if (externalIp) {
+              await updateEngineHealth(user.userId, { external_ip: externalIp });
+            }
+          } catch { /* retry */ }
+        }
+        if (externalIp) {
+          try {
+            const pingResp = await fetch(`http://${externalIp}:7400/health`, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (pingResp.ok) {
+              vmReady = true;
+              break;
+            }
+          } catch { /* retry */ }
+        }
         await new Promise(r => setTimeout(r, 5000));
       }
 
@@ -540,24 +577,45 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           console.warn('[cloud-engine] Restore failed:', restoreResult.error);
         }
 
-        // 2. Sync agent databases (knowledge.db, memory.db)
-        try {
-          const agentSync = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 60_000);
-          if (agentSync.ok) {
-            console.log('[cloud-engine] Agent data synced on start for user', user.userId);
-          }
-        } catch (e: any) {
-          console.warn('[cloud-engine] Agent data sync on start failed:', e?.message);
-        }
+        // 2. Sync agent databases + OAuth tokens + browser cookies in parallel
+        //    Agent data gets retries and generous timeout for large knowledge DBs
+        const [agentResult, integrationResult] = await Promise.allSettled([
+          // Agent data sync with retry (3 attempts, 10 min timeout each)
+          (async () => {
+            let lastErr = '';
+            for (let attempt = 0; attempt < 3; attempt++) {
+              if (attempt > 0) {
+                await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 2000));
+                console.log(`[cloud-engine] Agent data sync retry ${attempt + 1} on start for user ${user.userId}`);
+              }
+              try {
+                const agentSync = await sendVMCommand(user.userId, 'sync_agent_data', { direction: 'download' }, 10 * 60_000);
+                if (agentSync.ok) {
+                  console.log('[cloud-engine] Agent data synced on start for user', user.userId);
+                  return;
+                }
+                lastErr = agentSync.error || 'sync_failed';
+              } catch (e: any) {
+                lastErr = e?.message || 'sync_error';
+              }
+              console.warn(`[cloud-engine] Agent data sync attempt ${attempt + 1} on start failed:`, lastErr);
+            }
+            console.error('[cloud-engine] Agent data sync on start failed after 3 attempts:', lastErr);
+          })(),
+          // OAuth tokens + browser cookies (independent of agent data)
+          syncRuntimeStateToVM(user.userId).catch((e: any) => {
+            console.warn('[cloud-engine] Integration sync on start failed:', e?.message);
+          }),
+        ]);
 
-        // 3. Push OAuth tokens + browser cookies
-        try {
-          await syncRuntimeStateToVM(user.userId);
-        } catch (e: any) {
-          console.warn('[cloud-engine] Integration sync on start failed:', e?.message);
+        if (agentResult.status === 'rejected') {
+          console.warn('[cloud-engine] Agent sync on start rejected:', agentResult.reason?.message);
+        }
+        if (integrationResult.status === 'rejected') {
+          console.warn('[cloud-engine] Integration sync on start rejected:', integrationResult.reason?.message);
         }
       } else {
-        console.warn('[cloud-engine] VM not ready for restore, skipping');
+        console.warn('[cloud-engine] VM not ready for restore after 120s, skipping');
       }
 
       // Transition: starting → running
@@ -910,7 +968,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       const result = await sendVMCommand(user.userId, 'sync_agent_data', {
         direction: 'download',
         downloadUrl: urlResult.downloadUrl,
-      }, 60_000);
+      }, 10 * 60_000);
       json(res, 200, { ok: Boolean(result.ok), direction: 'download' });
     } catch (e: any) {
       console.error('[cloud-engine] sync-agent-data error:', e?.message);
@@ -964,6 +1022,105 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     } catch (e: any) {
       console.error('[cloud-engine] vm/agent-data-urls error:', e?.message);
       json(res, 500, { ok: false, error: 'failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/vm/agent-data-updated ──────────────────────
+  // Called BY the VM agent after it uploads new agent data to GCS.
+  // Cloud-ai notifies the desktop via WebSocket so it can pull the update.
+  if (method === 'POST' && path === '/v1/cloud-engine/vm/agent-data-updated') {
+    try {
+      const body = await readBody(req, 4096);
+      const userId = body?.userId;
+      const vmToken = body?.vmToken;
+      if (!userId || !vmToken) {
+        json(res, 400, { ok: false, error: 'missing userId or vmToken' });
+        return true;
+      }
+
+      // Verify the VM token
+      const engine = await getCloudEngine(userId);
+      if (!engine || !engine.vm_secret) {
+        json(res, 403, { ok: false, error: 'no_engine' });
+        return true;
+      }
+      const { verifyVMToken } = await import('../services/vm-tokens');
+      const tokenPayload = verifyVMToken(vmToken, engine.vm_secret);
+      if (!tokenPayload || tokenPayload.userId !== userId) {
+        json(res, 403, { ok: false, error: 'invalid_vm_token' });
+        return true;
+      }
+
+      // Notify desktop via WebSocket that new agent data is available in GCS
+      const desktopWs = getDesktopWs(userId);
+      if (desktopWs) {
+        try {
+          desktopWs.send(JSON.stringify({
+            type: 'agent_data_updated',
+            source: 'vm',
+            timestamp: new Date().toISOString(),
+          }));
+          console.log(`[cloud-engine] Notified desktop of agent data update for user ${userId}`);
+        } catch (e: any) {
+          console.warn('[cloud-engine] Failed to notify desktop:', e?.message);
+        }
+      }
+
+      json(res, 200, { ok: true, desktopNotified: !!desktopWs });
+    } catch (e: any) {
+      console.error('[cloud-engine] vm/agent-data-updated error:', e?.message);
+      json(res, 500, { ok: false, error: 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/push-agent-data ─────────────────────────────
+  // Called BY the desktop after it uploads new agent data to GCS.
+  // Cloud-ai tells the running VM to download the updated data.
+  if (method === 'POST' && path === '/v1/cloud-engine/push-agent-data') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const engine = await getCloudEngine(user.userId);
+      if (!engine || engine.status !== 'running') {
+        json(res, 409, { ok: false, error: 'engine_not_running' });
+        return true;
+      }
+
+      // Generate signed download URL for the VM
+      const { generateAgentDataDownloadUrl } = await import('../services/cold-storage');
+      const urlResult = await generateAgentDataDownloadUrl(user.userId);
+      if (!urlResult) {
+        json(res, 404, { ok: false, error: 'no_agent_data' });
+        return true;
+      }
+
+      // Tell VM to download the updated agent data (10 min timeout for large DBs)
+      const result = await sendVMCommand(user.userId, 'sync_agent_data', {
+        direction: 'download',
+        downloadUrl: urlResult.downloadUrl,
+      }, 10 * 60_000);
+
+      json(res, 200, { ok: Boolean(result.ok), direction: 'download', vmResult: result });
+    } catch (e: any) {
+      console.error('[cloud-engine] push-agent-data error:', e?.message);
+      json(res, 500, { ok: false, error: 'push_agent_data_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/push-oauth-tokens ───────────────────────────
+  // Explicitly push current OAuth tokens to the running VM.
+  // Called by desktop when an integration is connected/disconnected.
+  if (method === 'POST' && path === '/v1/cloud-engine/push-oauth-tokens') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      await pushOAuthTokensToVM(user.userId);
+      json(res, 200, { ok: true });
+    } catch (e: any) {
+      json(res, 500, { ok: false, error: e?.message || 'push_failed' });
     }
     return true;
   }
