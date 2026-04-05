@@ -31,6 +31,7 @@ import type {
   SubagentAnswer,
 } from './types';
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
+import { logUsageEvent } from '../supabase';
 import type { ModelChoice } from '../router/model-router';
 
 const require = createRequire(import.meta.url);
@@ -461,6 +462,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     let fullText = '';
     let allToolCalls: any[] = [];
     let returnControlResult = '';
+    let streamUsage: any = null;
 
     while (attempt <= MAX_RETRIES) {
       const messages = toolErrorHistory.length > 0
@@ -535,9 +537,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               else if (ct === 'step-start') {
                 emitToClient('step_start', { stepId: chunk.payload?.stepId });
               }
-              // Finish
+              // Finish — capture usage
               else if (ct === 'finish') {
-                // noop — handled after loop
+                const payload = chunk.payload || chunk;
+                if (payload?.usage) streamUsage = payload.usage;
               }
               // Fallback: plain text or textDelta
               else if (typeof chunk === 'string' && chunk) {
@@ -552,6 +555,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
           // Final text fallback
           if (!fullText && streamResult?.text) fullText = streamResult.text;
+          // Capture usage from streamResult if not already captured from finish event
+          if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
           return { text: fullText, steps: streamResult?.steps || [] };
         };
 
@@ -603,14 +608,41 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           console.warn(`[subagent:${subagentId}] WARNING: No tool calls made! Response preview: "${text.slice(0, 200)}"`);
         }
 
-        writeLog('subagent_complete', { subagentId, ok: true, durationMs, textLength: finalResult.length, toolCallCount: toolCalls.length, stepsCount: steps.length });
-        emitToClient('completed', { ok: true, durationMs });
+        // ── Bill subagent usage ──
+        const resolvedModelId = modelId || (typeof model === 'string' ? model : 'balanced');
+        const usageData = streamUsage || {};
+        const promptTokens = Number(usageData.promptTokens || usageData.prompt_tokens || usageData.inputTokens || 0);
+        const completionTokens = Number(usageData.completionTokens || usageData.completion_tokens || usageData.outputTokens || 0);
+        const totalTokens = Number(usageData.totalTokens || usageData.total_tokens || 0) || (promptTokens + completionTokens);
+        const usageSummary = { promptTokens, completionTokens, totalTokens, model: resolvedModelId };
+
+        // Log to usage_events with sourceType='subagent' so it shows in billing
+        const userId = bridgeSecrets?.userId;
+        if (userId && (promptTokens > 0 || completionTokens > 0)) {
+          try {
+            await logUsageEvent(userId, null, resolvedModelId, {
+              ...usageData,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              sourceType: 'subagent',
+              subagentKind: request.kind,
+              subagentId,
+            });
+          } catch (e: any) {
+            console.error(`[subagent:${subagentId}] failed to log usage:`, e?.message);
+          }
+        }
+
+        writeLog('subagent_complete', { subagentId, ok: true, durationMs, textLength: finalResult.length, toolCallCount: toolCalls.length, stepsCount: steps.length, usage: usageSummary });
+        emitToClient('completed', { ok: true, durationMs, usage: usageSummary });
 
         return {
           ok: true,
           subagentId,
           result: finalResult,
           durationMs,
+          usage: usageSummary,
         };
       } catch (error: any) {
         const toolError = detectRetryableToolError(error);

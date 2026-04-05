@@ -107,6 +107,12 @@ export interface DelegationResult {
   error?: string;
   toolCallCount?: number;
   durationMs?: number;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    model?: string;
+  };
 }
 
 // ─── Union of all subagent wire messages ─────────────────────────────────────
