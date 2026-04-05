@@ -3,18 +3,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCloudEngineStatus } from '@/lib/cloudApi';
 import { CloudOverview } from './components/CloudOverview';
-import { CloudChat } from './components/CloudChat';
-import { CloudTerminal } from './components/CloudTerminal';
-import { CloudFileBrowser } from './components/CloudFileBrowser';
-import { CloudMonitoring } from './components/CloudMonitoring';
-import { CloudSnapshots } from './components/CloudSnapshots';
-import { CloudBilling } from './components/CloudBilling';
 import { ProvisionFlow } from './components/ProvisionFlow';
-
-type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'snapshots' | 'billing';
+import { CloudIDELayout } from './components/CloudIDELayout';
 
 export default function CloudDashboardPage() {
-  const [activeTab, setActiveTab] = useState<CloudTab>('overview');
   const [engine, setEngine] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const hasEngine = useRef(false);
@@ -205,28 +197,22 @@ export default function CloudDashboardPage() {
     );
   }
 
-  const tabs: { id: CloudTab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'chat', label: 'Chat' },
-    { id: 'terminal', label: 'Terminal' },
-    { id: 'files', label: 'Files' },
-    { id: 'monitoring', label: 'Monitoring' },
-    { id: 'snapshots', label: 'Snapshots' },
-    { id: 'billing', label: 'Billing' },
-  ];
+  // When engine is running + healthy → full IDE layout
+  if (engine.status === 'running') {
+    return <CloudIDELayout engine={engine} onRefresh={loadStatus} />;
+  }
 
+  // Stopped / error states → simplified overview with start/delete controls
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Cloud Engine</h1>
         <div className="flex items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
-            engine.status === 'running' ? 'bg-green-100 text-green-800' :
             engine.status === 'stopped' ? 'bg-gray-100 text-gray-600' :
             'bg-yellow-100 text-yellow-800'
           }`}>
             <span className={`w-2 h-2 rounded-full ${
-              engine.status === 'running' ? 'bg-green-500' :
               engine.status === 'stopped' ? 'bg-gray-400' :
               'bg-yellow-500 animate-pulse'
             }`} />
@@ -234,34 +220,7 @@ export default function CloudDashboardPage() {
           </span>
         </div>
       </div>
-
-      {/* Tab Navigation */}
-      <div className="flex gap-1 mb-6 p-1 bg-gray-100 rounded-lg w-fit">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-3.5 py-1.5 text-[13px] font-medium rounded-md transition-all ${
-              activeTab === tab.id
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      <div className="mt-4">
-        {activeTab === 'overview' && <CloudOverview engine={engine} onRefresh={loadStatus} />}
-        {activeTab === 'chat' && <CloudChat engine={engine} />}
-        {activeTab === 'terminal' && <CloudTerminal engine={engine} />}
-        {activeTab === 'files' && <CloudFileBrowser engine={engine} />}
-        {activeTab === 'monitoring' && <CloudMonitoring engine={engine} />}
-        {activeTab === 'snapshots' && <CloudSnapshots />}
-        {activeTab === 'billing' && <CloudBilling />}
-      </div>
+      <CloudOverview engine={engine} onRefresh={loadStatus} />
     </div>
   );
 }
