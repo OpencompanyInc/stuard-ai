@@ -61,8 +61,7 @@ describe('Delegation question coordination', () => {
     const { delegate, replyToSubagent } = await import('./delegation-tools');
 
     const delegated = await (delegate as any).execute({
-      subagent: 'browser',
-      instruction: 'Ask the orchestrator what number to return, then finish.',
+      tasks: [{ subagent: 'browser', instruction: 'Ask the orchestrator what number to return, then finish.' }],
     });
 
     expect(delegated.ok).toBe(true);
@@ -117,8 +116,7 @@ describe('Delegation question coordination', () => {
     const { delegate, replyToSubagent } = await import('./delegation-tools');
 
     const firstQuestion = await (delegate as any).execute({
-      subagent: 'browser',
-      instruction: 'Ask two questions before finishing.',
+      tasks: [{ subagent: 'browser', instruction: 'Ask two questions before finishing.' }],
     });
 
     expect(firstQuestion.awaitingReply).toBe(true);

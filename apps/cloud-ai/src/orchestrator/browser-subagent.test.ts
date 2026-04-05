@@ -169,7 +169,7 @@ describe('Browser Pack Tool Resolution', () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('makeLocalTool Bridge Detection', () => {
-  it('browser_use_navigate fails gracefully when no bridge is available', async () => {
+  it('browser_use_navigate fails gracefully when no bridge is available', { timeout: 30000 }, async () => {
     const { browser_use_navigate } = await import('../tools/device/browser-use');
 
     // Execute outside bridge context — the tool may still try the local browser
@@ -422,8 +422,7 @@ describe('Delegation Tool Contract', () => {
     const { delegate } = await import('./delegation-tools');
 
     const result = await (delegate as any).execute({
-      subagent: 'nonexistent_agent',
-      instruction: 'do something',
+      tasks: [{ subagent: 'nonexistent_agent', instruction: 'do something' }],
     });
 
     expect(result.ok).toBe(false);

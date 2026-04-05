@@ -50,12 +50,26 @@ vi.mock('../../tools/bridge', () => {
   return {
     withClientBridge: vi.fn((_ws: any, fn: any) => fn()),
     getBridgeSecrets: vi.fn(() => undefined),
+    getBridgeWs: vi.fn(() => undefined),
+    hasClientBridge: vi.fn(() => false),
   };
 });
 
 vi.mock('../../utils/usage', () => {
   return {
     normalizeUsage: vi.fn((u: any) => u),
+  };
+});
+
+vi.mock('../../orchestrator', () => {
+  return {
+    getOrchestratorAgent: vi.fn(),
+  };
+});
+
+vi.mock('../../orchestrator/subagent-runtime', () => {
+  return {
+    abortAllRunningSubagents: vi.fn(),
   };
 });
 
