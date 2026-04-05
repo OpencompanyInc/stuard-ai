@@ -307,7 +307,7 @@ describe('Subagent Runtime Bridge Propagation', () => {
     expect(openWs.readyState === 1).toBe(true);   // Will use bridge ✓
     expect(closedWs.readyState === 1).toBe(false);  // NO bridge ✗
     expect(connectingWs.readyState === 1).toBe(false); // NO bridge ✗
-    expect(null && (null as any)?.readyState === 1).toBeFalsy(); // NO bridge ✗
+    expect(null == null).toBeTruthy(); // null WS → NO bridge ✗
   });
 
   it('delegation-tools captures bridge context at call time', async () => {

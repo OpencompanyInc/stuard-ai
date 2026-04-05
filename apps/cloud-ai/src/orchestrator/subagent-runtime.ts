@@ -15,9 +15,6 @@ import { detectRetryableToolError } from '../routes/proactive-utils';
 import { getModel } from '../agents/stuard/models';
 import { writeLog } from '../utils/logger';
 import { getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
-import { logUsageEvent, debitCredits } from '../supabase';
-import { estimateCostUsd, creditsFromUsd } from '../pricing';
-import { normalizeUsage } from '../utils/usage';
 import {
   withActiveBridgeContext,
   setActiveBridge,
@@ -92,58 +89,22 @@ export function getPendingQuestionCount(): number {
   return pendingQuestions.size;
 }
 
-// ─── Subagent run state (shared across ask/return/progress tools) ────────────
-
-interface SubagentRunState {
-  pendingQuestionId: string | null;
-  pendingAnswerPromise: Promise<string> | null;
-}
-
-async function waitForConcurrentAskRegistration(runState: SubagentRunState): Promise<void> {
-  if (runState.pendingAnswerPromise) return;
-
-  // Tool calls emitted in the same model step are usually scheduled very close
-  // together, but not always in the same microtask. Give sibling
-  // ask_orchestrator calls a brief chance to mark the pending state before
-  // return_control decides it's safe to finish.
-  await Promise.resolve();
-  if (runState.pendingAnswerPromise) return;
-
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
 // ─── Child-side tools ────────────────────────────────────────────────────────
 
 function makeAskOrchestratorTool(
   correlation: SubagentCorrelation,
-  runState: SubagentRunState,
   onQuestion?: (question: SubagentQuestion) => Promise<SubagentAnswer>,
 ) {
   return createTool({
     id: 'ask_orchestrator',
     description:
       'Ask the orchestrator a question when you need information, a user decision, or context ' +
-      'that is not available in your current tool set. Returns the orchestrator\'s answer.',
+      'that is not available in your current tool set. The orchestrator will respond and you can continue.',
     inputSchema: z.object({
       question: z.string().describe('The question to ask the orchestrator.'),
       choices: z.array(z.string()).optional().describe('Optional choices the orchestrator can pick from.'),
     }),
     execute: async ({ question, choices }) => {
-      // If a question is already pending (e.g. parallel tool calls in the
-      // same step), share the blocking promise instead of firing a duplicate.
-      if (runState.pendingQuestionId && runState.pendingAnswerPromise) {
-        writeLog('ask_orchestrator_sharing_pending', {
-          subagentId: correlation.subagentId,
-          pendingQuestionId: runState.pendingQuestionId,
-        });
-        try {
-          const answer = await runState.pendingAnswerPromise;
-          return { ok: true, answer };
-        } catch (e: any) {
-          return { ok: false, error: e.message || 'Pending question failed' };
-        }
-      }
-
       const questionId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       writeLog('subagent_ask_orchestrator', {
@@ -162,26 +123,10 @@ function makeAskOrchestratorTool(
       };
 
       if (onQuestion) {
-        // Set up shared answer promise BEFORE calling onQuestion so that
-        // parallel duplicate calls or return_control can observe it.
-        let resolveShared!: (answer: string) => void;
-        runState.pendingAnswerPromise = new Promise<string>((resolve) => {
-          resolveShared = resolve;
-        });
-        // Prevent unhandled rejection if nobody else awaits this promise
-        runState.pendingAnswerPromise.catch(() => {});
-        runState.pendingQuestionId = questionId;
-
         try {
-          const answerMsg = await onQuestion(questionMsg);
-          resolveShared(answerMsg.answer);
-          runState.pendingQuestionId = null;
-          runState.pendingAnswerPromise = null;
-          return { ok: true, answer: answerMsg.answer };
+          const answer = await onQuestion(questionMsg);
+          return { ok: true, answer: answer.answer };
         } catch (e: any) {
-          resolveShared(`[error] ${e.message || 'No answer received'}`);
-          runState.pendingQuestionId = null;
-          runState.pendingAnswerPromise = null;
           return { ok: false, error: e.message || 'No answer received' };
         }
       }
@@ -191,10 +136,7 @@ function makeAskOrchestratorTool(
   });
 }
 
-function makeReturnControlTool(
-  correlation: SubagentCorrelation,
-  runState: SubagentRunState,
-) {
+function makeReturnControlTool(correlation: SubagentCorrelation) {
   return createTool({
     id: 'return_control',
     description:
@@ -205,30 +147,12 @@ function makeReturnControlTool(
       success: z.boolean().default(true).describe('Whether the task was completed successfully.'),
     }),
     execute: async ({ summary, success }) => {
-      // If ask_orchestrator was emitted in the same model step, give it a brief
-      // chance to register before deciding whether we can finalize.
-      await waitForConcurrentAskRegistration(runState);
-
-      // If ask_orchestrator is in-flight, wait for the answer before
-      // finalizing — this prevents the subagent from "pre-finishing"
-      // while a question is still pending.
-      if (runState.pendingAnswerPromise) {
-        writeLog('return_control_waiting_for_pending_ask', {
-          subagentId: correlation.subagentId,
-          pendingQuestionId: runState.pendingQuestionId,
-        });
-        try {
-          await runState.pendingAnswerPromise;
-        } catch {
-          // Question failed but we're still returning control
-        }
-      }
-
       writeLog('subagent_return_control', {
         subagentId: correlation.subagentId,
         success,
         summaryLength: summary.length,
       });
+      // Signal completion — the outer runner reads this from the result
       return { ok: true, returned: true, summary, success };
     },
   });
@@ -338,13 +262,8 @@ function buildSubagent(
   const executionTools = getExecutionToolsLazy();
   const selectedModel = getModel(model, modelId);
 
-  const runState: SubagentRunState = {
-    pendingQuestionId: null,
-    pendingAnswerPromise: null,
-  };
-
-  const askTool = makeAskOrchestratorTool(correlation, runState, onQuestion);
-  const returnTool = makeReturnControlTool(correlation, runState);
+  const askTool = makeAskOrchestratorTool(correlation, onQuestion);
+  const returnTool = makeReturnControlTool(correlation);
   const progressTool = makeReportProgressTool(correlation);
 
   // Build tool set: capability pack tools from the full universe + control tools
@@ -483,7 +402,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
 
   const agent = buildSubagent(pack, correlation, model, modelId, bridgeWs, bridgeSecrets, onQuestion);
-  const timeoutMs = request.timeoutMs ?? pack.timeoutMs;
+  const timeoutMs = request.timeoutMs ?? pack.timeoutMs ?? 0;
 
   let prompt = request.instruction;
   if (request.context) {
@@ -518,9 +437,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   emitToClient('started', { kind: request.kind, label: request.kind });
 
   try {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Subagent timed out after ${timeoutMs}ms`)), timeoutMs);
-    });
+    // Only create a timeout promise if timeoutMs > 0 (0 = no timeout)
+    const timeoutPromise = timeoutMs > 0
+      ? new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Subagent timed out after ${timeoutMs}ms`)), timeoutMs);
+        })
+      : null;
 
     const abortPromise = new Promise<never>((_, reject) => {
       if (localAbort.signal.aborted) {
@@ -539,10 +461,6 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     let fullText = '';
     let allToolCalls: any[] = [];
     let returnControlResult = '';
-    // Accumulate token usage across all steps for billing
-    let totalPromptTokens = 0;
-    let totalCompletionTokens = 0;
-    let totalCachedTokens = 0;
 
     while (attempt <= MAX_RETRIES) {
       const messages = toolErrorHistory.length > 0
@@ -604,43 +522,22 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                   toolCallId: tr.toolCallId,
                   result: tr.result,
                 });
-                // Capture return_control result and stop stream immediately
+                // Capture return_control result as fallback for summary extraction
                 const trName = tr.toolName || '';
                 if (trName === 'return_control' && tr.result) {
                   const res = typeof tr.result === 'string' ? (() => { try { return JSON.parse(tr.result); } catch { return {}; } })() : tr.result;
                   if (res?.summary && !returnControlResult) {
                     returnControlResult = res.summary;
                   }
-                  // Subagent explicitly returned control — stop processing
-                  // immediately so no more tokens are consumed or text emitted.
-                  emitToClient('return_control', { summary: returnControlResult });
-                  break;
                 }
               }
               // Step boundaries
               else if (ct === 'step-start') {
                 emitToClient('step_start', { stepId: chunk.payload?.stepId });
               }
-              // Step finish — accumulate token usage for billing
-              else if (ct === 'step-finish') {
-                const stepUsage = chunk.payload?.usage || chunk.usage;
-                if (stepUsage) {
-                  const nu = normalizeUsage(stepUsage);
-                  totalPromptTokens += nu.promptTokens || 0;
-                  totalCompletionTokens += nu.completionTokens || 0;
-                  totalCachedTokens += nu.cachedPromptTokens || 0;
-                }
-              }
               // Finish
               else if (ct === 'finish') {
-                // Extract final usage if available
-                const finishUsage = chunk.payload?.usage || chunk.usage;
-                if (finishUsage && totalPromptTokens === 0 && totalCompletionTokens === 0) {
-                  const nu = normalizeUsage(finishUsage);
-                  totalPromptTokens = nu.promptTokens || 0;
-                  totalCompletionTokens = nu.completionTokens || 0;
-                  totalCachedTokens = nu.cachedPromptTokens || 0;
-                }
+                // noop — handled after loop
               }
               // Fallback: plain text or textDelta
               else if (typeof chunk === 'string' && chunk) {
@@ -658,17 +555,19 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           return { text: fullText, steps: streamResult?.steps || [] };
         };
 
-        const runPromise = bridgeWs && bridgeOpen
+        const runPromise: Promise<any> = bridgeWs && bridgeOpen
           ? withActiveBridgeContext(
               bridgeWs as any,
               bridgeSecrets,
               () => withClientBridge(bridgeWs as any, streamAgent, bridgeSecrets),
-            )
+            ) as Promise<any>
           : bridgeSecrets
-            ? runWithSecrets(bridgeSecrets, streamAgent)
+            ? runWithSecrets(bridgeSecrets, streamAgent) as Promise<any>
             : streamAgent();
 
-        const response: any = await Promise.race([runPromise, timeoutPromise, abortPromise]);
+        const racers = [runPromise, abortPromise] as Promise<any>[];
+        if (timeoutPromise) racers.push(timeoutPromise as Promise<any>);
+        const response: any = await Promise.race(racers);
         // Success — break out of retry loop
         const text = response?.text || fullText || '';
         const steps = response?.steps || [];
@@ -704,85 +603,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           console.warn(`[subagent:${subagentId}] WARNING: No tool calls made! Response preview: "${text.slice(0, 200)}"`);
         }
 
-        // Extract usage from steps if stream events didn't provide it
-        if (totalPromptTokens === 0 && totalCompletionTokens === 0 && steps.length > 0) {
-          for (const step of steps) {
-            const su = step?.usage;
-            if (su) {
-              const nu = normalizeUsage(su);
-              totalPromptTokens += nu.promptTokens || 0;
-              totalCompletionTokens += nu.completionTokens || 0;
-              totalCachedTokens += nu.cachedPromptTokens || 0;
-            }
-          }
-        }
-        // Also try streamResult.usage as final fallback
-        if (totalPromptTokens === 0 && totalCompletionTokens === 0) {
-          const topUsage = (response as any)?.usage;
-          if (topUsage) {
-            const nu = normalizeUsage(topUsage);
-            totalPromptTokens = nu.promptTokens || 0;
-            totalCompletionTokens = nu.completionTokens || 0;
-            totalCachedTokens = nu.cachedPromptTokens || 0;
-          }
-        }
-
-        // Bill the subagent's LLM usage to the user
-        const userId = bridgeSecrets?.userId as string | undefined;
-        const resolvedModelId = modelId || model || 'balanced';
-        if (userId && (totalPromptTokens > 0 || totalCompletionTokens > 0)) {
-          const costUsd = estimateCostUsd(resolvedModelId, totalPromptTokens, totalCompletionTokens, totalCachedTokens);
-          const credits = creditsFromUsd(costUsd);
-
-          writeLog('subagent_billing', {
-            subagentId,
-            userId,
-            model: resolvedModelId,
-            promptTokens: totalPromptTokens,
-            completionTokens: totalCompletionTokens,
-            cachedTokens: totalCachedTokens,
-            costUsd,
-            credits,
-            kind: request.kind,
-          });
-
-          // Log usage event (inserts into usage_events table)
-          try {
-            await logUsageEvent(userId, null, resolvedModelId, {
-              promptTokens: totalPromptTokens,
-              completionTokens: totalCompletionTokens,
-              totalTokens: totalPromptTokens + totalCompletionTokens,
-              cachedPromptTokens: totalCachedTokens,
-              sourceType: 'subagent',
-              subagentKind: request.kind,
-              subagentId,
-            });
-          } catch (e: any) {
-            console.warn(`[subagent:${subagentId}] failed to log usage event:`, e?.message);
-          }
-
-          // Debit credits from user's balance
-          try {
-            await debitCredits(userId, {
-              credits,
-              sourceType: 'subagent',
-              sourceRef: `subagent:${subagentId}`,
-              model: resolvedModelId,
-              amountUsd: costUsd,
-              metadata: {
-                subagentKind: request.kind,
-                promptTokens: totalPromptTokens,
-                completionTokens: totalCompletionTokens,
-                durationMs,
-              },
-            });
-          } catch (e: any) {
-            console.warn(`[subagent:${subagentId}] failed to debit credits:`, e?.message);
-          }
-        }
-
         writeLog('subagent_complete', { subagentId, ok: true, durationMs, textLength: finalResult.length, toolCallCount: toolCalls.length, stepsCount: steps.length });
-        emitToClient('completed', { ok: true, durationMs, usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, cachedTokens: totalCachedTokens } });
+        emitToClient('completed', { ok: true, durationMs });
 
         return {
           ok: true,
@@ -814,9 +636,6 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         fullText = '';
         allToolCalls = [];
         returnControlResult = '';
-        totalPromptTokens = 0;
-        totalCompletionTokens = 0;
-        totalCachedTokens = 0;
       }
     }
 

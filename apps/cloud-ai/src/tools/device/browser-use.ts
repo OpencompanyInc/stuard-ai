@@ -166,8 +166,8 @@ export const browser_use_click = makeLocalTool(
   }),
   z.object({
     ok: z.boolean(),
-    clicked: z.string().optional(),
-    elementId: z.string().optional(),
+    clicked: z.string().nullable().optional(),
+    elementId: z.string().nullable().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -189,7 +189,8 @@ export const browser_use_type = makeLocalTool(
   z.object({
     ok: z.boolean(),
     typed: z.number().optional(),
-    elementId: z.string().optional(),
+    elementId: z.string().nullable().optional(),
+    method: z.string().optional(),
     error: z.string().optional(),
   }),
   15000,
@@ -209,7 +210,7 @@ export const browser_use_press_key = makeLocalTool(
   z.object({
     ok: z.boolean(),
     key: z.string().optional(),
-    elementId: z.string().optional(),
+    elementId: z.string().nullable().optional(),
     error: z.string().optional(),
   }),
   10000,
@@ -365,8 +366,8 @@ export const browser_use_hover = makeLocalTool(
   }),
   z.object({
     ok: z.boolean(),
-    hovered: z.string().optional(),
-    elementId: z.string().optional(),
+    hovered: z.string().nullable().optional(),
+    elementId: z.string().nullable().optional(),
     method: z.string().optional(),
     error: z.string().optional(),
   }),
@@ -391,8 +392,8 @@ export const browser_use_select_option = makeLocalTool(
   z.object({
     ok: z.boolean(),
     selected: z.any().optional(),
-    text: z.string().optional(),
-    elementId: z.string().optional(),
+    text: z.string().nullable().optional(),
+    elementId: z.string().nullable().optional(),
     method: z.string().optional(),
     error: z.string().optional(),
   }),
@@ -413,7 +414,7 @@ export const browser_use_get_dropdown_options = makeLocalTool(
   z.object({
     ok: z.boolean(),
     type: z.string().optional().describe('Either "native_select" or "custom_dropdown"'),
-    elementId: z.string().optional(),
+    elementId: z.string().nullable().optional(),
     options: z.array(z.object({
       text: z.string(),
       value: z.string(),
@@ -467,16 +468,24 @@ export const browser_use_fill_form = makeLocalTool(
   'browser_use_fill_form',
   'Fill multiple form fields at once and optionally submit the form. More reliable than calling browser_use_type for each field individually. Supports text fields, dropdowns, toggles, and file inputs. Array items can target fields by elementId from browser_use_get_interactive_elements.',
   z.object({
-    fields: z.union([
-      z.record(z.string(), z.string()),
-      z.array(z.object({
-        elementId: z.string().optional(),
-        selector: z.string().optional(),
-        name: z.string().optional(),
-        value: z.string(),
-        type: z.string().optional().describe('"text" (default), "select", "checkbox", "radio", "toggle", "switch", or "file". For toggles/switches/checkboxes, value should be "true"/"false".'),
-      })),
-    ]).describe('Fields to fill: object { "css-selector": "value" } or array of { selector, value, type? }'),
+    fields: z.preprocess(
+      (val) => {
+        if (typeof val === 'string') {
+          try { return JSON.parse(val); } catch { return val; }
+        }
+        return val;
+      },
+      z.union([
+        z.record(z.string(), z.string()),
+        z.array(z.object({
+          elementId: z.string().optional(),
+          selector: z.string().optional(),
+          name: z.string().optional(),
+          value: z.string(),
+          type: z.string().optional().describe('"text" (default), "select", "checkbox", "radio", "toggle", "switch", or "file". For toggles/switches/checkboxes, value should be "true"/"false".'),
+        })),
+      ]),
+    ).describe('Fields to fill: object { "css-selector": "value" } or array of { selector, value, type? }'),
     submit: z.boolean().optional().describe('Submit the form after filling (default: false)'),
     form_selector: z.string().optional().describe('CSS selector of the form element (helps find the submit button)'),
   }),
@@ -506,14 +515,14 @@ export const browser_use_upload_file = makeLocalTool(
   z.object({
     ok: z.boolean(),
     uploaded: z.boolean().optional(),
-    elementId: z.string().optional(),
+    elementId: z.string().nullable().optional(),
     filePath: z.string().optional(),
     fileName: z.string().optional(),
-    selector: z.string().optional(),
-    accept: z.string().optional(),
+    selector: z.string().nullable().optional(),
+    accept: z.string().nullable().optional(),
     multiple: z.boolean().optional(),
     hidden: z.boolean().optional(),
-    label: z.string().optional(),
+    label: z.string().nullable().optional(),
     method: z.string().optional(),
     error: z.string().optional(),
   }),

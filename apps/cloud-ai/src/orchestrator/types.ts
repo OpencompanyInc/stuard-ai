@@ -30,8 +30,8 @@ export interface CapabilityPack {
   systemPrompt: string;
   /** Max tool-use steps before forcing return */
   maxSteps: number;
-  /** Default timeout in ms */
-  timeoutMs: number;
+  /** Default timeout in ms (0 or omitted = no timeout) */
+  timeoutMs?: number;
 }
 
 // ─── Subagent Messages ───────────────────────────────────────────────────────

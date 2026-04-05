@@ -728,7 +728,7 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
     const { data, error } = await supabaseService
       .from('profiles')
       .select('sync_accounts, sync_conversations, sync_memories, sync_integrations, timezone')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
     if (error || !data) return defaultSyncPrefs;
     return {
@@ -756,7 +756,7 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
     const { error } = await supabaseService
       .from('profiles')
       .update(updates)
-      .eq('user_id', userId);
+      .eq('id', userId);
     return !error;
   } catch {
     return false;
@@ -769,7 +769,7 @@ export async function getProfile(userId: string): Promise<{ plan: string; daily_
     const { data, error } = await supabaseService
       .from('profiles')
       .select('plan, monthly_token_limit')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
     if (error || !data) return null;
     return {
@@ -903,7 +903,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
       const { data } = await supabaseService
         .from('profiles')
         .select('plan, current_period_start, current_period_end')
-        .eq('user_id', userId)
+        .eq('id', userId)
         .single();
       if (data) {
         plan = String((data as any).plan || plan);
@@ -1167,6 +1167,89 @@ export async function getUsageBreakdown(userId: string, since?: Date): Promise<U
   } catch (e: any) {
     console.error('[supabase] getUsageBreakdown error:', e?.message);
     return [];
+  }
+}
+
+export interface UsageLogEntry {
+  id: string;
+  model: string;
+  chatName: string | null;
+  conversationId: string | null;
+  sourceType: string;
+  credits: number;
+  costUsd: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
+}
+
+/**
+ * Get detailed per-event usage logs with conversation titles.
+ */
+export async function getUsageLogs(
+  userId: string,
+  limit = 50,
+  offset = 0,
+  since?: Date,
+): Promise<{ logs: UsageLogEntry[]; total: number }> {
+  if (!supabaseService) return { logs: [], total: 0 };
+  try {
+    const monthStart = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    // Count total
+    const { count } = await supabaseService
+      .from('usage_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', monthStart.toISOString());
+
+    // Fetch usage events
+    const { data: rows } = await supabaseService
+      .from('usage_events')
+      .select('id, model, conversation_id, cost_usd, credit_cost, prompt_tokens, completion_tokens, total_tokens, raw, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', monthStart.toISOString())
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (!rows || rows.length === 0) return { logs: [], total: count || 0 };
+
+    // Collect unique conversation IDs to fetch titles
+    const convIds = [...new Set((rows as any[]).map(r => r.conversation_id).filter(Boolean))];
+    let convTitles = new Map<string, string>();
+    if (convIds.length > 0) {
+      const { data: convRows } = await supabaseService
+        .from('conversations')
+        .select('id, title')
+        .in('id', convIds);
+      for (const c of convRows || []) {
+        if (c.title) convTitles.set(c.id, c.title);
+      }
+    }
+
+    const logs: UsageLogEntry[] = (rows as any[]).map(r => {
+      const raw = r.raw && typeof r.raw === 'object' ? r.raw : {};
+      const sourceType = raw.sourceType || raw.source_type || 'inference';
+      return {
+        id: r.id,
+        model: r.model || 'unknown',
+        chatName: r.conversation_id ? (convTitles.get(r.conversation_id) || null) : null,
+        conversationId: r.conversation_id || null,
+        sourceType,
+        credits: Number(r.credit_cost) || 0,
+        costUsd: Number(r.cost_usd) || 0,
+        promptTokens: Number(r.prompt_tokens) || 0,
+        completionTokens: Number(r.completion_tokens) || 0,
+        totalTokens: Number(r.total_tokens) || 0,
+        createdAt: r.created_at,
+      };
+    });
+
+    return { logs, total: count || 0 };
+  } catch (e: any) {
+    console.error('[supabase] getUsageLogs error:', e?.message);
+    return { logs: [], total: 0 };
   }
 }
 

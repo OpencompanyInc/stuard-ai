@@ -8,8 +8,25 @@ import {
   Plus,
   Coins,
   CreditCard,
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Bot,
+  MessageSquare,
+  HardDrive,
+  Cpu,
+  Shield,
+  TrendingUp,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  Legend,
+} from "recharts";
 
 interface Product {
   id: string;
@@ -46,17 +63,73 @@ interface UsageBreakdownItem {
   count: number;
 }
 
+interface UsageLogEntry {
+  id: string;
+  model: string;
+  chatName: string | null;
+  conversationId: string | null;
+  sourceType: string;
+  credits: number;
+  costUsd: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  createdAt: string;
+}
+
 const CLOUD_AI_HTTP =
   (window as any).__CLOUD_AI_HTTP__ ||
   (import.meta as any).env?.VITE_CLOUD_AI_URL ||
   "http://127.0.0.1:8082";
 
-const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
-  inference: { label: "AI Inference", color: "bg-blue-500" },
-  subagent: { label: "Delegated Agents", color: "bg-purple-500" },
-  compute: { label: "Cloud Compute", color: "bg-amber-500" },
-  storage: { label: "Storage", color: "bg-teal-500" },
-  messaging: { label: "Messaging", color: "bg-rose-500" },
+const CATEGORY_CONFIG: Record<
+  string,
+  { label: string; color: string; hex: string; icon: React.ElementType }
+> = {
+  inference: {
+    label: "AI Inference",
+    color: "bg-blue-500",
+    hex: "#3b82f6",
+    icon: Bot,
+  },
+  subagent: {
+    label: "Delegated Agents",
+    color: "bg-purple-500",
+    hex: "#8b5cf6",
+    icon: Globe,
+  },
+  compute: {
+    label: "Cloud Compute",
+    color: "bg-amber-500",
+    hex: "#f59e0b",
+    icon: Cpu,
+  },
+  storage: {
+    label: "Storage",
+    color: "bg-teal-500",
+    hex: "#14b8a6",
+    icon: HardDrive,
+  },
+  messaging: {
+    label: "Messaging",
+    color: "bg-rose-500",
+    hex: "#f43f5e",
+    icon: MessageSquare,
+  },
+};
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  inference: "Chat",
+  subagent: "Browser Agent",
+  browser_use: "Browser Agent",
+  browser: "Browser Agent",
+  delegation: "Delegated Agent",
+  compute: "Cloud Compute",
+  storage: "Storage",
+  messaging: "Messaging",
+  telnyx: "SMS",
+  whatsapp: "WhatsApp",
+  sms: "SMS",
 };
 
 const SectionHeader = ({
@@ -81,6 +154,31 @@ const formatCurrency = (amount: number, currency: string) => {
   }).format(amount / 100);
 };
 
+const formatModel = (model: string): string => {
+  if (!model || model === "unknown") return "Unknown";
+  // Shorten common model names
+  return model
+    .replace("anthropic/", "")
+    .replace("openai/", "")
+    .replace("google/", "")
+    .replace("deepseek/", "");
+};
+
+const formatRelativeTime = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
 async function cloudApiFetch<T = any>(path: string): Promise<T | null> {
   try {
     const { data } = await supabase.auth.getSession();
@@ -96,6 +194,20 @@ async function cloudApiFetch<T = any>(path: string): Promise<T | null> {
   }
 }
 
+/* ---------- Pie chart custom tooltip ---------- */
+const PieTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.[0]) return null;
+  const { name, value, payload: entry } = payload[0];
+  return (
+    <div className="bg-theme-card border border-theme rounded-lg px-3 py-2 shadow-lg">
+      <p className="text-[11px] font-bold text-theme-fg">{name}</p>
+      <p className="text-[10px] text-theme-muted">
+        {Number(value).toFixed(1)} credits ({entry.percent}%)
+      </p>
+    </div>
+  );
+};
+
 export const BillingSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -108,6 +220,33 @@ export const BillingSettings: React.FC = () => {
     null
   );
   const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>(
+    []
+  );
+  const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsPage, setLogsPage] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  const LOGS_PER_PAGE = 20;
+
+  const loadLogs = useCallback(
+    async (page: number) => {
+      setLogsLoading(true);
+      try {
+        const result = await cloudApiFetch<any>(
+          `/v1/credits/logs?limit=${LOGS_PER_PAGE}&offset=${
+            page * LOGS_PER_PAGE
+          }`
+        );
+        if (result) {
+          setUsageLogs(result.logs || []);
+          setLogsTotal(result.total || 0);
+          setLogsPage(page);
+        }
+      } finally {
+        setLogsLoading(false);
+      }
+    },
     []
   );
 
@@ -138,11 +277,15 @@ export const BillingSettings: React.FC = () => {
       setUserId(session.user.id);
 
       // Load all data in parallel
-      const [productsResult, creditsData, usageData] = await Promise.all([
-        window.desktopAPI?.billingListProducts?.(),
-        cloudApiFetch<any>("/v1/credits"),
-        cloudApiFetch<any>("/v1/credits/usage"),
-      ]);
+      const [productsResult, creditsData, usageData, logsData] =
+        await Promise.all([
+          window.desktopAPI?.billingListProducts?.(),
+          cloudApiFetch<any>("/v1/credits"),
+          cloudApiFetch<any>("/v1/credits/usage"),
+          cloudApiFetch<any>(
+            `/v1/credits/logs?limit=${LOGS_PER_PAGE}&offset=0`
+          ),
+        ]);
 
       if (productsResult?.ok && productsResult.products) {
         setProducts(productsResult.products);
@@ -152,6 +295,10 @@ export const BillingSettings: React.FC = () => {
       }
       if (usageData?.breakdown) {
         setUsageBreakdown(usageData.breakdown);
+      }
+      if (logsData) {
+        setUsageLogs(logsData.logs || []);
+        setLogsTotal(logsData.total || 0);
       }
     } catch (e: any) {
       setError(e?.message || "Failed to load billing information");
@@ -187,6 +334,27 @@ export const BillingSettings: React.FC = () => {
           )
         )
       : 0;
+
+  // Pie chart data
+  const pieData = usageBreakdown
+    .filter((item) => item.credits > 0)
+    .map((item) => {
+      const config = CATEGORY_CONFIG[item.category] || {
+        label: item.category,
+        hex: "#9ca3af",
+      };
+      return {
+        name: config.label,
+        value: Number(item.credits.toFixed(1)),
+        percent:
+          usageTotal > 0
+            ? ((item.credits / usageTotal) * 100).toFixed(1)
+            : "0",
+        fill: config.hex,
+      };
+    });
+
+  const totalLogsPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
 
   const handleAutoRefillToggle = async (enabled: boolean) => {
     setAutoRefill(enabled);
@@ -248,271 +416,526 @@ export const BillingSettings: React.FC = () => {
   }
 
   return (
-    <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-8">
-      <SectionHeader
-        title="Billing & Credits"
-        description="Manage your plan, credit balance, and add-ons."
-      />
+    <div className="space-y-6">
+      {/* ── Main Card: Balance + Limits ── */}
+      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
+        <SectionHeader
+          title="Billing & Credits"
+          description="Manage your plan, credit balance, and add-ons."
+        />
 
-      {error && (
-        <div className="flex items-center gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
-          <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-          <span className="text-sm text-red-500 font-medium">{error}</span>
-        </div>
-      )}
-
-      {/* Plan & Balance Overview */}
-      {creditSummary && (
-        <div className="mb-6">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-            Current Balance
-          </label>
-
-          <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-            {/* Plan badge + remaining */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-primary" />
-                <span className="text-[13px] font-bold text-theme-fg">
-                  {currentPlan} Plan
-                </span>
-              </div>
-              <div className="text-right">
-                <span className="text-lg font-black text-theme-fg">
-                  {creditSummary.unlimited
-                    ? "Unlimited"
-                    : Number(
-                        creditSummary.remaining || 0
-                      ).toLocaleString()}
-                </span>
-                {!creditSummary.unlimited && (
-                  <span className="text-[11px] text-theme-muted ml-1">
-                    credits remaining
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Usage progress bar */}
-            {!creditSummary.unlimited &&
-              creditSummary.limit &&
-              creditSummary.limit > 0 && (
-                <div className="mb-3">
-                  <div className="w-full bg-theme-bg rounded-full h-2">
-                    <div
-                      className={`h-2 rounded-full transition-all ${
-                        usagePercent >= 90
-                          ? "bg-red-500"
-                          : usagePercent >= 70
-                          ? "bg-amber-500"
-                          : "bg-emerald-500"
-                      }`}
-                      style={{ width: `${usagePercent}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[10px] text-theme-muted mt-1">
-                    <span>
-                      {Number(creditSummary.used || 0).toLocaleString()} used
-                    </span>
-                    <span>
-                      {Number(creditSummary.limit).toLocaleString()} total
-                    </span>
-                  </div>
-                </div>
-              )}
-
-            {/* Pool breakdown */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="p-2 bg-theme-bg rounded-theme-button">
-                <p className="text-[10px] text-theme-muted font-bold uppercase">
-                  Subscription
-                </p>
-                <p className="text-sm font-bold text-theme-fg">
-                  {Number(
-                    creditSummary.includedRemaining || 0
-                  ).toLocaleString()}
-                </p>
-              </div>
-              <div className="p-2 bg-theme-bg rounded-theme-button">
-                <p className="text-[10px] text-theme-muted font-bold uppercase">
-                  Add-ons
-                </p>
-                <p className="text-sm font-bold text-theme-fg">
-                  {Number(
-                    creditSummary.addonRemaining || 0
-                  ).toLocaleString()}
-                </p>
-              </div>
-            </div>
+        {error && (
+          <div className="flex items-center gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
+            <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+            <span className="text-sm text-red-500 font-medium">{error}</span>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Usage Breakdown */}
-      {usageBreakdown.length > 0 && (
-        <div className="mb-6">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-            Usage This Period
-          </label>
-          <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-            {/* Stacked bar */}
-            <div className="flex w-full h-2 rounded-full overflow-hidden bg-theme-bg mb-3">
-              {usageBreakdown.map((item) => {
-                const pct =
-                  usageTotal > 0 ? (item.credits / usageTotal) * 100 : 0;
-                if (pct < 1) return null;
-                const config = CATEGORY_CONFIG[item.category] || {
-                  color: "bg-gray-400",
-                };
-                return (
-                  <div
-                    key={item.category}
-                    className={`${config.color}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                );
-              })}
-            </div>
+        {/* Plan & Balance Overview */}
+        {creditSummary && (
+          <div className="mb-6">
+            <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
+              Current Balance
+            </label>
 
-            {/* Legend */}
-            <div className="space-y-1.5">
-              {usageBreakdown.map((item) => {
-                const config = CATEGORY_CONFIG[item.category] || {
-                  label: item.category,
-                  color: "bg-gray-400",
-                };
-                return (
-                  <div
-                    key={item.category}
-                    className="flex items-center justify-between text-[11px]"
-                  >
-                    <div className="flex items-center gap-2">
+            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
+              {/* Plan badge + remaining */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-primary" />
+                  <span className="text-[13px] font-bold text-theme-fg">
+                    {currentPlan} Plan
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-lg font-black text-theme-fg">
+                    {creditSummary.unlimited
+                      ? "Unlimited"
+                      : Number(
+                          creditSummary.remaining || 0
+                        ).toLocaleString()}
+                  </span>
+                  {!creditSummary.unlimited && (
+                    <span className="text-[11px] text-theme-muted ml-1">
+                      credits remaining
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Usage progress bar */}
+              {!creditSummary.unlimited &&
+                creditSummary.limit &&
+                creditSummary.limit > 0 && (
+                  <div className="mb-3">
+                    <div className="w-full bg-theme-bg rounded-full h-2.5">
                       <div
-                        className={`w-2 h-2 rounded-sm ${config.color}`}
+                        className={`h-2.5 rounded-full transition-all ${
+                          usagePercent >= 90
+                            ? "bg-red-500"
+                            : usagePercent >= 70
+                            ? "bg-amber-500"
+                            : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${usagePercent}%` }}
                       />
-                      <span className="text-theme-muted font-medium">
-                        {config.label}
+                    </div>
+                    <div className="flex justify-between text-[10px] text-theme-muted mt-1">
+                      <span>
+                        {Number(creditSummary.used || 0).toLocaleString()}{" "}
+                        used
+                      </span>
+                      <span>
+                        {Number(creditSummary.limit).toLocaleString()} total
                       </span>
                     </div>
-                    <span className="font-bold text-theme-fg">
-                      {item.credits.toFixed(1)}
-                    </span>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+                )}
 
-      {/* Auto-Refill Credits */}
-      <div className="mb-6">
-        <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-          Auto-Refill
-        </label>
-        <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoRefill}
-              onChange={(e) => handleAutoRefillToggle(e.target.checked)}
-              className="w-4 h-4 mt-0.5 rounded border-theme bg-theme-card text-primary focus:ring-primary"
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 text-primary" />
-                <span className="text-[13px] font-bold text-theme-fg">
-                  Auto-refill credits
-                </span>
-              </div>
-              <p className="text-[11px] text-theme-muted mt-1 font-medium">
-                Automatically purchase a credit pack when your balance runs
-                low, so you never run out mid-conversation.
-              </p>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      {/* Purchase Add-On Credits */}
-      <div className="mb-6">
-        <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-          Purchase Add-On Credits
-        </label>
-        {creditPacks.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {creditPacks.map((product) => {
-              const price = product.prices[0];
-              return (
-                <button
-                  key={product.id}
-                  onClick={() => handlePurchaseCredits(product.id)}
-                  disabled={!!actionLoading || !userEmail}
-                  className="p-4 rounded-theme-button border border-theme bg-theme-bg hover:bg-theme-hover transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Coins className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
-                    <span className="font-bold text-theme-fg text-sm group-hover:text-primary transition-colors">
-                      {product.name}
-                    </span>
-                  </div>
-                  <p className="text-xs text-theme-muted mb-2">
-                    {product.description}
+              {/* Pool breakdown */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 bg-theme-bg rounded-theme-button">
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">
+                    Subscription
                   </p>
-                  {product.benefits.length > 0 && (
-                    <ul className="text-xs text-theme-muted space-y-0.5 mb-2">
-                      {product.benefits.slice(0, 3).map((benefit, i) => (
-                        <li key={i} className="flex items-center gap-1">
-                          <span className="text-emerald-500">+</span>{" "}
-                          {benefit}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-primary">
-                      {price
-                        ? formatCurrency(price.amount, price.currency)
-                        : "\u2014"}
-                    </span>
-                    {actionLoading === product.id ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                    ) : (
-                      <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+                  <p className="text-sm font-bold text-theme-fg">
+                    {Number(
+                      creditSummary.includedRemaining || 0
+                    ).toLocaleString()}
+                  </p>
+                </div>
+                <div className="p-2 bg-theme-bg rounded-theme-button">
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">
+                    Add-ons
+                  </p>
+                  <p className="text-sm font-bold text-theme-fg">
+                    {Number(
+                      creditSummary.addonRemaining || 0
+                    ).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
-            <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-            <p className="text-xs text-theme-muted font-medium">
-              No credit packs available right now.
-            </p>
+        )}
+
+        {/* ── Limits & Quota ── */}
+        {creditSummary && !creditSummary.unlimited && (
+          <div className="mb-6">
+            <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
+              Plan Limits
+            </label>
+            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
+              <div className="grid grid-cols-3 gap-3">
+                {/* Total limit */}
+                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
+                  <Shield className="w-4 h-4 text-primary mx-auto mb-1" />
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">
+                    Period Limit
+                  </p>
+                  <p className="text-sm font-black text-theme-fg">
+                    {Number(creditSummary.limit || 0).toLocaleString()}
+                  </p>
+                </div>
+                {/* Used */}
+                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
+                  <TrendingUp className="w-4 h-4 text-amber-500 mx-auto mb-1" />
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">
+                    Used
+                  </p>
+                  <p className="text-sm font-black text-theme-fg">
+                    {Number(creditSummary.used || 0).toLocaleString()}
+                  </p>
+                </div>
+                {/* Remaining */}
+                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
+                  <Coins className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">
+                    Remaining
+                  </p>
+                  <p className="text-sm font-black text-theme-fg">
+                    {Number(creditSummary.remaining || 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Warning banners */}
+              {usagePercent >= 90 && (
+                <div className="mt-3 p-2 bg-red-500/10 border border-red-500/20 rounded-theme-button flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                  <span className="text-[11px] text-red-500 font-bold">
+                    {usagePercent >= 100
+                      ? "Credit limit reached! Purchase add-ons or upgrade your plan."
+                      : "You've used over 90% of your credits this period."}
+                  </span>
+                </div>
+              )}
+              {usagePercent >= 70 && usagePercent < 90 && (
+                <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/20 rounded-theme-button flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  <span className="text-[11px] text-amber-600 font-bold">
+                    You've used {usagePercent}% of your credits this period.
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Manage Billing on Website */}
-      <div className="pt-4 border-t border-theme">
-        <button
-          onClick={handleOpenWebsiteBilling}
-          disabled={actionLoading === "website"}
-          className="flex items-center gap-2 px-4 py-2 rounded-theme-button border border-theme text-theme-fg text-sm font-bold hover:bg-theme-hover transition-all"
-        >
-          {actionLoading === "website" ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+      {/* ── Usage Breakdown Card with Pie Chart ── */}
+      {usageBreakdown.length > 0 && (
+        <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
+          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
+            Usage Breakdown
+          </label>
+
+          <div className="flex flex-col sm:flex-row gap-4">
+            {/* Pie Chart */}
+            {pieData.length > 0 && (
+              <div className="flex-shrink-0 w-full sm:w-[200px] h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={3}
+                      dataKey="value"
+                      nameKey="name"
+                      strokeWidth={0}
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<PieTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Category list */}
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold uppercase mb-1 px-1">
+                <span>Category</span>
+                <div className="flex gap-6">
+                  <span className="w-14 text-right">Credits</span>
+                  <span className="w-10 text-right">Count</span>
+                </div>
+              </div>
+              {usageBreakdown.map((item) => {
+                const config = CATEGORY_CONFIG[item.category] || {
+                  label: item.category,
+                  color: "bg-gray-400",
+                  hex: "#9ca3af",
+                  icon: Zap,
+                };
+                const pct =
+                  usageTotal > 0
+                    ? ((item.credits / usageTotal) * 100).toFixed(1)
+                    : "0";
+                const Icon = config.icon;
+                return (
+                  <div
+                    key={item.category}
+                    className="flex items-center justify-between p-2 bg-theme-hover rounded-theme-button"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`w-7 h-7 rounded-md flex items-center justify-center ${config.color}/20`}
+                      >
+                        <Icon
+                          className="w-3.5 h-3.5"
+                          style={{ color: config.hex }}
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[12px] font-bold text-theme-fg">
+                          {config.label}
+                        </span>
+                        <span className="text-[10px] text-theme-muted ml-2">
+                          {pct}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex gap-6">
+                      <span className="text-[12px] font-black text-theme-fg w-14 text-right">
+                        {item.credits.toFixed(1)}
+                      </span>
+                      <span className="text-[11px] text-theme-muted w-10 text-right">
+                        {item.count}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Total row */}
+              <div className="flex items-center justify-between px-2 pt-2 border-t border-theme">
+                <span className="text-[11px] font-bold text-theme-muted">
+                  Total
+                </span>
+                <div className="flex gap-6">
+                  <span className="text-[12px] font-black text-theme-fg w-14 text-right">
+                    {usageTotal.toFixed(1)}
+                  </span>
+                  <span className="text-[11px] text-theme-muted w-10 text-right">
+                    {usageBreakdown.reduce((s, b) => s + b.count, 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Billing Logs Table ── */}
+      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
+        <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
+          Credit Usage Logs
+        </label>
+
+        {logsLoading && usageLogs.length === 0 ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          </div>
+        ) : usageLogs.length === 0 ? (
+          <div className="text-center py-8">
+            <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
+            <p className="text-xs text-theme-muted font-medium">
+              No usage events this period.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Table */}
+            <div className="overflow-x-auto -mx-2">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="border-b border-theme text-theme-muted font-bold uppercase">
+                    <th className="text-left px-2 py-2">Type</th>
+                    <th className="text-left px-2 py-2">Model</th>
+                    <th className="text-left px-2 py-2">Chat</th>
+                    <th className="text-right px-2 py-2">Credits</th>
+                    <th className="text-right px-2 py-2">Tokens</th>
+                    <th className="text-right px-2 py-2">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usageLogs.map((log) => {
+                    const sourceLabel =
+                      SOURCE_TYPE_LABELS[log.sourceType] ||
+                      log.sourceType.charAt(0).toUpperCase() +
+                        log.sourceType.slice(1);
+                    const sourceCategory =
+                      log.sourceType === "subagent" ||
+                      log.sourceType === "browser_use" ||
+                      log.sourceType === "browser" ||
+                      log.sourceType === "delegation"
+                        ? "subagent"
+                        : log.sourceType === "compute"
+                        ? "compute"
+                        : log.sourceType === "storage"
+                        ? "storage"
+                        : ["telnyx", "whatsapp", "sms", "messaging"].includes(
+                            log.sourceType
+                          )
+                        ? "messaging"
+                        : "inference";
+                    const catConfig = CATEGORY_CONFIG[sourceCategory] || {
+                      hex: "#9ca3af",
+                    };
+
+                    return (
+                      <tr
+                        key={log.id}
+                        className="border-b border-theme/50 hover:bg-theme-hover/50 transition-colors"
+                      >
+                        <td className="px-2 py-2">
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
+                            style={{
+                              backgroundColor: catConfig.hex + "18",
+                              color: catConfig.hex,
+                            }}
+                          >
+                            {sourceLabel}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 font-mono text-theme-fg font-medium max-w-[120px] truncate">
+                          {formatModel(log.model)}
+                        </td>
+                        <td className="px-2 py-2 text-theme-muted max-w-[150px] truncate">
+                          {log.chatName || (
+                            <span className="italic opacity-50">
+                              Untitled
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right font-bold text-theme-fg tabular-nums">
+                          {log.credits.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-2 text-right text-theme-muted tabular-nums">
+                          {log.totalTokens > 0
+                            ? log.totalTokens.toLocaleString()
+                            : "-"}
+                        </td>
+                        <td className="px-2 py-2 text-right text-theme-muted whitespace-nowrap">
+                          {formatRelativeTime(log.createdAt)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalLogsPages > 1 && (
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-theme">
+                <span className="text-[10px] text-theme-muted font-medium">
+                  {logsTotal} events total
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadLogs(logsPage - 1)}
+                    disabled={logsPage === 0 || logsLoading}
+                    className="p-1 rounded-md hover:bg-theme-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-theme-muted" />
+                  </button>
+                  <span className="text-[10px] text-theme-muted font-bold tabular-nums">
+                    {logsPage + 1} / {totalLogsPages}
+                  </span>
+                  <button
+                    onClick={() => loadLogs(logsPage + 1)}
+                    disabled={
+                      logsPage >= totalLogsPages - 1 || logsLoading
+                    }
+                    className="p-1 rounded-md hover:bg-theme-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4 text-theme-muted" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Auto-Refill + Add-Ons Card ── */}
+      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
+        {/* Auto-Refill Credits */}
+        <div className="mb-6">
+          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
+            Auto-Refill
+          </label>
+          <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoRefill}
+                onChange={(e) => handleAutoRefillToggle(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded border-theme bg-theme-card text-primary focus:ring-primary"
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-primary" />
+                  <span className="text-[13px] font-bold text-theme-fg">
+                    Auto-refill credits
+                  </span>
+                </div>
+                <p className="text-[11px] text-theme-muted mt-1 font-medium">
+                  Automatically purchase a credit pack when your balance runs
+                  low, so you never run out mid-conversation.
+                </p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Purchase Add-On Credits */}
+        <div className="mb-6">
+          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
+            Purchase Add-On Credits
+          </label>
+          {creditPacks.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {creditPacks.map((product) => {
+                const price = product.prices[0];
+                return (
+                  <button
+                    key={product.id}
+                    onClick={() => handlePurchaseCredits(product.id)}
+                    disabled={!!actionLoading || !userEmail}
+                    className="p-4 rounded-theme-button border border-theme bg-theme-bg hover:bg-theme-hover transition-all text-left group"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Coins className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
+                      <span className="font-bold text-theme-fg text-sm group-hover:text-primary transition-colors">
+                        {product.name}
+                      </span>
+                    </div>
+                    <p className="text-xs text-theme-muted mb-2">
+                      {product.description}
+                    </p>
+                    {product.benefits.length > 0 && (
+                      <ul className="text-xs text-theme-muted space-y-0.5 mb-2">
+                        {product.benefits.slice(0, 3).map((benefit, i) => (
+                          <li key={i} className="flex items-center gap-1">
+                            <span className="text-emerald-500">+</span>{" "}
+                            {benefit}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-primary">
+                        {price
+                          ? formatCurrency(price.amount, price.currency)
+                          : "\u2014"}
+                      </span>
+                      {actionLoading === product.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                      ) : (
+                        <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
-            <ExternalLink className="w-4 h-4" />
+            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
+              <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
+              <p className="text-xs text-theme-muted font-medium">
+                No credit packs available right now.
+              </p>
+            </div>
           )}
-          Manage billing & usage history on stuard.ai
-        </button>
-        <p className="text-[11px] text-theme-muted mt-2 ml-1 font-medium">
-          Change your plan, view transaction history, and manage payment
-          methods on the website.
-        </p>
+        </div>
+
+        {/* Manage Billing on Website */}
+        <div className="pt-4 border-t border-theme">
+          <button
+            onClick={handleOpenWebsiteBilling}
+            disabled={actionLoading === "website"}
+            className="flex items-center gap-2 px-4 py-2 rounded-theme-button border border-theme text-theme-fg text-sm font-bold hover:bg-theme-hover transition-all"
+          >
+            {actionLoading === "website" ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <ExternalLink className="w-4 h-4" />
+            )}
+            Manage billing & usage history on stuard.ai
+          </button>
+          <p className="text-[11px] text-theme-muted mt-2 ml-1 font-medium">
+            Change your plan, view transaction history, and manage payment
+            methods on the website.
+          </p>
+        </div>
       </div>
     </div>
   );

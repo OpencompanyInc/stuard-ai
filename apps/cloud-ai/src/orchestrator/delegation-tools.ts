@@ -102,10 +102,143 @@ function buildQuestionResponse(question: SubagentQuestion) {
 
 // ─── The one delegation tool ─────────────────────────────────────────────────
 
+/** Shared logic: spin up one subagent task, race completion vs question */
+async function runDelegateTask(
+  task: { subagent: string; instruction: string; context?: string },
+  index: number,
+  bridgeWs: any,
+  bridgeSecrets: Record<string, any> | undefined,
+  parentModelTier: string | undefined,
+  parentModelId: string | undefined,
+) {
+  const name = task.subagent.trim().toLowerCase() as SubagentName;
+  const isIntegration = !['browser', 'file_ops', 'workflow'].includes(name);
+  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
+  const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  writeLog('delegate_start', {
+    subagent: name,
+    instruction: task.instruction.slice(0, 200),
+    hasBridge: !!bridgeWs,
+    parentModelTier,
+    parentModelId,
+  });
+  console.log(`[delegation] ▶ DELEGATE START | subagent=${name} runId=${runId} kind=${kind} | instruction="${task.instruction.slice(0, 120)}"`);
+
+  // Set up coordinator for question/answer flow
+  const sig = createQuestionSignal();
+  const coordinator: SubagentCoordinator = {
+    subagentId: '',
+    resultPromise: null as any,
+    questionPromise: sig.promise,
+    questionResolve: sig.resolve,
+    answerResolvers: new Map(),
+    questionPending: false,
+  };
+
+  const onQuestion = async (question: SubagentQuestion): Promise<SubagentAnswer> => {
+    if (coordinator.questionPending) {
+      writeLog('delegate_question_duplicate_blocking', {
+        subagent: name,
+        questionId: question.questionId,
+      });
+      console.log(`[delegation] ⚠ DUPLICATE QUESTION from ${name} | questionId=${question.questionId} — blocking on same answer`);
+      return new Promise<SubagentAnswer>((resolve) => {
+        coordinator.answerResolvers.set(question.questionId, {
+          resolve: (answer: string) => {
+            resolve({
+              type: 'subagent_answer',
+              questionId: question.questionId,
+              subagentId: question.subagentId,
+              runId: question.runId,
+              answer,
+            });
+          },
+        });
+      });
+    }
+
+    coordinator.subagentId = question.subagentId;
+    coordinator.questionPending = true;
+
+    writeLog('delegate_question_to_orchestrator', {
+      subagent: name,
+      questionId: question.questionId,
+      question: question.question,
+    });
+    console.log(`[delegation] ❓ QUESTION from ${name} | subagentId=${question.subagentId} questionId=${question.questionId} | "${question.question.slice(0, 100)}"`);
+
+    coordinator.questionResolve(question);
+
+    return new Promise<SubagentAnswer>((resolve) => {
+      coordinator.answerResolvers.set(question.questionId, {
+        resolve: (answer: string) => {
+          coordinator.questionPending = false;
+          resolve({
+            type: 'subagent_answer',
+            questionId: question.questionId,
+            subagentId: question.subagentId,
+            runId: question.runId,
+            answer,
+          });
+        },
+      });
+    });
+  };
+
+  const startSubagent = () => runSubagent({
+    request: {
+      kind,
+      instruction: task.instruction,
+      context: isIntegration
+        ? `Integration group: ${name}\n${task.context || ''}`
+        : task.context,
+    },
+    runId,
+    parentRunId: runId,
+    model: (parentModelTier as any) || 'balanced',
+    modelId: parentModelId,
+    bridgeWs: bridgeWs as any,
+    bridgeSecrets,
+    onQuestion,
+  });
+
+  coordinator.resultPromise = bridgeWs && (bridgeWs as any).readyState === 1
+    ? withClientBridge(bridgeWs as any, startSubagent, bridgeSecrets) as Promise<DelegationResult>
+    : startSubagent();
+
+  coordinator.resultPromise.catch(() => {});
+
+  const race = await raceCompletionOrQuestion(coordinator);
+
+  if (race.type === 'completed') {
+    console.log(`[delegation] ✅ DELEGATE COMPLETE (no question) | subagent=${name} ok=${race.result.ok} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
+    return { index, subagent: name, ...buildCompletionResponse(race.result) };
+  }
+
+  // Subagent asked a question — store the coordinator and return early
+  resetQuestionSignal(coordinator);
+  activeCoordinators.set(race.question.questionId, coordinator);
+  coordinatorsBySubagent.set(coordinator.subagentId || race.question.subagentId, {
+    questionId: race.question.questionId,
+    coordinator,
+  });
+
+  writeLog('delegate_returning_question', {
+    subagent: name,
+    questionId: race.question.questionId,
+    question: race.question.question,
+  });
+  console.log(`[delegation] ⏸ DELEGATE PAUSED — returning question to orchestrator | subagent=${name} subagentId=${coordinator.subagentId} questionId=${race.question.questionId} | activeCoordinators=${activeCoordinators.size}`);
+
+  return { index, subagent: name, ...buildQuestionResponse(race.question) };
+}
+
 export const delegate = createTool({
   id: 'delegate',
   description:
-    'Delegate a task to a specialized subagent by name.\n' +
+    'Delegate one or more tasks to specialized subagents.\n' +
+    'Pass a single task or multiple independent tasks — multiple tasks run in parallel.\n\n' +
     'Available subagents:\n' +
     '  browser     — web browsing, form filling, page scraping, screenshots\n' +
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
@@ -117,168 +250,75 @@ export const delegate = createTool({
     '  whatsapp    — WhatsApp messaging\n' +
     '  telnyx      — SMS, voice calls\n' +
     '  reddit      — subreddits, posts, comments\n' +
-    '  discord     — Discord bot operations\n' +
-    'The subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
-    'this tool returns early with the question and a top-level questionId field. Pass that exact questionId to ' +
-    'reply_to_subagent to answer, which will then wait for the subagent to either finish or ask another question.',
+    '  discord     — Discord bot operations\n\n' +
+    'A subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
+    'this tool returns with the question and a questionId. Use reply_to_subagent to answer.',
   inputSchema: z.object({
-    subagent: z
-      .string()
-      .describe('Name of the subagent to delegate to (e.g. "browser", "file_ops", "google").'),
-    instruction: z
-      .string()
-      .describe('Detailed instruction describing what the subagent should do.'),
-    context: z
-      .string()
-      .optional()
-      .describe('Additional context (conversation history, IDs, user preferences).'),
-    timeoutMs: z
-      .number()
-      .optional()
-      .describe('Timeout in milliseconds (uses subagent default if omitted).'),
+    tasks: z.array(z.object({
+      subagent: z
+        .string()
+        .describe('Name of the subagent (e.g. "browser", "file_ops", "google").'),
+      instruction: z
+        .string()
+        .describe('Detailed instruction describing what the subagent should do.'),
+      context: z
+        .string()
+        .optional()
+        .describe('Additional context (conversation history, IDs, user preferences).'),
+    })).min(1).max(10).describe('Array of tasks to delegate. Use 1 for a single task, or multiple for parallel execution.'),
   }),
-  execute: async ({ subagent, instruction, context, timeoutMs }) => {
-    const name = subagent.trim().toLowerCase() as SubagentName;
-
-    if (!KNOWN_SUBAGENT_NAMES.includes(name as any)) {
-      return {
-        ok: false,
-        error: `Unknown subagent "${subagent}". Valid names: ${KNOWN_SUBAGENT_NAMES.join(', ')}`,
-      };
-    }
-
+  execute: async ({ tasks }) => {
     const bridgeWs = getBridgeWs();
     const bridgeSecrets = getBridgeSecrets();
     const parentModelTier = bridgeSecrets?.__modelTier as string | undefined;
     const parentModelId = bridgeSecrets?.__modelId as string | undefined;
-    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const isIntegration = !['browser', 'file_ops', 'workflow'].includes(name);
-    const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
 
-    writeLog('delegate_start', {
-      subagent: name,
-      instruction: instruction.slice(0, 200),
-      hasBridge: !!bridgeWs,
-      parentModelTier,
-      parentModelId,
-    });
-
-    // Set up coordinator for question/answer flow between subagent and orchestrator
-    const sig = createQuestionSignal();
-    const coordinator: SubagentCoordinator = {
-      subagentId: '',
-      resultPromise: null as any,
-      questionPromise: sig.promise,
-      questionResolve: sig.resolve,
-      answerResolvers: new Map(),
-      questionPending: false,
-    };
-
-    const onQuestion = async (question: SubagentQuestion): Promise<SubagentAnswer> => {
-      // Duplicate calls should already be caught at the subagent-side
-      // (makeAskOrchestratorTool shares its pending promise). Safety net:
-      // if a duplicate somehow reaches here, block it on the same answer
-      // resolver so it also receives the orchestrator's answer.
-      if (coordinator.questionPending) {
-        writeLog('delegate_question_duplicate_blocking', {
-          subagent: name,
-          questionId: question.questionId,
-        });
-        return new Promise<SubagentAnswer>((resolve) => {
-          coordinator.answerResolvers.set(question.questionId, {
-            resolve: (answer: string) => {
-              resolve({
-                type: 'subagent_answer',
-                questionId: question.questionId,
-                subagentId: question.subagentId,
-                runId: question.runId,
-                answer,
-              });
-            },
-          });
-        });
+    // Validate all subagent names upfront
+    for (const task of tasks) {
+      const name = task.subagent.trim().toLowerCase();
+      if (!KNOWN_SUBAGENT_NAMES.includes(name as any)) {
+        return {
+          ok: false,
+          error: `Unknown subagent "${task.subagent}". Valid names: ${KNOWN_SUBAGENT_NAMES.join(', ')}`,
+        };
       }
-
-      coordinator.subagentId = question.subagentId;
-      coordinator.questionPending = true;
-
-      writeLog('delegate_question_to_orchestrator', {
-        subagent: name,
-        questionId: question.questionId,
-        question: question.question,
-      });
-
-      // Signal the delegate tool (or reply_to_subagent) that a question arrived
-      coordinator.questionResolve(question);
-
-      // Block here until the orchestrator answers via reply_to_subagent.
-      // No timeout — the overall subagent timeout in runSubagent is the
-      // safety net. A local timeout here caused unhandled rejections that
-      // crashed the process.
-      return new Promise<SubagentAnswer>((resolve) => {
-        coordinator.answerResolvers.set(question.questionId, {
-          resolve: (answer: string) => {
-            coordinator.questionPending = false;
-            resolve({
-              type: 'subagent_answer',
-              questionId: question.questionId,
-              subagentId: question.subagentId,
-              runId: question.runId,
-              answer,
-            });
-          },
-        });
-      });
-    };
-
-    const startSubagent = () => runSubagent({
-      request: {
-        kind,
-        instruction,
-        context: isIntegration
-          ? `Integration group: ${name}\n${context || ''}`
-          : context,
-        timeoutMs,
-      },
-      runId,
-      parentRunId: runId,
-      model: (parentModelTier as any) || 'balanced',
-      modelId: parentModelId,
-      bridgeWs: bridgeWs as any,
-      bridgeSecrets,
-      onQuestion,
-    });
-
-    coordinator.resultPromise = bridgeWs && (bridgeWs as any).readyState === 1
-      ? withClientBridge(bridgeWs as any, startSubagent, bridgeSecrets) as Promise<DelegationResult>
-      : startSubagent();
-
-    // Prevent unhandled rejection if subagent settles after delegate already returned
-    coordinator.resultPromise.catch(() => {});
-
-    // Race: subagent completes first, or asks a question first
-    const race = await raceCompletionOrQuestion(coordinator);
-
-    if (race.type === 'completed') {
-      return buildCompletionResponse(race.result);
     }
 
-    // Subagent asked a question — store the coordinator and return early.
-    // The subagent keeps running in the background, blocked on ask_orchestrator.
-    resetQuestionSignal(coordinator);
-    activeCoordinators.set(race.question.questionId, coordinator);
-    coordinatorsBySubagent.set(coordinator.subagentId || race.question.subagentId, {
-      questionId: race.question.questionId,
-      coordinator,
+    if (tasks.length === 1) {
+      // Single task — return flat result (backwards-compatible shape)
+      const result = await runDelegateTask(tasks[0], 0, bridgeWs, bridgeSecrets, parentModelTier, parentModelId);
+      const { index: _index, ...rest } = result;
+      return rest;
+    }
+
+    // Multiple tasks — run in parallel
+    writeLog('delegate_multi_start', {
+      taskCount: tasks.length,
+      subagents: tasks.map(t => t.subagent),
+    });
+    console.log(`[delegation] ▶▶ DELEGATE PARALLEL | ${tasks.length} tasks | subagents=[${tasks.map(t => t.subagent).join(', ')}]`);
+
+    const results = await Promise.all(
+      tasks.map((task, index) =>
+        runDelegateTask(task, index, bridgeWs, bridgeSecrets, parentModelTier, parentModelId),
+      ),
+    );
+
+    const completed = results.filter(r => r.completed);
+    const pending = results.filter(r => !r.completed);
+
+    console.log(`[delegation] 🏁 DELEGATE PARALLEL DONE | ${completed.length} completed, ${pending.length} awaiting replies`);
+    writeLog('delegate_multi_complete', {
+      totalTasks: tasks.length,
+      completed: completed.length,
+      pendingQuestions: pending.length,
     });
 
-    writeLog('delegate_returning_question', {
-      subagent: name,
-      questionId: race.question.questionId,
-      question: race.question.question,
-    });
-
-    return buildQuestionResponse(race.question);
+    return {
+      ok: true,
+      results,
+      summary: `${completed.length}/${tasks.length} tasks completed${pending.length > 0 ? `, ${pending.length} awaiting reply (use reply_to_subagent with the questionId)` : ''}`,
+    };
   },
 });
 
@@ -296,10 +336,13 @@ export const replyToSubagent = createTool({
     answer: z.string().describe('Your answer to the subagent question.'),
   }),
   execute: async ({ questionId, answer }) => {
+    console.log(`[delegation] 💬 REPLY_TO_SUBAGENT called | questionId=${questionId} answer="${answer.slice(0, 80)}" | activeCoordinators=${activeCoordinators.size} coordBySubagent=${coordinatorsBySubagent.size} answeredCache=${answeredCache.size}`);
+
     // Dedup: if this questionId was already answered, return the cached result
     const cached = answeredCache.get(questionId);
     if (cached) {
       writeLog('reply_to_subagent_dedup', { questionId });
+      console.log(`[delegation] ♻ REPLY DEDUP — already answered | questionId=${questionId}`);
       return cached;
     }
 
@@ -328,6 +371,8 @@ export const replyToSubagent = createTool({
 
     if (!coordinator) {
       const availableIds = Array.from(activeCoordinators.keys());
+      const availableSubagents = Array.from(coordinatorsBySubagent.keys());
+      console.log(`[delegation] ✖ REPLY FAILED — coordinator not found | questionId=${questionId} | availableQuestionIds=[${availableIds.join(', ')}] availableSubagentIds=[${availableSubagents.join(', ')}]`);
       return {
         ok: false,
         error: `No pending question with id "${questionId}". ${
@@ -368,12 +413,14 @@ export const replyToSubagent = createTool({
     }
 
     writeLog('reply_to_subagent_answered', { questionId: effectiveQuestionId, answerLength: answer.length });
+    console.log(`[delegation] ✉ ANSWER SENT to subagent | subagentId=${coordinator.subagentId} questionId=${effectiveQuestionId} | waiting for completion or next question...`);
 
     // Wait for the subagent to either complete or ask another question
     const race = await raceCompletionOrQuestion(coordinator);
 
     let result: any;
     if (race.type === 'completed') {
+      console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
       result = buildCompletionResponse(race.result);
     } else {
       // Another question from the subagent — store and return it

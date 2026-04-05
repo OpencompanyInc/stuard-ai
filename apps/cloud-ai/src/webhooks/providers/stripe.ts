@@ -275,7 +275,7 @@ async function handleSubscriptionDeleted(userId: string, event: StripeEvent) {
       await supabase
         .from('profiles')
         .update({ plan: 'free' })
-        .eq('user_id', userId);
+        .eq('id', userId);
     } catch {}
   }
 }
@@ -319,7 +319,7 @@ async function updateUserPlanFromSubscription(userId: string, subscription: any)
         stripe_subscription_id: subscription.id,
         stripe_customer_id: subscription.customer,
       })
-      .eq('user_id', userId);
+      .eq('id', userId);
   } catch {}
 }
 

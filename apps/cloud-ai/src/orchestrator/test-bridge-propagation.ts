@@ -106,7 +106,7 @@ async function testSubagentBridgePropagation() {
   
   log('TEST2', 'Running subagent inside withClientBridge...');
   
-  const result = await withClientBridge(mockWs as any, async () => {
+  const result: any = await withClientBridge(mockWs as any, async () => {
     log('TEST2', `Outer bridge: hasClientBridge=${hasClientBridge()}`);
     
     // Capture bridge WS (same as delegate tool does)

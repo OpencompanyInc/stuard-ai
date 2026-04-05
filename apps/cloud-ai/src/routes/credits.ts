@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, getCreditSummary, getUsageBreakdown, getCreditTransactions } from '../supabase';
+import { verifyToken, getCreditSummary, getUsageBreakdown, getCreditTransactions, getUsageLogs } from '../supabase';
 import { creditsPerUsd } from '../pricing';
 
 const CORS_HEADERS = {
@@ -56,6 +56,26 @@ export async function handleCredits(req: IncomingMessage, res: ServerResponse, p
         totalCredits: Number(totalCredits.toFixed(2)),
         totalCostUsd: Number(totalCostUsd.toFixed(4)),
       });
+      return true;
+    } catch (e: any) {
+      writeJson(res, 500, { ok: false, error: 'internal_error', message: e?.message || 'failed' });
+      return true;
+    }
+  }
+
+  // GET /v1/credits/logs — detailed per-event usage logs
+  if (path === '/v1/credits/logs') {
+    try {
+      const authUser = await authenticateRequest(req);
+      if (!authUser) { writeJson(res, 401, { ok: false, error: 'unauthorized' }); return true; }
+
+      const limit = Math.min(100, Math.max(1, Number(parsedUrl.searchParams.get('limit')) || 50));
+      const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0);
+      const sinceParam = parsedUrl.searchParams.get('since');
+      const since = sinceParam ? new Date(sinceParam) : undefined;
+      const result = await getUsageLogs(authUser.userId, limit, offset, since);
+
+      writeJson(res, 200, { ok: true, ...result });
       return true;
     } catch (e: any) {
       writeJson(res, 500, { ok: false, error: 'internal_error', message: e?.message || 'failed' });
