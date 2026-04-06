@@ -3,7 +3,7 @@ import { makeLocalTool } from './shared';
 
 export const read_file = makeLocalTool(
   'read_file',
-  'Read text file contents. For files over 500 lines, you must specify line_start and line_end to read a portion. Returns total_lines count for all files.',
+  'Read file contents. Text files are returned directly; supported PDFs and spreadsheets are converted to text. For files over 500 lines, you must specify line_start and line_end to read a portion. Returns total_lines count for all files.',
   z.object({
     path: z.string().describe('Path to the file to read'),
     line_start: z.number().int().positive().optional().describe('Starting line number (1-indexed, inclusive). Required for large files.'),
@@ -16,6 +16,15 @@ export const read_file = makeLocalTool(
     line_start: z.number().optional(),
     line_end: z.number().optional(),
     lines_returned: z.number().optional(),
+    max_lines: z.number().optional(),
+    preview_start: z.string().optional(),
+    preview_end: z.string().optional(),
+    hint: z.string().optional(),
+    path: z.string().optional(),
+    mime_type: z.string().optional(),
+    document_type: z.string().optional(),
+    sheet_names: z.array(z.string()).optional(),
+    page_count: z.number().optional(),
     error: z.string().optional(),
     message: z.string().optional(),
   }),

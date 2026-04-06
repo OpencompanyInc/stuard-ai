@@ -20,6 +20,7 @@ const MAX_FILE_LINES = 650;
 export const file_read = makeLocalTool(
   'file_read',
   `Read file contents. Returns file content with line numbers.
+Supports plain text plus extractable PDFs and spreadsheets.
 
 MODES:
 1. Whole file: Set whole_file=true (ERRORS if file has > ${MAX_FILE_LINES} lines)
@@ -46,6 +47,13 @@ RETURNS:
     line_end: z.number().optional(),
     lines_returned: z.number().optional(),
     truncated: z.boolean().optional(),
+    max_lines: z.number().optional(),
+    hint: z.string().optional(),
+    path: z.string().optional(),
+    mime_type: z.string().optional(),
+    document_type: z.string().optional(),
+    sheet_names: z.array(z.string()).optional(),
+    page_count: z.number().optional(),
     error: z.string().optional(),
     message: z.string().optional(),
   }),

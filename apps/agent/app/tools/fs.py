@@ -6,11 +6,15 @@ import glob
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import uuid
+import xml.etree.ElementTree as ET
+import zipfile
+import zlib
 from typing import Any, Dict, Optional
 
 from .folder_limiter import FolderLimiter, current_session_id
@@ -77,6 +81,7 @@ def _is_safe_path(path: str) -> bool:
 MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "524288000"))  # 500MB default
 MAX_READ_FILE_LINES = int(os.getenv("READ_FILE_MAX_LINES", "500"))
 MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
+MAX_READ_FILE_DOCUMENT_BYTES = int(os.getenv("READ_FILE_DOCUMENT_MAX_BYTES", "52428800"))  # 50MB
 MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "20000"))
 MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "2000"))
 MAX_GREP_FILE_BYTES = int(os.getenv("GREP_MAX_FILE_BYTES", "5242880"))  # 5MB
@@ -86,6 +91,479 @@ CHECKPOINT_DIR = os.environ.get(
     if os.environ.get("STUARD_AGENT_MODE") == "vm"
     else os.path.expanduser("~/.stuard/checkpoints"),
 )
+
+PDF_EXTENSIONS = {".pdf"}
+OPENXML_SPREADSHEET_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+LEGACY_SPREADSHEET_EXTENSIONS = {".xls"}
+
+
+def _split_content_lines(content: str) -> list[str]:
+    if not content:
+        return []
+    return content.splitlines(keepends=True)
+
+
+def _xml_local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    return tag
+
+
+def _xml_collect_text(node: ET.Element) -> str:
+    parts: list[str] = []
+    for item in node.iter():
+        if _xml_local_name(item.tag) == "t" and item.text:
+            parts.append(item.text)
+    return "".join(parts)
+
+
+def _excel_column_index(cell_ref: str) -> int:
+    letters = []
+    for ch in cell_ref:
+        if ch.isalpha():
+            letters.append(ch.upper())
+        else:
+            break
+    if not letters:
+        return 0
+    value = 0
+    for ch in letters:
+        value = value * 26 + (ord(ch) - ord("A") + 1)
+    return value
+
+
+def _extract_xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in zf.namelist():
+        return []
+    root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+    strings: list[str] = []
+    for item in root.iter():
+        if _xml_local_name(item.tag) == "si":
+            strings.append(_xml_collect_text(item))
+    return strings
+
+
+def _extract_xlsx_sheet_map(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    workbook_path = "xl/workbook.xml"
+    rels_path = "xl/_rels/workbook.xml.rels"
+    if workbook_path not in zf.namelist():
+        raise ValueError("missing workbook.xml")
+
+    rels_by_id: dict[str, str] = {}
+    if rels_path in zf.namelist():
+        rels_root = ET.fromstring(zf.read(rels_path))
+        for rel in rels_root.iter():
+            if _xml_local_name(rel.tag) != "Relationship":
+                continue
+            rel_id = str(rel.attrib.get("Id") or "").strip()
+            target = str(rel.attrib.get("Target") or "").strip()
+            if not rel_id or not target:
+                continue
+            normalized = target.lstrip("/")
+            if not normalized.startswith("xl/"):
+                normalized = f"xl/{normalized}"
+            rels_by_id[rel_id] = normalized
+
+    workbook_root = ET.fromstring(zf.read(workbook_path))
+    sheets: list[tuple[str, str]] = []
+    for sheet in workbook_root.iter():
+        if _xml_local_name(sheet.tag) != "sheet":
+            continue
+        name = str(sheet.attrib.get("name") or "Sheet").strip() or "Sheet"
+        rel_id = ""
+        for key, value in sheet.attrib.items():
+            if key == "id" or key.endswith("}id"):
+                rel_id = str(value or "").strip()
+                break
+        target = rels_by_id.get(rel_id)
+        if target:
+            sheets.append((name, target))
+
+    if sheets:
+        return sheets
+
+    fallback_paths = sorted(
+        name for name in zf.namelist()
+        if name.startswith("xl/worksheets/") and name.endswith(".xml")
+    )
+    return [(f"Sheet {idx}", sheet_path) for idx, sheet_path in enumerate(fallback_paths, 1)]
+
+
+def _extract_xlsx_cell_text(cell: ET.Element, shared_strings: list[str]) -> str:
+    cell_type = str(cell.attrib.get("t") or "").strip()
+    if cell_type == "inlineStr":
+        for child in cell.iter():
+            if _xml_local_name(child.tag) == "is":
+                return _xml_collect_text(child)
+        return _xml_collect_text(cell)
+
+    value_text = ""
+    for child in cell:
+        tag = _xml_local_name(child.tag)
+        if tag == "v":
+            value_text = child.text or ""
+            break
+        if tag == "is":
+            value_text = _xml_collect_text(child)
+            break
+
+    if cell_type == "s":
+        try:
+            index = int(value_text)
+            return shared_strings[index] if 0 <= index < len(shared_strings) else ""
+        except Exception:
+            return ""
+    if cell_type == "b":
+        return "TRUE" if value_text == "1" else "FALSE"
+    return value_text
+
+
+def _extract_xlsx_sheet_text(zf: zipfile.ZipFile, sheet_path: str, shared_strings: list[str]) -> str:
+    root = ET.fromstring(zf.read(sheet_path))
+    lines: list[str] = []
+    for row in root.iter():
+        if _xml_local_name(row.tag) != "row":
+            continue
+        cells: dict[int, str] = {}
+        max_col = 0
+        for cell in row:
+            if _xml_local_name(cell.tag) != "c":
+                continue
+            cell_ref = str(cell.attrib.get("r") or "")
+            col_idx = _excel_column_index(cell_ref)
+            if col_idx <= 0:
+                col_idx = max_col + 1
+            value = _extract_xlsx_cell_text(cell, shared_strings)
+            cells[col_idx] = value
+            max_col = max(max_col, col_idx)
+        if not cells:
+            continue
+        row_values = [cells.get(idx, "") for idx in range(1, max_col + 1)]
+        while row_values and row_values[-1] == "":
+            row_values.pop()
+        if not row_values:
+            continue
+        lines.append("\t".join(row_values))
+    return "\n".join(lines)
+
+
+def _extract_openxml_spreadsheet_text(path: str) -> tuple[str, Dict[str, Any]]:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            shared_strings = _extract_xlsx_shared_strings(zf)
+            sheet_map = _extract_xlsx_sheet_map(zf)
+            if not sheet_map:
+                raise ValueError("no worksheets found")
+
+            sections: list[str] = []
+            sheet_names: list[str] = []
+            for sheet_name, sheet_path in sheet_map:
+                if sheet_path not in zf.namelist():
+                    continue
+                sheet_names.append(sheet_name)
+                sheet_text = _extract_xlsx_sheet_text(zf, sheet_path, shared_strings)
+                body = sheet_text if sheet_text.strip() else "(Empty sheet)"
+                sections.append(f"[Sheet: {sheet_name}]\n{body}")
+
+            if not sections:
+                raise ValueError("no readable worksheet content found")
+
+            return (
+                "\n\n".join(sections),
+                {
+                    "document_type": "spreadsheet",
+                    "sheet_names": sheet_names,
+                },
+            )
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"invalid spreadsheet file: {exc}") from exc
+    except ET.ParseError as exc:
+        raise ValueError(f"invalid spreadsheet XML: {exc}") from exc
+
+
+def _extract_legacy_spreadsheet_text(path: str) -> tuple[str, Dict[str, Any]]:
+    try:
+        import xlrd  # type: ignore
+    except Exception as exc:
+        raise ValueError(
+            "legacy .xls spreadsheets are not supported in this environment; convert the file to .xlsx"
+        ) from exc
+
+    workbook = xlrd.open_workbook(path)
+    sections: list[str] = []
+    sheet_names: list[str] = []
+    for sheet in workbook.sheets():
+        sheet_names.append(sheet.name)
+        lines: list[str] = []
+        for row_idx in range(sheet.nrows):
+            values = [str(sheet.cell_value(row_idx, col_idx)) for col_idx in range(sheet.ncols)]
+            while values and values[-1] == "":
+                values.pop()
+            if values:
+                lines.append("\t".join(values))
+        body = "\n".join(lines) if lines else "(Empty sheet)"
+        sections.append(f"[Sheet: {sheet.name}]\n{body}")
+
+    if not sections:
+        raise ValueError("no readable worksheet content found")
+
+    return (
+        "\n\n".join(sections),
+        {
+            "document_type": "spreadsheet",
+            "sheet_names": sheet_names,
+        },
+    )
+
+
+def _read_pdf_literal_string(data: bytes, start: int) -> tuple[bytes, int]:
+    i = start + 1
+    depth = 1
+    out = bytearray()
+    while i < len(data):
+        b = data[i]
+        if b == 92:  # backslash escape
+            out.append(b)
+            i += 1
+            if i < len(data):
+                out.append(data[i])
+                i += 1
+            continue
+        if b == 40:  # (
+            depth += 1
+            out.append(b)
+            i += 1
+            continue
+        if b == 41:  # )
+            depth -= 1
+            if depth == 0:
+                return bytes(out), i + 1
+            out.append(b)
+            i += 1
+            continue
+        out.append(b)
+        i += 1
+    return bytes(out), i
+
+
+def _read_pdf_hex_string(data: bytes, start: int) -> tuple[bytes, int]:
+    i = start + 1
+    out = bytearray()
+    while i < len(data):
+        b = data[i]
+        if b == 62:  # >
+            return bytes(out), i + 1
+        out.append(b)
+        i += 1
+    return bytes(out), i
+
+
+def _decode_pdf_literal_text(raw: bytes) -> str:
+    out = bytearray()
+    i = 0
+    while i < len(raw):
+        b = raw[i]
+        if b != 92:
+            out.append(b)
+            i += 1
+            continue
+
+        i += 1
+        if i >= len(raw):
+            break
+        esc = raw[i]
+        if esc in (110, 114, 116, 98, 102):  # n r t b f
+            out.extend({
+                110: b"\n",
+                114: b"\r",
+                116: b"\t",
+                98: b"\b",
+                102: b"\f",
+            }[esc])
+            i += 1
+            continue
+        if esc in (40, 41, 92):  # ( ) \
+            out.append(esc)
+            i += 1
+            continue
+        if 48 <= esc <= 55:
+            octal = [esc]
+            i += 1
+            for _ in range(2):
+                if i < len(raw) and 48 <= raw[i] <= 55:
+                    octal.append(raw[i])
+                    i += 1
+                else:
+                    break
+            out.append(int(bytes(octal), 8))
+            continue
+        if esc == 13:  # \r line continuation
+            i += 1
+            if i < len(raw) and raw[i] == 10:
+                i += 1
+            continue
+        if esc == 10:  # \n line continuation
+            i += 1
+            continue
+        out.append(esc)
+        i += 1
+
+    for encoding in ("utf-8", "latin-1", "utf-16-be"):
+        try:
+            text = out.decode(encoding)
+        except Exception:
+            continue
+        if text and any(ch.isprintable() for ch in text):
+            return text
+    return out.decode("latin-1", errors="replace")
+
+
+def _decode_pdf_hex_text(raw: bytes) -> str:
+    cleaned = re.sub(rb"\s+", b"", raw)
+    if not cleaned:
+        return ""
+    if len(cleaned) % 2 == 1:
+        cleaned += b"0"
+    try:
+        data = bytes.fromhex(cleaned.decode("ascii"))
+    except Exception:
+        return ""
+    encodings = ("utf-16-be", "utf-8", "latin-1") if b"\x00" in data else ("utf-8", "latin-1", "utf-16-be")
+    for encoding in encodings:
+        try:
+            text = data.decode(encoding)
+        except Exception:
+            continue
+        if text and any(ch.isprintable() for ch in text):
+            return text
+    return data.decode("latin-1", errors="replace")
+
+
+def _extract_pdf_text_fragments(block: bytes) -> list[str]:
+    parts: list[str] = []
+    i = 0
+    while i < len(block):
+        b = block[i]
+        if b == 40:  # (
+            raw, i = _read_pdf_literal_string(block, i)
+            text = _decode_pdf_literal_text(raw).strip()
+            if text:
+                parts.append(text)
+            continue
+        if b == 60 and i + 1 < len(block) and block[i + 1] != 60:  # <hex>
+            raw, i = _read_pdf_hex_string(block, i)
+            text = _decode_pdf_hex_text(raw).strip()
+            if text:
+                parts.append(text)
+            continue
+        i += 1
+    return parts
+
+
+def _decode_pdf_stream(dict_bytes: bytes, stream_data: bytes) -> bytes:
+    payload = stream_data.strip(b"\r\n")
+    if b"/FlateDecode" in dict_bytes:
+        try:
+            return zlib.decompress(payload)
+        except Exception:
+            try:
+                return zlib.decompress(payload, -15)
+            except Exception:
+                return b""
+    return payload
+
+
+def _extract_pdf_text_fallback(path: str) -> tuple[str, Dict[str, Any]]:
+    with open(path, "rb") as f:
+        pdf_bytes = f.read()
+
+    streams: list[bytes] = []
+    for match in re.finditer(rb"<<(.*?)>>\s*stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.DOTALL):
+        decoded = _decode_pdf_stream(match.group(1), match.group(2))
+        if decoded:
+            streams.append(decoded)
+
+    if not streams:
+        streams = [pdf_bytes]
+
+    blocks: list[str] = []
+    for stream in streams:
+        for match in re.finditer(rb"BT(.*?)ET", stream, re.DOTALL):
+            fragments = _extract_pdf_text_fragments(match.group(1))
+            if fragments:
+                blocks.append("\n".join(fragments))
+
+    if not blocks:
+        raise ValueError("no extractable text found in PDF")
+
+    page_count = len(re.findall(rb"/Type\s*/Page\b", pdf_bytes))
+    metadata: Dict[str, Any] = {
+        "document_type": "pdf",
+    }
+    if page_count > 0:
+        metadata["page_count"] = page_count
+    return "\n\n".join(blocks), metadata
+
+
+def _extract_pdf_text(path: str) -> tuple[str, Dict[str, Any]]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(path)
+        pages: list[str] = []
+        for idx, page in enumerate(reader.pages, 1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append(f"[Page {idx}]\n{text}")
+        if pages:
+            return (
+                "\n\n".join(pages),
+                {
+                    "document_type": "pdf",
+                    "page_count": len(reader.pages),
+                },
+            )
+    except Exception:
+        pass
+
+    return _extract_pdf_text_fallback(path)
+
+
+def _read_text_like_file(path: str) -> Dict[str, Any]:
+    ext = os.path.splitext(path)[1].lower()
+    metadata: Dict[str, Any] = {
+        "path": path,
+        "mime_type": mimetypes.guess_type(path)[0] or "application/octet-stream",
+    }
+
+    if ext in PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS:
+        size = os.path.getsize(path)
+        if size > MAX_READ_FILE_DOCUMENT_BYTES:
+            raise ValueError(
+                f"file is too large to extract text ({size} bytes > {MAX_READ_FILE_DOCUMENT_BYTES} bytes)"
+            )
+
+    if ext in PDF_EXTENSIONS:
+        content, doc_meta = _extract_pdf_text(path)
+        metadata.update(doc_meta)
+        lines = _split_content_lines(content)
+        return {"content": content, "lines": lines, **metadata}
+
+    if ext in OPENXML_SPREADSHEET_EXTENSIONS:
+        content, doc_meta = _extract_openxml_spreadsheet_text(path)
+        metadata.update(doc_meta)
+        lines = _split_content_lines(content)
+        return {"content": content, "lines": lines, **metadata}
+
+    if ext in LEGACY_SPREADSHEET_EXTENSIONS:
+        content, doc_meta = _extract_legacy_spreadsheet_text(path)
+        metadata.update(doc_meta)
+        lines = _split_content_lines(content)
+        return {"content": content, "lines": lines, **metadata}
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    return {"content": "".join(lines), "lines": lines, **metadata}
 
 class CheckpointManager:
     _active_id: str | None = None
@@ -477,6 +955,10 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
     _check_folder_read(p, args)
+    if not os.path.exists(p):
+        raise ValueError(f"path not found: {p}")
+    if os.path.isdir(p):
+        raise ValueError(f"path is a directory, not a file: {p}")
     
     # Get optional line range (1-indexed)
     line_start = args.get("line_start") or args.get("lineStart")
@@ -488,8 +970,15 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     if line_end is not None:
         line_end = int(line_end)
     
-    with open(p, "r", encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
+    file_payload = _read_text_like_file(p)
+    lines = file_payload["lines"]
+    base_result = {
+        "path": file_payload.get("path", p),
+        "mime_type": file_payload.get("mime_type"),
+        "document_type": file_payload.get("document_type"),
+        "sheet_names": file_payload.get("sheet_names"),
+        "page_count": file_payload.get("page_count"),
+    }
     
     total_lines = len(lines)
     
@@ -504,7 +993,7 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
             "ok": False,
             "error": "file_too_large",
             "message": f"File has {total_lines} lines which exceeds the {MAX_READ_FILE_LINES} line limit. Use line_start and line_end parameters to read specific portions.",
-            "path": p,
+            **base_result,
             "total_lines": total_lines,
             "max_lines": MAX_READ_FILE_LINES,
             "preview_start": first_lines,
@@ -530,12 +1019,13 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
             "line_start": start_idx + 1,
             "line_end": start_idx + len(lines),
             "lines_returned": len(lines),
-            "total_lines": total_lines
+            "total_lines": total_lines,
+            **base_result,
         }
     
     # Return full content for small files
     content = "".join(lines)
-    return {"ok": True, "content": content, "total_lines": total_lines}
+    return {"ok": True, "content": content, "total_lines": total_lines, **base_result}
 
 
 async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -983,10 +1473,18 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
         line_end = int(line_end)
 
     try:
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+        file_payload = _read_text_like_file(p)
+        lines = file_payload["lines"]
     except Exception as e:
         return {"ok": False, "error": f"Failed to read file: {str(e)}"}
+
+    metadata = {
+        "path": file_payload.get("path", p),
+        "mime_type": file_payload.get("mime_type"),
+        "document_type": file_payload.get("document_type"),
+        "sheet_names": file_payload.get("sheet_names"),
+        "page_count": file_payload.get("page_count"),
+    }
 
     total_lines = len(lines)
 
@@ -1000,7 +1498,8 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
                 "total_lines": total_lines,
                 "max_lines": MAX_AGENTIC_FILE_LINES,
                 "truncated": True,
-                "hint": f"Use line_start and line_end to read specific portions (e.g., line_start=1, line_end={MAX_AGENTIC_FILE_LINES})"
+                "hint": f"Use line_start and line_end to read specific portions (e.g., line_start=1, line_end={MAX_AGENTIC_FILE_LINES})",
+                **metadata,
             }
 
         # Return full content with line numbers
@@ -1015,7 +1514,8 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
             "line_start": 1,
             "line_end": total_lines,
             "lines_returned": total_lines,
-            "truncated": False
+            "truncated": False,
+            **metadata,
         }
 
     # Mode 2: line_start/line_end specified - read range
@@ -1032,7 +1532,8 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
                 "ok": False,
                 "error": "invalid_range",
                 "message": f"Invalid line range: {line_start or 1} to {line_end or total_lines}. File has {total_lines} lines.",
-                "total_lines": total_lines
+                "total_lines": total_lines,
+                **metadata,
             }
 
         selected_lines = lines[start_idx:end_idx]
@@ -1049,7 +1550,8 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
             "line_start": start_idx + 1,
             "line_end": start_idx + len(selected_lines),
             "lines_returned": len(selected_lines),
-            "truncated": False
+            "truncated": False,
+            **metadata,
         }
 
     # Mode 3: No mode specified - require explicit mode
@@ -1058,7 +1560,8 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
         "error": "mode_required",
         "message": "You must specify either whole_file=true or provide line_start/line_end.",
         "total_lines": total_lines,
-        "hint": f"Use whole_file=true for files under {MAX_AGENTIC_FILE_LINES} lines, or line_start/line_end for larger files."
+        "hint": f"Use whole_file=true for files under {MAX_AGENTIC_FILE_LINES} lines, or line_start/line_end for larger files.",
+        **metadata,
     }
 
 

@@ -35,6 +35,9 @@ export interface PolarCustomerInfo {
   }>;
 }
 
+const CUSTOMER_DETAIL_PAGE_SIZE = 25;
+const PRODUCT_PAGE_SIZE = 25;
+
 /**
  * Create a checkout session and open in browser
  */
@@ -85,11 +88,13 @@ export async function getCustomer(email: string): Promise<{ ok: boolean; custome
     // Get subscriptions
     const subscriptions = await polar.subscriptions.list({
       customerId: customer.id,
+      limit: CUSTOMER_DETAIL_PAGE_SIZE,
     });
 
     // Get orders
     const orders = await polar.orders.list({
       customerId: customer.id,
+      limit: CUSTOMER_DETAIL_PAGE_SIZE,
     });
 
     return {
@@ -128,6 +133,7 @@ export async function listProducts(): Promise<{ ok: boolean; products?: any[]; e
 
     const products = await polar.products.list({
       isArchived: false,
+      limit: PRODUCT_PAGE_SIZE,
     });
 
     return {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ExternalLink,
   Loader2,
@@ -188,13 +188,17 @@ const formatRelativeTime = (dateStr: string): string => {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
-async function cloudApiFetch<T = any>(path: string): Promise<T | null> {
+async function cloudApiFetch<T = any>(
+  path: string,
+  signal?: AbortSignal
+): Promise<T | null> {
   try {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return null;
     const res = await fetch(`${CLOUD_AI_HTTP}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal,
     });
     const json = await res.json();
     return json?.ok ? json : null;
@@ -234,35 +238,104 @@ export const BillingSettings: React.FC = () => {
   const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsPage, setLogsPage] = useState(0);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageLoaded, setUsageLoaded] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsLoaded, setLogsLoaded] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsLoaded, setProductsLoaded] = useState(false);
 
   const LOGS_PER_PAGE = 20;
+  const mountedRef = useRef(true);
+  const activeLogsRequestRef = useRef(0);
+  const backgroundLoadAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      backgroundLoadAbortRef.current?.abort();
+    };
+  }, []);
+
+  const loadUsageBreakdown = useCallback(async (signal?: AbortSignal) => {
+    setUsageLoading(true);
+    try {
+      const usageData = await cloudApiFetch<any>("/v1/credits/usage", signal);
+      if (!mountedRef.current || signal?.aborted) return;
+      setUsageBreakdown(usageData?.breakdown || []);
+    } finally {
+      if (!mountedRef.current || signal?.aborted) return;
+      setUsageLoading(false);
+      setUsageLoaded(true);
+    }
+  }, []);
 
   const loadLogs = useCallback(
-    async (page: number) => {
+    async (page: number, signal?: AbortSignal) => {
+      const requestId = activeLogsRequestRef.current + 1;
+      activeLogsRequestRef.current = requestId;
       setLogsLoading(true);
       try {
         const result = await cloudApiFetch<any>(
           `/v1/credits/logs?limit=${LOGS_PER_PAGE}&offset=${
             page * LOGS_PER_PAGE
-          }`
+          }`,
+          signal
         );
-        if (result) {
+        if (
+          mountedRef.current &&
+          !signal?.aborted &&
+          requestId === activeLogsRequestRef.current &&
+          result
+        ) {
           setUsageLogs(result.logs || []);
           setLogsTotal(result.total || 0);
           setLogsPage(page);
         }
       } finally {
+        if (!mountedRef.current || signal?.aborted) return;
         setLogsLoading(false);
+        setLogsLoaded(true);
       }
     },
     []
   );
 
+  const loadProducts = useCallback(async () => {
+    setProductsLoading(true);
+    try {
+      const productsResult = await window.desktopAPI?.billingListProducts?.();
+      if (!mountedRef.current) return;
+      if (productsResult?.ok && productsResult.products) {
+        setProducts(productsResult.products);
+      }
+    } finally {
+      if (!mountedRef.current) return;
+      setProductsLoading(false);
+      setProductsLoaded(true);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
+    backgroundLoadAbortRef.current?.abort();
+    const backgroundAbort = new AbortController();
+    backgroundLoadAbortRef.current = backgroundAbort;
+
     try {
       setLoading(true);
       setError(null);
+      setCreditSummary(null);
+      setProducts([]);
+      setUsageBreakdown([]);
+      setUsageLogs([]);
+      setLogsTotal(0);
+      setLogsPage(0);
+      setUsageLoaded(false);
+      setLogsLoaded(false);
+      setProductsLoaded(false);
+      setUsageLoading(false);
+      setLogsLoading(false);
+      setProductsLoading(false);
 
       // Load persisted auto-refill preference
       const prefsResult = await window.desktopAPI?.getPrefs?.();
@@ -285,36 +358,33 @@ export const BillingSettings: React.FC = () => {
       setUserEmail(session.user.email);
       setUserId(session.user.id);
 
-      // Load all data in parallel
-      const [productsResult, creditsData, usageData, logsData] =
-        await Promise.all([
-          window.desktopAPI?.billingListProducts?.(),
-          cloudApiFetch<any>("/v1/credits"),
-          cloudApiFetch<any>("/v1/credits/usage"),
-          cloudApiFetch<any>(
-            `/v1/credits/logs?limit=${LOGS_PER_PAGE}&offset=0`
-          ),
-        ]);
-
-      if (productsResult?.ok && productsResult.products) {
-        setProducts(productsResult.products);
-      }
+      // Load the summary first so the page becomes interactive quickly.
+      const creditsData = await cloudApiFetch<any>(
+        "/v1/credits",
+        backgroundAbort.signal
+      );
+      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
       if (creditsData) {
         setCreditSummary(creditsData);
       }
-      if (usageData?.breakdown) {
-        setUsageBreakdown(usageData.breakdown);
-      }
-      if (logsData) {
-        setUsageLogs(logsData.logs || []);
-        setLogsTotal(logsData.total || 0);
-      }
     } catch (e: any) {
+      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
       setError(e?.message || "Failed to load billing information");
     } finally {
+      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
       setLoading(false);
     }
-  }, []);
+
+    try {
+      await loadUsageBreakdown(backgroundAbort.signal);
+      if (backgroundAbort.signal.aborted) return;
+      await loadLogs(0, backgroundAbort.signal);
+      if (backgroundAbort.signal.aborted) return;
+      await loadProducts();
+    } catch {
+      // Deferred section loaders settle their own loading state.
+    }
+  }, [loadLogs, loadProducts, loadUsageBreakdown]);
 
   useEffect(() => {
     loadData();
@@ -593,110 +663,123 @@ export const BillingSettings: React.FC = () => {
       </div>
 
       {/* ── Usage Breakdown Card with Pie Chart ── */}
-      {usageBreakdown.length > 0 && (
+      {(usageLoading || usageLoaded || usageBreakdown.length > 0) && (
         <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
             Usage Breakdown
           </label>
 
-          <div className="flex flex-col sm:flex-row gap-4">
-            {/* Pie Chart */}
-            {pieData.length > 0 && (
-              <div className="flex-shrink-0 w-full sm:w-[200px] h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={3}
-                      dataKey="value"
-                      nameKey="name"
-                      strokeWidth={0}
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<PieTooltip />} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-
-            {/* Category list */}
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold uppercase mb-1 px-1">
-                <span>Category</span>
-                <div className="flex gap-6">
-                  <span className="w-14 text-right">Credits</span>
-                  <span className="w-10 text-right">Count</span>
-                </div>
-              </div>
-              {usageBreakdown.map((item) => {
-                const config = CATEGORY_CONFIG[item.category] || {
-                  label: item.category,
-                  color: "bg-gray-400",
-                  hex: "#9ca3af",
-                  icon: Zap,
-                };
-                const pct =
-                  usageTotal > 0
-                    ? ((item.credits / usageTotal) * 100).toFixed(1)
-                    : "0";
-                const Icon = config.icon;
-                return (
-                  <div
-                    key={item.category}
-                    className="flex items-center justify-between p-2 bg-theme-hover rounded-theme-button"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-7 h-7 rounded-md flex items-center justify-center ${config.color}/20`}
+          {usageLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" />
+            </div>
+          ) : usageBreakdown.length === 0 ? (
+            <div className="text-center py-8">
+              <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
+              <p className="text-xs text-theme-muted font-medium">
+                No usage breakdown available yet.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-4">
+              {/* Pie Chart */}
+              {pieData.length > 0 && (
+                <div className="flex-shrink-0 w-full sm:w-[200px] h-[200px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={80}
+                        paddingAngle={3}
+                        dataKey="value"
+                        nameKey="name"
+                        strokeWidth={0}
                       >
-                        <Icon
-                          className="w-3.5 h-3.5"
-                          style={{ color: config.hex }}
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[12px] font-bold text-theme-fg">
-                          {config.label}
-                        </span>
-                        <span className="text-[10px] text-theme-muted ml-2">
-                          {pct}%
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex gap-6">
-                      <span className="text-[12px] font-black text-theme-fg w-14 text-right">
-                        {item.credits.toFixed(1)}
-                      </span>
-                      <span className="text-[11px] text-theme-muted w-10 text-right">
-                        {item.count}
-                      </span>
-                    </div>
+                        {pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<PieTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Category list */}
+              <div className="flex-1 space-y-2">
+                <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold uppercase mb-1 px-1">
+                  <span>Category</span>
+                  <div className="flex gap-6">
+                    <span className="w-14 text-right">Credits</span>
+                    <span className="w-10 text-right">Count</span>
                   </div>
-                );
-              })}
-              {/* Total row */}
-              <div className="flex items-center justify-between px-2 pt-2 border-t border-theme">
-                <span className="text-[11px] font-bold text-theme-muted">
-                  Total
-                </span>
-                <div className="flex gap-6">
-                  <span className="text-[12px] font-black text-theme-fg w-14 text-right">
-                    {usageTotal.toFixed(1)}
+                </div>
+                {usageBreakdown.map((item) => {
+                  const config = CATEGORY_CONFIG[item.category] || {
+                    label: item.category,
+                    color: "bg-gray-400",
+                    hex: "#9ca3af",
+                    icon: Zap,
+                  };
+                  const pct =
+                    usageTotal > 0
+                      ? ((item.credits / usageTotal) * 100).toFixed(1)
+                      : "0";
+                  const Icon = config.icon;
+                  return (
+                    <div
+                      key={item.category}
+                      className="flex items-center justify-between p-2 bg-theme-hover rounded-theme-button"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-7 h-7 rounded-md flex items-center justify-center ${config.color}/20`}
+                        >
+                          <Icon
+                            className="w-3.5 h-3.5"
+                            style={{ color: config.hex }}
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[12px] font-bold text-theme-fg">
+                            {config.label}
+                          </span>
+                          <span className="text-[10px] text-theme-muted ml-2">
+                            {pct}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex gap-6">
+                        <span className="text-[12px] font-black text-theme-fg w-14 text-right">
+                          {item.credits.toFixed(1)}
+                        </span>
+                        <span className="text-[11px] text-theme-muted w-10 text-right">
+                          {item.count}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Total row */}
+                <div className="flex items-center justify-between px-2 pt-2 border-t border-theme">
+                  <span className="text-[11px] font-bold text-theme-muted">
+                    Total
                   </span>
-                  <span className="text-[11px] text-theme-muted w-10 text-right">
-                    {usageBreakdown.reduce((s, b) => s + b.count, 0)}
-                  </span>
+                  <div className="flex gap-6">
+                    <span className="text-[12px] font-black text-theme-fg w-14 text-right">
+                      {usageTotal.toFixed(1)}
+                    </span>
+                    <span className="text-[11px] text-theme-muted w-10 text-right">
+                      {usageBreakdown.reduce((s, b) => s + b.count, 0)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -706,7 +789,7 @@ export const BillingSettings: React.FC = () => {
           Credit Usage Logs
         </label>
 
-        {logsLoading && usageLogs.length === 0 ? (
+        {(!logsLoaded || logsLoading) && usageLogs.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
           </div>
@@ -872,7 +955,11 @@ export const BillingSettings: React.FC = () => {
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
             Purchase Add-On Credits
           </label>
-          {creditPacks.length > 0 ? (
+          {!productsLoaded || productsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-primary" />
+            </div>
+          ) : creditPacks.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {creditPacks.map((product) => {
                 const price = product.prices[0];

@@ -3,11 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   getStuardAgentMock,
   getWorkflowAgentMock,
+  getOrchestratorAgentMock,
   writeLogMock,
 } = vi.hoisted(() => {
   return {
     getStuardAgentMock: vi.fn(),
     getWorkflowAgentMock: vi.fn(),
+    getOrchestratorAgentMock: vi.fn(),
     writeLogMock: vi.fn(),
   };
 });
@@ -63,7 +65,7 @@ vi.mock('../../utils/usage', () => {
 
 vi.mock('../../orchestrator', () => {
   return {
-    getOrchestratorAgent: vi.fn(),
+    getOrchestratorAgent: getOrchestratorAgentMock,
   };
 });
 
@@ -77,6 +79,7 @@ describe('runAgent tool-call JSON parse failure handling', () => {
   beforeEach(() => {
     getStuardAgentMock.mockReset();
     getWorkflowAgentMock.mockReset();
+    getOrchestratorAgentMock.mockReset();
     writeLogMock.mockReset();
   });
 
@@ -93,7 +96,7 @@ describe('runAgent tool-call JSON parse failure handling', () => {
       }),
     };
 
-    getStuardAgentMock.mockReturnValue(agent);
+    getOrchestratorAgentMock.mockReturnValue(agent);
 
     const sent: any[] = [];
     const ws: any = {
