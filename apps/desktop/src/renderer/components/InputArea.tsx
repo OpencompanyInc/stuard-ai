@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, Terminal, LayoutGrid } from 'lucide-react';
+import { Mic, AudioWaveform, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, Terminal, LayoutGrid } from 'lucide-react';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
@@ -74,6 +74,9 @@ interface InputAreaProps {
   // Speech
   isRecording?: boolean;
   onMicClick?: () => void;
+
+  // Voice mode (full ElevenLabs conversation)
+  onVoiceMode?: () => void;
 
   // Context Paths (for @ mentions)
   contextPaths?: ContextItem[];
@@ -456,7 +459,7 @@ const InputArea = forwardRef(function InputArea(
     expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
     connectionStatus,
     queueDepth, queuedMessages, onCancelQueuedMessage,
-    isRecording, onMicClick,
+    isRecording, onMicClick, onVoiceMode,
     contextPaths, setContextPaths,
     translucentMode = false,
     accessToken,
@@ -2107,6 +2110,17 @@ const InputArea = forwardRef(function InputArea(
                 <Mic className="w-5 h-5" />
               </button>
             )}
+            {/* Voice Mode Button */}
+            {onVoiceMode && (
+              <button
+                type="button"
+                className="no-drag h-[42px] w-[42px] rounded-[14px] flex-shrink-0 inline-flex items-center justify-center transition-all active:scale-95 bg-theme-hover text-theme-fg/70 hover:text-primary hover:bg-primary/10"
+                onClick={onVoiceMode}
+                title="Voice conversation"
+              >
+                <AudioWaveform className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -2252,6 +2266,16 @@ const InputArea = forwardRef(function InputArea(
                 data-onboarding="mic-btn"
               >
                 <Mic className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {/* Voice Mode Button */}
+            {onVoiceMode && (
+              <button
+                className="no-drag inline-flex items-center justify-center rounded-md transition-all h-7 w-7 text-theme-fg/70 hover:text-primary hover:bg-primary/10"
+                onClick={onVoiceMode}
+                title="Voice conversation"
+              >
+                <AudioWaveform className="w-3.5 h-3.5" />
               </button>
             )}
             <div className="w-px h-4 bg-theme/20 mx-0.5" />

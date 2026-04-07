@@ -207,28 +207,28 @@ function CronFieldSelect({
 
   return (
     <div className="relative">
-      <label className="block text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-1.5">{label}</label>
+      <label className="block text-[10px] font-semibold text-theme-muted uppercase tracking-wider mb-1.5">{label}</label>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-lg bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] flex items-center justify-between gap-2 transition-all shadow-sm text-left"
+        className="w-full px-3 py-2 text-sm border border-theme rounded-lg bg-theme-card hover:bg-theme-hover flex items-center justify-between gap-2 transition-all shadow-sm text-left"
       >
-        <span className="truncate text-white/80 font-medium">{displayLabel}</span>
-        <ChevronDown className={`w-4 h-4 text-white/40 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="truncate text-theme-fg font-medium">{displayLabel}</span>
+        <ChevronDown className={`w-4 h-4 text-theme-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 w-full mt-1 bg-white/[0.04] border border-white/[0.04] rounded-lg shadow-xl max-h-56 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
+          <div className="absolute z-50 w-full mt-1 bg-theme-card border border-theme rounded-lg shadow-xl max-h-56 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
             {allowCustom && (
-              <div className="p-2 border-b border-white/[0.04] sticky top-0 bg-white/[0.04]">
+              <div className="p-2 border-b border-theme sticky top-0 bg-theme-card">
                 <div className="flex gap-1">
                   <input
                     type="text"
                     value={customInput}
                     onChange={(e) => setCustomInput(e.target.value)}
                     placeholder="Custom value..."
-                    className="flex-1 px-2 py-1.5 text-xs font-mono border border-white/[0.08] rounded focus:outline-none focus:ring-1 focus:ring-indigo-200"
+                    className="flex-1 px-2 py-1.5 text-xs font-mono border border-theme rounded bg-theme-card text-theme-fg placeholder:text-theme-muted focus:outline-none focus:ring-1 focus:ring-indigo-200"
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -253,12 +253,12 @@ function CronFieldSelect({
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between gap-2 transition-colors ${
                   opt.value === value
-                    ? 'bg-indigo-50 text-indigo-700 font-medium'
-                    : 'text-white/70 hover:bg-white/[0.06]'
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-theme-fg hover:bg-theme-hover'
                 }`}
               >
                 <span className="truncate">{opt.label}</span>
-                {opt.value === value && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
+                {opt.value === value && <Check className="w-4 h-4 text-primary shrink-0" />}
               </button>
             ))}
           </div>
@@ -276,25 +276,25 @@ function AmPmSelect({ value, onChange }: { value: 'AM' | 'PM'; onChange: (v: 'AM
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full px-3 py-2.5 text-sm border border-white/[0.08] rounded-lg bg-white/[0.04] hover:bg-white/[0.06] hover:border-white/[0.12] flex items-center justify-between gap-1 transition-all shadow-sm font-medium text-white/80"
+        className="w-full px-3 py-2.5 text-sm border border-theme rounded-lg bg-theme-card hover:bg-theme-hover flex items-center justify-between gap-1 transition-all shadow-sm font-medium text-theme-fg"
       >
         {value}
-        <ChevronDown className={`w-3.5 h-3.5 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-theme-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 w-full mt-1 bg-white/[0.04] border border-white/[0.04] rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+          <div className="absolute z-50 w-full mt-1 bg-theme-card border border-theme rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
             {(['AM', 'PM'] as const).map(opt => (
               <button
                 key={opt}
                 onClick={() => { onChange(opt); setOpen(false); }}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between transition-colors ${
-                  opt === value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-white/70 hover:bg-white/[0.06]'
+                  opt === value ? 'bg-primary/10 text-primary font-medium' : 'text-theme-fg hover:bg-theme-hover'
                 }`}
               >
                 {opt}
-                {opt === value && <Check className="w-4 h-4 text-indigo-600" />}
+                {opt === value && <Check className="w-4 h-4 text-primary" />}
               </button>
             ))}
           </div>
@@ -434,13 +434,13 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
   return (
     <div className="space-y-4">
       {/* Mode tabs - just builder and advanced */}
-      <div className="flex gap-1 p-1 bg-white/[0.06] rounded-xl">
+      <div className="flex gap-1 p-1 bg-theme-hover border border-theme rounded-xl">
         <button
           onClick={() => setMode('builder')}
           className={`flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
             mode === 'builder'
-              ? 'bg-white/[0.04] text-white/80 shadow-sm'
-              : 'text-white/50 hover:text-white/80'
+              ? 'bg-theme-card text-theme-fg shadow-sm border border-theme'
+              : 'text-theme-muted hover:text-theme-fg'
           }`}
         >
           <Calendar className="w-3.5 h-3.5" />
@@ -450,8 +450,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
           onClick={() => { setMode('raw'); setCustomValue(value || '* * * * *'); }}
           className={`flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
             mode === 'raw'
-              ? 'bg-white/[0.04] text-white/80 shadow-sm'
-              : 'text-white/50 hover:text-white/80'
+              ? 'bg-theme-card text-theme-fg shadow-sm border border-theme'
+              : 'text-theme-muted hover:text-theme-fg'
           }`}
         >
           <Code2 className="w-3.5 h-3.5" />
@@ -464,8 +464,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
         <div className="space-y-4">
           {/* Schedule Type Toggle */}
           <div>
-            <label className="block text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Time</label>
-            <div className="flex gap-2 p-1 bg-white/[0.06] rounded-lg">
+            <label className="block text-[10px] font-semibold text-theme-muted uppercase tracking-wider mb-2">Time</label>
+            <div className="flex gap-2 p-1 bg-theme-hover border border-theme rounded-lg">
               <button
                 onClick={() => {
                   setScheduleType('interval');
@@ -477,8 +477,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                 }}
                 className={`flex-1 px-3 py-2 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
                   scheduleType === 'interval'
-                    ? 'bg-white/[0.04] text-indigo-600 shadow-sm'
-                    : 'text-white/50 hover:text-white/80'
+                    ? 'bg-theme-card text-primary shadow-sm border border-theme'
+                    : 'text-theme-muted hover:text-theme-fg'
                 }`}
               >
                 <Timer className="w-3.5 h-3.5" />
@@ -491,8 +491,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                 }}
                 className={`flex-1 px-3 py-2 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 ${
                   scheduleType === 'specific'
-                    ? 'bg-white/[0.04] text-indigo-600 shadow-sm'
-                    : 'text-white/50 hover:text-white/80'
+                    ? 'bg-theme-card text-primary shadow-sm border border-theme'
+                    : 'text-theme-muted hover:text-theme-fg'
                 }`}
               >
                 <Clock className="w-3.5 h-3.5" />
@@ -503,7 +503,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
 
           {/* Interval Picker */}
           {scheduleType === 'interval' && (
-            <div className="p-4 bg-white/[0.06] rounded-xl border border-white/[0.08] space-y-4">
+            <div className="p-4 bg-theme-card rounded-xl border border-theme space-y-4 shadow-sm">
               {/* Interval mode toggle */}
               <div className="flex gap-2">
                 <button
@@ -513,8 +513,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                   }}
                   className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
                     intervalMode === 'minutes'
-                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                      : 'bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.06]'
+                      ? 'bg-primary/10 border-primary/20 text-primary'
+                      : 'bg-theme-card border-theme text-theme-muted hover:bg-theme-hover hover:text-theme-fg'
                   }`}
                 >
                   Minutes
@@ -526,8 +526,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                   }}
                   className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
                     intervalMode === 'hours'
-                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                      : 'bg-white/[0.04] border-white/[0.08] text-white/70 hover:bg-white/[0.06]'
+                      ? 'bg-primary/10 border-primary/20 text-primary'
+                      : 'bg-theme-card border-theme text-theme-muted hover:bg-theme-hover hover:text-theme-fg'
                   }`}
                 >
                   Hours
@@ -536,7 +536,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
 
               {/* Interval input */}
               <div className="flex items-center gap-3">
-                <span className="text-sm text-white/70 font-medium">Every</span>
+                <span className="text-sm text-theme-muted font-medium">Every</span>
                 {intervalMode === 'minutes' ? (
                   <>
                     <input
@@ -551,9 +551,9 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                           updateInterval(val, null);
                         }
                       }}
-                      className="w-20 px-3 py-2.5 text-center text-lg font-semibold border border-white/[0.08] rounded-lg bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
+                      className="w-20 px-3 py-2.5 text-center text-lg font-semibold border border-theme rounded-lg bg-theme-card text-theme-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
                     />
-                    <span className="text-sm text-white/70 font-medium">minutes</span>
+                    <span className="text-sm text-theme-muted font-medium">minutes</span>
                   </>
                 ) : (
                   <>
@@ -569,15 +569,15 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                           updateInterval(null, val);
                         }
                       }}
-                      className="w-20 px-3 py-2.5 text-center text-lg font-semibold border border-white/[0.08] rounded-lg bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
+                      className="w-20 px-3 py-2.5 text-center text-lg font-semibold border border-theme rounded-lg bg-theme-card text-theme-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
                     />
-                    <span className="text-sm text-white/70 font-medium">hours</span>
+                    <span className="text-sm text-theme-muted font-medium">hours</span>
                   </>
                 )}
               </div>
 
               {/* Quick interval buttons */}
-              <div className="flex flex-wrap gap-2 pt-3 border-t border-white/[0.08]">
+              <div className="flex flex-wrap gap-2 pt-3 border-t border-theme">
                 {intervalMode === 'minutes' ? (
                   <>
                     {[1, 2, 5, 10, 15, 20, 30, 45].map(m => (
@@ -589,8 +589,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                         }}
                         className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                           everyMinutes === m
-                            ? 'bg-indigo-100 border-indigo-200 text-indigo-700'
-                            : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
+                            ? 'bg-primary/10 border-primary/20 text-primary'
+                            : 'bg-theme-card border-theme text-theme-muted hover:bg-theme-hover hover:text-theme-fg'
                         }`}
                       >
                         {m} min
@@ -608,8 +608,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                         }}
                         className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                           everyHours === h
-                            ? 'bg-indigo-100 border-indigo-200 text-indigo-700'
-                            : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
+                            ? 'bg-primary/10 border-primary/20 text-primary'
+                            : 'bg-theme-card border-theme text-theme-muted hover:bg-theme-hover hover:text-theme-fg'
                         }`}
                       >
                         {h} hr
@@ -623,7 +623,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
 
           {/* Specific Time Picker */}
           {scheduleType === 'specific' && (
-            <div className="p-4 bg-white/[0.06] rounded-xl border border-white/[0.08] space-y-4">
+            <div className="p-4 bg-theme-card rounded-xl border border-theme space-y-4 shadow-sm">
               <div className="flex items-center gap-3">
                 {/* Hour input */}
                 <div className="flex flex-col items-center">
@@ -633,12 +633,12 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                     max={12}
                     value={hour12}
                     onChange={(e) => handleHourChange(e.target.value)}
-                    className="w-16 px-3 py-2.5 text-center text-lg font-semibold border border-white/[0.08] rounded-lg bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
+                    className="w-16 px-3 py-2.5 text-center text-lg font-semibold border border-theme rounded-lg bg-theme-card text-theme-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
                   />
-                  <span className="text-[10px] text-white/40 mt-1">Hour</span>
+                  <span className="text-[10px] text-theme-muted mt-1">Hour</span>
                 </div>
 
-                <span className="text-2xl font-bold text-slate-300 mb-4">:</span>
+                <span className="text-2xl font-bold text-theme-muted mb-4">:</span>
 
                 {/* Minute input */}
                 <div className="flex flex-col items-center">
@@ -648,9 +648,9 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                     max={59}
                     value={String(minute).padStart(2, '0')}
                     onChange={(e) => handleMinuteChange(e.target.value)}
-                    className="w-16 px-3 py-2.5 text-center text-lg font-semibold border border-white/[0.08] rounded-lg bg-white/[0.04] focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
+                    className="w-16 px-3 py-2.5 text-center text-lg font-semibold border border-theme rounded-lg bg-theme-card text-theme-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all shadow-sm"
                   />
-                  <span className="text-[10px] text-white/40 mt-1">Minute</span>
+                  <span className="text-[10px] text-theme-muted mt-1">Minute</span>
                 </div>
 
                 {/* AM/PM dropdown */}
@@ -666,7 +666,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
               </div>
 
               {/* Quick time buttons */}
-              <div className="flex flex-wrap gap-2 pt-3 border-t border-white/[0.08]">
+              <div className="flex flex-wrap gap-2 pt-3 border-t border-theme">
                 {[
                   { h: 6, m: 0, p: 'AM' as const, label: '6:00 AM' },
                   { h: 8, m: 0, p: 'AM' as const, label: '8:00 AM' },
@@ -690,8 +690,8 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
                       }}
                       className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                         isSelected
-                          ? 'bg-indigo-100 border-indigo-200 text-indigo-700'
-                          : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
+                          ? 'bg-primary/10 border-primary/20 text-primary'
+                          : 'bg-theme-card border-theme text-theme-muted hover:bg-theme-hover hover:text-theme-fg'
                       }`}
                     >
                       {t.label}
@@ -740,7 +740,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
               onBlur={applyRaw}
               onKeyDown={(e) => e.key === 'Enter' && applyRaw()}
               placeholder="* * * * *"
-              className="flex-1 px-4 py-2.5 text-sm font-mono border border-white/[0.08] rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all bg-white/[0.04] shadow-sm"
+              className="flex-1 px-4 py-2.5 text-sm font-mono border border-theme rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all bg-theme-card text-theme-fg placeholder:text-theme-muted shadow-sm"
             />
             <button
               onClick={applyRaw}
@@ -749,7 +749,7 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
               Apply
             </button>
           </div>
-          <div className="text-xs text-white/40 bg-white/[0.06] rounded-lg p-3 font-mono">
+          <div className="text-xs text-theme-muted bg-theme-card rounded-lg p-3 font-mono border border-theme">
             <div className="grid grid-cols-5 gap-2 text-center">
               <span>minute</span>
               <span>hour</span>
@@ -757,14 +757,14 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
               <span>month</span>
               <span>weekday</span>
             </div>
-            <div className="grid grid-cols-5 gap-2 text-center text-white/50 mt-1">
+            <div className="grid grid-cols-5 gap-2 text-center text-theme-muted mt-1">
               <span>0-59</span>
               <span>0-23</span>
               <span>1-31</span>
               <span>1-12</span>
               <span>0-6</span>
             </div>
-            <div className="mt-3 pt-3 border-t border-white/[0.08] text-white/50 space-y-1">
+            <div className="mt-3 pt-3 border-t border-theme text-theme-muted space-y-1">
               <div><code>*</code> = every</div>
               <div><code>*/5</code> = every 5</div>
               <div><code>1,3,5</code> = specific values</div>
@@ -775,11 +775,11 @@ export function CronEditor({ value, onChange }: CronEditorProps) {
       )}
 
       {/* Preview */}
-      <div className="flex items-center gap-2 p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-100">
+      <div className="flex items-center gap-2 p-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-500/10 dark:to-orange-500/10 rounded-xl border border-amber-200 dark:border-amber-500/20">
         <RefreshCw className="w-4 h-4 text-amber-600 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-amber-800">{description}</div>
-          <div className="text-xs text-amber-600/70 font-mono mt-0.5">{value || '* * * * *'}</div>
+          <div className="text-sm font-medium text-amber-900 dark:text-amber-100">{description}</div>
+          <div className="text-xs text-amber-700/80 dark:text-amber-200/80 font-mono mt-0.5">{value || '* * * * *'}</div>
         </div>
       </div>
     </div>

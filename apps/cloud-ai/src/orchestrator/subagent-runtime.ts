@@ -6,7 +6,6 @@
  * with a reusable contract.
  */
 
-import { createRequire } from 'node:module';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
@@ -33,9 +32,7 @@ import type {
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
 import { logUsageEvent } from '../supabase';
 import type { ModelChoice } from '../router/model-router';
-
-const require = createRequire(import.meta.url);
-let _getExecutionTools: (() => Record<string, any>) | undefined;
+import { resolveExecutionTools } from './execution-tools-resolver';
 
 // Track running subagents so they can be aborted when the parent stream is cancelled
 const runningSubagents = new Map<string, AbortController>();
@@ -60,12 +57,10 @@ export function abortAllRunningSubagents(): number {
   return count;
 }
 
-// Lazy: avoids meta-tools ↔ stuard/tools circular init via workflow-subagent.
+// Resolved at startup via execution-tools-resolver to break the circular
+// dependency: stuard/tools → meta-tools → workflow-subagent → subagent-runtime.
 function getExecutionToolsLazy(): Record<string, any> {
-  if (!_getExecutionTools) {
-    _getExecutionTools = require('../agents/stuard/tools').getExecutionTools;
-  }
-  return _getExecutionTools!();
+  return resolveExecutionTools();
 }
 
 // ─── Ask/Reply Channel ──────────────────────────────────────────────────────

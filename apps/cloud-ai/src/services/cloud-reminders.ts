@@ -208,6 +208,12 @@ let reminderInterval: ReturnType<typeof setInterval> | null = null;
 export function startReminderCron(): void {
   if (reminderInterval) return;
   console.log(`[reminders] Starting cloud reminder cron (interval: ${REMINDER_POLL_INTERVAL_MS}ms)`);
+
+  // Immediately process any overdue reminders (catches up after server downtime)
+  processDueReminders().catch((err) => {
+    console.error('[reminders] Initial catch-up cycle error:', err?.message || err);
+  });
+
   reminderInterval = setInterval(() => {
     processDueReminders().catch((err) => {
       console.error('[reminders] Poll cycle error:', err?.message || err);

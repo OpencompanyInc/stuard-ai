@@ -15,7 +15,7 @@ const handleClose = () => {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      <VoiceModeView demo onClose={handleClose} />
+      <VoiceModeView onClose={handleClose} />
     </div>
   </React.StrictMode>
 );

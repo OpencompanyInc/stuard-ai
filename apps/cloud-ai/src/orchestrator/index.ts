@@ -7,3 +7,4 @@ export * from './capability-packs';
 export * from './subagent-runtime';
 export * from './delegation-tools';
 export { getOrchestratorAgent } from './orchestrator-agent';
+export { registerExecutionTools, resolveExecutionTools } from './execution-tools-resolver';

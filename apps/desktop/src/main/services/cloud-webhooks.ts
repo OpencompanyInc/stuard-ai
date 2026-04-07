@@ -237,7 +237,7 @@ let _desktopSyncTimer: NodeJS.Timeout | null = null;
 function hasDesktopAgentDataChanged(): boolean {
     const agentDir = getDesktopAgentDataDir();
     if (!fs.existsSync(agentDir)) return false;
-    const filesToWatch = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'memory.db-wal'];
+    const filesToWatch = ['knowledge.db', 'memory.db', 'file_index.db', 'knowledge.db-wal', 'memory.db-wal', 'file_index.db-wal'];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
         if (!fs.existsSync(filePath)) continue;
@@ -253,7 +253,7 @@ function hasDesktopAgentDataChanged(): boolean {
 function snapshotDesktopMtimes(): void {
     const agentDir = getDesktopAgentDataDir();
     if (!fs.existsSync(agentDir)) return;
-    const filesToWatch = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'memory.db-wal'];
+    const filesToWatch = ['knowledge.db', 'memory.db', 'file_index.db', 'knowledge.db-wal', 'memory.db-wal', 'file_index.db-wal'];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
         if (fs.existsSync(filePath)) {

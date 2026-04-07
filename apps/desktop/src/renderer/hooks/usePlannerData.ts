@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 
 const DEFAULT_AGENT_HTTP = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
 const AGENT_HTTP_CANDIDATES = (() => {
@@ -61,6 +61,13 @@ export interface UsePlannerDataResult {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+}
+
+interface UsePlannerDataOptions {
+  enabled?: boolean;
+  cloudPollMs?: number;
+  localPollOnlineMs?: number;
+  localPollOfflineMs?: number;
 }
 
 function formatTimeUntil(date: Date): { label: string; urgency: UrgencyLevel; minutesUntil: number } {
@@ -141,7 +148,16 @@ function parseTaskDueForNextUp(value: string): Date {
   return new Date(s);
 }
 
-export function usePlannerData(accessToken?: string | null): UsePlannerDataResult {
+export function usePlannerData(
+  accessToken?: string | null,
+  options: UsePlannerDataOptions = {},
+): UsePlannerDataResult {
+  const {
+    enabled = true,
+    cloudPollMs = 120_000,
+    localPollOnlineMs = 30_000,
+    localPollOfflineMs = 15_000,
+  } = options;
   const [tasks, setTasks] = useState<PlannerTask[]>([]);
   const [reminders, setReminders] = useState<PlannerReminder[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -150,6 +166,44 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
   const [tick, setTick] = useState(0); // Force re-render for time updates
   const [agentOnline, setAgentOnline] = useState(false);
   const [agentHttp, setAgentHttp] = useState<string>(DEFAULT_AGENT_HTTP);
+  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible');
+  const agentOnlineRef = useRef(agentOnline);
+  const agentHttpRef = useRef(agentHttp);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const cloudCacheRef = useRef<{
+    reminders: PlannerReminder[];
+    events: CalendarEvent[];
+    remindersFetchedAt: number;
+    eventsFetchedAt: number;
+  }>({
+    reminders: [],
+    events: [],
+    remindersFetchedAt: 0,
+    eventsFetchedAt: 0,
+  });
+
+  useEffect(() => {
+    agentOnlineRef.current = agentOnline;
+  }, [agentOnline]);
+
+  useEffect(() => {
+    agentHttpRef.current = agentHttp;
+  }, [agentHttp]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => setDocumentVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    cloudCacheRef.current = {
+      reminders: [],
+      events: [],
+      remindersFetchedAt: 0,
+      eventsFetchedAt: 0,
+    };
+  }, [accessToken]);
 
   const probeAgent = useCallback(async (timeoutMs: number): Promise<{ ok: boolean; baseUrl: string | null }> => {
     const perRequestTimeoutMs = Math.max(100, Math.floor(timeoutMs / Math.max(1, AGENT_HTTP_CANDIDATES.length)));
@@ -216,6 +270,12 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
 
   const fetchCloudReminders = async (): Promise<PlannerReminder[]> => {
     if (!accessToken) return [];
+
+    const now = Date.now();
+    if (now - cloudCacheRef.current.remindersFetchedAt < cloudPollMs) {
+      return cloudCacheRef.current.reminders;
+    }
+
     try {
       const res = await fetch(`${CLOUD_AI_HTTP}/v1/reminders/cloud?status=pending`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -223,16 +283,19 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
       if (res.ok) {
         const j = await res.json();
         if (j?.ok && Array.isArray(j.items)) {
-          return j.items.map((r: any) => ({
+          const items = j.items.map((r: any) => ({
             id: `cloud:${r.id}`,
             message: `${r.message || 'Reminder'}${r.deliveryMethod ? ` [${r.deliveryMethod}]` : ''}`,
             whenIso: r.whenIso,
             whenEpochMs: r.whenEpochMs,
           }));
+          cloudCacheRef.current.reminders = items;
+          cloudCacheRef.current.remindersFetchedAt = now;
+          return items;
         }
       }
     } catch {}
-    return [];
+    return cloudCacheRef.current.reminders;
   };
 
   const fetchCalendarEvents = async (): Promise<CalendarEvent[]> => {
@@ -240,26 +303,38 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
 
     // Fetch Google Calendar events (cloud)
     if (accessToken) {
-      try {
-        const res = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=week`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (res.ok) {
-          const j = await res.json();
-          if (j?.ok && Array.isArray(j.blocks)) {
-            for (const b of j.blocks) {
-              allEvents.push({
+      const now = Date.now();
+      if (now - cloudCacheRef.current.eventsFetchedAt < cloudPollMs) {
+        allEvents.push(...cloudCacheRef.current.events);
+      } else {
+        try {
+          const res = await fetch(`${CLOUD_AI_HTTP}/v1/calendar/events?view=week`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (res.ok) {
+            const j = await res.json();
+            if (j?.ok && Array.isArray(j.blocks)) {
+              const cloudEvents = j.blocks.map((b: any) => ({
                 id: b.id,
                 title: b.title || '(No Title)',
                 start: b.start,
                 end: b.end,
                 allDay: b.allDay,
                 source: b.source || 'google',
-              });
+              }));
+              cloudCacheRef.current.events = cloudEvents;
+              cloudCacheRef.current.eventsFetchedAt = now;
+              allEvents.push(...cloudEvents);
             }
+          } else if (cloudCacheRef.current.events.length > 0) {
+            allEvents.push(...cloudCacheRef.current.events);
+          }
+        } catch {
+          if (cloudCacheRef.current.events.length > 0) {
+            allEvents.push(...cloudCacheRef.current.events);
           }
         }
-      } catch {}
+      }
     }
 
     // Fetch offline/local calendar events (always works)
@@ -312,67 +387,104 @@ export function usePlannerData(accessToken?: string | null): UsePlannerDataResul
   };
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const eventsPromise = fetchCalendarEvents();
-      const unifiedTasksPromise = fetchUnifiedTasks();
-      const cloudRemindersPromise = fetchCloudReminders();
-
-      let ok = agentOnline;
-      let baseUrl = agentHttp;
-      if (!ok) {
-        const probed = await probeAgent(1500);
-        ok = probed.ok;
-        if (probed.baseUrl) baseUrl = probed.baseUrl;
-      }
-
-      if (baseUrl !== agentHttp) setAgentHttp(baseUrl);
-      if (ok !== agentOnline) setAgentOnline(ok);
-
-      const [agentTasks, r, e, unifiedTasks, cloudR] = await Promise.all([
-        ok ? fetchTasks(baseUrl) : Promise.resolve(null),
-        ok ? fetchReminders(baseUrl) : Promise.resolve(null),
-        eventsPromise,
-        unifiedTasksPromise,
-        cloudRemindersPromise,
-      ]);
-
-      // Merge agent tasks with unified tasks
-      const mergedTasks: PlannerTask[] = [];
-      if (agentTasks !== null) {
-        mergedTasks.push(...agentTasks.map((t: any) => ({ ...t, source: 'agent' as const })));
-      }
-      mergedTasks.push(...unifiedTasks);
-      setTasks(mergedTasks);
-
-      // Merge local + cloud reminders
-      const mergedReminders: PlannerReminder[] = [];
-      if (r !== null) mergedReminders.push(...r);
-      if (cloudR.length > 0) mergedReminders.push(...cloudR);
-      setReminders(mergedReminders);
-      setEvents(e);
-
-      if (ok && agentTasks === null && r === null) {
-        setAgentOnline(false);
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load planner data');
-    } finally {
+    if (!enabled || !documentVisible) {
       setLoading(false);
+      return;
     }
-  }, [accessToken, agentOnline, agentHttp, probeAgent]);
+
+    if (refreshPromiseRef.current) {
+      return refreshPromiseRef.current;
+    }
+
+    const run = (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const eventsPromise = fetchCalendarEvents();
+        const unifiedTasksPromise = fetchUnifiedTasks();
+        const cloudRemindersPromise = fetchCloudReminders();
+
+        let ok = agentOnlineRef.current;
+        let baseUrl = agentHttpRef.current;
+        if (!ok) {
+          const probed = await probeAgent(1500);
+          ok = probed.ok;
+          if (probed.baseUrl) baseUrl = probed.baseUrl;
+        }
+
+        if (baseUrl !== agentHttpRef.current) {
+          agentHttpRef.current = baseUrl;
+          setAgentHttp(baseUrl);
+        }
+        if (ok !== agentOnlineRef.current) {
+          agentOnlineRef.current = ok;
+          setAgentOnline(ok);
+        }
+
+        const [agentTasks, r, e, unifiedTasks, cloudR] = await Promise.all([
+          ok ? fetchTasks(baseUrl) : Promise.resolve(null),
+          ok ? fetchReminders(baseUrl) : Promise.resolve(null),
+          eventsPromise,
+          unifiedTasksPromise,
+          cloudRemindersPromise,
+        ]);
+
+        // Merge agent tasks with unified tasks
+        const mergedTasks: PlannerTask[] = [];
+        if (agentTasks !== null) {
+          mergedTasks.push(...agentTasks.map((t: any) => ({ ...t, source: 'agent' as const })));
+        }
+        mergedTasks.push(...unifiedTasks);
+        setTasks(mergedTasks);
+
+        // Merge local + cloud reminders
+        const mergedReminders: PlannerReminder[] = [];
+        if (r !== null) mergedReminders.push(...r);
+        if (cloudR.length > 0) mergedReminders.push(...cloudR);
+        setReminders(mergedReminders);
+        setEvents(e);
+
+        if (ok && agentTasks === null && r === null) {
+          agentOnlineRef.current = false;
+          setAgentOnline(false);
+        }
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load planner data');
+      } finally {
+        setLoading(false);
+        refreshPromiseRef.current = null;
+      }
+    })();
+
+    refreshPromiseRef.current = run;
+    return run;
+  }, [accessToken, cloudPollMs, documentVisible, enabled, probeAgent]);
 
   useEffect(() => {
-    refresh();
-    const refreshMs = agentOnline ? 30000 : 3000;
-    const dataInterval = setInterval(refresh, refreshMs);
+    if (!enabled || !documentVisible) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let dataTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const run = async () => {
+      await refresh();
+      if (cancelled) return;
+      const refreshMs = agentOnlineRef.current ? localPollOnlineMs : localPollOfflineMs;
+      dataTimer = setTimeout(run, refreshMs);
+    };
+
+    void run();
     const tickInterval = setInterval(() => setTick(t => t + 1), 10000);
+
     return () => {
-      clearInterval(dataInterval);
+      cancelled = true;
+      if (dataTimer) clearTimeout(dataTimer);
       clearInterval(tickInterval);
     };
-  }, [refresh, agentOnline]);
+  }, [documentVisible, enabled, localPollOfflineMs, localPollOnlineMs, refresh]);
 
   // Compute next upcoming item (re-computed on tick for live time updates)
   const nextUp: NextUpItem | null = useMemo(() => {

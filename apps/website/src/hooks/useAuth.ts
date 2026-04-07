@@ -30,14 +30,6 @@ interface UserData {
 }
 
 async function fetchProfile(userId: string) {
-  const byUserId = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-
-  if (!byUserId.error && byUserId.data) return byUserId;
-
   return supabase
     .from('profiles')
     .select('*')
@@ -46,12 +38,6 @@ async function fetchProfile(userId: string) {
 }
 
 async function upsertProfile(userId: string, row: Record<string, any>) {
-  const byUserId = await supabase
-    .from('profiles')
-    .upsert({ user_id: userId, ...row }, { onConflict: 'user_id' });
-
-  if (!byUserId.error) return byUserId;
-
   return supabase
     .from('profiles')
     .upsert({ id: userId, ...row }, { onConflict: 'id' });

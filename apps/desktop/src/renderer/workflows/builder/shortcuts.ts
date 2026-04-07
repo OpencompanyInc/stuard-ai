@@ -114,12 +114,12 @@ export const TOOL_SHORTCUTS: Record<string, ToolShortcut> = {
   // =========================================================================
   // System & Commands
   // =========================================================================
-  'run': { tool: 'run_command', args: { shell: 'auto' } },
-  'cmd': { tool: 'run_command', args: { shell: 'cmd' } },
-  'powershell': { tool: 'run_command', args: { shell: 'powershell' } },
-  'bash': { tool: 'run_command', args: { shell: 'bash' } },
-  'shell': { tool: 'run_command', args: { shell: 'auto' } },
-  'exec': { tool: 'run_command', args: { shell: 'auto' } },
+  'run': { tool: 'run_command', args: { shell: 'auto', isPermissionRequired: false } },
+  'cmd': { tool: 'run_command', args: { shell: 'cmd', isPermissionRequired: false } },
+  'powershell': { tool: 'run_command', args: { shell: 'powershell', isPermissionRequired: false } },
+  'bash': { tool: 'run_command', args: { shell: 'bash', isPermissionRequired: false } },
+  'shell': { tool: 'run_command', args: { shell: 'auto', isPermissionRequired: false } },
+  'exec': { tool: 'run_command', args: { shell: 'auto', isPermissionRequired: false } },
   'launch': { tool: 'launch_application_or_uri', args: {} },
   'open': { tool: 'launch_application_or_uri', args: {} },
   'start': { tool: 'launch_application_or_uri', args: {} },
@@ -228,8 +228,12 @@ export const tools = {
     ({ tool: 'log', args: { message } }),
   focus: (title: string) => 
     ({ tool: 'bring_window_to_foreground', args: { title } }),
-  run: (command: string, shell: 'auto' | 'cmd' | 'powershell' | 'bash' = 'auto') => 
-    ({ tool: 'run_command', args: { command, shell } }),
+  run: (
+    command: string,
+    shell: 'auto' | 'cmd' | 'powershell' | 'bash' = 'auto',
+    isPermissionRequired = false,
+  ) =>
+    ({ tool: 'run_command', args: { command, shell, isPermissionRequired } }),
   python: (code: string, envId?: string) => 
     ({ tool: 'run_python_script', args: { code, envId } }),
   node: (code: string) => 

@@ -37,12 +37,14 @@ import { handleVMAgentRoutes } from './vm-agent-routes';
 import { handleDesktopToolRelayRoutes } from './desktop-tool-relay';
 import { handleProactiveRoutes } from './proactive';
 import { handleServerlessChatRoutes } from './serverless-chat';
+import { handleBillingRoutes } from './billing';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
   if (handleHealth(req, res, parsedUrl)) return true;
   if (await handleModelsRoutes(req, res, parsedUrl)) return true;
   if (await handleCredits(req, res, parsedUrl)) return true;
+  if (await handleBillingRoutes(req, res, parsedUrl)) return true;
   if (await handleBetaRoutes(req, res, parsedUrl)) return true;
   if (await handleOpsRoutes(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;

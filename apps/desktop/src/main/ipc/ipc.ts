@@ -26,6 +26,7 @@ import {
   updateMediaLibraryPrefs,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
+import { pushDesktopAgentDataToVM } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
 import {
   browserMirrorClickAt,
@@ -874,6 +875,16 @@ export function setupIpc() {
   // Auth session sync
   ipcMain.handle('auth:syncSession', async (_e, session: any) => {
     return syncMainAuthSession(session);
+  });
+
+  // Cloud Engine — agent data upload (desktop → GCS → VM)
+  ipcMain.handle('cloud:uploadAgentData', async () => {
+    try {
+      const ok = await pushDesktopAgentDataToVM();
+      return { ok };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'upload_failed') };
+    }
   });
 
   // Skills

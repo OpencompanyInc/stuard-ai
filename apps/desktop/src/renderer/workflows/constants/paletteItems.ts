@@ -15,7 +15,7 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
 
 export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   // Commands & apps
-  { k: 'local.tool', t: 'run_command', label: 'Run Command', args: { command: 'echo hello', shell: 'auto', description: '' } },
+  { k: 'local.tool', t: 'run_command', label: 'Run Command', args: { command: 'echo hello', shell: 'auto', isPermissionRequired: false, description: '' } },
   { k: 'local.tool', t: 'launch_application_or_uri', label: 'Launch App / URL', args: { target: 'C:/Path/To/App.exe', args: [] } },
 
   // Notifications

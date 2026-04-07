@@ -170,10 +170,11 @@ The user's OS is provided in the task context. Adjust all paths and shell comman
 ### Terminal & Commands (use only when the above tools can't do the job)
 
 Use run_command **only** for tasks that the dedicated file/search tools cannot handle — e.g. running builds, installing packages, git operations, or piping multiple shell commands together. Do NOT use run_command for things like reading files, listing directories, searching text, or finding files — use the dedicated tools above instead.
+Set \`isPermissionRequired=false\` only for read-only inspection commands. Set it to \`true\` for anything that writes files, installs packages, changes git or system state, or could be destructive. When approval is required, also include a short \`description\`.
 
 | Tool | When to Use | Key Parameters |
 |------|-------------|----------------|
-| run_command | Run a one-shot shell command | command, description, shell? (auto/cmd/powershell/bash), timeoutMs?, cwd?, background? |
+| run_command | Run a one-shot shell command | command, isPermissionRequired, description? (required when approval is needed), shell? (auto/cmd/powershell/bash), timeoutMs?, cwd?, background? |
 | run_python_script | Execute Python code or a .py file | code OR path, packages?, timeoutMs?, cwd? |
 | terminal_create | Start a persistent PTY session (for interactive or long-running processes) | description, shell? (auto/powershell/bash/zsh), cwd?, env? |
 | terminal_send_input | Send a line of input to a PTY | sessionId, input, enter?, description |

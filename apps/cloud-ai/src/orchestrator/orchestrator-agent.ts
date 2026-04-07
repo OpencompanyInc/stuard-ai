@@ -7,7 +7,6 @@
  */
 
 import { Agent } from '@mastra/core/agent';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import { getModel, getAgentName } from '../agents/stuard/models';
 import { buildAvailableSkillsPromptSection, type SkillSummary } from '../tools/skill-tools';
@@ -35,14 +34,11 @@ import {
 } from '../tools/device-tools';
 import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
 
-// Lazy import to break circular: orchestrator-agent → stuard/tools → meta-tools → workflow-subagent → orchestrator
-const _require = createRequire(import.meta.url);
-let _getExecutionTools: ((mcpTools?: Record<string, any>) => Record<string, any>) | undefined;
+// Resolved at startup via execution-tools-resolver to break the circular
+// dependency: orchestrator-agent → stuard/tools → meta-tools → workflow-subagent → orchestrator.
+import { resolveExecutionTools } from './execution-tools-resolver';
 function getExecutionToolsLazy(mcpTools: Record<string, any> = {}): Record<string, any> {
-  if (!_getExecutionTools) {
-    _getExecutionTools = _require('../agents/stuard/tools').getExecutionTools;
-  }
-  return _getExecutionTools!(mcpTools);
+  return resolveExecutionTools(mcpTools);
 }
 
 const DEFAULT_USER_HOME_DIR = (() => {

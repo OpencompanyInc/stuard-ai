@@ -672,6 +672,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
       ? Number(explicitCostUsd.toFixed(8))
       : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
+    const creditCost = creditsFromUsd(costUsd);
     await supabaseService.from('usage_events').insert([
       {
         user_id: userId,
@@ -681,11 +682,51 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
         completion_tokens: completionTokens,
         total_tokens: totalTokens,
         cost_usd: costUsd,
-        credit_cost: creditsFromUsd(costUsd),
+        credit_cost: creditCost,
         raw: u,
       },
     ]);
+
+    // Debit credit grants so remaining balance decreases
+    if (creditCost > 0) {
+      try {
+        await debitCreditGrants(userId, creditCost);
+      } catch {}
+    }
   } catch {}
+}
+
+/**
+ * Decrement remaining_credits on credit_grants for a given amount.
+ * Uses oldest-expiring-first order. Does NOT insert into usage_events
+ * (the caller is expected to have already done that).
+ */
+async function debitCreditGrants(userId: string, credits: number): Promise<void> {
+  if (!supabaseService || credits <= 0) return;
+  const { data: grants } = await supabaseService
+    .from('credit_grants')
+    .select('id, remaining_credits, expires_at, created_at')
+    .eq('user_id', userId)
+    .gt('remaining_credits', 0)
+    .order('expires_at', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  let remaining = credits;
+  const now = Date.now();
+  for (const grant of grants || []) {
+    if (remaining <= 0) break;
+    const expiresAt = grant?.expires_at ? new Date(grant.expires_at).getTime() : null;
+    if (expiresAt && expiresAt <= now) continue;
+    const available = Number(grant?.remaining_credits) || 0;
+    if (available <= 0) continue;
+    const debitAmount = Math.min(remaining, available);
+    remaining -= debitAmount;
+    await supabaseService
+      .from('credit_grants')
+      .update({ remaining_credits: Number((available - debitAmount).toFixed(4)) })
+      .eq('id', grant.id)
+      .throwOnError();
+  }
 }
 
 export function hasSupabase(): boolean {
@@ -728,7 +769,7 @@ export async function getSyncPreferences(userId: string): Promise<SyncPreference
     const { data, error } = await supabaseService
       .from('profiles')
       .select('sync_accounts, sync_conversations, sync_memories, sync_integrations, timezone')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
     if (error || !data) return defaultSyncPrefs;
     return {
@@ -756,7 +797,7 @@ export async function updateSyncPreferences(userId: string, prefs: Partial<SyncP
     const { error } = await supabaseService
       .from('profiles')
       .update(updates)
-      .eq('id', userId);
+      .eq('user_id', userId);
     return !error;
   } catch {
     return false;
@@ -769,7 +810,7 @@ export async function getProfile(userId: string): Promise<{ plan: string; daily_
     const { data, error } = await supabaseService
       .from('profiles')
       .select('plan, monthly_token_limit')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
     if (error || !data) return null;
     return {
@@ -903,7 +944,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
       const { data } = await supabaseService
         .from('profiles')
         .select('plan, current_period_start, current_period_end')
-        .eq('id', userId)
+        .eq('user_id', userId)
         .single();
       if (data) {
         plan = String((data as any).plan || plan);
@@ -1081,231 +1122,6 @@ export async function debitCredits(userId: string, input: CreditDebitInput): Pro
   } catch (e: any) {
     console.error('[supabase] debitCredits error:', e?.message || e);
     return false;
-  }
-}
-
-// ── Usage Breakdown & Transaction History ──────────────────────────────────
-
-export interface UsageBreakdownItem {
-  category: string;
-  credits: number;
-  costUsd: number;
-  count: number;
-}
-
-/**
- * Get usage breakdown by category for the current billing period.
- * Categories: inference, subagent, compute, messaging, etc.
- */
-export async function getUsageBreakdown(userId: string, since?: Date): Promise<UsageBreakdownItem[]> {
-  if (!supabaseService) return [];
-  const monthStart = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  try {
-    // Query usage_events grouped by source type
-    const { data: usageRows } = await supabaseService
-      .from('usage_events')
-      .select('model, cost_usd, credit_cost, raw')
-      .eq('user_id', userId)
-      .gte('created_at', monthStart.toISOString());
-
-    // Also query compute billing events
-    const { data: computeRows } = await supabaseService
-      .from('compute_billing_events')
-      .select('event_type, credits_deducted, details')
-      .eq('user_id', userId)
-      .gte('billing_hour', monthStart.toISOString());
-
-    // Also query credit_transactions for messaging debits
-    const { data: txRows } = await supabaseService
-      .from('credit_transactions')
-      .select('source_type, credits, amount_usd')
-      .eq('user_id', userId)
-      .eq('entry_type', 'debit')
-      .gte('created_at', monthStart.toISOString());
-
-    const breakdown = new Map<string, UsageBreakdownItem>();
-    const getOrCreate = (cat: string): UsageBreakdownItem => {
-      if (!breakdown.has(cat)) breakdown.set(cat, { category: cat, credits: 0, costUsd: 0, count: 0 });
-      return breakdown.get(cat)!;
-    };
-
-    // Process usage_events (inference, subagent calls)
-    for (const row of usageRows || []) {
-      const raw = row.raw && typeof row.raw === 'object' ? row.raw as any : {};
-      const sourceType = raw.sourceType || raw.source_type || 'inference';
-      const category = sourceType === 'subagent' ? 'subagent' : 'inference';
-      const item = getOrCreate(category);
-      item.credits += Number(row.credit_cost) || 0;
-      item.costUsd += Number(row.cost_usd) || 0;
-      item.count++;
-    }
-
-    // Process compute billing events
-    for (const row of computeRows || []) {
-      const eventType = String(row.event_type || 'compute');
-      const category = eventType.includes('storage') ? 'storage' : 'compute';
-      const item = getOrCreate(category);
-      item.credits += Number(row.credits_deducted) || 0;
-      // Estimate USD from credits
-      const rate = creditsPerUsd();
-      item.costUsd += rate > 0 ? (Number(row.credits_deducted) || 0) / rate : 0;
-      item.count++;
-    }
-
-    // Process messaging debits from credit_transactions
-    for (const row of txRows || []) {
-      const st = String(row.source_type || '');
-      if (['telnyx', 'whatsapp', 'sms', 'messaging'].some(k => st.includes(k))) {
-        const item = getOrCreate('messaging');
-        item.credits += Number(row.credits) || 0;
-        item.costUsd += Number(row.amount_usd) || 0;
-        item.count++;
-      }
-    }
-
-    return Array.from(breakdown.values()).sort((a, b) => b.credits - a.credits);
-  } catch (e: any) {
-    console.error('[supabase] getUsageBreakdown error:', e?.message);
-    return [];
-  }
-}
-
-export interface UsageLogEntry {
-  id: string;
-  model: string;
-  chatName: string | null;
-  conversationId: string | null;
-  sourceType: string;
-  subagentKind: string | null;
-  credits: number;
-  costUsd: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  createdAt: string;
-}
-
-/**
- * Get detailed per-event usage logs with conversation titles.
- */
-export async function getUsageLogs(
-  userId: string,
-  limit = 50,
-  offset = 0,
-  since?: Date,
-): Promise<{ logs: UsageLogEntry[]; total: number }> {
-  if (!supabaseService) return { logs: [], total: 0 };
-  try {
-    const monthStart = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
-    // Count total (exclude zero-credit/zero-token junk rows)
-    const { count } = await supabaseService
-      .from('usage_events')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .gte('created_at', monthStart.toISOString())
-      .or('credit_cost.gt.0,total_tokens.gt.0,prompt_tokens.gt.0');
-
-    // Fetch usage events (exclude zero-credit/zero-token junk)
-    const { data: rows } = await supabaseService
-      .from('usage_events')
-      .select('id, model, conversation_id, cost_usd, credit_cost, prompt_tokens, completion_tokens, total_tokens, raw, created_at')
-      .eq('user_id', userId)
-      .gte('created_at', monthStart.toISOString())
-      .or('credit_cost.gt.0,total_tokens.gt.0,prompt_tokens.gt.0')
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (!rows || rows.length === 0) return { logs: [], total: count || 0 };
-
-    // Collect unique conversation IDs to fetch titles
-    const convIds = [...new Set((rows as any[]).map(r => r.conversation_id).filter(Boolean))];
-    let convTitles = new Map<string, string>();
-    if (convIds.length > 0) {
-      const { data: convRows } = await supabaseService
-        .from('conversations')
-        .select('id, title')
-        .in('id', convIds);
-      for (const c of convRows || []) {
-        if (c.title) convTitles.set(c.id, c.title);
-      }
-    }
-
-    const logs: UsageLogEntry[] = (rows as any[]).map(r => {
-      const raw = r.raw && typeof r.raw === 'object' ? r.raw : {};
-      const sourceType = raw.sourceType || raw.source_type || 'inference';
-      const subagentKind = raw.subagentKind || null;
-      return {
-        id: r.id,
-        model: r.model || 'unknown',
-        chatName: r.conversation_id ? (convTitles.get(r.conversation_id) || null) : null,
-        conversationId: r.conversation_id || null,
-        sourceType: subagentKind || sourceType,
-        subagentKind,
-        credits: Number(r.credit_cost) || 0,
-        costUsd: Number(r.cost_usd) || 0,
-        promptTokens: Number(r.prompt_tokens) || 0,
-        completionTokens: Number(r.completion_tokens) || 0,
-        totalTokens: Number(r.total_tokens) || 0,
-        createdAt: r.created_at,
-      };
-    });
-
-    return { logs, total: count || 0 };
-  } catch (e: any) {
-    console.error('[supabase] getUsageLogs error:', e?.message);
-    return { logs: [], total: 0 };
-  }
-}
-
-export interface CreditTransaction {
-  id: string;
-  entryType: string;
-  sourceType: string;
-  sourceRef: string;
-  credits: number;
-  amountUsd: number | null;
-  metadata: any;
-  createdAt: string;
-}
-
-/**
- * Get recent credit transactions for a user (debits and grants).
- */
-export async function getCreditTransactions(
-  userId: string,
-  limit = 50,
-  offset = 0,
-): Promise<{ transactions: CreditTransaction[]; total: number }> {
-  if (!supabaseService) return { transactions: [], total: 0 };
-  try {
-    const { count } = await supabaseService
-      .from('credit_transactions')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId);
-
-    const { data } = await supabaseService
-      .from('credit_transactions')
-      .select('id, entry_type, source_type, source_ref, credits, amount_usd, metadata, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    const transactions: CreditTransaction[] = (data || []).map((r: any) => ({
-      id: r.id,
-      entryType: r.entry_type,
-      sourceType: r.source_type,
-      sourceRef: r.source_ref || '',
-      credits: Number(r.credits) || 0,
-      amountUsd: r.amount_usd != null ? Number(r.amount_usd) : null,
-      metadata: r.metadata || {},
-      createdAt: r.created_at,
-    }));
-
-    return { transactions, total: count || 0 };
-  } catch (e: any) {
-    console.error('[supabase] getCreditTransactions error:', e?.message);
-    return { transactions: [], total: 0 };
   }
 }
 

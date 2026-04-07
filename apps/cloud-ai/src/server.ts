@@ -29,12 +29,16 @@ import { normalizeUsage } from './utils/usage';
 // Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
 import { getOrchestratorAgent } from './orchestrator';
+import { registerExecutionTools } from './orchestrator/execution-tools-resolver';
+import { getExecutionTools } from './agents/stuard/tools';
 
 import { startVMHealthMonitor } from './services/vm-health';
 import { registerConnection, getDesktopWs } from './services/vm-bridge';
 import { verifyVMToken } from './services/vm-tokens';
 
-// Configuration moved to utils/config
+// Wire the execution-tools resolver before any connections are accepted.
+// This breaks the circular dependency that previously required dynamic require().
+registerExecutionTools(getExecutionTools);
 
 type TierChoice = 'auto' | ModelChoice;
 
@@ -165,10 +169,18 @@ server.on('upgrade', (req, socket, head) => {
     });
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // Register with the global ping/pong keepalive so the ping timer
+      // doesn't terminate this connection after 30s of "no pong".
+      wsAlive.set(ws, true);
+      ws.on('pong', () => { try { wsAlive.set(ws, true); } catch {} });
       handleSpeechConnection(ws, req);
     });
   } else if (url === '/terminal' || url.startsWith('/terminal?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // Register with the global ping/pong keepalive so the ping timer
+      // doesn't terminate this connection after 30s of "no pong".
+      wsAlive.set(ws, true);
+      ws.on('pong', () => { try { wsAlive.set(ws, true); } catch {} });
       handleTerminalConnection(ws, req);
     });
   } else if (url.startsWith('/ws/telnyx-bridge')) {

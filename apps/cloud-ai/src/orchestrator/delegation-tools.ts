@@ -212,7 +212,8 @@ async function runDelegateTask(
   const race = await raceCompletionOrQuestion(coordinator);
 
   if (race.type === 'completed') {
-    console.log(`[delegation] ✅ DELEGATE COMPLETE (no question) | subagent=${name} ok=${race.result.ok} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
+    const resultPreview = String(race.result.result || race.result.error || '').slice(0, 120);
+    console.log(`[delegation] ✅ DELEGATE COMPLETE (no question) | subagent=${name} ok=${race.result.ok} | result="${resultPreview}"`);
     return { index, subagent: name, ...buildCompletionResponse(race.result) };
   }
 
@@ -420,7 +421,8 @@ export const replyToSubagent = createTool({
 
     let result: any;
     if (race.type === 'completed') {
-      console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
+      const replyResultPreview = String(race.result.result || race.result.error || '').slice(0, 120);
+      console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${replyResultPreview}"`);
       result = buildCompletionResponse(race.result);
     } else {
       // Another question from the subagent — store and return it

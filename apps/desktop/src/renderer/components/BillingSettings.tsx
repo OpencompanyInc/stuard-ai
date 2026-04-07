@@ -192,18 +192,30 @@ async function cloudApiFetch<T = any>(
   path: string,
   signal?: AbortSignal
 ): Promise<T | null> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return null;
+
+  // Create a timeout that auto-aborts after 15s
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), 15_000);
+  // Forward parent abort to our controller so a single signal covers both
+  if (signal) signal.addEventListener("abort", () => timeout.abort(), { once: true });
+
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) return null;
     const res = await fetch(`${CLOUD_AI_HTTP}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
-      signal,
+      signal: timeout.signal,
     });
     const json = await res.json();
     return json?.ok ? json : null;
-  } catch {
-    return null;
+  } catch (e: any) {
+    if (signal?.aborted) return null; // intentional abort, don't throw
+    if (e?.name === "AbortError")
+      throw new Error("Request timed out. Please check your connection and try again.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -251,6 +263,7 @@ export const BillingSettings: React.FC = () => {
   const backgroundLoadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true; // Reset on remount (React Strict Mode)
     return () => {
       mountedRef.current = false;
       backgroundLoadAbortRef.current?.abort();
@@ -321,15 +334,23 @@ export const BillingSettings: React.FC = () => {
     const backgroundAbort = new AbortController();
     backgroundLoadAbortRef.current = backgroundAbort;
 
+    // Hard failsafe: guarantee loading ends within 20s no matter what
+    const failsafe = setTimeout(() => {
+      if (mountedRef.current) {
+        setLoading(false);
+        setError("Loading timed out. Please try again.");
+      }
+    }, 20_000);
+
     try {
       setLoading(true);
       setError(null);
       setCreditSummary(null);
-      setProducts([]);
       setUsageBreakdown([]);
       setUsageLogs([]);
       setLogsTotal(0);
       setLogsPage(0);
+      setProducts([]);
       setUsageLoaded(false);
       setLogsLoaded(false);
       setProductsLoaded(false);
@@ -337,28 +358,36 @@ export const BillingSettings: React.FC = () => {
       setLogsLoading(false);
       setProductsLoading(false);
 
-      // Load persisted auto-refill preference
-      const prefsResult = await window.desktopAPI?.getPrefs?.();
-      if (
-        prefsResult?.ok &&
-        prefsResult.prefs?.autoRefillCredits !== undefined
-      ) {
-        setAutoRefill(!!prefsResult.prefs.autoRefillCredits);
+      // Load persisted auto-refill preference (non-blocking)
+      window.desktopAPI?.getPrefs?.().then((prefsResult: any) => {
+        if (prefsResult?.ok && prefsResult.prefs?.autoRefillCredits !== undefined) {
+          setAutoRefill(!!prefsResult.prefs.autoRefillCredits);
+        }
+      }).catch(() => {});
+
+      // Get user session with a 5s timeout so it can't hang forever
+      let session: any = null;
+      try {
+        const sessionResult = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Session check timed out")), 5_000)
+          ),
+        ]);
+        session = sessionResult?.data?.session;
+      } catch {
+        // Session timed out or failed — show sign-in message
       }
 
-      // Get user session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
       if (!session?.user?.email) {
-        setLoading(false);
+        setError("Sign in to view billing information.");
         return;
       }
 
       setUserEmail(session.user.email);
       setUserId(session.user.id);
 
-      // Load the summary first so the page becomes interactive quickly.
+      // Only load credit summary — the fastest query. Everything else loads lazily.
       const creditsData = await cloudApiFetch<any>(
         "/v1/credits",
         backgroundAbort.signal
@@ -366,25 +395,37 @@ export const BillingSettings: React.FC = () => {
       if (!mountedRef.current || backgroundAbort.signal.aborted) return;
       if (creditsData) {
         setCreditSummary(creditsData);
+      } else {
+        setError("Could not load billing data. The server may be temporarily unavailable.");
       }
     } catch (e: any) {
       if (!mountedRef.current || backgroundAbort.signal.aborted) return;
       setError(e?.message || "Failed to load billing information");
     } finally {
-      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
+      clearTimeout(failsafe);
       setLoading(false);
     }
+  }, []);
 
-    try {
-      await loadUsageBreakdown(backgroundAbort.signal);
-      if (backgroundAbort.signal.aborted) return;
-      await loadLogs(0, backgroundAbort.signal);
-      if (backgroundAbort.signal.aborted) return;
-      await loadProducts();
-    } catch {
-      // Deferred section loaders settle their own loading state.
-    }
-  }, [loadLogs, loadProducts, loadUsageBreakdown]);
+  // Lazy-load usage breakdown after credit summary is ready
+  useEffect(() => {
+    if (!creditSummary || usageLoaded || usageLoading) return;
+    const abort = backgroundLoadAbortRef.current;
+    loadUsageBreakdown(abort?.signal).catch(() => {});
+  }, [creditSummary, usageLoaded, usageLoading, loadUsageBreakdown]);
+
+  // Lazy-load logs after usage breakdown is ready
+  useEffect(() => {
+    if (!usageLoaded || logsLoaded || logsLoading) return;
+    const abort = backgroundLoadAbortRef.current;
+    loadLogs(0, abort?.signal).catch(() => {});
+  }, [usageLoaded, logsLoaded, logsLoading, loadLogs]);
+
+  // Lazy-load products after logs are ready
+  useEffect(() => {
+    if (!logsLoaded || productsLoaded || productsLoading) return;
+    loadProducts().catch(() => {});
+  }, [logsLoaded, productsLoaded, productsLoading, loadProducts]);
 
   useEffect(() => {
     loadData();
@@ -504,9 +545,35 @@ export const BillingSettings: React.FC = () => {
         />
 
         {error && (
-          <div className="flex items-center gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
-            <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-            <span className="text-sm text-red-500 font-medium">{error}</span>
+          <div className="flex items-center justify-between gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <span className="text-sm text-red-500 font-medium">{error}</span>
+            </div>
+            <button
+              onClick={() => { setError(null); loadData(); }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold text-red-600 hover:bg-red-500/10 transition-colors flex-shrink-0"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Empty state when credits couldn't be loaded */}
+        {!creditSummary && !loading && !error && (
+          <div className="text-center py-8 mb-6">
+            <CreditCard className="w-6 h-6 text-theme-muted mx-auto mb-2" />
+            <p className="text-sm text-theme-muted font-medium mb-3">
+              Billing data unavailable.
+            </p>
+            <button
+              onClick={loadData}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Reload
+            </button>
           </div>
         )}
 

@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 import websockets
 from ..logging_config import get_logger
 from ..permissions import is_auto_approved as _is_auto_approved
+from ..tool_approval import run_command_requires_approval
 from .session import WebSocketSession
 from ..tools.folder_limiter import current_session_id as _folder_session_ctx
 
@@ -17,7 +18,7 @@ else:
 
 logger = get_logger("agent")
 
-SENSITIVE_TOOLS = {"run_command", "write_file"}
+SENSITIVE_TOOLS = {"write_file"}
 # Tools that should be executed by the Desktop client (Electron) instead of the local agent.
 CLIENT_TOOLS = {
     # GenUI (handled by renderer)
@@ -64,6 +65,12 @@ SENSITIVE_CLIENT_TOOLS = {
     "terminal_destroy",
 }
 
+
+def _tool_requires_approval(tool: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    if tool == "run_command":
+        return run_command_requires_approval(args)
+    return tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS
+
 async def handle_cloud_tool_request(
     cdata: Dict[str, Any], 
     session: WebSocketSession, 
@@ -108,9 +115,9 @@ async def handle_cloud_tool_request(
         await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
         # Approval gate for sensitive tools (skip if auto-approved by VM permissions)
-        if (tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS) and not _is_auto_approved(tool):
+        if _tool_requires_approval(tool, args) and not _is_auto_approved(tool):
             try:
-                safe_args = {k: v for k, v in (args or {}).items() if k in ("command", "path", "content")}
+                safe_args = {k: v for k, v in (args or {}).items() if k in ("command", "path", "content", "isPermissionRequired")}
             except Exception:
                 safe_args = {}
             # Use AI-provided description from args, or fallback

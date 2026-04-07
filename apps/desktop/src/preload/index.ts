@@ -521,4 +521,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
 
   // Auth session sync (required for SMS inbox realtime subscription in main process)
   syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
+
+  // Cloud Engine — upload agent data (knowledge.db, memory.db, file_index.db, etc.) to GCS
+  uploadAgentData: (_cloudAiUrl: string, _token: string) => ipcRenderer.invoke('cloud:uploadAgentData'),
 });

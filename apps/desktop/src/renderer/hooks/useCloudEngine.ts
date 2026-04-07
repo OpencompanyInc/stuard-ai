@@ -118,6 +118,13 @@ export function useCloudEngine() {
   const [snapshots, setSnapshots] = useState<CloudSnapshot[]>(_cache?.snapshots ?? []);
   const [deployments, setDeployments] = useState<CloudDeployment[]>(_cache?.deployments ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible');
+
+  useEffect(() => {
+    const onVisibilityChange = () => setDocumentVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
 
   const fetchEngine = useCallback(async () => {
     try {
@@ -409,10 +416,22 @@ export function useCloudEngine() {
 
   // Initial load + polling
   useEffect(() => {
-    fetchEngine();
-  }, [fetchEngine]);
+    if (!documentVisible) {
+      setLoading(false);
+      return;
+    }
+
+    const cacheIsFresh = _cache && (Date.now() - _cache.ts) < CACHE_MAX_AGE_MS;
+    if (!cacheIsFresh) {
+      fetchEngine();
+    } else {
+      setLoading(false);
+    }
+  }, [documentVisible, fetchEngine]);
 
   useEffect(() => {
+    if (!documentVisible) return;
+
     const status = engine?.status;
     if (!status) return;
 
@@ -433,15 +452,17 @@ export function useCloudEngine() {
     }
 
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [engine?.status, engine?.health_status, fetchEngine, fetchMetrics]);
+  }, [documentVisible, engine?.status, engine?.health_status, fetchEngine, fetchMetrics]);
 
   // Load snapshots + deployments when engine is running (not during provisioning/starting)
   useEffect(() => {
+    if (!documentVisible) return;
+
     if (engine && engine.status === 'running') {
       fetchSnapshots();
       fetchDeployments();
     }
-  }, [engine?.id, fetchSnapshots, fetchDeployments]);
+  }, [documentVisible, engine?.id, engine?.status, fetchSnapshots, fetchDeployments]);
 
   return {
     engine,

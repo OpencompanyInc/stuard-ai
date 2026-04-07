@@ -84,11 +84,21 @@ async function getAuthToken(): Promise<string | null> {
 async function apiFetch<T = any>(path: string): Promise<T | null> {
     const token = await getAuthToken();
     if (!token) return null;
-    const res = await fetch(`${CLOUD_API_URL}${path}`, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    return data?.ok ? data : null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+        const res = await fetch(`${CLOUD_API_URL}${path}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+        });
+        const data = await res.json();
+        return data?.ok ? data : null;
+    } catch (e: any) {
+        if (e?.name === 'AbortError') throw new Error('Request timed out. Please try again.');
+        throw e;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 export default function BillingPage() {
@@ -109,6 +119,7 @@ export default function BillingPage() {
         if (!user) { setCreditSummary(null); setCreditsLoading(false); return; }
         try {
             setCreditsLoading(true);
+            setError(null);
             const [creditsData, usageData, txData] = await Promise.all([
                 apiFetch<any>('/v1/credits'),
                 apiFetch<any>('/v1/credits/usage'),
@@ -117,6 +128,9 @@ export default function BillingPage() {
             if (creditsData) setCreditSummary(creditsData);
             if (usageData?.breakdown) setUsageBreakdown(usageData.breakdown);
             if (txData?.transactions) { setTransactions(txData.transactions); setTxTotal(txData.total || 0); }
+            if (!creditsData && !usageData && !txData) {
+                setError('Could not load billing data. The server may be temporarily unavailable.');
+            }
         } catch (e: any) {
             setError(String(e?.message || 'Failed to load billing data.'));
         } finally {
@@ -240,13 +254,39 @@ export default function BillingPage() {
             </div>
 
             {error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-                    {error}
-                    <button onClick={() => setError(null)} className="ml-2 underline">dismiss</button>
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 flex items-center justify-between">
+                    <span>{error}</span>
+                    <div className="flex items-center gap-2 ml-4">
+                        <button onClick={() => { setError(null); loadData(); }} className="underline font-medium">retry</button>
+                        <button onClick={() => setError(null)} className="underline">dismiss</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Loading skeleton */}
+            {creditsLoading && !creditSummary && (
+                <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+                        <div className="space-y-2">
+                            <div className="h-3 w-20 bg-gray-200 rounded" />
+                            <div className="h-8 w-32 bg-gray-200 rounded" />
+                            <div className="h-3 w-48 bg-gray-200 rounded" />
+                        </div>
+                        <div className="h-10 w-40 bg-gray-200 rounded-lg" />
+                    </div>
+                    <div className="mt-5 pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="bg-gray-50 rounded-lg px-4 py-3">
+                                <div className="h-2.5 w-16 bg-gray-200 rounded mb-2" />
+                                <div className="h-6 w-20 bg-gray-200 rounded" />
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
             {/* Current Plan & Balance Card */}
+            {(!creditsLoading || creditSummary) && (
             <div className="bg-white rounded-xl border border-gray-200 p-6">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
                     <div>
@@ -306,6 +346,7 @@ export default function BillingPage() {
                     </>
                 )}
             </div>
+            )}
 
             {/* Tabs: Overview | History */}
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
