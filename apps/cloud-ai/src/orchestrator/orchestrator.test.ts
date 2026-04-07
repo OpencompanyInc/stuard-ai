@@ -207,16 +207,23 @@ describe('Capability Packs', () => {
 
 // ─── Feature Flag ────────────────────────────────────────────────────────────
 
-describe('Feature Flag', () => {
-  it('USE_ORCHESTRATOR defaults to disabled', () => {
-    const flag = process.env.USE_ORCHESTRATOR === '1';
-    expect(flag).toBe(false);
+describe('Runtime Mode', () => {
+  it('orchestrator delegation tools are available without an env flag', async () => {
+    const { ORCHESTRATOR_DELEGATION_TOOLS } = await import('./delegation-tools');
+    expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('delegate');
+    expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('reply_to_subagent');
   });
 
-  it('USE_ORCHESTRATOR can be toggled via env', () => {
+  it('execution tool bootstrap registration does not depend on USE_ORCHESTRATOR', async () => {
     const original = process.env.USE_ORCHESTRATOR;
-    process.env.USE_ORCHESTRATOR = '1';
-    expect(process.env.USE_ORCHESTRATOR === '1').toBe(true);
+    delete process.env.USE_ORCHESTRATOR;
+
+    const { ensureExecutionToolsRegistered } = await import('./execution-tools-bootstrap');
+    const { hasExecutionToolsRegistered } = await import('./execution-tools-resolver');
+
+    await ensureExecutionToolsRegistered();
+    expect(hasExecutionToolsRegistered()).toBe(true);
+
     process.env.USE_ORCHESTRATOR = original;
   });
 });

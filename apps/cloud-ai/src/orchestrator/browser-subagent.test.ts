@@ -485,28 +485,21 @@ describe('Browser Session ID Injection', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 8. USE_ORCHESTRATOR Flag
+// 8. Runtime configuration
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-describe('USE_ORCHESTRATOR Configuration', () => {
-  it('USE_ORCHESTRATOR=1 is set in environment', () => {
-    // This test verifies the env is configured for orchestrator mode.
-    // If this fails, the system will use the direct Stuard agent which
-    // has ALL tools but doesn't delegate to specialized subagents.
-    const flag = process.env.USE_ORCHESTRATOR;
-    console.log(`USE_ORCHESTRATOR = "${flag}"`);
+describe('Runtime Configuration', () => {
+  it('browser delegation tooling exists without relying on USE_ORCHESTRATOR', async () => {
+    const original = process.env.USE_ORCHESTRATOR;
+    delete process.env.USE_ORCHESTRATOR;
 
     // Document the current state — not a hard assertion since tests
     // may run without the full .env loaded
-    if (flag === '1') {
-      expect(flag).toBe('1');
-    } else {
-      console.warn(
-        'USE_ORCHESTRATOR is not "1" in test environment. ' +
-        'Browser delegation requires orchestrator mode. ' +
-        'Current value:', flag
-      );
-    }
+    const { ORCHESTRATOR_DELEGATION_TOOLS } = await import('./delegation-tools');
+    expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('delegate');
+    expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('reply_to_subagent');
+
+    process.env.USE_ORCHESTRATOR = original;
   });
 });
 

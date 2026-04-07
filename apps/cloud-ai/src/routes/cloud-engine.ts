@@ -306,7 +306,8 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         userTimezone,
       });
 
-      // Insert cloud engine record (including per-VM secret for HMAC auth)
+      // Insert cloud engine record (including per-VM secret for HMAC auth).
+      // Reset stale fields from any previous (deleted) engine for this user.
       const engine = await upsertCloudEngine(user.userId, {
         instance_name: instanceName,
         zone,
@@ -314,7 +315,23 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         disk_size_gb: diskSizeGb,
         status: 'provisioning',
         vm_secret: vmSecret,
+        started_at: null,
+        stopped_at: null,
+        deleted_at: null,
+        external_ip: null,
+        health_status: null,
+        last_heartbeat_at: null,
+        agent_version: null,
       });
+      if (!engine) {
+        // DB write failed — delete the orphaned VM
+        console.error('[cloud-engine] upsertCloudEngine returned null, cleaning up orphaned VM', instanceName);
+        provider.deleteVM(instanceName, zone).catch((e: any) =>
+          console.error('[cloud-engine] Failed to cleanup orphaned VM:', e?.message),
+        );
+        json(res, 500, { ok: false, error: 'provision_failed', message: 'Could not save engine record. Please try again.' });
+        return true;
+      }
 
       // Initialize storage usage record
       await upsertStorageUsage(user.userId, {

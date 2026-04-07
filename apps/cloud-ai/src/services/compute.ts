@@ -636,8 +636,15 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 4
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LRO helper — @google-cloud/compute v6+ returns LRO objects without .promise()
+// LRO helper — @google-cloud/compute v6+ returns Operation proto objects
 // ─────────────────────────────────────────────────────────────────────────────
+
+function checkOperationError(op: any): void {
+  if (op?.error?.errors?.length) {
+    const errMsg = op.error.errors.map((e: any) => e.message || e.code).join('; ');
+    throw new Error(`GCE operation failed: ${errMsg}`);
+  }
+}
 
 async function waitForOperation(operation: any): Promise<void> {
   if (!operation) return;
@@ -646,11 +653,67 @@ async function waitForOperation(operation: any): Promise<void> {
     await operation.promise();
     return;
   }
-  // v6+ style — already resolved or check .done
-  if (operation.done) return;
-  // If not done, give GCP a few seconds to finalize
-  console.log(`[compute:gce] Operation LRO (name=${operation.name}) not yet done, waiting...`);
-  await new Promise(r => setTimeout(r, 3000));
+  // v6+ — check status field (PENDING/RUNNING/DONE)
+  if (operation.status === 'DONE') {
+    checkOperationError(operation);
+    return;
+  }
+  // No operation name — can't poll, fall back to legacy check
+  if (!operation.name) {
+    if (operation.done) return;
+    await new Promise(r => setTimeout(r, 5000));
+    return;
+  }
+
+  // Determine scope: zone (most ops) vs global (firewall rules)
+  const opZone = operation.zone?.split('/').pop();
+
+  console.log(`[compute:gce] Waiting for operation ${operation.name}${opZone ? ` in ${opZone}` : ' (global)'}...`);
+
+  // Poll using the appropriate operations client. The wait() API long-polls
+  // server-side (~2 min per call) so we only need a few iterations.
+  const MAX_POLLS = 5;
+  if (opZone) {
+    const { ZoneOperationsClient } = await import('@google-cloud/compute');
+    const opsClient = new ZoneOperationsClient();
+    for (let i = 0; i < MAX_POLLS; i++) {
+      try {
+        const [result] = await opsClient.wait({
+          project: GCP_PROJECT_ID,
+          zone: opZone,
+          operation: operation.name,
+        });
+        if (result.status === 'DONE') {
+          checkOperationError(result);
+          return;
+        }
+      } catch (err: any) {
+        if (err?.message?.startsWith('GCE operation failed:')) throw err;
+        console.warn(`[compute:gce] Operation poll error (attempt ${i + 1}): ${err?.message}`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+  } else {
+    const { GlobalOperationsClient } = await import('@google-cloud/compute');
+    const opsClient = new GlobalOperationsClient();
+    for (let i = 0; i < MAX_POLLS; i++) {
+      try {
+        const [result] = await opsClient.wait({
+          project: GCP_PROJECT_ID,
+          operation: operation.name,
+        });
+        if (result.status === 'DONE') {
+          checkOperationError(result);
+          return;
+        }
+      } catch (err: any) {
+        if (err?.message?.startsWith('GCE operation failed:')) throw err;
+        console.warn(`[compute:gce] Global operation poll error (attempt ${i + 1}): ${err?.message}`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+  }
+  console.warn(`[compute:gce] Operation ${operation.name} did not complete after ${MAX_POLLS} polls`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
