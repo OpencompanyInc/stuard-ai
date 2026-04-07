@@ -24,7 +24,6 @@ import * as memoryService from './memory/conversations';
 import { compactHistory } from './memory/context-compactor';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
-import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
 // Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
@@ -485,7 +484,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const payload = verifyVMToken(msg.auth.vmToken, secret);
                 if (payload && payload.userId === claimedUserId) {
                   authUser = { userId: claimedUserId };
-                }
               }
             } catch {}
           }
@@ -798,20 +796,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         } else {
           // ─── Parallel embedding + tool ranking pipeline ───────────────
-          // Always attempt embedding-based tool ranking. The embedding is
-          // memoized and reused by knowledge/memory retrieval later, so
-          // this is essentially free. Falls back to static Tier 1 if
-          // embedding or Supabase is unavailable.
-          let rankedToolNames: string[] | undefined;
 
-          if (prompt) {
-            try {
-              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
-              if (queryEmbedding && queryEmbedding.length > 0) {
-                const topN = Number(process.env.SIS_RANKED_TOPN || '5');
-                rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
-                if (process.env.SIS_DEBUG === '1') {
-                  console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
                 }
               }
             } catch (e: any) {
