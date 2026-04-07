@@ -413,7 +413,7 @@ async function connect() {
                             try { win.webContents.send('chat:sync-event', msg); } catch { }
                         }
                     } catch { }
-                } else if (msg.vmMirror && (msg.type === 'progress' || msg.type === 'final' || msg.type === 'conversation' || msg.type === 'title')) {
+                } else if (msg.vmMirror && (msg.type === 'progress' || msg.type === 'final' || msg.type === 'conversation' || msg.type === 'title' || msg.type === 'subagent_event')) {
                     // VM stream mirror — relay real-time streaming events to renderer
                     try {
                         for (const win of BrowserWindow.getAllWindows()) {

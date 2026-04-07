@@ -5,7 +5,7 @@ import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from './agents/workflow-agen
 import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
-import { verifyAccessToken, AuthErrorCode, parseTokenInfo } from './auth';
+import { verifyAccessToken, AuthErrorCode } from './auth';
 import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, getConversationMessages } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
@@ -28,17 +28,15 @@ import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
 // Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
-import { getOrchestratorAgent } from './orchestrator';
-import { registerExecutionTools } from './orchestrator/execution-tools-resolver';
-import { getExecutionTools } from './agents/stuard/tools';
+import { getAgentForQuery } from './agents/stuard/index';
+
 
 import { startVMHealthMonitor } from './services/vm-health';
 import { registerConnection, getDesktopWs } from './services/vm-bridge';
 import { verifyVMToken } from './services/vm-tokens';
+import { setVMStreamMirror, mirrorToDesktop } from './services/vm-stream-mirror';
 
-// Wire the execution-tools resolver before any connections are accepted.
-// This breaks the circular dependency that previously required dynamic require().
-registerExecutionTools(getExecutionTools);
+// Configuration moved to utils/config
 
 type TierChoice = 'auto' | ModelChoice;
 
@@ -63,14 +61,6 @@ function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undef
   }
 }
 
-// VM stream mirror: when processing a VM-auth'd chat, mirror streaming events
-// to the user's desktop WS so they get real-time reasoning/text/tool events.
-// WeakMap auto-cleans when the VM WS is garbage collected.
-const _vmStreamMirrors = new WeakMap<WebSocket, WebSocket>();
-
-/** Event types that should be mirrored to the desktop during VM streaming */
-const MIRROR_EVENT_TYPES = new Set(['progress', 'final', 'title', 'conversation']);
-
 function send(ws: WebSocket, data: unknown, requestId?: string) {
   try {
     // Include requestId in all messages for parallel routing
@@ -79,19 +69,7 @@ function send(ws: WebSocket, data: unknown, requestId?: string) {
   } catch { }
 
   // Mirror to desktop for VM→desktop stream relay
-  const mirror = _vmStreamMirrors.get(ws);
-  if (mirror && mirror.readyState === WebSocket.OPEN && mirror !== ws) {
-    const d = data as any;
-    if (d?.type && MIRROR_EVENT_TYPES.has(d.type)) {
-      try {
-        const mirrorPayload = {
-          ...(requestId ? { ...d, requestId } : d),
-          vmMirror: true,
-        };
-        mirror.send(JSON.stringify(mirrorPayload));
-      } catch { }
-    }
-  }
+  mirrorToDesktop(ws, data, requestId);
 }
 
 // Helper to check if a tool should be hidden from UI (SIS meta-tools, internal operations)
@@ -169,18 +147,10 @@ server.on('upgrade', (req, socket, head) => {
     });
   } else if (url === '/speech' || url.startsWith('/speech?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
-      // Register with the global ping/pong keepalive so the ping timer
-      // doesn't terminate this connection after 30s of "no pong".
-      wsAlive.set(ws, true);
-      ws.on('pong', () => { try { wsAlive.set(ws, true); } catch {} });
       handleSpeechConnection(ws, req);
     });
   } else if (url === '/terminal' || url.startsWith('/terminal?')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
-      // Register with the global ping/pong keepalive so the ping timer
-      // doesn't terminate this connection after 30s of "no pong".
-      wsAlive.set(ws, true);
-      ws.on('pong', () => { try { wsAlive.set(ws, true); } catch {} });
       handleTerminalConnection(ws, req);
     });
   } else if (url.startsWith('/ws/telnyx-bridge')) {
@@ -386,12 +356,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               const authResult = await verifyAccessToken(accessToken);
               if (authResult?.success && authResult.userId) {
                 secrets.userId = authResult.userId;
-              } else {
-                // Fallback: extract userId from JWT for local-first token lookup
-                const tokenInfo = parseTokenInfo(accessToken);
-                if (tokenInfo?.userId && !tokenInfo.isExpired) {
-                  secrets.userId = tokenInfo.userId;
-                }
               }
             } catch {}
           }
@@ -410,33 +374,35 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       return;
     }
 
-    // Handle auth messages (from cloud-webhooks desktop connection)
-    // Registers the WS for webhook delivery, chat sync, and VM stream mirroring
+    // Handle auth-only messages (from cloud-webhooks desktop connection).
+    // This registers the persistent desktop WS for VM stream mirroring and webhook delivery.
     if (kind === 'auth') {
-      const token = String(msg?.accessToken || msg?.auth?.accessToken || '');
-      if (!token) { send(ws, { type: 'auth_result', ok: false }); return; }
+      const token = String(msg?.accessToken || msg?.auth?.accessToken || '').trim();
+      if (!token) {
+        send(ws, { type: 'auth_result', ok: false, message: 'no_token' });
+        return;
+      }
       try {
         const authResult = await verifyAccessToken(token);
         if (authResult?.success && authResult.userId) {
-          registerConnection(ws, authResult.userId, 'desktop');
-          registerWebhookClient(authResult.userId, ws);
-          // Deliver queued webhooks
-          let queuedCount = 0;
+          // Register as desktop connection for VM stream mirroring
+          const ct = (ws as any).__clientType || 'desktop';
+          if (ct !== 'vm-agent') {
+            registerConnection(ws, authResult.userId, 'desktop');
+          }
+          // Webhook delivery on this persistent connection
           try {
-            queuedCount = await deliverQueuedWebhooks(authResult.userId, ws);
-          } catch { }
-          // Deliver queued chat sync events
-          try {
-            const { deliverQueuedChatEvents } = await import('./services/chat-sync');
-            const chatDelivered = await deliverQueuedChatEvents(authResult.userId, ws);
-            queuedCount += chatDelivered;
-          } catch { }
-          send(ws, { type: 'auth_result', ok: true, queued: queuedCount });
+            registerWebhookClient(authResult.userId, ws);
+            const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
+            send(ws, { type: 'auth_result', ok: true, queued: delivered });
+          } catch {
+            send(ws, { type: 'auth_result', ok: true, queued: 0 });
+          }
         } else {
-          send(ws, { type: 'auth_result', ok: false });
+          send(ws, { type: 'auth_result', ok: false, message: 'invalid_token' });
         }
-      } catch {
-        send(ws, { type: 'auth_result', ok: false });
+      } catch (e: any) {
+        send(ws, { type: 'auth_result', ok: false, message: e?.message || 'auth_failed' });
       }
       return;
     }
@@ -501,20 +467,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const accessToken = String(msg?.auth?.accessToken || '');
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
         authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
-        if (!authUser && accessToken) {
-          console.warn('[auth] Token verification failed:', authResult?.error || 'unknown', authResult?.message || '');
-          // Fallback: extract userId from JWT payload (unverified) so local-first
-          // tools (Google, etc.) can still look up locally-stored OAuth tokens.
-          const tokenInfo = parseTokenInfo(accessToken);
-          if (tokenInfo?.userId && !tokenInfo.isExpired) {
-            authUser = { userId: tokenInfo.userId, email: tokenInfo.email };
-            console.log('[auth] Using JWT-parsed userId fallback:', tokenInfo.userId);
-          }
-        } else if (!accessToken) {
-          console.warn('[auth] No access token provided by client');
-        }
-        // Track auth method so chat sync uses verified source, not spoofable context flags
-        let authViaVMToken = false;
 
         // Fallback: authenticate VM agent via HMAC token (no Supabase JWT on VMs)
         if (!authUser && msg?.auth?.vmToken) {
@@ -527,7 +479,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const payload = verifyVMToken(msg.auth.vmToken, secret);
                 if (payload && payload.userId === claimedUserId) {
                   authUser = { userId: claimedUserId };
-                  authViaVMToken = true;
                 }
               }
             } catch {}
@@ -568,30 +519,25 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
           } catch { }
 
-          // Register this WS as a desktop connection so VM agent relay works
+          // Register this WS for VM agent relay / stream mirroring
           try {
             const ct = (ws as any).__clientType || 'desktop';
-            if (ct !== 'vm-agent') registerConnection(ws, authUser.userId, 'desktop');
-          } catch { }
-
-          // Deliver any queued chat sync events (VM→desktop) on reconnect
-          try {
-            const { deliverQueuedChatEvents } = await import('./services/chat-sync');
-            const chatDelivered = await deliverQueuedChatEvents(authUser.userId, ws);
-            if (chatDelivered > 0) {
-              writeLog('queued_chat_events_delivered', { userId: authUser.userId, count: chatDelivered });
+            if (ct !== 'vm-agent') {
+              // Only register as desktop if no existing open desktop WS.
+              // The persistent cloud-webhooks connection has IPC forwarding
+              // for vmMirror events — don't overwrite it with a transient chat WS.
+              if (!getDesktopWs(authUser.userId)) {
+                registerConnection(ws, authUser.userId, 'desktop');
+              }
+            } else {
+              // VM agent connection — set up stream mirroring to the desktop WS
+              // so CloudChatPanel receives real-time streaming events
+              const desktopWs = getDesktopWs(authUser.userId);
+              if (desktopWs) {
+                setVMStreamMirror(ws, desktopWs);
+              }
             }
           } catch { }
-        }
-
-        // VM stream mirror: relay streaming events to the desktop so the user
-        // sees real-time reasoning/text/tool calls from VM chats.
-        // Skip for SMS-originated chats (no desktop UI to mirror to).
-        if (authViaVMToken && authUser && !(msg as any)?.mobileSource) {
-          const desktopWs = getDesktopWs(authUser.userId);
-          if (desktopWs && desktopWs !== ws && desktopWs.readyState === WebSocket.OPEN) {
-            _vmStreamMirrors.set(ws, desktopWs);
-          }
         }
 
         requestedMode = normalizeTierChoice((msg as any)?.model);
@@ -629,10 +575,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         try {
           send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
         } catch { }
-
-        // Propagate model selection to bridge secrets so subagents inherit it
-        secretBag.__modelTier = routedTier;
-        if (chosenModelId) secretBag.__modelId = chosenModelId;
 
         let enabledIntegrations: string[] = [];
         let mcpTools: Record<string, any> = {};
@@ -849,7 +791,32 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             return;
           }
         } else {
-          agent = getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId);
+          // ─── Parallel embedding + tool ranking pipeline ───────────────
+          // Always attempt embedding-based tool ranking. The embedding is
+          // memoized and reused by knowledge/memory retrieval later, so
+          // this is essentially free. Falls back to static Tier 1 if
+          // embedding or Supabase is unavailable.
+          let rankedToolNames: string[] | undefined;
+
+          if (prompt) {
+            try {
+              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+              if (queryEmbedding && queryEmbedding.length > 0) {
+                const topN = Number(process.env.SIS_RANKED_TOPN || '5');
+                rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
+                if (process.env.SIS_DEBUG === '1') {
+                  console.log(`[tool-rank] Ranked ${rankedToolNames.length} tools: ${rankedToolNames.join(', ')}`);
+                }
+              }
+            } catch (e: any) {
+              // Graceful fallback — static Tier 1 tools still loaded
+              if (process.env.SIS_DEBUG === '1') {
+                console.warn('[tool-rank] Ranking failed, using static Tier 1:', e.message);
+              }
+            }
+          }
+
+          agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
         }
 
         let conversationCreatedNow = false;
@@ -1386,7 +1353,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 tier: routedTier,
                 modelId: chosenModelId,
                 reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               };
@@ -1395,8 +1362,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
             send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
-            // Derive VM source from verified auth method, not client-controlled context flag
-            const isVMChat = authViaVMToken;
             if (authUser && conversationId && conversationCreatedNow) {
               // Only generate title for new conversations
               try {
@@ -1410,44 +1375,13 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                 await setConversationTitle(authUser.userId, conversationId, title);
                 // Send title update to client
                 send(ws, { type: 'title', conversationId, title }, requestId);
-                // Relay title to the other side (VM↔desktop)
-                try {
-                  const { relayChatEvent } = await import('./services/chat-sync');
-                  relayChatEvent(authUser.userId, {
-                    type: 'chat_sync',
-                    action: 'title_update',
-                    conversationId,
-                    source: isVMChat ? 'vm' : 'desktop',
-                    data: { title },
-                    timestamp: new Date().toISOString(),
-                  }).catch(() => {});
-                } catch { }
               } catch { }
             }
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
-            // Chat Sync: relay conversation event to the other side (VM↔desktop)
-            if (authUser && conversationId) {
-              try {
-                const { relayChatEvent } = await import('./services/chat-sync');
-                relayChatEvent(authUser.userId, {
-                  type: 'chat_sync',
-                  action: conversationCreatedNow ? 'new_conversation' : 'new_message',
-                  conversationId,
-                  source: isVMChat ? 'vm' : 'desktop',
-                  data: {
-                    role: 'assistant',
-                    content: finalText,
-                    model: chosenModelId || routedTier,
-                    metadata: { tier: routedTier, modelId: chosenModelId },
-                  },
-                  timestamp: new Date().toISOString(),
-                }).catch(() => {});
-              } catch { }
-            }
-
             // Knowledge Graph Ingestion - extract and store knowledge from conversation
             // Skip for VM chats — the VM agent handles its own knowledge ingestion locally
+            const isVMChat = !!(msg as any)?.context?.isVM;
             if (!isVMChat) try {
               const { ingestConversationTurn } = await import('./knowledge');
               // Run ingestion in background (don't block response)
@@ -1776,7 +1710,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
                 reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -1830,7 +1764,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
                 reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1911,7 +1845,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
                 reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1980,7 +1914,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
                 reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -2009,7 +1943,7 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             const metadata = {
               mode: requestedMode, tier: routedTier, modelId: chosenModelId,
               reasoning: aggregatedReasoning || undefined,
-              reasoningDuration: reasoningStartTime ? (Date.now() - reasoningStartTime) / 1000 : undefined,
+              reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
               toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
               streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               finishReason: 'error',

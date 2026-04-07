@@ -59,6 +59,10 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     try:
         # Increase max_size to avoid 1 MiB default limit (1009 errors) when receiving tool events
         ws_url = CLOUD_WS if CLOUD_WS.endswith("/ws") else (CLOUD_WS.rstrip("/") + "/ws")
+        # Tag as vm-agent so cloud-ai mirrors streaming events to the desktop WS
+        if _IS_VM:
+            sep = "&" if "?" in ws_url else "?"
+            ws_url = ws_url + sep + "client=vm-agent"
         logger.info("cloud_connect url=%s", ws_url)
 
         async with websockets.connect(ws_url, max_size=None) as cws:

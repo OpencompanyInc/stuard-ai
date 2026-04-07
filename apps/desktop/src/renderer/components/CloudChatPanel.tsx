@@ -71,13 +71,35 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
   const [isReasoning, setIsReasoning] = useState(false);
   const [streamTools, setStreamTools] = useState<Array<{ tool: string; status: string }>>([]);
   const streamReceivedFinal = useRef(false);
+  // Refs mirror the latest stream state so the IPC callback (registered once) always
+  // reads current values without needing to re-register on every state change.
+  const streamTextRef = useRef('');
+  const streamReasoningRef = useRef('');
+  const streamToolsRef = useRef<Array<{ tool: string; status: string }>>([]);
+  const messageAddedRef = useRef(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, streamText, streamReasoning, streamTools]);
 
-  // Listen for VM stream mirror events via IPC
+  // Listen for VM stream mirror events via IPC.
+  // Registered ONCE (empty deps) — refs provide access to latest values
+  // without triggering re-registration on every delta/reasoning update.
   useEffect(() => {
+    const clearStreamRefs = () => {
+      streamTextRef.current = '';
+      streamReasoningRef.current = '';
+      streamToolsRef.current = [];
+    };
+
+    const updateToolState = (updater: (prev: Array<{ tool: string; status: string }>) => Array<{ tool: string; status: string }>) => {
+      setStreamTools(prev => {
+        const next = updater(prev);
+        streamToolsRef.current = next;
+        return next;
+      });
+    };
+
     const unsub = (window as any).desktopAPI?.onVMStreamEvent?.((event: any) => {
       if (!event?.vmMirror) return;
 
@@ -88,6 +110,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         switch (ev) {
           case 'start':
             // Stream starting — clear any previous stream state
+            clearStreamRefs();
             setStreamText('');
             setStreamReasoning('');
             setStreamTools([]);
@@ -96,6 +119,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
 
           case 'delta':
             if (data.text) {
+              streamTextRef.current += data.text;
               setStreamText(prev => prev + data.text);
             }
             break;
@@ -104,6 +128,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
           case 'reasoning':
             setIsReasoning(true);
             if (data.text) {
+              streamReasoningRef.current += data.text;
               setStreamReasoning(prev => prev + data.text);
             }
             break;
@@ -114,7 +139,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
 
           case 'tool_event':
             if (data.tool) {
-              setStreamTools(prev => {
+              updateToolState(prev => {
                 const existing = prev.findIndex(t => t.tool === data.tool && t.status === 'called');
                 if (data.status === 'completed' && existing >= 0) {
                   return prev.map((t, i) => i === existing ? { ...t, status: 'completed' } : t);
@@ -127,17 +152,90 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
             }
             break;
         }
+      } else if (event.type === 'subagent_event') {
+        // Subagent streaming events from delegation (browser, file_ops, etc.)
+        // NOTE: text deltas and reasoning from subagents arrive as subagent_event
+        // (not duplicated as progress events — see subagent-runtime.ts).
+        const ev = event.event;
+        const data = event.data || {};
+
+        switch (ev) {
+          case 'started':
+            // Subagent started — show as an active tool step
+            updateToolState(prev => [
+              ...prev,
+              { tool: `delegate:${data.kind || data.label || 'task'}`, status: 'called' },
+            ]);
+            break;
+
+          case 'delta':
+            if (data.text) {
+              streamTextRef.current += data.text;
+              setStreamText(prev => prev + data.text);
+            }
+            break;
+
+          case 'reasoning_start':
+          case 'reasoning':
+            setIsReasoning(true);
+            if (data.text) {
+              streamReasoningRef.current += data.text;
+              setStreamReasoning(prev => prev + data.text);
+            }
+            break;
+
+          case 'reasoning_end':
+            setIsReasoning(false);
+            break;
+
+          case 'tool_call':
+            if (data.tool) {
+              updateToolState(prev => [...prev, { tool: data.tool, status: 'called' }]);
+            }
+            break;
+
+          case 'tool_result':
+            if (data.tool) {
+              updateToolState(prev => {
+                const existing = prev.findIndex(t => t.tool === data.tool && t.status === 'called');
+                if (existing >= 0) {
+                  return prev.map((t, i) => i === existing ? { ...t, status: 'completed' } : t);
+                }
+                return prev;
+              });
+            }
+            break;
+
+          case 'completed':
+            // Mark the delegate step as completed
+            updateToolState(prev =>
+              prev.map(t =>
+                t.tool.startsWith('delegate:') && t.status === 'called'
+                  ? { ...t, status: 'completed' }
+                  : t,
+              ),
+            );
+            break;
+        }
       } else if (event.type === 'final') {
-        // Streaming complete — finalize the message from stream data
+        // Streaming complete — finalize the message from stream data.
+        // Read from refs for the latest accumulated values (not stale closures).
         streamReceivedFinal.current = true;
-        const finalText = event.result?.text || streamText || '';
-        const finalReasoning = streamReasoning || undefined;
+        if (messageAddedRef.current) return; // HTTP fallback already added a message
+        messageAddedRef.current = true;
+
+        const finalText = event.result?.text || streamTextRef.current || '';
+        const finalReasoning = streamReasoningRef.current || undefined;
+        const finalTools = streamToolsRef.current.length > 0
+          ? streamToolsRef.current.map(t => ({ tool: t.tool, status: t.status }))
+          : undefined;
 
         if (finalText) {
           setMessages(prev => [...prev, {
             role: 'assistant',
             content: finalText,
             reasoning: finalReasoning,
+            toolCalls: finalTools,
           }]);
         }
 
@@ -146,6 +244,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         }
 
         // Clear streaming state
+        clearStreamRefs();
         setStreamText('');
         setStreamReasoning('');
         setStreamTools([]);
@@ -155,7 +254,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
       }
     });
     return () => { try { unsub?.(); } catch {} };
-  }, [streamText, streamReasoning]);
+  }, []);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -165,8 +264,12 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
     streamReceivedFinal.current = false;
+    messageAddedRef.current = false;
 
     // Clear stream state for new message
+    streamTextRef.current = '';
+    streamReasoningRef.current = '';
+    streamToolsRef.current = [];
     setStreamText('');
     setStreamReasoning('');
     setStreamTools([]);
@@ -176,7 +279,8 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
       const res = await sendAgentChat(text, conversationId || undefined);
 
       // Only use HTTP response as fallback if streaming didn't deliver the final message
-      if (!streamReceivedFinal.current) {
+      if (!streamReceivedFinal.current && !messageAddedRef.current) {
+        messageAddedRef.current = true;
         if (res.ok && res.text) {
           setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
           if (res.conversationId) setConversationId(res.conversationId);
@@ -191,7 +295,8 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         if (res.conversationId) setConversationId(res.conversationId);
       }
     } catch {
-      if (!streamReceivedFinal.current) {
+      if (!streamReceivedFinal.current && !messageAddedRef.current) {
+        messageAddedRef.current = true;
         setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error.' }]);
       }
     } finally {
@@ -228,31 +333,53 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className="max-w-[85%]">
-              {/* Reasoning block */}
-              {msg.role === 'assistant' && msg.reasoning && (
-                <ChainOfThought className="mb-1">
-                  <ChainOfThoughtHeader>
-                    <span className="text-[11px] text-theme-muted">Thought</span>
-                  </ChainOfThoughtHeader>
-                  <ChainOfThoughtContent>
-                    <ChainOfThoughtStep
-                      label="Reasoning"
-                      status="complete"
-                      isLast
-                    >
-                      <div
-                        className="scrollbar-none max-h-28 overflow-y-auto rounded-lg px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
-                        style={{
-                          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
-                          color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
-                        }}
-                      >
-                        {msg.reasoning}
-                      </div>
-                    </ChainOfThoughtStep>
-                  </ChainOfThoughtContent>
-                </ChainOfThought>
-              )}
+              {/* Reasoning + tool calls block */}
+              {msg.role === 'assistant' && (msg.reasoning || msg.toolCalls?.length) && (() => {
+                const steps = [
+                  ...(msg.reasoning ? [{ type: 'reasoning' as const }] : []),
+                  ...(msg.toolCalls || []).map((t, i) => ({ type: 'tool' as const, tool: t, idx: i })),
+                ];
+                return (
+                  <ChainOfThought className="mb-1">
+                    <ChainOfThoughtHeader>
+                      <span className="text-[11px] text-theme-muted">Thought</span>
+                    </ChainOfThoughtHeader>
+                    <ChainOfThoughtContent>
+                      {steps.map((step, si) => {
+                        if (step.type === 'reasoning') {
+                          return (
+                            <ChainOfThoughtStep
+                              key="reasoning"
+                              label="Reasoning"
+                              status="complete"
+                              isLast={si === steps.length - 1}
+                            >
+                              <div
+                                className="scrollbar-none max-h-28 overflow-y-auto rounded-lg px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
+                                style={{
+                                  backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                                  color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                                }}
+                              >
+                                {msg.reasoning}
+                              </div>
+                            </ChainOfThoughtStep>
+                          );
+                        }
+                        const t = step.tool!;
+                        return (
+                          <ChainOfThoughtStep
+                            key={`${t.tool}-${step.idx}`}
+                            label={humanizeToolName(t.tool)}
+                            status={t.status === 'completed' ? 'complete' : 'active'}
+                            isLast={si === steps.length - 1}
+                          />
+                        );
+                      })}
+                    </ChainOfThoughtContent>
+                  </ChainOfThought>
+                );
+              })()}
               <div
                 className={clsx(
                   'px-2.5 py-1.5 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap',

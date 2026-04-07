@@ -14,6 +14,7 @@ import { detectRetryableToolError } from '../routes/proactive-utils';
 import { getModel } from '../agents/stuard/models';
 import { writeLog } from '../utils/logger';
 import { getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
+import { mirrorToDesktop } from '../services/vm-stream-mirror';
 import {
   withActiveBridgeContext,
   setActiveBridge,
@@ -416,18 +417,23 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     : (bridgeSecrets ? setActiveBridge(null, bridgeSecrets) : undefined);
 
   const emitToClient = (event: string, data: any) => {
+    const msg = {
+      type: 'subagent_event' as const,
+      subagentId,
+      runId,
+      event,
+      data,
+    };
     try {
       if (bridgeWs && (bridgeWs as any).readyState === WebSocket.OPEN) {
-        (bridgeWs as any).send(JSON.stringify({
-          type: 'subagent_event',
-          subagentId,
-          runId,
-          event,
-          data,
-        }));
+        (bridgeWs as any).send(JSON.stringify(msg));
+        // Mirror subagent event to desktop dashboard (for CloudChatPanel streaming).
+        // CloudChatPanel handles subagent_event types directly for delta/reasoning/tool
+        // display — no duplicate progress mirror needed (that caused double text rendering).
+        mirrorToDesktop(bridgeWs as any, msg);
       }
     } catch {}
-    onEvent?.({ type: 'subagent_event', subagentId, runId, event, data });
+    onEvent?.({ ...msg });
   };
 
   emitToClient('started', { kind: request.kind, label: request.kind });
@@ -553,7 +559,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           if (!fullText && streamResult?.text) fullText = streamResult.text;
           // Capture usage from streamResult if not already captured from finish event
           if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
-          return { text: fullText, steps: streamResult?.steps || [] };
+          return { text: fullText, steps: Array.isArray(streamResult?.steps) ? streamResult.steps : [] };
         };
 
         const runPromise: Promise<any> = bridgeWs && bridgeOpen
@@ -571,7 +577,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         const response: any = await Promise.race(racers);
         // Success — break out of retry loop
         const text = response?.text || fullText || '';
-        const steps = response?.steps || [];
+        const steps = Array.isArray(response?.steps) ? response.steps : [];
         const durationMs = Date.now() - startTime;
         const toolCalls = allToolCalls.length > 0 ? allToolCalls : steps.flatMap((s: any) => s?.toolCalls || []);
 
