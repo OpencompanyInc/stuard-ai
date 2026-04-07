@@ -229,6 +229,16 @@ if [ -n "$AGENT_DATA_SIGNED_URL" ]; then
   echo "[stuard] Downloading agent data via signed URL..."
   if curl -fsSL -o /tmp/agent-data.tar.gz "$AGENT_DATA_SIGNED_URL" 2>/dev/null; then
     AGENT_DATA_DOWNLOADED=1
+    echo "[stuard] Agent data downloaded via signed URL ($(wc -c < /tmp/agent-data.tar.gz) bytes)"
+  else
+    echo "[stuard] Signed URL download failed, trying VM service account..."
+  fi
+fi
+if [ "$AGENT_DATA_DOWNLOADED" -eq 0 ]; then
+  # Fallback: use VM's own service account token (same as agent bundle fallback)
+  if gcs_download "users/${userId}/agent-data.tar.gz" "/tmp/agent-data.tar.gz"; then
+    AGENT_DATA_DOWNLOADED=1
+    echo "[stuard] Agent data downloaded via VM service account ($(wc -c < /tmp/agent-data.tar.gz) bytes)"
   fi
 fi
 if [ "$AGENT_DATA_DOWNLOADED" -eq 1 ]; then

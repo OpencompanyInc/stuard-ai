@@ -1295,7 +1295,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const result = await handleCommand(command, args);
-      json(res, 200, { ok: true, result });
+      // Propagate inner ok status so callers (cloud-ai sendVMCommand) see actual success/failure
+      const innerOk = result && typeof result === 'object' && 'ok' in result ? !!result.ok : true;
+      json(res, 200, { ok: innerOk, result, error: innerOk ? undefined : result?.error });
     } catch (e: any) {
       json(res, 500, { ok: false, error: e?.message || 'command_failed' });
     }

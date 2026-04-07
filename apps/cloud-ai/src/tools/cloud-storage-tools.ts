@@ -127,8 +127,9 @@ export const cloud_storage_get_url = createTool({
       const { url, expiresAt } = await generateTtlUrl(userId, fullName, ttl_hours * 60 * 60 * 1000);
       return { ok: true, url, visibility: 'ttl' as const, objectName: fullName, expiresAt: new Date(expiresAt).toISOString() };
     } else {
-      const { downloadUrl } = await generateUserDownloadUrl(userId, fullName);
-      return { ok: true, url: downloadUrl, visibility: 'private' as const, objectName: fullName };
+      const result = await generateUserDownloadUrl(userId, fullName);
+      if (!result) return { ok: false, error: 'file_not_found' };
+      return { ok: true, url: result.downloadUrl, visibility: 'private' as const, objectName: fullName };
     }
   },
 });

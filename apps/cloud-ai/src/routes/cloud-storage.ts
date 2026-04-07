@@ -180,6 +180,10 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
       }
 
       const result = await generateUserDownloadUrl(user.userId, objectName);
+      if (!result) {
+        json(res, 404, { ok: false, error: 'file_not_found' });
+        return true;
+      }
       json(res, 200, { ok: true, ...result });
     } catch (e: any) {
       console.error('[cloud-storage] download-url error:', e?.message);

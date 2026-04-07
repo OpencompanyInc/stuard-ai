@@ -53,7 +53,7 @@ export async function syncToCloud(userId: string): Promise<SyncResult> {
   const objectName = getBackupObjectName(userId);
 
   try {
-    const { uploadUrl } = await generateUserUploadUrl(userId, 'memory_backup.tar.gz');
+    const { uploadUrl } = await generateUserUploadUrl(userId, 'memory_backup.tar.gz', true);
     console.log(`[sync-engine] Initiating upload sync for user ${userId}`);
 
     // Tell the VM agent to compress & upload
@@ -144,18 +144,13 @@ export async function restoreFromCloud(userId: string): Promise<RestoreResult> {
 
   try {
     // Check if backup exists first
-    let downloadUrl: string;
-    try {
-      const result = await generateUserDownloadUrl(userId, objectName);
-      downloadUrl = result.downloadUrl;
-    } catch (e: any) {
+    const result = await generateUserDownloadUrl(userId, objectName, true);
+    if (!result) {
       // No backup exists yet - this is OK for first-time users
-      if (e?.message?.includes('not found') || e?.code === 404) {
-        console.log(`[sync-engine] No backup found for user ${userId}, skipping restore`);
-        return { success: true, objectName, error: 'no_backup_exists' };
-      }
-      throw e;
+      console.log(`[sync-engine] No backup found for user ${userId}, skipping restore`);
+      return { success: true, objectName, error: 'no_backup_exists' };
     }
+    const { downloadUrl } = result;
 
     console.log(`[sync-engine] Initiating restore for user ${userId}`);
 

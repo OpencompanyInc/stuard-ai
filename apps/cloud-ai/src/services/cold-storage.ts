@@ -100,10 +100,14 @@ function rewriteSignedUrl(signedUrl: string): string {
 // Upload Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Generate a signed upload URL for a user file. */
+/**
+ * Generate a signed upload URL for a user file.
+ * @param raw If true, returns raw GCS URL without Cloudflare proxy rewrite (use for VM-destined URLs).
+ */
 export async function generateUserUploadUrl(
   userId: string,
   filename: string,
+  raw = false,
 ): Promise<{ uploadUrl: string; objectName: string }> {
   const safe = sanitizeFilename(filename);
   const objectName = `${userId}/${safe}`;
@@ -117,7 +121,7 @@ export async function generateUserUploadUrl(
     contentType: 'application/octet-stream',
   });
 
-  return { uploadUrl: rewriteSignedUrl(uploadUrl), objectName };
+  return { uploadUrl: raw ? uploadUrl : rewriteSignedUrl(uploadUrl), objectName };
 }
 
 /**
@@ -312,14 +316,21 @@ export async function renameUserFile(
   return { objectName: destKey };
 }
 
-/** Generate a signed download URL for a user file. */
+/**
+ * Generate a signed download URL for a user file. Returns null if the object does not exist.
+ * @param raw If true, returns raw GCS URL without Cloudflare proxy rewrite (use for VM-destined URLs).
+ */
 export async function generateUserDownloadUrl(
   userId: string,
   objectName: string,
-): Promise<{ downloadUrl: string }> {
+  raw = false,
+): Promise<{ downloadUrl: string } | null> {
   assertUserPrefix(userId, objectName);
 
   const file = getBucket().file(objectName);
+  const [exists] = await file.exists();
+  if (!exists) return null;
+
   const expires = Date.now() + DOWNLOAD_URL_TTL_MS;
   const [downloadUrl] = await file.getSignedUrl({
     version: 'v4',
@@ -327,7 +338,7 @@ export async function generateUserDownloadUrl(
     expires,
   });
 
-  return { downloadUrl: rewriteSignedUrl(downloadUrl) };
+  return { downloadUrl: raw ? downloadUrl : rewriteSignedUrl(downloadUrl) };
 }
 
 /** Get total bytes stored for a user in their prefix. */
@@ -442,7 +453,8 @@ export async function uploadAgentData(userId: string, data: Buffer): Promise<{ o
 }
 
 /**
- * Generate a signed upload URL for agent data (used by desktop to upload directly to GCS).
+ * Generate a signed upload URL for agent data (used by desktop and VM to upload directly to GCS).
+ * Returns raw GCS URL — both Electron (no CORS) and VMs can access storage.googleapis.com directly.
  */
 export async function generateAgentDataUploadUrl(userId: string): Promise<{ uploadUrl: string; objectName: string }> {
   const objectName = getAgentDataObjectName(userId);
@@ -453,7 +465,7 @@ export async function generateAgentDataUploadUrl(userId: string): Promise<{ uplo
     expires: Date.now() + UPLOAD_URL_TTL_MS,
     contentType: 'application/gzip',
   });
-  return { uploadUrl: rewriteSignedUrl(uploadUrl), objectName };
+  return { uploadUrl, objectName };
 }
 
 /**
@@ -470,12 +482,15 @@ export async function generateAgentDataDownloadUrl(userId: string): Promise<{ do
     action: 'read',
     expires: Date.now() + DOWNLOAD_URL_TTL_MS,
   });
-  return { downloadUrl: rewriteSignedUrl(downloadUrl), objectName };
+  // VM-destined URLs use raw GCS URLs (no Cloudflare proxy rewrite)
+  // VMs can access storage.googleapis.com directly and the proxy breaks signatures
+  return { downloadUrl, objectName };
 }
 
 /**
  * Generate signed download URLs for VM startup assets (agent bundle, python agent).
  * These are scoped to specific objects — VM never gets broad bucket access.
+ * Returns raw GCS URLs (not rewritten) since VMs access storage.googleapis.com directly.
  */
 export async function generateVMAssetUrls(): Promise<{
   agentBundleUrl: string | null;
@@ -492,7 +507,7 @@ export async function generateVMAssetUrls(): Promise<{
     const [bundleExists] = await bundleFile.exists();
     if (bundleExists) {
       const [url] = await bundleFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
-      agentBundleUrl = rewriteSignedUrl(url);
+      agentBundleUrl = url;
     } else {
       console.warn('[cold-storage] agent/vm-agent-bundle.js not found in bucket');
     }
@@ -505,7 +520,7 @@ export async function generateVMAssetUrls(): Promise<{
     const [pyExists] = await pyFile.exists();
     if (pyExists) {
       const [url] = await pyFile.getSignedUrl({ version: 'v4', action: 'read', expires: ttl });
-      pythonAgentUrl = rewriteSignedUrl(url);
+      pythonAgentUrl = url;
     }
   } catch (e) {
     console.error('[cold-storage] Failed to generate signed URL for python agent:', e);
