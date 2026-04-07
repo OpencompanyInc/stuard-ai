@@ -25,8 +25,13 @@ import {
   Cell,
   ResponsiveContainer,
   Tooltip,
-  Legend,
 } from "recharts";
+import {
+  getUsageSourceCategory,
+  getUsageSourceLabel,
+  normalizeUsageLogEntry,
+  type UsageLogEntry,
+} from "./BillingSettings.utils";
 
 interface Product {
   id: string;
@@ -61,21 +66,6 @@ interface UsageBreakdownItem {
   credits: number;
   costUsd: number;
   count: number;
-}
-
-interface UsageLogEntry {
-  id: string;
-  model: string;
-  chatName: string | null;
-  conversationId: string | null;
-  sourceType: string;
-  subagentKind: string | null;
-  credits: number;
-  costUsd: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  createdAt: string;
 }
 
 const CLOUD_AI_HTTP =
@@ -119,28 +109,6 @@ const CATEGORY_CONFIG: Record<
   },
 };
 
-const SOURCE_TYPE_LABELS: Record<string, string> = {
-  inference: "Chat",
-  subagent: "Subagent",
-  browser_use: "Browser Agent",
-  browser: "Browser Agent",
-  file_ops: "File Agent",
-  workflow: "Workflow Agent",
-  delegation: "Delegated Agent",
-  google: "Google Agent",
-  outlook: "Outlook Agent",
-  github: "GitHub Agent",
-  meta: "Meta Agent",
-  discord: "Discord Agent",
-  reddit: "Reddit Agent",
-  compute: "Cloud Compute",
-  storage: "Storage",
-  messaging: "Messaging",
-  telnyx: "SMS",
-  whatsapp: "WhatsApp Agent",
-  sms: "SMS",
-};
-
 const SectionHeader = ({
   title,
   description,
@@ -174,7 +142,9 @@ const formatModel = (model: string): string => {
 };
 
 const formatRelativeTime = (dateStr: string): string => {
+  if (!dateStr) return "Unknown";
   const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return "Unknown";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMin = Math.floor(diffMs / 60000);
@@ -301,7 +271,10 @@ export const BillingSettings: React.FC = () => {
           requestId === activeLogsRequestRef.current &&
           result
         ) {
-          setUsageLogs(result.logs || []);
+          const normalizedLogs = Array.isArray(result.logs)
+            ? result.logs.map(normalizeUsageLogEntry)
+            : [];
+          setUsageLogs(normalizedLogs);
           setLogsTotal(result.total || 0);
           setLogsPage(page);
         }
@@ -884,27 +857,14 @@ export const BillingSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {usageLogs.map((log) => {
-                    const isSubagent = !!log.subagentKind || log.sourceType === "subagent";
-                    const sourceLabel =
-                      SOURCE_TYPE_LABELS[log.sourceType] ||
-                      (isSubagent
-                        ? "Subagent"
-                        : log.sourceType.charAt(0).toUpperCase() +
-                          log.sourceType.slice(1));
-                    const sourceCategory = isSubagent
-                      ? "subagent"
-                      : log.sourceType === "compute"
-                      ? "compute"
-                      : log.sourceType === "storage"
-                      ? "storage"
-                      : [
-                          "telnyx",
-                          "whatsapp",
-                          "sms",
-                          "messaging",
-                        ].includes(log.sourceType)
-                      ? "messaging"
-                      : "inference";
+                    const sourceLabel = getUsageSourceLabel(
+                      log.sourceType,
+                      log.subagentKind
+                    );
+                    const sourceCategory = getUsageSourceCategory(
+                      log.sourceType,
+                      log.subagentKind
+                    );
                     const catConfig = CATEGORY_CONFIG[sourceCategory] || {
                       hex: "#9ca3af",
                     };

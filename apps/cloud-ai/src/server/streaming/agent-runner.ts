@@ -15,6 +15,7 @@ import {
   getRecentWithinBudget,
   pruneToolOutputs,
 } from '../../memory/context-compactor';
+import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { logUsageEvent } from '../../supabase';
@@ -276,6 +277,9 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
       const _agentStart = Date.now();
       const skills = getSkillsFromContext();
+      if (agentType === 'stuard') {
+        await ensureExecutionToolsRegistered();
+      }
       const agent = agentType === 'workflow'
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'

@@ -33,6 +33,7 @@ import type {
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
 import { logUsageEvent } from '../supabase';
 import type { ModelChoice } from '../router/model-router';
+import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
 
 // Track running subagents so they can be aborted when the parent stream is cancelled
@@ -327,6 +328,8 @@ export interface RunSubagentOptions {
 }
 
 export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationResult> {
+  await ensureExecutionToolsRegistered();
+
   const {
     request,
     runId,

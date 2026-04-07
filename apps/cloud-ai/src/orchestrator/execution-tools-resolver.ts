@@ -4,9 +4,9 @@
  * Breaks the circular dependency:
  *   stuard/tools → meta-tools → workflow-subagent → subagent-runtime → stuard/tools
  *
- * Instead of using `createRequire` + dynamic `require()` (which breaks when tsup
- * bundles into a single file), consumers import from this module and the actual
- * `getExecutionTools` function is registered at startup from server.ts.
+ * Instead of using a direct top-level import (which re-introduces the cycle),
+ * consumers import from this module and the actual `getExecutionTools`
+ * function is registered by the bootstrap helper during startup or first use.
  */
 
 type GetExecutionToolsFn = (mcpTools?: Record<string, any>) => Record<string, any>;
@@ -14,16 +14,19 @@ type GetExecutionToolsFn = (mcpTools?: Record<string, any>) => Record<string, an
 let _getExecutionTools: GetExecutionToolsFn | undefined;
 
 /**
- * Called once at startup (from server.ts) to wire the real implementation.
+ * Called by the bootstrap helper to wire the real implementation.
  */
 export function registerExecutionTools(fn: GetExecutionToolsFn): void {
   _getExecutionTools = fn;
 }
 
+export function hasExecutionToolsRegistered(): boolean {
+  return typeof _getExecutionTools === 'function';
+}
+
 /**
  * Safe lazy accessor used by subagent-runtime and orchestrator-agent.
- * Throws if called before registration (should never happen in practice
- * because server.ts registers before accepting any connections).
+ * Throws if called before registration.
  */
 export function resolveExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
   if (!_getExecutionTools) {

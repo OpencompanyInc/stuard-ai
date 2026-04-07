@@ -239,8 +239,12 @@ function DashboardApp() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState<any | null>(null);
-  const [usage, setUsage] = useState<any[]>([]);
+  const [usageCount, setUsageCount] = useState(0);
+  const [usageCountLoading, setUsageCountLoading] = useState(false);
+  const [usageCountLoaded, setUsageCountLoaded] = useState(false);
   const [conversations, setConversations] = useState<any[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversationsLoadedLimit, setConversationsLoadedLimit] = useState(0);
   const [selectedConversation, setSelectedConversation] = useState<any | null>(null);
   const [convMessages, setConvMessages] = useState<any[]>([]);
   const [convLoading, setConvLoading] = useState<boolean>(false);
@@ -356,30 +360,16 @@ function DashboardApp() {
     try {
       const plan = planKey((profile?.plan || profile?.plan_name || 'free') as string);
       const limit = limitForPlan(plan);
-      let usd = 0;
-      for (const u of usage) {
-        const cu = Number((u as any)?.cost_usd || (u as any)?.costUsd || 0);
-        if (isFinite(cu) && cu > 0) usd += cu;
-      }
-      const used = Math.max(0, Math.ceil(usd * 100));
-      const remaining = Math.max(0, limit - used);
-      return { plan, limit, used, remaining, unlimited: false };
+      return { plan, limit, used: 0, remaining: limit, unlimited: false };
     } catch {
       return null;
     }
-  }, [profile, usage]);
+  }, [profile]);
   const handleSaveTonePersona = async () => {
     try {
       setPersona(personaDraft || "");
       try { (window as any).desktopAPI?.notify?.('Saved', 'Tone & Persona will be used as system instructions.'); } catch { }
     } catch { }
-  };
-
-  const handleRefresh = async () => {
-    await fetchData();
-    if (tab === 'planner') {
-      await loadPlannerData();
-    }
   };
 
   // Listen for navigation events from main process (when dashboard is already open)
@@ -425,16 +415,24 @@ function DashboardApp() {
   const signInViaBrowser = async () => {
     setStatus("Opening browser…");
     const res = await startBrowserSignIn();
-    if (!res.ok) setStatus(`Error: ${res.error}`);
-    else setStatus("Signed in");
+    if (!res.ok) {
+      setStatus(`Error: ${"error" in res ? res.error : "Unable to sign in"}`);
+    } else {
+      setStatus("Signed in");
+    }
   };
 
   const signOut = async () => {
     await supabase.auth.signOut();
     setStatus("");
     setProfile(null);
-    setUsage([]);
+    setUsageCount(0);
+    setUsageCountLoaded(false);
     setConversations([]);
+    setConversationsLoadedLimit(0);
+    setSelectedConversation(null);
+    setConvMessages([]);
+    setCreditsInfo(null);
   };
 
   const handleSaveTheme = async () => {
@@ -448,65 +446,40 @@ function DashboardApp() {
     } catch { }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const loadProfileAndCredits = useCallback(async () => {
+    if (!session) {
+      setProfile(null);
+      setCreditsInfo(null);
+      return;
+    }
     try {
-      // Fetch conversations from local agent (works without sign-in)
-      try {
-        const json = await agentFetchJson(
-          resolveAgentEndpoints(),
-          '/v1/memory/conversations?limit=20&source=stuard',
-          { accessToken: session?.access_token || null },
-        );
-        if (json.ok && Array.isArray(json.conversations)) {
-          const convs = json.conversations
-            .map((c: any) => ({ ...c, id: c.id || c.conversation_id }))
-            .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
-            .slice(0, 20);
-          setConversations(convs);
+      const userId = session.user.id;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("user_id", userId)
+        .limit(1);
+      if (!error) {
+        const profileData = (data as any[])?.[0] ?? null;
+        setProfile(profileData);
+        if (profileData?.full_name || profileData?.display_name || profileData?.username) {
+          const name = profileData.full_name || profileData.display_name || profileData.username;
+          try {
+            postJsonPlanner([`${AGENT_HTTP}/v1/knowledge/facts`], {
+              action: 'upsert_core',
+              key: 'name',
+              value: name,
+              source: 'profile_sync'
+            }).catch(() => { });
+          } catch { }
         }
-      } catch { }
-
-      // Fetch profile and usage from Supabase if signed in
-      if (session) {
-        const userId = session.user.id;
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const [p, u] = await Promise.all([
-          supabase.from("profiles").select("*").eq("user_id", userId).limit(1),
-          supabase.from("usage_events").select("id, model, cost_usd, created_at").eq("user_id", userId).gte("created_at", monthStart).order("created_at", { ascending: false }).limit(100),
-        ]);
-        if (!p.error) {
-          const profileData = (p.data as any[])?.[0] ?? null;
-          setProfile(profileData);
-          // Sync name to local knowledge graph for agent personalization
-          if (profileData?.full_name || profileData?.display_name || profileData?.username) {
-            const name = profileData.full_name || profileData.display_name || profileData.username;
-            try {
-              // Fire and forget sync
-              postJsonPlanner([`${AGENT_HTTP}/v1/knowledge/facts`], {
-                action: 'upsert_core', // Helper alias handled by bridge or direct tool call
-                key: 'name',
-                value: name,
-                source: 'profile_sync'
-              }).catch(() => { });
-            } catch { }
-          }
-        }
-        if (!u.error) setUsage((u.data as any[]) ?? []);
       }
-      // Reset selection if the selected conversation no longer exists
-      try {
-        if (selectedConversation) {
-          const exists = conversations.some((it: any) => String(it.id) === String(selectedConversation.id));
-          if (!exists) { setSelectedConversation(null); setConvMessages([]); }
-        }
-      } catch { }
-      // Fetch credits from cloud server (retry once if cloud-ai is still starting)
-      if (session?.access_token) {
+      if (session.access_token) {
         const fetchCredits = async () => {
           try {
-            const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+            const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, {
+              headers: { Authorization: `Bearer ${session.access_token}` }
+            });
             const j = await resp.json().catch(() => null);
             if (j && typeof j === 'object' && (j.ok === true || j.plan)) {
               setCreditsInfo(j);
@@ -516,15 +489,71 @@ function DashboardApp() {
           return false;
         };
         if (!(await fetchCredits())) {
-          // Retry once after 2s (cloud-ai may still be booting)
-          setTimeout(() => { fetchCredits().catch(() => {}); }, 2000);
+          setTimeout(() => { fetchCredits().catch(() => { }); }, 2000);
         }
       }
-    } catch (e) {
-    } finally {
-      setLoading(false);
+    } catch { }
+  }, [session]);
+
+  const loadConversations = useCallback(async (requestedLimit = 20, force = false) => {
+    if (!force && (conversationsLoading || conversationsLoadedLimit >= requestedLimit)) return;
+    setConversationsLoading(true);
+    try {
+      const json = await agentFetchJson(
+        resolveAgentEndpoints(),
+        `/v1/memory/conversations?limit=${requestedLimit}&source=stuard`,
+        { accessToken: session?.access_token || null },
+      );
+      if (json.ok && Array.isArray(json.conversations)) {
+        const convs = json.conversations
+          .map((c: any) => ({ ...c, id: c.id || c.conversation_id }))
+          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+          .slice(0, requestedLimit);
+        setConversations(convs);
+        setConversationsLoadedLimit(requestedLimit);
+        try {
+          if (selectedConversation) {
+            const exists = convs.some((it: any) => String(it.id) === String(selectedConversation.id));
+            if (!exists) {
+              setSelectedConversation(null);
+              setConvMessages([]);
+            }
+          }
+        } catch { }
+      }
+    } catch { }
+    finally {
+      setConversationsLoading(false);
     }
-  };
+  }, [conversationsLoading, conversationsLoadedLimit, selectedConversation, session?.access_token]);
+
+  const loadUsageCount = useCallback(async (force = false) => {
+    if (!session) {
+      setUsageCount(0);
+      setUsageCountLoaded(false);
+      return;
+    }
+    if (!force && usageCountLoading) return;
+    if (!force && usageCountLoaded) return;
+    setUsageCountLoading(true);
+    try {
+      const userId = session.user.id;
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const { count, error } = await supabase
+        .from("usage_events")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .gte("created_at", monthStart);
+      if (!error) {
+        setUsageCount(count ?? 0);
+        setUsageCountLoaded(true);
+      }
+    } catch { }
+    finally {
+      setUsageCountLoading(false);
+    }
+  }, [session, usageCountLoaded, usageCountLoading]);
 
   const handleDeleteConversation = async (id: string) => {
     try {
@@ -561,11 +590,26 @@ function DashboardApp() {
     }
   };
 
-  // Fetch data when session changes or when navigating to overview/history.
-  // Single effect avoids the previous double-fetch race on session change.
   useEffect(() => {
-    fetchData();
-  }, [tab, session]);
+    loadProfileAndCredits();
+  }, [loadProfileAndCredits]);
+
+  useEffect(() => {
+    if (!session) {
+      setConversations([]);
+      setConversationsLoadedLimit(0);
+      setUsageCount(0);
+      setUsageCountLoaded(false);
+      return;
+    }
+    if (tab === 'overview') {
+      loadConversations(10).catch(() => { });
+      loadUsageCount().catch(() => { });
+    }
+    if (tab === 'history') {
+      loadConversations(20).catch(() => { });
+    }
+  }, [tab, session, loadConversations, loadUsageCount]);
 
   const firstOkJsonPlanner = async (urls: string[]) => {
     for (const u of urls) {
@@ -1035,6 +1079,28 @@ function DashboardApp() {
 
   const userEmail = session?.user?.email ?? null;
 
+  const handleRefresh = async () => {
+    setLoading(true);
+    try {
+      await loadProfileAndCredits();
+      if (tab === 'overview') {
+        await Promise.all([
+          loadConversations(10, true),
+          loadUsageCount(true),
+        ]);
+      } else if (tab === 'history') {
+        await loadConversations(20, true);
+        if (selectedConversation?.id) {
+          await loadConversationMessages(String(selectedConversation.id));
+        }
+      } else if (tab === 'planner') {
+        await loadPlannerData();
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const sidebarSections = [
     {
       key: 'primary',
@@ -1252,8 +1318,10 @@ function DashboardApp() {
                               creditsInfo={creditsInfo}
                               creditsFallback={creditsFallback}
                               profile={profile}
-                              usage={usage}
+                              usageCount={usageCount}
+                              usageCountLoading={usageCountLoading}
                               conversations={conversations}
+                              conversationsLoading={conversationsLoading}
                               onNavigate={setTab}
                             />
                           )}
@@ -1261,8 +1329,8 @@ function DashboardApp() {
                           {tab === 'history' && userEmail && (
                             <MemoryLockGate label="History Locked">
                               <HistoryView
-                                usage={usage}
                                 conversations={conversations}
+                                conversationsLoading={conversationsLoading}
                                 selectedConversation={selectedConversation}
                                 setSelectedConversation={setSelectedConversation}
                                 convMessages={convMessages}

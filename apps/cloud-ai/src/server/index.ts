@@ -8,11 +8,16 @@ import { initVoiceProviders } from '../voice';
 import { PORT } from '../utils/config';
 import { WebSocketServer } from 'ws';
 import { startReminderCron, stopReminderCron } from '../services/cloud-reminders';
+import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-bootstrap';
 
 console.log('[cloud-ai] Starting server...');
 
 // Initialize voice providers (ElevenLabs, OpenAI Realtime, etc.)
 initVoiceProviders();
+
+void ensureExecutionToolsRegistered().catch((error) => {
+  console.warn('[cloud-ai] Failed to pre-register execution tools:', error);
+});
 
 const server = createHttpServer();
 const socketManager = new SocketManager();

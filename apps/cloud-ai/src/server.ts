@@ -28,7 +28,9 @@ import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
 // Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
-import { getAgentForQuery } from './agents/stuard/index';
+import { getOrchestratorAgent } from './orchestrator';
+import { ensureExecutionToolsRegistered } from './orchestrator/execution-tools-bootstrap';
+import { getSkillsFromContext } from './tools/skill-tools';
 
 
 import { startVMHealthMonitor } from './services/vm-health';
@@ -138,6 +140,10 @@ import { initVoiceProviders } from './voice';
 
 // Register all voice providers (OpenAI Realtime, ElevenLabs, Grok, Gemini Live)
 initVoiceProviders();
+
+void ensureExecutionToolsRegistered().catch((error) => {
+  console.warn('[cloud-ai] Failed to pre-register execution tools:', error);
+});
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -816,7 +822,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
           }
 
-          agent = await getAgentForQuery(routedTier, prompt, undefined, enabledIntegrations, mcpTools, chosenModelId, rankedToolNames);
+          await ensureExecutionToolsRegistered();
+          const skills = getSkillsFromContext();
+          agent = getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId, skills);
         }
 
         let conversationCreatedNow = false;

@@ -6,7 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx } from 'clsx';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
-import { Search, Clock, Trash2 } from "lucide-react";
+import { Search, Clock, Trash2, Loader2 } from "lucide-react";
 
 function normalizeMarkdownSpacing(input: string): string {
   const raw = String(input || '').replace(/\r\n/g, '\n');
@@ -41,8 +41,8 @@ function getMessageToolCalls(message: any): any[] {
 }
 
 interface HistoryViewProps {
-  usage: any[];
   conversations: any[];
+  conversationsLoading: boolean;
   selectedConversation: any | null;
   setSelectedConversation: (conv: any | null) => void;
   convMessages: any[];
@@ -52,6 +52,7 @@ interface HistoryViewProps {
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
   conversations,
+  conversationsLoading,
   selectedConversation,
   setSelectedConversation,
   convMessages,
@@ -72,7 +73,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5 bg-transparent">
-          {conversations.length === 0 ? (
+          {conversationsLoading && conversations.length === 0 ? (
+            <div className="py-8 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-theme-muted" />
+            </div>
+          ) : conversations.length === 0 ? (
             <div className="py-8 text-center text-[13px] text-theme-muted italic">No conversations found</div>
           ) : (
             conversations.map((c) => {

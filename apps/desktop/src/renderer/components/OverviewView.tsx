@@ -6,15 +6,18 @@ import {
   Lock,
   WalletCards,
   History,
-  Wand2
+  Wand2,
+  Loader2,
 } from "lucide-react";
 
 interface OverviewViewProps {
   creditsInfo: any | null;
   creditsFallback: any | null;
   profile: any | null;
-  usage: any[];
+  usageCount: number;
+  usageCountLoading: boolean;
   conversations: any[];
+  conversationsLoading: boolean;
   onNavigate: (tab: string) => void;
 }
 
@@ -22,8 +25,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   creditsInfo,
   creditsFallback,
   profile,
-  usage,
+  usageCount,
+  usageCountLoading,
   conversations,
+  conversationsLoading,
   onNavigate,
 }) => {
   const planLabel = String(creditsInfo?.plan || profile?.plan || profile?.plan_name || 'Starter');
@@ -31,7 +36,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const limit = Math.max(1, creditsInfo?.limit ?? creditsFallback?.limit ?? 0);
   const used = Math.max(0, creditsInfo?.used ?? creditsFallback?.used ?? 0);
   const usageWidth = `${Math.min(100, Math.max(0, (used / Math.max(1, limit)) * 100))}%`;
-  const usageCount = usage?.length ?? 0;
   const openPricing = () => {
     try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { window.open('https://stuard.ai/pricing', '_blank'); }
   };
@@ -121,7 +125,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 <div className="text-[18px] font-semibold text-theme-fg tracking-tight">Monthly Activity</div>
               
               <div className="text-[50px] font-semibold text-theme-fg tracking-tight leading-none">
-                {usageCount}
+                {usageCountLoading ? (
+                  <Loader2 className="w-10 h-10 animate-spin mx-auto text-theme-muted" />
+                ) : (
+                  usageCount
+                )}
               </div>
               <div className="text-base text-theme-muted font-medium">Events processed</div>
             </div>
@@ -179,7 +187,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         <div className="flex-1 overflow-hidden relative group/list">
           <div className="absolute top-0 right-0 p-32 bg-gradient-to-bl from-primary/5 to-transparent rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none opacity-50 group-hover/list:opacity-100 transition-opacity duration-700"></div>
           
-          {conversations.length === 0 ? (
+          {conversationsLoading && conversations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full py-20 px-6 text-center relative z-10">
+              <Loader2 className="w-7 h-7 animate-spin text-theme-muted/70 mb-4" />
+              <p className="text-[15px] text-theme-muted font-medium">Loading conversations...</p>
+            </div>
+          ) : conversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-20 px-6 text-center relative z-10">
               <div className="w-16 h-16 dashboard-card-muted rounded-2xl flex items-center justify-center mb-6 shadow-inner">
                 <MessageSquare className="w-7 h-7 text-theme-muted/60" />
