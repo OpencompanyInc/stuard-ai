@@ -1017,6 +1017,85 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   };
 }
 
+// ── Usage & Transaction Queries ─────────────────────────────────────────────
+
+export async function getUsageBreakdown(
+  userId: string,
+  since?: Date,
+): Promise<Array<{ category: string; credits: number; costUsd: number; count: number }>> {
+  if (!supabaseService) return [];
+  try {
+    const start = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const { data, error } = await supabaseService
+      .from('usage_events')
+      .select('model, cost_usd, credit_cost')
+      .eq('user_id', userId)
+      .gte('created_at', start.toISOString());
+    if (error || !data) return [];
+
+    const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+    for (const row of data as any[]) {
+      const model = String(row.model || 'unknown');
+      const category = model.split('/')[0] || 'other';
+      if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
+      buckets[category].credits += Number(row.credit_cost) || 0;
+      buckets[category].costUsd += Number(row.cost_usd) || 0;
+      buckets[category].count += 1;
+    }
+
+    return Object.entries(buckets).map(([category, v]) => ({
+      category,
+      credits: Number(v.credits.toFixed(2)),
+      costUsd: Number(v.costUsd.toFixed(6)),
+      count: v.count,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getCreditTransactions(
+  userId: string,
+  limit: number,
+  offset: number,
+): Promise<{ transactions: any[]; total: number }> {
+  if (!supabaseService) return { transactions: [], total: 0 };
+  try {
+    const { data, error, count } = await supabaseService
+      .from('credit_grants')
+      .select('id, source_type, total_credits, remaining_credits, expires_at, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error || !data) return { transactions: [], total: 0 };
+    return { transactions: data, total: count ?? data.length };
+  } catch {
+    return { transactions: [], total: 0 };
+  }
+}
+
+export async function getUsageLogs(
+  userId: string,
+  limit: number,
+  offset: number,
+  since?: Date,
+): Promise<{ logs: any[]; total: number }> {
+  if (!supabaseService) return { logs: [], total: 0 };
+  try {
+    let q = supabaseService
+      .from('usage_events')
+      .select('id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (since) q = q.gte('created_at', since.toISOString());
+    const { data, error, count } = await q.range(offset, offset + limit - 1);
+    if (error || !data) return { logs: [], total: 0 };
+    return { logs: data, total: count ?? data.length };
+  } catch {
+    return { logs: [], total: 0 };
+  }
+}
+
 export async function debitCredits(userId: string, input: CreditDebitInput): Promise<boolean> {
   if (!supabaseService) return false;
 

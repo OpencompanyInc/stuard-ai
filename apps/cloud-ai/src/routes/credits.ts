@@ -47,8 +47,8 @@ export async function handleCredits(req: IncomingMessage, res: ServerResponse, p
       const sinceParam = parsedUrl.searchParams.get('since');
       const since = sinceParam ? new Date(sinceParam) : undefined;
       const breakdown = await getUsageBreakdown(authUser.userId, since);
-      const totalCredits = breakdown.reduce((sum, b) => sum + b.credits, 0);
-      const totalCostUsd = breakdown.reduce((sum, b) => sum + b.costUsd, 0);
+      const totalCredits = breakdown.reduce((sum: number, b: { credits: number }) => sum + b.credits, 0);
+      const totalCostUsd = breakdown.reduce((sum: number, b: { costUsd: number }) => sum + b.costUsd, 0);
 
       writeJson(res, 200, {
         ok: true,

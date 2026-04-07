@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccountsFromCloud, getSyncPreferences } from '../supabase';
+import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts, getSyncPreferences } from '../supabase';
 import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
@@ -29,10 +29,10 @@ export async function pushOAuthTokensToVM(userId: string): Promise<void> {
   try {
     const engine = await getCloudEngine(userId);
     if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) return;
-    const accounts = await listExternalAccountsFromCloud(userId);
+    const accounts = await listExternalAccounts(userId);
     const tokens = accounts
-      .filter(a => a.access_token && a.access_token !== 'verified')
-      .map(a => ({
+      .filter((a: any) => a.access_token && a.access_token !== 'verified')
+      .map((a: any) => ({
         provider: a.provider,
         profileLabel: a.profile_label,
         isDefault: a.is_default,
@@ -861,11 +861,11 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      const accounts = await listExternalAccountsFromCloud(user.userId);
+      const accounts = await listExternalAccounts(user.userId);
       // Strip sensitive fields, keep what the VM needs
       const tokens = accounts
-        .filter(a => a.access_token && a.access_token !== 'verified')
-        .map(a => ({
+        .filter((a: any) => a.access_token && a.access_token !== 'verified')
+        .map((a: any) => ({
           provider: a.provider,
           profileLabel: a.profile_label,
           isDefault: a.is_default,
@@ -895,10 +895,10 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         return true;
       }
 
-      const accounts = await listExternalAccountsFromCloud(user.userId);
+      const accounts = await listExternalAccounts(user.userId);
       const tokens = accounts
-        .filter(a => a.access_token && a.access_token !== 'verified')
-        .map(a => ({
+        .filter((a: any) => a.access_token && a.access_token !== 'verified')
+        .map((a: any) => ({
           provider: a.provider,
           profileLabel: a.profile_label,
           isDefault: a.is_default,
