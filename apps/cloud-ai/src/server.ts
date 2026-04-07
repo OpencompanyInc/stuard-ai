@@ -484,6 +484,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const payload = verifyVMToken(msg.auth.vmToken, secret);
                 if (payload && payload.userId === claimedUserId) {
                   authUser = { userId: claimedUserId };
+                }
               }
             } catch {}
           }
@@ -797,16 +798,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         } else {
           // ─── Parallel embedding + tool ranking pipeline ───────────────
 
-                }
-              }
-            } catch (e: any) {
               // Graceful fallback — static Tier 1 tools still loaded
-              if (process.env.SIS_DEBUG === '1') {
-                console.warn('[tool-rank] Ranking failed, using static Tier 1:', e.message);
-              }
-            }
-          }
-
           await ensureExecutionToolsRegistered();
           const skills = getSkillsFromContext();
           agent = getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId, skills);
