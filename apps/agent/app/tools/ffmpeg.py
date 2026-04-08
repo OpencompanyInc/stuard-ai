@@ -14,6 +14,32 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 from urllib import request
 
 
+def _resolve_cwd(cwd: Any) -> Optional[str]:
+    if not isinstance(cwd, str):
+        return None
+
+    candidate = cwd.strip()
+    if not candidate:
+        return None
+
+    expanded = os.path.expanduser(candidate)
+    if "{{" in expanded and "}}" in expanded and not os.path.isabs(expanded):
+        return None
+
+    try:
+        resolved = os.path.abspath(expanded)
+    except Exception:
+        return None
+
+    try:
+        if os.path.isdir(resolved):
+            return resolved
+    except Exception:
+        return None
+
+    return None
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -477,6 +503,7 @@ async def ffmpeg_run(
     argv = args.get("args")
     timeout_ms = int(args.get("timeoutMs") or 300000)
     cwd = args.get("cwd")
+    resolved_cwd = _resolve_cwd(cwd)
 
     output_file_path: str | None = None
 
@@ -516,7 +543,7 @@ async def ffmpeg_run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=str(cwd) if isinstance(cwd, str) and cwd else None,
+            cwd=resolved_cwd,
             timeout=timeout_ms / 1000,
         )
         success = proc.returncode == 0
@@ -603,6 +630,7 @@ async def ffmpeg_probe_media(
     input_path = str(args.get("inputPath") or "").strip()
     timeout_ms = int(args.get("timeoutMs") or 300000)
     cwd = args.get("cwd")
+    resolved_cwd = _resolve_cwd(cwd)
 
     if not input_path:
         return {"ok": False, "error": "missing_input_path"}
@@ -633,7 +661,7 @@ async def ffmpeg_probe_media(
             cmd,
             capture_output=True,
             text=True,
-            cwd=str(cwd) if isinstance(cwd, str) and cwd else None,
+            cwd=resolved_cwd,
             timeout=timeout_ms / 1000,
         )
         if proc.returncode != 0:

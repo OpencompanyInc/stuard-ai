@@ -7,7 +7,7 @@
 
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
+import { resolveEmbedder } from '../utils/embeddings';
 
 export interface SelectedTool {
   name: string;
@@ -97,13 +97,18 @@ export async function selectToolsForQuery(
     const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
     const queryVector = embeddings[0];
 
-    // 2. Fetch all tool embeddings
-    const { data: rows, error } = await supabase
-      .from('tool_embeddings')
-      .select('name, description, category, embedding');
+    // 2. Search via pgvector RPC (server-side cosine similarity)
+    const { data, error } = await supabase.rpc('search_tools', {
+      query_embedding: queryVector,
+      match_threshold: similarityThreshold,
+      match_count: topK * 3, // fetch extra for integration filtering
+      filter_category: null,
+      filter_kind: null,
+      enabled_only: true,
+    });
 
-    if (error || !rows) {
-      console.warn('[tool-selector] Failed to fetch tool embeddings:', error);
+    if (error || !data) {
+      console.warn('[tool-selector] search_tools RPC failed:', error);
       return selectedTools;
     }
 
@@ -116,64 +121,46 @@ export async function selectToolsForQuery(
       }
     }
 
-    // 4. Calculate similarity scores
-    const withScores = rows
-      .map((row: any) => {
-        // Skip integration tools if integration not enabled
-        const isIntegrationTool = Object.values(INTEGRATION_PREFIXES)
-          .flat()
-          .some(prefix => row.name.startsWith(prefix));
+    // 4. Add core tools first (always included) - fetch from registry
+    const { data: coreRows } = await supabase
+      .from('tool_embeddings')
+      .select('name, description, category')
+      .in('name', [...CORE_TOOLS]);
 
-        if (isIntegrationTool) {
-          const isAllowed = allowedPrefixes.some(prefix => row.name.startsWith(prefix));
-          if (!isAllowed) return null;
-        }
-
-        // Parse embedding
-        let vec = row.embedding;
-        if (typeof vec === 'string') {
-          try {
-            vec = JSON.parse(vec);
-          } catch {
-            return null;
-          }
-        }
-
-        if (!Array.isArray(vec)) return null;
-
-        const similarity = cosineSimilarity(queryVector, vec);
-        return {
-          name: row.name,
-          description: row.description,
-          category: row.category,
-          similarity,
-        };
-      })
-      .filter((t): t is SelectedTool => t !== null);
-
-    // 5. Sort by similarity
-    withScores.sort((a, b) => b.similarity - a.similarity);
-
-    // 6. Add core tools first (always included)
-    for (const row of rows) {
-      if (CORE_TOOLS.has(row.name)) {
+    if (coreRows) {
+      for (const row of coreRows) {
         selectedTools.push({
           name: row.name,
           description: row.description,
           category: row.category,
-          similarity: 1.0, // Core tools always have max similarity
+          similarity: 1.0,
         });
       }
     }
 
-    // 7. Add top similar tools (that aren't already in core)
+    // 5. Filter by integration access and add top similar tools
     const coreNames = new Set(selectedTools.map(t => t.name));
-    for (const tool of withScores) {
-      if (selectedTools.length >= topK) break;
-      if (coreNames.has(tool.name)) continue;
-      if (tool.similarity < similarityThreshold) continue;
 
-      selectedTools.push(tool);
+    for (const row of data) {
+      if (selectedTools.length >= topK) break;
+      if (coreNames.has(row.name)) continue;
+
+      // Skip integration tools if integration not enabled
+      const isIntegration = Object.values(INTEGRATION_PREFIXES)
+        .flat()
+        .some(prefix => row.name.startsWith(prefix));
+
+      if (isIntegration) {
+        const isAllowed = allowedPrefixes.some(prefix => row.name.startsWith(prefix));
+        if (!isAllowed) continue;
+      }
+
+      selectedTools.push({
+        name: row.name,
+        description: row.description || '',
+        category: row.category || 'Other',
+        similarity: typeof row.similarity === 'number' ? row.similarity : 0,
+      });
     }
 
     console.log(`[tool-selector] Selected ${selectedTools.length} tools for query`);

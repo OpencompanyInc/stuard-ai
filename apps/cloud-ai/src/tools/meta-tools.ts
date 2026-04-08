@@ -25,7 +25,7 @@ import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
-import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
+import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
@@ -604,30 +604,28 @@ export const search_tools = createTool({
         let results: Array<{ name: string; description: string; category: string }> = [];
 
         if (hasQuery && supabase) {
-            // Vector Search
-            if (!_syncPromise) {
-                _syncPromise = ensureToolEmbeddings().catch(e => console.error('Tool embedding sync failed', e));
-            }
-            try { await _syncPromise; } catch { }
-
+            // Vector search via Supabase RPC (pgvector server-side cosine similarity)
             try {
                 const { embedder } = await resolveEmbedder();
                 const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
                 const queryVector = embeddings[0];
 
-                const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
-                if (error || !rows) throw error;
-
-                let candidates = rows;
-                if (category) candidates = rows.filter((r: any) => r.category === category);
-
-                const withScores = candidates.map((r: any) => {
-                    let vec = r.embedding;
-                    if (typeof vec === 'string') { try { vec = JSON.parse(vec); } catch { } }
-                    return { ...r, score: Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1 };
+                const { data, error } = await supabase.rpc('search_tools', {
+                    query_embedding: queryVector,
+                    match_threshold: 0.25,
+                    match_count: limit,
+                    filter_category: category || null,
+                    filter_kind: null,
+                    enabled_only: true,
                 });
-                withScores.sort((a: any, b: any) => b.score - a.score);
-                results = withScores.slice(0, limit).map((t: any) => ({ name: t.name, description: t.description, category: t.category }));
+
+                if (error) throw error;
+
+                results = (data || []).map((row: any) => ({
+                    name: row.name,
+                    description: row.description || '',
+                    category: row.category || 'Other',
+                }));
             } catch (e) {
                 console.warn('Vector search failed, falling back to keyword search', e);
                 results = keywordSearch().slice(0, limit);

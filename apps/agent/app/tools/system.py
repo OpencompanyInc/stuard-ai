@@ -27,6 +27,47 @@ _cached_node_bin: str | None = None
 _cached_pip_ok: set[str] = set()  # env dirs where pip is known to be available
 
 
+def _normalize_cwd(cwd: Any) -> Optional[str]:
+    if not isinstance(cwd, str):
+        return None
+
+    candidate = cwd.strip()
+    if not candidate:
+        return None
+
+    expanded = os.path.expanduser(candidate)
+    if "{{" in expanded and "}}" in expanded and not os.path.isabs(expanded):
+        return None
+
+    try:
+        resolved = os.path.abspath(expanded)
+    except Exception:
+        return None
+
+    try:
+        if os.path.isdir(resolved):
+            return resolved
+    except Exception:
+        return None
+
+    return None
+
+
+def _resolve_cwd(cwd: Any, *, fallback_to_process: bool = False) -> Optional[str]:
+    normalized = _normalize_cwd(cwd)
+    if normalized:
+        return normalized
+
+    if fallback_to_process:
+        try:
+            current = os.getcwd()
+        except Exception:
+            return None
+        return _normalize_cwd(current)
+
+    return None
+
+
 def _checkpoint_requested(args: Dict[str, Any]) -> bool:
     """
     Check whether this tool call explicitly requests filesystem checkpointing.
@@ -352,12 +393,13 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
     shell_pref = str(args.get("shell") or "auto").lower()
     timeout_ms = int(args.get("timeoutMs") or 30000)
     cwd = args.get("cwd")
+    resolved_cwd = _resolve_cwd(cwd, fallback_to_process=True)
     background = bool(args.get("background") or False)
     terminal_id = args.get("terminalId")
     if not cmd:
         raise ValueError("missing command")
 
-    checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
+    checkpoint = _start_command_checkpoint(resolved_cwd) if _checkpoint_requested(args) else None
 
     def _is_windows() -> bool:
         return sys.platform.startswith("win")
@@ -403,7 +445,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             argv=[str(a) for a in argv],
             shell=False,
             shell_used=shell_used,
-            cwd=cwd if isinstance(cwd, str) and cwd else None,
+            cwd=resolved_cwd,
             terminal_id=str(terminal_id) if terminal_id is not None else None,
             checkpoint_before=checkpoint,
         )
@@ -415,7 +457,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             capture_output=True,
             text=True,
             timeout=timeout_ms / 1000,
-            cwd=cwd if isinstance(cwd, str) and cwd else None,
+            cwd=resolved_cwd,
         )
         _finish_command_checkpoint(checkpoint)
         return {"ok": True, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr, "shell": shell_used}
@@ -680,7 +722,8 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         req_txt = str(args.get("requirementsTxt") or "")
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
-        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
+        resolved_cwd = _resolve_cwd(cwd, fallback_to_process=True)
+        checkpoint = _start_command_checkpoint(resolved_cwd) if _checkpoint_requested(args) else None
         auto_install = args.get("autoInstall", True)
 
         # Normalize packages to list
@@ -856,7 +899,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                 capture_output=True,
                 text=True,
                 timeout=max(0.1, timeout_ms / 1000),
-                cwd=cwd if isinstance(cwd, str) and cwd else None,
+                cwd=resolved_cwd,
             )
             
             result = {
@@ -904,7 +947,8 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
         arg_list = [str(a) for a in (args.get("args") or [])]
         timeout_ms = int(args.get("timeoutMs") or 30000)
         cwd = args.get("cwd")
-        checkpoint = _start_command_checkpoint(cwd if isinstance(cwd, str) else None) if _checkpoint_requested(args) else None
+        resolved_cwd = _resolve_cwd(cwd, fallback_to_process=True)
+        checkpoint = _start_command_checkpoint(resolved_cwd) if _checkpoint_requested(args) else None
 
         # Find node executable (cached after first lookup to avoid slow PATH traversal on Windows)
         global _cached_node_bin
@@ -984,7 +1028,7 @@ async def run_node_script(args: Dict[str, Any], emit: Callable[[str, Dict[str, A
                         capture_output=True,
                         text=True,
                         timeout=max(0.1, timeout_ms / 1000),
-                        cwd=cwd if isinstance(cwd, str) and cwd else None,
+                        cwd=resolved_cwd,
                     )
                     result_box["proc"] = proc
                 except subprocess.TimeoutExpired as e:

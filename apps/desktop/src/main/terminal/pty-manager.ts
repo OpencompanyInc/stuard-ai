@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { TerminalSession, TerminalCreateOptions, TerminalOutputChunk } from './types';
 import logger from '../utils/logger';
+import { normalizeWorkingDirectory } from '../utils/working-directory';
 
 let _pty: any = null;
 function getPty(): any {
@@ -57,7 +58,7 @@ class PtyManager {
     }
     const id = `pty-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const shell = this.resolveShell(options.shell);
-    const cwd = options.cwd || process.cwd();
+    const cwd = normalizeWorkingDirectory(options.cwd, process.cwd());
     const cols = options.cols || 120;
     const rows = options.rows || 30;
 
