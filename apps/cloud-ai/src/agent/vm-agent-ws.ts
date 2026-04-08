@@ -12,9 +12,13 @@ export const LOCAL_AGENT_WS_URL = process.env.STUARD_LOCAL_AGENT_WS || 'ws://127
 
 let _agentWs: WebSocket | null = null;
 
+function isOpenWebSocket(ws: WebSocket | null | undefined): ws is WebSocket {
+  return ws?.readyState === WebSocket.OPEN;
+}
+
 /** Check if the Python agent WS is currently connected. */
 export function isAgentWsConnected(): boolean {
-  return _agentWs?.readyState === WebSocket.OPEN;
+  return isOpenWebSocket(_agentWs);
 }
 
 /** Close the Python agent WS connection (for cleanup on shutdown). */
@@ -95,17 +99,17 @@ function _connectAgentWs(): Promise<WebSocket> {
  * Retries with backoff for up to 60s after VM boot (Python agent may still be starting).
  */
 export async function getAgentWs(): Promise<WebSocket> {
-  if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+  if (isOpenWebSocket(_agentWs)) return _agentWs;
 
   // If another caller is already connecting, wait for it
   if (_agentWsConnecting) {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
-      if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+      if (isOpenWebSocket(_agentWs)) return _agentWs;
       if (!_agentWsConnecting) break; // connection attempt finished (success or fail)
     }
-    if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+    if (isOpenWebSocket(_agentWs)) return _agentWs;
   }
 
   // Retry connection with backoff — Python agent may still be installing deps
