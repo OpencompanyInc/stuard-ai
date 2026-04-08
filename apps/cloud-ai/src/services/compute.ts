@@ -646,7 +646,7 @@ function checkOperationError(op: any): void {
   }
 }
 
-async function waitForOperation(operation: any): Promise<void> {
+async function waitForOperation(operation: any, knownZone?: string): Promise<void> {
   if (!operation) return;
   // v4/v5 style — has .promise()
   if (typeof operation.promise === 'function') {
@@ -665,8 +665,10 @@ async function waitForOperation(operation: any): Promise<void> {
     return;
   }
 
-  // Determine scope: zone (most ops) vs global (firewall rules)
-  const opZone = operation.zone?.split('/').pop();
+  // Determine scope: zone (most ops) vs global (firewall rules).
+  // Prefer the explicitly passed zone (from caller context) over the
+  // operation.zone field, which may be missing in some @google-cloud/compute versions.
+  const opZone = knownZone || operation.zone?.split('/').pop();
 
   console.log(`[compute:gce] Waiting for operation ${operation.name}${opZone ? ` in ${opZone}` : ' (global)'}...`);
 
@@ -819,7 +821,7 @@ export class GCEComputeProvider implements IComputeProvider {
         console.warn(`[compute:gce] Cleaning up orphaned VM: ${vm.name} (status: ${vm.status})`);
         try {
           const [op] = await client.delete({ project: GCP_PROJECT_ID, zone, instance: vm.name });
-          await waitForOperation(op);
+          await waitForOperation(op, zone);
           console.log(`[compute:gce] Deleted orphaned VM ${vm.name}`);
         } catch (delErr: any) {
           console.warn(`[compute:gce] Could not delete orphan ${vm.name}: ${delErr?.message}`);
@@ -946,7 +948,7 @@ export class GCEComputeProvider implements IComputeProvider {
       `provisionVM(${instanceName})`,
     );
 
-    await waitForOperation(operation);
+    await waitForOperation(operation, zone);
 
     console.log(`[compute:gce] Provisioned VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}`);
     return { instanceName, zone, vmSecret };
@@ -959,7 +961,7 @@ export class GCEComputeProvider implements IComputeProvider {
       zone,
       instance: instanceName,
     });
-    await waitForOperation(operation);
+    await waitForOperation(operation, zone);
     console.log(`[compute:gce] Started VM ${instanceName}`);
   }
 
@@ -970,7 +972,7 @@ export class GCEComputeProvider implements IComputeProvider {
       zone,
       instance: instanceName,
     });
-    await waitForOperation(operation);
+    await waitForOperation(operation, zone);
     console.log(`[compute:gce] Stopped VM ${instanceName}`);
   }
 
@@ -981,7 +983,7 @@ export class GCEComputeProvider implements IComputeProvider {
       zone,
       instance: instanceName,
     });
-    await waitForOperation(operation);
+    await waitForOperation(operation, zone);
     console.log(`[compute:gce] Deleted VM ${instanceName}`);
   }
 
@@ -1016,8 +1018,10 @@ export class GCEComputeProvider implements IComputeProvider {
           if (ac?.natIP) return ac.natIP;
         }
       }
+      console.warn(`[compute:gce] No natIP found for ${instanceName} (status=${instance?.status}, ifaces=${ifaces.length})`);
       return null;
-    } catch {
+    } catch (err: any) {
+      console.warn(`[compute:gce] getVMExternalIP(${instanceName}) failed: ${err?.message}`);
       return null;
     }
   }
