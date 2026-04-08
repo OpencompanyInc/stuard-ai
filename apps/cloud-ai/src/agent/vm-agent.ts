@@ -422,6 +422,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
 
   const conversationId = args.conversationId || randomUUID();
   const model = args.model || 'balanced';
+  const modelId = typeof args.modelId === 'string' && args.modelId.trim() ? args.modelId.trim() : undefined;
 
   // Set up NDJSON streaming response
   res.writeHead(200, {
@@ -465,12 +466,12 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         message,
         conversationId,
         model,
+        ...(modelId ? { modelId } : {}),
         context: { isVM: true, userId: USER_ID, ...(args.context || {}) },
         memoryContext,
         ...(vmAuth ? { auth: vmAuth } : {}),
       },
       (event) => {
-        // Forward streaming events as NDJSON lines
         const t = String(event.type || '').toLowerCase();
         if (t === 'progress' || t === 'delta') {
           writeLine({ type: 'progress', event: event.event || 'delta', data: event.data || { text: event.text } });
@@ -478,6 +479,12 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
           writeLine({ type: 'routing', model: event.model, data: event.data });
         } else if (t === 'tool_event') {
           writeLine({ type: 'tool_event', tool: event.tool, status: event.status, data: event.data });
+        } else if (t === 'subagent_event') {
+          writeLine({ type: 'subagent_event', subagentId: event.subagentId, event: event.event, data: event.data });
+        } else if (t === 'conversation') {
+          writeLine({ type: 'conversation', conversationId: event.conversationId });
+        } else if (t === 'title') {
+          writeLine({ type: 'title', title: event.title, conversationId: event.conversationId });
         }
       },
       180_000,

@@ -3,33 +3,19 @@ import React, { useRef, useLayoutEffect, useState, useEffect, useCallback, useMe
 import SimpleBar from 'simplebar-react';
 import MessageBubble from './MessageBubble';
 import 'simplebar-react/dist/simplebar.min.css';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, ChevronUp, Loader2 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
+import { ChevronUp, Loader2 } from 'lucide-react';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
-import { DiscoverTips } from '../workflows/components/DiscoverTips';
-import { useDiscovery } from '../hooks/useDiscovery';
 import { Shimmer } from './ai-elements/Shimmer';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from './ai-elements/ChainOfThought';
 
 // Performance constants
 const INITIAL_MESSAGES_TO_RENDER = 10; // Start with last 10 messages
 const MESSAGES_TO_LOAD_ON_SCROLL = 10; // Load 10 more when scrolling up
-
-function normalizeMarkdownSpacing(input: string): string {
-  const raw = String(input || '').replace(/\r\n/g, '\n');
-  const parts = raw.split('```');
-  const normalized = parts.map((part, idx) => {
-    if (idx % 2 === 1) return part;
-    return part
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n');
-  });
-  return normalized.join('```');
-}
 
 interface ContextPath {
   path: string;
@@ -74,17 +60,13 @@ function formatDuration(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
-// Inline thinking indicator with live timer (memoized for performance)
+// Chain-of-thought thinking indicator (matches window mode format)
 const ThinkingIndicator: React.FC<{
   startTime?: number;
   reasoning?: string;
 }> = memo(({ startTime, reasoning }) => {
   const [elapsed, setElapsed] = useState(0);
-  const [expanded, setExpanded] = useState(true); // Start expanded
-  const [autoCollapsed, setAutoCollapsed] = useState(false); // Track if auto-collapsed
   const internalStartRef = useRef<number | null>(null);
-  const reasoningRef = useRef<HTMLDivElement>(null);
-  const autoCollapseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const hasReasoning = reasoning && reasoning.trim().length > 0;
 
@@ -99,84 +81,36 @@ const ThinkingIndicator: React.FC<{
     return () => clearInterval(interval);
   }, [startTime]);
 
-  // Auto-collapse after 4 seconds
-  useEffect(() => {
-    if (hasReasoning && expanded && !autoCollapsed) {
-      autoCollapseTimeoutRef.current = setTimeout(() => {
-        setExpanded(false);
-        setAutoCollapsed(true);
-      }, 4000); // 4 seconds
-    }
-    return () => {
-      if (autoCollapseTimeoutRef.current) {
-        clearTimeout(autoCollapseTimeoutRef.current);
-      }
-    };
-  }, [hasReasoning, expanded, autoCollapsed]);
-
-  // Auto-scroll reasoning when expanded
-  useEffect(() => {
-    if (expanded && reasoningRef.current) {
-      reasoningRef.current.scrollTop = reasoningRef.current.scrollHeight;
-    }
-  }, [reasoning, expanded]);
-
-  const toggleExpanded = () => {
-    setExpanded(!expanded);
-    // Clear any pending auto-collapse timeout when manually toggling
-    if (autoCollapseTimeoutRef.current) {
-      clearTimeout(autoCollapseTimeoutRef.current);
-      autoCollapseTimeoutRef.current = null;
-    }
-  };
-
   return (
-    <div className="flex flex-col items-start">
-      <button
-        onClick={toggleExpanded}
-        className="flex items-center gap-1.5 text-[11px] text-neutral-400 hover:text-neutral-500 transition-colors select-none pl-1"
-        disabled={!hasReasoning}
-      >
-        <ChevronRight
-          className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-        />
-        <span className="inline-flex items-center gap-1.5 italic font-medium">
-          <Shimmer as="span" duration={1.8} spread={3}>
-            Planning next moves
-          </Shimmer>
-          <span className="text-neutral-400">{formatDuration(elapsed)}</span>
-        </span>
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-      </button>
-
-      {/* Expanded reasoning preview */}
-      <AnimatePresence initial={false}>
-        {hasReasoning && expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            className="w-full max-w-[90%] overflow-hidden mt-2 mb-3"
+    <ChainOfThought defaultOpen className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]">
+      <ChainOfThoughtHeader>
+        <Shimmer as="span" className="text-[13px] text-theme-muted" duration={1.8} spread={3}>
+          Thinking… {formatDuration(elapsed)}
+        </Shimmer>
+      </ChainOfThoughtHeader>
+      {hasReasoning && (
+        <ChainOfThoughtContent>
+          <ChainOfThoughtStep
+            label={
+              <Shimmer as="span" duration={2} spread={3}>Reasoning</Shimmer>
+            }
+            status="active"
+            isLast
           >
             <div
-              ref={reasoningRef}
-              className="pl-3 border-l-2 border-violet-200/60 max-h-36 overflow-y-auto custom-scrollbar"
+              className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+              }}
             >
-              <div className="text-[12px] text-theme-muted leading-relaxed py-1 prose prose-sm max-w-none prose-p:my-1 prose-headings:text-theme-fg prose-headings:font-bold prose-headings:text-xs prose-code:text-primary prose-code:bg-theme-hover prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-strong:text-theme-fg prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
-                <ReactMarkdown
-                  remarkPlugins={[remarkMath, remarkGfm]}
-                  rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                >
-                  {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(reasoning || '')))}
-                </ReactMarkdown>
-                <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
-              </div>
+              {reasoning}
+              <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          </ChainOfThoughtStep>
+        </ChainOfThoughtContent>
+      )}
+    </ChainOfThought>
   );
 });
 
@@ -238,13 +172,6 @@ const MessageList: React.FC<MessageListProps> = ({
   const endRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topAnchorRef = useRef<HTMLDivElement>(null);
-
-  // Discovery tips for thinking state
-  const { getTipsForCarousel } = useDiscovery();
-  const thinkingTips = useMemo(() => {
-    const tips = getTipsForCarousel(4);
-    return tips.map(t => ({ id: t.id, title: t.title, description: t.description }));
-  }, []); // Static on mount to avoid reshuffling during thinking
 
   // Track how many messages to render (start from most recent)
   const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES_TO_RENDER);
@@ -342,8 +269,6 @@ const MessageList: React.FC<MessageListProps> = ({
     }
   }, [lastMessageId, userHasScrolledUp]);
 
-  const isThinking = !!(currentReasoning && !currentResponse);
-
   return (
     <div className="relative h-full" ref={scrollContainerRef}>
       <SimpleBar className={className || "h-full no-drag custom-scrollbar px-3 py-2 select-text"}>
@@ -382,8 +307,8 @@ const MessageList: React.FC<MessageListProps> = ({
               onRedoFiles={onRedoFiles}
             />
           ))}
-          {/* Streaming response with interleaved content */}
-          {(currentResponse || (currentStreamChunks && currentStreamChunks.length > 0)) && (
+          {/* Streaming response with interleaved content (also triggers on reasoning for chain-of-thought) */}
+          {(currentResponse || currentReasoning || (currentStreamChunks && currentStreamChunks.length > 0)) && (
             <MessageBubble
               key="streaming-response"
               role="assistant"
@@ -395,27 +320,6 @@ const MessageList: React.FC<MessageListProps> = ({
               onSubmitToolOutput={onSubmitToolOutput}
               onGenUIResponse={onGenUIResponse}
             />
-          )}
-          {/* Thinking indicator when reasoning but no response/chunks yet */}
-          {isThinking && !(currentStreamChunks && currentStreamChunks.length > 0) && (
-            <div className="flex w-full justify-start mb-5">
-              <div className="max-w-[90%] px-1">
-                <ThinkingIndicator
-                  startTime={thinkingStartTime}
-                  reasoning={currentReasoning}
-                />
-                {/* Discovery tips while AI is thinking */}
-                {thinkingTips.length > 0 && (
-                  <div className="mt-3">
-                    <DiscoverTips
-                      tips={thinkingTips}
-                      title="Did you know?"
-                      compact
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
           )}
           <div ref={endRef} className="h-px" />
         </div>

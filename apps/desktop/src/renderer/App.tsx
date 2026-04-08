@@ -787,6 +787,13 @@ export default function App() {
     const modeToSend = isAuto ? 'auto' : ((meta?.category as any) || (meta?.isReasoning ? 'smart' : 'balanced'));
     const modelIdToSend = !isAuto ? selected : undefined;
 
+    // Build modelConfig from chatModels so server knows tier defaults
+    const modelConfigToSend = chatModels ? {
+      fast: { default: chatModels.fast?.default },
+      balanced: { default: chatModels.balanced?.default },
+      smart: { default: chatModels.smart?.default },
+    } : undefined;
+
     // Build context with paths
     const contextData: Record<string, any> = {
       tone: (tone === 'custom' ? customTone : tone),
@@ -817,6 +824,7 @@ export default function App() {
         contextPaths: contextPaths.length > 0 ? contextPaths : undefined,
         mode: modeToSend,
         modelId: typeof modelIdToSend === 'string' ? modelIdToSend : undefined,
+        modelConfig: modelConfigToSend,
         reasoningLevel,
       });
       setQuery("");

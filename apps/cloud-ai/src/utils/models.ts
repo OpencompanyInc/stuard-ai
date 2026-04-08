@@ -41,13 +41,22 @@ export const buildProviderModel = (id: string): any | null => {
       return deepseek ? deepseek(mid) : null;
     }
     if (provider === 'openai' || provider === 'penai') {
-      // o-series and gpt-5 models: use Responses API to expose reasoning summaries
       const isReasoningModel = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(mid);
       return isReasoningModel ? openai.responses(mid) : openai(mid);
     }
     if (provider === 'anthropic') {
       const anthropic = loadOptionalExport<(modelId: string) => any>('@ai-sdk/anthropic', 'anthropic');
       return anthropic ? anthropic(mid) : null;
+    }
+    if (provider === 'perplexity') {
+      const apiKey = process.env.PERPLEXITY_API_KEY || '';
+      if (!apiKey) return null;
+      const { createOpenAI } = require('@ai-sdk/openai');
+      const perplexity = createOpenAI({
+        apiKey,
+        baseURL: 'https://api.perplexity.ai/',
+      });
+      return perplexity(mid);
     }
     if (provider === 'openrouter') {
       const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;

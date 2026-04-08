@@ -13,7 +13,6 @@ export function getModel(model: ModelChoice, modelId?: string) {
     const defaultId = getDefaultModelForCategory(model as any);
     selectedModel = buildProviderModel(defaultId);
     
-    // Fallback if buildProviderModel failed for some reason
     if (!selectedModel) {
       if (model === 'fast') {
         selectedModel = buildProviderModel('google/gemini-3.1-flash-lite-preview');
@@ -21,6 +20,10 @@ export function getModel(model: ModelChoice, modelId?: string) {
         selectedModel =
           buildProviderModel('openai/gpt-5-chat-latest') ||
           buildProviderModel('google/gemini-3.1-flash-lite-preview');
+      } else if (model === 'research') {
+        selectedModel =
+          buildProviderModel('perplexity/sonar-pro') ||
+          buildProviderModel('google/gemini-3.1-pro-preview');
       } else {
         selectedModel =
           buildProviderModel('google/gemini-3.1-pro-preview') ||

@@ -85,7 +85,7 @@ async function getAuthToken(): Promise<string | null> {
   }
 }
 
-async function cloudFetch(path: string, opts?: RequestInit) {
+async function cloudFetch(path: string, opts?: RequestInit & { timeoutMs?: number }) {
   const token = await getAuthToken();
   const headers: Record<string, string> = {
     ...(opts?.headers as Record<string, string> || {}),
@@ -93,8 +93,29 @@ async function cloudFetch(path: string, opts?: RequestInit) {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (opts?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
 
-  const resp = await fetch(`${CLOUD_AI_HTTP}${path}`, { ...opts, headers });
-  return resp.json();
+  const timeoutMs = opts?.timeoutMs ?? 180_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const mergedSignal = opts?.signal
+    ? AbortSignal.any([opts.signal, controller.signal])
+    : controller.signal;
+
+  try {
+    const resp = await fetch(`${CLOUD_AI_HTTP}${path}`, { ...opts, headers, signal: mergedSignal });
+    clearTimeout(timer);
+
+    const text = await resp.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      if (!resp.ok) return { ok: false, error: `server_error_${resp.status}`, message: text.slice(0, 200) || `HTTP ${resp.status}` };
+      return { ok: false, error: 'invalid_response', message: 'Server returned non-JSON response' };
+    }
+  } catch (e: any) {
+    clearTimeout(timer);
+    if (e?.name === 'AbortError') return { ok: false, error: 'timeout', message: 'Request timed out' };
+    throw e;
+  }
 }
 
 // ── Module-level cache so tab re-mounts are instant ──────────────────
@@ -235,13 +256,18 @@ export function useCloudEngine() {
         setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
       }
     } catch (e: any) {
-      setError('Connection failed. Please check your internet and try again.');
+      setError('Unable to reach Stuard Cloud. Please check your internet and try again.');
     } finally {
       setLoading(false);
     }
   }, [fetchEngine]);
 
   const start = useCallback(async () => {
+    setError(null);
+    // Optimistic update so UI immediately shows "Starting..."
+    setEngine(prev => prev ? { ...prev, status: 'starting' } : prev);
+    if (_cache?.engine) { _cache.engine = { ..._cache.engine, status: 'starting' }; _cache.ts = Date.now(); }
+
     try {
       // Upload latest agent data before starting so it's available for restore
       try {
@@ -254,13 +280,19 @@ export function useCloudEngine() {
         console.warn('[cloud-engine] Pre-start agent data upload failed:', e);
       }
 
-      const data = await cloudFetch('/v1/cloud-engine/start', { method: 'POST' });
+      const data = await cloudFetch('/v1/cloud-engine/start', { method: 'POST', timeoutMs: 300_000 });
       if (data.ok) {
         await fetchEngine();
+      } else if (data.error === 'timeout') {
+        await fetchEngine();
+      } else {
+        setError(data.message || data.error || 'Failed to start engine');
+        // Re-fetch actual status without overwriting our specific error
+        try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
       }
-      else setError(data.error || 'Failed to start engine');
     } catch {
-      setError('Connection failed');
+      setError('Unable to reach Stuard Cloud. Check your connection and try again.');
+      try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
     }
   }, [fetchEngine]);
 
@@ -299,22 +331,34 @@ export function useCloudEngine() {
   }, []);
 
   const stop = useCallback(async () => {
+    setError(null);
+    setEngine(prev => prev ? { ...prev, status: 'stopping' } : prev);
+    if (_cache?.engine) { _cache.engine = { ..._cache.engine, status: 'stopping' }; _cache.ts = Date.now(); }
+
     try {
-      const data = await cloudFetch('/v1/cloud-engine/stop', { method: 'POST' });
-      if (data.ok) await fetchEngine();
-      else setError(data.error || 'Failed to stop engine');
+      const data = await cloudFetch('/v1/cloud-engine/stop', { method: 'POST', timeoutMs: 300_000 });
+      if (data.ok) {
+        await fetchEngine();
+      } else if (data.error === 'timeout') {
+        await fetchEngine();
+      } else {
+        setError(data.message || data.error || 'Failed to pause engine');
+        try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
+      }
     } catch {
-      setError('Connection failed');
+      setError('Unable to reach Stuard Cloud. Check your connection and try again.');
+      try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
     }
   }, [fetchEngine]);
 
   const destroy = useCallback(async () => {
+    setError(null);
     try {
-      const data = await cloudFetch('/v1/cloud-engine', { method: 'DELETE' });
+      const data = await cloudFetch('/v1/cloud-engine', { method: 'DELETE', timeoutMs: 300_000 });
       if (data.ok) { setEngine(null); setMetrics(null); setBilling(null); setSnapshots([]); setError(null); _cache = null; }
       else setError(data.message || data.error || 'Failed to delete engine');
     } catch {
-      setError('Connection failed');
+      setError('Unable to reach Stuard Cloud. Check your connection and try again.');
     }
   }, []);
 

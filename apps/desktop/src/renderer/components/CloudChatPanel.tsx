@@ -9,6 +9,9 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from './ai-elements/ChainOfThought';
+import { ModelSelector } from './ModelSelector';
+import { useModelRegistry } from '../hooks/useModelRegistry';
+import type { ModelMeta } from '../hooks/usePreferences';
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
 
@@ -39,6 +42,10 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
   const [conversationId, setConversationId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Model selection
+  const [selectedModelId, setSelectedModelId] = useState<string | 'auto'>('auto');
+  const { modelById } = useModelRegistry();
 
   // Streaming state
   const [streamText, setStreamText] = useState('');
@@ -81,6 +88,11 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         token = data?.session?.access_token || '';
       } catch {}
 
+      const isAuto = selectedModelId === 'auto';
+      const meta: ModelMeta | undefined = !isAuto ? modelById.get(selectedModelId) : undefined;
+      const modelTier = isAuto ? 'auto' : ((meta?.category as string) || (meta?.isReasoning ? 'smart' : 'balanced'));
+      const explicitModelId = !isAuto ? selectedModelId : undefined;
+
       const res = await fetch(`${CLOUD_AI_HTTP}/v1/vm/agent/chat`, {
         method: 'POST',
         headers: {
@@ -90,6 +102,8 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
         body: JSON.stringify({
           message: text,
           conversationId: currentConvId || undefined,
+          model: modelTier,
+          modelId: explicitModelId,
         }),
         signal: abort.signal,
       });
@@ -171,6 +185,40 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
                     accTools = [...accTools, { tool, status: 'called' }];
                   }
                   setStreamTools([...accTools]);
+                }
+                break;
+              }
+
+              case 'subagent_event': {
+                setStatusMessage('');
+                const subEvent = event.event || '';
+                const subData = event.data || {};
+                if (subEvent === 'delta') {
+                  const chunk = subData.text || '';
+                  if (chunk) {
+                    accText += chunk;
+                    setStreamText(accText);
+                  }
+                } else if (subEvent === 'reasoning' || subEvent === 'reasoning_start') {
+                  setIsReasoning(true);
+                  if (subData.text) {
+                    accReasoning += subData.text;
+                    setStreamReasoning(accReasoning);
+                  }
+                } else if (subEvent === 'reasoning_end') {
+                  setIsReasoning(false);
+                } else if (subEvent === 'tool_call') {
+                  const toolName = subData.tool || subData.name || 'tool';
+                  accTools = [...accTools, { tool: toolName, status: 'called' }];
+                  setStreamTools([...accTools]);
+                } else if (subEvent === 'tool_result') {
+                  const toolName = subData.tool || '';
+                  if (toolName) {
+                    accTools = accTools.map(t =>
+                      t.tool === toolName && t.status === 'called' ? { ...t, status: 'completed' } : t,
+                    );
+                    setStreamTools([...accTools]);
+                  }
                 }
                 break;
               }
@@ -267,7 +315,7 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
       abortRef.current = null;
       inputRef.current?.focus();
     }
-  }, [input, loading, conversationId]);
+  }, [input, loading, conversationId, selectedModelId, modelById]);
 
   if (engine.status !== 'running') {
     return (
@@ -454,19 +502,28 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
 
       {/* Input */}
       <div className="shrink-0 border-t border-theme/10 px-2 py-2">
-        <div className="flex gap-1.5">
+        <div className="flex items-center gap-1.5 mb-1">
+          <ModelSelector
+            selectedModelId={selectedModelId}
+            onSelectModel={(id) => setSelectedModelId(id)}
+            side="top"
+            variant="glass"
+            className="text-[10px]"
+          />
           {conversationId && (
             <button
               onClick={() => {
                 setMessages([]);
                 setConversationId(null);
               }}
-              className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+              className="ml-auto p-1 rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
               title="New chat"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
           )}
+        </div>
+        <div className="flex gap-1.5">
           <input
             ref={inputRef}
             type="text"

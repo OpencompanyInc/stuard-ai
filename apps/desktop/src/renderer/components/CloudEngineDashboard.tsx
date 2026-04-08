@@ -392,8 +392,52 @@ export function CloudEngineDashboard() {
     );
   }
 
+  // Transitional states (starting / stopping)
+  if (engine.status === 'starting' || engine.status === 'stopping') {
+    const isStarting = engine.status === 'starting';
+    return (
+      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      <div className="animate-in fade-in duration-500">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Engine</h1>
+            <div className="flex items-center gap-3 mt-1">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                <span className="text-sm font-bold text-blue-400">{isStarting ? 'Starting...' : 'Stopping...'}</span>
+              </div>
+              <span className="text-theme-muted text-xs">•</span>
+              <span className="text-theme-muted text-xs font-medium capitalize">{engine.tier} tier</span>
+            </div>
+          </div>
+          <button onClick={refresh} className="p-2.5 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-all" title="Refresh">
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center justify-center py-16">
+          <div className="w-16 h-16 rounded-3xl bg-blue-500/10 flex items-center justify-center mb-4">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
+          </div>
+          <h2 className="text-2xl font-black text-theme-fg tracking-tight">
+            {isStarting ? 'Starting your engine' : 'Pausing your engine'}
+          </h2>
+          <p className="text-theme-muted text-sm mt-2 text-center max-w-md">
+            {isStarting
+              ? 'Booting VM, restoring your data, and syncing memories. This usually takes 1\u20132 minutes.'
+              : 'Syncing your data to cloud storage and shutting down the VM. This takes about 30 seconds.'}
+          </p>
+        </div>
+
+        {error && (
+          <div className="mt-4 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm font-medium text-center">{error}</div>
+        )}
+      </div>
+      </div>
+    );
+  }
+
   // Show a "still booting" view if engine is running but agent is unreachable
-  // (e.g. e2-small VMs where agent takes >180s to start)
   const isBooting = engine.status === 'running' && (engine.health_status === 'unreachable' || engine.health_status === 'unknown') && !metrics;
   if (isBooting) {
     return (

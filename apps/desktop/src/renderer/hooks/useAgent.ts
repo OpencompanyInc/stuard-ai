@@ -99,7 +99,10 @@ export interface ToolCall {
   result?: any;
   error?: any;
   timestamp: number;
-  description?: string; // User-friendly description of what the tool is doing
+  description?: string;
+  liveOutput?: string;
+  subagentId?: string;
+  nested?: boolean;
 }
 
 export interface PendingMemory {
@@ -117,7 +120,7 @@ export interface PendingMemory {
 // Stream chunk types for interleaved display
 export type StreamChunk =
 | { type: 'text'; content: string }
-| { type: 'reasoning'; content: string }
+| { type: 'reasoning'; content: string; nested?: boolean }
 | { type: 'tool'; tool: ToolCall };
 
 // Hidden state for AI context - tracks IDs and tool results that should be remembered
@@ -998,9 +1001,17 @@ export function useAgent(options?: string | UseAgentOptions) {
               });
               setState((s) => ({ ...s, status: 'processing' }));
             } else if (evt.event === 'reasoning_start') {
-              // Reasoning started - track timing
               console.log('[agent] Reasoning started');
               reasoningStartTimeRef.current = Date.now();
+              // Add initial reasoning chunk so streaming bubble renders immediately with chain-of-thought
+              updateStreamingTab(t => {
+                const chunks = [...t.currentStreamChunks];
+                const hasReasoningChunk = chunks.some(ch => ch.type === 'reasoning');
+                if (!hasReasoningChunk) {
+                  chunks.push({ type: 'reasoning' as const, content: '' });
+                }
+                return { ...t, currentStreamChunks: chunks };
+              });
               setStreamingAI((prev) => {
                 if (prev.phase === 'tool') return prev;
                 return { ...prev, phase: 'responding', statusText: 'Thinking…' };
@@ -1015,12 +1026,16 @@ export function useAgent(options?: string | UseAgentOptions) {
               const isFinal = evt.data?.final === true;
               if (chunk) {
                 if (isFinal) {
-                  // Final reasoning - replace if current is empty, otherwise only set if different
                   updateStreamingTab(t => {
-                    // If we already have streaming reasoning, keep it (more complete)
-                    // If not, use the final reasoning
                     if (!t.currentReasoning.trim()) {
-                      return { ...t, currentReasoning: chunk };
+                      const chunks = [...t.currentStreamChunks];
+                      const lastChunk = chunks[chunks.length - 1];
+                      if (lastChunk?.type === 'reasoning') {
+                        chunks[chunks.length - 1] = { type: 'reasoning', content: chunk };
+                      } else {
+                        chunks.push({ type: 'reasoning', content: chunk });
+                      }
+                      return { ...t, currentReasoning: chunk, currentStreamChunks: chunks };
                     }
                     return t;
                   });
@@ -1521,12 +1536,97 @@ export function useAgent(options?: string | UseAgentOptions) {
             tryDequeueAndSend();
             setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {
-            // Server acknowledged the stop request
             console.log('[agent] Stream stopped by server:', msg.success);
-            // Clear streaming state - the 'final' message with aborted=true will follow
             streamingRef.current = false;
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
+          } else if (msg.type === 'subagent_event') {
+            if (stoppedRef.current) return;
+            const subEvt = msg as any;
+            const eventType = subEvt.event || '';
+            const data = subEvt.data || {};
+
+            if (eventType === 'delta') {
+              const text = typeof data.text === 'string' ? data.text : '';
+              if (text) {
+                streamingRef.current = true;
+                updateStreamingTab(t => {
+                  const newResponse = t.currentResponse + text;
+                  const chunks = [...t.currentStreamChunks];
+                  const lastChunk = chunks[chunks.length - 1];
+                  if (lastChunk?.type === 'text') {
+                    chunks[chunks.length - 1] = { type: 'text', content: lastChunk.content + text };
+                  } else {
+                    chunks.push({ type: 'text', content: text });
+                  }
+                  return { ...t, currentResponse: newResponse, currentStreamChunks: chunks };
+                });
+                setStreamingAI((prev) => ({
+                  ...prev,
+                  phase: 'responding',
+                  statusText: 'Agent responding…'
+                }));
+                setState((s) => ({ ...s, status: 'responding' }));
+              }
+            } else if (eventType === 'reasoning' || eventType === 'reasoning_start') {
+              const text = typeof data.text === 'string' ? data.text : '';
+              if (text) {
+                updateStreamingTab(t => {
+                  const newReasoning = t.currentReasoning + text;
+                  const chunks = [...t.currentStreamChunks];
+                  const lastChunk = chunks[chunks.length - 1];
+                  if (lastChunk?.type === 'reasoning') {
+                    chunks[chunks.length - 1] = { type: 'reasoning', content: lastChunk.content + text, nested: true };
+                  } else {
+                    chunks.push({ type: 'reasoning', content: text, nested: true });
+                  }
+                  return { ...t, currentReasoning: newReasoning, currentStreamChunks: chunks };
+                });
+                setStreamingAI((prev) => ({
+                  ...prev,
+                  phase: 'responding',
+                  statusText: 'Thinking…'
+                }));
+              }
+            } else if (eventType === 'tool_call') {
+              const toolName = data.tool || data.name || 'tool';
+              const toolId = data.toolCallId || data.id || `sub-tc-${Date.now()}`;
+              const subagentId = subEvt.subagentId || '';
+              updateStreamingTab(t => {
+                const existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                if (existing) return t;
+                const newCall: ToolCall = {
+                  id: toolId,
+                  tool: toolName,
+                  status: 'called',
+                  args: data.args,
+                  timestamp: Date.now(),
+                  description: data.description || humanizeToolName(toolName),
+                  subagentId,
+                  nested: true,
+                };
+                return {
+                  ...t,
+                  currentToolCalls: [...t.currentToolCalls, newCall],
+                  currentStreamChunks: [...t.currentStreamChunks, { type: 'tool' as const, tool: newCall }],
+                };
+              });
+            } else if (eventType === 'tool_result') {
+              const toolId = data.toolCallId || data.id || '';
+              if (toolId) {
+                updateStreamingTab(t => ({
+                  ...t,
+                  currentToolCalls: t.currentToolCalls.map(tc =>
+                    tc.id === toolId ? { ...tc, status: 'completed' as const, result: data.result } : tc
+                  ),
+                  currentStreamChunks: t.currentStreamChunks.map(ch =>
+                    ch.type === 'tool' && ch.tool.id === toolId
+                      ? { ...ch, tool: { ...ch.tool, status: 'completed' as const, result: data.result } }
+                      : ch
+                  ),
+                }));
+              }
+            }
           } else if (msg.type === 'conversation') {
             const cid = msg.conversationId;
             const cidStr = (cid !== null && cid !== undefined) ? String(cid) : '';

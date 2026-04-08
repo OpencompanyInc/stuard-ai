@@ -133,6 +133,7 @@ export async function handleVMAgentRoutes(
           message,
           conversationId: body.conversationId,
           model: body.model || 'balanced',
+          modelId: body.modelId,
           context: body.context,
           memoryQuery: body.memoryQuery,
         }),

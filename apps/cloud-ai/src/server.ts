@@ -47,6 +47,7 @@ function normalizeTierChoice(input: any): TierChoice {
   if (raw === 'smart') return 'smart';
   if (raw === 'balanced') return 'balanced';
   if (raw === 'fast') return 'fast';
+  if (raw === 'research') return 'research';
   if (raw === 'auto') return 'auto';
   return 'balanced';
 }
