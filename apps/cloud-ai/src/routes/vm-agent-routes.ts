@@ -96,7 +96,7 @@ export async function handleVMAgentRoutes(
     return true;
   }
 
-  // ── POST /v1/vm/agent/chat — Chat with Stuard agent on VM ─────────────────
+  // ── POST /v1/vm/agent/chat — Chat with Stuard agent on VM (SSE streaming) ──
   if (method === 'POST' && path === '/v1/vm/agent/chat') {
     const user = await authenticate(req, res);
     if (!user) return true;
@@ -110,22 +110,89 @@ export async function handleVMAgentRoutes(
         return true;
       }
 
-      const result = await sendVMCommand(user.userId, 'agent_chat', {
-        message,
-        conversationId: body.conversationId,
-        model: body.model || 'balanced',
-        context: body.context,
-        memoryQuery: body.memoryQuery,
-      }, 180_000); // 3 min timeout
-
-      if (!result.ok) {
-        json(res, 502, { ok: false, error: result.error || 'agent_chat_failed' });
+      const base = await resolveVMBaseUrl(user.userId);
+      if (!base) {
+        json(res, 502, { ok: false, error: 'vm_not_reachable' });
         return true;
       }
 
-      json(res, 200, { ok: true, ...result.result });
+      const secret = await resolveVMSecret(user.userId);
+      const token = mintVMToken(secret, user.userId, 'cloud-ai-chat');
+
+      // Proxy to VM agent's streaming endpoint — returns NDJSON
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 190_000); // slightly longer than VM's 180s
+
+      const vmResp = await fetch(`${base}/agent/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          message,
+          conversationId: body.conversationId,
+          model: body.model || 'balanced',
+          context: body.context,
+          memoryQuery: body.memoryQuery,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!vmResp.ok || !vmResp.body) {
+        const errBody = await vmResp.text().catch(() => '');
+        json(res, vmResp.status || 502, { ok: false, error: 'agent_chat_failed', detail: errBody });
+        return true;
+      }
+
+      // Stream NDJSON from VM → SSE to client
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'X-Content-Type-Options': 'nosniff',
+      });
+
+      const reader = vmResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // keep incomplete line in buffer
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            // Forward as SSE event
+            res.write(`data: ${trimmed}\n\n`);
+          }
+        }
+        // Flush remaining buffer
+        if (buffer.trim()) {
+          res.write(`data: ${buffer.trim()}\n\n`);
+        }
+      } catch (streamErr: any) {
+        if (streamErr?.name !== 'AbortError') {
+          try { res.write(`data: ${JSON.stringify({ type: 'error', error: 'stream_interrupted' })}\n\n`); } catch {}
+        }
+      } finally {
+        res.end();
+      }
     } catch (e: any) {
-      json(res, 500, { ok: false, error: e?.message || 'agent_chat_failed' });
+      if (!res.headersSent) {
+        json(res, 500, { ok: false, error: e?.message || 'agent_chat_failed' });
+      } else {
+        try { res.end(); } catch {}
+      }
     }
     return true;
   }

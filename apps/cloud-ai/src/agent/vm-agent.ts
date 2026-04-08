@@ -40,7 +40,7 @@ import { DeployExecutor } from './deploy-executor';
 import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
 import { getVMProactiveScheduler } from './vm-proactive';
 import * as fileManager from './file-manager';
-import { getAgentWs, sendToAgent, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
+import { getAgentWs, sendToAgent, sendToAgentStreaming, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -405,6 +405,98 @@ async function handleAgentChat(args: any): Promise<any> {
     return { ok: true, conversationId, ...result };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'agent_chat_failed') };
+  }
+}
+
+/**
+ * Streaming variant of handleAgentChat — writes NDJSON lines to the HTTP response
+ * as Python agent WS events arrive (progress, delta, reasoning, tool_event, final).
+ */
+async function handleAgentChatStream(args: any, res: import('http').ServerResponse): Promise<void> {
+  const message = String(args.message || '').trim();
+  if (!message) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'empty_message' }));
+    return;
+  }
+
+  const conversationId = args.conversationId || randomUUID();
+  const model = args.model || 'balanced';
+
+  // Set up NDJSON streaming response
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Content-Type-Options': 'nosniff',
+  });
+
+  const writeLine = (obj: any) => {
+    try { if (!res.destroyed) res.write(JSON.stringify(obj) + '\n'); } catch {}
+  };
+
+  writeLine({ type: 'start', conversationId });
+
+  try {
+    // Build memory context
+    writeLine({ type: 'status', message: 'Loading memory context...' });
+    const memoryContext = await buildVMMemoryContext(
+      args.memoryQuery || message,
+      args.queryEmbedding,
+    );
+
+    // Store user message
+    sendToAgent({
+      type: 'tool_exec',
+      tool: 'message_add',
+      args: { conversation_id: conversationId, role: 'user', content: message },
+    }, 10_000).catch(() => {});
+
+    const vmAuth = VM_SECRET && USER_ID
+      ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
+      : undefined;
+
+    writeLine({ type: 'status', message: 'Generating response...' });
+
+    // Stream chat to Python agent — onEvent fires for every WS message
+    const result = await sendToAgentStreaming(
+      {
+        type: 'chat',
+        message,
+        conversationId,
+        model,
+        context: { isVM: true, userId: USER_ID, ...(args.context || {}) },
+        memoryContext,
+        ...(vmAuth ? { auth: vmAuth } : {}),
+      },
+      (event) => {
+        // Forward streaming events as NDJSON lines
+        const t = String(event.type || '').toLowerCase();
+        if (t === 'progress' || t === 'delta') {
+          writeLine({ type: 'progress', event: event.event || 'delta', data: event.data || { text: event.text } });
+        } else if (t === 'routing') {
+          writeLine({ type: 'routing', model: event.model, data: event.data });
+        } else if (t === 'tool_event') {
+          writeLine({ type: 'tool_event', tool: event.tool, status: event.status, data: event.data });
+        }
+      },
+      180_000,
+    );
+
+    // Process turn in background (store assistant message, create segment, embeddings)
+    const assistantText = result?.text || '';
+    if (assistantText) {
+      processVMConversationTurn(conversationId, message, assistantText).catch((e) => {
+        console.warn('[vm-agent] post-response memory processing failed:', e?.message);
+      });
+    }
+
+    // Write final event
+    writeLine({ type: 'final', ok: true, conversationId, ...result });
+  } catch (e: any) {
+    writeLine({ type: 'error', error: String(e?.message || 'agent_chat_failed') });
+  } finally {
+    res.end();
   }
 }
 
@@ -1208,6 +1300,19 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, result });
     } catch (e: any) {
       json(res, 500, { ok: false, error: e?.message || 'agent_chat_failed' });
+    }
+    return;
+  }
+
+  // POST /agent/chat/stream — streaming chat (NDJSON)
+  if (method === 'POST' && url === '/agent/chat/stream') {
+    try {
+      const body = await readBody(req, 5 * 1024 * 1024);
+      await handleAgentChatStream(body, res);
+    } catch (e: any) {
+      if (!res.headersSent) {
+        json(res, 500, { ok: false, error: e?.message || 'agent_chat_stream_failed' });
+      }
     }
     return;
   }

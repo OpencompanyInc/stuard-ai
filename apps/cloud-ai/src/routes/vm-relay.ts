@@ -39,6 +39,7 @@ const ALLOWED_VM_PATHS: RegExp[] = [
   /^\/sync\/download$/,
   // Agent chat & execute
   /^\/agent\/chat$/,
+  /^\/agent\/chat\/stream$/,
   /^\/agent\/execute$/,
   // Memory
   /^\/memory\/add$/,

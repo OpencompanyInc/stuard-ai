@@ -1,7 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { sendVMAgentChat } from '@/lib/cloudApi';
+
+const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
+
+function getToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('stuard_access_token') || null;
+}
 
 interface CloudChatProps {
   engine: any;
@@ -10,7 +16,17 @@ interface CloudChatProps {
 type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
+  reasoning?: string;
+  toolCalls?: Array<{ tool: string; status: string }>;
 };
+
+function humanizeToolName(tool: string): string {
+  return tool
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
 
 export function CloudChat({ engine }: CloudChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -20,9 +36,16 @@ export function CloudChat({ engine }: CloudChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Streaming state
+  const [streamText, setStreamText] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [isReasoning, setIsReasoning] = useState(false);
+  const [streamTools, setStreamTools] = useState<Array<{ tool: string; status: string }>>([]);
+  const [statusMessage, setStatusMessage] = useState('');
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, loading, streamText, streamReasoning, streamTools, statusMessage]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -31,19 +54,191 @@ export function CloudChat({ engine }: CloudChatProps) {
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setIsReasoning(false);
+    setStatusMessage('Connecting to agent...');
+
+    let accText = '';
+    let accReasoning = '';
+    let accTools: Array<{ tool: string; status: string }> = [];
+    let gotFinal = false;
+    let currentConvId = conversationId;
 
     try {
-      const res = await sendVMAgentChat(text, conversationId || undefined);
-      if (res.ok && res.text) {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
-        if (res.conversationId) setConversationId(res.conversationId);
+      const token = getToken();
+      const res = await fetch(`${CLOUD_API_URL}/v1/vm/agent/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: text,
+          conversationId: currentConvId || undefined,
+        }),
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream') && res.body) {
+        setStatusMessage('');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const jsonStr = trimmed.startsWith('data: ') ? trimmed.slice(6) : trimmed;
+            if (!jsonStr) continue;
+
+            let event: any;
+            try { event = JSON.parse(jsonStr); } catch { continue; }
+
+            switch (event.type) {
+              case 'start':
+                if (event.conversationId) {
+                  currentConvId = event.conversationId;
+                  setConversationId(event.conversationId);
+                }
+                break;
+
+              case 'status':
+                setStatusMessage(event.message || '');
+                break;
+
+              case 'progress': {
+                setStatusMessage('');
+                const ev = event.event || '';
+                const data = event.data || {};
+                if (ev === 'delta' || ev === 'text') {
+                  const chunk = data.text || '';
+                  if (chunk) {
+                    accText += chunk;
+                    setStreamText(accText);
+                  }
+                } else if (ev === 'reasoning_start' || ev === 'reasoning') {
+                  setIsReasoning(true);
+                  if (data.text) {
+                    accReasoning += data.text;
+                    setStreamReasoning(accReasoning);
+                  }
+                } else if (ev === 'reasoning_end') {
+                  setIsReasoning(false);
+                }
+                break;
+              }
+
+              case 'tool_event': {
+                setStatusMessage('');
+                const tool = event.tool || event.data?.tool;
+                const status = event.status || event.data?.status || 'called';
+                if (tool) {
+                  if (status === 'completed' || status === 'result') {
+                    accTools = accTools.map(t =>
+                      t.tool === tool && t.status === 'called' ? { ...t, status: 'completed' } : t,
+                    );
+                  } else {
+                    accTools = [...accTools, { tool, status: 'called' }];
+                  }
+                  setStreamTools([...accTools]);
+                }
+                break;
+              }
+
+              case 'routing':
+                setStatusMessage(event.model ? `Routing to ${event.model}...` : '');
+                break;
+
+              case 'final':
+                gotFinal = true;
+                if (event.conversationId) {
+                  currentConvId = event.conversationId;
+                  setConversationId(event.conversationId);
+                }
+                const finalText = accText || event.text || '';
+                if (finalText) {
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: finalText,
+                    reasoning: accReasoning || undefined,
+                    toolCalls: accTools.length > 0 ? accTools : undefined,
+                  }]);
+                }
+                break;
+
+              case 'error':
+                if (!gotFinal) {
+                  gotFinal = true;
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: accText || `Error: ${event.error || 'unknown'}`,
+                    reasoning: accReasoning || undefined,
+                    toolCalls: accTools.length > 0 ? accTools : undefined,
+                  }]);
+                }
+                break;
+            }
+          }
+        }
+
+        if (!gotFinal && accText) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: accText,
+            reasoning: accReasoning || undefined,
+            toolCalls: accTools.length > 0 ? accTools : undefined,
+          }]);
+        }
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.error || 'Something went wrong. Please try again.' }]);
+        // Fallback: non-streaming JSON response
+        setStatusMessage('');
+        const data = await res.json();
+        if (data.ok && (data.text || data.result?.text)) {
+          const txt = data.text || data.result?.text || '';
+          setMessages(prev => [...prev, { role: 'assistant', content: txt }]);
+          if (data.conversationId || data.result?.conversationId) {
+            setConversationId(data.conversationId || data.result?.conversationId);
+          }
+        } else {
+          const errMsg = data.error || 'Failed to get a response.';
+          const isBootTimeout = errMsg.includes('agent_ws_connect_timeout');
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: isBootTimeout
+              ? 'The AI agent is still starting up on your cloud engine. This usually takes 1-2 minutes after provisioning. Please try again shortly.'
+              : errMsg,
+          }]);
+        }
       }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error. Please try again.' }]);
+      if (accText) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: accText,
+          reasoning: accReasoning || undefined,
+          toolCalls: accTools.length > 0 ? accTools : undefined,
+        }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error. Please try again.' }]);
+      }
     } finally {
       setLoading(false);
+      setStreamText('');
+      setStreamReasoning('');
+      setStreamTools([]);
+      setIsReasoning(false);
+      setStatusMessage('');
       inputRef.current?.focus();
     }
   }, [input, loading, conversationId]);
@@ -61,6 +256,8 @@ export function CloudChat({ engine }: CloudChatProps) {
       </div>
     );
   }
+
+  const hasStreamContent = streamText || streamReasoning || streamTools.length > 0 || isReasoning;
 
   return (
     <div className="flex flex-col h-[600px] border border-gray-200 rounded-xl overflow-hidden bg-white">
@@ -89,16 +286,90 @@ export function CloudChat({ engine }: CloudChatProps) {
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
-              msg.role === 'user'
-                ? 'bg-blue-600 text-white rounded-br-md'
-                : 'bg-gray-100 text-gray-800 rounded-bl-md'
-            }`}>
-              {msg.content}
+            <div className="max-w-[80%]">
+              {/* Reasoning + tools */}
+              {msg.role === 'assistant' && (msg.reasoning || msg.toolCalls?.length) && (
+                <div className="mb-1.5 rounded-lg border border-gray-100 bg-gray-50/80 overflow-hidden">
+                  <button
+                    className="w-full px-3 py-1.5 text-left text-xs text-gray-400 font-medium"
+                  >
+                    Thought process
+                  </button>
+                  <div className="px-3 pb-2 space-y-1">
+                    {msg.reasoning && (
+                      <div className="max-h-24 overflow-y-auto text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
+                        {msg.reasoning}
+                      </div>
+                    )}
+                    {msg.toolCalls?.map((t, ti) => (
+                      <div key={ti} className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'completed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                        {humanizeToolName(t.tool)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className={`px-3.5 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
+                msg.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-br-md'
+                  : 'bg-gray-100 text-gray-800 rounded-bl-md'
+              }`}>
+                {msg.content}
+              </div>
             </div>
           </div>
         ))}
-        {loading && (
+
+        {/* Live streaming */}
+        {loading && hasStreamContent && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%]">
+              {(isReasoning || streamReasoning || streamTools.length > 0) && (
+                <div className="mb-1.5 rounded-lg border border-gray-100 bg-gray-50/80 overflow-hidden">
+                  <div className="px-3 py-1.5 text-xs text-gray-400 font-medium animate-pulse">
+                    Thinking...
+                  </div>
+                  <div className="px-3 pb-2 space-y-1">
+                    {(isReasoning || streamReasoning) && (
+                      <div className="max-h-24 overflow-y-auto text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
+                        {streamReasoning || '...'}
+                      </div>
+                    )}
+                    {streamTools.map((t, ti) => (
+                      <div key={ti} className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'completed' ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
+                        {humanizeToolName(t.tool)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {streamText && (
+                <div className="bg-gray-100 rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm whitespace-pre-wrap text-gray-800">
+                  {streamText}
+                  <span className="inline-block w-0.5 h-4 bg-gray-400 animate-pulse ml-0.5 align-middle" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Status message (agent booting, loading memory, etc.) */}
+        {loading && statusMessage && !hasStreamContent && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span className="text-xs text-gray-500">{statusMessage}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Simple loading dots */}
+        {loading && !hasStreamContent && !statusMessage && (
           <div className="flex justify-start">
             <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-3">
               <div className="flex gap-1">

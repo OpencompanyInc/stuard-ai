@@ -689,6 +689,11 @@ async function waitForOperation(operation: any): Promise<void> {
         }
       } catch (err: any) {
         if (err?.message?.startsWith('GCE operation failed:')) throw err;
+        // 404 = operation already completed and was garbage-collected by GCE
+        if (err?.code === 404 || err?.message?.includes('was not found')) {
+          console.log(`[compute:gce] Operation ${operation.name} not found (likely already completed)`);
+          return;
+        }
         console.warn(`[compute:gce] Operation poll error (attempt ${i + 1}): ${err?.message}`);
         await new Promise(r => setTimeout(r, 5000));
       }
@@ -708,6 +713,11 @@ async function waitForOperation(operation: any): Promise<void> {
         }
       } catch (err: any) {
         if (err?.message?.startsWith('GCE operation failed:')) throw err;
+        // 404 = operation already completed and was garbage-collected by GCE
+        if (err?.code === 404 || err?.message?.includes('was not found')) {
+          console.log(`[compute:gce] Global operation ${operation.name} not found (likely already completed)`);
+          return;
+        }
         console.warn(`[compute:gce] Global operation poll error (attempt ${i + 1}): ${err?.message}`);
         await new Promise(r => setTimeout(r, 5000));
       }

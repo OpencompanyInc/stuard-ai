@@ -32,31 +32,6 @@ function humanizeToolName(tool: string): string {
     .trim();
 }
 
-async function sendAgentChat(
-  message: string,
-  conversationId?: string,
-): Promise<{ ok: boolean; text?: string; conversationId?: string; error?: string }> {
-  try {
-    let token = '';
-    try {
-      const { data } = await supabase.auth.getSession();
-      token = data?.session?.access_token || '';
-    } catch {}
-
-    const res = await fetch(`${CLOUD_AI_HTTP}/v1/vm/agent/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ message, conversationId }),
-    });
-    return await res.json();
-  } catch (e: any) {
-    return { ok: false, error: e?.message || 'connection_failed' };
-  }
-}
-
 export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, className }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -65,196 +40,17 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Streaming state (from VM stream mirror via IPC)
+  // Streaming state
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [isReasoning, setIsReasoning] = useState(false);
   const [streamTools, setStreamTools] = useState<Array<{ tool: string; status: string }>>([]);
-  const streamReceivedFinal = useRef(false);
-  // Refs mirror the latest stream state so the IPC callback (registered once) always
-  // reads current values without needing to re-register on every state change.
-  const streamTextRef = useRef('');
-  const streamReasoningRef = useRef('');
-  const streamToolsRef = useRef<Array<{ tool: string; status: string }>>([]);
-  const messageAddedRef = useRef(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading, streamText, streamReasoning, streamTools]);
-
-  // Listen for VM stream mirror events via IPC.
-  // Registered ONCE (empty deps) — refs provide access to latest values
-  // without triggering re-registration on every delta/reasoning update.
-  useEffect(() => {
-    const clearStreamRefs = () => {
-      streamTextRef.current = '';
-      streamReasoningRef.current = '';
-      streamToolsRef.current = [];
-    };
-
-    const updateToolState = (updater: (prev: Array<{ tool: string; status: string }>) => Array<{ tool: string; status: string }>) => {
-      setStreamTools(prev => {
-        const next = updater(prev);
-        streamToolsRef.current = next;
-        return next;
-      });
-    };
-
-    const unsub = (window as any).desktopAPI?.onVMStreamEvent?.((event: any) => {
-      if (!event?.vmMirror) return;
-
-      if (event.type === 'progress') {
-        const ev = event.event;
-        const data = event.data || {};
-
-        switch (ev) {
-          case 'start':
-            // Stream starting — clear any previous stream state
-            clearStreamRefs();
-            setStreamText('');
-            setStreamReasoning('');
-            setStreamTools([]);
-            setIsReasoning(false);
-            break;
-
-          case 'delta':
-            if (data.text) {
-              streamTextRef.current += data.text;
-              setStreamText(prev => prev + data.text);
-            }
-            break;
-
-          case 'reasoning_start':
-          case 'reasoning':
-            setIsReasoning(true);
-            if (data.text) {
-              streamReasoningRef.current += data.text;
-              setStreamReasoning(prev => prev + data.text);
-            }
-            break;
-
-          case 'reasoning_end':
-            setIsReasoning(false);
-            break;
-
-          case 'tool_event':
-            if (data.tool) {
-              updateToolState(prev => {
-                const existing = prev.findIndex(t => t.tool === data.tool && t.status === 'called');
-                if (data.status === 'completed' && existing >= 0) {
-                  return prev.map((t, i) => i === existing ? { ...t, status: 'completed' } : t);
-                }
-                if (data.status === 'called') {
-                  return [...prev, { tool: data.tool, status: 'called' }];
-                }
-                return prev;
-              });
-            }
-            break;
-        }
-      } else if (event.type === 'subagent_event') {
-        // Subagent streaming events from delegation (browser, file_ops, etc.)
-        // NOTE: text deltas and reasoning from subagents arrive as subagent_event
-        // (not duplicated as progress events — see subagent-runtime.ts).
-        const ev = event.event;
-        const data = event.data || {};
-
-        switch (ev) {
-          case 'started':
-            // Subagent started — show as an active tool step
-            updateToolState(prev => [
-              ...prev,
-              { tool: `delegate:${data.kind || data.label || 'task'}`, status: 'called' },
-            ]);
-            break;
-
-          case 'delta':
-            if (data.text) {
-              streamTextRef.current += data.text;
-              setStreamText(prev => prev + data.text);
-            }
-            break;
-
-          case 'reasoning_start':
-          case 'reasoning':
-            setIsReasoning(true);
-            if (data.text) {
-              streamReasoningRef.current += data.text;
-              setStreamReasoning(prev => prev + data.text);
-            }
-            break;
-
-          case 'reasoning_end':
-            setIsReasoning(false);
-            break;
-
-          case 'tool_call':
-            if (data.tool) {
-              updateToolState(prev => [...prev, { tool: data.tool, status: 'called' }]);
-            }
-            break;
-
-          case 'tool_result':
-            if (data.tool) {
-              updateToolState(prev => {
-                const existing = prev.findIndex(t => t.tool === data.tool && t.status === 'called');
-                if (existing >= 0) {
-                  return prev.map((t, i) => i === existing ? { ...t, status: 'completed' } : t);
-                }
-                return prev;
-              });
-            }
-            break;
-
-          case 'completed':
-            // Mark the delegate step as completed
-            updateToolState(prev =>
-              prev.map(t =>
-                t.tool.startsWith('delegate:') && t.status === 'called'
-                  ? { ...t, status: 'completed' }
-                  : t,
-              ),
-            );
-            break;
-        }
-      } else if (event.type === 'final') {
-        // Streaming complete — finalize the message from stream data.
-        // Read from refs for the latest accumulated values (not stale closures).
-        streamReceivedFinal.current = true;
-        if (messageAddedRef.current) return; // HTTP fallback already added a message
-        messageAddedRef.current = true;
-
-        const finalText = event.result?.text || streamTextRef.current || '';
-        const finalReasoning = streamReasoningRef.current || undefined;
-        const finalTools = streamToolsRef.current.length > 0
-          ? streamToolsRef.current.map(t => ({ tool: t.tool, status: t.status }))
-          : undefined;
-
-        if (finalText) {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: finalText,
-            reasoning: finalReasoning,
-            toolCalls: finalTools,
-          }]);
-        }
-
-        if (event.conversationId) {
-          setConversationId(event.conversationId);
-        }
-
-        // Clear streaming state
-        clearStreamRefs();
-        setStreamText('');
-        setStreamReasoning('');
-        setStreamTools([]);
-        setIsReasoning(false);
-      } else if (event.type === 'conversation' && event.conversationId) {
-        setConversationId(event.conversationId);
-      }
-    });
-    return () => { try { unsub?.(); } catch {} };
-  }, []);
+  }, [messages, loading, streamText, streamReasoning, streamTools, statusMessage]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -263,41 +59,203 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     setLoading(true);
-    streamReceivedFinal.current = false;
-    messageAddedRef.current = false;
-
-    // Clear stream state for new message
-    streamTextRef.current = '';
-    streamReasoningRef.current = '';
-    streamToolsRef.current = [];
     setStreamText('');
     setStreamReasoning('');
     setStreamTools([]);
     setIsReasoning(false);
+    setStatusMessage('Connecting to agent...');
+
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    let accText = '';
+    let accReasoning = '';
+    let accTools: Array<{ tool: string; status: string }> = [];
+    let gotFinal = false;
+    let currentConvId = conversationId;
 
     try {
-      const res = await sendAgentChat(text, conversationId || undefined);
+      let token = '';
+      try {
+        const { data } = await supabase.auth.getSession();
+        token = data?.session?.access_token || '';
+      } catch {}
 
-      // Only use HTTP response as fallback if streaming didn't deliver the final message
-      if (!streamReceivedFinal.current && !messageAddedRef.current) {
-        messageAddedRef.current = true;
-        if (res.ok && res.text) {
-          setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
-          if (res.conversationId) setConversationId(res.conversationId);
-        } else {
-          setMessages(prev => [
-            ...prev,
-            { role: 'assistant', content: res.error || 'Failed to get a response.' },
-          ]);
+      const res = await fetch(`${CLOUD_AI_HTTP}/v1/vm/agent/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: text,
+          conversationId: currentConvId || undefined,
+        }),
+        signal: abort.signal,
+      });
+
+      // Check if we got SSE streaming response
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream') && res.body) {
+        setStatusMessage('');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            // SSE lines are prefixed with "data: "
+            const jsonStr = trimmed.startsWith('data: ') ? trimmed.slice(6) : trimmed;
+            if (!jsonStr) continue;
+
+            let event: any;
+            try { event = JSON.parse(jsonStr); } catch { continue; }
+
+            switch (event.type) {
+              case 'start':
+                if (event.conversationId) {
+                  currentConvId = event.conversationId;
+                  setConversationId(event.conversationId);
+                }
+                break;
+
+              case 'status':
+                setStatusMessage(event.message || '');
+                break;
+
+              case 'progress': {
+                setStatusMessage('');
+                const ev = event.event || '';
+                const data = event.data || {};
+                if (ev === 'delta' || ev === 'text') {
+                  const chunk = data.text || '';
+                  if (chunk) {
+                    accText += chunk;
+                    setStreamText(accText);
+                  }
+                } else if (ev === 'reasoning_start' || ev === 'reasoning') {
+                  setIsReasoning(true);
+                  if (data.text) {
+                    accReasoning += data.text;
+                    setStreamReasoning(accReasoning);
+                  }
+                } else if (ev === 'reasoning_end') {
+                  setIsReasoning(false);
+                } else if (ev === 'start') {
+                  // Stream starting, clear state
+                  setStatusMessage('');
+                }
+                break;
+              }
+
+              case 'tool_event': {
+                setStatusMessage('');
+                const tool = event.tool || event.data?.tool;
+                const status = event.status || event.data?.status || 'called';
+                if (tool) {
+                  if (status === 'completed' || status === 'result') {
+                    accTools = accTools.map(t =>
+                      t.tool === tool && t.status === 'called' ? { ...t, status: 'completed' } : t,
+                    );
+                  } else {
+                    accTools = [...accTools, { tool, status: 'called' }];
+                  }
+                  setStreamTools([...accTools]);
+                }
+                break;
+              }
+
+              case 'routing':
+                setStatusMessage(event.model ? `Routing to ${event.model}...` : '');
+                break;
+
+              case 'final':
+                gotFinal = true;
+                if (event.conversationId) {
+                  currentConvId = event.conversationId;
+                  setConversationId(event.conversationId);
+                }
+                // Use accumulated text or the final text from the event
+                const finalText = accText || event.text || '';
+                if (finalText) {
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: finalText,
+                    reasoning: accReasoning || undefined,
+                    toolCalls: accTools.length > 0 ? accTools : undefined,
+                  }]);
+                }
+                break;
+
+              case 'error':
+                if (!gotFinal) {
+                  gotFinal = true;
+                  const errorText = accText || event.error || 'Agent error';
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: accText ? accText : `Error: ${event.error || 'unknown'}`,
+                    reasoning: accReasoning || undefined,
+                    toolCalls: accTools.length > 0 ? accTools : undefined,
+                  }]);
+                }
+                break;
+            }
+          }
+        }
+
+        // If we accumulated text but never got a 'final' event, add the message
+        if (!gotFinal && accText) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: accText,
+            reasoning: accReasoning || undefined,
+            toolCalls: accTools.length > 0 ? accTools : undefined,
+          }]);
         }
       } else {
-        // Streaming already delivered the final — just update conversationId if needed
-        if (res.conversationId) setConversationId(res.conversationId);
+        // Fallback: non-streaming JSON response (old VM agent without /agent/chat/stream)
+        setStatusMessage('');
+        const data = await res.json();
+        if (data.ok && (data.text || data.result?.text)) {
+          const txt = data.text || data.result?.text || '';
+          setMessages(prev => [...prev, { role: 'assistant', content: txt }]);
+          if (data.conversationId || data.result?.conversationId) {
+            setConversationId(data.conversationId || data.result?.conversationId);
+          }
+        } else {
+          const errMsg = data.error || 'Failed to get a response.';
+          // Show a helpful message for agent boot timeout
+          const isBootTimeout = errMsg.includes('agent_ws_connect_timeout');
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: isBootTimeout
+              ? 'The AI agent is still starting up on your cloud engine. This usually takes 1-2 minutes after provisioning. Please try again shortly.'
+              : errMsg,
+          }]);
+        }
       }
-    } catch {
-      if (!streamReceivedFinal.current && !messageAddedRef.current) {
-        messageAddedRef.current = true;
-        setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error.' }]);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      // Show accumulated text if we have it
+      if (accText) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: accText,
+          reasoning: accReasoning || undefined,
+          toolCalls: accTools.length > 0 ? accTools : undefined,
+        }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error. Please try again.' }]);
       }
     } finally {
       setLoading(false);
@@ -305,6 +263,8 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
       setStreamReasoning('');
       setStreamTools([]);
       setIsReasoning(false);
+      setStatusMessage('');
+      abortRef.current = null;
       inputRef.current?.focus();
     }
   }, [input, loading, conversationId]);
@@ -467,8 +427,18 @@ export const CloudChatPanel: React.FC<CloudChatPanelProps> = ({ engine, classNam
           </div>
         )}
 
-        {/* Simple loading dots when no stream events yet */}
-        {loading && !hasStreamContent && (
+        {/* Status message (agent booting, loading memory, etc.) */}
+        {loading && statusMessage && !hasStreamContent && (
+          <div className="flex justify-start">
+            <div className="bg-theme-card/50 border border-theme/10 rounded-xl rounded-bl-sm px-3 py-2 flex items-center gap-2">
+              <Loader2 className="w-3 h-3 animate-spin text-theme-muted/60" />
+              <span className="text-[10px] text-theme-muted">{statusMessage}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Simple loading dots when no stream events and no status yet */}
+        {loading && !hasStreamContent && !statusMessage && (
           <div className="flex justify-start">
             <div className="bg-theme-card/50 border border-theme/10 rounded-xl rounded-bl-sm px-3 py-2">
               <div className="flex gap-1 items-center">

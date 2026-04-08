@@ -30,22 +30,22 @@ const _agentPendingRequests = new Map<string, {
   timer: ReturnType<typeof setTimeout>;
 }>();
 
-export function getAgentWs(): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    if (_agentWs?.readyState === WebSocket.OPEN) {
-      return resolve(_agentWs);
-    }
-    if (_agentWsConnecting) {
-      const check = setInterval(() => {
-        if (_agentWs?.readyState === WebSocket.OPEN) {
-          clearInterval(check);
-          resolve(_agentWs);
-        }
-      }, 100);
-      setTimeout(() => { clearInterval(check); reject(new Error('agent_ws_connect_timeout')); }, 10_000);
-      return;
-    }
+// Per-request stream listeners — registered by streamToAgent(), called for
+// every intermediate WS message (progress/delta/routing/tool_event).
+const _streamListeners = new Map<string, (msg: any) => void>();
 
+/** Register a stream listener for a request ID. Called for every WS message. */
+export function addStreamListener(id: string, listener: (msg: any) => void): void {
+  _streamListeners.set(id, listener);
+}
+
+/** Remove a stream listener. */
+export function removeStreamListener(id: string): void {
+  _streamListeners.delete(id);
+}
+
+function _connectAgentWs(): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
     _agentWsConnecting = true;
     const ws = new WebSocket(LOCAL_AGENT_WS_URL);
     ws.on('open', () => {
@@ -58,7 +58,15 @@ export function getAgentWs(): Promise<WebSocket> {
       try {
         const msg = JSON.parse(String(data));
         const id = msg.id || msg.requestId;
-        if (!id || !_agentPendingRequests.has(id)) return;
+        if (!id) return;
+
+        // Forward to stream listener if registered (for streaming chat)
+        const streamCb = _streamListeners.get(id);
+        if (streamCb) {
+          try { streamCb(msg); } catch {}
+        }
+
+        if (!_agentPendingRequests.has(id)) return;
         // Only resolve on terminal messages — skip progress/delta/routing
         // events which arrive before the actual result.
         const t = String(msg.type || '').toLowerCase();
@@ -82,6 +90,41 @@ export function getAgentWs(): Promise<WebSocket> {
   });
 }
 
+/**
+ * Get or create a WebSocket connection to the local Python agent.
+ * Retries with backoff for up to 60s after VM boot (Python agent may still be starting).
+ */
+export async function getAgentWs(): Promise<WebSocket> {
+  if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+
+  // If another caller is already connecting, wait for it
+  if (_agentWsConnecting) {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+      if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+      if (!_agentWsConnecting) break; // connection attempt finished (success or fail)
+    }
+    if (_agentWs?.readyState === WebSocket.OPEN) return _agentWs;
+  }
+
+  // Retry connection with backoff — Python agent may still be installing deps
+  const MAX_ATTEMPTS = 12; // 12 attempts over ~60s
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await _connectAgentWs();
+    } catch (err: any) {
+      if (attempt === MAX_ATTEMPTS) {
+        throw new Error('agent_ws_connect_timeout');
+      }
+      const delay = Math.min(2000 + attempt * 1000, 8000);
+      console.warn(`[vm-agent-ws] Connection attempt ${attempt}/${MAX_ATTEMPTS} failed: ${err?.message}. Retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('agent_ws_connect_timeout');
+}
+
 /** Send a message to the Python agent and await a response. */
 export async function sendToAgent(msg: Record<string, any>, timeoutMs = 120_000): Promise<any> {
   const ws = await getAgentWs();
@@ -96,6 +139,45 @@ export async function sendToAgent(msg: Record<string, any>, timeoutMs = 120_000)
     _agentPendingRequests.set(id, { resolve, timer });
     ws.send(JSON.stringify({ ...msg, id, requestId: id }));
   });
+}
+
+/**
+ * Send a message to the Python agent with streaming — calls `onEvent` for every
+ * intermediate WS message (progress, delta, tool_event, etc.) and resolves when
+ * the terminal response arrives.
+ */
+export async function sendToAgentStreaming(
+  msg: Record<string, any>,
+  onEvent: (event: any) => void,
+  timeoutMs = 180_000,
+): Promise<any> {
+  const ws = await getAgentWs();
+  const id = msg.id || randomUUID();
+
+  // Register stream listener BEFORE sending so we don't miss early events
+  addStreamListener(id, onEvent);
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        _agentPendingRequests.delete(id);
+        removeStreamListener(id);
+        reject(new Error('agent_response_timeout'));
+      }, timeoutMs);
+
+      _agentPendingRequests.set(id, {
+        resolve: (result: any) => {
+          removeStreamListener(id);
+          resolve(result);
+        },
+        timer,
+      });
+      ws.send(JSON.stringify({ ...msg, id, requestId: id }));
+    });
+  } catch (err) {
+    removeStreamListener(id);
+    throw err;
+  }
 }
 
 /**
