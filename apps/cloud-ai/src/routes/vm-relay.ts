@@ -56,6 +56,8 @@ const ALLOWED_VM_PATHS: RegExp[] = [
   /^\/memory\/preferences_set$/,
   /^\/memory\/conversations_list$/,
   /^\/memory\/conversations_add$/,
+  /^\/memory\/conversations_update$/,
+  /^\/memory\/messages_list$/,
   // Proactive
   /^\/proactive\/status$/,
   /^\/proactive\/config$/,

@@ -5,7 +5,7 @@ import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
-import { CloudChatPanel } from './CloudChatPanel';
+import { CloudVmChat } from './CloudVmChat';
 
 type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots';
 
@@ -250,7 +250,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
         )}
 
         {tab === 'chat' && (
-          <CloudChatPanel engine={engine} className="w-full h-full" />
+          <CloudVmChat engine={engine} className="w-full h-full" />
         )}
 
         {tab === 'terminal' && (

@@ -330,6 +330,14 @@ export class VMMemoryStore {
     return this.conversations.get(id) || null;
   }
 
+  updateConversation(id: string, updates: Partial<Pick<ConversationSummary, 'title' | 'summary' | 'message_count' | 'topics'>>): ConversationSummary | null {
+    const conv = this.conversations.get(id);
+    if (!conv) return null;
+    Object.assign(conv, updates, { updated_at: new Date().toISOString() });
+    this.dirty = true;
+    return conv;
+  }
+
   listConversations(limit = 50): ConversationSummary[] {
     return Array.from(this.conversations.values())
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())

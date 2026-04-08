@@ -303,6 +303,22 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return handleMemoryConversationsList(args);
     case 'memory_conversations_add':
       return handleMemoryConversationsAdd(args);
+    case 'memory_conversations_update':
+      return handleMemoryConversationsUpdate(args);
+    case 'memory_messages_list':
+      return handleMemoryMessagesList(args);
+
+    case 'tool_result': {
+      const toolId = String(args.id || '').trim();
+      if (!toolId) return { ok: false, error: 'missing tool id' };
+      try {
+        const ws = await getAgentWs();
+        ws.send(JSON.stringify({ type: 'tool_result', id: toolId, result: args.result }));
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'agent_ws_not_connected' };
+      }
+    }
 
     // ── Proactive Commands ──────────────────────────────────────────────
     case 'proactive_status':
@@ -479,12 +495,17 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
           writeLine({ type: 'routing', model: event.model, data: event.data });
         } else if (t === 'tool_event') {
           writeLine({ type: 'tool_event', tool: event.tool, status: event.status, data: event.data });
+        } else if (t === 'tool_request') {
+          writeLine({ type: 'tool_request', id: event.id, tool: event.tool, args: event.args });
         } else if (t === 'subagent_event') {
           writeLine({ type: 'subagent_event', subagentId: event.subagentId, event: event.event, data: event.data });
         } else if (t === 'conversation') {
           writeLine({ type: 'conversation', conversationId: event.conversationId });
         } else if (t === 'title') {
           writeLine({ type: 'title', title: event.title, conversationId: event.conversationId });
+          if (event.title) {
+            getVMMemoryStore().updateConversation(conversationId, { title: String(event.title) });
+          }
         }
       },
       180_000,
@@ -498,8 +519,31 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       });
     }
 
+    // Track conversation in VM memory store for history
+    const memStore2 = getVMMemoryStore();
+    const existing = memStore2.getConversation(conversationId);
+    if (existing) {
+      memStore2.updateConversation(conversationId, {
+        message_count: (existing.message_count || 0) + 2,
+        summary: message.slice(0, 200),
+      });
+    } else {
+      memStore2.addConversation({
+        id: conversationId,
+        title: message.slice(0, 80),
+        summary: message.slice(0, 200),
+        model: model || 'balanced',
+        source: 'agent',
+        message_count: 2,
+        topics: extractSimpleTopics(message),
+      });
+    }
+
     // Write final event
     writeLine({ type: 'final', ok: true, conversationId, ...result });
+
+    // Trigger immediate sync to desktop so conversations appear without waiting for periodic sync
+    scheduleQuickSync();
   } catch (e: any) {
     writeLine({ type: 'error', error: String(e?.message || 'agent_chat_failed') });
   } finally {
@@ -743,8 +787,27 @@ function handleMemoryPreferencesSet(args: any): any {
   return { ok: true };
 }
 
-function handleMemoryConversationsList(args: any): any {
-  return { ok: true, conversations: getVMMemoryStore().listConversations(args.limit || 50) };
+async function handleMemoryConversationsList(args: any): Promise<any> {
+  // Try VM memory store first
+  const vmConvs = getVMMemoryStore().listConversations(args.limit || 50);
+  if (vmConvs.length > 0) {
+    return { ok: true, conversations: vmConvs };
+  }
+
+  // Fallback: query Python agent's SQLite DB for real conversation data
+  try {
+    const result = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'conversation_list',
+      args: { limit: Number(args.limit) || 50, status: 'active' },
+    }, 10_000);
+    const convs = result?.result?.conversations || result?.conversations || [];
+    if (Array.isArray(convs) && convs.length > 0) {
+      return { ok: true, conversations: convs };
+    }
+  } catch { /* silent */ }
+
+  return { ok: true, conversations: [] };
 }
 
 function handleMemoryConversationsAdd(args: any): any {
@@ -758,6 +821,34 @@ function handleMemoryConversationsAdd(args: any): any {
     topics: Array.isArray(args.topics) ? args.topics : [],
   });
   return { ok: true, conversation: conv };
+}
+
+function handleMemoryConversationsUpdate(args: any): any {
+  const id = String(args.id || '').trim();
+  if (!id) return { ok: false, error: 'missing id' };
+  const updates: any = {};
+  if (args.title != null) updates.title = String(args.title);
+  if (args.summary != null) updates.summary = String(args.summary);
+  if (args.message_count != null) updates.message_count = Number(args.message_count);
+  if (args.topics != null) updates.topics = args.topics;
+  const conv = getVMMemoryStore().updateConversation(id, updates);
+  if (!conv) return { ok: false, error: 'not_found' };
+  return { ok: true, conversation: conv };
+}
+
+async function handleMemoryMessagesList(args: any): Promise<any> {
+  const conversationId = String(args.conversation_id || '').trim();
+  if (!conversationId) return { ok: false, error: 'missing conversation_id' };
+  try {
+    const result = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'message_list',
+      args: { conversation_id: conversationId, limit: Number(args.limit) || 100 },
+    }, 15_000);
+    return { ok: true, messages: result?.messages || result?.result?.messages || [] };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'message_list_failed', messages: [] };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -889,6 +980,20 @@ async function notifyAgentDataUploaded(): Promise<void> {
   } catch (e: any) {
     console.warn('[vm-agent] Failed to notify cloud-ai of agent data upload:', e?.message);
   }
+}
+
+let _quickSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Debounced quick sync — triggers 3s after last call to avoid
+ * hammering GCS during rapid-fire chats.
+ */
+function scheduleQuickSync() {
+  if (_quickSyncTimer) clearTimeout(_quickSyncTimer);
+  _quickSyncTimer = setTimeout(() => {
+    _quickSyncTimer = null;
+    periodicAgentDataSync();
+  }, 3_000);
 }
 
 /**
