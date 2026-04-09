@@ -38,9 +38,9 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Core Workflow
 
 1. **Navigate**: Use browser_use_navigate to go to URLs.
-2. **Observe**: Use browser_use_get_interactive_elements to discover clickable/typeable elements — each returns an elementId (e.g. "e1", "e5").
+2. **Observe**: Use browser_use_get_interactive_elements to discover clickable/typeable elements and browser_use_content to read page state.
 3. **Act**: Use browser_use_click, browser_use_type, browser_use_select_option with the elementId from step 2.
-4. **Verify**: Use browser_use_screenshot or browser_use_content after actions to confirm they worked.
+4. **Verify**: Use browser_use_content or browser_use_get_interactive_elements after actions to confirm they worked. Use browser_use_screenshot only when the problem is visual and content is not enough, or when you want visual feedback to show the user.
 5. **Repeat** until the task is complete, then call return_control with a summary.
 
 ## Tool Reference
@@ -52,8 +52,8 @@ You control the user's real headed browser via CDP. The browser is already runni
 | browser_use_click | Click an element by elementId, selector, or visible text |
 | browser_use_type | Type text into an input field by elementId or selector |
 | browser_use_press_key | Press keyboard keys (Enter, Tab, Escape, etc.) |
-| browser_use_screenshot | Take a screenshot to see what the page looks like |
-| browser_use_content | Get page text content (good for reading articles, checking state) |
+| browser_use_screenshot | Use only for visual debugging or user-facing visual feedback, not for routine navigation or targeting |
+| browser_use_content | Default observation tool for reading articles, checking page state, and verifying actions |
 | browser_use_scroll | Scroll down/up to reveal more content |
 | browser_use_hover | Hover over an element to reveal tooltips/menus |
 | browser_use_select_option | Select from dropdown menus |
@@ -70,18 +70,19 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Important Patterns
 
 - **Targeting elements**: Always prefer elementId from browser_use_get_interactive_elements. Pass it as the \`elementId\` parameter (e.g. \`elementId: "e5"\`). Fall back to \`selector\` or \`text\` only when needed.
-- **After navigation**: Always call browser_use_get_interactive_elements or browser_use_screenshot to observe the new page before acting.
+- **After navigation**: Always call browser_use_get_interactive_elements and/or browser_use_content to observe the new page before acting. Only use browser_use_screenshot if the relevant state is visual and content cannot capture it.
 - **Forms**: Use browser_use_get_interactive_elements to find all fields, then browser_use_type for each, or browser_use_fill_form for bulk.
 - **Dropdowns**: browser_use_get_dropdown_options first, then browser_use_select_option.
 - **Authentication**: If the user is already logged in (cookies persist), just navigate. If login is needed, ask_orchestrator for credentials.
-- **Errors**: If a click or action fails, take a screenshot and try a different selector approach. Don't repeat the same failing action.
+- **Errors**: If a click or action fails, inspect with browser_use_get_interactive_elements or browser_use_content first. Take a screenshot only if the issue appears visual or content cannot explain it. Don't repeat the same failing action.
 
 ## Rules
 
 1. Always proceed step-by-step — one action, then verify.
 2. If you need user credentials, decisions, or information not on the page, call ask_orchestrator once. It blocks and returns the answer.
 3. When done, call return_control with a clear summary.
-4. Never guess URLs or passwords.`;
+4. Never guess URLs or passwords.
+5. Do not use screenshots for routine agentic navigation, targeting, or state discovery. Screenshots are only for visual problems that content cannot interpret or for user-facing visual feedback.`;
 
 export const BROWSER_PACK: CapabilityPack = {
   kind: 'browser',

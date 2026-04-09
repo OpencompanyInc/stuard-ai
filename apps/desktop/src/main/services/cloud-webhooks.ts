@@ -438,8 +438,14 @@ async function connect() {
                     handleAgentDataUpdated().catch((e: any) => {
                         logger.error(`[cloud-webhooks] Agent data sync failed: ${e?.message}`);
                     });
+                } else if (msg.type === 'run_state_sync') {
+                    logger.info(`[cloud-webhooks] Run state sync: approvals=${msg.pendingApprovals?.length || 0} terminals=${msg.terminals?.length || 0}`);
+                    try {
+                        for (const win of BrowserWindow.getAllWindows()) {
+                            try { win.webContents.send('run-state:sync', msg); } catch { }
+                        }
+                    } catch { }
                 } else if (msg.type === 'handshake') {
-                    // Check for token and auth if we haven't already
                     getAuthToken().then(token => {
                         if (token && ws?.readyState === WebSocket.OPEN) {
                             ws.send(JSON.stringify({ type: 'auth', accessToken: token }));

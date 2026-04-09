@@ -439,6 +439,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
+  const lastStreamActivityRef = useRef<number>(0); // Watchdog: last time we received streaming data
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
 
@@ -538,20 +539,51 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const stopGeneration = useCallback((): boolean => {
     try {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
-      // Find the requestId for the active tab so the server aborts only THAT stream
-      const targetTabId = activeTabIdRef.current;
-      let targetRequestId: string | undefined;
-      for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
-        if (tabId === targetTabId) { targetRequestId = reqId; break; }
+      const wsOpen = !!(wsRef.current && wsRef.current.readyState === WebSocket.OPEN);
+
+      if (wsOpen) {
+        const targetTabId = activeTabIdRef.current;
+        let targetRequestId: string | undefined;
+        for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
+          if (tabId === targetTabId) { targetRequestId = reqId; break; }
+        }
+        const stopPayload: any = { type: 'stop' };
+        if (targetRequestId) stopPayload.requestId = targetRequestId;
+        wsRef.current!.send(JSON.stringify(stopPayload));
       }
-      const stopPayload: any = { type: 'stop' };
-      if (targetRequestId) stopPayload.requestId = targetRequestId;
-      wsRef.current.send(JSON.stringify(stopPayload));
-      // Clear streaming state and mark as stopped to ignore further chunks
+
       streamingRef.current = false;
       stoppedRef.current = true;
-      setAI({ phase: 'idle', statusText: 'Stopped' });
+      if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+      deltaBufferRef.current = '';
+
+      const targetTabId = activeTabIdRef.current;
+      setTabs(prev => prev.map(t => {
+        if (t.id !== targetTabId) return t;
+        const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+        if (!hasWork) {
+          return { ...t, aiState: { ...t.aiState, phase: 'idle', statusText: 'Stopped' } };
+        }
+        return {
+          ...t,
+          messages: [...t.messages, {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant' as const,
+            text: (t.currentResponse || '') + '\n\n*(Stopped)*',
+            reasoning: t.currentReasoning || undefined,
+            toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+            streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+            timestamp: Date.now(),
+            aborted: true,
+          }],
+          currentResponse: '',
+          currentReasoning: '',
+          currentToolCalls: [],
+          currentStreamChunks: [],
+          aiState: { ...t.aiState, phase: 'idle', statusText: 'Stopped' },
+        };
+      }));
+
       return true;
     } catch {
       return false;
@@ -719,8 +751,8 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Add requestId to payload for server to echo back
       const payload = { ...next.payload, requestId };
 
-      // Reset stopped flag for new request
       stoppedRef.current = false;
+      lastStreamActivityRef.current = Date.now();
       try { wsRef.current.send(JSON.stringify(payload)); } catch { }
 
       // Update this specific tab's AI state
@@ -778,6 +810,10 @@ export function useAgent(options?: string | UseAgentOptions) {
           const msg = JSON.parse(event.data);
           if (msg.type !== 'progress' && msg.type !== 'request') {
             console.log('[agent] Received:', msg.type);
+          }
+
+          if (msg.type === 'progress' || msg.type === 'final' || msg.type === 'subagent_event' || msg.type === 'stopped' || msg.type === 'queued') {
+            lastStreamActivityRef.current = Date.now();
           }
 
           // Determine target tab from requestId (parallel routing) or fallback to FIFO queue
@@ -1538,6 +1574,7 @@ export function useAgent(options?: string | UseAgentOptions) {
           } else if (msg.type === 'stopped') {
             console.log('[agent] Stream stopped by server:', msg.success);
             streamingRef.current = false;
+            stoppedRef.current = false;
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
           } else if (msg.type === 'subagent_event') {
@@ -1760,8 +1797,29 @@ export function useAgent(options?: string | UseAgentOptions) {
 
       ws.onclose = () => {
         console.log('[agent] Disconnected');
+        setTabs(prev => prev.map(t => {
+          const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+          if (!hasWork) return { ...t, aiState: { ...t.aiState, phase: 'disconnected', statusText: 'Disconnected' } };
+          return {
+            ...t,
+            messages: [...t.messages, {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: 'assistant' as const,
+              text: (t.currentResponse || '') + '\n\n*(Disconnected)*',
+              reasoning: t.currentReasoning || undefined,
+              toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+              streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+              timestamp: Date.now(),
+              aborted: true,
+            }],
+            currentResponse: '',
+            currentReasoning: '',
+            currentToolCalls: [],
+            currentStreamChunks: [],
+            aiState: { ...t.aiState, phase: 'disconnected', statusText: 'Disconnected' },
+          };
+        }));
         setState({ connected: false, connecting: false, status: 'disconnected' });
-        setAI({ phase: 'disconnected', statusText: 'Disconnected' });
         wsRef.current = null;
         if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
         deltaBufferRef.current = '';
@@ -2202,6 +2260,98 @@ export function useAgent(options?: string | UseAgentOptions) {
     resetConversationNextRef.current = true;
   }, []);
 
+  // Watchdog: auto-commit stale streaming state when no messages arrive for 90s
+  useEffect(() => {
+    const STALE_TIMEOUT_MS = 90_000;
+    const CHECK_INTERVAL_MS = 15_000;
+
+    const interval = setInterval(() => {
+      const lastActivity = lastStreamActivityRef.current;
+      if (!lastActivity) return;
+      const phase = activeTab?.aiState?.phase;
+      const isActive = phase === 'responding' || phase === 'tool' || phase === 'routing';
+      if (!isActive) return;
+      if (Date.now() - lastActivity < STALE_TIMEOUT_MS) return;
+
+      console.log('[agent] Watchdog: stale stream detected, committing partial state');
+      lastStreamActivityRef.current = 0;
+      streamingRef.current = false;
+      stoppedRef.current = false;
+      if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+      deltaBufferRef.current = '';
+
+      setTabs(prev => prev.map(t => {
+        const tPhase = t.aiState?.phase;
+        if (tPhase !== 'responding' && tPhase !== 'tool' && tPhase !== 'routing') return t;
+        const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+        if (!hasWork) {
+          return { ...t, aiState: { ...t.aiState, phase: 'idle', statusText: 'Idle' } };
+        }
+        return {
+          ...t,
+          messages: [...t.messages, {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant' as const,
+            text: (t.currentResponse || '') + '\n\n*(Connection lost)*',
+            reasoning: t.currentReasoning || undefined,
+            toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+            streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+            timestamp: Date.now(),
+            aborted: true,
+          }],
+          currentResponse: '',
+          currentReasoning: '',
+          currentToolCalls: [],
+          currentStreamChunks: [],
+          aiState: { ...t.aiState, phase: 'idle', statusText: 'Idle' },
+        };
+      }));
+      runningTabsRef.current.clear();
+      pendingResponseTabsRef.current = [];
+      requestIdToTabRef.current.clear();
+      activeRequestIdRef.current = null;
+      streamingTabIdRef.current = null;
+    }, CHECK_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [activeTab?.aiState?.phase]);
+
+  const reconcileTerminalState = useCallback((terminals: Array<{ requestId: string; result: { text: string; finishReason: string; aborted?: boolean; error?: boolean } }>) => {
+    if (!terminals || terminals.length === 0) return;
+    const terminalRequestIds = new Set(terminals.map(t => t.requestId));
+    setTabs(prev => prev.map(t => {
+      const tPhase = t.aiState?.phase;
+      if (tPhase !== 'responding' && tPhase !== 'tool' && tPhase !== 'routing') return t;
+      const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+      if (!hasWork) {
+        return { ...t, aiState: { ...t.aiState, phase: 'idle', statusText: 'Idle' } };
+      }
+      return {
+        ...t,
+        messages: [...t.messages, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: 'assistant' as const,
+          text: (t.currentResponse || '') + '\n\n*(Recovered)*',
+          reasoning: t.currentReasoning || undefined,
+          toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+          streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+          timestamp: Date.now(),
+          aborted: true,
+        }],
+        currentResponse: '',
+        currentReasoning: '',
+        currentToolCalls: [],
+        currentStreamChunks: [],
+        aiState: { ...t.aiState, phase: 'idle', statusText: 'Idle' },
+      };
+    }));
+    for (const reqId of terminalRequestIds) {
+      requestIdToTabRef.current.delete(reqId);
+    }
+    streamingRef.current = false;
+    stoppedRef.current = false;
+  }, []);
+
   return {
     messages,
     state,
@@ -2247,5 +2397,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     // Hidden state accessors
     hiddenState: activeTab?.hiddenState || createEmptyHiddenState(),
     getHiddenStateSummary: () => summarizeHiddenState(activeTab?.hiddenState || createEmptyHiddenState()),
+    reconcileTerminalState,
   };
 }

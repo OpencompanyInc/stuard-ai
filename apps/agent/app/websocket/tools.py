@@ -228,6 +228,33 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
     try:
         await emit("started", {"args": args, "startedAtMsMono": int(asyncio.get_event_loop().time() * 1000)})
 
+        # Approval gate (same logic as handle_cloud_tool_request)
+        if _tool_requires_approval(tool, args) and not _is_auto_approved(tool):
+            try:
+                safe_args = {k: v for k, v in (args or {}).items() if k in ("command", "path", "content", "isPermissionRequired")}
+            except Exception:
+                safe_args = {}
+            description = (args or {}).get("description", "This action requires your permission.")
+            await emit("approval_required", {"args": safe_args, "description": description})
+
+            fut = asyncio.get_event_loop().create_future()
+            session.pending_approvals[req_id] = fut
+            try:
+                decision = await asyncio.wait_for(fut, timeout=60.0)
+            except asyncio.TimeoutError:
+                result = {"ok": False, "error": "access_denied", "reason": "approval_timeout"}
+                await emit("completed", {"result": result})
+                session.pending_approvals.pop(req_id, None)
+                return
+            else:
+                allowed = bool((decision or {}).get("allow"))
+                if not allowed:
+                    result = {"ok": False, "error": "access_denied", "denied": True}
+                    await emit("completed", {"result": result})
+                    session.pending_approvals.pop(req_id, None)
+                    return
+            session.pending_approvals.pop(req_id, None)
+
         # Set the folder-limiter session context from args
         _session_id = str(args.get("session_id") or args.get("sessionId") or "default")
         _folder_session_ctx.set(_session_id)

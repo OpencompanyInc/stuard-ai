@@ -337,6 +337,11 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('vm:stream-event', handler);
     return () => { try { ipcRenderer.off('vm:stream-event', handler); } catch { } };
   },
+  onRunStateSync: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('run-state:sync', handler);
+    return () => { try { ipcRenderer.off('run-state:sync', handler); } catch { } };
+  },
   onDashboardNavigate: (cb: (data: { tab: string }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('dashboard:navigate', handler);

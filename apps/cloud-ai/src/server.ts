@@ -6,7 +6,7 @@ import { setSessionWorkflow, clearSessionWorkflow } from './tools/workflow';
 import { withClientBridge, handleClientToolMessage } from './tools/bridge';
 import { routeModel, type ModelChoice } from './router/model-router';
 import { verifyAccessToken, AuthErrorCode } from './auth';
-import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount, getConversationMessages } from './supabase';
+import { createConversation, addAssistantMessage, addUserMessage, logUsageEvent, checkAccess, incrementDailyRequestCounter, finishRun, setConversationTitle, getExternalAccount } from './supabase';
 import { getDefaultModelForCategory, priceForModel } from './pricing';
 import { buildProviderModel } from './utils/models';
 import { randomUUID } from 'crypto';
@@ -24,18 +24,14 @@ import * as memoryService from './memory/conversations';
 import { compactHistory } from './memory/context-compactor';
 import { registerWebhookClient, deliverQueuedWebhooks } from './webhooks/dispatch';
 import { getOrCreateQueryEmbedding } from './utils/shared-embedding';
+import { getRankedToolNames } from './utils/tool-ranking';
 import { normalizeUsage } from './utils/usage';
-// Skills are now injected into the system prompt via buildSystemInstructions (see agent-runner.ts)
 
-import { getOrchestratorAgent } from './orchestrator';
-import { ensureExecutionToolsRegistered } from './orchestrator/execution-tools-bootstrap';
-import { getSkillsFromContext } from './tools/skill-tools';
+import { getAgentForQuery } from './agents/stuard/index';
 
 
 import { startVMHealthMonitor } from './services/vm-health';
-import { registerConnection, getDesktopWs } from './services/vm-bridge';
-import { verifyVMToken } from './services/vm-tokens';
-import { setVMStreamMirror, mirrorToDesktop } from './services/vm-stream-mirror';
+import { registerRun, addPendingApproval, removePendingApprovalByToolId, setTerminalResult, clearRun, buildSyncPayload } from './services/run-state';
 
 // Configuration moved to utils/config
 
@@ -47,7 +43,6 @@ function normalizeTierChoice(input: any): TierChoice {
   if (raw === 'smart') return 'smart';
   if (raw === 'balanced') return 'balanced';
   if (raw === 'fast') return 'fast';
-  if (raw === 'research') return 'research';
   if (raw === 'auto') return 'auto';
   return 'balanced';
 }
@@ -69,9 +64,6 @@ function send(ws: WebSocket, data: unknown, requestId?: string) {
     const payload = requestId ? { ...data as object, requestId } : data;
     ws.send(JSON.stringify(payload));
   } catch { }
-
-  // Mirror to desktop for VM→desktop stream relay
-  mirrorToDesktop(ws, data, requestId);
 }
 
 // Helper to check if a tool should be hidden from UI (SIS meta-tools, internal operations)
@@ -99,7 +91,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Filename, X-File-Path',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Max-Age': '600',
     });
     res.end();
@@ -134,16 +126,6 @@ const pingTimer = setInterval(() => {
 server.on('close', () => { try { clearInterval(pingTimer); } catch { } });
 
 import { handleSpeechConnection } from './routes/speech';
-import { handleTerminalConnection } from './routes/terminal-relay';
-import { telnyxBridgeWss } from './routes/integrations/telnyx-bridge';
-import { initVoiceProviders } from './voice';
-
-// Register all voice providers (OpenAI Realtime, ElevenLabs, Grok, Gemini Live)
-initVoiceProviders();
-
-void ensureExecutionToolsRegistered().catch((error) => {
-  console.warn('[cloud-ai] Failed to pre-register execution tools:', error);
-});
 
 server.on('upgrade', (req, socket, head) => {
   const url = req.url || '';
@@ -155,14 +137,6 @@ server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => {
       handleSpeechConnection(ws, req);
     });
-  } else if (url === '/terminal' || url.startsWith('/terminal?')) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handleTerminalConnection(ws, req);
-    });
-  } else if (url.startsWith('/ws/telnyx-bridge')) {
-    telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
-      telnyxBridgeWss.emit('connection', ws, req);
-    });
   } else {
     socket.destroy();
   }
@@ -170,13 +144,13 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(PORT, () => {
   // console.log(`[cloud-ai] HTTP listening on http://0.0.0.0:${PORT}`);
-  // console.log(`[cloud-ai] WS endpoint at ws://<host>:${PORT}/ws`);
-  // console.log(`[cloud-ai] Model routing: ${ENABLE_ROUTING ? 'enabled (Gemini)' : 'disabled (gpt-5-medium)'}`);
-
-  // Warm up semantic group cache (lightweight SELECT, no embeddings)
+  // console.log(`[cloud-ai] WS endpoint   // Warm up semantic group cache (lightweight SELECT, no embeddings)
   try {
     warmupGroupCache();
   } catch { }
+
+at ws://<host>:${PORT}/ws`);
+  // console.log(`[cloud-ai] Model routing: ${ENABLE_ROUTING ? 'enabled (Gemini)' : 'disabled (gpt-5-medium)'}`);
 
   // Optional: eager tool embedding sync on startup (disabled by default to avoid embedding costs)
   try {
@@ -381,7 +355,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     }
 
     // Handle auth-only messages (from cloud-webhooks desktop connection).
-    // This registers the persistent desktop WS for VM stream mirroring and webhook delivery.
     if (kind === 'auth') {
       const token = String(msg?.accessToken || msg?.auth?.accessToken || '').trim();
       if (!token) {
@@ -391,12 +364,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       try {
         const authResult = await verifyAccessToken(token);
         if (authResult?.success && authResult.userId) {
-          // Register as desktop connection for VM stream mirroring
-          const ct = (ws as any).__clientType || 'desktop';
-          if (ct !== 'vm-agent') {
-            registerConnection(ws, authResult.userId, 'desktop');
-          }
-          // Webhook delivery on this persistent connection
           try {
             registerWebhookClient(authResult.userId, ws);
             const delivered = await deliverQueuedWebhooks(authResult.userId, ws);
@@ -404,6 +371,16 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           } catch {
             send(ws, { type: 'auth_result', ok: true, queued: 0 });
           }
+          // Replay any pending approvals and missed terminal results
+          try {
+            const sync = buildSyncPayload(authResult.userId);
+            if (sync.pendingApprovals.length > 0 || sync.terminals.length > 0) {
+              send(ws, { type: 'run_state_sync', ...sync });
+              for (const t of sync.terminals) {
+                clearRun(authResult.userId, t.requestId);
+              }
+            }
+          } catch { }
         } else {
           send(ws, { type: 'auth_result', ok: false, message: 'invalid_token' });
         }
@@ -413,7 +390,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       return;
     }
 
-    // Unknown types → error
     if (kind !== 'chat') {
       send(ws, { type: 'error', message: `unknown type: ${kind}` });
       return;
@@ -437,12 +413,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     } catch { }
 
     const secretBag: any = { ...(secrets || {}) };
-    try {
-      const incomingSkills = Array.isArray((msg as any)?.context?.skills) ? (msg as any).context.skills : [];
-      if (incomingSkills.length > 0) {
-        secretBag.__skills = incomingSkills;
-      }
-    } catch { }
 
     // Run EVERYTHING in background (don't await) to allow parallel processing across tabs
     // This moves auth, routing, and agent setup into the non-blocking bridge context
@@ -460,8 +430,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       const toolCallsMap = new Map<string, any>();
       type StreamChunk = { type: 'text'; content: string } | { type: 'reasoning'; content: string } | { type: 'tool'; tool: any };
       const streamChunks: StreamChunk[] = [];
-      let aggregatedReasoning = '';
-      let reasoningStartTime: number | null = null;
       try {
         const messages = normalizeMessages(msg);
         const providedMessages = Array.isArray((msg as any)?.messages) ? (msg as any).messages : undefined;
@@ -473,23 +441,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         const accessToken = String(msg?.auth?.accessToken || '');
         const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
         authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
-
-        // Fallback: authenticate VM agent via HMAC token (no Supabase JWT on VMs)
-        if (!authUser && msg?.auth?.vmToken) {
-          const claimedUserId = String(msg.auth.userId || (msg as any)?.context?.userId || '');
-          if (claimedUserId) {
-            try {
-              const { resolveVMSecret } = await import('./services/vm-command');
-              const secret = await resolveVMSecret(claimedUserId);
-              if (secret) {
-                const payload = verifyVMToken(msg.auth.vmToken, secret);
-                if (payload && payload.userId === claimedUserId) {
-                  authUser = { userId: claimedUserId };
-                }
-              }
-            } catch {}
-          }
-        }
 
         // Update secretBag with userId if authenticated
         if (authUser?.userId) secretBag.userId = authUser.userId;
@@ -510,7 +461,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         if (authUser) {
           const access = await checkAccess(authUser.userId);
           if (!access.allowed) {
-            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used, remaining: access.remaining } }, requestId);
+            send(ws, { type: 'error', message: access.reason || 'access_denied', data: { plan: access.plan, limit: access.limit, used: access.used } }, requestId);
             return;
           }
           // Count this chat request towards daily usage
@@ -524,23 +475,13 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
             }
           } catch { }
-
-          // Register this WS for VM agent relay / stream mirroring
+          // Replay any pending approvals and missed terminal results on reconnect
           try {
-            const ct = (ws as any).__clientType || 'desktop';
-            if (ct !== 'vm-agent') {
-              // Only register as desktop if no existing open desktop WS.
-              // The persistent cloud-webhooks connection has IPC forwarding
-              // for vmMirror events — don't overwrite it with a transient chat WS.
-              if (!getDesktopWs(authUser.userId)) {
-                registerConnection(ws, authUser.userId, 'desktop');
-              }
-            } else {
-              // VM agent connection — set up stream mirroring to the desktop WS
-              // so CloudChatPanel receives real-time streaming events
-              const desktopWs = getDesktopWs(authUser.userId);
-              if (desktopWs) {
-                setVMStreamMirror(ws, desktopWs);
+            const sync = buildSyncPayload(authUser.userId);
+            if (sync.pendingApprovals.length > 0 || sync.terminals.length > 0) {
+              send(ws, { type: 'run_state_sync', ...sync }, requestId);
+              for (const t of sync.terminals) {
+                clearRun(authUser.userId, t.requestId);
               }
             }
           } catch { }
@@ -609,40 +550,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
-        // Merge client-reported integrations (e.g. browser_use from desktop/VM)
-        const clientIntegrations = (msg as any)?.clientIntegrations;
-        if (Array.isArray(clientIntegrations)) {
-          const existing = new Set(enabledIntegrations);
-          for (const ci of clientIntegrations) {
-            if (typeof ci === 'string' && ci && !existing.has(ci)) {
-              enabledIntegrations.push(ci);
-              existing.add(ci);
-            }
-          }
-        }
-
         // Get conversation history for this connection
         const history = conversations.get(ws) || [];
-
-        // If a conversationId was provided but in-memory history is empty,
-        // load prior messages from Supabase so multi-turn context is preserved
-        // (e.g., SMS where each message opens a new WebSocket connection).
-        if (conversationId && history.length === 0 && authUser) {
-          try {
-            const priorMsgs = await getConversationMessages(authUser.userId, conversationId, 20);
-            for (const pm of priorMsgs) {
-              if (pm.role === 'user' || pm.role === 'assistant') {
-                history.push({ role: pm.role, content: pm.content });
-              }
-            }
-            if (history.length > 0) {
-              conversations.set(ws, history);
-              console.log(`[cloud-ai] Loaded ${history.length} prior messages from Supabase for conversation ${conversationId}`);
-            }
-          } catch (e: any) {
-            console.warn('[cloud-ai] Failed to load conversation history from Supabase:', e?.message);
-          }
-        }
 
         // Add new user messages to history
         const newUserMsgs = messages.filter(m => m.role === 'user');
@@ -793,20 +702,21 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
           } catch (e: any) {
             console.error('[cloud-ai] Failed to get workflow agent:', e.message);
-            send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.message }, requestId);
-            return;
-          }
-        } else {
-          // ─── Parallel embedding + tool ranking pipeline ───────────────
+            send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + e.messa                const topN = Number(process.env.SIS_RANKED_TOPN || '5');
+        // ─── Parallel embedding + tool ranking pipeline ───────────────
+          // Always attempt embedding-based tool ranking. The embedding is
+          // memoized and reused by knowledge/memory retrieval later, so
+          // this is essentially free. Falls back to static Tier 1 if
+          // embedding or Supabase is unavailable.
+          let rankedToolNames: string[] | undefined;
 
-              // Graceful fallback — static Tier 1 tools still loaded
-          await ensureExecutionToolsRegistered();
-          const skills = getSkillsFromContext();
-          agent = getOrchestratorAgent(routedTier, enabledIntegrations, mcpTools, chosenModelId, skills);
-        }
-
-        let conversationCreatedNow = false;
-        // Mobile-originated messages (SMS/WhatsApp routed to desktop) must always
+          if (prompt) {
+            try {
+              const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
+              if (queryEmbedding && queryEmbedding.length > 0) {
+                const topN = Number(process.env.SIS_RANKED_TOPN || '8');
+                rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
+                      // Mobile-originated messages (SMS/WhatsApp routed to desktop) must always
         // persist conversations regardless of sync_conversations preference.
         const forcePersist = !!(msg as any)?.forcePersist;
         const mobileSource: string | undefined = typeof (msg as any)?.mobileSource === 'string' ? (msg as any).mobileSource : undefined;
@@ -826,6 +736,20 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
               agentType === 'workflow' ? 'workflow' : 'stuard',
               forcePersist,
+setRequested = !!(msg as any)?.resetConversation;
+          if (resetRequested) {
+            try { wsConversations.delete(ws); } catch { }
+          }
+          const requestedId = typeof (msg as any)?.conversationId === 'string' ? String((msg as any).conversationId).trim() : '';
+          if (requestedId) {
+            conversationId = requestedId;
+          } else {
+            conversationId = await createConversation(
+              authUser.userId,
+              prompt,
+              modelLabel,
+              { mode: requestedMode, tier: routedTier, modelId: chosenModelId, contextPaths: contextPathsForMeta },
+              agentType === 'workflow' ? 'workflow' : 'stuard'
             ) as any;
             if (conversationId) {
               conversationCreatedNow = true;
@@ -898,14 +822,14 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             inputMessages.push({ role: 'user', content: [{ type: 'text', text: prompt || 'Attached files' }, ...attachmentParts] });
           }
         }
-        // Track whether the model produced any text deltas or invoked tools
-        let sawAnyTextDelta = false;
+        // Track whether the model produced any text deltas or invoked too            }, forcePersist);
+sawAnyTextDelta = false;
         let sawToolCall = false;
         aggregatedText = '';
 
-        // Reset reasoning tracking for this turn (variables hoisted above try block)
-        aggregatedReasoning = '';
-        reasoningStartTime = null;
+        // Track metadata for persistence (reasoning, tools, stream chunks)
+        let aggregatedReasoning = '';
+        let reasoningStartTime: number | null = null;
         // toolCallsMap and streamChunks are hoisted above the try block
 
         // Persist this user turn for ongoing conversations (first turn already stored on creation)
@@ -916,7 +840,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               tier: routedTier,
               modelId: chosenModelId,
               contextPaths: contextPathsForMeta,
-            }, forcePersist);
+            });
           } catch { }
         }
 
@@ -952,10 +876,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
 
           // Persona / tone
-          const personaRaw = typeof incomingCtx?.persona === 'string' ? incomingCtx.persona.trim() : '';
-          const presetRaw = typeof incomingCtx?.tonePreset === 'string' ? incomingCtx.tonePreset : '';
-          const rawTone = typeof incomingCtx?.tone === 'string' ? incomingCtx.tone.trim() : '';
-          if (personaRaw) contextParts.push(`Persona: ${personaRaw}`);
+          const personaRaw = typeof incomingCtx?.persona === 'string' ? incomingCtx.persona.trim()        // Skills are now injected directly into the system prompt via buildSystemInstructions
+a: ${personaRaw}`);
           const preset = (presetRaw || '').toLowerCase();
           if (preset === 'custom' && rawTone) {
             contextParts.push(`Tone: ${rawTone}`);
@@ -969,8 +891,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             inputMessages = [{ role: 'system', content: contextParts.join(' | ') }, ...inputMessages];
           }
         } catch { }
-
-        // Skills are now injected directly into the system prompt via buildSystemInstructions
 
         // Inject hidden state context (terminals, subagents, recent tool results) - NOT rendered in UI
         try {
@@ -1047,71 +967,46 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             } catch { }
 
             try {
-              const query = String(prompt || '').trim();
-              if (query) {
-                const matches = await memoryService.searchSegments(query, { limit: 3, threshold: 0.6 });
-                const similar = matches.filter(({ score }) => score >= 0.6).slice(0, 3);
-                if (similar.length > 0) {
-                  const lines = ['[PAST CONTEXT]'];
-                  for (const { segment } of similar) {
-                    const summary = String(segment.summary || '').trim().slice(0, 100);
-                    if (summary) lines.push(`- ${summary}`);
-                  }
-                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
-                }
-              }
-            } catch { }
-
-            if (ctxParts.length > 0) {
-              inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
-            }
-          }
-        }
-
-
-
-        // ─── TOKEN BREAKDOWN DIAGNOSTIC ─────────────────────────────────
+          // ─── TOKEN BREAKDOWN DIAGNOSTIC ─────────────────────────────────
         // Detailed per-component token estimation to identify bloat sources.
         // Rough estimate: 1 token ≈ 4 chars for English text, ~3 chars for JSON/schemas.
         try {
           const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
-          const userMessages = inputMessages.filter((m: any) => m.role === 'user');
-          const assistantMessages = inputMessages.filter((m: any) => m.role === 'assistant');
-          const toolMessages = inputMessages.filter((m: any) => m.role === 'tool');
-
-          const charCount = (msgs: any[]) => msgs.reduce((sum: number, m: any) => {
-            const c = m.content;
-            if (typeof c === 'string') return sum + c.length;
-            if (Array.isArray(c)) return sum + c.reduce((s: number, p: any) => s + String(p?.text || JSON.stringify(p) || '').length, 0);
-            return sum + JSON.stringify(c || '').length;
-          }, 0);
-
-          const systemChars = charCount(systemMessages);
-          const userChars = charCount(userMessages);
-          const assistantChars = charCount(assistantMessages);
-          const toolChars = charCount(toolMessages);
-
-          // Estimate tool definition tokens (JSON schemas are denser, ~3 chars/token)
-          // Read from __diagTools attached in getAgent/getAgentForQuery (Mastra doesn't expose these)
+          const userMessages = inputMessages.filter((m: any)           // Read from __diagTools attached in getAgent/getAgentForQuery (Mastra doesn't expose these)
           const agentTools = (agent as any)?.__diagTools || agent?.tools || {};
           const toolNames = Object.keys(agentTools);
           let toolSchemaChars = 0;
-          const perToolSizes: { name: string; chars: number; tokEst: number }[] = [];
           for (const [name, tool] of Object.entries(agentTools)) {
             try {
               const desc = String((tool as any)?.description || '').length;
               const params = JSON.stringify((tool as any)?.parameters || (tool as any)?.inputSchema || {}).length;
-              const total = desc + params + name.length + 20;
-              toolSchemaChars += total;
-              perToolSizes.push({ name, chars: total, tokEst: Math.round(total / 3) });
-            } catch { toolSchemaChars += 200; perToolSizes.push({ name, chars: 200, tokEst: 67 }); }
+              toolSchemaChars += desc + params + name.length + 20; // overhead per tool
+            } catch { toolSchemaChars += 200; }
           }
-          perToolSizes.sort((a, b) => b.chars - a.chars);
 
           // Agent system instructions (separate from inputMessages system msgs)
           let agentInstructionChars = 0;
           try {
             const instr = (agent as any)?.__diagInstructions || (agent as any)?.instructions;
+unt(assistantMessages);
+          const toolChars = charCount(toolMessages);
+
+          // Estimate tool definition tokens (JSON schemas are denser, ~3 chars/token)
+          const agentTools = agent?.tools || {};
+          const toolNames = Object.keys(agentTools);
+          let toolSchemaChars = 0;
+          for (const [name, tool] of Object.entries(agentTools)) {
+            try {
+              const desc = String((tool as any)?.description || '').length;
+              const params = JSON.stringify((tool as any)?.parameters || (tool as any)?.inputSchema || {}).length;
+              toolSchemaChars += desc + params + name.length + 20; // overhead per tool
+            } catch { toolSchemaChars += 200; }
+          }
+
+          // Agent system instructions (separate from inputMessages system msgs)
+          let agentInstructionChars = 0;
+          try {
+            const instr = (agent as any)?.instructions;
             if (typeof instr === 'string') agentInstructionChars = instr.length;
             else if (Array.isArray(instr)) agentInstructionChars = instr.reduce((s: number, i: any) => s + String(i?.content || JSON.stringify(i) || '').length, 0);
           } catch {}
@@ -1127,13 +1022,31 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           console.log(`[cloud-ai]   Tool result messages: ~${Math.round(toolChars / 4)} tok (${toolMessages.length} msgs, ${toolChars} chars)`);
           console.log(`[cloud-ai]   ─────────────────────────────────`);
           console.log(`[cloud-ai]   TOTAL est:           ~${Math.round(agentInstructionChars / 4 + toolSchemaChars / 3 + totalMsgChars / 4)} tok`);
-          console.log(`[cloud-ai]   ─── Per-tool schema sizes (desc) ───`);
-          for (const t of perToolSizes) {
-            console.log(`[cloud-ai]     ${t.name.padEnd(35)} ~${String(t.tokEst).padStart(5)} tok (${t.chars} chars)`);
-          }
+          console.log(`[cloud-ai]   Tool names: ${toolNames.slice(0, 10).join(', ')}${toolNames.length > 10 ? ` ...+${toolNames.length - 10} more` : ''}`);
           console.log(`[cloud-ai] ═══════════════════════════════════`);
         } catch (diagErr) {
           console.warn('[cloud-ai] Token breakdown diagnostic failed:', diagErr);
+ring(segment.summary || '').trim().slice(0, 100);
+                    if (summary) lines.push(`- ${summary}`);
+                  }
+                  if (lines.length > 1) ctxParts.push(lines.join('\n'));
+                }
+              }
+            } catch { }
+
+            if (ctxParts.length > 0) {
+              inputMessages = [{ role: 'system', content: ctxParts.join('\n\n') }, ...inputMessages];
+            }
+          }
+        }
+
+
+
+        // Log system prompt size for debugging (compact log, no full dump)
+        const systemMessages = inputMessages.filter((m: any) => m.role === 'system');
+        if (systemMessages.length > 0) {
+          const totalChars = systemMessages.reduce((sum: number, m: any) => sum + String(m.content || '').length, 0);
+          console.log(`[cloud-ai] System context: ${systemMessages.length} msgs, ~${totalChars} chars, ~${Math.round(totalChars / 4)} tokens est.`);
         }
 
         // Provider options
@@ -1206,12 +1119,30 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
         }
 
+        // Register this run for durable state tracking (approval recovery, reconnect replay)
+        if (authUser?.userId && requestId) {
+          registerRun(authUser.userId, requestId);
+        }
+
         // Create AbortController for this stream so it can be cancelled
         abortController = new AbortController();
         setAbortController(ws, requestId, abortController);
         const hardTimeoutMs = (() => {
-          const raw = Number(process.env.CLOUD_CHAT_HARD_TIMEOUT_MS || process.env.CLOUD_STREAM_HARD_TIMEOUT_MS || '');
-          if (!isNaN(raw) && raw > 0) return raw;
+          const raw        let stepCount = 0;
+        let cumulativeInputTokens = 0;
+        const streamOptions: any = {
+          maxSteps,
+          providerOptions,
+          abortSignal: abortController.signal,
+          onStepFinish: ({ usage: stepUsage, toolCalls, toolResults }: any) => {
+            stepCount++;
+            if (!stepUsage) return;
+            const normalized = normalizeUsage(stepUsage);
+            cumulativeInputTokens += normalized.promptTokens;
+            const toolNames = (toolCalls || []).map((tc: any) => tc?.toolName || '?').join(', ');
+            console.log(`[cloud-ai] ── Step ${stepCount} ── input: ${normalized.promptTokens} tok | output: ${normalized.completionTokens} tok | cumulative input: ${cumulativeInputTokens} tok${toolNames ? ` | tools: ${toolNames}` : ''}`);
+          },
+raw > 0) return raw;
           return agentType === 'workflow' ? 12 * 60 * 1000 : 8 * 60 * 1000;
         })();
         hardTimeout = setTimeout(() => {
@@ -1235,42 +1166,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         }, hardTimeoutMs);
 
         // fast/balanced use Grok models that don't support reasoningEffort
-        let stepCount = 0;
-        let cumulativeInputTokens = 0;
-        const activeToolNames: string[] | undefined = (agent as any).__activeToolNames;
         const streamOptions: any = {
           maxSteps,
           providerOptions,
           abortSignal: abortController.signal,
-          ...(activeToolNames ? { activeTools: activeToolNames } : {}),
-          onStepFinish: (stepData: any) => {
-            stepCount++;
-            const stepUsage = stepData?.usage;
-            const normalized = stepUsage ? normalizeUsage(stepUsage) : null;
-            if (normalized) cumulativeInputTokens += normalized.promptTokens;
-            // Mastra wraps tool calls in { type, runId, from, payload } — dig into payload
-            const rawCalls = stepData?.toolCalls || stepData?.tool_calls || [];
-            const extractToolName = (tc: any) =>
-              tc?.toolName || tc?.tool_name || tc?.name || tc?.function?.name
-              || tc?.payload?.toolName || tc?.payload?.tool_name || tc?.payload?.name
-              || '?';
-            const toolNames = (Array.isArray(rawCalls) ? rawCalls : []).map(extractToolName).join(', ');
-            // Also check toolResults for tool names if toolCalls is empty
-            const rawResults = stepData?.toolResults || stepData?.tool_results || [];
-            const resultToolNames = (!toolNames || toolNames === '?') && Array.isArray(rawResults)
-              ? rawResults.map((tr: any) => extractToolName(tr)).join(', ')
-              : '';
-            const finalToolNames = (toolNames && toolNames !== '?') ? toolNames : resultToolNames;
-            // Log raw keys on first step for debugging
-            if (stepCount === 1) {
-              const keys = Object.keys(stepData || {});
-              console.log(`[cloud-ai] ── Step 1 raw keys: ${keys.join(', ')}`);
-              if (rawCalls.length > 0) console.log(`[cloud-ai]    toolCalls[0] keys: ${Object.keys(rawCalls[0] || {}).join(', ')}`);
-              if (rawResults.length > 0) console.log(`[cloud-ai]    toolResults[0] keys: ${Object.keys(rawResults[0] || {}).join(', ')}`);
-            }
-            const inputTok = normalized ? `input: ${normalized.promptTokens} tok | output: ${normalized.completionTokens} tok | cached: ${normalized.cachedPromptTokens || 0} tok | cumulative input: ${cumulativeInputTokens} tok` : 'no usage';
-            console.log(`[cloud-ai] ── Step ${stepCount} ── ${inputTok}${finalToolNames ? ` | tools: ${finalToolNames}` : ''}`);
-          },
           onFinish: async ({ text, steps, finishReason, usage }: any) => {
             if (didSendFinal) {
               try { if (hardTimeout) clearTimeout(hardTimeout); } catch { }
@@ -1320,9 +1219,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             }
             
             // Auto-compact: summarize older messages, truncate large tool results
-            // This runs asynchronously — fire-and-forget since we already have the final text
-            compactHistory(history).then(() => {
-              conversations.set(ws, history);
+            // This runs asynchronou              try { await addAssistantMessage(authUser.userId, conversationId, finalText, metadata, forcePersist); } catch { }
+           conversations.set(ws, history);
             }).catch((err) => {
               console.warn('[cloud-ai] Compaction failed:', err);
               // Fallback: hard cap at 60
@@ -1338,8 +1236,6 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 mode: requestedMode,
                 tier: routedTier,
                 modelId: chosenModelId,
-                reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               };
@@ -1348,6 +1244,9 @@ wss.on('connection', (ws: WebSocket, req: any) => {
 
             const stepsSafe = typeof steps !== 'undefined' ? sanitizeSteps(steps) : steps;
             send(ws, { type: 'final', origin: 'cloud-ai', model: chosenModelId || routedTier, conversationId, result: { text: finalText, steps: stepsSafe, finishReason, usage: normalizedUsage } }, requestId);
+            if (authUser?.userId && requestId) {
+              setTerminalResult(authUser.userId, requestId, { text: finalText, finishReason: finishReason || 'done', model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+            }
             if (authUser && conversationId && conversationCreatedNow) {
               // Only generate title for new conversations
               try {
@@ -1366,17 +1265,15 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
             // Knowledge Graph Ingestion - extract and store knowledge from conversation
-            // Skip for VM chats — the VM agent handles its own knowledge ingestion locally
-            const isVMChat = !!(msg as any)?.context?.isVM;
-            if (!isVMChat) try {
+            try {
               const { ingestConversationTurn } = await import('./knowledge');
               // Run ingestion in background (don't block response)
               // Pass the full conversation thread so the model has context for updates
               const fullHistory = [...history]; // includes all prior messages + the new assistant response
               console.log('[cloud-ai] Starting knowledge ingestion, history length:', fullHistory.length);
               ingestConversationTurn(fullHistory).then(({ extracted, executed }) => {
-                console.log('[cloud-ai] Knowledge ingestion complete:', {
-                  actionsExtracted: extracted.actions.length,
+               analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined, normalizedUsage?.totalTokens).then((draft) => {
+sExtracted: extracted.actions.length,
                   actionsSucceeded: executed.success,
                   actionsFailed: executed.failed,
                   actions: extracted.actions.map((a: any) => a.action),
@@ -1393,22 +1290,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               });
             } catch (ingestionErr) {
               console.error('[cloud-ai] Knowledge ingestion import failed:', ingestionErr);
-            }
-
-            // Auto-Skill Generation - analyze conversation for teachable patterns
-            try {
-              const { analyzeForAutoSkill } = await import('./knowledge');
-              const fullHistoryCopy = [...history];
-              analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined, normalizedUsage?.totalTokens).then((draft) => {
-                if (draft) {
-                  console.log(`[cloud-ai] Auto-skill created: "${draft.name}" (${draft.steps.length} steps, confidence=${draft.confidence})`);
-                  writeLog('auto_skill_generated', { name: draft.name, confidence: draft.confidence, steps: draft.steps.length });
-                }
-              }).catch((err) => {
-                console.error('[cloud-ai] Auto-skill analysis failed:', err);
-              });
-            } catch (autoSkillErr) {
-              console.error('[cloud-ai] Auto-skill import failed:', autoSkillErr);
             }
 
             // Local Memory Storage - store conversation locally with encryption
@@ -1498,7 +1379,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   // Reasoning/Thinking events - forward to client for display
                   case 'reasoning-start':
                   case 'thinking-start': {
-                    if (!reasoningStartTime) reasoningStartTime = Date.now();
                     send(ws, { type: 'progress', event: 'reasoning_start', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -1508,7 +1388,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   case 'thinking-delta': {
                     const reasoningText = (chunk as any)?.payload?.text || (chunk as any)?.textDelta || (typeof (chunk as any)?.payload === 'string' ? (chunk as any).payload : '');
                     if (reasoningText) {
-                      aggregatedReasoning += reasoningText;
                       send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoningText } }, requestId);
                     }
                     handledChunk = true;
@@ -1517,10 +1396,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
 
                   case 'reasoning-end':
                   case 'thinking-end': {
-                    // Persist accumulated reasoning as a stream chunk
-                    if (aggregatedReasoning) {
-                      streamChunks.push({ type: 'reasoning', content: aggregatedReasoning });
-                    }
                     send(ws, { type: 'progress', event: 'reasoning_end', data: { id: (chunk as any)?.payload?.id } }, requestId);
                     handledChunk = true;
                     break;
@@ -1534,13 +1409,24 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
                   case 'tool_event':
                     sawToolCall = true;
                     const safeEvt = sanitizeToolEvent(chunk);
-                    // Log workflow_modify events for debugging immediate application
                     if (safeEvt?.tool === 'workflow_modify' && safeEvt?.status === 'completed') {
                       console.log('[cloud-ai] Forwarding workflow_modify completed event with result:', {
                         hasResult: !!safeEvt?.result,
                         hasWorkflow: !!safeEvt?.result?.workflow,
                         changes: safeEvt?.result?.changes
                       });
+                    }
+                    if (authUser?.userId && requestId && safeEvt?.status === 'approval_required' && safeEvt?.id) {
+                      addPendingApproval(authUser.userId, requestId, {
+                        id: safeEvt.id,
+                        tool: safeEvt.tool || '',
+                        args: safeEvt.args,
+                        description: safeEvt.description,
+                        createdAt: Date.now(),
+                      });
+                    }
+                    if (authUser?.userId && requestId && (safeEvt?.status === 'completed' || safeEvt?.status === 'error' || safeEvt?.status === 'failed') && safeEvt?.id) {
+                      removePendingApprovalByToolId(authUser.userId, safeEvt.id);
                     }
                     send(ws, { type: 'progress', event: 'tool_event', data: safeEvt }, requestId);
                     writeLog('tool_event', { source: 'top-level', tool: safeEvt?.tool, status: safeEvt?.status });
@@ -1695,8 +1581,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -1717,6 +1601,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             },
             requestId
           );
+          if (authUser?.userId && requestId) {
+            setTerminalResult(authUser.userId, requestId, { text: errorFinalText, finishReason: 'error', error: true, model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+          }
           return;
         }
 
@@ -1749,8 +1636,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1771,6 +1656,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             },
             requestId
           );
+          if (authUser?.userId && requestId) {
+            setTerminalResult(authUser.userId, requestId, { text: partialText || '(Stopped)', finishReason: 'aborted', aborted: true, model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+          }
           return;
         }
 
@@ -1830,8 +1718,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'aborted',
@@ -1848,6 +1734,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             result: { text: partialText || '(Stopped)', steps: [], finishReason: 'aborted' },
             aborted: true
           }, requestId);
+          if (authUser?.userId && requestId) {
+            setTerminalResult(authUser.userId, requestId, { text: partialText || '(Stopped)', finishReason: 'aborted', aborted: true, model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+          }
           return;
         }
 
@@ -1899,8 +1788,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
               const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
               const metadata = {
                 mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-                reasoning: aggregatedReasoning || undefined,
-                reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
                 toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
                 streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
                 finishReason: 'error',
@@ -1918,6 +1805,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             },
             requestId
           );
+          if (authUser?.userId && requestId) {
+            setTerminalResult(authUser.userId, requestId, { text: finalText, finishReason: 'error', error: true, model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+          }
           return;
         }
 
@@ -1928,8 +1818,6 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             const toolCallsList = Array.from(toolCallsMap.values()).filter(tc => !isSISMetaTool(tc.tool));
             const metadata = {
               mode: requestedMode, tier: routedTier, modelId: chosenModelId,
-              reasoning: aggregatedReasoning || undefined,
-              reasoningDuration: reasoningStartTime ? Date.now() - reasoningStartTime : undefined,
               toolCalls: toolCallsList.length > 0 ? toolCallsList : undefined,
               streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
               finishReason: 'error',
@@ -1939,6 +1827,9 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
         }
 
         send(ws, { type: 'error', message: e?.message || String(e) }, requestId);
+        if (authUser?.userId && requestId) {
+          setTerminalResult(authUser.userId, requestId, { text: aggregatedText || '', finishReason: 'error', error: true, model: chosenModelId || routedTier, conversationId: conversationId || undefined });
+        }
       }
     }, secretBag);
     // Don't await - allow parallel processing

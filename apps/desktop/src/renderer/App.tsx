@@ -137,7 +137,7 @@ export default function App() {
   const [convList, setConvList] = useState<any[]>([]);
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
-  const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
+  const [approvalQueue, setApprovalQueue] = useState<Array<{ id: string; tool: string; args?: Record<string, any>; description?: string }>>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<{ id: string; args: any } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
 
@@ -205,7 +205,8 @@ export default function App() {
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
-    editMessage, revertFiles, redoFiles
+    editMessage, revertFiles, redoFiles,
+    reconcileTerminalState,
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
   // Listen for approval responses from notification overlay (when permission was handled out-of-app)
@@ -213,11 +214,48 @@ export default function App() {
     const cleanup = (window as any).desktopAPI?.onApprovalResponse?.((data: { id: string; allow: boolean }) => {
       if (data?.id) {
         respondToApproval(data.id, data.allow);
-        setApprovalPrompt((curr) => (curr && curr.id === data.id ? null : curr));
+        setApprovalQueue((q) => q.filter((p) => p.id !== data.id));
       }
     });
     return () => { cleanup?.(); };
   }, [respondToApproval]);
+
+  // Reconcile approval queue & request state from server on reconnect
+  useEffect(() => {
+    const cleanup = (window as any).desktopAPI?.onRunStateSync?.((sync: any) => {
+      if (!sync) return;
+      const serverApprovals: Array<{ id: string; tool: string; args?: Record<string, any>; description?: string }> = Array.isArray(sync.pendingApprovals) ? sync.pendingApprovals : [];
+      if (serverApprovals.length > 0) {
+        setApprovalQueue((prev) => {
+          const ids = new Set(prev.map((p) => p.id));
+          const merged = [...prev];
+          for (const sa of serverApprovals) {
+            if (!ids.has(sa.id)) {
+              merged.push({ id: sa.id, tool: sa.tool, args: sa.args, description: sa.description });
+              try {
+                const toolLabel = sa.tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                (window as any).desktopAPI?.notify?.({
+                  title: 'Permission Required',
+                  message: sa.description || `Stuard wants to use ${toolLabel}`,
+                  variant: 'warning',
+                  duration: 0,
+                  sound: true,
+                  permissionRequest: { id: sa.id, tool: sa.tool, args: sa.args, description: sa.description },
+                });
+              } catch { }
+            }
+          }
+          return merged;
+        });
+      }
+      const terminals: Array<{ requestId: string; result: any }> = Array.isArray(sync.terminals) ? sync.terminals : [];
+      if (terminals.length > 0) {
+        setApprovalQueue([]);
+        reconcileTerminalState(terminals);
+      }
+    });
+    return () => { cleanup?.(); };
+  }, [reconcileTerminalState]);
 
   // Speech Hook
   const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
@@ -564,28 +602,23 @@ export default function App() {
             const args = (d.args && typeof d.args === 'object') ? d.args : undefined;
             const description = typeof d.description === 'string' ? d.description : undefined;
             if (id && tool) {
-              if (windowFocusedRef.current) {
-                // Window is active — show in-app permission dialog only
-                setApprovalPrompt({ id, tool, args, description });
-              } else {
-                // Window is NOT active — show notification overlay only
-                const toolLabel = tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                try {
-                  (window as any).desktopAPI?.notify?.({
-                    title: 'Permission Required',
-                    message: description || `Stuard wants to use ${toolLabel}`,
-                    variant: 'warning',
-                    duration: 0,
-                    sound: true,
-                    permissionRequest: { id, tool, args, description },
-                  });
-                } catch { }
-              }
+              setApprovalQueue((q) => q.some((p) => p.id === id) ? q : [...q, { id, tool, args, description }]);
+              const toolLabel = tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+              try {
+                (window as any).desktopAPI?.notify?.({
+                  title: 'Permission Required',
+                  message: description || `Stuard wants to use ${toolLabel}`,
+                  variant: 'warning',
+                  duration: 0,
+                  sound: true,
+                  permissionRequest: { id, tool, args, description },
+                });
+              } catch { }
             }
           }
           if (status === 'completed') {
             const id = String(d.id || '');
-            setApprovalPrompt((curr) => (curr && curr.id === id ? null : curr));
+            setApprovalQueue((q) => q.filter((p) => p.id !== id));
           }
 
         }
@@ -1371,23 +1404,27 @@ export default function App() {
               )}
               {/* Main Content - Full Width */}
               <div className="flex flex-col h-full w-full relative smooth-resize">
-                {/* Permission Approval Overlay */}
-                {approvalPrompt && (
-                  <PermissionDialog
-                    isOpen={!!approvalPrompt}
-                    tool={approvalPrompt.tool}
-                    args={approvalPrompt.args}
-                    description={approvalPrompt.description}
-                    onAllow={() => {
-                      respondToApproval(approvalPrompt.id, true);
-                      setApprovalPrompt(null);
-                    }}
-                    onDeny={() => {
-                      respondToApproval(approvalPrompt.id, false);
-                      setApprovalPrompt(null);
-                    }}
-                  />
-                )}
+                {/* Permission Approval Overlay — shows the first queued approval; next auto-appears on dismiss */}
+                {approvalQueue.length > 0 && (() => {
+                  const ap = approvalQueue[0];
+                  return (
+                    <PermissionDialog
+                      key={ap.id}
+                      isOpen
+                      tool={ap.tool}
+                      args={ap.args}
+                      description={approvalQueue.length > 1 ? `${ap.description || ''} (${approvalQueue.length} pending)`.trim() : ap.description}
+                      onAllow={() => {
+                        respondToApproval(ap.id, true);
+                        setApprovalQueue((q) => q.filter((p) => p.id !== ap.id));
+                      }}
+                      onDeny={() => {
+                        respondToApproval(ap.id, false);
+                        setApprovalQueue((q) => q.filter((p) => p.id !== ap.id));
+                      }}
+                    />
+                  );
+                })()}
 
                 {/* In-app Ask User Prompt (shown when window is focused) */}
                 {askUserPrompt && (

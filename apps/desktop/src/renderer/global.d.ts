@@ -105,6 +105,7 @@ declare global {
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => () => void;
       onVMStreamEvent: (cb: (data: any) => void) => () => void;
+      onRunStateSync: (cb: (data: { pendingApprovals: Array<{ id: string; tool: string; args?: Record<string, any>; description?: string; createdAt: number }>; terminals: Array<{ requestId: string; result: { text: string; finishReason: string; aborted?: boolean; error?: boolean; model?: string; conversationId?: string } }>; activePhases: Array<{ requestId: string; phase: string }> }) => void) => () => void;
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)

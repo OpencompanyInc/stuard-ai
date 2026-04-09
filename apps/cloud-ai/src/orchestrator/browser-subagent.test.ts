@@ -145,6 +145,14 @@ describe('Browser Pack Tool Resolution', () => {
     expect(toolsWithoutExecute).toEqual([]);
   });
 
+  it('browser pack prompt limits screenshots to visual fallback use', async () => {
+    const { BROWSER_PACK } = await import('./capability-packs');
+
+    expect(BROWSER_PACK.systemPrompt).toContain('Do not use screenshots for routine agentic navigation, targeting, or state discovery.');
+    expect(BROWSER_PACK.systemPrompt).toContain('browser_use_screenshot only when the problem is visual and content is not enough');
+    expect(BROWSER_PACK.systemPrompt).toContain('browser_use_get_interactive_elements and/or browser_use_content');
+  });
+
   it('file_ops pack tools all resolve', async () => {
     const { FILE_OPS_PACK } = await import('./capability-packs');
     const { getExecutionTools } = await import('../agents/stuard/tools');
