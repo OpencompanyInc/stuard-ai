@@ -166,11 +166,12 @@ describe('Capability Packs', () => {
   it('getAllCapabilityPacks returns all static packs', async () => {
     const { getAllCapabilityPacks } = await import('./capability-packs');
     const packs = getAllCapabilityPacks();
-    expect(packs.length).toBe(3);
+    expect(packs.length).toBe(4);
     const kinds = packs.map(p => p.kind);
     expect(kinds).toContain('browser');
     expect(kinds).toContain('file_ops');
     expect(kinds).toContain('workflow');
+    expect(kinds).toContain('media');
   });
 
   it('INTEGRATION_PREFIX_MAP covers expected groups', async () => {
@@ -201,7 +202,8 @@ describe('Capability Packs', () => {
     expect(KNOWN_SUBAGENT_NAMES).toContain('telnyx');
     expect(KNOWN_SUBAGENT_NAMES).toContain('reddit');
     expect(KNOWN_SUBAGENT_NAMES).toContain('discord');
-    expect(KNOWN_SUBAGENT_NAMES.length).toBe(11);
+    expect(KNOWN_SUBAGENT_NAMES).toContain('media');
+    expect(KNOWN_SUBAGENT_NAMES.length).toBe(12);
   });
 });
 
