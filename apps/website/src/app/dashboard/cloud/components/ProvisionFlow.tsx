@@ -11,8 +11,8 @@ function creditsFromUsd(usd: number): number {
   return Math.max(0, Math.round(usd * CREDITS_PER_USD));
 }
 
-function estimateCustomComputeCredits(vcpus: number): number {
-  return creditsFromUsd(vcpus * 0.034);
+function estimateCustomComputeCredits(vcpus: number, ramGb: number): number {
+  return creditsFromUsd((vcpus * 0.022) + (ramGb * 0.003));
 }
 
 function estimateStorageCredits(diskGb: number): number {
@@ -65,7 +65,7 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
   const [error, setError] = useState<string | null>(null);
 
   const plan = PLANS.find(p => p.id === selectedPlan)!;
-  const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu) : plan.credits;
+  const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu, customRam) : plan.credits;
   const diskCredits = estimateStorageCredits(customMode ? customDisk : plan.disk);
   const totalCredits = cpuCredits + diskCredits;
 
@@ -230,6 +230,20 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
           {error}
         </div>
       )}
+
+      {/* Sync notice — website can't sync local memories */}
+      <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+        <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+        </svg>
+        <div>
+          <div className="text-sm font-semibold text-amber-800">Memories will be out of sync</div>
+          <p className="text-xs text-amber-700 mt-1">
+            Deploying from the web cannot sync your local memories and knowledge to the VM.
+            Open the <span className="font-semibold">Cloud Engine dashboard in the Stuard desktop app</span> to sync your memories, conversations, and data onto the VM.
+          </p>
+        </div>
+      </div>
 
       {/* Provision Button */}
       <button

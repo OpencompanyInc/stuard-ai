@@ -30,3 +30,23 @@ def run_command_requires_approval(args: Optional[Dict[str, Any]] = None) -> bool
             return True
         return command_looks_write_or_destructive(str(arg_obj.get("command") or ""))
     return command_looks_write_or_destructive(str(arg_obj.get("command") or ""))
+
+
+_TERMINAL_TOOLS_WITH_PERMISSION = {
+    "terminal_create",
+    "terminal_send_input",
+    "terminal_send_raw",
+    "terminal_send_keys",
+    "terminal_destroy",
+}
+
+
+def terminal_tool_requires_approval(tool: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    if tool not in _TERMINAL_TOOLS_WITH_PERMISSION:
+        return False
+    arg_obj = args or {}
+    requested = arg_obj.get("isPermissionRequired")
+    if isinstance(requested, bool):
+        return requested
+    # If the AI didn't provide isPermissionRequired, default to requiring approval (safe fallback)
+    return True

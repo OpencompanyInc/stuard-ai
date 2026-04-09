@@ -962,9 +962,21 @@ export default function App() {
     });
   };
 
+  const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
+
   const addAttachmentsFromFiles = useCallback(async (files: File[] | FileList) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
+    const tooLarge = arr.filter(f => f.size > MAX_ATTACHMENT_BYTES);
+    if (tooLarge.length > 0) {
+      const names = tooLarge.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`).join(', ');
+      alert(`File too large (max 65 MB): ${names}`);
+      const valid = arr.filter(f => f.size <= MAX_ATTACHMENT_BYTES);
+      if (valid.length === 0) return;
+      const atts = await Promise.all(valid.map(fileToAttachment));
+      setAttachments((prev) => [...prev, ...atts]);
+      return;
+    }
     const atts = await Promise.all(arr.map(fileToAttachment));
     setAttachments((prev) => [...prev, ...atts]);
   }, []);

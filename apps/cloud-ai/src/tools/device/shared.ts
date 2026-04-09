@@ -352,6 +352,20 @@ async function execViaLocalBrowser(toolId: string, args: any, timeoutMs: number)
   }
 }
 
+/**
+ * Strip top-level null values from a tool result so that Zod `.optional()` fields
+ * don't fail validation. Python backends use `None` (→ JSON `null`) for absent
+ * fields, but Zod `.optional()` only accepts `undefined` or missing keys.
+ */
+function stripNulls(result: any): any {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const cleaned: Record<string, any> = {};
+  for (const [k, v] of Object.entries(result)) {
+    if (v !== null) cleaned[k] = v;
+  }
+  return cleaned;
+}
+
 export function makeLocalTool(
   id: string,
   description: string,
@@ -389,7 +403,7 @@ export function makeLocalTool(
         );
       }
       if (hasBridge) {
-        return await execLocalToolWithCapturedBridge(id, inputData, writer, localToolSpec, bridgeContext!);
+        return stripNulls(await execLocalToolWithCapturedBridge(id, inputData, writer, localToolSpec, bridgeContext!));
       }
 
       // No desktop bridge — try routing to VM, then local browser server
@@ -400,12 +414,12 @@ export function makeLocalTool(
         // Try VM fallback first
         console.warn(`[makeLocalTool:${id}] No bridge — trying VM fallback`);
         const vmResult = await execViaVM(id, effectiveInput, effectiveTimeout);
-        if (vmResult !== null) return vmResult;
+        if (vmResult !== null) return stripNulls(vmResult);
 
         // Try local browser server (direct HTTP to localhost:18082)
         console.warn(`[makeLocalTool:${id}] No VM — trying local browser server`);
         const localResult = await execViaLocalBrowser(id, effectiveInput, effectiveTimeout);
-        if (localResult !== null) return localResult;
+        if (localResult !== null) return stripNulls(localResult);
 
         return { ok: false, error: `No desktop, VM, or local browser server available. ${id} requires a running Stuard desktop app, cloud VM, or local browser server.` };
       }
@@ -415,7 +429,7 @@ export function makeLocalTool(
       }
 
       const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
-      return await execLocalTool(id, effectiveInput as any, writer as any, typeof t === 'number' ? t : undefined, { noFallback });
+      return stripNulls(await execLocalTool(id, effectiveInput as any, writer as any, typeof t === 'number' ? t : undefined, { noFallback }));
     },
   });
   (tool as any).__localToolSpec = localToolSpec;

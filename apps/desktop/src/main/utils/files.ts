@@ -57,6 +57,8 @@ export function getMimeType(ext: string): string {
   return mimeMap[ext.toLowerCase()] || 'application/octet-stream';
 }
 
+const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
+
 export async function selectFiles() {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
@@ -67,13 +69,22 @@ export async function selectFiles() {
   });
   if (result.canceled || !result.filePaths.length) return null;
   const files: any[] = [];
+  const skipped: string[] = [];
   for (const filePath of result.filePaths) {
     try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_ATTACHMENT_BYTES) {
+        skipped.push(`${path.basename(filePath)} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+        continue;
+      }
       const data = fs.readFileSync(filePath, { encoding: 'base64' });
       const ext = path.extname(filePath).slice(1);
       const mimeType = getMimeType(ext);
       files.push({ name: path.basename(filePath), path: filePath, data, mimeType });
     } catch {}
+  }
+  if (skipped.length > 0) {
+    dialog.showMessageBoxSync({ type: 'warning', title: 'File too large', message: `Skipped (max 65 MB): ${skipped.join(', ')}` });
   }
   return files.length > 0 ? files : null;
 }
@@ -85,13 +96,22 @@ export async function selectImages() {
   });
   if (result.canceled || !result.filePaths.length) return null;
   const images: any[] = [];
+  const skipped: string[] = [];
   for (const filePath of result.filePaths) {
     try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_ATTACHMENT_BYTES) {
+        skipped.push(`${path.basename(filePath)} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+        continue;
+      }
       const data = fs.readFileSync(filePath, { encoding: 'base64' });
       const ext = path.extname(filePath).slice(1).toLowerCase();
       const mimeType = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
       images.push({ name: path.basename(filePath), path: filePath, data, mimeType });
     } catch {}
+  }
+  if (skipped.length > 0) {
+    dialog.showMessageBoxSync({ type: 'warning', title: 'File too large', message: `Skipped (max 65 MB): ${skipped.join(', ')}` });
   }
   return images.length > 0 ? images : null;
 }

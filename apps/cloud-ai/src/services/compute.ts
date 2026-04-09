@@ -867,7 +867,6 @@ export class GCEComputeProvider implements IComputeProvider {
     if (!machineTypeName) throw new Error(`Unknown compute tier: ${tier}`);
 
     const instanceName = buildInstanceName(userId);
-    const zone = GCP_ZONE;
 
     // Generate a unique secret for this VM (never shared with other VMs)
     const vmSecret = generateVMSecret();
@@ -889,10 +888,6 @@ export class GCEComputeProvider implements IComputeProvider {
     // Ensure GCP VPC firewall rule exists for VM agent port 7400
     await this.ensureFirewallRule();
 
-    // Pre-flight: clean up orphaned VMs and wait for pending operations
-    await this.cleanupOrphanedVMs(client, userId, zone);
-    await this.waitForPendingOps(zone);
-
     const networkInterfaces: any[] = [{
       network: GCP_VM_NETWORK,
       ...(GCP_VM_SUBNETWORK ? { subnetwork: GCP_VM_SUBNETWORK } : {}),
@@ -910,48 +905,76 @@ export class GCEComputeProvider implements IComputeProvider {
       ? [{ email: GCP_VM_SERVICE_ACCOUNT, scopes: vmScopes }]
       : [{ email: 'default', scopes: vmScopes }];
 
-    console.log(`[compute:gce] Provisioning VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}...`);
+    const userLabel = userId.slice(0, 63).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
-    const [operation] = await withRetry<any[]>(
-      () => client.insert({
-        project: GCP_PROJECT_ID,
-        zone,
-        instanceResource: {
-          name: instanceName,
-          machineType: `zones/${zone}/machineTypes/${machineTypeName}`,
-          disks: [{
-            boot: true,
-            autoDelete: true,
-            initializeParams: {
-              sourceImage: GCP_VM_IMAGE,
-              diskSizeGb: String(diskSizeGb),
-              diskType: `zones/${zone}/diskTypes/pd-ssd`,
+    // Build the list of zones to try: primary zone first, then fallbacks in the same region.
+    const region = GCP_ZONE.replace(/-[a-z]$/, '');
+    const allZonesInRegion = ['a', 'b', 'c', 'f'].map(s => `${region}-${s}`);
+    const zones = [GCP_ZONE, ...allZonesInRegion.filter(z => z !== GCP_ZONE)];
+
+    let lastErr: Error | null = null;
+    for (const zone of zones) {
+      // Pre-flight: clean up orphaned VMs and wait for pending operations
+      await this.cleanupOrphanedVMs(client, userId, zone);
+      await this.waitForPendingOps(zone);
+
+      console.log(`[compute:gce] Provisioning VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}...`);
+
+      try {
+        const [operation] = await withRetry<any[]>(
+          () => client.insert({
+            project: GCP_PROJECT_ID,
+            zone,
+            instanceResource: {
+              name: instanceName,
+              machineType: `zones/${zone}/machineTypes/${machineTypeName}`,
+              disks: [{
+                boot: true,
+                autoDelete: true,
+                initializeParams: {
+                  sourceImage: GCP_VM_IMAGE,
+                  diskSizeGb: String(diskSizeGb),
+                  diskType: `zones/${zone}/diskTypes/pd-ssd`,
+                },
+              }],
+              networkInterfaces,
+              serviceAccounts,
+              metadata: {
+                items: [
+                  { key: 'startup-script', value: buildStartupScript(userId, vmSecret, undefined, signedUrls, options?.userTimezone) },
+                  { key: 'stuard-user-id', value: userId },
+                  { key: 'stuard-tier', value: tier },
+                ],
+              },
+              labels: {
+                'stuard-user': userLabel,
+                'stuard-tier': tier,
+                'managed-by': 'stuard-cloud-ai',
+              },
+              tags: { items: ['stuard-vm'] },
             },
-          }],
-          networkInterfaces,
-          serviceAccounts,
-          metadata: {
-            items: [
-              { key: 'startup-script', value: buildStartupScript(userId, vmSecret, undefined, signedUrls, options?.userTimezone) },
-              { key: 'stuard-user-id', value: userId },
-              { key: 'stuard-tier', value: tier },
-            ],
-          },
-          labels: {
-            'stuard-user': userId.slice(0, 63).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''),
-            'stuard-tier': tier,
-            'managed-by': 'stuard-cloud-ai',
-          },
-          tags: { items: ['stuard-vm'] },
-        },
-      }),
-      `provisionVM(${instanceName})`,
-    );
+          }),
+          `provisionVM(${instanceName})`,
+        );
 
-    await waitForOperation(operation, zone);
+        await waitForOperation(operation, zone);
 
-    console.log(`[compute:gce] Provisioned VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}`);
-    return { instanceName, zone, vmSecret };
+        console.log(`[compute:gce] Provisioned VM ${instanceName} (${machineTypeName}, ${diskSizeGb}GB) in ${zone}`);
+        return { instanceName, zone, vmSecret };
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || '');
+        // Retry in the next zone only for resource exhaustion errors
+        if (msg.includes('does not have enough resources') || msg.includes('ZONE_RESOURCE_POOL_EXHAUSTED')) {
+          console.warn(`[compute:gce] Zone ${zone} exhausted, trying next zone...`);
+          continue;
+        }
+        // Non-capacity error — don't retry in another zone
+        throw err;
+      }
+    }
+
+    throw lastErr || new Error('All zones exhausted — could not provision VM');
   }
 
   async startVM(instanceName: string, zone: string): Promise<void> {

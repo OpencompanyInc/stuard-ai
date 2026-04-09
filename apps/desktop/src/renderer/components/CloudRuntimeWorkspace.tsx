@@ -28,12 +28,16 @@ export type CloudRuntimeView =
   | 'deploys'
   | 'permissions';
 
+export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
+
 interface CloudRuntimeWorkspaceProps {
   engine: any;
   pauseLoading?: boolean;
+  syncState?: SyncState;
   onPause: () => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
   onDelete: () => void | Promise<void>;
+  onSync?: () => void | Promise<any>;
   explorer: React.ReactNode;
   terminal: React.ReactNode;
   views: Record<CloudRuntimeView, React.ReactNode>;
@@ -63,9 +67,11 @@ const DEFAULT_TERMINAL_H = 220;
 export function CloudRuntimeWorkspace({
   engine,
   pauseLoading = false,
+  syncState = 'unknown',
   onPause,
   onRefresh,
   onDelete,
+  onSync,
   explorer,
   terminal,
   views,
@@ -178,6 +184,30 @@ export function CloudRuntimeWorkspace({
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
               Running
             </div>
+            {/* Sync status badge */}
+            {syncState === 'synced' && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-green-500 mr-1" title="Memories synced">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                Synced
+              </div>
+            )}
+            {syncState === 'out_of_sync' && (
+              <button
+                type="button"
+                onClick={onSync}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-amber-500 hover:bg-amber-500/10 transition-colors mr-1"
+                title="Memories out of sync — click to sync"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                Out of Sync
+              </button>
+            )}
+            {syncState === 'syncing' && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-blue-400 mr-1" title="Syncing memories...">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Syncing
+              </div>
+            )}
             <button
               type="button"
               className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"

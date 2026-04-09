@@ -306,6 +306,11 @@ export function calcToolTimeout(tool: string, args: any): number {
     return 300000; // 5 min default
   }
   
+  // read_file_binary / read_file: large files need more time for reading + base64 encoding
+  if (tool === 'read_file_binary' || tool === 'read_file') {
+    return 300000; // 5 min for large file reads
+  }
+
   // analyze_media: can take a while for transcription/analysis
   if (tool === 'analyze_media') {
     return 600000; // 10 min for long media files

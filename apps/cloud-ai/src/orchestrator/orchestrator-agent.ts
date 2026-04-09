@@ -67,6 +67,7 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | browser     | Web browsing, form filling, page scraping, screenshots |
 | file_ops    | Reading/writing files, code editing, terminal commands, compute |
 | workflow    | Creating/modifying/testing StuardAI automation workflows |
+| media       | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames (FFmpeg) |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
 | outlook     | Outlook mail & calendar |
 | github      | Repos, issues, PRs, branches, actions |

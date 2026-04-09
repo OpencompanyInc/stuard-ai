@@ -423,6 +423,15 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
       {/* ── Main Content ── */}
       <div className="ide-main">
+        {/* Sync notice — website can't sync local memories */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 shrink-0">
+          <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <span>
+            <strong>Memories may be out of sync.</strong> Open the Cloud Engine dashboard in the <strong>Stuard desktop app</strong> to sync your memories and data to the VM.
+          </span>
+        </div>
         {/* Chat area */}
         <div className="ide-chat-area">
           {messages.length === 0 && !chatLoading ? (

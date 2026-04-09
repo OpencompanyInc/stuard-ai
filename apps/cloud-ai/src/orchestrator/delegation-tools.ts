@@ -112,7 +112,7 @@ async function runDelegateTask(
   parentModelId: string | undefined,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const isIntegration = !['browser', 'file_ops', 'workflow'].includes(name);
+  const isIntegration = !['browser', 'file_ops', 'workflow', 'media'].includes(name);
   const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -244,6 +244,7 @@ export const delegate = createTool({
     '  browser     — web browsing, form filling, page scraping, screenshots\n' +
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
+    '  media       — audio/video processing with FFmpeg (convert, trim, extract audio, probe, extract frames)\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +

@@ -344,12 +344,12 @@ export const agent_todo = createTool({
   }),
   outputSchema: z.object({
     ok: z.boolean(),
-    todo: z.any().optional(),
-    todos: z.any().optional(),
-    items: z.any().optional(),
-    count: z.number().optional(),
-    progress: z.any().optional(),
-    error: z.string().optional(),
+    todo: z.any().nullish(),
+    todos: z.any().nullish(),
+    items: z.any().nullish(),
+    count: z.number().nullish(),
+    progress: z.any().nullish(),
+    error: z.string().nullish(),
   }),
   execute: async (inputData, context) => {
     return await execLocalTool('agent_todo', inputData);

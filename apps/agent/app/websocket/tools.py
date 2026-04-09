@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 import websockets
 from ..logging_config import get_logger
 from ..permissions import is_auto_approved as _is_auto_approved
-from ..tool_approval import run_command_requires_approval
+from ..tool_approval import run_command_requires_approval, terminal_tool_requires_approval
 from .session import WebSocketSession
 from ..tools.folder_limiter import current_session_id as _folder_session_ctx
 
@@ -57,19 +57,12 @@ CLIENT_TOOLS = {
 # On VM, browser_use_* tools are handled locally (headless) — not forwarded to desktop
 _IS_VM = os.environ.get("STUARD_AGENT_MODE") == "vm"
 CLIENT_PREFIXES = ("terminal_",) if _IS_VM else ("terminal_", "browser_use_")
-SENSITIVE_CLIENT_TOOLS = {
-    "terminal_create",
-    "terminal_send_input",
-    "terminal_send_raw",
-    "terminal_send_keys",
-    "terminal_destroy",
-}
-
-
 def _tool_requires_approval(tool: str, args: Optional[Dict[str, Any]] = None) -> bool:
     if tool == "run_command":
         return run_command_requires_approval(args)
-    return tool in SENSITIVE_TOOLS or tool in SENSITIVE_CLIENT_TOOLS
+    if terminal_tool_requires_approval(tool, args):
+        return True
+    return tool in SENSITIVE_TOOLS
 
 async def handle_cloud_tool_request(
     cdata: Dict[str, Any], 

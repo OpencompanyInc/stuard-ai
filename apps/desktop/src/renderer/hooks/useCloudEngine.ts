@@ -50,6 +50,27 @@ export interface CloudBilling {
   hours_this_month?: number;
 }
 
+export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
+
+export interface CloudSyncStatus {
+  state: SyncState;
+  lastSyncAt: string | null;
+  vm: {
+    memories: number;
+    conversations: number;
+    topics: number;
+    diskBytes: number;
+    byOrigin?: { cloud_vm: number; desktop: number } | null;
+  } | null;
+  desktop: {
+    conversations: number;
+    messages: number;
+    spaces: number;
+    spaceItems: number;
+    segments: number;
+  } | null;
+}
+
 export interface CloudFileEntry {
   name: string;
   path: string;
@@ -123,6 +144,7 @@ interface EngineCache {
   engine: CloudEngine | null;
   metrics: CloudMetrics | null;
   billing: CloudBilling | null;
+  syncStatus: CloudSyncStatus | null;
   snapshots: CloudSnapshot[];
   deployments: CloudDeployment[];
   ts: number; // last update timestamp
@@ -130,12 +152,41 @@ interface EngineCache {
 let _cache: EngineCache | null = null;
 const CACHE_MAX_AGE_MS = 60_000; // consider stale after 60s
 
+/** Compute sync state from VM + desktop memory stats and last sync time */
+function computeSyncState(
+  syncData: { lastSyncAt: string | null; vm: any; desktop: any } | null,
+  isSyncing: boolean,
+): CloudSyncStatus {
+  if (isSyncing) {
+    return { state: 'syncing', lastSyncAt: syncData?.lastSyncAt ?? null, vm: syncData?.vm ?? null, desktop: syncData?.desktop ?? null };
+  }
+  if (!syncData || (!syncData.vm && !syncData.desktop)) {
+    return { state: 'unknown', lastSyncAt: syncData?.lastSyncAt ?? null, vm: null, desktop: null };
+  }
+  // If we have both VM and desktop stats, compare them
+  if (syncData.vm && syncData.desktop) {
+    // Check staleness: if last sync was more than 10 minutes ago, consider out of sync
+    const lastSync = syncData.lastSyncAt ? new Date(syncData.lastSyncAt).getTime() : 0;
+    const staleThresholdMs = 10 * 60 * 1000; // 10 minutes
+    const isStale = !syncData.lastSyncAt || (Date.now() - lastSync > staleThresholdMs);
+    if (isStale) {
+      return { state: 'out_of_sync', lastSyncAt: syncData.lastSyncAt, vm: syncData.vm, desktop: syncData.desktop };
+    }
+    return { state: 'synced', lastSyncAt: syncData.lastSyncAt, vm: syncData.vm, desktop: syncData.desktop };
+  }
+  // Only one side has data — out of sync
+  return { state: 'out_of_sync', lastSyncAt: syncData.lastSyncAt ?? null, vm: syncData.vm ?? null, desktop: syncData.desktop ?? null };
+}
+
 export function useCloudEngine() {
   const [engine, setEngine] = useState<CloudEngine | null>(_cache?.engine ?? null);
   const [loading, setLoading] = useState(!_cache);
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<CloudMetrics | null>(_cache?.metrics ?? null);
   const [billing, setBilling] = useState<CloudBilling | null>(_cache?.billing ?? null);
+  const [syncStatus, setSyncStatus] = useState<CloudSyncStatus | null>(_cache?.syncStatus ?? null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncingRef = useRef(false);
   const [snapshots, setSnapshots] = useState<CloudSnapshot[]>(_cache?.snapshots ?? []);
   const [deployments, setDeployments] = useState<CloudDeployment[]>(_cache?.deployments ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -183,8 +234,15 @@ export function useCloudEngine() {
           };
           setBilling(mappedBilling);
         }
+        // Extract sync status from response
+        let mappedSync: CloudSyncStatus | null = null;
+        if (data.sync) {
+          mappedSync = computeSyncState(data.sync, isSyncingRef.current);
+          setSyncStatus(mappedSync);
+        }
+
         // Update module cache
-        _cache = { ...(_cache || { snapshots: [], deployments: [] }), engine: mapped, billing: mappedBilling ?? _cache?.billing ?? null, metrics: _cache?.metrics ?? null, snapshots: _cache?.snapshots ?? [], deployments: _cache?.deployments ?? [], ts: Date.now() };
+        _cache = { ...(_cache || { snapshots: [], deployments: [], syncStatus: null }), engine: mapped, billing: mappedBilling ?? _cache?.billing ?? null, syncStatus: mappedSync ?? _cache?.syncStatus ?? null, metrics: _cache?.metrics ?? null, snapshots: _cache?.snapshots ?? [], deployments: _cache?.deployments ?? [], ts: Date.now() };
         setError(null);
       } else if (data.ok && !data.engine) {
         setEngine(null);
@@ -298,6 +356,9 @@ export function useCloudEngine() {
 
   /** Manually sync local agent data (memories, knowledge) to the running VM */
   const syncData = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    setIsSyncing(true);
+    isSyncingRef.current = true;
+    setSyncStatus(prev => prev ? { ...prev, state: 'syncing' } : { state: 'syncing', lastSyncAt: null, vm: null, desktop: null });
     try {
       // 1. Upload latest agent databases to GCS
       const token = await getAuthToken();
@@ -305,6 +366,9 @@ export function useCloudEngine() {
         console.log('[cloud-engine] Uploading agent data for sync...');
         const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
         if (!uploadResult?.ok && !uploadResult?.skipped) {
+          setIsSyncing(false);
+          isSyncingRef.current = false;
+          setSyncStatus(prev => prev ? { ...prev, state: 'out_of_sync' } : null);
           return { ok: false, error: 'Failed to upload agent data' };
         }
       }
@@ -324,11 +388,18 @@ export function useCloudEngine() {
       cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
       cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
 
+      setIsSyncing(false);
+      isSyncingRef.current = false;
+      // Refresh status to get updated sync data
+      await fetchEngine();
       return syncResult;
     } catch (e: any) {
+      setIsSyncing(false);
+      isSyncingRef.current = false;
+      setSyncStatus(prev => prev ? { ...prev, state: 'out_of_sync' } : null);
       return { ok: false, error: e?.message || 'sync_failed' };
     }
-  }, []);
+  }, [fetchEngine]);
 
   const stop = useCallback(async () => {
     setError(null);
@@ -514,6 +585,8 @@ export function useCloudEngine() {
     error,
     metrics,
     billing,
+    syncStatus,
+    isSyncing,
     snapshots,
     deployments,
     provision,

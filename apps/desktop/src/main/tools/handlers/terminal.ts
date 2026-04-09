@@ -167,6 +167,7 @@ export async function execTerminalWaitFor(args: any, ctx: RouterContext): Promis
     const pollMs = Math.max(50, Number(args?.pollMs ?? args?.poll_ms ?? 200) || 200);
     const maxChars = Math.max(0, Number(args?.maxChars ?? 8000) || 8000);
     const stripAnsi = args?.stripAnsi !== false;
+    const exitOnDone = args?.exitOnDone !== false; // Default true
     if (!sessionId) return { ok: false, error: 'missing_session_id' };
     if (!needle) return { ok: false, error: 'missing_text' };
 
@@ -192,8 +193,8 @@ export async function execTerminalWaitFor(args: any, ctx: RouterContext): Promis
       if (collected.includes(needle)) {
         return { ok: true, sessionId, matched: true, needle, seq: sinceSeq, done: r.done, exitCode: r.exitCode };
       }
-      if (r.done) {
-        return { ok: true, sessionId, matched: collected.includes(needle), needle, seq: sinceSeq, done: true, exitCode: r.exitCode };
+      if (r.done && exitOnDone) {
+        return { ok: true, sessionId, matched: false, needle, seq: sinceSeq, done: true, exitCode: r.exitCode };
       }
 
       await new Promise(r2 => setTimeout(r2, pollMs));

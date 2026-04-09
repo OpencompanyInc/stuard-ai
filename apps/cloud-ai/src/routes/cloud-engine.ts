@@ -291,7 +291,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         const customRam = Math.max(1, Math.min(64, Number(body.ramGb) || 4));
         const memoryMb = customRam * 1024;
         const machineType = `e2-custom-${customVcpus}-${memoryMb}`;
-        const hourlyUsd = customVcpus * 0.034; // ~$0.034/vCPU/hr for e2
+        const hourlyUsd = (customVcpus * 0.022) + (customRam * 0.003); // e2 custom: ~$0.022/vCPU/hr + ~$0.003/GB/hr
         tierConfig = { machineType, vcpus: customVcpus, memoryGb: customRam, hourlyUsd };
         machineTypeOverride = machineType;
       }
@@ -771,6 +771,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       let liveHealthStatus = engine.health_status;
       let liveHeartbeat = engine.last_heartbeat_at;
       let liveAgentVersion = engine.agent_version;
+      let vmMemoryStats: { totalMemories: number; totalConversations: number; topicCount: number; diskUsageBytes: number; byOrigin?: { cloud_vm: number; desktop: number } } | null = null;
       if (engine.status === 'running' && engine.external_ip) {
         try {
           const ping = await pingVMAgent(engine.external_ip, 5_000);
@@ -785,6 +786,14 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
               health_status: 'healthy',
               agent_version: liveAgentVersion ?? undefined,
             }).catch(() => {});
+
+            // Fetch VM memory stats for sync comparison (non-blocking, short timeout)
+            try {
+              const memResult = await sendVMCommand(user.userId, 'memory_stats', {}, 5_000);
+              if (memResult.ok && memResult.result?.stats) {
+                vmMemoryStats = memResult.result.stats;
+              }
+            } catch { /* non-fatal */ }
           } else {
             const staleMs = engine.last_heartbeat_at
               ? Date.now() - new Date(engine.last_heartbeat_at).getTime()
@@ -795,6 +804,13 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           // Non-fatal — fall back to DB values
         }
       }
+
+      // Fetch desktop memory stats (from cloud-ai's own memory service if bridge is available)
+      let desktopMemoryStats: { conversations: number; messages: number; spaces: number; space_items: number; segments: number } | null = null;
+      try {
+        const { getMemoryStats } = await import('../memory/conversations');
+        desktopMemoryStats = await getMemoryStats();
+      } catch { /* non-fatal — desktop bridge may be offline */ }
 
       json(res, 200, {
         ok: true,
@@ -819,6 +835,23 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           provisionStep: provisionProgress?.step ?? null,
         },
         storage: syncStatus,
+        sync: {
+          lastSyncAt: syncStatus.lastSyncAt,
+          vm: vmMemoryStats ? {
+            memories: vmMemoryStats.totalMemories,
+            conversations: vmMemoryStats.totalConversations,
+            topics: vmMemoryStats.topicCount,
+            diskBytes: vmMemoryStats.diskUsageBytes,
+            byOrigin: vmMemoryStats.byOrigin ?? null,
+          } : null,
+          desktop: desktopMemoryStats ? {
+            conversations: desktopMemoryStats.conversations,
+            messages: desktopMemoryStats.messages,
+            spaces: desktopMemoryStats.spaces,
+            spaceItems: desktopMemoryStats.space_items,
+            segments: desktopMemoryStats.segments,
+          } : null,
+        },
         billing: {
           total_credits_used: computeUsage.total,
           compute_credits: computeUsage.compute,

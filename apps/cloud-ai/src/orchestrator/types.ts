@@ -18,7 +18,7 @@ export interface SubagentCorrelation {
 
 // ─── Capability Pack ─────────────────────────────────────────────────────────
 
-export type SubagentKind = 'browser' | 'file_ops' | 'workflow' | 'integration' | 'custom';
+export type SubagentKind = 'browser' | 'file_ops' | 'workflow' | 'media' | 'integration' | 'custom';
 
 export interface CapabilityPack {
   kind: SubagentKind;

@@ -23,8 +23,8 @@ function creditsFromUsd(usd: number): number {
   return Math.max(0, Math.round(usd * CREDITS_PER_USD));
 }
 
-function estimateCustomComputeCredits(vcpus: number): number {
-  return creditsFromUsd(vcpus * 0.034);
+function estimateCustomComputeCredits(vcpus: number, ramGb: number): number {
+  return creditsFromUsd((vcpus * 0.022) + (ramGb * 0.003));
 }
 
 function estimateStorageCredits(diskGb: number): number {
@@ -69,8 +69,8 @@ const PLANS = [
 
 export function CloudEngineDashboard() {
   const {
-    engine, loading, error, metrics, billing, snapshots, deployments,
-    provision, start, stop, destroy, listFiles, readFile, refresh,
+    engine, loading, error, metrics, billing, syncStatus, isSyncing, snapshots, deployments,
+    provision, start, stop, destroy, syncData, listFiles, readFile, refresh,
     createSnapshot, restoreSnapshot, deleteSnapshot,
     createDeployment, stopDeployment, restartDeployment, deleteDeployment,
     getDeployLogs, fetchDeployments,
@@ -87,7 +87,7 @@ export function CloudEngineDashboard() {
   if (!engine && !loading) {
     const plan = PLANS.find(p => p.id === selectedPlan)!;
     const diskCredits = estimateStorageCredits(customMode ? customDisk : plan.disk);
-    const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu) : plan.credits;
+    const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu, customRam) : plan.credits;
     const totalCredits = cpuCredits + diskCredits;
 
     const handleProvision = async () => {
@@ -547,12 +547,64 @@ export function CloudEngineDashboard() {
 
         <div className="dashboard-card p-5 col-span-12">
           <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <StatusPill label="AI Agent" connected={engine.health_status === 'healthy'} detail={engine.health_status === 'healthy' ? 'Connected and ready' : 'Not connected'} />
             <StatusPill label="Heartbeat" connected={!!engine.last_heartbeat_at} detail={engine.last_heartbeat_at ? `Last: ${new Date(engine.last_heartbeat_at).toLocaleTimeString()}` : 'Waiting...'} />
             <StatusPill label="Network" connected={!!engine.external_ip} detail={engine.external_ip || 'Assigning...'} />
+            <SyncStatusPill syncStatus={syncStatus} isSyncing={isSyncing} onSync={syncData} />
           </div>
         </div>
+
+        {/* Sync Details */}
+        {syncStatus && (syncStatus.vm || syncStatus.desktop) && (
+          <div className="dashboard-card p-5 col-span-12">
+            <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-4">Memory Sync</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-wider flex items-center gap-1.5">
+                  <Server className="w-3 h-3" /> Desktop
+                </div>
+                {syncStatus.desktop ? (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Conversations</span><span className="font-bold text-theme-fg">{syncStatus.desktop.conversations}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Messages</span><span className="font-bold text-theme-fg">{syncStatus.desktop.messages}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Spaces</span><span className="font-bold text-theme-fg">{syncStatus.desktop.spaces}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Segments</span><span className="font-bold text-theme-fg">{syncStatus.desktop.segments}</span></div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-theme-muted/60 italic">No data available</div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-wider flex items-center gap-1.5">
+                  <Cloud className="w-3 h-3" /> Cloud VM
+                </div>
+                {syncStatus.vm ? (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Memories</span><span className="font-bold text-theme-fg">{syncStatus.vm.memories}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Conversations</span><span className="font-bold text-theme-fg">{syncStatus.vm.conversations}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Topics</span><span className="font-bold text-theme-fg">{syncStatus.vm.topics}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Disk</span><span className="font-bold text-theme-fg">{(syncStatus.vm.diskBytes / 1024).toFixed(1)} KB</span></div>
+                    {syncStatus.vm.byOrigin && (
+                      <div className="pt-1.5 mt-1.5 border-t border-theme/10">
+                        <div className="text-[9px] font-bold text-theme-muted uppercase tracking-wider mb-1">Origin Breakdown</div>
+                        <div className="flex justify-between text-xs"><span className="text-theme-muted">From Cloud VM</span><span className="font-bold text-theme-fg">{syncStatus.vm.byOrigin.cloud_vm}</span></div>
+                        <div className="flex justify-between text-xs"><span className="text-theme-muted">From Desktop</span><span className="font-bold text-theme-fg">{syncStatus.vm.byOrigin.desktop}</span></div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-theme-muted/60 italic">VM not reachable</div>
+                )}
+              </div>
+            </div>
+            {syncStatus.lastSyncAt && (
+              <div className="mt-3 pt-3 border-t border-theme/10 text-[10px] text-theme-muted">
+                Last synced: {new Date(syncStatus.lastSyncAt).toLocaleString()}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -576,9 +628,11 @@ export function CloudEngineDashboard() {
       <CloudRuntimeWorkspace
         engine={engine}
         pauseLoading={actionLoading === 'stop'}
+        syncState={isSyncing ? 'syncing' : (syncStatus?.state || 'unknown')}
         onPause={handlePause}
         onRefresh={refresh}
         onDelete={handleDelete}
+        onSync={syncData}
         explorer={
           <CloudFileBrowser
             engine={engine}
@@ -952,6 +1006,46 @@ function StatusPill({ label, connected, detail }: { label: string; connected: bo
         <div className="text-xs font-bold text-theme-fg">{label}</div>
         <div className="text-[10px] text-theme-muted">{detail}</div>
       </div>
+    </div>
+  );
+}
+
+function SyncStatusPill({ syncStatus, isSyncing, onSync }: { syncStatus: any; isSyncing: boolean; onSync: () => Promise<any> }) {
+  const state = isSyncing ? 'syncing' : (syncStatus?.state || 'unknown');
+  const colorMap: Record<string, { dot: string; text: string; bg: string }> = {
+    synced: { dot: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]', text: 'text-green-500', bg: 'border-green-500/20' },
+    out_of_sync: { dot: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]', text: 'text-amber-500', bg: 'border-amber-500/20' },
+    syncing: { dot: 'bg-blue-400 animate-pulse shadow-[0_0_8px_rgba(96,165,250,0.5)]', text: 'text-blue-400', bg: 'border-blue-400/20' },
+    unknown: { dot: 'bg-gray-400', text: 'text-gray-400', bg: 'border-theme/10' },
+  };
+  const colors = colorMap[state] || colorMap.unknown;
+  const labelMap: Record<string, string> = {
+    synced: 'Synced',
+    out_of_sync: 'Out of Sync',
+    syncing: 'Syncing...',
+    unknown: 'Unknown',
+  };
+
+  return (
+    <div className={clsx('flex items-center gap-3 rounded-2xl border bg-theme-card/20 p-4 flex-1', colors.bg)}>
+      <div className={clsx('w-2.5 h-2.5 rounded-full shrink-0', colors.dot)} />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-bold text-theme-fg">Memory Sync</div>
+        <div className={clsx('text-[10px] font-medium', colors.text)}>{labelMap[state]}</div>
+      </div>
+      {state !== 'syncing' && (
+        <button
+          onClick={onSync}
+          disabled={isSyncing}
+          className="p-1.5 rounded-lg hover:bg-theme-hover/60 text-theme-muted hover:text-primary transition-colors disabled:opacity-50"
+          title="Sync now"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {state === 'syncing' && (
+        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 shrink-0" />
+      )}
     </div>
   );
 }

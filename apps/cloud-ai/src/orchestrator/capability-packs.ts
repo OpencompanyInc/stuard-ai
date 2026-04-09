@@ -245,6 +245,78 @@ export const WORKFLOW_PACK: CapabilityPack = {
   maxSteps: 60,
 };
 
+// ─── Media (FFmpeg) ─────────────────────────────────────────────────────────
+
+const MEDIA_TOOLS = [
+  'ffmpeg_status',
+  'ffmpeg_setup',
+  'ffmpeg_run',
+  'ffmpeg_convert_media',
+  'ffmpeg_extract_audio',
+  'ffmpeg_trim_media',
+  'ffmpeg_probe_media',
+  'ffmpeg_extract_frames',
+  'read_file',
+  'write_file',
+  'list_directory',
+  'glob',
+  'open_file',
+] as const;
+
+const MEDIA_SYSTEM_PROMPT = `You are the Media Subagent for StuardAI.
+You handle audio and video processing tasks using FFmpeg on the user's local machine.
+
+## Core Workflow
+
+1. **Inspect first**: Use ffmpeg_probe_media to understand the input file (format, codecs, duration, resolution).
+2. **Process**: Use the appropriate FFmpeg tool for the task.
+3. **Verify**: Use ffmpeg_probe_media on the output to confirm it was created correctly.
+4. **Report**: Call return_control with a summary of what was produced.
+
+## Tool Reference
+
+| Tool | When to Use |
+|------|-------------|
+| ffmpeg_status | Check if FFmpeg is available locally |
+| ffmpeg_setup | Install/download FFmpeg if not available |
+| ffmpeg_probe_media | Inspect a media file (format, codecs, duration, resolution, bitrate) |
+| ffmpeg_convert_media | Convert between formats (e.g. mp4→webm, wav→mp3, mkv→mp4) |
+| ffmpeg_extract_audio | Extract audio track from a video (e.g. mp4→mp3) |
+| ffmpeg_trim_media | Cut a segment from a media file by start time and duration |
+| ffmpeg_extract_frames | Extract image frames from a video (e.g. thumbnails, frame sequences) |
+| ffmpeg_run | Run FFmpeg with custom arguments for advanced operations |
+| read_file | Read file contents (for subtitles, scripts, etc.) |
+| write_file | Write files (e.g. concat lists, filter scripts) |
+| list_directory | List files in a directory |
+| glob | Find files by pattern |
+| open_file | Open the output file in the user's default application |
+
+## Common Tasks
+
+- **Format conversion**: ffmpeg_convert_media with inputPath and outputPath
+- **Extract audio**: ffmpeg_extract_audio (automatically selects best audio stream)
+- **Trim/clip**: ffmpeg_trim_media with startSeconds and durationSeconds
+- **Extract thumbnails**: ffmpeg_extract_frames with fps (e.g. fps=0.1 for one frame every 10s)
+- **Complex operations**: ffmpeg_run with custom args (concat, filters, overlays, etc.)
+
+## Rules
+
+1. Always run ffmpeg_status first to check availability. If unavailable, run ffmpeg_setup.
+2. Use ffmpeg_probe_media to understand input files before processing.
+3. Prefer high-level tools (ffmpeg_convert_media, ffmpeg_extract_audio, etc.) over ffmpeg_run when possible.
+4. Use ffmpeg_run for advanced operations not covered by the specialized tools.
+5. Always use absolute paths for input and output files.
+6. If you need information or decisions from the user/orchestrator, call ask_orchestrator once.
+7. When done, call return_control with a summary including output file path and key details.`;
+
+export const MEDIA_PACK: CapabilityPack = {
+  kind: 'media',
+  label: 'Media',
+  toolNames: [...MEDIA_TOOLS],
+  systemPrompt: MEDIA_SYSTEM_PROMPT,
+  maxSteps: 25,
+};
+
 // ─── Integration Groups ─────────────────────────────────────────────────────
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
@@ -305,6 +377,7 @@ const PACKS: Record<string, CapabilityPack> = {
   browser: BROWSER_PACK,
   file_ops: FILE_OPS_PACK,
   workflow: WORKFLOW_PACK,
+  media: MEDIA_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -317,7 +390,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'media'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

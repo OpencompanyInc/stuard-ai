@@ -78,7 +78,7 @@ def _is_safe_path(path: str) -> bool:
             
     return True
 
-MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "524288000"))  # 500MB default
+MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "68157440"))  # 65MB default
 MAX_READ_FILE_LINES = int(os.getenv("READ_FILE_MAX_LINES", "500"))
 MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
 MAX_READ_FILE_DOCUMENT_BYTES = int(os.getenv("READ_FILE_DOCUMENT_MAX_BYTES", "52428800"))  # 50MB
@@ -972,13 +972,13 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     
     file_payload = _read_text_like_file(p)
     lines = file_payload["lines"]
-    base_result = {
+    base_result: Dict[str, Any] = {
         "path": file_payload.get("path", p),
-        "mime_type": file_payload.get("mime_type"),
-        "document_type": file_payload.get("document_type"),
-        "sheet_names": file_payload.get("sheet_names"),
-        "page_count": file_payload.get("page_count"),
     }
+    for _k in ("mime_type", "document_type", "sheet_names", "page_count"):
+        _v = file_payload.get(_k)
+        if _v is not None:
+            base_result[_k] = _v
     
     total_lines = len(lines)
     
@@ -1478,13 +1478,13 @@ async def file_read(args: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": f"Failed to read file: {str(e)}"}
 
-    metadata = {
+    metadata: Dict[str, Any] = {
         "path": file_payload.get("path", p),
-        "mime_type": file_payload.get("mime_type"),
-        "document_type": file_payload.get("document_type"),
-        "sheet_names": file_payload.get("sheet_names"),
-        "page_count": file_payload.get("page_count"),
     }
+    for _k in ("mime_type", "document_type", "sheet_names", "page_count"):
+        _v = file_payload.get(_k)
+        if _v is not None:
+            metadata[_k] = _v
 
     total_lines = len(lines)
 

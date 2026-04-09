@@ -55,7 +55,7 @@ Show local media in chat with <<path>> syntax.
  - file_edit for precise editing (read first to get line numbers!)
  - list_directory, read_file, write_file for file operations
  - run_command for OS operations. Set isPermissionRequired=false for read-only inspection commands and true for write/destructive commands. When true, also include description. Use shell: "default" for the platform default shell.
-- For interactive CLIs: use terminal_create → terminal_send_input → terminal_read (get schema via get_tool_schema first)
+- For interactive CLIs: use terminal_create → terminal_send_input → terminal_read (get schema via get_tool_schema first). Terminal tools also support isPermissionRequired — set to false for safe/read-only operations, true for destructive ones (include description when true).
 
 **Tool Discovery & Execution**:
 You have ~15 tools loaded natively. For anything else, you have 180+ tools available.

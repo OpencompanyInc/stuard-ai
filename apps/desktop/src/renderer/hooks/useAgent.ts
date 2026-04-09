@@ -1262,11 +1262,11 @@ export function useAgent(options?: string | UseAgentOptions) {
                         currentStreamChunks: [...t.currentStreamChunks, { type: 'tool' as const, tool: newCall }]
                       };
                     });
-                  } else if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed') {
+                  } else if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed' || normalizedStatus === 'timeout') {
                     // Update existing tool call with result in both arrays
                     const newStatus = normalizedStatus === 'completed' ? 'completed' : 'error';
                     const result = normalizedStatus === 'completed' ? d.result : undefined;
-                    const error = normalizedStatus === 'completed' ? undefined : (d.error || d.result?.error || 'failed');
+                    const error = normalizedStatus === 'completed' ? undefined : (normalizedStatus === 'timeout' ? (d.error || 'Tool timed out') : (d.error || d.result?.error || 'failed'));
                     
                     updateStreamingTab(t => {
                       // Find the matching tool call - prefer exact id match, fallback to tool name with pending status

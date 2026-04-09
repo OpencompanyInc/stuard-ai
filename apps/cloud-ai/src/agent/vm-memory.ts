@@ -21,6 +21,8 @@ import { createHash, randomUUID } from 'crypto';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type MemoryOrigin = 'cloud_vm' | 'desktop';
+
 export interface MemoryEntry {
   id: string;
   topic: string;
@@ -28,6 +30,7 @@ export interface MemoryEntry {
   metadata: Record<string, any>;
   tags: string[];
   source: 'agent' | 'proactive' | 'workflow' | 'user' | 'system';
+  origin: MemoryOrigin;
   importance: number; // 0-10
   created_at: string;
   updated_at: string;
@@ -185,6 +188,7 @@ export class VMMemoryStore {
     const memory: MemoryEntry = {
       id: randomUUID(),
       ...entry,
+      origin: entry.origin || 'cloud_vm',
       hash,
       created_at: now,
       updated_at: now,
@@ -225,6 +229,7 @@ export class VMMemoryStore {
   list(options?: {
     topic?: string;
     source?: string;
+    origin?: MemoryOrigin;
     tags?: string[];
     limit?: number;
     offset?: number;
@@ -241,6 +246,9 @@ export class VMMemoryStore {
     }
     if (options?.source) {
       results = results.filter(m => m.source === options.source);
+    }
+    if (options?.origin) {
+      results = results.filter(m => m.origin === options.origin);
     }
     if (options?.tags && options.tags.length > 0) {
       const tagSet = new Set(options.tags);
@@ -414,10 +422,12 @@ export class VMMemoryStore {
       this.preferences = {};
     }
 
-    // Import memories
+    // Import memories — tag origin as 'desktop' for synced-in data unless already tagged
     if (data.memories) {
       for (const entry of data.memories) {
         if (!entry?.id) continue;
+        // Preserve existing origin, default incoming to 'desktop' (synced from desktop)
+        if (!entry.origin) entry.origin = 'desktop';
         const existing = this.memories.get(entry.id);
         if (existing) {
           // Merge: keep the newer version
@@ -469,6 +479,7 @@ export class VMMemoryStore {
     diskUsageBytes: number;
     oldestMemory: string | null;
     newestMemory: string | null;
+    byOrigin: { cloud_vm: number; desktop: number };
   } {
     const memories = Array.from(this.memories.values());
     let diskUsage = 0;
@@ -478,6 +489,14 @@ export class VMMemoryStore {
       const convPath = path.join(MEMORY_ROOT, CONVERSATIONS_FILE);
       if (fs.existsSync(convPath)) diskUsage += fs.statSync(convPath).size;
     } catch { /* ignore */ }
+
+    // Count memories by origin
+    let cloudVmCount = 0;
+    let desktopCount = 0;
+    for (const m of memories) {
+      if (m.origin === 'desktop') desktopCount++;
+      else cloudVmCount++; // default to cloud_vm for older entries without origin
+    }
 
     return {
       totalMemories: this.memories.size,
@@ -490,6 +509,7 @@ export class VMMemoryStore {
       newestMemory: memories.length > 0
         ? memories.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0].created_at
         : null,
+      byOrigin: { cloud_vm: cloudVmCount, desktop: desktopCount },
     };
   }
 

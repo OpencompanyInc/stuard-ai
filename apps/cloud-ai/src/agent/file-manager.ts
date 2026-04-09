@@ -10,7 +10,7 @@ import path from 'path';
 import { Stats } from 'fs';
 
 const SANDBOX_ROOT = process.env.STUARD_VM_ROOT || '/home/stuard';
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB read limit
+const MAX_FILE_SIZE = 65 * 1024 * 1024; // 65 MB read limit
 
 export interface FileEntry {
   name: string;

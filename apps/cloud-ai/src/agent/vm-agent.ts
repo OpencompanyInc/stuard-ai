@@ -705,6 +705,7 @@ function handleMemoryAdd(args: any): any {
     metadata: args.metadata || {},
     tags: Array.isArray(args.tags) ? args.tags : [],
     source: args.source || 'user',
+    origin: args.origin || 'cloud_vm',
     importance: Number(args.importance ?? 5),
     expires_at: args.expires_at || null,
   });

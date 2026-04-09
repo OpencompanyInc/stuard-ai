@@ -11,22 +11,22 @@ export const read_file = makeLocalTool(
   }),
   z.object({
     ok: z.boolean(),
-    content: z.string().optional(),
-    total_lines: z.number().optional(),
-    line_start: z.number().optional(),
-    line_end: z.number().optional(),
-    lines_returned: z.number().optional(),
-    max_lines: z.number().optional(),
-    preview_start: z.string().optional(),
-    preview_end: z.string().optional(),
-    hint: z.string().optional(),
-    path: z.string().optional(),
-    mime_type: z.string().optional(),
-    document_type: z.string().optional(),
-    sheet_names: z.array(z.string()).optional(),
-    page_count: z.number().optional(),
-    error: z.string().optional(),
-    message: z.string().optional(),
+    content: z.string().nullish(),
+    total_lines: z.number().nullish(),
+    line_start: z.number().nullish(),
+    line_end: z.number().nullish(),
+    lines_returned: z.number().nullish(),
+    max_lines: z.number().nullish(),
+    preview_start: z.string().nullish(),
+    preview_end: z.string().nullish(),
+    hint: z.string().nullish(),
+    path: z.string().nullish(),
+    mime_type: z.string().nullish(),
+    document_type: z.string().nullish(),
+    sheet_names: z.array(z.string()).nullish(),
+    page_count: z.number().nullish(),
+    error: z.string().nullish(),
+    message: z.string().nullish(),
   }),
 );
 
@@ -56,7 +56,7 @@ export const open_file = makeLocalTool(
   'open_file',
   'Open a file or folder with the default application',
   z.object({ path: z.string().describe('Path to the file or directory to open') }),
-  z.object({ ok: z.boolean(), opened: z.string().optional(), method: z.string().optional(), error: z.string().optional() }),
+  z.object({ ok: z.boolean(), opened: z.string().nullish(), method: z.string().nullish(), error: z.string().nullish() }),
 );
 
 export const move_file = makeLocalTool(
@@ -73,7 +73,7 @@ export const get_clipboard_content = makeLocalTool(
   'get_clipboard_content',
   'Read clipboard text',
   z.object({}),
-  z.object({ text: z.string().optional() }),
+  z.object({ text: z.string().nullish() }),
 );
 
 export const set_clipboard_content = makeLocalTool(

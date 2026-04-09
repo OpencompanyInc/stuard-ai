@@ -54,9 +54,18 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
     }
   };
 
+  const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
+
   const processFiles = (newFiles: File[]) => {
     const validFiles = newFiles.slice(0, maxFiles);
-    const mapped: DropzoneFile[] = validFiles.map((f) => ({
+    const tooLarge = validFiles.filter(f => f.size > MAX_ATTACHMENT_BYTES);
+    if (tooLarge.length > 0) {
+      const names = tooLarge.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`).join(', ');
+      alert(`File too large (max 65 MB): ${names}`);
+    }
+    const allowed = validFiles.filter(f => f.size <= MAX_ATTACHMENT_BYTES);
+    if (allowed.length === 0) return;
+    const mapped: DropzoneFile[] = allowed.map((f) => ({
       name: f.name,
       size: f.size,
       type: f.type,
