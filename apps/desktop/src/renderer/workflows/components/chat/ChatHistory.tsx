@@ -10,6 +10,7 @@ import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { ReasoningBlock } from "../../../components/ReasoningBlock";
 import type { Message, StreamItem, ToolEvent } from "../../hooks/useWorkflowChat";
+import { prepareMarkdownForDisplay } from "../../../utils/text";
 
 // --- Helpers ---
 
@@ -110,8 +111,7 @@ function toMediaSrc(src: string): string {
 
 function preprocessMessageContent(content: string): string {
   if (!content) return '';
-  // Escape dollar signs used for currency to prevent LaTeX parsing
-  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$$1');
+  let processed = prepareMarkdownForDisplay(content);
   processed = processed.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
 
   // Comprehensive regex for media paths (Windows and Unix)
@@ -539,7 +539,7 @@ export function ChatHistory({
                 <div className="markdown-body">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
+                    rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                     components={{
                       img: (props) => <ChatMedia {...props as any} />,
                       p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
@@ -662,7 +662,7 @@ export function ChatHistory({
                   <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm wf-bg-sunken border wf-border-subtle wf-fg shadow-sm text-[13px] leading-relaxed">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
-                      rehypePlugins={[rehypeKatex]}
+                      rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                       components={{
                         img: (props) => <ChatMedia {...props as any} />,
                         p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,

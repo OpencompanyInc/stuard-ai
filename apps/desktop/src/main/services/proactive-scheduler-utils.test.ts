@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildProactiveSessionSummary,
   buildLocalProactiveHiddenContext,
   buildLocalProactivePrompt,
   buildUserFacingProactiveMessage,
   executeAgentToolRequest,
   extractAgentTextFromWsMessage,
   extractAgentToolRequest,
+  summarizeProactiveActivity,
 } from './proactive-scheduler-utils';
 
 describe('extractAgentTextFromWsMessage', () => {
@@ -102,6 +104,53 @@ describe('local proactive prompt helpers', () => {
     expect(hidden).toContain('web_search');
     expect(hidden).toContain('DO THE WORK');
     expect(hidden).toContain('Email Helper');
+  });
+
+  it('injects the last five wake-up summaries with anti-repetition guidance', () => {
+    const hidden = buildLocalProactiveHiddenContext({
+      context: {
+        recentSessionSummaries: [
+          '[5m ago] Activity: GitHub · Google Chrome | Intervention: notified the user | Notification: ignored',
+        ],
+      },
+    });
+
+    expect(hidden).toContain('[LAST 5 WAKE-UP SUMMARIES');
+    expect(hidden).toContain('change your tack');
+    expect(hidden).toContain('Notification: ignored');
+  });
+});
+
+describe('proactive session summary helpers', () => {
+  it('summarizes visible activity from recent windows', () => {
+    expect(summarizeProactiveActivity([
+      { title: 'Fix tests - StuardAI - Visual Studio Code' },
+      { title: 'PR review - GitHub - Google Chrome' },
+      { title: 'Team chat - Slack' },
+    ])).toContain('Visual Studio Code');
+  });
+
+  it('builds a fallback summary when the agent does not write one', () => {
+    const summary = buildProactiveSessionSummary({
+      openWindows: [
+        { title: 'Fix tests - StuardAI - Visual Studio Code' },
+        { title: 'PR review - GitHub - Google Chrome' },
+      ],
+      agentMessage: 'I checked your PR queue and nudged you to finish the open review.',
+      taskCount: 2,
+    });
+
+    expect(summary).toContain('Activity:');
+    expect(summary).toContain('Intervention: notified the user');
+    expect(summary).toContain('proactive tasks');
+  });
+
+  it('preserves explicit session summaries from the agent', () => {
+    expect(buildProactiveSessionSummary({
+      existingSummary: 'Activity: Cursor + GitHub | Intervention: skipped — user was already deep in code review.',
+      openWindows: [{ title: 'Ignored title' }],
+      agentMessage: 'Ignored message',
+    })).toBe('Activity: Cursor + GitHub | Intervention: skipped — user was already deep in code review.');
   });
 });
 

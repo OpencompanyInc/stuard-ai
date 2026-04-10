@@ -28,6 +28,33 @@ function normalizeLine(value: string): string {
   return rest ? leading + rest : '';
 }
 
+function truncateText(value: string, maxLength: number): string {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 1))}…` : normalized;
+}
+
+function compactWindowTitle(title: string): string {
+  const normalized = truncateText(title, 120);
+  if (!normalized) return '';
+
+  const parts = normalized
+    .split(/\s+\|\s+|\s+[-—]\s+/)
+    .map((part) => truncateText(part, 60))
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const last = parts[parts.length - 1];
+    const prev = parts[parts.length - 2];
+    if (/^(google chrome|chrome|arc|firefox|microsoft edge|edge|visual studio code|cursor|slack|discord|notion|terminal|powershell)$/i.test(last)) {
+      return truncateText(`${prev} · ${last}`, 70);
+    }
+    return last;
+  }
+
+  return truncateText(normalized, 70);
+}
+
 function isUiArtifactLine(line: string): boolean {
   const normalized = normalizeLine(line).toLowerCase();
   return normalized === 'show less'
@@ -44,6 +71,24 @@ function looksLikeInternalPlanningLine(line: string): boolean {
   if (isUiArtifactLine(normalized)) return true;
   if (/^(yes|no|maybe)\.?$/i.test(normalized)) return true;
   return INTERNAL_PLANNING_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function summarizeProactiveActivity(openWindows: Array<{ title?: string }> = []): string {
+  const seen = new Set<string>();
+  const titles: string[] = [];
+
+  for (const windowInfo of openWindows) {
+    const title = compactWindowTitle(String(windowInfo?.title || ''));
+    if (!title) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    titles.push(title);
+    if (titles.length >= 3) break;
+  }
+
+  if (titles.length === 0) return 'No clear app context captured.';
+  return titles.join('; ');
 }
 
 export function buildUserFacingProactiveMessage(rawText: string, fallback = DEFAULT_PROACTIVE_NOTIFICATION_MESSAGE): string {
@@ -72,6 +117,36 @@ export function buildUserFacingProactiveMessage(rawText: string, fallback = DEFA
   }
 
   return filteredText;
+}
+
+export function buildProactiveSessionSummary(args: {
+  existingSummary?: string;
+  openWindows?: Array<{ title?: string }>;
+  agentMessage?: string;
+  taskCount?: number;
+  skipped?: boolean;
+  failureReason?: string;
+  timedOut?: boolean;
+}): string {
+  const existingSummary = truncateText(String(args.existingSummary || ''), 320);
+  if (existingSummary) return existingSummary;
+
+  const activity = summarizeProactiveActivity(Array.isArray(args.openWindows) ? args.openWindows : []);
+
+  if (args.failureReason) {
+    const reason = truncateText(String(args.failureReason || ''), 160);
+    return `Activity: ${activity} | Intervention: wake-up failed${args.timedOut ? ' after timing out' : ''}${reason ? ` — ${reason}` : ''}`;
+  }
+
+  if (args.skipped || !String(args.agentMessage || '').trim()) {
+    return `Activity: ${activity} | Intervention: skipped the check-in because nothing materially changed.`;
+  }
+
+  const message = truncateText(buildUserFacingProactiveMessage(String(args.agentMessage || '')), 160);
+  const taskCount = typeof args.taskCount === 'number' && args.taskCount > 0
+    ? ` after reviewing ${args.taskCount} proactive task${args.taskCount === 1 ? '' : 's'}`
+    : '';
+  return `Activity: ${activity} | Intervention: notified the user${taskCount}${message ? ` — ${message}` : '.'}`;
 }
 
 export function splitProactiveStructuredContent(text: string): {
@@ -288,6 +363,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     '## ANTI-REPETITION',
     'Your notification digest shows what you recently told the user. Do NOT bring up the same topics unless they escalated.',
     'If the user ignored/dismissed your last 2+ notifications, strongly consider skipping.',
+    'If the same activity keeps showing up across the last 5 wake-up summaries, call out the persistence and change your approach instead of repeating the same generic reminder.',
     '',
     '## TASKS',
     'Claim → work → complete. Use proactive_task_update to change status. Create tasks for things YOU can do, not reminders for the user.',
@@ -334,7 +410,8 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
   // Inject previous session summaries for pattern awareness
   if (Array.isArray(payload?.context?.recentSessionSummaries) && payload.context.recentSessionSummaries.length > 0) {
     lines.push('');
-    lines.push('[RECENT SESSION OBSERVATIONS — patterns from your previous wake-ups]');
+    lines.push('[LAST 5 WAKE-UP SUMMARIES — use these to avoid repeating yourself]');
+    lines.push('If the same activity appears more than once below, acknowledge that persistence and change your tack instead of sending the same reminder again.');
     for (const summary of payload.context.recentSessionSummaries.slice(0, 5)) {
       lines.push(`- ${String(summary).trim()}`);
     }

@@ -13,7 +13,7 @@
 import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
-import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
@@ -339,7 +339,7 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
   const startedAt = new Date().toISOString();
 
   // Mark the notification as engaged (user replied)
-  proactiveService.markNotificationEngagement(wakeUpId, 'replied');
+  proactiveService.markNotificationEngagement(wakeUpId, 'replied', { replyText: text });
 
   try {
     pruneStaleConversations();
@@ -992,6 +992,7 @@ async function executeWakeUp() {
   const contextUsed: string[] = [];
   let taskIds: string[] = [];
   let screenshotData: string | null = null;
+  let openWindows: Array<{ id?: number; title: string }> = [];
   const startedAt = new Date().toISOString();
   const modelSelection = buildModelSelection(config);
 
@@ -1097,7 +1098,6 @@ async function executeWakeUp() {
     }
 
     // Capture open windows for situational awareness
-    let openWindows: Array<{ id?: number; title: string }> = [];
     try {
       const { execListOpenWindows } = await import('../tools/handlers/electron');
       const toolCtx: RouterContext = {
@@ -1121,7 +1121,7 @@ async function executeWakeUp() {
     }
 
     // Load recent session summaries for pattern awareness
-    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(10);
+    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(5);
 
     // Load notification digest so the agent knows what it recently said
     const notificationDigest = proactiveService.getNotificationDigest(8);
@@ -1239,19 +1239,12 @@ async function executeWakeUp() {
     proactiveService.setLastWakeUp(new Date().toISOString());
     emitStage(logId, 'complete');
 
-    // Persist session summary from the agent
-    if (executionResult.sessionSummary) {
-      proactiveService.addSessionSummary(executionResult.sessionSummary);
-    }
-
     // Use agent's urgency-based channel choice if available, otherwise fall back to configured channels
     const agentChannel = executionResult.agentChannel;
     const agentUrgency = executionResult.agentUrgency;
 
+    let channels: string[] = config.notificationChannels || ['app'];
     if (agentMessage) {
-      let channels: string[] = config.notificationChannels || ['app'];
-
-      // If the agent chose to skip notification, respect that
       if (agentChannel === 'skip') {
         channels = [];
         logger.info(`[proactive-scheduler] Agent chose to skip notification (urgency: ${agentUrgency})`);
@@ -1260,7 +1253,24 @@ async function executeWakeUp() {
         channels = ['app', agentChannel];
         logger.info(`[proactive-scheduler] Agent chose channel: ${agentChannel} (urgency: ${agentUrgency})`);
       }
+    }
 
+    const primaryChannel = agentMessage ? (channels[0] || 'skip') : (agentChannel === 'skip' ? 'skip' : undefined);
+    const sessionSummary = buildProactiveSessionSummary({
+      existingSummary: executionResult.sessionSummary,
+      openWindows,
+      agentMessage,
+      taskCount: activeTasks.length,
+      skipped: !agentMessage || channels.length === 0 || primaryChannel === 'skip',
+      failureReason: executionResult.failureReason,
+      timedOut: executionResult.timedOut,
+    });
+    proactiveService.addSessionSummary(sessionSummary, {
+      wakeUpId: logId,
+      notificationEngagement: primaryChannel && primaryChannel !== 'skip' ? 'pending' : undefined,
+    });
+
+    if (agentMessage) {
       if (channels.includes('app')) {
         sendCheckinNotification(logId, agentMessage, contextUsed.includes('screenshot'), taskIds.length);
       }
@@ -1315,6 +1325,11 @@ async function executeWakeUp() {
       timedOut: !!e?.timedOut,
       failureReason: String(e.message || e),
     });
+    proactiveService.addSessionSummary(buildProactiveSessionSummary({
+      openWindows,
+      failureReason: String(e.message || e),
+      timedOut: !!e?.timedOut,
+    }), { wakeUpId: logId });
     broadcastUpdate({ type: 'wake-up-failed', logId, error: String(e.message || e), timedOut: !!e?.timedOut });
   } finally {
     currentRunId = null;

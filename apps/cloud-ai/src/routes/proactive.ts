@@ -646,8 +646,11 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     // Recent session summaries for pattern awareness
     if (Array.isArray(context.recentSessionSummaries) && context.recentSessionSummaries.length > 0) {
-      const sumLines = ['[SESSION OBSERVATIONS — your notes from previous wake-ups]'];
-      for (const s of (context.recentSessionSummaries as string[]).slice(0, 10)) {
+      const sumLines = [
+        '[LAST 5 WAKE-UP SUMMARIES — use these to avoid repeating yourself]',
+        'If the same activity shows up across multiple summaries, acknowledge the persistence and change your approach instead of repeating the same reminder.',
+      ];
+      for (const s of (context.recentSessionSummaries as string[]).slice(0, 5)) {
         sumLines.push(`- ${String(s).trim()}`);
       }
       envContextParts.push(sumLines.join('\n'));

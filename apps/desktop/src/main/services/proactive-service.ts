@@ -62,6 +62,8 @@ interface WakeUpActivityEvent {
   at: string;
 }
 
+type NotificationEngagement = 'pending' | 'replied' | 'dismissed' | 'ignored';
+
 interface WakeUpLog {
   id: string;
   startedAt: string;
@@ -348,15 +350,30 @@ export const proactiveService = {
 
   // ── Session Summary Storage ──────────────────────────────────────────────
 
-  addSessionSummary(summary: string): void {
+  addSessionSummary(summary: string, opts?: {
+    wakeUpId?: string;
+    notificationEngagement?: NotificationEngagement;
+    userReplyPreview?: string;
+  }): void {
     if (!summary?.trim()) return;
     try {
       const p = sessionSummariesPath();
       const existing = loadSessionSummaries();
-      existing.unshift({
+      const nextEntry: SessionSummaryEntry = {
         summary: summary.trim(),
         at: new Date().toISOString(),
-      });
+        wakeUpId: typeof opts?.wakeUpId === 'string' && opts.wakeUpId.trim() ? opts.wakeUpId.trim() : undefined,
+        notificationEngagement: opts?.notificationEngagement,
+        userReplyPreview: normalizeSummaryPreview(opts?.userReplyPreview),
+      };
+      const existingIdx = nextEntry.wakeUpId
+        ? existing.findIndex((entry) => entry.wakeUpId === nextEntry.wakeUpId)
+        : -1;
+      if (existingIdx >= 0) {
+        existing[existingIdx] = { ...existing[existingIdx], ...nextEntry };
+      } else {
+        existing.unshift(nextEntry);
+      }
       // Keep last 50 summaries
       const trimmed = existing.slice(0, 50);
       fs.writeFileSync(p, JSON.stringify(trimmed, null, 2), 'utf-8');
@@ -365,12 +382,35 @@ export const proactiveService = {
     }
   },
 
-  getRecentSessionSummaries(limit = 10): string[] {
+  updateSessionSummary(wakeUpId: string, updates: Partial<Pick<SessionSummaryEntry, 'notificationEngagement' | 'userReplyPreview'>>): void {
+    const id = String(wakeUpId || '').trim();
+    if (!id) return;
+    try {
+      const p = sessionSummariesPath();
+      const existing = loadSessionSummaries();
+      const idx = existing.findIndex((entry) => entry.wakeUpId === id);
+      if (idx >= 0) {
+        existing[idx] = {
+          ...existing[idx],
+          ...(updates.notificationEngagement !== undefined ? { notificationEngagement: updates.notificationEngagement } : {}),
+          ...(updates.userReplyPreview !== undefined ? { userReplyPreview: normalizeSummaryPreview(updates.userReplyPreview) } : {}),
+        };
+        fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf-8');
+      }
+    } catch (e) {
+      logger.warn('[proactive] Failed to update session summary:', e);
+    }
+  },
+
+  getRecentSessionSummaries(limit = 5): string[] {
     try {
       const summaries = loadSessionSummaries();
       return summaries.slice(0, limit).map(s => {
         const timeAgo = getTimeAgo(s.at);
-        return `[${timeAgo}] ${s.summary}`;
+        const parts = [`[${timeAgo}] ${s.summary}`];
+        if (s.notificationEngagement) parts.push(`Notification: ${describeNotificationEngagement(s.notificationEngagement)}`);
+        if (s.userReplyPreview) parts.push(`Reply: "${s.userReplyPreview}"`);
+        return parts.join(' | ');
       });
     } catch {
       return [];
@@ -397,15 +437,25 @@ export const proactiveService = {
     }
   },
 
-  markNotificationEngagement(wakeUpId: string, engagement: NotificationLogEntry['engagement']): void {
+  markNotificationEngagement(
+    wakeUpId: string,
+    engagement: NotificationLogEntry['engagement'],
+    opts?: { replyText?: string },
+  ): void {
     try {
       const p = notificationLogPath();
       const log = loadNotificationLog();
       const idx = log.findIndex(e => e.wakeUpId === wakeUpId);
+      const replyPreview = normalizeSummaryPreview(opts?.replyText);
       if (idx >= 0) {
         log[idx].engagement = engagement;
+        if (replyPreview) log[idx].replyPreview = replyPreview;
         fs.writeFileSync(p, JSON.stringify(log, null, 2), 'utf-8');
       }
+      proactiveService.updateSessionSummary(wakeUpId, {
+        notificationEngagement: engagement,
+        ...(replyPreview ? { userReplyPreview: replyPreview } : {}),
+      });
     } catch (e) {
       logger.warn('[proactive] Failed to update notification engagement:', e);
     }
@@ -430,7 +480,8 @@ export const proactiveService = {
           : entry.engagement === 'ignored' ? '(no response)'
           : '(pending)';
         const msg = (entry.message || '').slice(0, 120);
-        return `[${timeAgo}] ${msg} ${eng}`;
+        const replyPreview = entry.replyPreview ? ` Reply: "${entry.replyPreview}"` : '';
+        return `[${timeAgo}] ${msg} ${eng}${replyPreview}`;
       });
     } catch {
       return [];
@@ -443,6 +494,9 @@ export const proactiveService = {
 interface SessionSummaryEntry {
   summary: string;
   at: string;
+  wakeUpId?: string;
+  notificationEngagement?: NotificationEngagement;
+  userReplyPreview?: string;
 }
 
 function sessionSummariesPath(): string {
@@ -454,7 +508,17 @@ function loadSessionSummaries(): SessionSummaryEntry[] {
     const p = sessionSummariesPath();
     if (fs.existsSync(p)) {
       const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(data)
+        ? data
+          .map((entry: any) => ({
+            summary: typeof entry?.summary === 'string' ? entry.summary : '',
+            at: typeof entry?.at === 'string' ? entry.at : new Date().toISOString(),
+            wakeUpId: typeof entry?.wakeUpId === 'string' && entry.wakeUpId.trim() ? entry.wakeUpId.trim() : undefined,
+            notificationEngagement: normalizeNotificationEngagement(entry?.notificationEngagement),
+            userReplyPreview: normalizeSummaryPreview(entry?.userReplyPreview),
+          }))
+          .filter((entry: SessionSummaryEntry) => !!entry.summary.trim())
+        : [];
     }
   } catch {}
   return [];
@@ -468,8 +532,9 @@ export interface NotificationLogEntry {
   message: string;
   channel: string;
   urgency: string;
-  engagement: 'pending' | 'replied' | 'dismissed' | 'ignored';
+  engagement: NotificationEngagement;
   at: string;
+  replyPreview?: string;
 }
 
 function notificationLogPath(): string {
@@ -481,10 +546,41 @@ function loadNotificationLog(): NotificationLogEntry[] {
     const p = notificationLogPath();
     if (fs.existsSync(p)) {
       const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(data)
+        ? data
+          .map((entry: any) => ({
+            id: String(entry?.id || `notif_${Date.now()}`),
+            wakeUpId: String(entry?.wakeUpId || ''),
+            message: String(entry?.message || ''),
+            channel: String(entry?.channel || ''),
+            urgency: String(entry?.urgency || ''),
+            engagement: normalizeNotificationEngagement(entry?.engagement) || 'pending',
+            at: typeof entry?.at === 'string' ? entry.at : new Date().toISOString(),
+            replyPreview: normalizeSummaryPreview(entry?.replyPreview),
+          }))
+          .filter((entry: NotificationLogEntry) => !!entry.wakeUpId)
+        : [];
     }
   } catch {}
   return [];
+}
+
+function normalizeNotificationEngagement(value: any): NotificationEngagement | undefined {
+  if (value === 'pending' || value === 'replied' || value === 'dismissed' || value === 'ignored') return value;
+  return undefined;
+}
+
+function normalizeSummaryPreview(value: any): string | undefined {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  return normalized.length > 120 ? `${normalized.slice(0, 119)}…` : normalized;
+}
+
+function describeNotificationEngagement(value: NotificationEngagement): string {
+  if (value === 'replied') return 'user replied';
+  if (value === 'dismissed') return 'dismissed';
+  if (value === 'ignored') return 'ignored';
+  return 'pending';
 }
 
 function getTimeAgo(isoDate: string): string {

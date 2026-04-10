@@ -168,7 +168,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <div className={clsx("prose prose-sm max-w-none break-words", m.role === 'user' ? "prose-invert" : "")}>
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
+                          rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                           components={{
                             p: ({ children, ...props }: any) => {
                               const childArr = Array.isArray(children) ? children : [children];

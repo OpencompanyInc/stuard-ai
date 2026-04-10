@@ -12,6 +12,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { ChatSession, formatSessionTime } from "../utils/chatStorage";
 import { ReasoningBlock } from "../../components/ReasoningBlock";
 import { AudioPlayer } from "../../components/AudioPlayer";
+import { prepareMarkdownForDisplay } from "../../utils/text";
 
 const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_get_identity',
@@ -121,9 +122,8 @@ function toMediaSrc(src: string): string {
 // This allows us to intercept the 'img' component in ReactMarkdown and render AudioPlayer/ChatImage
 function preprocessMessageContent(content: string): string {
   if (!content) return '';
-  
-  // 0. Escape dollar signs used for currency to prevent LaTeX parsing
-  let processed = content.replace(/\$(\d[\d,]*\.?\d*)/g, '\\$$$1');
+
+  let processed = prepareMarkdownForDisplay(content);
   
   // 1. Replace <<path>> with ![attachment](path)
   processed = processed.replace(/<<([^<>]+)>>/g, '![attachment](<$1>)');
@@ -993,7 +993,7 @@ export function ChatPanel({
                 <div className="markdown-body">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
+                  rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                   components={{
                     img: (props) => <ChatImage {...props as any} />,
                     p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
@@ -1092,7 +1092,7 @@ export function ChatPanel({
                   <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.08] text-white/80 shadow-sm text-sm leading-relaxed">
                     <ReactMarkdown 
                       remarkPlugins={[remarkGfm, remarkMath]} 
-                      rehypePlugins={[rehypeKatex]}
+                      rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                       components={{
                         img: (props) => <ChatImage {...props as any} />,
                         p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
