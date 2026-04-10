@@ -397,13 +397,8 @@ vi.mock('../utils/models', () => ({
   buildProviderModel: vi.fn(() => 'mocked-model'),
 }));
 
-vi.mock('../pricing', () => ({
-  getDefaultModelForCategory: vi.fn(() => 'google/gemini-2.5-pro'),
-}));
-
 vi.mock('../tools/bridge', () => ({
   execLocalTool: vi.fn(async () => ({ ok: true })),
-  hasClientBridge: vi.fn(() => true),
 }));
 
 vi.mock('../utils/logger', () => ({
@@ -412,7 +407,6 @@ vi.mock('../utils/logger', () => ({
 
 describe('analyzeForAutoSkill', () => {
   let mockGenerateObject: any;
-  let mockHasClientBridge: any;
   let mockExecLocalTool: any;
 
   beforeEach(async () => {
@@ -420,22 +414,12 @@ describe('analyzeForAutoSkill', () => {
     const aiModule = await import('ai');
     mockGenerateObject = vi.mocked(aiModule.generateObject);
     const bridgeModule = await import('../tools/bridge');
-    mockHasClientBridge = vi.mocked(bridgeModule.hasClientBridge);
     mockExecLocalTool = vi.mocked(bridgeModule.execLocalTool);
-    // Re-apply default returns after clearAllMocks wipes them
-    mockHasClientBridge.mockReturnValue(true);
     mockExecLocalTool.mockResolvedValue({ ok: true });
   });
 
   it('returns null when totalTokensUsed is below MIN_TOTAL_TOKENS', async () => {
     const result = await analyzeForAutoSkill(SHORT_CONVERSATION, undefined, 30);
-    expect(result).toBeNull();
-    expect(mockGenerateObject).not.toHaveBeenCalled();
-  });
-
-  it('returns null when client bridge is not available', async () => {
-    mockHasClientBridge.mockReturnValue(false);
-    const result = await analyzeForAutoSkill(TEACHABLE_CONVERSATION);
     expect(result).toBeNull();
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
@@ -734,7 +718,7 @@ describe('analyzeForAutoSkill', () => {
       { role: 'assistant', content: 'bye' },
     ];
     // Pass high tokens so we don't hit the token gate — test transcript length gate only
-    const result = await analyzeForAutoSkill(tinyMessages, undefined, 500);
+    const result = await analyzeForAutoSkill(tinyMessages, undefined, 100_000);
     expect(result).toBeNull();
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
@@ -746,10 +730,10 @@ describe('analyzeForAutoSkill', () => {
         pattern_reasoning: 'No pattern found.',
       },
     });
-    // No totalTokensUsed passed — should skip the token gate and proceed
-    const result = await analyzeForAutoSkill(SIMPLE_QA_CONVERSATION);
+    // No totalTokensUsed passed — should skip the token gate and proceed to LLM
+    // Use TEACHABLE_CONVERSATION which has a long enough transcript (> 200 chars)
+    const result = await analyzeForAutoSkill(TEACHABLE_CONVERSATION);
     expect(result).toBeNull();
-    // Should have reached the LLM call (past the token gate)
     expect(mockGenerateObject).toHaveBeenCalled();
   });
 });

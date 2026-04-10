@@ -270,13 +270,9 @@ export async function ingestConversationTurn(
 }> {
   console.log('[knowledge] ingestConversationTurn called, history length:', conversationHistory.length);
 
-  // Guard: skip if no desktop bridge is available (e.g., WS closed before ingestion runs)
-  if (!hasClientBridge()) {
-    console.log('[knowledge] No client bridge available, skipping ingestion');
-    return {
-      extracted: { actions: [], detected_entities: [] },
-      executed: { success: 0, failed: 0, results: [] },
-    };
+  const bridgeAvailable = hasClientBridge();
+  if (!bridgeAvailable) {
+    console.log('[knowledge] Bridge not available — will attempt extraction but action execution may fail');
   }
 
   // Step 0: Fetch existing context to inform extraction decisions

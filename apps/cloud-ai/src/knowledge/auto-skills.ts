@@ -14,8 +14,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { buildProviderModel } from '../utils/models';
-import { getDefaultModelForCategory } from '../pricing';
-import { execLocalTool, hasClientBridge } from '../tools/bridge';
+
+import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -356,8 +356,6 @@ memory_retrieval, run_shell, execute_script, set_variable, get_variable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function storeAutoSkillDraft(draft: AutoSkillDraft): Promise<boolean> {
-  if (!hasClientBridge()) return false;
-
   try {
     const result = await execLocalTool('auto_skill_store', {
       skill: {
@@ -419,9 +417,9 @@ async function storeAutoSkillDraft(draft: AutoSkillDraft): Promise<boolean> {
 // MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Minimum token usage to analyze — teachable patterns can happen in short exchanges,
-// so we gate on engagement (tokens used) rather than message count.
-const MIN_TOTAL_TOKENS = 50_000;
+// Minimum token usage to analyze — conversations with corrections/teaching
+// typically involve 5+ messages and a few thousand tokens at minimum.
+const MIN_TOTAL_TOKENS = 3_000;
 // Maximum messages to feed the model
 const MAX_ANALYSIS_MESSAGES = 60;
 
@@ -442,11 +440,7 @@ export async function analyzeForAutoSkill(
 ): Promise<AutoSkillDraft | null> {
   // Gate: minimum engagement — need enough back-and-forth to contain a teachable pattern
   if (Number.isFinite(totalTokensUsed) && (totalTokensUsed as number) < MIN_TOTAL_TOKENS) {
-    return null;
-  }
-
-  // Gate: need bridge for storage
-  if (!hasClientBridge()) {
+    console.log(`[auto-skills] Skipping — token usage ${totalTokensUsed} below threshold ${MIN_TOTAL_TOKENS}`);
     return null;
   }
 
@@ -454,16 +448,15 @@ export async function analyzeForAutoSkill(
   const trimmed = conversationHistory.slice(-MAX_ANALYSIS_MESSAGES);
   const transcript = buildTranscript(trimmed);
 
-  // Skip very short transcripts (likely no real interaction)
-  if (Number.isFinite(totalTokensUsed) && transcript.length < 200) {
+  if (transcript.length < 200) {
+    console.log('[auto-skills] Skipping — transcript too short');
     return null;
   }
 
-  console.log(`[auto-skills] Analyzing conversation (${conversationHistory.length} messages) for teachable patterns...`);
+  console.log(`[auto-skills] Analyzing conversation (${conversationHistory.length} messages, ${transcript.length} chars) for teachable patterns...`);
 
   try {
-    // Single LLM call does detection + extraction + generation
-    const modelId = getDefaultModelForCategory('smart');
+    const modelId = 'google/gemini-2.5-flash';
     const model = buildProviderModel(modelId);
 
     const { object: analysis } = await generateObject({

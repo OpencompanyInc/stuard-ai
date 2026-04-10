@@ -1264,16 +1264,15 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
             }
             if (authUser) { try { await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage); } catch { } try { if (conversationId) await finishRun(authUser.userId, conversationId, finalText || ''); } catch { } }
 
-            // Knowledge Graph Ingestion - extract and store knowledge from conversation
+            // Knowledge Graph Ingestion & Auto-Skill Analysis (background, non-blocking)
             try {
-              const { ingestConversationTurn } = await import('./knowledge');
-              // Run ingestion in background (don't block response)
-              // Pass the full conversation thread so the model has context for updates
-              const fullHistory = [...history]; // includes all prior messages + the new assistant response
+              const { ingestConversationTurn, analyzeForAutoSkill } = await import('./knowledge');
+              const fullHistory = [...history];
               console.log('[cloud-ai] Starting knowledge ingestion, history length:', fullHistory.length);
+
               ingestConversationTurn(fullHistory).then(({ extracted, executed }) => {
-               analyzeForAutoSkill(fullHistoryCopy, conversationId ?? undefined, normalizedUsage?.totalTokens).then((draft) => {
-sExtracted: extracted.actions.length,
+                console.log('[cloud-ai] Knowledge ingestion complete:', {
+                  actionsExtracted: extracted.actions.length,
                   actionsSucceeded: executed.success,
                   actionsFailed: executed.failed,
                   actions: extracted.actions.map((a: any) => a.action),
@@ -1288,8 +1287,16 @@ sExtracted: extracted.actions.length,
               }).catch((err) => {
                 console.error('[cloud-ai] Knowledge ingestion failed:', err);
               });
+
+              analyzeForAutoSkill(fullHistory, conversationId ?? undefined, normalizedUsage?.totalTokens).then((draft) => {
+                if (draft) {
+                  console.log(`[cloud-ai] Auto-skill generated: "${draft.name}" (confidence=${draft.confidence}, steps=${draft.steps.length})`);
+                }
+              }).catch((err) => {
+                console.error('[cloud-ai] Auto-skill analysis failed:', err);
+              });
             } catch (ingestionErr) {
-              console.error('[cloud-ai] Knowledge ingestion import failed:', ingestionErr);
+              console.error('[cloud-ai] Knowledge pipeline import failed:', ingestionErr);
             }
 
             // Local Memory Storage - store conversation locally with encryption
