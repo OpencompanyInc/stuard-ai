@@ -272,7 +272,7 @@ export async function ingestConversationTurn(
 
   const bridgeAvailable = hasClientBridge();
   if (!bridgeAvailable) {
-    console.log('[knowledge] Bridge not available — will attempt extraction but action execution may fail');
+    console.log('[knowledge] Bridge not available — skipping existing context fetch and action execution');
   }
 
   // Step 0: Fetch existing context to inform extraction decisions
@@ -282,75 +282,77 @@ export async function ingestConversationTurn(
     recentFacts?: Array<{ text: string; category: string }>;
   } = {};
   
-  try {
-    console.log('[knowledge] Fetching existing context...');
-    
-    // Fetch profile (identity lens)
-    const profileResult = await execSilentLocalTool('knowledge_get_identity', {}, 5000);
-    const profileFacts: any[] = Array.isArray(profileResult)
-      ? profileResult
-      : Array.isArray((profileResult as any)?.facts)
-        ? (profileResult as any).facts
-        : [];
-    if (profileFacts.length > 0) {
-      const profile: Record<string, string> = {};
-      for (const f of profileFacts) {
-        const k = String(f?.attribute_key || '').trim();
-        const v = String(f?.text || '').trim();
-        if (!k || !v) continue;
-        profile[k] = v;
+  if (bridgeAvailable) {
+    try {
+      console.log('[knowledge] Fetching existing context...');
+      
+      // Fetch profile (identity lens)
+      const profileResult = await execSilentLocalTool('knowledge_get_identity', {}, 5000);
+      const profileFacts: any[] = Array.isArray(profileResult)
+        ? profileResult
+        : Array.isArray((profileResult as any)?.facts)
+          ? (profileResult as any).facts
+          : [];
+      if (profileFacts.length > 0) {
+        const profile: Record<string, string> = {};
+        for (const f of profileFacts) {
+          const k = String(f?.attribute_key || '').trim();
+          const v = String(f?.text || '').trim();
+          if (!k || !v) continue;
+          profile[k] = v;
+        }
+        if (Object.keys(profile).length > 0) {
+          existingContext.profile = profile;
+        }
       }
-      if (Object.keys(profile).length > 0) {
-        existingContext.profile = profile;
+      
+      // Fetch entities
+      const entitiesResult = await execSilentLocalTool('knowledge_list_entities', { limit: 50 }, 5000);
+      const entitiesList: any[] = Array.isArray(entitiesResult)
+        ? entitiesResult
+        : Array.isArray((entitiesResult as any)?.entities)
+          ? (entitiesResult as any).entities
+          : [];
+      if (entitiesList.length > 0) {
+        const entities = entitiesList
+          .map((e: any) => ({
+            name: String(e?.name || '').trim(),
+            type: String(e?.type || 'topic').trim(),
+            summary: typeof e?.summary === 'string' ? e.summary : undefined,
+          }))
+          .filter((e: any) => Boolean(e.name));
+        if (entities.length > 0) {
+          existingContext.entities = entities;
+        }
       }
+      
+      // Fetch recent facts (bio + recent project facts)
+      const bioResult = await execSilentLocalTool('knowledge_get_bio', { limit: 20 }, 5000);
+      const bioFacts: any[] = Array.isArray(bioResult)
+        ? bioResult
+        : Array.isArray((bioResult as any)?.facts)
+          ? (bioResult as any).facts
+          : [];
+      if (bioFacts.length > 0) {
+        const facts = bioFacts
+          .map((f: any) => ({
+            text: String(f?.text || '').trim(),
+            category: String(f?.category || 'personal').trim(),
+          }))
+          .filter((f: any) => Boolean(f.text));
+        if (facts.length > 0) {
+          existingContext.recentFacts = facts;
+        }
+      }
+      
+      console.log('[knowledge] Context fetched:', {
+        profileKeys: Object.keys(existingContext.profile || {}).length,
+        entityCount: existingContext.entities?.length || 0,
+        factCount: existingContext.recentFacts?.length || 0,
+      });
+    } catch (err) {
+      console.log('[knowledge] Failed to fetch existing context (continuing without):', err);
     }
-    
-    // Fetch entities
-    const entitiesResult = await execSilentLocalTool('knowledge_list_entities', { limit: 50 }, 5000);
-    const entitiesList: any[] = Array.isArray(entitiesResult)
-      ? entitiesResult
-      : Array.isArray((entitiesResult as any)?.entities)
-        ? (entitiesResult as any).entities
-        : [];
-    if (entitiesList.length > 0) {
-      const entities = entitiesList
-        .map((e: any) => ({
-          name: String(e?.name || '').trim(),
-          type: String(e?.type || 'topic').trim(),
-          summary: typeof e?.summary === 'string' ? e.summary : undefined,
-        }))
-        .filter((e: any) => Boolean(e.name));
-      if (entities.length > 0) {
-        existingContext.entities = entities;
-      }
-    }
-    
-    // Fetch recent facts (bio + recent project facts)
-    const bioResult = await execSilentLocalTool('knowledge_get_bio', { limit: 20 }, 5000);
-    const bioFacts: any[] = Array.isArray(bioResult)
-      ? bioResult
-      : Array.isArray((bioResult as any)?.facts)
-        ? (bioResult as any).facts
-        : [];
-    if (bioFacts.length > 0) {
-      const facts = bioFacts
-        .map((f: any) => ({
-          text: String(f?.text || '').trim(),
-          category: String(f?.category || 'personal').trim(),
-        }))
-        .filter((f: any) => Boolean(f.text));
-      if (facts.length > 0) {
-        existingContext.recentFacts = facts;
-      }
-    }
-    
-    console.log('[knowledge] Context fetched:', {
-      profileKeys: Object.keys(existingContext.profile || {}).length,
-      entityCount: existingContext.entities?.length || 0,
-      factCount: existingContext.recentFacts?.length || 0,
-    });
-  } catch (err) {
-    console.log('[knowledge] Failed to fetch existing context (continuing without):', err);
   }
 
   // Step 1: Extract knowledge from the full conversation thread
@@ -361,7 +363,7 @@ export async function ingestConversationTurn(
   console.log('[knowledge] Extraction complete, actions:', extracted.actions.length);
 
   // Step 2: Execute actions
-  const executed = extracted.actions.length > 0
+  const executed = extracted.actions.length > 0 && bridgeAvailable
     ? await executeKnowledgeActions(extracted.actions, { skipEmbeddings: options?.skipEmbeddings, conversationId: options?.conversationId })
     : { success: 0, failed: 0, results: [] };
 

@@ -129,6 +129,31 @@ describe('knowledge tool response shape parsing', () => {
     );
   });
 
+  it('skips local knowledge tool calls entirely when no client bridge is available', async () => {
+    hasClientBridgeMock.mockReturnValue(false);
+    extractKnowledgeMock.mockResolvedValue({
+      actions: [
+        {
+          action: 'ADD_BIO',
+          value: 'Prefers concise answers',
+        },
+      ],
+      detected_entities: [],
+    });
+
+    const result = await ingestion.ingestConversationTurn(
+      [{ role: 'user', content: 'Remember that I prefer concise answers' }],
+      { skipExtraction: false, skipEmbeddings: true }
+    );
+
+    expect(execLocalToolMock).not.toHaveBeenCalled();
+    expect(extractKnowledgeMock).toHaveBeenCalledWith(
+      [{ role: 'user', content: 'Remember that I prefer concise answers' }],
+      {}
+    );
+    expect(result.executed).toEqual({ success: 0, failed: 0, results: [] });
+  });
+
   it('retrieval lenses and detectEntities accept wrapped list_entities response', async () => {
     hasClientBridgeMock.mockReturnValue(true);
 
