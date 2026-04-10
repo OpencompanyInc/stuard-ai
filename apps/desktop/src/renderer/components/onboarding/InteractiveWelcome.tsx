@@ -675,6 +675,19 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
   const [proactiveOn, setProactiveOn] = useState(false);
   const [proactiveLoading, setProactiveLoading] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await (window as any).desktopAPI?.proactiveGetConfig?.();
+        if (!cancelled && res?.config) {
+          setProactiveOn(!!res.config.enabled);
+        }
+      } catch { }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Phone (Telnyx)
   const [phoneStep, setPhoneStep] = useState<'idle' | 'input' | 'code' | 'done'>('idle');
   const [countryCode, setCountryCode] = useState('+1');

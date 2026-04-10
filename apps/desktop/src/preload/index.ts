@@ -504,6 +504,32 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => { try { ipcRenderer.off('ask_user:show', handler); } catch { } };
   },
   respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
+  proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),
+  proactiveUpdateConfig: (updates: any) => ipcRenderer.invoke('proactive:updateConfig', updates),
+  proactiveListTasks: () => ipcRenderer.invoke('proactive:listTasks'),
+  proactiveAddTask: (task: any) => ipcRenderer.invoke('proactive:addTask', task),
+  proactiveUpdateTask: (taskId: string, updates: any) => ipcRenderer.invoke('proactive:updateTask', taskId, updates),
+  proactiveDeleteTask: (taskId: string) => ipcRenderer.invoke('proactive:deleteTask', taskId),
+  proactiveGetWakeUpLog: (limit?: number) => ipcRenderer.invoke('proactive:getWakeUpLog', limit),
+  proactiveTriggerNow: () => ipcRenderer.invoke('proactive:triggerNow'),
+  proactiveGetAvailableTools: () => ipcRenderer.invoke('proactive:getAvailableTools'),
+  proactiveSubmitResult: (payload: any) => ipcRenderer.invoke('proactive:submitResult', payload),
+  proactiveIsRunning: () => ipcRenderer.invoke('proactive:isRunning'),
+  onProactiveUpdate: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-update', handler);
+    return () => { try { ipcRenderer.off('proactive-update', handler); } catch { } };
+  },
+  onProactiveWakeUp: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-checkin', handler);
+    return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
+  },
+  onProactiveProgress: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-progress', handler);
+    return () => { try { ipcRenderer.off('proactive-progress', handler); } catch { } };
+  },
   onProactiveCheckin: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('proactive-checkin', handler);
