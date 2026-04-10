@@ -1,11 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCreditsApiPath,
   getUsageSourceCategory,
   getUsageSourceLabel,
   normalizeUsageLogEntry,
 } from "./BillingSettings.utils";
 
 describe("BillingSettings log normalization", () => {
+  it("builds credits API paths with billing period filters", () => {
+    const path = buildCreditsApiPath("/v1/credits/logs", {
+      limit: 20,
+      offset: 40,
+      since: "2026-04-01T00:00:00.000Z",
+    });
+
+    const url = new URL(path, "http://localhost");
+    expect(url.pathname).toBe("/v1/credits/logs");
+    expect(url.searchParams.get("limit")).toBe("20");
+    expect(url.searchParams.get("offset")).toBe("40");
+    expect(url.searchParams.get("since")).toBe("2026-04-01T00:00:00.000Z");
+  });
+
+  it("omits invalid billing period filters from credits API paths", () => {
+    const path = buildCreditsApiPath("/v1/credits/usage", {
+      since: "not-a-date",
+    });
+
+    const url = new URL(path, "http://localhost");
+    expect(url.pathname).toBe("/v1/credits/usage");
+    expect(url.search).toBe("");
+  });
+
   it("normalizes the snake_case log payload returned by the credits logs API", () => {
     const log = normalizeUsageLogEntry({
       id: "log_1",

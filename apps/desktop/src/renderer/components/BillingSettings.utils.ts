@@ -80,6 +80,38 @@ function pickFirstNumber(...values: unknown[]): number {
   return 0;
 }
 
+export function buildCreditsApiPath(
+  path: string,
+  options: {
+    limit?: number;
+    offset?: number;
+    since?: string | null;
+  } = {}
+): string {
+  const params = new URLSearchParams();
+  const limit = Number(options.limit);
+  const offset = Number(options.offset);
+
+  if (Number.isFinite(limit) && limit > 0) {
+    params.set("limit", String(Math.trunc(limit)));
+  }
+
+  if (Number.isFinite(offset) && offset >= 0) {
+    params.set("offset", String(Math.trunc(offset)));
+  }
+
+  const rawSince = String(options.since || "").trim();
+  if (rawSince) {
+    const parsed = new Date(rawSince);
+    if (!Number.isNaN(parsed.getTime())) {
+      params.set("since", parsed.toISOString());
+    }
+  }
+
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 function titleCaseToken(token: string): string {
   const lower = token.toLowerCase();
   if (lower === "ai") return "AI";

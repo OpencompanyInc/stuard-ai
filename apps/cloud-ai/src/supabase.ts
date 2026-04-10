@@ -839,13 +839,60 @@ export async function getMonthlyUsageTokens(userId: string, monthStart?: Date): 
   }
 }
 
+function resolveUsagePeriodStart(since?: Date): Date {
+  return since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+}
+
+async function getUsageCreditTotalAggregate(userId: string, since?: Date): Promise<number | null> {
+  if (!supabaseService) return null;
+  try {
+    const start = resolveUsagePeriodStart(since);
+    const { data, error } = await supabaseService.rpc('get_usage_credit_total', {
+      p_user_id: userId,
+      p_since: start.toISOString(),
+    });
+    if (error) return null;
+    const totalCredits = Number(data);
+    return Number.isFinite(totalCredits) && totalCredits >= 0 ? totalCredits : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getUsageBreakdownAggregate(
+  userId: string,
+  since?: Date,
+): Promise<Array<{ category: string; credits: number; costUsd: number; count: number }> | null> {
+  if (!supabaseService) return null;
+  try {
+    const start = resolveUsagePeriodStart(since);
+    const { data, error } = await supabaseService.rpc('get_usage_breakdown', {
+      p_user_id: userId,
+      p_since: start.toISOString(),
+    });
+    if (error || !Array.isArray(data)) return null;
+    return data.map((row: any) => ({
+      category: String(row?.category || 'other').trim() || 'other',
+      credits: Number(Number(row?.credits || 0).toFixed(2)),
+      costUsd: Number(Number(row?.cost_usd || row?.costUsd || 0).toFixed(6)),
+      count: Math.max(0, Number(row?.count ?? row?.event_count) || 0),
+    }));
+  } catch {
+    return null;
+  }
+}
+
 export async function getMonthlyUsageCredits(userId: string, monthStart?: Date): Promise<number> {
   if (!supabaseService) return 0;
   try {
-    const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const start = resolveUsagePeriodStart(monthStart);
+    const aggregateTotal = await getUsageCreditTotalAggregate(userId, start);
+    if (aggregateTotal != null) {
+      return Math.max(0, Math.ceil(aggregateTotal));
+    }
     const { data, error } = await supabaseService
       .from('usage_events')
-      .select('model, prompt_tokens, completion_tokens, input_tokens, output_tokens, cost_usd, raw, created_at')
+      .select('model, prompt_tokens, completion_tokens, input_tokens, output_tokens, cost_usd, credit_cost, raw, created_at')
       .eq('user_id', userId)
       .gte('created_at', start.toISOString());
     if (error || !data) return 0;
@@ -1025,7 +1072,11 @@ export async function getUsageBreakdown(
 ): Promise<Array<{ category: string; credits: number; costUsd: number; count: number }>> {
   if (!supabaseService) return [];
   try {
-    const start = since || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const start = resolveUsagePeriodStart(since);
+    const aggregateRows = await getUsageBreakdownAggregate(userId, start);
+    if (aggregateRows) {
+      return aggregateRows;
+    }
     const { data, error } = await supabaseService
       .from('usage_events')
       .select('model, cost_usd, credit_cost')

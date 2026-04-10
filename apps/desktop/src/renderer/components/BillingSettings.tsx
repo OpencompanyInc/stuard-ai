@@ -27,6 +27,7 @@ import {
   Tooltip,
 } from "recharts";
 import {
+  buildCreditsApiPath,
   getUsageSourceCategory,
   getUsageSourceLabel,
   normalizeUsageLogEntry,
@@ -59,6 +60,8 @@ interface CreditSummary {
   addonCredits?: number;
   addonRemaining?: number;
   creditsPerUsd?: number;
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
 }
 
 interface UsageBreakdownItem {
@@ -240,10 +243,19 @@ export const BillingSettings: React.FC = () => {
     };
   }, []);
 
+  const billingPeriodStart = typeof creditSummary?.currentPeriodStart === "string"
+    ? creditSummary.currentPeriodStart
+    : null;
+
   const loadUsageBreakdown = useCallback(async (signal?: AbortSignal) => {
     setUsageLoading(true);
     try {
-      const usageData = await cloudApiFetch<any>("/v1/credits/usage", signal);
+      const usageData = await cloudApiFetch<any>(
+        buildCreditsApiPath("/v1/credits/usage", {
+          since: billingPeriodStart,
+        }),
+        signal
+      );
       if (!mountedRef.current || signal?.aborted) return;
       setUsageBreakdown(usageData?.breakdown || []);
     } finally {
@@ -251,7 +263,7 @@ export const BillingSettings: React.FC = () => {
       setUsageLoading(false);
       setUsageLoaded(true);
     }
-  }, []);
+  }, [billingPeriodStart]);
 
   const loadLogs = useCallback(
     async (page: number, signal?: AbortSignal) => {
@@ -260,9 +272,11 @@ export const BillingSettings: React.FC = () => {
       setLogsLoading(true);
       try {
         const result = await cloudApiFetch<any>(
-          `/v1/credits/logs?limit=${LOGS_PER_PAGE}&offset=${
-            page * LOGS_PER_PAGE
-          }`,
+          buildCreditsApiPath("/v1/credits/logs", {
+            limit: LOGS_PER_PAGE,
+            offset: page * LOGS_PER_PAGE,
+            since: billingPeriodStart,
+          }),
           signal
         );
         if (
@@ -284,7 +298,7 @@ export const BillingSettings: React.FC = () => {
         setLogsLoaded(true);
       }
     },
-    []
+    [billingPeriodStart]
   );
 
   const loadProducts = useCallback(async () => {
