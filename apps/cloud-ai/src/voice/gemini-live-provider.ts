@@ -127,8 +127,8 @@ class GeminiLiveSession implements VoiceSession {
   }
 
   async connect(): Promise<void> {
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
-    if (!apiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set');
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!apiKey) throw new Error('GOOGLE_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, or GEMINI_API_KEY not set');
 
     const model = this.config.model || process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
     const wsUrl = `${GEMINI_LIVE_URL}?key=${encodeURIComponent(apiKey)}`;
@@ -314,6 +314,6 @@ export const geminiLiveProvider: VoiceProvider = {
   },
 
   isConfigured(): boolean {
-    return !!(process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY);
+    return !!(process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY);
   },
 };

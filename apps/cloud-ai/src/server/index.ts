@@ -4,15 +4,24 @@ import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-
 import { handleSpeechConnection } from '../routes/speech';
 import { PORT } from '../utils/config';
 import { startVMHealthMonitor } from '../services/vm-health';
+import { initVoiceProviders } from '../voice';
+import { telnyxBridgeWss } from '../routes/integrations/telnyx-bridge';
+import { verifyTelnyxConfig } from '../routes/integrations/telnyx';
 
 export function startCloudAiServer() {
+  initVoiceProviders();
+
   const server = createHttpServer();
   const { wss, cleanup } = createChatWebSocketServer();
 
   server.on('close', cleanup);
   server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
-    if (url === '/ws' || url.startsWith('/ws?')) {
+    if (url === '/ws/telnyx-bridge' || url.startsWith('/ws/telnyx-bridge?')) {
+      telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
+        telnyxBridgeWss.emit('connection', ws, req);
+      });
+    } else if (url === '/ws' || url.startsWith('/ws?')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
@@ -36,6 +45,9 @@ export function startCloudAiServer() {
     } catch (error) {
       console.warn('[cloud-ai] VM health monitor failed to start:', error);
     }
+    void verifyTelnyxConfig().catch((error) => {
+      console.warn('[cloud-ai] Telnyx config verification failed:', error);
+    });
   });
 
   return { server, wss };
