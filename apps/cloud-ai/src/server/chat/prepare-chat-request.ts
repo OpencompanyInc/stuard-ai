@@ -2,8 +2,9 @@ import { randomUUID } from 'crypto';
 import type { WebSocket } from 'ws';
 
 import { getWorkflowAgent } from '../../agents/workflow-agent';
-import { getAgentForQuery } from '../../agents/stuard/index';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
+import { getOrchestratorAgent } from '../../orchestrator';
+import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
 import {
   createConversation,
@@ -12,12 +13,12 @@ import {
   incrementDailyRequestCounter,
   getExternalAccount,
 } from '../../supabase';
+import { getSkillsFromContext } from '../../tools/skill-tools';
 import { clearSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
 import { contentToText, normalizeMessages } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { writeLog } from '../../utils/logger';
 import { ENABLE_ROUTING, REQUIRE_AUTH } from '../../utils/config';
-import { getRankedToolNames } from '../../utils/tool-ranking';
 import { anonResources, anonThreads, conversations, wsConversations } from '../socket/state';
 import { buildInputMessages } from './message-context';
 import { buildProviderOptions, resolveMaxSteps } from './provider-options';
@@ -92,6 +93,10 @@ export async function prepareChatRequest({
   const requestedMode = normalizeTierChoice(msg?.model);
   const routedTier = await resolveModelTier(msg, messages, requestedMode, ws, requestId);
   const chosenModelId = resolveChosenModelId(msg, routedTier);
+  secretBag.__modelTier = routedTier;
+  if (chosenModelId) {
+    secretBag.__modelId = chosenModelId;
+  }
   send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
 
   const { enabledIntegrations, mcpTools } = authUser
@@ -123,7 +128,6 @@ export async function prepareChatRequest({
     agentType,
     msg,
     providedMessages,
-    prompt,
     routedTier,
     chosenModelId,
     enabledIntegrations,
@@ -333,7 +337,6 @@ interface ResolveAgentArgs {
   agentType: AgentType;
   msg: any;
   providedMessages?: any[];
-  prompt: string;
   routedTier: ModelChoice;
   chosenModelId?: string;
   enabledIntegrations: string[];
@@ -347,7 +350,6 @@ async function resolveAgent({
   agentType,
   msg,
   providedMessages,
-  prompt,
   routedTier,
   chosenModelId,
   enabledIntegrations,
@@ -360,25 +362,14 @@ async function resolveAgent({
     return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId);
   }
 
-  let rankedToolNames: string[] | undefined;
-  if (prompt) {
-    try {
-      const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
-      if (queryEmbedding && queryEmbedding.length > 0) {
-        const topN = Number(process.env.SIS_RANKED_TOPN || '8');
-        rankedToolNames = await getRankedToolNames(queryEmbedding, enabledIntegrations, topN);
-      }
-    } catch { }
-  }
-
-  return await getAgentForQuery(
+  await ensureExecutionToolsRegistered();
+  const skills = getSkillsFromContext();
+  return getOrchestratorAgent(
     routedTier,
-    prompt,
-    undefined,
     enabledIntegrations,
     mcpTools,
     chosenModelId,
-    rankedToolNames,
+    skills,
   );
 }
 

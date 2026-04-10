@@ -1,9 +1,8 @@
 import { createHttpServer } from './http/app';
 import { createChatWebSocketServer } from './socket/server';
+import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-bootstrap';
 import { handleSpeechConnection } from '../routes/speech';
 import { PORT } from '../utils/config';
-import { warmupGroupCache } from '../utils/tool-groups';
-import { ensureToolEmbeddings } from '../tools/meta-tools';
 import { startVMHealthMonitor } from '../services/vm-health';
 
 export function startCloudAiServer() {
@@ -26,21 +25,11 @@ export function startCloudAiServer() {
     }
   });
 
+  void ensureExecutionToolsRegistered().catch((error) => {
+    console.warn('[cloud-ai] Failed to pre-register execution tools:', error);
+  });
+
   server.listen(PORT, () => {
-    try {
-      warmupGroupCache();
-    } catch { }
-
-    try {
-      const eager = String(process.env.CLOUD_EAGER_TOOL_EMBEDDINGS_SYNC || '').trim().toLowerCase();
-      if (eager === '1' || eager === 'true' || eager === 'yes') {
-        console.log('[cloud-ai] Eager tool embeddings sync enabled');
-        ensureToolEmbeddings()
-          .then(() => console.log('[cloud-ai] Tool embeddings sync complete'))
-          .catch((error) => console.warn('[cloud-ai] Tool embeddings sync failed', error));
-      }
-    } catch { }
-
     try {
       startVMHealthMonitor();
       console.log('[cloud-ai] VM health monitor started');

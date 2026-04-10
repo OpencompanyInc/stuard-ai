@@ -28,7 +28,7 @@ import { runSequentialTool, runParallelTool } from './workflow-system';
 import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
 
@@ -568,87 +568,76 @@ export const search_tools = createTool({
     }),
     execute: async (inputData) => {
         const { category, query, list_categories, limit = 10 } = inputData as any;
-        const registry = getToolRegistry();
-        const categories = getToolCategories();
-
-        if (list_categories) {
-            return {
-                tools: [...categories.keys()].map(cat => ({ name: cat, description: '', category: cat })),
-            };
+        const supabase = getSupabaseService();
+        if (!supabase) {
+            throw new Error('Supabase-backed tool search is unavailable.');
         }
 
-        const keywordSearch = () => {
-            const results: Array<{ name: string; description: string; category: string }> = [];
-            const q = (query || '').toLowerCase();
-
-            for (const [cat, names] of categories.entries()) {
-                if (category && cat !== category) continue;
-
-                for (const name of names) {
-                    const tool = registry.get(name);
-                    if (!tool) continue;
-
-                    const desc = tool.description || '';
-                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
-
-                    results.push({ name, description: desc, category: cat });
-                }
-            }
-
-            return results;
-        };
-
-        const supabase = getSupabaseService();
         const hasQuery = typeof query === 'string' && query.trim().length > 0;
 
         let results: Array<{ name: string; description: string; category: string }> = [];
 
-        if (hasQuery && supabase) {
-            // Vector search via Supabase RPC (pgvector server-side cosine similarity)
-            try {
-                const { embedder } = await resolveEmbedder();
-                const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
-                const queryVector = embeddings[0];
+        if (list_categories) {
+            const { data, error } = await supabase
+                .from('tool_embeddings')
+                .select('category')
+                .eq('enabled', true);
 
-                const { data, error } = await supabase.rpc('search_tools', {
-                    query_embedding: queryVector,
-                    match_threshold: 0.25,
-                    match_count: limit,
-                    filter_category: category || null,
-                    filter_kind: null,
-                    enabled_only: true,
-                });
+            if (error) throw error;
 
-                if (error) throw error;
+            const categories = Array.from(new Set(
+                (data || [])
+                    .map((row: any) => String(row?.category || '').trim() || 'Other')
+                    .filter(Boolean),
+            )).sort((a, b) => a.localeCompare(b));
 
-                results = (data || []).map((row: any) => ({
-                    name: row.name,
-                    description: row.description || '',
-                    category: row.category || 'Other',
-                }));
-            } catch (e) {
-                console.warn('Vector search failed, falling back to keyword search', e);
-                results = keywordSearch().slice(0, limit);
-            }
-        } else {
-            results = keywordSearch().slice(0, limit);
+            return {
+                tools: categories.map((cat) => ({ name: cat, description: '', category: cat })),
+            };
         }
 
-        // Also query local agent bridge for desktop-only tools
-        if (hasClientBridge() && results.length < limit) {
-            try {
-                const agentResult = await execLocalTool('list_tools', { category }) as any;
-                if (agentResult?.ok && Array.isArray(agentResult.tools)) {
-                    const existing = new Set(results.map(t => t.name));
-                    const q = (query || '').toLowerCase();
-                    for (const t of agentResult.tools) {
-                        if (existing.has(t.name)) continue;
-                        if (q && !t.name.toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) continue;
-                        results.push({ name: t.name, description: t.description || '', category: t.category || 'Other' });
-                        if (results.length >= limit) break;
-                    }
-                }
-            } catch { }
+        if (hasQuery) {
+            // Vector search via Supabase RPC (pgvector server-side cosine similarity)
+            const { embedder } = await resolveEmbedder();
+            const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
+            const queryVector = embeddings[0];
+
+            const { data, error } = await supabase.rpc('search_tools', {
+                query_embedding: queryVector,
+                match_threshold: 0.25,
+                match_count: limit,
+                filter_category: category || null,
+                filter_kind: null,
+                enabled_only: true,
+            });
+
+            if (error) throw error;
+
+            results = (data || []).map((row: any) => ({
+                name: row.name,
+                description: row.description || '',
+                category: row.category || 'Other',
+            }));
+        } else {
+            let dbQuery = supabase
+                .from('tool_embeddings')
+                .select('name, description, category')
+                .eq('enabled', true)
+                .order('name', { ascending: true })
+                .limit(limit);
+
+            if (category) {
+                dbQuery = dbQuery.eq('category', category);
+            }
+
+            const { data, error } = await dbQuery;
+            if (error) throw error;
+
+            results = (data || []).map((row: any) => ({
+                name: row.name,
+                description: row.description || '',
+                category: row.category || 'Other',
+            }));
         }
 
         return { tools: results };

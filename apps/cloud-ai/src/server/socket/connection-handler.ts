@@ -119,6 +119,11 @@ function extractSecretBag(msg: any) {
     try {
       msg.__deviceId = typeof incomingContext?.deviceId === 'string' ? incomingContext.deviceId : undefined;
     } catch { }
+
+    const incomingSkills = Array.isArray(incomingContext?.skills) ? incomingContext.skills : [];
+    if (incomingSkills.length > 0) {
+      secretBag.__skills = incomingSkills;
+    }
   } catch { }
 
   return secretBag;
