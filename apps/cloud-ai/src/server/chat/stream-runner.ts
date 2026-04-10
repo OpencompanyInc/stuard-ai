@@ -48,6 +48,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     conversationId,
     conversationCreatedNow,
     modelLabel,
+    contextPathsForMeta,
     resource,
     thread,
     maxSteps,
@@ -226,7 +227,11 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
         if (authUser) {
           try {
-            await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, normalizedUsage);
+            const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : 'Chat';
+            await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, {
+              ...normalizedUsage,
+              source_label: sourceLabel,
+            });
           } catch { }
 
           try {
@@ -237,7 +242,11 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
         }
 
         startKnowledgeIngestion(history, conversationId, normalizedUsage?.totalTokens);
-        startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText);
+        startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
+          userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
+          userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
+          assistantMetadata: buildMetadata(),
+        });
       },
     };
 
@@ -601,16 +610,31 @@ function startKnowledgeIngestion(history: any[], conversationId: string | null, 
   })();
 }
 
-function startLocalMemoryPersistence(localConversationId: string, history: any[], prompt: string, finalText: string) {
+function startLocalMemoryPersistence(
+  localConversationId: string,
+  history: any[],
+  prompt: string,
+  finalText: string,
+  options?: {
+    userAttachments?: any[];
+    userMetadata?: Record<string, any>;
+    assistantMetadata?: Record<string, any>;
+  },
+) {
   try {
     if (prompt) {
-      memoryService.storeMessageLocally(localConversationId, 'user', prompt).catch((error) => {
+      memoryService.storeMessageLocally(localConversationId, 'user', prompt, {
+        attachments: options?.userAttachments,
+        metadata: options?.userMetadata,
+      }).catch((error) => {
         console.error('[cloud-ai] Failed to store user message locally:', error);
       });
     }
 
     if (finalText) {
-      memoryService.storeMessageLocally(localConversationId, 'assistant', finalText).catch((error) => {
+      memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
+        metadata: options?.assistantMetadata,
+      }).catch((error) => {
         console.error('[cloud-ai] Failed to store assistant message locally:', error);
       });
     }

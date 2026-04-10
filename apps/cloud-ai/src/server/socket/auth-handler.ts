@@ -4,6 +4,7 @@ import { verifyAccessToken } from '../../auth';
 import { clearRun, buildSyncPayload } from '../../services/run-state';
 import { send } from './helpers';
 import { registerWebhookClient, deliverQueuedWebhooks } from '../../webhooks/dispatch';
+import { registerVoiceBridge } from '../../voice/voice-bridge-manager';
 
 export async function registerWebhookState(ws: WebSocket, userId: string) {
   registerWebhookClient(userId, ws);
@@ -33,6 +34,14 @@ export async function handleAuthMessage(ws: WebSocket, msg: any) {
     const authResult = await verifyAccessToken(token);
     if (!authResult?.success || !authResult.userId) {
       send(ws, { type: 'auth_result', ok: false, message: 'invalid_token' });
+      return;
+    }
+
+    // If this WS was opened for a voice bridge session, register it
+    const voiceSession = (ws as any).__voiceSession as string | undefined;
+    if (voiceSession) {
+      registerVoiceBridge(voiceSession, ws);
+      send(ws, { type: 'auth_result', ok: true, voiceBridge: true });
       return;
     }
 

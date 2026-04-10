@@ -5,10 +5,10 @@
  * Loads user context from Supabase (recent conversations, profile) and
  * defines the tools the voice AI can call mid-conversation.
  *
- * Design: Avoid heavy pre-call work (embedding search, semantic ranking)
- * to minimize latency. Instead, give the AI lightweight tools it can
- * call on-demand during the conversation (SIS search/execute, web search,
- * memory search).
+ * Design: Keep the pre-call work compact, but preload a short runtime-memory
+ * summary from the user's configured desktop/vm route when available. The
+ * live model then gets a voice-safe orchestrator-style tool surface for
+ * on-demand actions during the call.
  */
 
 import type { VoiceToolDefinition } from './types';
@@ -29,105 +29,15 @@ import {
 } from '../memory/conversations';
 import { getDesktopWs } from '../services/vm-bridge';
 import { withClientBridge } from '../tools/bridge';
+import {
+  VOICE_TOOL_DEFINITIONS,
+  loadVoiceRuntimeMemorySummary,
+} from './voice-runtime-tools';
 
 // ── Voice Tool Definitions ──────────────────────────────────────────────────
-// These are the tools the voice AI can call during a live call.
-// Kept minimal to reduce latency and token overhead.
-
-const VOICE_TOOLS: VoiceToolDefinition[] = [
-  {
-    type: 'function',
-    name: 'sis_search_tools',
-    description: 'Discover available tools by describing what you need. Returns tool names and descriptions. Use sis_execute_tool to run a discovered tool.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'What you want to do, e.g. "send email", "check calendar", "create reminder"',
-        },
-        category: {
-          type: 'string',
-          enum: ['system', 'core', 'input', 'ui', 'vision', 'data', 'integrations', 'flow'],
-          description: 'Optional category filter',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'sis_execute_tool',
-    description: 'Execute a tool by name after discovering it with sis_search_tools. Pass arguments matching the tool schema.',
-    parameters: {
-      type: 'object',
-      properties: {
-        tool_name: {
-          type: 'string',
-          description: 'The exact name of the tool to execute',
-        },
-        args: {
-          type: 'object',
-          description: 'Arguments for the tool',
-        },
-      },
-      required: ['tool_name'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'web_search',
-    description: 'Search the web for up-to-date information. Returns results with title, URL, and snippet.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Search query',
-        },
-        max_results: {
-          type: 'number',
-          description: 'Number of results (1-5, default 3)',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'memory_search',
-    description: 'Search your past conversations with the user to find relevant context. Use when the user asks about something you discussed before or you need historical context.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'What to search for, e.g. "project setup", "meeting notes", "what we discussed about X"',
-        },
-        limit: {
-          type: 'number',
-          description: 'Max results (1-5, default 3)',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'send_sms',
-    description: 'Send an SMS text message to the user (e.g. to share a link, confirmation, or follow-up info they mentioned during the call).',
-    parameters: {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'The text message to send',
-        },
-      },
-      required: ['message'],
-    },
-  },
-];
+// These are the voice-safe tools the model can call during a live call.
+// They mirror the orchestrator pattern while excluding UI-only tools.
+const VOICE_TOOLS: VoiceToolDefinition[] = VOICE_TOOL_DEFINITIONS;
 
 // ── System Prompt Builder ───────────────────────────────────────────────────
 
@@ -136,12 +46,14 @@ function buildVoiceSystemPrompt(opts: {
   direction: 'inbound' | 'outbound';
   callerNumber?: string;
   recentContext?: string;
+  runtimeMemorySummary?: string;
+  runtimeMemorySource?: string;
   customPrompt?: string;
   identityFacts?: Fact[];
   directiveFacts?: Fact[];
   bioFacts?: Fact[];
 }): string {
-  const { userName, direction, callerNumber, recentContext, customPrompt,
+  const { userName, direction, callerNumber, recentContext, runtimeMemorySummary, runtimeMemorySource, customPrompt,
     identityFacts, directiveFacts, bioFacts } = opts;
 
   const userRef = userName ? `The user's name is ${userName}.` : '';
@@ -189,9 +101,12 @@ function buildVoiceSystemPrompt(opts: {
     '- Be concise and conversational — this is a phone call, not a text chat.',
     '- Use natural speech patterns. Avoid bullet points, markdown, or overly structured responses.',
     '- Confirm understanding before taking actions.',
-    '- If the user asks you to do something and you have the tools, do it. Use sis_search_tools to find tools, then sis_execute_tool to run them.',
-    '- You can search the web with web_search and search past conversations with memory_search.',
+    '- If the user asks you to do something and you have the tools, do it. Use search_tools, then get_tool_schema when needed, then execute_tool.',
+    '- Use delegate for bigger multi-step jobs that need a focused subagent.',
+    '- Use search_memory when you need history or personal context from past conversations or runtime memory.',
     '- If the user wants you to send them something (a link, info, confirmation), use send_sms to text it to them.',
+    '- Do not use ask_user, chat_ui, or other visual/UI-only flows during a phone call. If you need more information, ask the caller verbally.',
+    '- If a delegated subagent asks a question, ask the caller verbally and answer it with reply_to_subagent.',
     '- When calling tools, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
   );
 
@@ -201,6 +116,11 @@ function buildVoiceSystemPrompt(opts: {
 
   if (recentContext) {
     parts.push('', 'Recent conversation context (for reference):', recentContext);
+  }
+
+  if (runtimeMemorySummary) {
+    const sourceLabel = runtimeMemorySource ? ` (${runtimeMemorySource})` : '';
+    parts.push('', `Runtime memory preloaded${sourceLabel}:`, runtimeMemorySummary);
   }
 
   return parts.filter(p => p !== undefined).join('\n');
@@ -336,11 +256,12 @@ export async function buildVoiceContext(opts: {
 }): Promise<VoiceContext> {
   const { userId, direction, callerNumber, customPrompt } = opts;
 
-  // Load recent context + knowledge graph in parallel (all fast, no embeddings)
-  const [recentMessages, userName, knowledge] = await Promise.all([
+  // Load recent context + knowledge graph + configured runtime memory in parallel.
+  const [recentMessages, userName, knowledge, runtimeMemory] = await Promise.all([
     loadRecentContext(userId).catch(() => ''),
     loadUserName(userId).catch(() => undefined),
     loadKnowledgeFacts(userId),
+    loadVoiceRuntimeMemorySummary(userId).catch(() => ({ source: undefined, summary: '' })),
   ]);
   const { identity: identityFacts, directives: directiveFacts, bio: bioFacts } = knowledge;
 
@@ -353,6 +274,8 @@ export async function buildVoiceContext(opts: {
     direction,
     callerNumber,
     recentContext: recentMessages || undefined,
+    runtimeMemorySummary: runtimeMemory.summary || undefined,
+    runtimeMemorySource: runtimeMemory.source,
     customPrompt,
     identityFacts,
     directiveFacts,

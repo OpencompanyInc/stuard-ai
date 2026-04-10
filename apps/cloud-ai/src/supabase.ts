@@ -103,6 +103,11 @@ export type ExternalAccount = {
   updated_at?: string | null;
 };
 
+/** Providers that are inherently cloud-only (no local component).
+ *  These always read/write Supabase regardless of the user's sync preference,
+ *  because local SQLite is ephemeral and wiped on server redeployments. */
+const CLOUD_ONLY_PROVIDERS = new Set(['telnyx', 'whatsapp']);
+
 /** Resolve whether integration accounts should be synced to Supabase for this user.
  *  Enabled when either sync_accounts or sync_integrations is true.
  *  Caches per-user result for 60s to avoid hitting Supabase on every operation.
@@ -178,7 +183,8 @@ export async function getExternalAccount(
   provider: string,
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
-  if (!(await shouldSyncAccounts(userId))) return localGetExternalAccount(userId, provider, profileLabel);
+  const useSupabase = CLOUD_ONLY_PROVIDERS.has(provider) || await shouldSyncAccounts(userId);
+  if (!useSupabase) return localGetExternalAccount(userId, provider, profileLabel);
   // Primary: Supabase (hot store)
   const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
   if (hot) return hot;
@@ -240,7 +246,8 @@ export async function listExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
-  if (!(await shouldSyncAccounts(userId))) return localListExternalAccounts(userId, provider);
+  const useSupabase = (provider && CLOUD_ONLY_PROVIDERS.has(provider)) || await shouldSyncAccounts(userId);
+  if (!useSupabase) return localListExternalAccounts(userId, provider);
   const hot = await _supabaseListExternalAccounts(userId, provider);
   if (hot.length > 0) return hot;
   // Fallthrough: local (cold store)
@@ -324,7 +331,7 @@ export async function deleteExternalAccount(
   profileLabel: string,
 ): Promise<boolean> {
   const localOk = await localDeleteExternalAccount(userId, provider, profileLabel);
-  if (await shouldSyncAccounts(userId)) {
+  if (CLOUD_ONLY_PROVIDERS.has(provider) || await shouldSyncAccounts(userId)) {
     try { await _supabaseDeleteExternalAccount(userId, provider, profileLabel); } catch {}
   }
   return localOk;
@@ -391,8 +398,8 @@ export async function upsertExternalAccount(input: {
 }): Promise<void> {
   // Always write to local first (cold store = source of truth)
   await localUpsertExternalAccount(input);
-  // Also write to Supabase when sync is enabled
-  if (await shouldSyncAccounts(input.userId)) {
+  // Also write to Supabase when sync is enabled OR for cloud-only providers
+  if (CLOUD_ONLY_PROVIDERS.has(input.provider) || await shouldSyncAccounts(input.userId)) {
     try { await _supabaseUpsertExternalAccount(input); } catch {}
   }
 }
@@ -554,6 +561,16 @@ export interface MessageMetadata {
   modelId?: string;
   usage?: any;
   contextPaths?: Array<{ path: string; name: string; isDirectory: boolean }>;
+  attachments?: Array<{
+    type: string;
+    name: string;
+    mimeType?: string;
+    path?: string;
+    source?: string;
+    previewText?: string;
+    lineCount?: number;
+    charCount?: number;
+  }>;
   toolCalls?: Array<{
     id: string;
     tool: string;
@@ -1135,7 +1152,7 @@ export async function getUsageLogs(
   try {
     let q = supabaseService
       .from('usage_events')
-      .select('id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, created_at', { count: 'exact' })
+      .select('id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at', { count: 'exact' })
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     if (since) q = q.gte('created_at', since.toISOString());

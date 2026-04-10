@@ -20,6 +20,13 @@ import { OnboardingProvider, OnboardingTooltipContainer } from './components/onb
 import EnvironmentBadge from './components/EnvironmentBadge';
 import { WorkflowOverlay } from './components/WorkflowOverlay/WorkflowOverlay';
 import { NotificationProvider, NotificationController } from './components/NotificationSystem';
+import {
+  buildAttachmentMessageText,
+  createClipboardDocumentAttachment,
+  normalizeChatAttachment,
+  shouldConvertPasteToDocumentAttachment,
+  type ChatAttachment,
+} from './utils/attachments';
 
 import { useSpeechToText } from './hooks/useSpeechToText';
 import { VoiceModeView } from './views/VoiceModeView';
@@ -136,7 +143,7 @@ export default function App() {
   const [conversationTitle, setConversationTitle] = useState<string | null>(null);
   const [convList, setConvList] = useState<any[]>([]);
   const [loadingConvs, setLoadingConvs] = useState(false);
-  const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [approvalQueue, setApprovalQueue] = useState<Array<{ id: string; tool: string; args?: Record<string, any>; description?: string }>>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<{ id: string; args: any } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
@@ -845,13 +852,19 @@ export default function App() {
 
     const doSend = (skills: any[]) => {
       if (skills.length > 0) contextData.skills = skills;
+      const fallbackText = buildAttachmentMessageText(attachments, contextPaths);
       sendMessage({
-        text: text || (contextPaths.length > 0 ? `Context: ${contextPaths.map(p => p.name).join(', ')}` : 'Attached files'),
+        text: text || fallbackText || 'Attached files',
         attachments: attachments.map(a => ({
           type: a.type,
           name: a.name,
           data: a.data,
           mimeType: a.mimeType,
+          path: a.path,
+          source: a.source,
+          previewText: a.previewText,
+          lineCount: a.lineCount,
+          charCount: a.charCount,
         })),
         context: contextData,
         contextPaths: contextPaths.length > 0 ? contextPaths : undefined,
@@ -968,7 +981,10 @@ export default function App() {
   }, [signedIn, handleSignIn]);
 
   // Attachments
-  const fileToAttachment = (file: File): Promise<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }> => {
+  const fileToAttachment = (
+    file: File,
+    source: ChatAttachment['source'] = 'clipboard-file',
+  ): Promise<ChatAttachment> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -987,7 +1003,13 @@ export default function App() {
           const isImage = typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('image/');
           const fallbackExt = isImage ? (mimeType.split('/')[1] || 'png') : '';
           const name = file.name && file.name.trim() ? file.name : (isImage ? `pasted_image.${fallbackExt}` : 'pasted_file');
-          resolve({ type: isImage ? 'image' : 'file', name, data: base64, mimeType: mimeType || 'application/octet-stream' });
+          resolve(normalizeChatAttachment({
+            type: isImage ? 'image' : 'file',
+            name,
+            data: base64,
+            mimeType: mimeType || 'application/octet-stream',
+            source,
+          }));
         } catch (e) { reject(e); }
       };
       reader.onerror = (e) => reject(e);
@@ -997,7 +1019,10 @@ export default function App() {
 
   const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
 
-  const addAttachmentsFromFiles = useCallback(async (files: File[] | FileList) => {
+  const addAttachmentsFromFiles = useCallback(async (
+    files: File[] | FileList,
+    source: ChatAttachment['source'] = 'clipboard-file',
+  ) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
     const tooLarge = arr.filter(f => f.size > MAX_ATTACHMENT_BYTES);
@@ -1006,22 +1031,22 @@ export default function App() {
       alert(`File too large (max 65 MB): ${names}`);
       const valid = arr.filter(f => f.size <= MAX_ATTACHMENT_BYTES);
       if (valid.length === 0) return;
-      const atts = await Promise.all(valid.map(fileToAttachment));
+      const atts = await Promise.all(valid.map((file) => fileToAttachment(file, source)));
       setAttachments((prev) => [...prev, ...atts]);
       return;
     }
-    const atts = await Promise.all(arr.map(fileToAttachment));
+    const atts = await Promise.all(arr.map((file) => fileToAttachment(file, source)));
     setAttachments((prev) => [...prev, ...atts]);
   }, []);
 
   const handleAttachFiles = useCallback(async () => {
     const files = await window.desktopAPI.selectFiles();
-    if (files) setAttachments(prev => [...prev, ...files.map(f => ({ type: 'file' as const, ...f }))]);
+    if (files) setAttachments(prev => [...prev, ...files.map(f => normalizeChatAttachment({ type: 'file' as const, ...f }))]);
   }, []);
 
   const handleAttachImages = useCallback(async () => {
     const images = await window.desktopAPI.selectImages();
-    if (images) setAttachments(prev => [...prev, ...images.map(i => ({ type: 'image' as const, ...i }))]);
+    if (images) setAttachments(prev => [...prev, ...images.map(i => normalizeChatAttachment({ type: 'image' as const, ...i }))]);
   }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
@@ -1086,7 +1111,7 @@ export default function App() {
 
       // Fall back to file handling
       const files = e.dataTransfer?.files;
-      if (files && files.length > 0) await addAttachmentsFromFiles(files);
+      if (files && files.length > 0) await addAttachmentsFromFiles(files, 'drop');
     } catch { }
   }, [addAttachmentsFromFiles]);
 
@@ -1095,10 +1120,18 @@ export default function App() {
       const cd = e.clipboardData;
       if (!cd) return;
       const files: File[] = Array.from(cd.items || []).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter((f): f is File => !!f);
-      if (files.length === 0) return;
-      const hasText = Array.from(cd.types || []).includes('text/plain');
-      if (!hasText) e.preventDefault();
-      await addAttachmentsFromFiles(files);
+      if (files.length > 0) {
+        const hasText = Array.from(cd.types || []).includes('text/plain');
+        if (!hasText) e.preventDefault();
+        await addAttachmentsFromFiles(files, 'clipboard-file');
+        return;
+      }
+
+      const text = cd.getData('text/plain');
+      if (shouldConvertPasteToDocumentAttachment(text)) {
+        e.preventDefault();
+        setAttachments((prev) => [...prev, createClipboardDocumentAttachment(text)]);
+      }
     } catch { }
   }, [addAttachmentsFromFiles]);
 

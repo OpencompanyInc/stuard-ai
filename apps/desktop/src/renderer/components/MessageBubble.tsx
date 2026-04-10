@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
 import { AudioPlayer } from './AudioPlayer';
+import { AttachmentPreviewStrip } from './AttachmentPreview';
 import { LinkPreview } from './LinkPreview';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
 import { Shimmer } from './ai-elements/Shimmer';
@@ -21,6 +22,7 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from './ai-elements/ChainOfThought';
+import type { ChatAttachment } from '../utils/attachments';
 
 // GenUI tools that render interactive UI components
 const GENUI_TOOL_NAMES = new Set([
@@ -397,6 +399,7 @@ interface MessageBubbleProps {
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void; // For syntax-based GenUI (```genui:...) responses
   compact?: boolean;
+  attachments?: ChatAttachment[];
   // Edit & Revert
   messageId?: string;
   onEditMessage?: (messageId: string, newText: string) => void;
@@ -1703,7 +1706,7 @@ function processCustomMarkdown(text: string): string {
   );
 }
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles, onRedoFiles }) => {
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, attachments, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles, onRedoFiles }) => {
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -2145,6 +2148,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     hasToolCalls ||
     Boolean(streamChunks?.some((chunk) => chunk.type === 'reasoning' || chunk.type === 'tool'))
   );
+  const shouldRenderTextBubble = compact || role !== 'user' || isEditing || Boolean(text.trim()) || segments.length > 0;
   const inlineChatUiBubbleClass = "w-full max-w-[85%] mr-auto";
 
   return (
@@ -2180,6 +2184,16 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               <span className="truncate max-w-[100px]">{ctx.name}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {attachments && attachments.length > 0 && (
+        <div className={clsx("mb-2 flex", role === 'user' ? 'justify-end' : 'justify-start')}>
+          <AttachmentPreviewStrip
+            attachments={attachments}
+            layout="wrap"
+            align={role === 'user' ? 'right' : 'left'}
+          />
         </div>
       )}
 
@@ -2337,19 +2351,20 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
           </>
         ) : (
           // Fallback to single bubble for user messages or when no streamChunks
-          <div className={clsx(
-            "text-[15px] relative group/bubble leading-relaxed transition-colors",
-            compact
-              ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
-              : clsx(
-                "rounded-2xl px-5 py-3.5",
-                role === 'user'
-                  ? (isEditing
-                    ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
-                    : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
-                  : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
-              )
-          )}>
+          shouldRenderTextBubble ? (
+            <div className={clsx(
+              "text-[15px] relative group/bubble leading-relaxed transition-colors",
+              compact
+                ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
+                : clsx(
+                  "rounded-2xl px-5 py-3.5",
+                  role === 'user'
+                    ? (isEditing
+                      ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
+                      : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
+                    : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
+                )
+            )}>
             {/* Edit mode for user messages */}
             {role === 'user' && isEditing ? (
               <div className="flex flex-col gap-2 w-full min-w-0">
@@ -2535,7 +2550,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 )}
               </div>
             )}
-          </div>
+            </div>
+          ) : null
         )}
         {/* Edit icon for user messages — outside bubble, in the gap */}
         {role === 'user' && !isEditing && !isStreaming && messageId && onEditMessage && (

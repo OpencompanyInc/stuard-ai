@@ -12,6 +12,7 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from './ai-elements/ChainOfThought';
+import type { ChatAttachment } from '../utils/attachments';
 
 // Performance constants
 const INITIAL_MESSAGES_TO_RENDER = 10; // Start with last 10 messages
@@ -32,6 +33,7 @@ interface Message {
   toolCalls?: ToolCall[];
   streamChunks?: StreamChunk[];
   contextPaths?: ContextPath[];
+  attachments?: ChatAttachment[];
   modifiedFiles?: string[];
   checkpointId?: string;
   reverted?: boolean;
@@ -125,6 +127,7 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
     prevProps.isStreaming === nextProps.isStreaming &&
     prevProps.toolCalls === nextProps.toolCalls &&
     prevProps.streamChunks === nextProps.streamChunks &&
+    prevProps.attachments === nextProps.attachments &&
     prevProps.reverted === nextProps.reverted &&
     prevProps.messageId === nextProps.messageId
   );
@@ -296,6 +299,7 @@ const MessageList: React.FC<MessageListProps> = ({
               toolCalls={m.toolCalls}
               streamChunks={m.streamChunks}
               contextPaths={m.contextPaths}
+              attachments={m.attachments}
               onSubmitToolOutput={onSubmitToolOutput}
               onGenUIResponse={onGenUIResponse}
               messageId={m.id}

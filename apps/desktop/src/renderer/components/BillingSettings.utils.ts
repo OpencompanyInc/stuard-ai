@@ -4,6 +4,7 @@ export interface UsageLogEntry {
   chatName: string | null;
   conversationId: string | null;
   sourceType: string;
+  sourceLabel: string | null;
   subagentKind: string | null;
   credits: number;
   costUsd: number;
@@ -165,8 +166,10 @@ function normalizeSourceType(value: unknown, model: string): string {
 
 export function getUsageSourceLabel(
   sourceType: string,
-  subagentKind?: string | null
+  subagentKind?: string | null,
+  sourceLabel?: string | null
 ): string {
+  if (sourceLabel) return sourceLabel;
   const normalized = String(sourceType || "usage").trim().toLowerCase();
   if (normalized === "subagent" && subagentKind) {
     return "Subagent";
@@ -245,6 +248,13 @@ export function normalizeUsageLogEntry(entry: any): UsageLogEntry {
         raw?.source_type,
       model
     ),
+    sourceLabel:
+      pickFirstString(
+        entry?.sourceLabel,
+        entry?.source_label,
+        raw?.sourceLabel,
+        raw?.source_label
+      ) || null,
     subagentKind:
       pickFirstString(
         entry?.subagentKind,

@@ -4,7 +4,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
-import { getMainAccessToken } from './auth-session';
+import {
+    getMainAccessToken,
+    getMainSupabaseClient,
+    getMainAuthSession,
+    onMainAuthSessionChange,
+} from './auth-session';
 import { execTool } from '../tools/index';
 import type { RouterContext } from '../tools/types';
 
@@ -478,4 +483,153 @@ async function connect() {
             reconnectTimer = setTimeout(connect, 5000);
         }
     }
+}
+
+// ── Voice Bridge via Supabase Realtime ──────────────────────────────────────
+// When cloud-ai starts a voice call for this user, it inserts a row into
+// `voice_bridge_requests`. We pick that up via Realtime, open a per-session
+// WS to cloud-ai, and act as the local tool bridge for the duration of the call.
+
+const VOICE_BRIDGE_TABLE = 'voice_bridge_requests';
+let voiceBridgeChannel: any = null;
+let voiceBridgeAuthUnsub: (() => void) | null = null;
+const activeVoiceBridges = new Map<string, WebSocket>();
+
+function getCloudAiWsUrl(): string {
+    const http = getCloudAiHttpBase().replace(/\/+$/, '');
+    const wsProto = http.startsWith('https://') ? 'wss://' : 'ws://';
+    const host = http.replace(/^https?:\/\//, '');
+    return `${wsProto}${host}/ws`;
+}
+
+function openVoiceBridge(sessionId: string): void {
+    if (activeVoiceBridges.has(sessionId)) return;
+
+    const token = getMainAccessToken();
+    if (!token) {
+        logger.warn(`[voice-bridge] No auth token, cannot open bridge for ${sessionId}`);
+        return;
+    }
+
+    const wsUrl = `${getCloudAiWsUrl()}?client=desktop&voice_session=${encodeURIComponent(sessionId)}`;
+    logger.info(`[voice-bridge] Opening bridge WS for session ${sessionId}`);
+
+    let bridgeWs: WebSocket;
+    try {
+        bridgeWs = new WebSocket(wsUrl);
+    } catch (e: any) {
+        logger.error(`[voice-bridge] WS creation failed: ${e?.message}`);
+        return;
+    }
+
+    activeVoiceBridges.set(sessionId, bridgeWs);
+
+    bridgeWs.on('open', () => {
+        logger.info(`[voice-bridge] Connected for session ${sessionId}, authenticating...`);
+        try {
+            bridgeWs.send(JSON.stringify({ type: 'auth', accessToken: token }));
+        } catch { }
+    });
+
+    bridgeWs.on('message', (data: WebSocket.RawData) => {
+        try {
+            const msg = JSON.parse(data.toString('utf8'));
+            if (msg.type === 'auth_result') {
+                logger.info(`[voice-bridge] Auth ${msg.ok ? 'ok' : 'failed'} for session ${sessionId}`);
+                return;
+            }
+            if (msg.type === 'tool_request') {
+                handleToolRequest(msg, bridgeWs);
+                return;
+            }
+            if (msg.type === 'handshake') {
+                return;
+            }
+        } catch (e: any) {
+            logger.error(`[voice-bridge] Message parse error: ${e?.message}`);
+        }
+    });
+
+    bridgeWs.on('close', () => {
+        logger.info(`[voice-bridge] Bridge WS closed for session ${sessionId}`);
+        activeVoiceBridges.delete(sessionId);
+    });
+
+    bridgeWs.on('error', (err: Error) => {
+        logger.error(`[voice-bridge] Bridge WS error for ${sessionId}: ${err.message}`);
+        activeVoiceBridges.delete(sessionId);
+        try { bridgeWs.close(); } catch { }
+    });
+}
+
+function handleVoiceBridgeRealtime(payload: any): void {
+    const row = payload?.new;
+    if (!row || row.status !== 'pending') return;
+
+    const sessionId = String(row.session_id || '');
+    if (!sessionId) return;
+
+    logger.info(`[voice-bridge] Realtime INSERT: session_id=${sessionId} channel=${row.channel}`);
+    openVoiceBridge(sessionId);
+}
+
+async function startVoiceBridgeListener(): Promise<void> {
+    const client = getMainSupabaseClient();
+    const session = getMainAuthSession();
+    const userId = session?.user?.id;
+    if (!client || !userId) return;
+
+    if (voiceBridgeChannel) {
+        try { await client.removeChannel(voiceBridgeChannel); } catch { }
+        voiceBridgeChannel = null;
+    }
+
+    try { client.realtime.setAuth(session.access_token); } catch { }
+
+    const ch = client
+        .channel(`voice-bridge:${userId}`)
+        .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: VOICE_BRIDGE_TABLE,
+            filter: `user_id=eq.${userId}`,
+        }, handleVoiceBridgeRealtime);
+
+    ch.subscribe((status: string) => {
+        if (ch !== voiceBridgeChannel) return;
+        if (status === 'SUBSCRIBED') {
+            logger.info(`[voice-bridge] Realtime subscribed for ${userId}`);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            logger.warn(`[voice-bridge] Realtime channel ${status}, will retry on next auth change`);
+        }
+    });
+
+    voiceBridgeChannel = ch;
+}
+
+function stopVoiceBridgeListener(): void {
+    if (voiceBridgeAuthUnsub) {
+        try { voiceBridgeAuthUnsub(); } catch { }
+        voiceBridgeAuthUnsub = null;
+    }
+    const client = getMainSupabaseClient();
+    if (client && voiceBridgeChannel) {
+        try { client.removeChannel(voiceBridgeChannel); } catch { }
+    }
+    voiceBridgeChannel = null;
+    for (const [, bridgeWs] of activeVoiceBridges) {
+        try { bridgeWs.close(); } catch { }
+    }
+    activeVoiceBridges.clear();
+}
+
+export function startVoiceBridgeService(): void {
+    voiceBridgeAuthUnsub = onMainAuthSessionChange(() => {
+        void startVoiceBridgeListener();
+    });
+    void startVoiceBridgeListener();
+}
+
+export function stopVoiceBridgeService(): void {
+    stopVoiceBridgeListener();
 }

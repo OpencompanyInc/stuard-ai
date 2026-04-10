@@ -55,3 +55,18 @@ export function extractClientType(rawUrl: string): string | undefined {
 
   return undefined;
 }
+
+export function extractQueryParam(rawUrl: string, param: string): string | undefined {
+  const qIndex = rawUrl.indexOf('?');
+  if (qIndex < 0) return undefined;
+
+  const search = rawUrl.slice(qIndex + 1);
+  for (const part of search.split('&')) {
+    const eqIndex = part.indexOf('=');
+    const k = eqIndex >= 0 ? decodeURIComponent(part.slice(0, eqIndex)) : decodeURIComponent(part);
+    if (k === param) {
+      return eqIndex >= 0 ? decodeURIComponent(part.slice(eqIndex + 1)) : '';
+    }
+  }
+  return undefined;
+}

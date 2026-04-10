@@ -341,6 +341,7 @@ async function processMessage(
       await logUsageEvent(userId, convId, model, {
         ...(result?.usage || {}),
         sourceType: 'discord_dm',
+        source_label: 'Discord DM',
       });
     } catch {}
 
@@ -376,6 +377,7 @@ async function processMessage(
         await logUsageEvent(userId, convId, modelId, {
           ...(result?.usage || {}),
           sourceType: 'discord_dm_fallback',
+          source_label: 'Discord DM',
         });
       } catch {}
       return { text: replyText || 'Sorry, I couldn\'t generate a response.' };

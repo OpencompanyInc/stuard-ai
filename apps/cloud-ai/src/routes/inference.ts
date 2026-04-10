@@ -46,12 +46,13 @@ async function validateStrictBearerAuth(req: IncomingMessage): Promise<{ userId:
 }
 
 /** Log inference usage after a successful generateText/embed call. */
-async function logInferenceUsage(userId: string | null, model: string, usage?: any): Promise<void> {
+async function logInferenceUsage(userId: string | null, model: string, usage?: any, sourceLabel?: string): Promise<void> {
   if (!userId) return;
   try {
     await logUsageEvent(userId, null, model, {
       ...(usage || {}),
       sourceType: 'inference',
+      ...(sourceLabel ? { source_label: sourceLabel } : {}),
     });
   } catch {}
 }
@@ -317,7 +318,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
           prompt: `${prompt}\n\nRespond with a valid JSON object matching this schema: ${JSON.stringify(schema.shape)}`,
           temperature: 0.2
         });
-        await logInferenceUsage(userId, modelId, out.usage);
+        await logInferenceUsage(userId, modelId, out.usage, 'Workflow Router');
         const obj = JSON.parse(out.text) as any;
         if (obj && typeof obj.next === 'string') result = { next: obj.next, argsPatch: obj.argsPatch };
       } catch {}
@@ -375,7 +376,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         values,
       });
 
-      await logInferenceUsage(embUserId, modelId, out.usage);
+      await logInferenceUsage(embUserId, modelId, out.usage, 'Embedding (batch)');
       writeJson(res, 200, { ok: true, embeddings: out.embeddings, model: modelId }, corsOrigin);
       return true;
     } catch (e: any) {
@@ -405,6 +406,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const task = String(body?.task || 'Analyze this media and provide a summary.');
       const media = Array.isArray(body?.media) ? body.media : [];
       const requestedModel = String(body?.model || '').trim().toLowerCase();
+      const callerLabel = typeof body?.source_label === 'string' ? body.source_label.trim() : '';
       
       if (media.length === 0) {
         writeJson(res, 400, { ok: false, error: 'no_media_provided' }, corsOrigin);
@@ -446,7 +448,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             },
           }),
         });
-        await logInferenceUsage(mediaUserId, mediaModelId, out.usage);
+        await logInferenceUsage(mediaUserId, mediaModelId, out.usage, callerLabel || 'Analyze Media');
 
         const summary = out.text?.trim() || '';
         writeJson(res, 200, { ok: true, summary, text: summary }, corsOrigin);
@@ -498,6 +500,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       }
 
       const { prompt, imageB64, mimeType, schema } = parsed.data;
+      const visionCallerLabel = typeof (body as any)?.source_label === 'string' ? (body as any).source_label.trim() : '';
 
       const prov = pickModelProvider();
 
@@ -534,7 +537,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         const visionModelId = `${prov.kind}/${prov.model}`;
         const textPrompt = `${prompt}\n\nRespond with a valid JSON object matching this schema: ${JSON.stringify(objSchema.shape)}`;
         const out = await generateText({ model: model as any, messages: [{ role: 'user', content: textPrompt }], temperature: 0.2 });
-        await logInferenceUsage(visionUserId, visionModelId, out.usage);
+        await logInferenceUsage(visionUserId, visionModelId, out.usage, visionCallerLabel || 'Vision Structured');
         object = JSON.parse(out.text);
       } catch {}
 
@@ -573,6 +576,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const modelChoice = body?.model === 'quality' ? 'quality' : 'fast';
       const temperature = typeof body?.temperature === 'number' ? body.temperature : 0.3;
       const systemPrompt = body?.systemPrompt ? String(body.systemPrompt) : undefined;
+      const textCallerLabel = typeof body?.source_label === 'string' ? body.source_label.trim() : '';
 
       if (!prompt) {
         writeJson(res, 400, { ok: false, error: 'prompt_required' }, corsOrigin);
@@ -595,7 +599,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             model: aiEmbeddingModel,
             value: textToEmbed,
           });
-          await logInferenceUsage(textUserId, embeddingModelId, embResult.usage);
+          await logInferenceUsage(textUserId, embeddingModelId, embResult.usage, textCallerLabel || 'Embedding');
 
           writeJson(res, 200, { ok: true, embedding: embResult.embedding, model: embeddingModelId }, corsOrigin);
           return true;
@@ -628,7 +632,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             messages,
             temperature,
           });
-          await logInferenceUsage(textUserId, modelId, result.usage);
+          await logInferenceUsage(textUserId, modelId, result.usage, textCallerLabel || 'AI Inference (JSON)');
 
           let jsonResult: any;
           try {
@@ -661,7 +665,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             messages,
             temperature,
           });
-          await logInferenceUsage(textUserId, modelId, result.usage);
+          await logInferenceUsage(textUserId, modelId, result.usage, textCallerLabel || 'AI Inference (text)');
 
           const text = result.text?.trim() || '';
           writeJson(res, 200, { ok: true, text, model: modelId }, corsOrigin);
@@ -712,7 +716,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         model: embModel,
         value: text.slice(0, 12000),
       });
-      await logInferenceUsage(singleEmbUserId, modelId, out.usage);
+      await logInferenceUsage(singleEmbUserId, modelId, out.usage, 'Embedding');
 
       writeJson(res, 200, { ok: true, embedding: out.embedding, model: modelId }, corsOrigin);
       return true;
@@ -781,7 +785,7 @@ Filename: ${filename}`;
         messages: [{ role: 'user', content }],
         temperature: 0.3,
       });
-      await logInferenceUsage(sumUserId, 'google/gemini-2.5-flash', result.usage);
+      await logInferenceUsage(sumUserId, 'google/gemini-2.5-flash', result.usage, 'File Summary');
 
       const text = result.text?.trim() || '';
       const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?=KEYWORDS:|$)/is);
@@ -877,7 +881,7 @@ Filename: ${filename}`;
         }
       }
       if (!result) throw lastError || new Error('no_available_model');
-      await logInferenceUsage(chatUserId, usedModelId || modelCandidates[0], result.usage);
+      await logInferenceUsage(chatUserId, usedModelId || modelCandidates[0], result.usage, 'Chat Proxy (browser-use)');
 
       const wantsJson = shouldNormalizeJsonOutput(nonEmptyMessages);
       const rawText = result.text?.trim() || '';

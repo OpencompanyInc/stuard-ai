@@ -640,6 +640,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         const userId = bridgeSecrets?.userId;
         if (userId && (promptTokens > 0 || completionTokens > 0)) {
           try {
+            const kindLabels: Record<string, string> = { browser: 'Browser Agent', file_ops: 'File Agent', workflow: 'Workflow Agent', media: 'Media Agent' };
             await logUsageEvent(userId, null, resolvedModelId, {
               ...usageData,
               promptTokens,
@@ -648,6 +649,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               sourceType: 'subagent',
               subagentKind: request.kind,
               subagentId,
+              source_label: `Subagent: ${kindLabels[request.kind] || request.kind}`,
             });
           } catch (e: any) {
             console.error(`[subagent:${subagentId}] failed to log usage:`, e?.message);
@@ -703,6 +705,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     const partialCt = Number(streamUsage?.completionTokens || streamUsage?.completion_tokens || streamUsage?.outputTokens || 0);
     if (partialUserId && (partialPt > 0 || partialCt > 0)) {
       try {
+        const kindLabels: Record<string, string> = { browser: 'Browser Agent', file_ops: 'File Agent', workflow: 'Workflow Agent', media: 'Media Agent' };
         await logUsageEvent(partialUserId, null, resolvedModel, {
           promptTokens: partialPt,
           completionTokens: partialCt,
@@ -711,6 +714,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           subagentKind: request.kind,
           subagentId,
           partial: true,
+          source_label: `Subagent: ${kindLabels[request.kind] || request.kind}`,
         });
       } catch (e: any) {
         console.error(`[subagent:${subagentId}] failed to log partial usage:`, e?.message);

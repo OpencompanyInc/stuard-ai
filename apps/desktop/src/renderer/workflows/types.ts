@@ -1,10 +1,12 @@
 export interface WorkflowItem {
   id: string;
   name?: string;
+  description?: string;
   updatedAt?: string;
   isRunning?: boolean;
   version?: string;
   marketplaceSlug?: string;
+  triggers?: string[];
   /** When true, this workflow is locked - code hidden, AI cannot modify, edits disabled */
   locked?: boolean;
   /** Folder this workflow belongs to (undefined = root) */

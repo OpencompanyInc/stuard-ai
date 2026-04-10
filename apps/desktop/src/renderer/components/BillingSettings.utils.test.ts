@@ -76,6 +76,38 @@ describe("BillingSettings log normalization", () => {
     );
   });
 
+  it("prefers source_label from raw when available", () => {
+    const log = normalizeUsageLogEntry({
+      id: "log_src",
+      model: "google/gemini-3.1-pro-preview",
+      credit_cost: 5,
+      raw: {
+        sourceType: "inference",
+        source_label: "Workflow: Study",
+      },
+      created_at: "2026-04-10T12:00:00.000Z",
+    });
+
+    expect(log.sourceLabel).toBe("Workflow: Study");
+    expect(getUsageSourceLabel(log.sourceType, log.subagentKind, log.sourceLabel)).toBe(
+      "Workflow: Study"
+    );
+  });
+
+  it("falls back to sourceType label when source_label is absent", () => {
+    const log = normalizeUsageLogEntry({
+      id: "log_no_src",
+      model: "openai/gpt-4o-mini",
+      credit_cost: 1,
+      created_at: "2026-04-10T12:01:00.000Z",
+    });
+
+    expect(log.sourceLabel).toBeNull();
+    expect(getUsageSourceLabel(log.sourceType, log.subagentKind, log.sourceLabel)).toBe(
+      "Chat"
+    );
+  });
+
   it("classifies messaging sources without relying on raw charAt access", () => {
     const log = normalizeUsageLogEntry({
       id: "log_3",

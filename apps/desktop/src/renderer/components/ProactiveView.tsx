@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import {
-  Play, Plus, Trash2, Check, Clock, Camera, Mic, Volume2,
-  Shield, ChevronDown, ChevronRight, Loader2, Cloud, Monitor,
-  Bell, MessageSquare, Phone, Zap, Brain, Cpu, CheckCircle2, XCircle,
-  Eye, ListTodo, Settings2, Activity, LayoutDashboard,
+  Play, Pause, Plus, Trash2, Check, Clock, Camera, Mic, Volume2,
+  ChevronDown, ChevronRight, Loader2, Cloud, Monitor,
+  Bell, MessageSquare, Phone, Sparkles, CheckCircle2, XCircle,
+  ListTodo, Settings2, Activity,
 } from 'lucide-react';
 import { ReasoningBlock } from './ReasoningBlock';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
@@ -82,6 +82,30 @@ function formatDateTime(dateStr: string | null | undefined): string {
   return new Date(dateStr).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+function formatClockTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '--';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase();
+}
+
+function formatShortScheduleLabel(interval: ScheduleInterval): string {
+  switch (interval) {
+    case '10m': return '10 mins';
+    case '15m': return '15 mins';
+    case '30m': return '30 mins';
+    case '1h': return '1 hour';
+    case '2h': return '2 hours';
+    case 'random': return 'Random';
+    case 'manual': return 'Manual';
+    default: return SCHEDULE_LABELS[interval];
+  }
+}
+
+function padCount(value: number): string {
+  return String(Math.max(0, value)).padStart(2, '0');
+}
+
 function formatDuration(startedAt: string, completedAt?: string | null): string | null {
   const start = new Date(startedAt).getTime();
   const end = new Date(completedAt || Date.now()).getTime();
@@ -137,6 +161,74 @@ const STATUS_CONFIG: Record<ProactiveTaskStatus, { label: string; color: string;
   completed: { label: 'Done', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
   failed: { label: 'Failed', color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20' },
 };
+
+type BadgeTone = 'neutral' | 'primary' | 'warning' | 'success' | 'danger';
+
+function toneForTaskStatus(status: ProactiveTaskStatus): BadgeTone {
+  switch (status) {
+    case 'completed': return 'success';
+    case 'failed': return 'danger';
+    case 'in_progress': return 'warning';
+    case 'queued':
+    default:
+      return 'neutral';
+  }
+}
+
+function DashboardBadge({
+  label,
+  tone = 'neutral',
+  icon: Icon,
+  className,
+}: {
+  label: string;
+  tone?: BadgeTone;
+  icon?: any;
+  className?: string;
+}) {
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold',
+        tone === 'primary' && 'border-primary/25 bg-primary/10 text-primary',
+        tone === 'warning' && 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+        tone === 'success' && 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
+        tone === 'danger' && 'border-red-500/20 bg-red-500/10 text-red-300',
+        tone === 'neutral' && 'border-theme/10 bg-theme-card/70 text-theme-muted',
+        className,
+      )}
+    >
+      {Icon && <Icon className="h-3.5 w-3.5" />}
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function OverviewMetricCard({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={clsx('dashboard-card min-h-[120px] p-5', className)}>
+      <div className="text-[36px] font-semibold tracking-tight text-theme-fg leading-none">{value}</div>
+      <div className="mt-3 text-sm font-medium text-theme-muted">{label}</div>
+    </div>
+  );
+}
+
+function ConfigMetricCard({ value, label }: { value: React.ReactNode; label: string }) {
+  return (
+    <div className="dashboard-card-muted min-h-[92px] p-4">
+      <div className="text-[20px] font-semibold tracking-tight text-theme-fg">{value}</div>
+      <div className="mt-2 text-sm text-theme-muted">{label}</div>
+    </div>
+  );
+}
 
 // ─── Toggle ──────────────────────────────────────────────────────────────────
 
@@ -221,21 +313,33 @@ function ToolSelector({ selected, available, onChange }: { selected: string[]; a
 // ─── Task Card ───────────────────────────────────────────────────────────────
 
 function TaskCard({ task, onDelete }: { task: ProactiveTask; onDelete: (id: string) => void }) {
-  const sc = STATUS_CONFIG[task.status];
   return (
-    <div className={clsx('group flex items-start gap-3 rounded-lg border p-3 transition hover:bg-theme-hover/10', sc.border, 'bg-theme-card/20')}>
-      <span className={clsx('mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-xs', sc.bg, sc.color)}>
-        {task.status === 'completed' ? <Check className="w-3 h-3" /> : task.status === 'failed' ? <XCircle className="w-3 h-3" /> : task.status === 'in_progress' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-theme-fg leading-snug">{task.title}</div>
-        {task.instructions && <div className="mt-1 text-xs text-theme-muted line-clamp-2">{task.instructions}</div>}
-        {task.result && <div className="mt-1.5 rounded-md bg-emerald-500/8 border border-emerald-500/15 px-2 py-1 text-xs text-emerald-300 line-clamp-2">{task.result}</div>}
-        <div className="mt-1.5 text-[10px] text-theme-muted/60">{timeAgo(task.updatedAt)}</div>
-      </div>
-      <button onClick={() => onDelete(task.id)} className="rounded p-1 text-theme-muted/40 opacity-0 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100" title="Delete">
+    <div className="dashboard-card-muted group p-4 transition hover:bg-theme-hover/30">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-theme-muted/55">
+            {timeAgo(task.createdAt)}
+          </div>
+          <div className="mt-2 text-[15px] font-medium leading-6 text-theme-fg">
+            {task.title}
+          </div>
+          {task.instructions && (
+            <div className="mt-1.5 text-sm leading-6 text-theme-muted line-clamp-2">
+              {task.instructions}
+            </div>
+          )}
+          <div className="mt-3">
+            <DashboardBadge label={STATUS_CONFIG[task.status].label} tone={toneForTaskStatus(task.status)} />
+          </div>
+        </div>
+        <button
+          onClick={() => onDelete(task.id)}
+          className="rounded-xl p-2 text-theme-muted/45 opacity-0 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+          title="Remove task"
+        >
         <Trash2 className="w-3 h-3" />
-      </button>
+        </button>
+      </div>
     </div>
   );
 }
@@ -610,6 +714,10 @@ export function ProactiveView() {
     finally { setSaving(false); }
   }, []);
 
+  const handleToggleEnabled = useCallback(() => {
+    updateConfig({ enabled: !config.enabled });
+  }, [config.enabled, updateConfig]);
+
   const handleAddTask = useCallback(async () => {
     if (!newTitle.trim()) return;
     const res = await window.desktopAPI.proactiveAddTask({ title: newTitle.trim(), instructions: newInstructions.trim() });
@@ -621,6 +729,14 @@ export function ProactiveView() {
     const res = await window.desktopAPI.proactiveDeleteTask(id);
     if (res.tasks) setTasks(res.tasks);
   }, []);
+
+  const handleClearQueued = useCallback(async (items: ProactiveTask[]) => {
+    if (items.length === 0) return;
+    for (const task of items) {
+      await window.desktopAPI.proactiveDeleteTask(task.id);
+    }
+    await loadData();
+  }, [loadData]);
 
   const handleTriggerNow = useCallback(async () => {
     setWakeUpRunning(true);
@@ -636,20 +752,36 @@ export function ProactiveView() {
   }, [tasks]);
 
   const pendingCount = tasksByStatus.queued.length + tasksByStatus.in_progress.length;
-  const completedToday = useMemo(() => logs.filter(l => l.status === 'completed' && new Date(l.startedAt).toDateString() === new Date().toDateString()).length, [logs]);
-  const lastWakeUpAt = config.lastWakeUpAt || logs[0]?.startedAt || null;
   const notificationChannels = config.notificationChannels || ['app'];
   const modelMode = (config.modelMode || 'balanced') as ProactiveModelMode;
   const executionTargetMeta = EXECUTION_TARGET_LABELS[config.executionTarget];
   const modelModeMeta = PROACTIVE_MODEL_MODE_LABELS[modelMode];
-
-  // Active tasks to show (hide completed/failed unless they exist)
-  const visibleTaskStatuses: ProactiveTaskStatus[] = useMemo(() => {
-    const show: ProactiveTaskStatus[] = ['queued', 'in_progress'];
-    if (tasksByStatus.failed.length > 0) show.push('failed');
-    if (tasksByStatus.completed.length > 0) show.push('completed');
-    return show;
-  }, [tasksByStatus]);
+  const sectionTitle = activeTab === 'overview' ? 'Overview' : activeTab === 'activity' ? 'Activity' : 'Configuration';
+  const activeTasks = useMemo(
+    () => [...tasksByStatus.in_progress, ...tasksByStatus.queued],
+    [tasksByStatus.in_progress, tasksByStatus.queued],
+  );
+  const currentTask = activeTasks[0] || null;
+  const queuedTasks = useMemo(
+    () => (currentTask ? activeTasks.filter(task => task.id !== currentTask.id) : activeTasks),
+    [activeTasks, currentTask],
+  );
+  const schedulerState = wakeUpRunning
+    ? { label: 'Checking in', tone: 'warning' as const }
+    : config.enabled
+      ? { label: 'Running', tone: 'success' as const }
+      : { label: 'Paused', tone: 'warning' as const };
+  const nextCheckInValue = useMemo(() => {
+    if (config.nextWakeUpAt) return formatClockTime(config.nextWakeUpAt);
+    if (config.interval === 'manual') return 'Manual';
+    return config.enabled ? 'Waiting' : 'Paused';
+  }, [config.enabled, config.interval, config.nextWakeUpAt]);
+  const currentTaskTone = currentTask
+    ? (!config.enabled ? 'warning' : toneForTaskStatus(currentTask.status))
+    : 'neutral';
+  const currentTaskLabel = currentTask
+    ? (!config.enabled ? 'Paused' : currentTask.status === 'in_progress' ? 'Working now' : 'Queued')
+    : 'No active task';
 
   if (loading) {
     return (
@@ -661,222 +793,277 @@ export function ProactiveView() {
   }
 
   return (
-    <div className="flex flex-col h-full animate-in fade-in duration-300">
-      {/* ── Top bar ─────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 border-b border-theme/8 px-5 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-base font-bold text-theme-fg">Proactive</h1>
-            <div className="flex items-center gap-2">
-              <Toggle checked={config.enabled} onChange={v => updateConfig({ enabled: v })} />
-              <span className={clsx('text-[10px] font-semibold uppercase', config.enabled ? 'text-emerald-400' : 'text-theme-muted/60')}>
-                {config.enabled ? 'On' : 'Off'}
-              </span>
-            </div>
-            {saving && <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />}
+    <div className="flex h-full min-h-0 flex-col animate-in fade-in duration-300">
+      <div className="flex-shrink-0 px-1 pb-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <h1 className="font-stuard text-[32px] font-semibold tracking-tight text-theme-fg">Proactive</h1>
+            <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+              <span>Configure autonomous agent behavior and monitoring parameters.</span>
+            </p>
           </div>
-
-          <div className="flex items-center gap-2">
-            {/* Status chips */}
-            <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-theme-muted/70">
-              <span className="px-2 py-0.5 rounded bg-theme-hover/20">{executionTargetMeta.label}</span>
-              <span className="px-2 py-0.5 rounded bg-theme-hover/20">{modelModeMeta.label}</span>
-              <span className="px-2 py-0.5 rounded bg-theme-hover/20">{SCHEDULE_LABELS[config.interval]}</span>
-              {config.enabled && config.nextWakeUpAt && (
-                <span className="px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">Next: {timeUntil(config.nextWakeUpAt)}</span>
-              )}
-            </div>
-
+          <div className="flex flex-wrap items-center gap-3">
+            {saving && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
             <button
-              onClick={handleTriggerNow} disabled={wakeUpRunning}
-              className={clsx(
-                'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition',
-                wakeUpRunning ? 'bg-amber-500/15 text-amber-300' : 'bg-primary text-primary-fg hover:opacity-90'
-              )}
+              onClick={handleTriggerNow}
+              disabled={wakeUpRunning}
+              className="dashboard-button-secondary inline-flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
             >
               {wakeUpRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-              {wakeUpRunning ? 'Running...' : 'Run now'}
+              {wakeUpRunning ? 'Running...' : 'Run Once'}
+            </button>
+            <button
+              onClick={handleToggleEnabled}
+              disabled={saving}
+              className={clsx(
+                'inline-flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
+                config.enabled
+                  ? 'dashboard-button-secondary text-theme-fg'
+                  : 'dashboard-button-primary',
+              )}
+            >
+              {config.enabled ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+              {config.enabled ? 'Pause' : 'Resume'}
             </button>
           </div>
         </div>
-
-        {/* Tab strip */}
-        <div className="flex gap-0.5 mt-2.5 -mb-[13px]">
-          {([
-            { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-            { id: 'activity' as const, label: 'Activity', icon: Activity },
-            { id: 'settings' as const, label: 'Settings', icon: Settings2 },
-          ]).map(tab => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={clsx(
-                  'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-lg transition border border-b-0',
-                  active ? 'bg-theme-bg border-theme/10 text-theme-fg' : 'border-transparent text-theme-muted hover:text-theme-fg'
-                )}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
-      {/* ── Content ─────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-minimal">
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 scrollbar-minimal">
+        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="text-[22px] font-semibold tracking-tight text-theme-fg">{sectionTitle}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <DashboardBadge label={schedulerState.label} tone={schedulerState.tone} />
+            {([
+              { id: 'overview' as const, label: 'Tasks', icon: ListTodo },
+              { id: 'activity' as const, label: 'Activity', icon: Activity },
+              { id: 'settings' as const, label: 'Configuration', icon: Settings2 },
+            ]).map(tab => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={clsx(
+                    'inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium transition',
+                    active
+                      ? 'border-primary/45 bg-theme-card/80 text-theme-fg shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
+                      : 'border-theme/10 bg-theme-card/45 text-theme-muted hover:bg-theme-hover/25 hover:text-theme-fg',
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{tab.label}</span>
+                  {tab.id === 'overview' && (
+                    <span
+                      className={clsx(
+                        'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
+                        active ? 'bg-white text-slate-900' : 'bg-theme-hover/60 text-theme-muted',
+                      )}
+                    >
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* ─── Overview tab ─────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="space-y-5 max-w-4xl animate-in fade-in duration-300">
+          <div className="space-y-6 animate-in fade-in duration-300">
 
             {/* Live progress (only while running) */}
             {stageState && (
-              <div className="space-y-3">
-                <div className="text-xs font-semibold text-theme-fg">Live check-in</div>
+              <div className="dashboard-card p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-theme-fg">Live check-in</div>
+                  <DashboardBadge label="In progress" tone="warning" icon={Loader2} />
+                </div>
                 <StageProgress stageState={stageState} />
                 {currentStageLog && <WakeUpDiagnostics log={currentStageLog} modelById={modelById} />}
               </div>
             )}
 
-            {/* Quick stats row */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 px-3.5 py-3">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-theme-muted/50">Next check-in</div>
-                <div className="mt-1 text-lg font-bold text-theme-fg">
-                  {!config.enabled ? 'Paused' : config.interval === 'manual' ? 'Manual' : timeUntil(config.nextWakeUpAt)}
-                </div>
-              </div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 px-3.5 py-3">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-theme-muted/50">Pending tasks</div>
-                <div className="mt-1 text-lg font-bold text-theme-fg">{pendingCount}</div>
-              </div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 px-3.5 py-3">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-theme-muted/50">Today</div>
-                <div className="mt-1 text-lg font-bold text-theme-fg">{completedToday} <span className="text-xs font-normal text-theme-muted">check-in{completedToday !== 1 ? 's' : ''}</span></div>
-              </div>
-            </div>
-
-            {/* Last message */}
-            {logs[0]?.agentMessage && logs[0].status !== 'running' && (
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 p-3.5">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-theme-muted/50 mb-1.5">Last check-in <span className="normal-case font-normal">{timeAgo(logs[0].startedAt)}</span></div>
-                <div className="text-sm text-theme-fg leading-relaxed">{logs[0].agentMessage}</div>
-              </div>
-            )}
-
-            {/* Focus brief */}
-            <div className="rounded-lg border border-theme/8 bg-theme-card/20 p-3.5">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-semibold text-theme-fg">Focus brief</div>
-                {saving && <span className="text-[10px] text-primary font-medium">Saving...</span>}
-              </div>
-              <textarea
-                value={config.instructions}
-                onChange={e => setConfig(prev => ({ ...prev, instructions: e.target.value }))}
-                onBlur={() => updateConfig({ instructions: config.instructions })}
-                placeholder="Tell Stuard what to watch for — e.g., remind me about breaks, suggest summaries after meetings, flag tasks I keep postponing..."
-                rows={3}
-                className="w-full resize-none rounded-md border border-theme/8 bg-theme-bg/30 px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/35 focus:border-primary/30 focus:outline-none leading-relaxed"
-              />
-            </div>
-
-            {/* Tasks */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-xs font-semibold text-theme-fg">Tasks</div>
-                <button onClick={() => setShowAddTask(prev => !prev)} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 transition">
-                  <Plus className="w-3 h-3" />
-                  Add
-                </button>
-              </div>
-
-              {showAddTask && (
-                <div className="mb-3 rounded-lg border border-primary/15 bg-primary/5 p-3 animate-in slide-in-from-top-1 duration-200">
-                  <input
-                    type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)}
-                    placeholder="Task title" autoFocus
-                    onKeyDown={e => e.key === 'Enter' && handleAddTask()}
-                    className="w-full rounded-md border border-theme/10 bg-theme-bg/40 px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
-                  />
-                  <textarea
-                    value={newInstructions} onChange={e => setNewInstructions(e.target.value)}
-                    placeholder="Optional instructions..."
-                    rows={2}
-                    className="w-full mt-2 resize-none rounded-md border border-theme/10 bg-theme-bg/40 px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
-                  />
-                  <div className="flex justify-end gap-2 mt-2">
-                    <button onClick={() => { setShowAddTask(false); setNewTitle(''); setNewInstructions(''); }} className="rounded-md px-3 py-1.5 text-xs text-theme-muted hover:text-theme-fg transition">Cancel</button>
-                    <button onClick={handleAddTask} disabled={!newTitle.trim()} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-fg hover:opacity-90 disabled:opacity-40 transition">Save</button>
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.15fr)]">
+              <div className="space-y-6">
+                <section className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <OverviewMetricCard label="Next Check-in" value={nextCheckInValue} />
+                    <OverviewMetricCard label="Pending Tasks" value={pendingCount} />
+                    <OverviewMetricCard label="Total Check-ins" value={padCount(logs.length)} className="md:col-span-2" />
                   </div>
-                </div>
-              )}
+                </section>
 
-              {tasks.length === 0 && !showAddTask ? (
-                <div className="rounded-lg border border-dashed border-theme/10 bg-theme-bg/10 px-4 py-8 text-center text-xs text-theme-muted/60">
-                  No tasks yet. Add specific things for Stuard to track during check-ins.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {visibleTaskStatuses.map(status => {
-                    const items = tasksByStatus[status];
-                    if (items.length === 0 && (status === 'completed' || status === 'failed')) return null;
-                    const sc = STATUS_CONFIG[status];
-                    return (
-                      <div key={status}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={clsx('text-[10px] font-semibold uppercase tracking-wider', sc.color)}>{sc.label}</span>
-                          <span className="text-[10px] text-theme-muted/40">{items.length}</span>
-                        </div>
-                        {items.length === 0 ? (
-                          <div className="rounded-md border border-dashed border-theme/8 py-3 text-center text-[10px] text-theme-muted/40">None</div>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {items.map(task => <TaskCard key={task.id} task={task} onDelete={handleDeleteTask} />)}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                <section className="space-y-4">
+                  <div className="text-sm font-semibold text-theme-fg">Config</div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <ConfigMetricCard value={executionTargetMeta.label} label={config.enabled ? 'Enabled' : 'Disabled'} />
+                    <ConfigMetricCard value={modelModeMeta.label} label="Intelligence Level" />
+                    <ConfigMetricCard value={formatShortScheduleLabel(config.interval)} label="Check-in Interval" />
+                  </div>
+                </section>
 
-            {/* Recent activity (compact) */}
-            {logs.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-xs font-semibold text-theme-fg">Recent activity</div>
-                  <button onClick={() => setActiveTab('activity')} className="text-[10px] font-medium text-primary hover:underline">View all</button>
-                </div>
-                <div className="space-y-1.5">
-                  {logs.slice(0, 5).map(log => <WakeUpLogEntry key={log.id} log={log} modelById={modelById} />)}
-                </div>
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-theme-fg">Focus Brief</div>
+                    {saving && <span className="text-[11px] font-medium text-primary">Saving...</span>}
+                  </div>
+                  <div className="dashboard-card p-4">
+                    <textarea
+                      value={config.instructions}
+                      onChange={e => setConfig(prev => ({ ...prev, instructions: e.target.value }))}
+                      onBlur={() => updateConfig({ instructions: config.instructions })}
+                      placeholder="Monitor localhost ports, alert on prolonged inactivity, and surface action items from meetings."
+                      rows={5}
+                      className="min-h-[140px] w-full resize-none rounded-2xl border border-theme/10 bg-theme-bg/30 px-4 py-3 text-sm leading-7 text-theme-fg placeholder:text-theme-muted/35 focus:border-primary/30 focus:outline-none"
+                    />
+                  </div>
+                </section>
               </div>
-            )}
+
+              <div className="space-y-6">
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-theme-fg">Current Task</div>
+                    <button
+                      onClick={() => setShowAddTask(prev => !prev)}
+                      className="dashboard-button-secondary inline-flex h-9 items-center gap-2 rounded-2xl px-3 text-xs font-medium transition"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Task
+                    </button>
+                  </div>
+
+                  {showAddTask && (
+                    <div className="dashboard-card-muted p-4 animate-in slide-in-from-top-1 duration-200">
+                      <input
+                        type="text"
+                        value={newTitle}
+                        onChange={e => setNewTitle(e.target.value)}
+                        placeholder="Task title"
+                        autoFocus
+                        onKeyDown={e => e.key === 'Enter' && handleAddTask()}
+                        className="w-full rounded-2xl border border-theme/10 bg-theme-bg/35 px-4 py-3 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
+                      />
+                      <textarea
+                        value={newInstructions}
+                        onChange={e => setNewInstructions(e.target.value)}
+                        placeholder="Optional instructions..."
+                        rows={3}
+                        className="mt-3 w-full resize-none rounded-2xl border border-theme/10 bg-theme-bg/35 px-4 py-3 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
+                      />
+                      <div className="mt-3 flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => { setShowAddTask(false); setNewTitle(''); setNewInstructions(''); }}
+                          className="rounded-2xl px-4 py-2 text-xs font-medium text-theme-muted transition hover:text-theme-fg"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleAddTask}
+                          disabled={!newTitle.trim()}
+                          className="dashboard-button-primary rounded-2xl px-4 py-2 text-xs font-semibold text-primary-fg transition disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Save Task
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="dashboard-card min-h-[194px] p-5">
+                    {currentTask ? (
+                      <div className="flex h-full flex-col justify-between gap-6">
+                        <div className="space-y-4">
+                          <DashboardBadge label={currentTaskLabel} tone={currentTaskTone} />
+                          <div className="text-[26px] font-medium tracking-tight text-theme-fg leading-[1.3]">
+                            {currentTask.title}
+                          </div>
+                          <div className="max-w-2xl text-sm leading-7 text-theme-muted">
+                            {currentTask.instructions || 'This task will stay ready for Stuard to pick up on the next check-in.'}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-theme-muted">
+                            Updated {timeAgo(currentTask.updatedAt)}
+                          </div>
+                          <button
+                            onClick={() => handleDeleteTask(currentTask.id)}
+                            className="dashboard-button-secondary inline-flex h-9 items-center gap-2 rounded-2xl px-3 text-xs font-medium transition"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            End Task
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-full min-h-[154px] items-center justify-center rounded-[26px] border border-dashed border-theme/10 bg-theme-bg/20 px-6 text-center">
+                        <div>
+                          <div className="text-base font-medium text-theme-fg">No current task</div>
+                          <div className="mt-2 text-sm leading-6 text-theme-muted">
+                            Add a proactive task to give Stuard something concrete to monitor or complete during check-ins.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-theme-fg">Queued</div>
+                    {queuedTasks.length > 0 && (
+                      <button
+                        onClick={() => handleClearQueued(queuedTasks)}
+                        className="rounded-2xl px-3 py-1.5 text-xs font-medium text-theme-muted transition hover:bg-theme-hover/20 hover:text-theme-fg"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                  </div>
+
+                  {queuedTasks.length > 0 ? (
+                    <div className="space-y-3">
+                      {queuedTasks.map(task => <TaskCard key={task.id} task={task} onDelete={handleDeleteTask} />)}
+                    </div>
+                  ) : (
+                    <div className="dashboard-card min-h-[176px] p-5">
+                      <div className="flex h-full min-h-[132px] items-center justify-center rounded-[26px] border border-dashed border-theme/10 bg-theme-bg/20 px-6 text-center">
+                        <div>
+                          <div className="text-base font-medium text-theme-fg">Nothing queued</div>
+                          <div className="mt-2 text-sm leading-6 text-theme-muted">
+                            When you add more proactive tasks, they will show up here in the order Stuard will handle them.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
           </div>
         )}
 
         {/* ─── Activity tab ─────────────────────────────────────────── */}
         {activeTab === 'activity' && (
-          <div className="space-y-4 max-w-4xl animate-in fade-in duration-300">
+          <div className="space-y-4 max-w-5xl animate-in fade-in duration-300">
             {stageState && (
               <div className="space-y-3">
-                <div className="text-xs font-semibold text-theme-fg">Live</div>
+                <div className="text-sm font-semibold text-theme-fg">Live</div>
                 <StageProgress stageState={stageState} />
                 {currentStageLog && <WakeUpDiagnostics log={currentStageLog} modelById={modelById} />}
               </div>
             )}
 
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-theme-fg">Check-in history</div>
-              <span className="text-[10px] text-theme-muted/50">{logs.length} entries</span>
+              <div className="text-sm font-semibold text-theme-fg">Check-in history</div>
+              <span className="text-[11px] text-theme-muted/50">{logs.length} entries</span>
             </div>
 
             {logs.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-theme/10 bg-theme-bg/10 px-4 py-12 text-center text-xs text-theme-muted/60">
+              <div className="dashboard-card rounded-[28px] border-dashed bg-theme-bg/10 px-4 py-12 text-center text-xs text-theme-muted/60">
                 No proactive history yet. Run a check-in to see results here.
               </div>
             ) : (
@@ -889,11 +1076,11 @@ export function ProactiveView() {
 
         {/* ─── Settings tab ─────────────────────────────────────────── */}
         {activeTab === 'settings' && (
-          <div className="space-y-6 max-w-3xl animate-in fade-in duration-300">
+          <div className="space-y-6 max-w-4xl animate-in fade-in duration-300">
 
             {/* Behavior */}
             <section>
-              <div className="text-xs font-semibold text-theme-fg mb-3">Behavior</div>
+              <div className="text-sm font-semibold text-theme-fg mb-3">Behavior</div>
               <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
                 {/* Enable toggle */}
                 <div className="flex items-center justify-between px-4 py-3">
@@ -950,7 +1137,7 @@ export function ProactiveView() {
 
             {/* Model */}
             <section>
-              <div className="text-xs font-semibold text-theme-fg mb-3">Model</div>
+              <div className="text-sm font-semibold text-theme-fg mb-3">Model</div>
               <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
                 <div className="px-4 py-3">
                   <div className="text-xs font-medium text-theme-muted mb-2">Intelligence level</div>
@@ -984,7 +1171,7 @@ export function ProactiveView() {
 
             {/* Context & permissions */}
             <section>
-              <div className="text-xs font-semibold text-theme-fg mb-3">Context & permissions</div>
+              <div className="text-sm font-semibold text-theme-fg mb-3">Context & permissions</div>
               <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
                 {[
                   { key: 'screenshot' as const, label: 'Screen capture', icon: Camera, desc: 'Inspect the active window during check-ins' },
@@ -1018,7 +1205,7 @@ export function ProactiveView() {
 
             {/* Notifications */}
             <section>
-              <div className="text-xs font-semibold text-theme-fg mb-3">Notifications</div>
+              <div className="text-sm font-semibold text-theme-fg mb-3">Notifications</div>
               <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
                 {(Object.entries(NOTIFICATION_CHANNEL_LABELS) as Array<[NotificationChannel, { label: string; description: string }]>).map(([ch, info]) => {
                   const isActive = notificationChannels.includes(ch);
@@ -1048,7 +1235,7 @@ export function ProactiveView() {
 
             {/* Focus brief (in settings too for convenience) */}
             <section>
-              <div className="text-xs font-semibold text-theme-fg mb-3">Focus brief</div>
+              <div className="text-sm font-semibold text-theme-fg mb-3">Focus brief</div>
               <div className="rounded-lg border border-theme/8 bg-theme-card/20 p-3.5">
                 <textarea
                   value={config.instructions}

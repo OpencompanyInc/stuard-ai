@@ -873,7 +873,8 @@ export const BillingSettings: React.FC = () => {
                   {usageLogs.map((log) => {
                     const sourceLabel = getUsageSourceLabel(
                       log.sourceType,
-                      log.subagentKind
+                      log.subagentKind,
+                      log.sourceLabel
                     );
                     const sourceCategory = getUsageSourceCategory(
                       log.sourceType,

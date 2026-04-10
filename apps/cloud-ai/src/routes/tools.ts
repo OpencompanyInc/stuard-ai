@@ -184,6 +184,7 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
             provider: 'elevenlabs',
             endpoint: '/tools/text_to_speech',
             textLength: text.length,
+            source_label: 'Text to Speech',
             voiceId,
             modelId,
             format,

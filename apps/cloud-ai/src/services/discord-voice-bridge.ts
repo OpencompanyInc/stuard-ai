@@ -36,6 +36,14 @@ import {
   type VoiceSessionConfig,
 } from '../voice';
 import { findUserIdByDiscordId } from '../supabase';
+import {
+  executeVoiceToolCall,
+  truncateVoiceToolResult,
+} from '../voice/voice-runtime-tools';
+import {
+  requestDesktopBridge,
+  cleanupVoiceBridge,
+} from '../voice/voice-bridge-manager';
 
 const LOG_PREFIX = '[discord-voice]';
 
@@ -96,6 +104,7 @@ function upsample24kMonoTo48kStereo(input: Buffer): Buffer {
 interface DiscordVoiceCall {
   discordUserId: string;
   userId: string;
+  voiceSessionId: string;
   connection: VoiceConnection;
   player: AudioPlayer;
   session: VoiceSession;
@@ -145,18 +154,31 @@ export async function bridgeDiscordVoice(opts: {
     return null;
   }
 
-  console.log(LOG_PREFIX, 'Starting voice bridge', { discordUserId, userId: userId.slice(0, 8), providerId });
+  const voiceSessionId = `discord-${discordUserId}-${Date.now()}`;
+  console.log(LOG_PREFIX, 'Starting voice bridge', { discordUserId, userId: userId.slice(0, 8), providerId, voiceSessionId });
 
-  // Build voice context (system prompt, tools, user info)
+  // Build voice context + request desktop bridge in parallel
   let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
-  try {
-    voiceContext = await buildVoiceContext({
+  const [ctxResult] = await Promise.allSettled([
+    buildVoiceContext({
       userId,
-      direction: 'inbound', // User initiated the call
+      direction: 'inbound',
       customPrompt: 'This is a Discord voice call (not a phone call). The user is talking to you through Discord DMs.',
-    });
-  } catch (e: any) {
-    console.warn(LOG_PREFIX, 'Failed to load voice context:', e?.message);
+    }),
+    requestDesktopBridge(userId, voiceSessionId, 'discord').then((bridgeWs) => {
+      if (bridgeWs) {
+        console.log(LOG_PREFIX, 'Desktop bridge established', { voiceSessionId });
+      } else {
+        console.log(LOG_PREFIX, 'Desktop bridge not available', { voiceSessionId });
+      }
+    }),
+  ]);
+
+  if (ctxResult.status === 'fulfilled' && ctxResult.value) {
+    voiceContext = ctxResult.value;
+  } else {
+    console.warn(LOG_PREFIX, 'Failed to load voice context:',
+      ctxResult.status === 'rejected' ? ctxResult.reason?.message : 'null');
   }
 
   // Join the voice channel
@@ -213,7 +235,7 @@ export async function bridgeDiscordVoice(opts: {
       }
     },
     onFunctionCall: (callId, name, argsJson) => {
-      handleFunctionCall(callId, name, argsJson, userId, session)
+      handleFunctionCall(callId, name, argsJson, userId, voiceSessionId, session)
         .catch(err => {
           console.error(LOG_PREFIX, 'Function call error:', err?.message);
           session?.sendFunctionResult?.(callId, JSON.stringify({ error: err?.message || 'failed' }));
@@ -233,6 +255,7 @@ export async function bridgeDiscordVoice(opts: {
   const call: DiscordVoiceCall = {
     discordUserId,
     userId,
+    voiceSessionId,
     connection,
     player,
     session,
@@ -354,6 +377,7 @@ function cleanupCall(discordUserId: string): void {
       call.connection.destroy();
     }
   } catch {}
+  cleanupVoiceBridge(call.voiceSessionId);
 
   activeCalls.delete(discordUserId);
 }
@@ -369,108 +393,20 @@ async function handleFunctionCall(
   name: string,
   argsJson: string,
   userId: string,
+  voiceSessionId: string,
   session: VoiceSession | null,
 ): Promise<void> {
   const startTime = Date.now();
-  let args: Record<string, any> = {};
-  try { args = JSON.parse(argsJson); } catch { args = {}; }
-
   console.log(LOG_PREFIX, 'Executing function call', { callId, name, userId: userId.slice(0, 8) });
-
-  let result: any;
-
-  switch (name) {
-    case 'sis_search_tools': {
-      const { sis_search_tools } = await import('../tools/sis-runtime-tools');
-      result = await sis_search_tools.execute!(
-        { query: args.query || '', category: args.category, limit: args.limit || 5 },
-        {} as any,
-      );
-      break;
-    }
-    case 'sis_execute_tool': {
-      const { sis_execute_tool } = await import('../tools/sis-runtime-tools');
-      result = await sis_execute_tool.execute!(
-        { tool_name: args.tool_name || '', args: args.args || {} },
-        {} as any,
-      );
-      break;
-    }
-    case 'web_search': {
-      const { web_search } = await import('../tools/perplexity-tools');
-      result = await web_search.execute!(
-        { query: args.query || '', max_results: Math.min(args.max_results || 3, 5) },
-        {} as any,
-      );
-      break;
-    }
-    case 'memory_search': {
-      result = await executeMemorySearch(userId, args.query || '', args.limit || 3);
-      break;
-    }
-    case 'send_sms': {
-      // For Discord, send a DM instead of SMS
-      result = { ok: true, note: 'Message will be sent as a Discord DM after the call.' };
-      break;
-    }
-    default: {
-      result = { error: `Unknown voice tool: ${name}. Use sis_search_tools to find available tools.` };
-    }
-  }
+  const result = await executeVoiceToolCall({
+    name,
+    argsJson,
+    userId,
+    channel: 'discord',
+    voiceSessionId,
+  });
 
   const elapsed = Date.now() - startTime;
   console.log(LOG_PREFIX, 'Function call completed', { callId, name, elapsed: `${elapsed}ms` });
-
-  const resultStr = JSON.stringify(result);
-  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + '...(truncated)' : resultStr;
-  session?.sendFunctionResult?.(callId, truncated);
-}
-
-async function executeMemorySearch(userId: string, query: string, limit: number): Promise<any> {
-  try {
-    const { getSupabaseService } = await import('../supabase');
-    const supabase = getSupabaseService();
-    if (!supabase) return { ok: false, error: 'Memory service unavailable' };
-
-    const queryLower = query.toLowerCase();
-    const safeLimit = Math.max(1, Math.min(limit, 5));
-
-    const { data: convs } = await supabase
-      .from('conversations')
-      .select('id, title, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(20);
-
-    if (!convs || convs.length === 0) {
-      return { ok: true, results: [], message: 'No past conversations found.' };
-    }
-
-    const scored = convs
-      .map(c => {
-        const title = ((c as any).title || '').toLowerCase();
-        let score = 0;
-        for (const w of queryLower.split(/\s+/)) {
-          if (w.length > 2 && title.includes(w)) score += 1;
-        }
-        return { ...c, score };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, safeLimit);
-
-    const results = [];
-    const { getConversationMessages } = await import('../supabase');
-    for (const conv of scored) {
-      const msgs = await getConversationMessages(userId, conv.id, 3);
-      results.push({
-        title: (conv as any).title,
-        date: (conv as any).created_at,
-        messages: msgs.map((m: any) => ({ role: m.role, text: (m.content || '').slice(0, 200) })),
-      });
-    }
-
-    return { ok: true, results };
-  } catch (e: any) {
-    return { ok: false, error: e?.message || 'Search failed' };
-  }
+  session?.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
 }

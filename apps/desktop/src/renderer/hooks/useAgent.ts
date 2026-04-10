@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase, getValidAccessToken, ensureFreshToken, setupAutoRefresh } from '../auth/authManager';
 import type { ChatMode, ChatModelsConfig } from './usePreferences';
+import {
+  normalizeChatAttachments,
+  serializeChatAttachment,
+  type ChatAttachment,
+} from '../utils/attachments';
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
 const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
@@ -214,6 +219,7 @@ interface Message {
   streamChunks?: StreamChunk[]; // Interleaved chunks for display
   timestamp?: number;
   contextPaths?: ContextPath[]; // Files/folders attached via @ mention
+  attachments?: ChatAttachment[];
   modifiedFiles?: string[]; // Paths of files modified during this turn
   checkpointId?: string; // Checkpoint ID for reverting file changes
   reverted?: boolean; // Whether file changes have been reverted
@@ -243,12 +249,7 @@ interface AIStatus {
 
 interface SendMessageOptions {
   text: string;
-  attachments?: Array<{
-    type: 'image' | 'file';
-    name: string;
-    data: string; // base64 or data URI
-    mimeType?: string;
-  }>;
+  attachments?: ChatAttachment[];
   context?: Record<string, any>;
   contextPaths?: ContextPath[]; // Files/folders from @ mention
   mode?: string;
@@ -433,10 +434,10 @@ export function useAgent(options?: string | UseAgentOptions) {
   const [queueDepth, setQueueDepth] = useState<number>(0);
   const queueDepthRef = useRef<number>(0);
   const waitingQueuedStartRef = useRef<boolean>(false);
-  const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; text: string; timestamp: number }>>([]);
-  const queuedMessagesRef = useRef<Array<{ id: string; text: string; timestamp: number }>>([]);
-  const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean }>>([]);
-  const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string }>>([]);
+  const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
+  const queuedMessagesRef = useRef<Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
+  const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
+  const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
   const lastStreamActivityRef = useRef<number>(0); // Watchdog: last time we received streaming data
@@ -1006,7 +1007,17 @@ export function useAgent(options?: string | UseAgentOptions) {
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
                 const first = queuedMessagesRef.current[0];
                 if (first) {
-                  updateStreamingTab(t => ({ ...t, messages: [...t.messages, { id: first.id, role: 'user', text: first.text, timestamp: first.timestamp }] }));
+                  updateStreamingTab(t => ({
+                    ...t,
+                    messages: [...t.messages, {
+                      id: first.id,
+                      role: 'user',
+                      text: first.text,
+                      timestamp: first.timestamp,
+                      attachments: first.attachments,
+                      contextPaths: first.contextPaths,
+                    }],
+                  }));
                 }
                 setQueuedMessages((prev) => {
                   const nextList = prev.slice(1);
@@ -1023,7 +1034,17 @@ export function useAgent(options?: string | UseAgentOptions) {
                     updateStreamingTab(t => {
                       // Avoid duplicates if message was added optimistically
                       if (t.messages.some(m => m.id === p.id)) return t;
-                      return { ...t, messages: [...t.messages, { id: p.id, role: 'user', text: p.text, timestamp: p.timestamp }] };
+                      return {
+                        ...t,
+                        messages: [...t.messages, {
+                          id: p.id,
+                          role: 'user',
+                          text: p.text,
+                          timestamp: p.timestamp,
+                          attachments: p.attachments,
+                          contextPaths: p.contextPaths,
+                        }],
+                      };
                     });
                   }
                 }
@@ -1485,7 +1506,13 @@ export function useAgent(options?: string | UseAgentOptions) {
             setQueuedMessages((prev) => {
               const exists = prev.find((m) => m.id === queueId);
               if (exists) return prev;
-              const nextList = [...prev, { id: queueId, text: fullText, timestamp: ts }];
+              const nextList = [...prev, {
+                id: queueId,
+                text: fullText,
+                timestamp: ts,
+                attachments: p?.attachments,
+                contextPaths: p?.contextPaths,
+              }];
               const nd = nextList.length;
               queueDepthRef.current = nd;
               return nextList;
@@ -1886,6 +1913,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         text: options.text,
         timestamp: Date.now(),
         contextPaths: options.contextPaths,
+        attachments: normalizeChatAttachments(options.attachments || []),
       };
 
       const targetTabId = activeTabId;
@@ -1894,12 +1922,16 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Get active tab history BEFORE adding the new message
       const currentTab = tabsRef.current.find(t => t.id === targetTabId);
       const currentMsgs = currentTab?.messages || [];
+      const currentAttachmentPayload = userMsg.attachments?.map((attachment) => serializeChatAttachment(attachment));
 
       // Build history with the new message (for sending to server)
       const hist = [...currentMsgs, userMsg]
         .slice(-50)
         .map((m) => {
           const msgDetails: any = { role: m.role === 'assistant' || m.role === 'system' ? m.role : 'user', content: m.text };
+          if (Array.isArray(m.attachments) && m.attachments.length > 0 && m.id !== userMsg.id) {
+            msgDetails.attachments = m.attachments.map((attachment) => serializeChatAttachment(attachment));
+          }
           if (Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
             msgDetails.toolCalls = m.toolCalls;
           }
@@ -1922,7 +1954,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         type: 'chat',
         text: options.text,
         context: options.context || {},
-        attachments: options.attachments || [],
+        attachments: currentAttachmentPayload || [],
         contextPaths: options.contextPaths || [],
       };
       if (typeof options.mode === 'string' && options.mode) {
@@ -1976,7 +2008,9 @@ export function useAgent(options?: string | UseAgentOptions) {
         timestamp: userMsg.timestamp!,
         payload,
         tabId: targetTabId,
-        silent: isSilent
+        silent: isSilent,
+        attachments: userMsg.attachments,
+        contextPaths: userMsg.contextPaths,
       };
       outboundQueueRef.current.push(pendingItem);
       pendingSendRef.current.push(pendingItem);
@@ -2044,6 +2078,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     // Resend with the new text, preserving original context
     await sendMessage({
       text: newText,
+      attachments: originalMsg.attachments,
       contextPaths: originalMsg.contextPaths,
     });
   }, [sendMessage]);
@@ -2125,6 +2160,11 @@ export function useAgent(options?: string | UseAgentOptions) {
             toolCalls: meta.toolCalls,
             streamChunks: meta.streamChunks,
             contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+            attachments: normalizeChatAttachments(
+              Array.isArray(r.attachments)
+                ? r.attachments
+                : (Array.isArray(meta?.attachments) ? meta.attachments : [])
+            ),
             timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
           };
         });
@@ -2168,6 +2208,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 toolCalls: meta.toolCalls,
                 streamChunks: meta.streamChunks,
                 contextPaths: Array.isArray(meta?.contextPaths) ? meta.contextPaths : undefined,
+                attachments: normalizeChatAttachments(Array.isArray(meta?.attachments) ? meta.attachments : []),
                 timestamp: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
               };
             });

@@ -65,10 +65,11 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
+      const bodyPayload = ctx.sourceLabel ? { ...args, source_label: ctx.sourceLabel } : args;
       const resp = await net.fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(args),
+        body: JSON.stringify(bodyPayload),
         signal: controller.signal as any,
       });
       
@@ -357,6 +358,7 @@ async function execCloudAiVision(args: any, ctx: RouterContext): Promise<any> {
         imageB64: image.data,
         mimeType: args?.mimeType || image.mimeType || 'image/jpeg',
         schema,
+        ...(ctx.sourceLabel ? { source_label: ctx.sourceLabel } : {}),
       }),
     });
 
@@ -493,7 +495,7 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
     const resp = await net.fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ task, media: mediaParts, model }),
+      body: JSON.stringify({ task, media: mediaParts, model, ...(ctx.sourceLabel ? { source_label: ctx.sourceLabel } : {}) }),
     });
     
     if (!resp.ok) {

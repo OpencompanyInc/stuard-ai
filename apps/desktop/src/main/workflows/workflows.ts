@@ -934,6 +934,7 @@ export async function executeWorkflowFromTrigger(flowId: string, origin: string,
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken: triggerAccessToken,
+      sourceLabel: `Workflow: ${model.name || safe}`,
     };
 
     // Actually execute the workflow
@@ -1538,8 +1539,10 @@ export function workflows_list() {
       seenIds.add(id);
       let name = id;
       let updatedAt = '';
+      let description = '';
       let version = '';
       let marketplaceSlug = '';
+      let locked = false;
       let triggers: string[] = [];
       try {
         const stat = fs.statSync(filePath);
@@ -1547,15 +1550,17 @@ export function workflows_list() {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const j = JSON.parse(raw || '{}');
         if (j && typeof j.name === 'string' && j.name.trim()) name = j.name.trim();
+        if (j && typeof j.description === 'string' && j.description.trim()) description = j.description.trim();
         if (j && typeof j.version === 'string') version = j.version;
         if (j && typeof j.marketplaceSlug === 'string') marketplaceSlug = j.marketplaceSlug;
+        if (j && typeof j.locked === 'boolean') locked = j.locked;
         if (Array.isArray(j?.triggers)) {
           triggers = (j.triggers as any[]).map((t: any) => String(t?.type || '')).filter((s: string) => !!s);
         }
       } catch { }
       const hasRuntime = flowRuntimes.has(id);
       const running = isStuardEngineRunning(id);
-      return { id, name, updatedAt, version, marketplaceSlug, hasRuntime, running, triggers, folder: folder || undefined, isWorkspace: !!isWorkspace };
+      return { id, name, description, updatedAt, version, marketplaceSlug, locked, hasRuntime, running, triggers, folder: folder || undefined, isWorkspace: !!isWorkspace };
     };
 
     // Scan root-level entries
@@ -1935,6 +1940,7 @@ export function workflows_run(id: string, triggerId?: string, options?: { access
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken: options?.accessToken,
+      sourceLabel: `Workflow: ${model.name || safe}`,
     };
 
     // Actually execute the workflow via stuards engine (has custom_ui support)
@@ -2093,6 +2099,7 @@ export function workflows_runFromStep(id: string, options: { startStepId: string
       cloudAiUrl: process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || process.env.CLOUD_AI_URL || 'http://localhost:8082',
       logFn: (msg: string) => logFlow(safe, msg),
       accessToken,
+      sourceLabel: `Workflow: ${model.name || safe}`,
     };
 
     // Execute

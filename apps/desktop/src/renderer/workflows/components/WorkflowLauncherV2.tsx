@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowDownCircle,
   Activity,
-  Box,
   Calendar,
   ChevronsUpDown,
   Download,
@@ -11,22 +10,20 @@ import {
   LayoutGrid,
   Layers,
   Lock,
-  Mic,
   Play,
   RefreshCw,
   Rocket,
   Search,
   Share2,
-  SlidersHorizontal,
   Sparkles,
-  Settings,
   Square,
   Star,
   Store,
   Trash2,
-  Tv,
   Upload,
   Wand2,
+  X,
+  Zap,
 } from "lucide-react";
 import { DiscoverTips } from "./DiscoverTips";
 import {
@@ -37,6 +34,7 @@ import {
   type Skill,
 } from "./Skills";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
+import type { WorkflowItem } from "../types";
 import { getValidAccessToken } from "../../auth/authManager";
 import {
   getMarketplaceApi,
@@ -44,26 +42,17 @@ import {
   type MarketplaceUpdate,
   type MarketplaceWorkflow,
 } from "../../utils/cloud";
+import {
+  buildWorkflowFilterChips,
+  matchesWorkflowFilter,
+  matchesWorkflowSearch,
+  type WorkflowDeployStatus,
+  type WorkflowLauncherFilterId,
+  type WorkflowLauncherScope,
+} from "../utils/workflowLauncherFilters";
 
 type ActiveView = "workflows" | "deployed" | "shared" | "marketplace" | "skills";
-type DeployFilter = "all" | "running" | "idle";
-
-interface WorkflowItem {
-  id: string;
-  name?: string;
-  marketplaceSlug?: string;
-  locked?: boolean;
-  version?: string;
-  folder?: string;
-  description?: string;
-  updatedAt?: string;
-}
-
-interface DeployStatus {
-  deployed: boolean;
-  running: boolean;
-  triggers: string[];
-}
+type DeployStatus = WorkflowDeployStatus;
 
 interface WorkflowLauncherV2Props {
   items: WorkflowItem[];
@@ -102,7 +91,7 @@ export function WorkflowLauncherV2({
   const [activeView, setActiveView] = useState<ActiveView>("workflows");
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [deployFilter, setDeployFilter] = useState<DeployFilter>("all");
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowLauncherFilterId>("all");
   const [deployStatuses, setDeployStatuses] = useState<Record<string, DeployStatus>>({});
   const [busyMap, setBusyMap] = useState<Record<string, boolean>>({});
   const [marketplaceSearch, setMarketplaceSearch] = useState("");
@@ -125,6 +114,24 @@ export function WorkflowLauncherV2({
   useEffect(() => {
     inputRef.current?.focus();
   }, [activeView]);
+
+  const currentSearchValue =
+    activeView === "marketplace" ? marketplaceSearch : activeView === "skills" ? skillSearch : search;
+
+  const setCurrentSearchValue = useCallback(
+    (value: string) => {
+      if (activeView === "marketplace") {
+        setMarketplaceSearch(value);
+        return;
+      }
+      if (activeView === "skills") {
+        setSkillSearch(value);
+        return;
+      }
+      setSearch(value);
+    },
+    [activeView]
+  );
 
   const refreshDeployStatuses = useCallback(async () => {
     const entries = await Promise.all(
@@ -233,43 +240,74 @@ export function WorkflowLauncherV2({
     };
   }, [activeView, marketplaceCategory, marketplaceSearch]);
 
-  const filteredItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((item) => `${item.name || item.id} ${item.description || ""}`.toLowerCase().includes(q));
-  }, [items, search]);
+  const sharedBaseItems = useMemo(() => items.filter((item) => Boolean(item.marketplaceSlug)), [items]);
 
-  const sharedItems = useMemo(() => filteredItems.filter((item) => Boolean(item.marketplaceSlug)), [filteredItems]);
+  const deployedBaseItems = useMemo(
+    () => items.filter((item) => deployStatuses[item.id]?.deployed),
+    [deployStatuses, items]
+  );
 
-  const deployedItems = useMemo(() => {
-    const base = filteredItems.filter((item) => deployStatuses[item.id]?.deployed);
-    if (deployFilter === "running") {
-      return base.filter((item) => Boolean(deployStatuses[item.id]?.running || runningIds[item.id]));
-    }
-    if (deployFilter === "idle") {
-      return base.filter((item) => !Boolean(deployStatuses[item.id]?.running || runningIds[item.id]));
-    }
-    return base;
-  }, [deployFilter, deployStatuses, filteredItems, runningIds]);
+  const workflowScope: WorkflowLauncherScope =
+    activeView === "shared" ? "shared" : activeView === "deployed" ? "deployed" : "workflows";
+
+  const workflowBaseItems = useMemo(() => {
+    if (activeView === "shared") return sharedBaseItems;
+    if (activeView === "deployed") return deployedBaseItems;
+    return items;
+  }, [activeView, deployedBaseItems, items, sharedBaseItems]);
+
+  const searchedWorkflowItems = useMemo(
+    () => workflowBaseItems.filter((item) => matchesWorkflowSearch(item, search, deployStatuses[item.id])),
+    [deployStatuses, search, workflowBaseItems]
+  );
+
+  const workflowFilterChips = useMemo(
+    () =>
+      buildWorkflowFilterChips(searchedWorkflowItems, {
+        scope: workflowScope,
+        deployStatuses,
+        runningIds,
+      }),
+    [deployStatuses, runningIds, searchedWorkflowItems, workflowScope]
+  );
+
+  const visibleItems = useMemo(
+    () =>
+      searchedWorkflowItems.filter((item) =>
+        matchesWorkflowFilter(
+          item,
+          workflowFilter,
+          deployStatuses[item.id],
+          Boolean(runningIds[item.id] || deployStatuses[item.id]?.running)
+        )
+      ),
+    [deployStatuses, runningIds, searchedWorkflowItems, workflowFilter]
+  );
 
   const runningDeployed = useMemo(
-    () => deployedItems.filter((item) => Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
-    [deployStatuses, deployedItems, runningIds]
+    () => deployedBaseItems.filter((item) => Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
+    [deployStatuses, deployedBaseItems, runningIds]
   );
 
   const idleDeployed = useMemo(
-    () => deployedItems.filter((item) => !Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
-    [deployStatuses, deployedItems, runningIds]
+    () => deployedBaseItems.filter((item) => !Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
+    [deployStatuses, deployedBaseItems, runningIds]
   );
 
-  const visibleItems = activeView === "shared" ? sharedItems : activeView === "deployed" ? deployedItems : filteredItems;
   const selectedItem = activeView === "marketplace"
     ? null
     : visibleItems[Math.min(selectedIndex, Math.max(visibleItems.length - 1, 0))] || null;
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [activeView, deployFilter, marketplaceCategory, marketplaceSearch, search, visibleItems.length]);
+  }, [activeView, marketplaceCategory, marketplaceSearch, search, skillSearch, visibleItems.length, workflowFilter]);
+
+  useEffect(() => {
+    if (activeView === "marketplace" || activeView === "skills") return;
+    if (!workflowFilterChips.some((chip) => chip.id === workflowFilter)) {
+      setWorkflowFilter("all");
+    }
+  }, [activeView, workflowFilter, workflowFilterChips]);
 
   const handleCreateSkill = () => {
     const newSkill: Skill = {
@@ -328,7 +366,7 @@ export function WorkflowLauncherV2({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (activeView === "marketplace") return;
+      if (activeView === "marketplace" || activeView === "skills") return;
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((index) => Math.min(index + 1, Math.max(visibleItems.length - 1, 0)));
@@ -355,6 +393,8 @@ export function WorkflowLauncherV2({
     return rest.length ? rest : marketplaceItems;
   }, [featuredItems, marketplaceCategory, marketplaceItems, marketplaceSearch]);
 
+  const workflowFiltersActive = search.trim().length > 0 || workflowFilter !== "all";
+
   const title =
     activeView === "skills"
       ? "Skills"
@@ -363,10 +403,10 @@ export function WorkflowLauncherV2({
       : activeView === "shared"
       ? "Shared Workflows"
       : activeView === "deployed"
-      ? deployFilter === "running"
+      ? workflowFilter === "running"
         ? "Running Workflows"
-        : deployFilter === "idle"
-        ? "Not Running"
+        : workflowFilter === "idle"
+        ? "Idle Workflows"
         : "Deployed Workflows"
       : "My Workflows";
 
@@ -376,13 +416,35 @@ export function WorkflowLauncherV2({
       : activeView === "marketplace"
       ? "Discover community-built automations with theme-aware browsing."
       : activeView === "shared"
-      ? `${sharedItems.length} imported or synced workflows`
+      ? workflowFiltersActive
+        ? `${visibleItems.length} shown · ${sharedBaseItems.length} shared workflows`
+        : `${sharedBaseItems.length} imported or synced workflows`
       : activeView === "deployed"
-      ? `${runningDeployed.length} running · ${idleDeployed.length} idle`
+      ? workflowFiltersActive
+        ? `${visibleItems.length} shown · ${runningDeployed.length} running · ${idleDeployed.length} idle`
+        : `${runningDeployed.length} running · ${idleDeployed.length} idle`
+      : workflowFiltersActive
+      ? `${visibleItems.length} shown · ${items.length} workflows in your workspace`
       : `${items.length} workflows in your workspace`;
 
   const workspaceLabel = activeView === "marketplace" ? "Community Library" : "Your Workspace";
-  const showCreateCard = activeView === "workflows" && !search.trim();
+  const showCreateCard = activeView === "workflows" && !search.trim() && workflowFilter === "all";
+  const getWorkflowFilterIcon = (filterId: WorkflowLauncherFilterId) => {
+    switch (filterId) {
+      case "all":
+        return LayoutGrid;
+      case "triggered":
+        return Zap;
+      case "shared":
+        return Share2;
+      case "running":
+        return Play;
+      case "idle":
+        return Square;
+      default:
+        return undefined;
+    }
+  };
 
   if (editingSkill) {
     return <SkillEditor skill={editingSkill} onSave={handleSaveSkill} onCancel={() => setEditingSkill(null)} />;
@@ -435,13 +497,23 @@ export function WorkflowLauncherV2({
               <input
                 ref={inputRef}
                 type="text"
-                value={activeView === "marketplace" ? marketplaceSearch : activeView === "skills" ? skillSearch : search}
-                onChange={(e) => (activeView === "marketplace" ? setMarketplaceSearch(e.target.value) : activeView === "skills" ? setSkillSearch(e.target.value) : setSearch(e.target.value))}
+                value={currentSearchValue}
+                onChange={(e) => setCurrentSearchValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={activeView === "skills" ? "Search skills..." : activeView === "marketplace" ? "Search marketplace..." : activeView === "deployed" ? "Search deployed workflows..." : activeView === "shared" ? "Search shared workflows..." : "Search workflows..."}
-                className="w-full rounded-full pl-11 pr-4 py-3 text-[14px] focus:outline-none focus:border-blue-500/60 focus:ring-4 focus:ring-blue-500/15 transition-all border shadow-sm"
+                placeholder={activeView === "skills" ? "Search skills..." : activeView === "marketplace" ? "Search marketplace..." : "Search workflows, descriptions, or triggers..."}
+                className="w-full rounded-full pl-11 pr-11 py-3 text-[14px] focus:outline-none focus:border-blue-500/60 focus:ring-4 focus:ring-blue-500/15 transition-all border shadow-sm"
                 style={{ background: "var(--wf-input-bg)", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
               />
+              {currentSearchValue.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentSearchValue("")}
+                  className={`absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1 transition-colors ${d ? "text-white/45 hover:bg-white/10 hover:text-white/80" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`}
+                  aria-label="Clear search"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -467,13 +539,17 @@ export function WorkflowLauncherV2({
             </>
           ) : (
             <>
-              <FilterChip d={d} label="All" icon={LayoutGrid} active />
-              <FilterChip d={d} label="Productivity" icon={SlidersHorizontal} />
-              <FilterChip d={d} label="Organization" icon={Box} />
-              <FilterChip d={d} label="Voice & Audio" icon={Mic} />
-              <FilterChip d={d} label="Research" icon={Search} />
-              <FilterChip d={d} label="Utility" icon={Settings} />
-              <FilterChip d={d} label="Media" icon={Tv} />
+              {workflowFilterChips.map((chip) => (
+                <FilterChip
+                  key={chip.id}
+                  d={d}
+                  label={chip.label}
+                  count={chip.count}
+                  icon={getWorkflowFilterIcon(chip.id)}
+                  active={workflowFilter === chip.id}
+                  onClick={() => setWorkflowFilter(chip.id)}
+                />
+              ))}
             </>
           )}
         </div>}
@@ -569,8 +645,10 @@ export function WorkflowLauncherV2({
                 <EmptyState
                   d={d}
                   icon={activeView === "shared" ? Share2 : Layers}
-                  title={activeView === "shared" ? "No shared workflows yet" : "No workflows found"}
-                  description={activeView === "shared" ? "Import something from the marketplace to populate this section." : "Try adjusting your search or create a new workflow."}
+                  title={activeView === "shared" ? (workflowFiltersActive ? "No shared workflows found" : "No shared workflows yet") : "No workflows found"}
+                  description={activeView === "shared"
+                    ? (workflowFiltersActive ? "Try another search term or switch to a different trigger filter." : "Import something from the marketplace to populate this section.")
+                    : "Try adjusting your search or create a new workflow."}
                 />
               )}
             </div>
@@ -604,7 +682,7 @@ function SideNavItem({ d, icon: Icon, label, active, disabled, onClick, accent }
   );
 }
 
-function FilterChip({ d, label, icon: Icon, active, onClick }: { d: boolean; label: string; icon?: any; active?: boolean; onClick?: () => void }) {
+function FilterChip({ d, label, icon: Icon, active, onClick, count }: { d: boolean; label: string; icon?: any; active?: boolean; onClick?: () => void; count?: number }) {
   return (
     <button
       type="button"
@@ -613,6 +691,13 @@ function FilterChip({ d, label, icon: Icon, active, onClick }: { d: boolean; lab
     >
       {Icon ? <Icon className={`w-4 h-4 ${active ? "text-blue-500" : d ? "text-white/30" : "text-slate-400"}`} /> : null}
       <span>{label}</span>
+      {typeof count === "number" ? (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${active ? "bg-blue-500/10 text-blue-500" : d ? "bg-white/[0.06] text-white/60" : "bg-slate-100 text-slate-500"}`}
+        >
+          {count}
+        </span>
+      ) : null}
     </button>
   );
 }

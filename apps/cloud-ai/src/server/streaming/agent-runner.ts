@@ -737,7 +737,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Persist usage to billing
       if (userId && usage) {
         try {
-          await logUsageEvent(userId, conversationId || null, chosenModelId || model, usage);
+          const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'skill' ? 'Skill Agent' : 'Chat';
+          await logUsageEvent(userId, conversationId || null, chosenModelId || model, { ...usage, source_label: sourceLabel });
         } catch (e: any) {
           console.error('[AgentRunner] Failed to log usage:', e?.message);
         }
@@ -758,7 +759,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         // Bill partial usage even on abort
         if (userId && usage) {
           try {
-            await logUsageEvent(userId, conversationId || null, chosenModelId || model, usage);
+            const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'skill' ? 'Skill Agent' : 'Chat';
+            await logUsageEvent(userId, conversationId || null, chosenModelId || model, { ...usage, source_label: sourceLabel });
           } catch (e: any) {
             console.error('[AgentRunner] Failed to log aborted usage:', e?.message);
           }

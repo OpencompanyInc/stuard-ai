@@ -123,6 +123,7 @@ export async function prepareChatRequest({
     ? (workflowModelId || 'google/gemini-3-pro-preview')
     : (chosenModelId || routedTier);
   const contextPathsForMeta = Array.isArray(msg?.context?.paths) ? msg.context.paths : undefined;
+  const attachmentDescriptorsForMeta = buildAttachmentMetadata(msg?.attachments);
 
   const agent = await resolveAgent({
     agentType,
@@ -151,6 +152,7 @@ export async function prepareChatRequest({
     chosenModelId,
     modelLabel,
     contextPathsForMeta,
+    attachmentDescriptorsForMeta,
     agentType,
   });
 
@@ -172,6 +174,7 @@ export async function prepareChatRequest({
         tier: routedTier,
         modelId: chosenModelId,
         contextPaths: contextPathsForMeta,
+        attachments: attachmentDescriptorsForMeta,
       });
     } catch { }
   }
@@ -493,6 +496,7 @@ interface ResolveConversationArgs {
   chosenModelId?: string;
   modelLabel: string;
   contextPathsForMeta?: Array<{ path: string; name: string; isDirectory: boolean }>;
+  attachmentDescriptorsForMeta?: any[];
   agentType: AgentType;
 }
 
@@ -507,6 +511,7 @@ async function resolveConversation({
   chosenModelId,
   modelLabel,
   contextPathsForMeta,
+  attachmentDescriptorsForMeta,
   agentType,
 }: ResolveConversationArgs) {
   let conversationId: string | null = null;
@@ -537,6 +542,7 @@ async function resolveConversation({
       tier: routedTier,
       modelId: chosenModelId,
       contextPaths: contextPathsForMeta,
+      attachments: attachmentDescriptorsForMeta,
     },
     agentType === 'workflow' ? 'workflow' : 'stuard',
     !!msg?.forcePersist,
@@ -548,6 +554,26 @@ async function resolveConversation({
   }
 
   return { conversationId, conversationCreatedNow };
+}
+
+function buildAttachmentMetadata(rawAttachments: any): any[] | undefined {
+  const attachments = Array.isArray(rawAttachments) ? rawAttachments : [];
+  if (attachments.length === 0) return undefined;
+
+  const serialized = attachments
+    .filter((attachment) => attachment && typeof attachment === 'object')
+    .map((attachment: any) => ({
+      type: typeof attachment.type === 'string' ? attachment.type : 'file',
+      name: typeof attachment.name === 'string' ? attachment.name : 'attachment',
+      mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : undefined,
+      path: typeof attachment.path === 'string' ? attachment.path : undefined,
+      source: typeof attachment.source === 'string' ? attachment.source : undefined,
+      previewText: typeof attachment.previewText === 'string' ? attachment.previewText.slice(0, 600) : undefined,
+      lineCount: typeof attachment.lineCount === 'number' ? attachment.lineCount : undefined,
+      charCount: typeof attachment.charCount === 'number' ? attachment.charCount : undefined,
+    }));
+
+  return serialized.length > 0 ? serialized : undefined;
 }
 
 function resolveMemoryContext(

@@ -7,13 +7,18 @@ import { handleChatMessage } from '../chat/handle-chat-message';
 import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
 import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, wsAlive } from './state';
-import { extractClientType, send } from './helpers';
+import { extractClientType, extractQueryParam, send } from './helpers';
 
 export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
-    const clientType = extractClientType(String(req?.url || ''));
+    const rawUrl = String(req?.url || '');
+    const clientType = extractClientType(rawUrl);
     if (clientType) {
       (ws as any).__clientType = clientType;
+    }
+    const voiceSession = extractQueryParam(rawUrl, 'voice_session');
+    if (voiceSession) {
+      (ws as any).__voiceSession = voiceSession;
     }
   } catch { }
 

@@ -28,6 +28,7 @@ export async function buildInputMessages({
     ? [...providedMessages]
     : [...recentHistory, { role: 'user', content: prompt }];
 
+  inputMessages = expandProvidedMessageAttachments(inputMessages);
   appendAttachmentParts(msg, inputMessages, prompt);
   prependCompactContextMessage(msg, inputMessages, enabledIntegrations);
   prependHiddenContext(msg, inputMessages);
@@ -38,6 +39,30 @@ export async function buildInputMessages({
 
   logTokenBreakdown(inputMessages, agent);
   return inputMessages;
+}
+
+function expandProvidedMessageAttachments(inputMessages: any[]) {
+  return inputMessages.map((message) => {
+    const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+    if (attachments.length === 0) return message;
+
+    const attachmentParts = buildAttachmentParts(attachments);
+    if (attachmentParts.length === 0) return message;
+
+    const existingContent = message?.content;
+    if (Array.isArray(existingContent) && existingContent.some((part: any) => part?.type === 'image' || part?.type === 'file')) {
+      return message;
+    }
+
+    const baseParts = Array.isArray(existingContent)
+      ? existingContent
+      : [{ type: 'text', text: typeof existingContent === 'string' ? existingContent : '' }];
+
+    return {
+      ...message,
+      content: [...baseParts, ...attachmentParts],
+    };
+  });
 }
 
 function appendAttachmentParts(msg: any, inputMessages: any[], prompt: string) {

@@ -112,7 +112,7 @@ declare global {
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
 
-      workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; folder?: string }>; folders?: string[]; error?: string }>;
+      workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; description?: string; updatedAt?: string; version?: string; marketplaceSlug?: string; locked?: boolean; triggers?: string[]; folder?: string; isWorkspace?: boolean }>; folders?: string[]; error?: string }>;
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
       workflowsSave: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
