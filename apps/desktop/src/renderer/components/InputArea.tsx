@@ -1,4 +1,4 @@
-import React, { forwardRef, useState, useEffect, useRef, useCallback, useDeferredValue, memo } from 'react';
+import React, { forwardRef, useState, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -11,30 +11,29 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, AudioWaveform, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, Terminal, LayoutGrid } from 'lucide-react';
+import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
 import MessageBubble from './MessageBubble';
 import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark } from './QuickShortcuts';
-import { AttachmentPreviewStrip } from './AttachmentPreview';
 import stuardLogo from '@website-assets/logo.png';
 import googleLogo from '../assets/icons/google.png';
 import bingLogo from '../assets/icons/bing.png';
 import duckduckgoLogo from '../assets/icons/duckduckgo.png';
 import youtubeLogo from '../assets/icons/youtube.png';
 import githubLogo from '../assets/icons/github.png';
-import type { ChatAttachment } from '../utils/attachments';
 
 import type { UrgencyLevel } from '../hooks/usePlannerData';
 import { useWorkflows } from '../workflows/hooks/useWorkflows';
 import { getMarketplaceApi } from '../utils/cloud';
+import { chooseDropdownPlacement } from '../utils/dropdownPlacement';
 
 interface InputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
-  attachments: ChatAttachment[];
+  attachments: Array<{ type: 'image' | 'file'; name: string }>;
   onRemoveAttachment: (index: number) => void;
   onAttachFiles: () => void;
   onAttachImages: () => void;
@@ -71,14 +70,10 @@ interface InputAreaProps {
   // Queue
   queueDepth: number;
   queuedMessages: any[];
-  onCancelQueuedMessage?: (id: string) => void;
 
   // Speech
   isRecording?: boolean;
   onMicClick?: () => void;
-
-  // Voice mode (full ElevenLabs conversation)
-  onVoiceMode?: () => void;
 
   // Context Paths (for @ mentions)
   contextPaths?: ContextItem[];
@@ -97,8 +92,6 @@ interface InputAreaProps {
   setShowMiniOutput?: React.Dispatch<React.SetStateAction<boolean>>;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
-  /** Current tab ID for session-scoped folder permissions. */
-  activeTabId?: string;
 }
 
 // Helper component for attachments & context
@@ -108,7 +101,7 @@ const AttachmentBar = memo(({
   onRemoveAttachment,
   onRemoveContext
 }: {
-  attachments: ChatAttachment[];
+  attachments: Array<{ type: 'image' | 'file'; name: string }>;
   contextPaths?: ContextItem[];
   onRemoveAttachment: (index: number) => void;
   onRemoveContext: (index: number) => void;
@@ -116,44 +109,65 @@ const AttachmentBar = memo(({
   if (attachments.length === 0 && (!contextPaths || contextPaths.length === 0)) return null;
 
   return (
-    <div className="w-full flex flex-col gap-2 px-1 py-1 animate-in fade-in slide-in-from-bottom-1 duration-200 no-drag relative z-20">
-      {attachments.length > 0 ? (
-        <AttachmentPreviewStrip attachments={attachments} onRemove={onRemoveAttachment} layout="rail" />
-      ) : null}
-
-      {contextPaths?.length ? (
-        <div className="flex flex-wrap gap-2">
-          {contextPaths.map((c, i) => (
-            <div
-              key={c.path}
-              className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-primary/5 border border-primary/10 hover:bg-primary/10 hover:border-primary/20 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
-            >
-              <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center text-primary">
-                {c.isDirectory ? (
-                  <Folder className="w-3 h-3" />
-                ) : (
-                  <FileText className="w-3 h-3" />
-                )}
-              </div>
-              <div className="flex flex-col leading-none justify-center">
-                <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
-                  {c.name}
-                </span>
-                <span className="text-[9px] text-primary/70 font-medium truncate max-w-[100px] mt-0.5">
-                  Context
-                </span>
-              </div>
-              <button
-                onClick={(e) => { e.stopPropagation(); onRemoveContext(i); }}
-                className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
-                title="Remove context"
-              >
-                <Cross2Icon className="w-3 h-3" />
-              </button>
+    <div className="w-full flex flex-wrap gap-2 px-1 py-1 animate-in fade-in slide-in-from-bottom-1 duration-200 no-drag relative z-20">
+      {/* Attachments */}
+      {attachments.map((att, idx) => (
+        <div
+          key={`att-${idx}`}
+          className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-gray-200/50 border border-gray-300/30 hover:bg-gray-200/80 hover:border-gray-300/50 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
+        >
+          {att.type === 'image' ? (
+            <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-500">
+              <ImageIconLucide className="w-3 h-3" />
             </div>
-          ))}
+          ) : (
+            <div className="w-5 h-5 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-500">
+              <FileIconLucide className="w-3 h-3" />
+            </div>
+          )}
+          <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
+            {att.name}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemoveAttachment(idx); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
+            title="Remove attachment"
+          >
+            <Cross2Icon className="w-3 h-3" />
+          </button>
         </div>
-      ) : null}
+      ))}
+
+      {/* Context Paths */}
+      {contextPaths?.map((c, i) => (
+        <div
+          key={c.path}
+          className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-primary/5 border border-primary/10 hover:bg-primary/10 hover:border-primary/20 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
+        >
+          <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center text-primary">
+            {c.isDirectory ? (
+              <Folder className="w-3 h-3" />
+            ) : (
+              <FileText className="w-3 h-3" />
+            )}
+          </div>
+          <div className="flex flex-col leading-none justify-center">
+            <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
+              {c.name}
+            </span>
+            <span className="text-[9px] text-primary/70 font-medium truncate max-w-[100px] mt-0.5">
+              Context
+            </span>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemoveContext(i); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
+            title="Remove context"
+          >
+            <Cross2Icon className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 });
@@ -164,7 +178,7 @@ const FOLDER_PERMISSIONS_BASE_FP = `${AGENT_HTTP_FP}/v1/folder-permissions`;
 
 interface FolderRule { id: string; path: string; permission: "read" | "write" | "both"; }
 
-const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId = "default" }) => {
+const FolderPermissionsButton: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [rules, setRules] = useState<FolderRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -176,11 +190,11 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${FOLDER_PERMISSIONS_BASE_FP}?session_id=${encodeURIComponent(sessionId)}`);
+      const res = await fetch(FOLDER_PERMISSIONS_BASE_FP);
       const data = await res.json();
       if (data.ok) { setRules(data.rules || []); }
     } catch { } finally { setLoading(false); }
-  }, [sessionId]);
+  }, []);
 
   useEffect(() => { if (open) load(); }, [open, load]);
 
@@ -203,7 +217,7 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
         if (!folderPath) return;
         await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/add`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: folderPath, permission: selectedPerm, session_id: sessionId }),
+          body: JSON.stringify({ path: folderPath, permission: selectedPerm }),
         });
         await load();
       }
@@ -214,7 +228,7 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/remove`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, session_id: sessionId }),
+        body: JSON.stringify({ id }),
       });
       await load();
     } catch { }
@@ -224,7 +238,7 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
     try {
       await fetch(`${FOLDER_PERMISSIONS_BASE_FP}/add`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: rule.path, permission: perm, session_id: sessionId }),
+        body: JSON.stringify({ path: rule.path, permission: perm }),
       });
       await load();
     } catch { }
@@ -256,7 +270,6 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
           <div className="px-4 py-3 border-b border-theme flex items-center gap-2">
             <FolderLock className="w-4 h-4 text-primary" />
             <span className="text-[13px] font-bold text-theme-fg">Folder Permissions</span>
-            <span className="text-[10px] text-theme-muted ml-auto">This tab only</span>
           </div>
 
           <div className="p-3">
@@ -342,7 +355,7 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
               {rules.length > 0 && (
                 <div className="mt-2 flex items-start gap-1.5 text-[10px] text-theme-muted/70">
                   <AlertTriangle className="w-3 h-3 text-amber-500/70 mt-px flex-shrink-0" />
-                  <span>Only listed folders (and subfolders) are accessible to the agent in this tab.</span>
+                  <span>Only listed folders (and subfolders) are accessible to the agent.</span>
                 </div>
               )}
           </div>
@@ -350,84 +363,6 @@ const FolderPermissionsButton: React.FC<{ sessionId?: string }> = ({ sessionId =
       )}
     </div>
   );
-};
-
-const normalizeQuickSearchText = (value: string): string => String(value || '')
-  .toLowerCase()
-  .replace(/[/\\]+/g, ' ')
-  .replace(/[_\-.]+/g, ' ')
-  .replace(/[^a-z0-9\s]/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim();
-
-const boundedEditDistance = (a: string, b: string, maxDistance = 2): number => {
-  if (a === b) return 0;
-  if (!a.length || !b.length) return Math.max(a.length, b.length);
-  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
-
-  const m = a.length;
-  const n = b.length;
-  const row = new Array(n + 1).fill(0).map((_, i) => i);
-
-  for (let i = 1; i <= m; i++) {
-    let prev = i - 1;
-    row[0] = i;
-    let minInRow = row[0];
-    for (let j = 1; j <= n; j++) {
-      const current = row[j];
-      if (a[i - 1] === b[j - 1]) {
-        row[j] = prev;
-      } else {
-        row[j] = 1 + Math.min(prev, row[j], row[j - 1]);
-      }
-      prev = current;
-      if (row[j] < minInRow) minInRow = row[j];
-    }
-    if (minInRow > maxDistance) return maxDistance + 1;
-  }
-
-  return row[n];
-};
-
-const scoreLocalSuggestion = (label: string, query: string): number => {
-  const text = normalizeQuickSearchText(label);
-  if (!text || !query) return 0;
-  if (text === query) return 100;
-  if (text.startsWith(query)) return 86;
-  const tokens = text.split(' ').filter(Boolean);
-  if (tokens.some((token) => token === query)) return 82;
-  if (tokens.some((token) => token.startsWith(query))) return 74;
-  if (query.length >= 3 && text.includes(query)) return 58;
-  if (query.length >= 4) {
-    let best = 0;
-    for (const token of tokens) {
-      const maxDist = Math.max(query.length, token.length) >= 7 ? 2 : 1;
-      const dist = boundedEditDistance(query, token, maxDist);
-      if (dist <= maxDist) {
-        best = Math.max(best, dist === 1 ? 66 : 56);
-      }
-    }
-    return best;
-  }
-  return 0;
-};
-
-const shouldRunSemanticQuickSearch = (query: string): boolean => {
-  const normalized = normalizeQuickSearchText(query);
-  const compactLen = normalized.replace(/\s+/g, '').length;
-  const tokenCount = normalized ? normalized.split(' ').length : 0;
-  return tokenCount > 1 && compactLen >= 6;
-};
-
-type QuickLaunchAction = {
-  id: string;
-  title: string;
-  description: string;
-  keywords: string;
-  icon: React.ReactNode;
-  iconClassName: string;
-  iconWrapperClassName: string;
-  run: () => Promise<void> | void;
 };
 
 const InputArea = forwardRef(function InputArea(
@@ -439,8 +374,8 @@ const InputArea = forwardRef(function InputArea(
     conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
     expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
     connectionStatus,
-    queueDepth, queuedMessages, onCancelQueuedMessage,
-    isRecording, onMicClick, onVoiceMode,
+    queueDepth, queuedMessages,
+    isRecording, onMicClick,
     contextPaths, setContextPaths,
     translucentMode = false,
     accessToken,
@@ -451,35 +386,12 @@ const InputArea = forwardRef(function InputArea(
     setShowMiniOutput,
     onSubmitToolOutput,
     onGenUIResponse,
-    activeTabId,
   }: InputAreaProps,
   ref: React.ForwardedRef<HTMLTextAreaElement>
 ) {
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
-  const deferredQuery = useDeferredValue(query);
-  const normalizedDeferredQuery = React.useMemo(() => String(deferredQuery || '').trim(), [deferredQuery]);
-
-  // Drag-over state for visual drop feedback
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounter = useRef(0);
-
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current++;
-    if (dragCounter.current === 1) setIsDragOver(true);
-  }, []);
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current--;
-    if (dragCounter.current <= 0) { dragCounter.current = 0; setIsDragOver(false); }
-  }, []);
-  const handleDropWrapped = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    dragCounter.current = 0;
-    setIsDragOver(false);
-    onDrop?.(e);
-  }, [onDrop]);
 
   // Cloud AI URL for embeddings
   const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -501,15 +413,11 @@ const InputArea = forwardRef(function InputArea(
   const semanticReqIdRef = useRef(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const semanticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const quickSearchCacheRef = useRef(new Map<string, {
-    expiresAt: number;
-    apps: any[];
-    files: any[];
-    mode: 'quick' | 'hybrid';
-  }>());
 
   // Ref for File Navigator to control selection
   const fileNavRef = useRef<FileNavRef>(null);
+  // Ref to track showFileNav inside handleKeyDown (declared later as state)
+  const showFileNavRef = useRef(false);
 
   // Load index stats on mount
   useEffect(() => {
@@ -528,7 +436,6 @@ const InputArea = forwardRef(function InputArea(
   const [marketplaceResults, setMarketplaceResults] = useState<any[]>([]);
   const [isMarketplaceSearching, setMarketplaceSearching] = useState(false);
   const marketplaceDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const marketplaceReqIdRef = useRef(0);
 
   // Quick Shortcuts / Bookmarks
   const { bookmarks, saveBookmarks, executeBookmark } = useBookmarks();
@@ -537,20 +444,15 @@ const InputArea = forwardRef(function InputArea(
   // Search Marketplace
   useEffect(() => {
     // Only search if not expanded and query length >= 2
-    if (expanded) {
-      marketplaceReqIdRef.current += 1;
-      setMarketplaceSearching(false);
-      return;
-    }
+    if (expanded) return;
 
-    const q = normalizedDeferredQuery;
+    const q = String(query || '').trim();
     if (marketplaceDebounceRef.current) {
       clearTimeout(marketplaceDebounceRef.current);
       marketplaceDebounceRef.current = null;
     }
 
-    if (q.length < 4) {
-      marketplaceReqIdRef.current += 1;
+    if (q.length < 2) {
       setMarketplaceResults([]);
       setMarketplaceSearching(false);
       return;
@@ -558,113 +460,57 @@ const InputArea = forwardRef(function InputArea(
 
     setMarketplaceSearching(true);
     marketplaceDebounceRef.current = setTimeout(async () => {
-      const reqId = ++marketplaceReqIdRef.current;
       try {
         const token = accessToken ?? null;
         const api = getMarketplaceApi(() => token);
         const res = await api.search({ query: q, limit: 3 });
-        if (marketplaceReqIdRef.current !== reqId) return;
         if (res.ok && res.results) {
           setMarketplaceResults(res.results);
         } else {
           setMarketplaceResults([]);
         }
       } catch {
-        if (marketplaceReqIdRef.current !== reqId) return;
         setMarketplaceResults([]);
       } finally {
-        if (marketplaceReqIdRef.current === reqId) setMarketplaceSearching(false);
+        setMarketplaceSearching(false);
       }
-    }, 800);
+    }, 600);
 
     return () => {
       if (marketplaceDebounceRef.current) clearTimeout(marketplaceDebounceRef.current);
     };
-  }, [normalizedDeferredQuery, expanded, accessToken]);
+  }, [query, expanded, accessToken]);
 
   const filteredLocalWorkflows = React.useMemo(() => {
-    const q = normalizeQuickSearchText(normalizedDeferredQuery);
+    const q = (query || '').toLowerCase().trim();
     if (!q || q.length < 2) return [];
-    return localWorkflows
-      .map((workflow) => ({
-        workflow,
-        score: scoreLocalSuggestion(workflow.name || '', q),
-      }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || (a.workflow.name || '').localeCompare(b.workflow.name || ''))
-      .slice(0, 3)
-      .map((item) => item.workflow);
-  }, [localWorkflows, normalizedDeferredQuery]);
+    return localWorkflows.filter(w =>
+      (w.name || '').toLowerCase().includes(q)
+    ).slice(0, 3);
+  }, [localWorkflows, query]);
 
 
   // Quick file search by filename — uses unified search (apps + files)
   const doQuickFileSearch = useCallback(async (q: string) => {
     const api = (window as any).desktopAPI;
-    const reqId = ++searchReqIdRef.current;
-    const cacheKey = normalizeQuickSearchText(q);
-    const cached = quickSearchCacheRef.current.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      setAppResults(cached.apps);
-      setFileResults(cached.files);
-      setFileSearchMode(cached.mode);
-      setFileError('');
-      setFileLoading(false);
-      return;
-    }
     // Prefer unified search (includes app discovery + fuzzy matching)
     if (api?.unifiedSearch) {
+      const reqId = ++searchReqIdRef.current;
       setFileLoading(true);
       setFileError('');
       try {
         const res = await api.unifiedSearch(q, {
-          limit: 8,
+          limit: 12,
           includeApps: true,
           includeFiles: true,
         });
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok && Array.isArray(res.results)) {
-          const apps = res.results.filter((r: any) => r.source === 'app-discovery').slice(0, 4);
-          const files = res.results.filter((r: any) => r.source !== 'app-discovery').slice(0, 6);
+          const apps = res.results.filter((r: any) => r.source === 'app-discovery');
+          const files = res.results.filter((r: any) => r.source !== 'app-discovery');
           setAppResults(apps);
           setFileResults(files);
           setFileSearchMode('quick');
-          quickSearchCacheRef.current.set(cacheKey, {
-            expiresAt: Date.now() + 15000,
-            apps,
-            files,
-            mode: 'quick',
-          });
-
-          // Backfill indexed file results without blocking the initial fast response.
-          if (api?.execTool) {
-            void (async () => {
-              try {
-                const indexed = await api.execTool('file_search', {
-                  query: q,
-                  mode: 'quick',
-                  limit: 6,
-                });
-                if (searchReqIdRef.current !== reqId) return;
-                if (!indexed?.ok) return;
-
-                const indexedFiles = Array.isArray(indexed.results)
-                  ? indexed.results.slice(0, 6)
-                  : [];
-                if (indexedFiles.length === 0) return;
-
-                setFileResults(indexedFiles);
-                setFileSearchMode('quick');
-                quickSearchCacheRef.current.set(cacheKey, {
-                  expiresAt: Date.now() + 15000,
-                  apps,
-                  files: indexedFiles,
-                  mode: 'quick',
-                });
-              } catch {
-                // Keep the fast unified-search results if indexed backfill fails.
-              }
-            })();
-          }
         } else {
           setAppResults([]);
           setFileResults([]);
@@ -682,6 +528,7 @@ const InputArea = forwardRef(function InputArea(
     }
     // Fallback to old file-only search
     if (!api?.execTool) return;
+    const reqId = ++searchReqIdRef.current;
     setFileLoading(true);
     setFileError('');
     try {
@@ -693,16 +540,9 @@ const InputArea = forwardRef(function InputArea(
 
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        const files = Array.isArray(res.results) ? res.results.slice(0, 6) : [];
-        setFileResults(files);
+        setFileResults(Array.isArray(res.results) ? res.results : []);
         setAppResults([]);
         setFileSearchMode('quick');
-        quickSearchCacheRef.current.set(cacheKey, {
-          expiresAt: Date.now() + 15000,
-          apps: [],
-          files,
-          mode: 'quick',
-        });
       } else {
         setFileResults([]);
         setAppResults([]);
@@ -722,7 +562,7 @@ const InputArea = forwardRef(function InputArea(
   const doSemanticRefine = useCallback(async (q: string) => {
     const token = typeof accessToken === 'string' ? accessToken : '';
     const indexed = Number(indexStats?.indexed_files || 0);
-    if (!token || indexed <= 0 || !shouldRunSemanticQuickSearch(q)) return;
+    if (!token || indexed <= 0) return;
     if (!(window as any).desktopAPI?.execTool) return;
 
     const reqId = ++semanticReqIdRef.current;
@@ -744,22 +584,13 @@ const InputArea = forwardRef(function InputArea(
         query: q,
         vector: j.embedding,
         mode: 'hybrid',
-        limit: 4,
+        limit: 6,
       });
 
       if (semanticReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        const files = Array.isArray(res.results) ? res.results.slice(0, 6) : [];
-        setFileResults(files);
+        setFileResults(Array.isArray(res.results) ? res.results : []);
         setFileSearchMode('hybrid');
-        const key = normalizeQuickSearchText(q);
-        const cachedQuick = quickSearchCacheRef.current.get(key);
-        quickSearchCacheRef.current.set(key, {
-          expiresAt: Date.now() + 15000,
-          apps: cachedQuick?.apps || [],
-          files,
-          mode: 'hybrid',
-        });
       }
     } catch {
       // ignore
@@ -773,7 +604,7 @@ const InputArea = forwardRef(function InputArea(
     // Only search if not expanded and query length >= 2
     if (expanded) return;
 
-    const q = normalizedDeferredQuery;
+    const q = String(query || '').trim();
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
       searchDebounceRef.current = null;
@@ -784,8 +615,6 @@ const InputArea = forwardRef(function InputArea(
     }
 
     if (q.length < 2) {
-      searchReqIdRef.current += 1;
-      semanticReqIdRef.current += 1;
       setFileResults([]);
       setAppResults([]);
       setFileError('');
@@ -797,46 +626,49 @@ const InputArea = forwardRef(function InputArea(
     // Quick search (instant-ish)
     searchDebounceRef.current = setTimeout(() => {
       doQuickFileSearch(q);
-    }, 100);
+    }, 150);
 
-    if (shouldRunSemanticQuickSearch(q)) {
-      // Semantic refine only for longer natural-language queries.
-      semanticDebounceRef.current = setTimeout(() => {
-        doSemanticRefine(q);
-      }, 900);
-    }
+    // Semantic refine (slower, only if embeddings exist)
+    semanticDebounceRef.current = setTimeout(() => {
+      doSemanticRefine(q);
+    }, 650);
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
       if (semanticDebounceRef.current) clearTimeout(semanticDebounceRef.current);
     };
-  }, [normalizedDeferredQuery, expanded, doQuickFileSearch, doSemanticRefine]);
+  }, [query, expanded, doQuickFileSearch, doSemanticRefine]);
 
   useEffect(() => {
     const api = (window as any).desktopAPI;
     if (!api?.getFileIcon) return;
 
-    const uniquePaths = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
-
-    // Build a list of (displayPath, candidate icon source paths) pairs for visible results.
-    const iconRequests: { displayPath: string; iconPaths: string[] }[] = [];
-
-    for (const a of (Array.isArray(appResults) ? appResults.slice(0, 4) : [])) {
+    // Build a list of (displayPath, iconSourcePath) pairs for all results that can have icons
+    const iconRequests: { displayPath: string; iconPath: string }[] = [];
+    // App results (from unified search / app-discovery)
+    for (const a of (Array.isArray(appResults) ? appResults : [])) {
       if (!a) continue;
-      const displayPath = String(a.path || a.name || '').trim();
-      if (typeof a.iconDataUrl === 'string' && a.iconDataUrl) {
-        fileIconCacheRef.current[displayPath] = a.iconDataUrl;
-        continue;
+      const filePath = String(a.path || '').trim();
+      const iconHint = String(a.iconHint || a.launchTarget || '').trim();
+      if (!filePath) continue;
+      if (iconHint || filePath) {
+        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
       }
-      const iconHint = String(a.iconHint || '').trim();
-      const launchTarget = String(a.launchTarget || '').trim();
-      const candidates = uniquePaths([
-        iconHint,
-        launchTarget,
-        displayPath,
-      ]);
-      if (!displayPath || candidates.length === 0) continue;
-      iconRequests.push({ displayPath, iconPaths: candidates });
+    }
+    // File results
+    for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
+      if (!f) continue;
+      const kind = String(f.kind || '').toLowerCase();
+      const filePath = String(f.path || '').trim();
+      if (!filePath) continue;
+      
+      // Fetch icons for applications, executables, and any file with a target_path
+      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
+          String(f.extension || '').toLowerCase() === '.exe') {
+        // Let IPC handle .lnk resolution natively, but fallback to indexer's resolved paths if needed
+        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
+        iconRequests.push({ displayPath: filePath, iconPath });
+      }
     }
     if (iconRequests.length === 0) return;
 
@@ -844,10 +676,11 @@ const InputArea = forwardRef(function InputArea(
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        iconRequests.map(async ({ displayPath, iconPaths }) => {
+        iconRequests.map(async ({ displayPath, iconPath }) => {
           if (fileIconCacheRef.current[displayPath]) return;
-          for (const p of iconPaths) {
-            if (!p) continue;
+          // Try the best icon source first, fall back to original path
+          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
+          for (const p of pathsToTry) {
             const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
             if (fileIconReqIdRef.current !== reqId) return;
             if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
@@ -867,7 +700,7 @@ const InputArea = forwardRef(function InputArea(
       }
       setFileIconDataUrls(prev => ({ ...prev, ...updates }));
     })();
-  }, [appResults]);
+  }, [fileResults, appResults]);
 
   // Handle launching an app from search results
   const handleLaunchApp = useCallback(async (launchTarget: string) => {
@@ -882,95 +715,6 @@ const InputArea = forwardRef(function InputArea(
     } catch { }
   }, []);
 
-  const handleOpenTerminal = useCallback(async () => {
-    try {
-      const api = (window as any).desktopAPI;
-      await api?.openSidebar?.({ tab: 'terminal', expanded: true });
-      await api?.hide?.();
-    } catch { }
-  }, []);
-
-  const handleOpenSpaces = useCallback(async () => {
-    try {
-      const api = (window as any).desktopAPI;
-      await api?.openSidebar?.({ tab: 'spaces', expanded: true });
-      await api?.hide?.();
-    } catch { }
-  }, []);
-
-  const handleOpenWorkflows = useCallback(async () => {
-    try {
-      const api = (window as any).desktopAPI;
-      await api?.openWorkflows?.();
-      await api?.hide?.();
-    } catch { }
-  }, []);
-
-  const handleOpenDashboardAction = useCallback(async () => {
-    try {
-      onOpenDashboard();
-      await (window as any).desktopAPI?.hide?.();
-    } catch { }
-  }, [onOpenDashboard]);
-
-  const quickLaunchActions = React.useMemo(() => {
-    const q = normalizeQuickSearchText(normalizedDeferredQuery);
-    if (!q || q.length < 2) return [] as QuickLaunchAction[];
-
-    const actions: QuickLaunchAction[] = [
-      {
-        id: 'open-terminal',
-        title: 'Open Terminal',
-        description: 'Launch the built-in terminal panel',
-        keywords: 'new terminal open terminal shell console command prompt powershell',
-        icon: <Terminal className="w-3.5 h-3.5" />,
-        iconClassName: 'text-orange-500',
-        iconWrapperClassName: 'bg-orange-500/10 border-orange-500/20',
-        run: handleOpenTerminal,
-      },
-      {
-        id: 'open-spaces',
-        title: 'Open Spaces',
-        description: 'Open spaces and create or browse a space',
-        keywords: 'new space open spaces workspace room project collaboration',
-        icon: <LayoutGrid className="w-3.5 h-3.5" />,
-        iconClassName: 'text-cyan-500',
-        iconWrapperClassName: 'bg-cyan-500/10 border-cyan-500/20',
-        run: handleOpenSpaces,
-      },
-      {
-        id: 'open-workflows',
-        title: 'Open Workflows',
-        description: 'Go to the workflows builder',
-        keywords: 'workflow workflows automation automations builder',
-        icon: <Zap className="w-3.5 h-3.5" />,
-        iconClassName: 'text-amber-500',
-        iconWrapperClassName: 'bg-amber-500/10 border-amber-500/20',
-        run: handleOpenWorkflows,
-      },
-      {
-        id: 'open-dashboard',
-        title: 'Open Dashboard',
-        description: 'Open the full Stuard dashboard',
-        keywords: 'dashboard home planner settings memories main app',
-        icon: <PanelRight className="w-3.5 h-3.5" />,
-        iconClassName: 'text-indigo-500',
-        iconWrapperClassName: 'bg-indigo-500/10 border-indigo-500/20',
-        run: handleOpenDashboardAction,
-      },
-    ];
-
-    return actions
-      .map((action) => ({
-        action,
-        score: scoreLocalSuggestion(`${action.title} ${action.description} ${action.keywords}`, q),
-      }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || a.action.title.localeCompare(b.action.title))
-      .slice(0, 5)
-      .map((item) => item.action);
-  }, [normalizedDeferredQuery, handleOpenTerminal, handleOpenSpaces, handleOpenWorkflows, handleOpenDashboardAction]);
-
   // Handle adding a file result as context
   const handleAddFileAsContext = useCallback((file: any) => {
     const path = String(file.path || '').trim();
@@ -984,19 +728,13 @@ const InputArea = forwardRef(function InputArea(
         type: 'file'
       }]);
     }
-    setAppResults([]);
     setFileResults([]);
     setQuery('');
   }, [contextPaths, setContextPaths, setQuery]);
 
   // Handle opening a file
-  const handleOpenFile = useCallback(async (path: string) => {
-    try {
-      const api = (window as any).desktopAPI;
-      if (api?.execTool) {
-        await api.execTool('open_file', { path });
-      }
-    } catch { }
+  const handleOpenFile = useCallback((path: string) => {
+    (window as any).desktopAPI?.openPath?.(path);
   }, []);
 
   // Handle copying file path
@@ -1006,6 +744,7 @@ const InputArea = forwardRef(function InputArea(
 
   // Keep a local ref so we can position the @ overlay in expanded mode using a portal
   const localTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const dropdownGap = 12;
   const setTextareaRef = useCallback((node: HTMLTextAreaElement | null) => {
     localTextareaRef.current = node;
     if (typeof ref === 'function') {
@@ -1016,6 +755,32 @@ const InputArea = forwardRef(function InputArea(
   }, [ref]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Arrow key navigation for dropdowns
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (showFileNavRef.current && fileNavRef.current) {
+        e.preventDefault();
+        fileNavRef.current.moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+    }
+
+    // Enter to select current item in file nav
+    if (e.key === 'Enter' && !e.shiftKey && showFileNavRef.current && fileNavRef.current) {
+      e.preventDefault();
+      fileNavRef.current.selectCurrent();
+      return;
+    }
+
+    // Escape to close dropdowns
+    if (e.key === 'Escape') {
+      if (showFileNavRef.current) {
+        e.preventDefault();
+        setShowFileNav(false);
+        setFileNavFilter("");
+        return;
+      }
+    }
+
     // Web Search Shortcut (Ctrl+Enter)
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -1060,6 +825,8 @@ const InputArea = forwardRef(function InputArea(
   const [showFileNav, setShowFileNav] = useState(false);
   const [fileNavFilter, setFileNavFilter] = useState("");
   const fileNavDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep ref in sync for handleKeyDown
+  useEffect(() => { showFileNavRef.current = showFileNav; }, [showFileNav]);
 
   const [fileNavOverlay, setFileNavOverlay] = useState<null | {
     left: number;
@@ -1083,16 +850,19 @@ const InputArea = forwardRef(function InputArea(
       Math.max(margin, window.innerWidth - width - margin),
     );
 
-    // Prefer above the input; if not enough room, show below
-    let placement: 'top' | 'bottom' = 'top';
-    let top = rect.top - 10;
-    if (rect.top < 340) { // Increased threshold slightly
-      placement = 'bottom';
-      top = rect.bottom + 10;
-    }
+    const spaceAbove = rect.top - margin;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const placement = chooseDropdownPlacement({
+      currentPlacement: fileNavOverlay?.placement ?? 'bottom',
+      spaceAbove,
+      spaceBelow,
+      minComfortableSpace: 280,
+      hysteresis: 36,
+    });
+    const top = placement === 'top' ? rect.top - dropdownGap : rect.bottom + dropdownGap;
 
     setFileNavOverlay({ left, top, placement, width });
-  }, [showFileNav]);
+  }, [dropdownGap, fileNavOverlay?.placement, showFileNav]);
 
   useEffect(() => {
     if (!showFileNav) return;
@@ -1235,7 +1005,6 @@ const InputArea = forwardRef(function InputArea(
   const prevWindowHeightRef = useRef(140);
   const isExpandingRef = useRef(false);
 
-  // Calculate the best placement based on available screen space
   const calculatePlacement = useCallback((): 'top' | 'bottom' => {
     try {
       const screenHeight = window?.screen?.availHeight || 1080;
@@ -1243,20 +1012,16 @@ const InputArea = forwardRef(function InputArea(
       const windowHeight = window?.outerHeight || 140;
       const flipToTopThreshold = dropdownPlacement === 'bottom' ? 80 : 60;
       const flipToBottomThreshold = 160;
-
-      // Space available below the window
       const spaceBelow = screenHeight - (windowTop + windowHeight);
-      // Space available above the window
       const spaceAbove = windowTop;
 
       if (dropdownPlacement === 'bottom') {
-        // Flip to top only when very low on screen
         if (spaceBelow < flipToTopThreshold && spaceAbove > spaceBelow) {
           return 'top';
         }
         return 'bottom';
       }
-      // dropdownPlacement === 'top'
+
       if (spaceBelow > flipToBottomThreshold) {
         return 'bottom';
       }
@@ -1280,16 +1045,11 @@ const InputArea = forwardRef(function InputArea(
 
     // Calculate target height
     // baseHeight should match inputBarHeight (140 + inputBarGap)
-    const hasAttachmentCards = attachments.length > 0;
-    const hasContextChips = !!(contextPaths && contextPaths.length > 0);
-    const attachmentHeight = hasAttachmentCards
-      ? 118 + (hasContextChips ? 36 : 0)
-      : (hasContextChips ? 44 : 0);
-    const baseHeight = 156 + miniHeight + attachmentHeight; // base chrome + mini output + attachments/context
+    const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
+    const attachmentHeight = hasAttachments ? 44 : 0;
+    const baseHeight = 156 + miniHeight + attachmentHeight; // 140 + 16 gap + mini output + attachments
     const searchDropdownHeight = showWebOptions ? 460 : 400;
     const fileNavDropdownHeight = 400;
-    // Keep the dropdown height stable while typing so the compact window
-    // does not bounce around as async sections appear and disappear.
     const dropdownHeight = showFileNav
       ? fileNavDropdownHeight
       : showSearchOptions
@@ -1452,7 +1212,6 @@ const InputArea = forwardRef(function InputArea(
               dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
             )}
             style={{
-              // Position dropdown based on placement with proper spacing
               bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
               top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
             }}
@@ -1472,7 +1231,7 @@ const InputArea = forwardRef(function InputArea(
                   onEdit={() => setShowBookmarkEditor(true)}
                   onAdd={() => setShowBookmarkEditor(true)}
                   maxVisible={6}
-                  filter={normalizedDeferredQuery}
+                  filter={query}
                 />
                 {/* Ask Stuard - Primary */}
                 <button
@@ -1490,40 +1249,6 @@ const InputArea = forwardRef(function InputArea(
                   <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
                 </button>
 
-                {quickLaunchActions.length > 0 && (
-                  <div className="space-y-1 mb-1">
-                    <div className="px-3 py-1.5 flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Launch</span>
-                    </div>
-                    <div className="px-1 space-y-1">
-                      {quickLaunchActions.map((action) => (
-                        <button
-                          key={action.id}
-                          onClick={() => {
-                            void action.run();
-                            setQuery('');
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-violet-500/30 hover:shadow-md transition-all group text-left mb-1"
-                        >
-                          <div className={clsx('w-7 h-7 rounded-lg border flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all', action.iconWrapperClassName, action.iconClassName)}>
-                            {action.icon}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className={clsx('text-[13px] font-semibold text-theme-fg truncate transition-colors group-hover:text-violet-500')}>
-                              {action.title}
-                            </div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">
-                              {action.description}
-                            </div>
-                          </div>
-                          <PlayCircle className="w-3.5 h-3.5 text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 {/* App Results — always shown FIRST */}
                 {Array.isArray(appResults) && appResults.length > 0 && (
                   <div className="space-y-1 mb-1">
@@ -1534,7 +1259,7 @@ const InputArea = forwardRef(function InputArea(
                     </div>
                     <div className="px-1 space-y-1">
                       {appResults.map((a: any, idx: number) => {
-                        const iconUrl = a?.iconDataUrl || (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
+                        const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
                         return (
                           <button
                             key={String(a.name || idx)}
@@ -1546,7 +1271,7 @@ const InputArea = forwardRef(function InputArea(
                           >
                             <div className="w-7 h-7 rounded-lg border border-blue-500/20 bg-blue-500/10 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all">
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
+                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
                               ) : (
                                 <AppWindow className="w-3.5 h-3.5 text-blue-500" />
                               )}
@@ -1577,7 +1302,7 @@ const InputArea = forwardRef(function InputArea(
                         {fileSearchMode === 'hybrid' ? 'Semantic' : 'Quick'}
                       </div>
                     </div>
-                    <div className="px-1 space-y-1">
+                    <div className="max-h-[240px] overflow-y-auto custom-scrollbar px-1 space-y-1">
                       {fileResults.map((f: any, idx: number) => {
                         if (!f) return null;
 
@@ -1598,16 +1323,15 @@ const InputArea = forwardRef(function InputArea(
 
                         const cfg = getFileKindConfig(kind);
                         const Icon = cfg.icon;
-                        const iconUrl = kind === 'application' && f?.path
-                          ? fileIconDataUrls[String(f.path)]
-                          : undefined;
+                        const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
 
                         return (
                           <button
                             key={String(f.id || f.path || idx)}
                             onClick={() => {
                               if (kind === 'application') {
-                                handleLaunchApp(String(f.target_path || f.path));
+                                (window as any).desktopAPI?.openPath?.(String(f.path));
+                                (window as any).desktopAPI?.hide?.();
                                 setQuery('');
                               } else {
                                 handleAddFileAsContext(f);
@@ -1617,7 +1341,7 @@ const InputArea = forwardRef(function InputArea(
                           >
                             <div className={clsx("w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" loading="lazy" className="w-5 h-5 object-contain" />
+                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
                               ) : (
                                 <Icon className="w-3.5 h-3.5" />
                               )}
@@ -1901,29 +1625,14 @@ const InputArea = forwardRef(function InputArea(
         )}
         <div
           className={clsx(
-            "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300 relative",
+            "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300",
             translucentMode
               ? "bg-gray-100/80 backdrop-blur-2xl border border-gray-300/50"
-              : "bg-gray-100/90 border border-gray-200",
-            isDragOver && "ring-2 ring-primary/50 ring-offset-1"
+              : "bg-gray-100/90 border border-gray-200"
           )}
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDropWrapped}
+          onDrop={onDrop}
         >
-          {/* Queue Panel */}
-          {queueDepth > 0 && (
-            <QueuePanel messages={queuedMessages} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
-          )}
-          {/* Drop overlay */}
-          {isDragOver && (
-            <div className="absolute inset-0 z-50 rounded-[28px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150">
-              <div className="flex items-center gap-2 text-primary font-semibold text-sm">
-                <span>Drop files, images, or PDFs here</span>
-              </div>
-            </div>
-          )}
           {/* Top Row: Status & Actions */}
           <div className="flex items-center justify-between w-full pl-1">
             <button
@@ -2094,17 +1803,6 @@ const InputArea = forwardRef(function InputArea(
                 <Mic className="w-5 h-5" />
               </button>
             )}
-            {/* Voice Mode Button */}
-            {onVoiceMode && (
-              <button
-                type="button"
-                className="no-drag h-[42px] w-[42px] rounded-[14px] flex-shrink-0 inline-flex items-center justify-center transition-all active:scale-95 bg-theme-hover text-theme-fg/70 hover:text-primary hover:bg-primary/10"
-                onClick={onVoiceMode}
-                title="Voice conversation"
-              >
-                <AudioWaveform className="w-5 h-5" />
-              </button>
-            )}
           </div>
         </div>
 
@@ -2160,13 +1858,11 @@ const InputArea = forwardRef(function InputArea(
 
         {/* Input & Tools Row */}
         <div
-          className={clsx("px-3 py-2 flex items-center gap-2 relative", isDragOver && "ring-2 ring-primary/50 rounded-xl")}
+          className="px-3 py-2 flex items-center gap-2 relative"
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDropWrapped}
+          onDrop={onDrop}
         >
-          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
+          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} />
 
           {/* Attachment Menu */}
           <DropdownMenu.Root>
@@ -2235,7 +1931,7 @@ const InputArea = forwardRef(function InputArea(
           {/* Right Actions Group */}
           <div className="flex items-center gap-1 bg-theme-hover/50 border border-theme/10 rounded-lg p-0.5 h-8">
             {/* Folder Permissions */}
-            <FolderPermissionsButton sessionId={activeTabId} />
+            <FolderPermissionsButton />
             <div className="w-px h-4 bg-theme/20 mx-0.5" />
             {/* Mic Button */}
             {onMicClick && (
@@ -2250,16 +1946,6 @@ const InputArea = forwardRef(function InputArea(
                 data-onboarding="mic-btn"
               >
                 <Mic className="w-3.5 h-3.5" />
-              </button>
-            )}
-            {/* Voice Mode Button */}
-            {onVoiceMode && (
-              <button
-                className="no-drag inline-flex items-center justify-center rounded-md transition-all h-7 w-7 text-theme-fg/70 hover:text-primary hover:bg-primary/10"
-                onClick={onVoiceMode}
-                title="Voice conversation"
-              >
-                <AudioWaveform className="w-3.5 h-3.5" />
               </button>
             )}
             <div className="w-px h-4 bg-theme/20 mx-0.5" />

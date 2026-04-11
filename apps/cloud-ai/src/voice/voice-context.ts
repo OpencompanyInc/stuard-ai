@@ -109,6 +109,9 @@ function buildVoiceSystemPrompt(opts: {
     '- Do not use ask_user, chat_ui, or other visual/UI-only flows during a phone call. If you need more information, ask the caller verbally.',
     '- If a delegated subagent asks a question, ask the caller verbally and answer it with reply_to_subagent.',
     '- When calling tools, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
+    '- IMPORTANT — before calling delegate or reply_to_subagent, ALWAYS speak a short acknowledgment out loud first (e.g. "Give me a moment, I\'ll work on that" or "One sec, I\'m checking on it"). Once delegate is running the call will be silent until the subagent returns, so the caller needs to hear you acknowledge the request before you kick it off.',
+    '- Subagents can take a minute or more. If the caller starts talking while you\'re waiting, feel free to chat — and when the result comes back, smoothly continue where you left off.',
+    '- If a tool result comes back with "timedOut": true or an error saying it was released so the call can continue, do NOT silently retry. Tell the caller you\'re still working on it, offer to text them a follow-up with send_sms once it\'s ready, or ask whether they want you to keep trying.',
   );
 
   if (customPrompt) {

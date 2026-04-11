@@ -9,6 +9,7 @@ import { ChatTabs } from './ChatTabs';
 import { ChatHeaderActions } from './ChatHeaderActions';
 import { ChatInputArea } from './ChatInputArea';
 import { FileNavigatorOverlay } from './FileNavigatorOverlay';
+import { chooseDropdownPlacement } from '../../utils/dropdownPlacement';
 
 interface ChatViewProps {
   messages: any[];
@@ -170,20 +171,25 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     const rect = el.getBoundingClientRect();
     const width = 320;
     const margin = 10;
+    const dropdownGap = 12;
     const left = Math.min(
       Math.max(rect.left, margin),
       Math.max(margin, window.innerWidth - width - margin),
     );
 
-    let placement: 'top' | 'bottom' = 'top';
-    let top = rect.top - 10;
-    if (rect.top < 320) {
-      placement = 'bottom';
-      top = rect.bottom + 10;
-    }
+    const spaceAbove = rect.top - margin;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const placement = chooseDropdownPlacement({
+      currentPlacement: fileNavOverlay?.placement ?? 'bottom',
+      spaceAbove,
+      spaceBelow,
+      minComfortableSpace: 280,
+      hysteresis: 36,
+    });
+    const top = placement === 'top' ? rect.top - dropdownGap : rect.bottom + dropdownGap;
 
     setFileNavOverlay({ left, top, placement, width });
-  }, [showFileNav]);
+  }, [fileNavOverlay?.placement, showFileNav]);
 
   useEffect(() => {
     if (fileNavDebounceRef.current) {

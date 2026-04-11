@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import posthog from "posthog-js";
 import 'katex/dist/katex.min.css'; // Global Katex styles
 import { useAgent } from './hooks/useAgent';
@@ -29,7 +28,6 @@ import {
 } from './utils/attachments';
 
 import { useSpeechToText } from './hooks/useSpeechToText';
-import { VoiceModeView } from './views/VoiceModeView';
 import { usePlannerData } from './hooks/usePlannerData';
 import { LauncherView } from './components/LauncherView';
 import { ChatView } from './components/ChatView';
@@ -76,7 +74,6 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('stuard.pref.reasoning_level', reasoningLevel); } catch {} }, [reasoningLevel]);
   const [showPalette, setShowPalette] = useState(false);
   const [showHotkeys, setShowHotkeys] = useState(false);
-  const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   const [updateState, setUpdateState] = useState<{ status: string; info?: any }>({ status: 'idle' });
 
   // Workflows & Marketplace Search
@@ -975,11 +972,6 @@ export default function App() {
     }
   }, [isRecording, signedIn, query, stopRecording, startRecording, handleSignIn]);
 
-  const handleVoiceMode = useCallback(() => {
-    if (!signedIn) { handleSignIn(); return; }
-    setVoiceModeOpen(true);
-  }, [signedIn, handleSignIn]);
-
   // Attachments
   const fileToAttachment = (
     file: File,
@@ -1614,69 +1606,55 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-end relative">
+            <div className="flex-1 flex flex-col relative">
               {/* Environment Badge - compact mode (top-right) */}
               <EnvironmentBadge variant="minimal" className="absolute top-1 right-1 z-50" />
-              <AnimatePresence>
-                {!voiceModeOpen && (
-                  <motion.div
-                    key="input"
-                    className="w-full"
-                    initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 20, scale: 0.85, transition: { duration: 0.25 } }}
-                    transition={{ duration: 0.3, ease: 'easeOut' }}
-                  >
-                    <InputArea
-                      ref={inputRef}
-                      query={query}
-                      setQuery={setQuery}
-                      onSend={handleSend}
-                      attachments={attachments}
-                      onRemoveAttachment={handleRemoveAttachment}
-                      onAttachFiles={handleAttachFiles}
-                      onAttachImages={handleAttachImages}
-                      onPaste={handlePaste}
-                      onDrop={handleDrop}
-                      signedIn={signedIn}
-                      onSignIn={handleSignIn}
-                      conversationTitle={conversationTitle}
-                      conversations={convList}
-                      loadingConversations={loadingConvs}
-                      onSelectConversation={handleSelectConversation}
-                      onDeleteConversation={handleDeleteConversation}
-                      onNewChat={handleNewChat}
-                      onStopGeneration={stopGeneration}
-                      onChatMenuOpenChange={setChatMenuOpen}
-                      chatMenuOpen={chatMenuOpen}
-                      expanded={false}
-                      onToggleExpand={handleShowWindow}
-                      onOpenDashboard={handleOpenDashboard}
-                      overlayMode={overlayMode}
-                      statusText={inputStatusText}
-                      statusIcon={inputStatusIcon}
-                      statusUrgency={inputStatusUrgency}
-                      connectionStatus={connectionStatus}
-                      queueDepth={queueDepth}
-                      queuedMessages={queuedMessages}
-                      isRecording={isRecording}
-                      onMicClick={handleMicClick}
-                      onVoiceMode={handleVoiceMode}
-                      contextPaths={contextPaths}
-                      setContextPaths={setContextPaths}
-                      translucentMode={translucentMode}
-                      accessToken={accessToken}
-                      miniOutputText={miniOutputText}
-                      miniOutputHasContent={miniOutputHasContent}
-                      miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
-                      showMiniOutput={showMiniOutput}
-                      setShowMiniOutput={setShowMiniOutput}
-                      onSubmitToolOutput={submitToolOutput}
-                      onGenUIResponse={handleGenUIResponse}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <InputArea
+                ref={inputRef}
+                query={query}
+                setQuery={setQuery}
+                onSend={handleSend}
+                attachments={attachments}
+                onRemoveAttachment={handleRemoveAttachment}
+                onAttachFiles={handleAttachFiles}
+                onAttachImages={handleAttachImages}
+                onPaste={handlePaste}
+                onDrop={handleDrop}
+                signedIn={signedIn}
+                onSignIn={handleSignIn}
+                conversationTitle={conversationTitle}
+                conversations={convList}
+                loadingConversations={loadingConvs}
+                onSelectConversation={handleSelectConversation}
+                onDeleteConversation={handleDeleteConversation}
+                onNewChat={handleNewChat}
+                onStopGeneration={stopGeneration}
+                onChatMenuOpenChange={setChatMenuOpen}
+                chatMenuOpen={chatMenuOpen}
+                expanded={false}
+                onToggleExpand={handleShowWindow}
+                onOpenDashboard={handleOpenDashboard}
+                overlayMode={overlayMode}
+                statusText={inputStatusText}
+                statusIcon={inputStatusIcon}
+                statusUrgency={inputStatusUrgency}
+                connectionStatus={connectionStatus}
+                queueDepth={queueDepth}
+                queuedMessages={queuedMessages}
+                isRecording={isRecording}
+                onMicClick={handleMicClick}
+                contextPaths={contextPaths}
+                setContextPaths={setContextPaths}
+                translucentMode={translucentMode}
+                accessToken={accessToken}
+                miniOutputText={miniOutputText}
+                miniOutputHasContent={miniOutputHasContent}
+                miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
+                showMiniOutput={showMiniOutput}
+                setShowMiniOutput={setShowMiniOutput}
+                onSubmitToolOutput={submitToolOutput}
+                onGenUIResponse={handleGenUIResponse}
+              />
             </div>
           )}
 
@@ -1702,13 +1680,6 @@ export default function App() {
 
         {/* Stuard Workflow Overlay - renders native UI panels from automations */}
         <WorkflowOverlay />
-
-        {/* Voice Mode Pill — absolute bottom center of the window */}
-        <AnimatePresence>
-          {voiceModeOpen && (
-            <VoiceModeView key="voice-pill" onClose={() => setVoiceModeOpen(false)} />
-          )}
-        </AnimatePresence>
 
         {/* Onboarding Tooltips */}
         <OnboardingTooltipContainer />

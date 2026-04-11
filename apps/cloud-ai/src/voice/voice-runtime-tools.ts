@@ -20,6 +20,47 @@ const VOICE_RUNTIME_MEMORY_QUERY =
 const MAX_VOICE_MEMORY_SUMMARY_CHARS = 900;
 const MAX_VOICE_RESULT_JSON_CHARS = 2_000;
 
+// Per-tool execution timeouts. Voice calls are real-time — a tool that hangs
+// blocks the model from responding, leaving the caller in silence. When a
+// timeout fires we return a graceful error payload so the model can at least
+// acknowledge the caller instead of the Realtime session locking up forever.
+// Delegate/reply_to_subagent get the longest window because subagents can
+// legitimately run for several minutes.
+const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
+  delegate: 8 * 60_000,
+  reply_to_subagent: 8 * 60_000,
+  execute_tool: 2 * 60_000,
+  web_search: 45_000,
+  search_memory: 30_000,
+  search_tools: 30_000,
+  get_tool_schema: 30_000,
+  send_sms: 20_000,
+};
+const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 60_000;
+
+function voiceToolTimeoutFor(name: string): number {
+  return VOICE_TOOL_TIMEOUTS_MS[name] ?? DEFAULT_VOICE_TOOL_TIMEOUT_MS;
+}
+
+async function runWithVoiceTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T | { ok: false; error: string; timedOut: true }> {
+  const ms = voiceToolTimeoutFor(toolName);
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<{ ok: false; error: string; timedOut: true }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({
+        ok: false,
+        timedOut: true,
+        error: `Tool '${toolName}' exceeded ${Math.round(ms / 1000)}s and was released so the call can continue. Let the caller know you're still working on it and offer to follow up.`,
+      });
+    }, ms);
+  });
+  try {
+    return await Promise.race([fn(), timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const VOICE_BLOCKED_TOOL_IDS = new Set([
   'ask_user',
   'chat_ui',
@@ -479,6 +520,16 @@ async function executeSendSms(userId: string, message: string): Promise<any> {
   }
 }
 
+const KNOWN_VOICE_TOOLS = new Set([
+  'search_memory',
+  'search_tools',
+  'get_tool_schema',
+  'delegate',
+  'reply_to_subagent',
+  'web_search',
+  'send_sms',
+]);
+
 export async function executeVoiceToolCall(input: {
   name: string;
   argsJson: string;
@@ -495,6 +546,27 @@ export async function executeVoiceToolCall(input: {
     args = {};
   }
 
+  // Resolve the effective tool name for timeout selection. When execute_tool
+  // is used as a redirect to another known voice tool (e.g. delegate), honor
+  // the inner tool's timeout so long-running subagents aren't cut off by the
+  // shorter execute_tool budget.
+  let effectiveName = toolName;
+  if (toolName === 'execute_tool') {
+    const requestedTool = normalizeVoiceToolName(String(args.tool_name || ''));
+    if (KNOWN_VOICE_TOOLS.has(requestedTool)) {
+      effectiveName = requestedTool;
+    }
+  }
+
+  return runWithVoiceTimeout(effectiveName, () => dispatchVoiceTool(toolName, args, { userId, channel, voiceSessionId }));
+}
+
+async function dispatchVoiceTool(
+  toolName: string,
+  args: Record<string, any>,
+  ctx: { userId: string; channel: VoiceRuntimeChannel; voiceSessionId?: string },
+): Promise<any> {
+  const { userId, channel, voiceSessionId } = ctx;
   switch (toolName) {
     case 'search_tools': {
       const result = await withVoiceBridge(voiceSessionId, async () =>
@@ -545,22 +617,8 @@ export async function executeVoiceToolCall(input: {
         };
       }
 
-      if ([
-        'search_memory',
-        'search_tools',
-        'get_tool_schema',
-        'delegate',
-        'reply_to_subagent',
-        'web_search',
-        'send_sms',
-      ].includes(requestedTool)) {
-        return executeVoiceToolCall({
-          name: requestedTool,
-          argsJson: JSON.stringify(args.args || {}),
-          userId,
-          channel,
-          voiceSessionId,
-        });
+      if (KNOWN_VOICE_TOOLS.has(requestedTool)) {
+        return dispatchVoiceTool(requestedTool, (args.args && typeof args.args === 'object') ? args.args : {}, ctx);
       }
 
       return withVoiceBridge(voiceSessionId, async () =>

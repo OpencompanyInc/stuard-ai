@@ -26,6 +26,7 @@ import { SubagentDashboard } from "./chat-view/SubagentDashboard";
 import { AskUserPrompt } from "./chat-view/AskUserPrompt";
 import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
 import { buildContextUsageMetrics } from "../utils/contextUsage";
+import { chooseDropdownPlacement } from "../utils/dropdownPlacement";
 
 interface ChatViewProps {
   messages: any[];
@@ -317,6 +318,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
     const rect = el.getBoundingClientRect();
     const margin = 10;
+    const dropdownGap = 12;
     // Match input width, max 600px
     const width = Math.min(Math.max(320, rect.width), 600);
 
@@ -325,15 +327,19 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       Math.max(margin, window.innerWidth - width - margin),
     );
 
-    let placement: "top" | "bottom" = "top";
-    let top = rect.top - 10;
-    if (rect.top < 340) {
-      placement = "bottom";
-      top = rect.bottom + 10;
-    }
+    const spaceAbove = rect.top - margin;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const placement = chooseDropdownPlacement({
+      currentPlacement: fileNavOverlay?.placement ?? "bottom",
+      spaceAbove,
+      spaceBelow,
+      minComfortableSpace: 280,
+      hysteresis: 36,
+    });
+    const top = placement === "top" ? rect.top - dropdownGap : rect.bottom + dropdownGap;
 
     setFileNavOverlay({ left, top, placement, width });
-  }, [showFileNav]);
+  }, [fileNavOverlay?.placement, showFileNav]);
 
   useEffect(() => {
     if (fileNavDebounceRef.current) {
