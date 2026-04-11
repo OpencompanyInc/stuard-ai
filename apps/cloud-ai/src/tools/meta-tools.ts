@@ -16,19 +16,16 @@ import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
 import * as telnyxTools from './telnyx-tools';
 import * as whatsappTools from './whatsapp-tools';
-import * as metaSocialTools from './meta-social-tools';
-import * as cloudStorageTools from './cloud-storage-tools';
-import * as proactiveTaskTools from './proactive-task-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
-import { resolveEmbedder } from '../utils/embeddings';
+import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
 
@@ -305,92 +302,63 @@ const logTool = createTool({
 
 const chatUiTool = createTool({
     id: 'chat_ui',
-    description: `Render a custom React component inline in the chat. Use this as the DEFAULT way to display any structured data, results, or visual content — tables, stats, file lists, JSON, charts, dashboards, code output, search results, comparisons, etc. Prefer this over plain text whenever the response has structure worth visualizing.
-
-WHEN TO USE (non-blocking, blocking: false):
-  - Showing query results, file listings, search hits, API responses
-  - Displaying stats, metrics, comparisons, or summaries
-  - Rendering tables, cards, timelines, or any structured output
-  - Visualizing data the user will want to scan or interact with
-
-WHEN TO USE (blocking, blocking: true):
-  - Custom input not covered by ask_confirmation / show_choices / show_form
-  - Multi-step flows that need dynamic state between steps
+    description: `Render a custom interactive React component inline in the chat conversation.
+Unlike custom_ui (which opens a separate window), chat_ui embeds the UI directly in the chat bubble.
 
 COMPONENT FIELD:
-  Define a function App() using JSX. Auto-transformed via Sucrase.
+  Define a function App() using JSX syntax. JSX is auto-transformed at render time.
 
-  - Standard JSX: <div className="p-4">{expr}</div>
+  - Standard React JSX: <div className="p-4">{expr}</div>
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - Tailwind CSS (dark mode via dark: prefix)
-  - initialData — global object seeded from the data arg
-  - stuard.submit(data) — return data to agent and close (blocking only)
-  - stuard.close() — dismiss without data
+  - Tailwind CSS classes available (dark mode via dark: prefix)
+  - stuard.submit(data) — submit data back to the agent (resolves blocking)
+  - stuard.close() — dismiss the UI without data
 
-DESIGN:
-  A \`designScheme\` global is auto-injected:
+BLOCKING vs NON-BLOCKING:
+  - blocking: true  → Agent pauses until the user interacts (submit/close). Use for forms, confirmations, selections.
+  - blocking: false → Agent continues immediately. UI stays rendered in chat as display-only. Use for dashboards, status displays, rich content.
+
+DESIGN SCHEME (auto-injected):
+  A \`designScheme\` object is available globally in your component:
     designScheme.mode    — 'dark' | 'light'
     designScheme.colors  — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input }
 
-  <body> has class "dark" in dark mode. Use Tailwind dark: variants.
-  Background/text already match the host app — only override when intentional.
+  The <body> has class "dark" when in dark mode. Use Tailwind dark: classes for styling:
+    <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+
+  By default, background and text colors already match the host app — only override when needed.
 
 RULES:
-  1. Every submit/action button MUST have onClick.
-  2. Use JSX style objects: style={{color:'red'}} not style="color:red".
-  3. Sandboxed iframe — no parent window or Node.js access.
+  1. EVERY action button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit buttons.
+  2. initialData is available globally, seeded from the data arg.
+  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
+  4. The component renders in a sandboxed iframe — no access to parent window or Node.js APIs.
 
-EXAMPLE — data table (non-blocking):
-  data: { rows: [{name:"Alice",score:92},{name:"Bob",score:87}] }
+EXAMPLE (blocking form):
   component: \`
     function App() {
-      const { rows } = initialData;
-      return (
-        <div className="p-3 space-y-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Results</div>
-          {rows.map((r, i) => (
-            <div key={i} className="flex justify-between px-3 py-2 rounded bg-slate-800 text-sm">
-              <span>{r.name}</span>
-              <span className="text-indigo-400 font-mono">{r.score}</span>
-            </div>
-          ))}
-        </div>
-      );
-    }
-  \`
-
-EXAMPLE — stat cards (non-blocking):
-  data: { used: "4.2 GB", free: "11.8 GB", files: 1340 }
-  component: \`
-    function App() {
-      const { used, free, files } = initialData;
-      const stats = [["Used", used, "text-amber-400"], ["Free", free, "text-emerald-400"], ["Files", files, "text-indigo-400"]];
-      return (
-        <div className="p-3 grid grid-cols-3 gap-2">
-          {stats.map(([label, val, color]) => (
-            <div key={label} className="rounded-lg bg-slate-800 p-3 text-center">
-              <div className={\`text-xl font-bold \${color}\`}>{val}</div>
-              <div className="text-xs text-slate-400 mt-1">{label}</div>
-            </div>
-          ))}
-        </div>
-      );
-    }
-  \`
-
-EXAMPLE — blocking input:
-  component: \`
-    function App() {
-      const [val, setVal] = useState('');
+      const [name, setName] = useState(initialData.name || '');
       return (
         <div className="p-4 space-y-3">
-          <p className="text-sm">{initialData.prompt}</p>
-          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600 text-sm"
-            value={val} onChange={e => setVal(e.target.value)} placeholder="Type here..." />
-          <button onClick={() => stuard.submit({ value: val })}
-            className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm font-medium">
+          <h2 className="text-lg font-semibold">What's your name?</h2>
+          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600"
+            value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
+          <button onClick={() => stuard.submit({ name })}
+            className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">
             Submit
           </button>
+        </div>
+      );
+    }
+  \`
+
+EXAMPLE (non-blocking display):
+  component: \`
+    function App() {
+      return (
+        <div className="p-4">
+          <div className="text-sm text-slate-500 dark:text-slate-400">Status</div>
+          <div className="text-2xl font-bold">{initialData.status}</div>
         </div>
       );
     }
@@ -429,26 +397,13 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         registerTool(t, 'FileSearch');
-    } else if (['run_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
+    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         registerTool(t, 'System');
     } else if (['get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'random_choice', 'get_env_var', 'get_system_info', 'hash_string', 'base64_encode', 'base64_decode', 'json_parse', 'json_stringify', 'sleep', 'regex_match', 'regex_replace'].includes(name)) {
         registerTool(t, 'Utils');
     } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {
         registerTool(t, 'GUI');
-    } else if ([
-        'capture_media',
-        'stop_capture',
-        'list_active_captures',
-        'describe_media_capture_capabilities',
-        'capture_screen',
-        'stop_screen_capture',
-        'describe_screen_capture_capabilities',
-        'capture_system_audio',
-        'stop_system_audio',
-        'describe_system_audio_capabilities',
-        'stream_speech',
-        'stop_stream_speech',
-    ].includes(name)) {
+    } else if (['capture_media', 'stop_capture', 'list_active_captures', 'describe_media_capture_capabilities', 'stream_speech', 'stop_stream_speech'].includes(name)) {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
@@ -468,6 +423,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {
         registerTool(t, 'Productivity');
+    } else if (['canvas_list', 'canvas_read', 'canvas_write', 'canvas_create', 'canvas_delete'].includes(name)) {
+        registerTool(t, 'Canvas');
     } else if (['workspace_read_file', 'workspace_write_file', 'workspace_delete_file', 'workspace_list_files', 'workspace_create_folder', 'workspace_get_info'].includes(name)) {
         registerTool(t, 'Workspace');
     } else if (['set_variable', 'get_variable', 'toggle_variable', 'increment_variable', 'append_to_list', 'list_variables', 'delete_variable'].includes(name)) {
@@ -533,31 +490,20 @@ Object.values(httpTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
 });
 Object.values(telnyxTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Telnyx');
 });
 Object.values(whatsappTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
-});
-Object.values(metaSocialTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
-});
-Object.values(cloudStorageTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Integrations');
-});
-Object.values(proactiveTaskTools).forEach(t => {
-    if (typeof (t as any)?.execute === 'function') registerTool(t, 'Productivity');
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'WhatsApp');
 });
 
 // 2. Meta Tools
 
 export const search_tools = createTool({
     id: 'search_tools',
-    description: 'Search for available tools by category or query string. Returns tool names and descriptions. Pass list_categories:true to see all categories.',
+    description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Canvas', 'Other']).optional(),
+        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Telnyx', 'WhatsApp', 'Canvas', 'Other']).optional(),
         query: z.string().optional(),
-        list_categories: z.boolean().optional().describe('Return the list of available categories instead of searching'),
-        limit: z.number().int().min(1).max(20).optional().default(10),
     }),
     outputSchema: z.object({
         tools: z.array(z.object({
@@ -567,80 +513,86 @@ export const search_tools = createTool({
         })),
     }),
     execute: async (inputData) => {
-        const { category, query, list_categories, limit = 10 } = inputData as any;
-        const supabase = getSupabaseService();
-        if (!supabase) {
-            throw new Error('Supabase-backed tool search is unavailable.');
-        }
+        const { category, query } = inputData;
+        const registry = getToolRegistry();
+        const categories = getToolCategories();
 
+        const keywordSearch = () => {
+            const results: Array<{ name: string; description: string; category: string }> = [];
+            const q = (query || '').toLowerCase();
+
+            for (const [cat, names] of categories.entries()) {
+                if (category && cat !== category) continue;
+
+                for (const name of names) {
+                    const tool = registry.get(name);
+                    if (!tool) continue;
+
+                    const desc = tool.description || '';
+                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
+
+                    results.push({
+                        name,
+                        description: desc,
+                        category: cat,
+                    });
+                }
+            }
+
+            return { tools: results };
+        };
+
+        const supabase = getSupabaseService();
         const hasQuery = typeof query === 'string' && query.trim().length > 0;
 
-        let results: Array<{ name: string; description: string; category: string }> = [];
-
-        if (list_categories) {
-            const { data, error } = await supabase
-                .from('tool_embeddings')
-                .select('category')
-                .eq('enabled', true);
-
-            if (error) throw error;
-
-            const categories = Array.from(new Set(
-                (data || [])
-                    .map((row: any) => String(row?.category || '').trim() || 'Other')
-                    .filter(Boolean),
-            )).sort((a, b) => a.localeCompare(b));
-
-            return {
-                tools: categories.map((cat) => ({ name: cat, description: '', category: cat })),
-            };
+        if (!hasQuery || !supabase) {
+            return keywordSearch();
         }
 
-        if (hasQuery) {
-            // Vector search via Supabase RPC (pgvector server-side cosine similarity)
+        // Vector Search Logic
+        if (!_syncPromise) {
+            _syncPromise = ensureToolEmbeddings().catch(e => console.error('Tool embedding sync failed', e));
+        }
+        try { await _syncPromise; } catch { }
+
+        try {
             const { embedder } = await resolveEmbedder();
             const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
             const queryVector = embeddings[0];
 
-            const { data, error } = await supabase.rpc('search_tools', {
-                query_embedding: queryVector,
-                match_threshold: 0.25,
-                match_count: limit,
-                filter_category: category || null,
-                filter_kind: null,
-                enabled_only: true,
-            });
+            // Fetch all tools (caching in memory would be better, but for <1000 tools this is fast enough)
+            const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
+            if (error || !rows) throw error;
 
-            if (error) throw error;
-
-            results = (data || []).map((row: any) => ({
-                name: row.name,
-                description: row.description || '',
-                category: row.category || 'Other',
-            }));
-        } else {
-            let dbQuery = supabase
-                .from('tool_embeddings')
-                .select('name, description, category')
-                .eq('enabled', true)
-                .order('name', { ascending: true })
-                .limit(limit);
-
+            let candidates = rows;
             if (category) {
-                dbQuery = dbQuery.eq('category', category);
+                candidates = rows.filter((r: any) => r.category === category);
             }
 
-            const { data, error } = await dbQuery;
-            if (error) throw error;
+            const withScores = candidates.map((r: any) => {
+                let vec = r.embedding;
+                if (typeof vec === 'string') {
+                    try { vec = JSON.parse(vec); } catch { }
+                }
+                const sim = Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1;
+                return { ...r, score: sim };
+            });
 
-            results = (data || []).map((row: any) => ({
-                name: row.name,
-                description: row.description || '',
-                category: row.category || 'Other',
+            withScores.sort((a: any, b: any) => b.score - a.score);
+
+            // Return top 10
+            const top = withScores.slice(0, 10).map((t: any) => ({
+                name: t.name,
+                description: t.description,
+                category: t.category,
             }));
-        }
 
-        return { tools: results };
+            return { tools: top };
+
+        } catch (e) {
+            console.warn('Vector search failed, falling back to keyword search', e);
+            return keywordSearch();
+        }
     },
 });
 

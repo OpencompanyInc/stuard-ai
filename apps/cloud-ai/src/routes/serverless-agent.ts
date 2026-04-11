@@ -33,12 +33,25 @@ async function getMetaTools() {
 }
 
 let _whatsappSendMessage: any;
+let _whatsappTools: Record<string, any> | undefined;
 async function getWhatsappSendMessage() {
   if (!_whatsappSendMessage) {
     const mod = await import('../tools/whatsapp-tools');
     _whatsappSendMessage = mod.whatsapp_send_message;
+    _whatsappTools = {
+      whatsapp_send_message: mod.whatsapp_send_message,
+      whatsapp_send_media: mod.whatsapp_send_media,
+      whatsapp_send_voice_note: mod.whatsapp_send_voice_note,
+      whatsapp_voice_call: mod.whatsapp_voice_call,
+      whatsapp_status: mod.whatsapp_status,
+      whatsapp_transcribe_voice_note: mod.whatsapp_transcribe_voice_note,
+    };
   }
   return _whatsappSendMessage;
+}
+async function getWhatsappTools(): Promise<Record<string, any>> {
+  await getWhatsappSendMessage();
+  return _whatsappTools!;
 }
 import { getDefaultModelForCategory } from '../pricing';
 import {
@@ -380,7 +393,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     } else if (source === 'mms') {
       systemPrompt += '\n\n**Source**: The user sent this message via MMS. They may have included images, voice notes, or other media — check the message attachments. You have vision capabilities and can see any images sent. Respond fully and naturally. Use telnyx_send_mms to send an image back if it would be more helpful than text (e.g. charts, annotated photos, visual answers). Use telnyx_send_voice_note for audio replies. Use telnyx_send_sms for plain text. The text reply will also be saved to conversation history for desktop viewing.';
     } else if (source === 'whatsapp') {
-      systemPrompt += '\n\n**Source**: The user sent this message via WhatsApp. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over WhatsApp automatically.';
+      systemPrompt += '\n\n**Source**: The user sent this message via WhatsApp. Respond fully and naturally — the response will be saved to conversation history (viewable on desktop) and a condensed version will be sent back over WhatsApp automatically. Use whatsapp_send_message for follow-up texts, whatsapp_send_media for images/documents, or whatsapp_send_voice_note for audio replies.';
     } else if (source === 'call') {
       systemPrompt += '\n\n**Response Format**: Keep responses brief and conversational — this will be spoken aloud via TTS.';
     }
@@ -404,7 +417,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       telnyx_send_mms,
       telnyx_send_voice_note,
       telnyx_voice_call,
-      whatsapp_send_message: await getWhatsappSendMessage(),
+      ...(await getWhatsappTools()),
     };
 
     if (deployHeadlessAgent) {

@@ -30,6 +30,18 @@ const WA_API = 'https://graph.facebook.com/v22.0';
 
 export type WaMediaType = 'image' | 'audio' | 'video' | 'document' | 'sticker';
 
+// ── Inbound message dedup (prevents double-processing on Meta webhook retries) ──
+// Meta uses at-least-once delivery. If our response takes too long, it retries.
+// We track recent message IDs so the second delivery is a no-op.
+const _recentMsgIds = new Set<string>();
+function _markMsgProcessed(id: string): void {
+  _recentMsgIds.add(id);
+  setTimeout(() => _recentMsgIds.delete(id), 120_000); // forget after 2 min
+}
+function _isMsgDuplicate(id: string): boolean {
+  return _recentMsgIds.has(id);
+}
+
 // ── Pending link codes ────────────────────────────────────────────────────────
 // code -> { userId, expiresAt }
 const pendingLinks = new Map<string, { userId: string; expiresAt: number }>();
@@ -303,6 +315,13 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
         const from: string = msg?.from || '';       // sender's WhatsApp number (E.164 without +)
         const msgType: string = msg?.type || '';
         const msgId: string = msg?.id || '';
+
+        // Dedup: skip if we've already processed this message (Meta webhook retry)
+        if (msgId && _isMsgDuplicate(msgId)) {
+          console.log('[whatsapp] skipping duplicate message', { msgId, from });
+          continue;
+        }
+        if (msgId) _markMsgProcessed(msgId);
 
         // Extract text body or build a description for media messages
         let text = '';

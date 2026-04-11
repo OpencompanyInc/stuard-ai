@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { Bot, Globe, GripVertical, Layers, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
 import { SpacesSidebar } from '../SpacesSidebar';
@@ -47,9 +47,6 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
   const [hasRunningAgents, setHasRunningAgents] = useState(false);
   const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
   const [hasTodoActivity, setHasTodoActivity] = useState(false);
-  const agentAutoSwitchedRef = useRef(false);
-  const browserAutoSwitchedRef = useRef(false);
-  const todoAutoSwitchedRef = useRef(false);
   const [hoveredTab, setHoveredTab] = useState<SidebarTabId | null>(null);
 
   useEffect(() => {
@@ -88,25 +85,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     };
   }, []);
 
-  useEffect(() => {
-    if (hasRunningAgents && !agentAutoSwitchedRef.current && activeTab !== 'tasks' && activeTab !== 'browser') {
-      agentAutoSwitchedRef.current = true;
-      onTabChange('tasks');
-    }
-    if (!hasRunningAgents) {
-      agentAutoSwitchedRef.current = false;
-    }
-  }, [hasRunningAgents, activeTab, onTabChange]);
-
-  useEffect(() => {
-    if (hasBrowserActivity && !browserAutoSwitchedRef.current && activeTab !== 'browser') {
-      browserAutoSwitchedRef.current = true;
-      onTabChange('browser');
-    }
-    if (!hasBrowserActivity) {
-      browserAutoSwitchedRef.current = false;
-    }
-  }, [hasBrowserActivity, activeTab, onTabChange]);
+  // No auto-switching: activity dots are enough to signal the user.
+  // Auto-switching tabs while the user is working is disruptive.
 
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -122,15 +102,19 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     };
   }, []);
 
+  // Keyboard navigation: Alt+1..5 to switch tabs
   useEffect(() => {
-    if (hasTodoActivity && !todoAutoSwitchedRef.current && activeTab !== 'todo' && activeTab !== 'browser') {
-      todoAutoSwitchedRef.current = true;
-      onTabChange('todo');
-    }
-    if (!hasTodoActivity) {
-      todoAutoSwitchedRef.current = false;
-    }
-  }, [hasTodoActivity, activeTab, onTabChange]);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.altKey) return;
+      const idx = parseInt(e.key, 10);
+      if (idx >= 1 && idx <= SIDEBAR_TABS.length) {
+        e.preventDefault();
+        onTabChange(SIDEBAR_TABS[idx - 1].id);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onTabChange]);
 
   const handleExpand = () => {
     if (onToggleExpand) {
@@ -231,11 +215,12 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
 
                 {/* Tooltip */}
                 <div className={clsx(
-                  "absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap pointer-events-none transition-all duration-150 z-50",
+                  "absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap pointer-events-none transition-all duration-150 z-50",
                   "bg-theme-card text-theme-fg shadow-lg border border-theme/10",
-                  isHovered && !isActive ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-1"
+                  isHovered ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-1"
                 )}>
                   {tab.label}
+                  <span className="ml-1.5 text-[10px] text-theme-muted font-normal">Alt+{SIDEBAR_TABS.indexOf(tab) + 1}</span>
                 </div>
               </div>
             );
@@ -290,7 +275,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden" key={activeTab} style={{ animation: 'sidebarFadeIn 150ms ease-out' }}>
           {renderContent()}
         </div>
       </div>

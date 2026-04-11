@@ -178,6 +178,13 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   const eventArgs = redactSensitiveData(sendArgs);
   // In-band bridge if we are inside an active client WS context
   const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
+  // If we entered with a bridge context but the WS has since closed (e.g. async
+  // background work firing after the client disconnected), bail cleanly instead of
+  // falling through to the localhost dev fallback — in cloud there is no local agent
+  // on 127.0.0.1:8765, so that path only produces ECONNREFUSED spam.
+  if (!forceDirect && !useBridge && store?.ws) {
+    return { ok: false, error: 'bridge_closed' };
+  }
   if (useBridge) {
     const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<any>((resolve, reject) => {

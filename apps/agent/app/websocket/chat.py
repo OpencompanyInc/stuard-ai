@@ -21,7 +21,7 @@ def _get_vm_client_integrations() -> List[str]:
     """
     if not _IS_VM:
         return []
-    integrations = ["browser_use", "telnyx"]
+    integrations = ["browser_use", "telnyx", "whatsapp"]
     # Check for optional integrations that may be installed
     try:
         import aiohttp  # noqa: F401 — presence means browser_use_server deps available

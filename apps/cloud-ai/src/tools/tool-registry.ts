@@ -30,6 +30,7 @@ const CATEGORY_LOCATION: Record<string, ToolLocation> = {
   Search: 'cloud',
   Webhooks: 'cloud',
   Telnyx: 'cloud',
+  WhatsApp: 'cloud',
   Integrations: 'cloud',
   Feedback: 'cloud',
   Memory: 'cloud',

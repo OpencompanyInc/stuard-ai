@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, BarChart3, Users, Rocket, Server, Shield, LogOut,
-  GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock, Bug
+  GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock, Bug,
+  ChevronsLeft, ChevronsRight
 } from 'lucide-react';
 import {
   StatusData, AnalyticsData, UserEntry, Activity as ActivityItem,
@@ -107,14 +108,24 @@ function Sidebar({ activeTab, onTabChange, status, collapsed, onToggle }: {
         {NAV_ITEMS.map(item => {
           const active = activeTab === item.id;
           return (
-            <button key={item.id} onClick={() => onTabChange(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                active ? 'bg-white/10 text-white font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-              }`}
-              title={collapsed ? item.label : undefined}>
-              <item.icon className="w-4 h-4 flex-shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </button>
+            <div key={item.id} className="relative group">
+              <button onClick={() => onTabChange(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  active ? 'bg-white/10 text-white font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                }`}
+                title={collapsed ? item.label : undefined}>
+                {active && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-blue-500 rounded-r-full" />
+                )}
+                <item.icon className="w-4 h-4 flex-shrink-0" />
+                {!collapsed && <span>{item.label}</span>}
+              </button>
+              {collapsed && (
+                <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap pointer-events-none opacity-0 group-hover:opacity-100 -translate-x-1 group-hover:translate-x-0 transition-all duration-150 z-50 bg-slate-800 text-white shadow-lg border border-white/10">
+                  {item.label}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
@@ -135,8 +146,8 @@ function Sidebar({ activeTab, onTabChange, status, collapsed, onToggle }: {
 
       {/* Collapse toggle + Logout */}
       <div className="px-2 py-2 border-t border-white/10 flex items-center gap-1">
-        <button onClick={onToggle} className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors" title={collapsed ? 'Expand' : 'Collapse'}>
-          {collapsed ? <BarChart3 className="w-4 h-4" /> : <LayoutDashboard className="w-4 h-4" />}
+        <button onClick={onToggle} className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors" title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          {collapsed ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-4 h-4" />}
         </button>
         {!collapsed && (
           <button onClick={() => { localStorage.removeItem('stuard_access_token'); window.location.reload(); }}
