@@ -157,28 +157,26 @@ export async function bridgeDiscordVoice(opts: {
   const voiceSessionId = `discord-${discordUserId}-${Date.now()}`;
   console.log(LOG_PREFIX, 'Starting voice bridge', { discordUserId, userId: userId.slice(0, 8), providerId, voiceSessionId });
 
-  // Build voice context + request desktop bridge in parallel
+  // Desktop bridge first, then build voice context through it so knowledge
+  // lookups (identity / directives / bio) flow through the same WS and the
+  // model knows who it's talking to before answering.
   let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
-  const [ctxResult] = await Promise.allSettled([
-    buildVoiceContext({
+  const bridgeWs = await requestDesktopBridge(userId, voiceSessionId, 'discord').catch(() => null);
+  if (bridgeWs) {
+    console.log(LOG_PREFIX, 'Desktop bridge established', { voiceSessionId });
+  } else {
+    console.log(LOG_PREFIX, 'Desktop bridge not available', { voiceSessionId });
+  }
+
+  try {
+    voiceContext = await buildVoiceContext({
       userId,
       direction: 'inbound',
       customPrompt: 'This is a Discord voice call (not a phone call). The user is talking to you through Discord DMs.',
-    }),
-    requestDesktopBridge(userId, voiceSessionId, 'discord').then((bridgeWs) => {
-      if (bridgeWs) {
-        console.log(LOG_PREFIX, 'Desktop bridge established', { voiceSessionId });
-      } else {
-        console.log(LOG_PREFIX, 'Desktop bridge not available', { voiceSessionId });
-      }
-    }),
-  ]);
-
-  if (ctxResult.status === 'fulfilled' && ctxResult.value) {
-    voiceContext = ctxResult.value;
-  } else {
-    console.warn(LOG_PREFIX, 'Failed to load voice context:',
-      ctxResult.status === 'rejected' ? ctxResult.reason?.message : 'null');
+      bridgeWs: bridgeWs || undefined,
+    });
+  } catch (err: any) {
+    console.warn(LOG_PREFIX, 'Failed to load voice context:', err?.message);
   }
 
   // Join the voice channel

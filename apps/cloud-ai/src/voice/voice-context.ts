@@ -11,6 +11,7 @@
  * on-demand actions during the call.
  */
 
+import type { WebSocket } from 'ws';
 import type { VoiceToolDefinition } from './types';
 import {
   getConversationMessages,
@@ -150,16 +151,19 @@ export interface VoiceContext {
  * Load knowledge facts through the desktop bridge (if connected).
  * Knowledge graph lives in local SQLite on the user's machine — the desktop
  * client must be online for these to be available. Degrades gracefully.
+ *
+ * Prefers an explicit bridgeWs (e.g. the voice-session bridge) when provided,
+ * so we don't depend on the regular chat WS being connected at call time.
  */
-async function loadKnowledgeFacts(userId: string): Promise<{
+async function loadKnowledgeFacts(userId: string, bridgeWs?: WebSocket): Promise<{
   identity: Fact[];
   directives: Fact[];
   bio: Fact[];
 }> {
   const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
 
-  // Try desktop bridge first (full knowledge graph access)
-  const desktopWs = getDesktopWs(userId);
+  // Try the provided bridge first (voice session bridge), then regular desktop WS.
+  const desktopWs = bridgeWs || getDesktopWs(userId);
   if (desktopWs) {
     try {
       const result = await withClientBridge(desktopWs, async () => {
@@ -207,8 +211,8 @@ async function loadKnowledgeFacts(userId: string): Promise<{
   }
 }
 
-async function loadRecentContextFromDesktop(userId: string): Promise<string> {
-  const desktopWs = getDesktopWs(userId);
+async function loadRecentContextFromDesktop(userId: string, bridgeWs?: WebSocket): Promise<string> {
+  const desktopWs = bridgeWs || getDesktopWs(userId);
   if (!desktopWs) return '';
 
   try {
@@ -253,14 +257,15 @@ export async function buildVoiceContext(opts: {
   direction: 'inbound' | 'outbound';
   callerNumber?: string;
   customPrompt?: string;
+  bridgeWs?: WebSocket;
 }): Promise<VoiceContext> {
-  const { userId, direction, callerNumber, customPrompt } = opts;
+  const { userId, direction, callerNumber, customPrompt, bridgeWs } = opts;
 
   // Load recent context + knowledge graph + configured runtime memory in parallel.
   const [recentMessages, userName, knowledge, runtimeMemory] = await Promise.all([
-    loadRecentContext(userId).catch(() => ''),
+    loadRecentContext(userId, bridgeWs).catch(() => ''),
     loadUserName(userId).catch(() => undefined),
-    loadKnowledgeFacts(userId),
+    loadKnowledgeFacts(userId, bridgeWs),
     loadVoiceRuntimeMemorySummary(userId).catch(() => ({ source: undefined, summary: '' })),
   ]);
   const { identity: identityFacts, directives: directiveFacts, bio: bioFacts } = knowledge;
@@ -291,7 +296,9 @@ export async function buildVoiceContext(opts: {
 }
 
 /**
- * Load user display name from Supabase auth metadata.
+ * Last-resort name source: derive from the email prefix in users_billing.
+ * The real name should come from the desktop knowledge graph identity lens
+ * (the "Profile" sticky notes), which is loaded separately in buildVoiceContext.
  */
 async function loadUserName(userId: string): Promise<string | undefined> {
   const supabase = getSupabaseService();
@@ -303,15 +310,12 @@ async function loadUserName(userId: string): Promise<string | undefined> {
       .eq('user_id', userId)
       .limit(1)
       .single();
-    // Extract name from email prefix as fallback
     if (data?.email) {
       const name = data.email.split('@')[0].replace(/[._-]+/g, ' ');
       return name.charAt(0).toUpperCase() + name.slice(1);
     }
-    return undefined;
-  } catch {
-    return undefined;
-  }
+  } catch { /* ignore */ }
+  return undefined;
 }
 
 /**
@@ -319,9 +323,9 @@ async function loadUserName(userId: string): Promise<string | undefined> {
  * is available, otherwise from Supabase when conversation sync is enabled.
  * Returns a compact summary of recent interactions.
  */
-async function loadRecentContext(userId: string): Promise<string> {
+async function loadRecentContext(userId: string, bridgeWs?: WebSocket): Promise<string> {
   try {
-    const desktopRecent = await loadRecentContextFromDesktop(userId);
+    const desktopRecent = await loadRecentContextFromDesktop(userId, bridgeWs);
     if (desktopRecent) return desktopRecent;
 
     const syncPrefs = await getSyncPreferences(userId);

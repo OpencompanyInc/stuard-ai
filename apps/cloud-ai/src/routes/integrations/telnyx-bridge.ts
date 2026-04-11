@@ -142,39 +142,39 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     removeActiveCall(callControlId);
   });
 
-  // ── Load voice context + request desktop bridge in parallel ─────────────
-  // Both run alongside Telnyx stream setup for minimal latency.
+  // ── Desktop bridge first, then build voice context through it ───────────
+  // The voice-session bridge WS is the same channel we want knowledge lookups
+  // (identity / directives / bio lenses) to flow through, so we wait for it
+  // to be ready and thread it into buildVoiceContext. Falls back to the
+  // regular chat WS + Supabase if the desktop doesn't connect in time.
   const voiceSessionId = callControlId;
   let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
 
   if (params.userId) {
-    const [ctxResult] = await Promise.allSettled([
-      buildVoiceContext({
+    const bridgeWs = await requestDesktopBridge(params.userId, voiceSessionId, 'telnyx').catch(() => null);
+    if (bridgeWs) {
+      console.log('[telnyx-bridge] Desktop bridge established', { callControlId });
+    } else {
+      console.log('[telnyx-bridge] Desktop bridge not available (desktop offline or timed out)', { callControlId });
+    }
+
+    try {
+      voiceContext = await buildVoiceContext({
         userId: params.userId,
         direction: params.direction || 'outbound',
         callerNumber: params.callerNumber,
         customPrompt: params.systemPrompt,
-      }),
-      requestDesktopBridge(params.userId, voiceSessionId, 'telnyx').then((bridgeWs) => {
-        if (bridgeWs) {
-          console.log('[telnyx-bridge] Desktop bridge established', { callControlId });
-        } else {
-          console.log('[telnyx-bridge] Desktop bridge not available (desktop offline or timed out)', { callControlId });
-        }
-      }),
-    ]);
-
-    if (ctxResult.status === 'fulfilled' && ctxResult.value) {
-      voiceContext = ctxResult.value;
+        bridgeWs: bridgeWs || undefined,
+      });
       console.log('[telnyx-bridge] Voice context loaded', {
         callControlId,
         userName: voiceContext.userName,
         toolCount: voiceContext.tools.length,
         promptLen: voiceContext.systemPrompt.length,
+        viaBridge: !!bridgeWs,
       });
-    } else {
-      console.warn('[telnyx-bridge] Failed to load voice context, proceeding without:',
-        ctxResult.status === 'rejected' ? ctxResult.reason?.message : 'null');
+    } catch (err: any) {
+      console.warn('[telnyx-bridge] Failed to load voice context, proceeding without:', err?.message);
     }
   }
 
