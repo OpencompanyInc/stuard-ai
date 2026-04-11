@@ -22,7 +22,7 @@ import { AuthErrorCode } from '../../auth';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID, CLOUD_PUBLIC_URL } from '../../utils/config';
 import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
-import { messagingCreditCost } from '../../pricing';
+import { messagingCreditCost, voiceCallCreditCost, MESSAGING_USD } from '../../pricing';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { MediaProcessor, fromTelnyxMms } from '../../media';
 import { runServerlessAgent } from '../serverless-agent';
@@ -209,6 +209,85 @@ async function handleSmsSlashCommand(userId: string, fromPhone: string, command:
   }
 }
 
+// ── Voice call billing tracking ─────────────────────────────────────────────
+// Keyed by callControlId. Populated when we know the userId (inbound: in
+// answerWithStreaming; outbound: by the proactive route or telnyx_voice_call
+// tool via registerCallForBilling). startedAt is set on call.answered, then
+// the entry is consumed on call.hangup to debit credits for the call duration.
+type CallBillingEntry = {
+  userId: string;
+  direction: 'inbound' | 'outbound';
+  fromNumber: string;
+  toNumber: string;
+  startedAt: number;
+  registeredAt: number;
+};
+const callBillingMap = new Map<string, CallBillingEntry>();
+
+export function registerCallForBilling(callControlId: string, info: {
+  userId: string;
+  direction: 'inbound' | 'outbound';
+  fromNumber?: string;
+  toNumber?: string;
+}): void {
+  if (!callControlId || !info.userId) return;
+  callBillingMap.set(callControlId, {
+    userId: info.userId,
+    direction: info.direction,
+    fromNumber: info.fromNumber || '',
+    toNumber: info.toNumber || '',
+    startedAt: 0,
+    registeredAt: Date.now(),
+  });
+}
+
+async function billCallOnHangup(callControlId: string, hangupCause: string): Promise<void> {
+  const entry = callBillingMap.get(callControlId);
+  callBillingMap.delete(callControlId);
+  if (!entry) {
+    console.warn('[telnyx] Call hangup without billing entry — skipping bill', {
+      callControlId: callControlId.slice(0, 24),
+    });
+    return;
+  }
+  if (!entry.startedAt) {
+    console.log('[telnyx] Call ended before answer, no billing', {
+      callControlId: callControlId.slice(0, 24), hangupCause,
+    });
+    return;
+  }
+  const durationMs = Date.now() - entry.startedAt;
+  const { credits, usd, seconds } = voiceCallCreditCost('telnyx', entry.direction, durationMs);
+  console.log('[telnyx] Billing voice call', {
+    callControlId: callControlId.slice(0, 24),
+    direction: entry.direction,
+    seconds,
+    usd,
+    credits,
+    hangupCause,
+  });
+  if (credits <= 0) return;
+  try {
+    await debitCredits(entry.userId, {
+      sourceType: `voice:telnyx:${entry.direction}`,
+      sourceRef: `call:${callControlId}`,
+      credits,
+      amountUsd: usd,
+      metadata: {
+        provider: 'telnyx',
+        direction: entry.direction,
+        from: entry.fromNumber,
+        to: entry.toNumber,
+        durationMs,
+        durationSeconds: seconds,
+        hangupCause,
+      },
+    });
+  } catch (e: any) {
+    console.error('[telnyx] Voice call credit deduction failed:', e?.message);
+  }
+}
+
 async function deductTelnyxCredit(userId: string): Promise<void> {
   const credits = messagingCreditCost('telnyx');
   if (credits <= 0) return;
@@ -217,7 +296,7 @@ async function deductTelnyxCredit(userId: string): Promise<void> {
       sourceType: 'messaging:telnyx',
       sourceRef: `sms_send:${Date.now()}`,
       credits,
-      amountUsd: 0.004,
+      amountUsd: MESSAGING_USD.telnyxSms,
       metadata: { provider: 'telnyx' },
     });
   } catch (e: any) {
@@ -541,6 +620,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             ttsMessage: proactiveMessage, // Fallback if streaming fails
             createdAt: Date.now(),
           });
+          registerCallForBilling(callCtrlId, {
+            userId: auth.userId,
+            direction: 'outbound',
+            fromNumber: TELNYX_FROM_NUMBER || '',
+            toNumber: meta.phone,
+          });
           usedProvider = providerId;
           console.log('[telnyx] Proactive call placed with streaming bridge', {
             callControlId: callCtrlId.slice(0, 24), providerId, userId: auth.userId,
@@ -621,6 +706,12 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             audioUrl: proactiveAudioUrl || undefined,
             ttsMessage: proactiveAudioUrl ? undefined : proactiveMessage,
             createdAt: Date.now(),
+          });
+          registerCallForBilling(callCtrlId, {
+            userId: auth.userId,
+            direction: 'outbound',
+            fromNumber: TELNYX_FROM_NUMBER || '',
+            toNumber: meta.phone,
           });
         }
 
@@ -1301,6 +1392,12 @@ async function processCallWebhook(rawBody: string): Promise<void> {
         hasCustomHeaders: customHeaders.length > 0,
       });
 
+      // Mark billing start — duration is measured from answer to hangup
+      const billingEntry = callBillingMap.get(callControlId);
+      if (billingEntry && !billingEntry.startedAt) {
+        billingEntry.startedAt = Date.now();
+      }
+
       // For outbound calls, streaming wasn't started in the answer command
       // (since WE placed the call). We need to start it now.
       // Check direction AND custom headers as fallback. Telnyx often omits direction.
@@ -1500,10 +1597,12 @@ async function processCallWebhook(rawBody: string): Promise<void> {
 
     // ── Call ended ───────────────────────────────────────────────────────
     case 'call.hangup': {
+      const hangupCause = eventPayload?.hangup_cause || 'unknown';
       console.log('[telnyx] Call hung up', {
         callControlId: callControlId.slice(0, 24),
-        hangupCause: eventPayload?.hangup_cause || 'unknown',
+        hangupCause,
       });
+      await billCallOnHangup(callControlId, hangupCause);
       pendingInboundCalls.delete(callControlId);
       callDirectionCache.delete(callControlId);
       proactiveCallCache.delete(callControlId);
@@ -1619,6 +1718,13 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
   console.log('[telnyx] Inbound call provider selection', {
     callControlId, fromNumber, providerId, userId,
     configured: configuredProviders.map(p => p.id),
+  });
+
+  registerCallForBilling(callControlId, {
+    userId,
+    direction: 'inbound',
+    fromNumber,
+    toNumber: TELNYX_FROM_NUMBER || '',
   });
 
   // Build bridge config — system prompt and tools are loaded by the bridge

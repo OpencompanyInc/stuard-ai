@@ -4,8 +4,9 @@ import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
 import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, canvas_list, canvas_read, canvas_write, canvas_create, canvas_delete, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_system_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, browser_get_content, browser_click_element, browser_type_text, browser_find_text, browser_get_element_position, browser_find_clickable, browser_hover, browser_select_option, browser_press_key, browser_get_form_fields, browser_fill_form, browser_wait_for_element, browser_scroll_to, browser_get_page_info, browser_execute_script, browser_upload_file, browser_set_toggle, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
+import { browser_use_status, browser_use_configure, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for, browser_use_execute_script } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
 import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
@@ -93,11 +94,6 @@ export const ALL_TOOLS = {
   type_text,
   scroll,
   drag_and_drop,
-  canvas_list,
-  canvas_read,
-  canvas_write,
-  canvas_create,
-  canvas_delete,
   capture_media,
   stop_capture,
   describe_media_capture_capabilities,
@@ -117,7 +113,6 @@ export const ALL_TOOLS = {
   ffmpeg_trim_media,
   ffmpeg_probe_media,
   ffmpeg_extract_frames,
-  run_system_command,
   run_command,
   http_request,
   run_python_script,
@@ -230,24 +225,26 @@ export const ALL_TOOLS = {
   file_edit,
   glob,
   grep,
-  // Browser Extension tools
-  browser_get_content,
-  browser_click_element,
-  browser_type_text,
-  browser_find_text,
-  browser_get_element_position,
-  browser_find_clickable,
-  browser_hover,
-  browser_select_option,
-  browser_press_key,
-  browser_get_form_fields,
-  browser_fill_form,
-  browser_wait_for_element,
-  browser_scroll_to,
-  browser_get_page_info,
-  browser_upload_file,
-  browser_set_toggle,
-  browser_execute_script,
+  // Browser Use (AI browser automation via browser-use Python package)
+  browser_use_status,
+  browser_use_configure,
+  browser_use_navigate,
+  browser_use_click,
+  browser_use_type,
+  browser_use_press_key,
+  browser_use_screenshot,
+  browser_use_content,
+  browser_use_scroll,
+  browser_use_tabs,
+  browser_use_cookies,
+  browser_use_hover,
+  browser_use_select_option,
+  browser_use_get_dropdown_options,
+  browser_use_get_interactive_elements,
+  browser_use_fill_form,
+  browser_use_upload_file,
+  browser_use_wait_for,
+  browser_use_execute_script,
   agent_todo,
   // Feedback tools
   submit_feedback: submitFeedback,
@@ -575,5 +572,19 @@ export async function getToolsForQuery(
   }
 
   return selected;
+}
+
+/**
+ * Full tool universe available for execution.
+ *
+ * `getTools` / `getToolsForQuery` return the lean set of tools whose full
+ * schemas are exposed to the LLM. `getExecutionTools` returns every tool the
+ * Agent may end up executing — whether via lazy-loading through execute_tool,
+ * direct calls from subagents, or dynamically-discovered tool names. Passing
+ * this to the Mastra Agent constructor ensures it can run any tool without
+ * throwing "Tool X not found".
+ */
+export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
+  return { ...ALL_TOOLS, ...mcpTools };
 }
 

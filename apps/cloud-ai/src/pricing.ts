@@ -297,10 +297,17 @@ export function snapCredits(value: number): number {
 // Messaging Credit Cost
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Telnyx published rates (carrier fees not included).
 const MESSAGING_COST_USD: Record<string, number> = {
-  telnyx: 0.004,   // per SMS segment
-  whatsapp: 0.005, // per message
-  discord: 0,      // free
+  telnyx: 0.0055,      // SMS per part
+  telnyx_mms: 0.016,   // MMS per part
+  whatsapp: 0.005,
+  discord: 0,
+};
+
+export const MESSAGING_USD = {
+  telnyxSms: MESSAGING_COST_USD.telnyx,
+  telnyxMms: MESSAGING_COST_USD.telnyx_mms,
 };
 
 /**
@@ -309,6 +316,34 @@ const MESSAGING_COST_USD: Record<string, number> = {
 export function messagingCreditCost(platform: string): number {
   const usd = MESSAGING_COST_USD[platform] ?? 0;
   return snapCredits(usd * creditsPerUsd());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice Call Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// All-in Telnyx voice cost = Programmable Voice base ($0.002/min) + SIP Trunking
+// fee. SIP Trunking varies by destination/jurisdiction; these defaults assume
+// US local DID inbound and US/Canada outbound. Toll-free inbound is much
+// higher (~$0.017/min) — bump 'telnyx:inbound' if using a toll-free number.
+//   Inbound local : $0.002 PV + $0.0035 SIP = $0.0055/min
+//   Outbound      : $0.002 PV + $0.0070 SIP = $0.0090/min
+const VOICE_CALL_COST_USD_PER_MIN: Record<string, number> = {
+  'telnyx:inbound': 0.0055,
+  'telnyx:outbound': 0.009,
+};
+
+export function voiceCallCreditCost(
+  provider: string,
+  direction: 'inbound' | 'outbound',
+  durationMs: number,
+): { credits: number; usd: number; seconds: number } {
+  const perMinUsd = VOICE_CALL_COST_USD_PER_MIN[`${provider}:${direction}`] ?? 0;
+  if (perMinUsd <= 0 || durationMs <= 0) return { credits: 0, usd: 0, seconds: 0 };
+  const seconds = Math.max(1, Math.ceil(durationMs / 1000));
+  const usd = Number(((perMinUsd * seconds) / 60).toFixed(6));
+  const credits = snapCredits(preciseCreditsFromUsd(usd));
+  return { credits, usd, seconds };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

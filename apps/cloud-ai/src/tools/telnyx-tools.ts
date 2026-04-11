@@ -4,7 +4,8 @@ import { getExternalAccount, debitCredits } from '../supabase';
 import { getBridgeSecrets, execLocalTool } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
-import { messagingCreditCost } from '../pricing';
+import { messagingCreditCost, MESSAGING_USD } from '../pricing';
+import { registerCallForBilling } from '../routes/integrations/telnyx';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
 import { uploadUserFileBuffer } from '../services/cold-storage';
 import { randomUUID } from 'crypto';
@@ -101,7 +102,7 @@ export const telnyx_send_sms = createTool({
           sourceType: 'messaging:telnyx',
           sourceRef: `sms_tool:${result?.data?.id || Date.now()}`,
           credits,
-          amountUsd: 0.004,
+          amountUsd: MESSAGING_USD.telnyxSms,
           metadata: { provider: 'telnyx', tool: 'telnyx_send_sms' },
         }).catch((e: any) => console.error('[telnyx-tools] credit deduction failed:', e?.message));
       }
@@ -285,7 +286,7 @@ export const telnyx_send_mms = createTool({
             sourceType: 'messaging:telnyx',
             sourceRef: `mms_link:${smsResult?.data?.id || Date.now()}`,
             credits,
-            amountUsd: 0.004,
+            amountUsd: MESSAGING_USD.telnyxSms,
             metadata: { provider: 'telnyx', tool: 'telnyx_send_mms', fallback: 'link' },
           }).catch((e: any) => console.error('[telnyx-tools] credit deduction failed:', e?.message));
         }
@@ -304,13 +305,13 @@ export const telnyx_send_mms = createTool({
       }
 
       const result = await telnyxRequest('/messages', 'POST', body);
-      const credits = messagingCreditCost('telnyx');
-      if (credits > 0) {
+      const mmsCredits = messagingCreditCost('telnyx_mms');
+      if (mmsCredits > 0) {
         debitCredits(userId, {
           sourceType: 'messaging:telnyx',
           sourceRef: `mms_tool:${result?.data?.id || Date.now()}`,
-          credits: credits * 2,
-          amountUsd: 0.008,
+          credits: mmsCredits,
+          amountUsd: MESSAGING_USD.telnyxMms,
           metadata: { provider: 'telnyx', tool: 'telnyx_send_mms' },
         }).catch((e: any) => console.error('[telnyx-tools] mms credit deduction failed:', e?.message));
       }
@@ -442,9 +443,19 @@ export const telnyx_voice_call = createTool({
         ],
       });
 
+      const callControlId = callResult?.data?.call_control_id || '';
+      if (callControlId) {
+        registerCallForBilling(callControlId, {
+          userId,
+          direction: 'outbound',
+          fromNumber: TELNYX_FROM_NUMBER || '',
+          toNumber: phone,
+        });
+      }
+
       return {
         ok: true,
-        callControlId: callResult?.data?.call_control_id || '',
+        callControlId,
         to: phone,
         provider: providerId,
       };
