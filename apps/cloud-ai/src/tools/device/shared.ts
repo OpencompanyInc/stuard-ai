@@ -3,9 +3,14 @@ import { z } from 'zod';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execLocalTool, getBridgeSecrets, hasClientBridge, getBridgeWs, withClientBridge } from '../bridge';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve as pathResolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, resolve as pathResolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { getDesktopWs } from '../../services/vm-bridge';
 
 export { execLocalTool, getBridgeSecrets, hasClientBridge };
+
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 type ActiveBridgeContext = {
   ws: any;
@@ -46,6 +51,26 @@ function getFallbackBridgeScope(): ActiveBridgeScope | undefined {
   return undefined;
 }
 
+function getResolvedBridgeSecretsFallbackOnly(): Record<string, any> | undefined {
+  const alsSecrets = getBridgeSecrets();
+  if (alsSecrets && Object.keys(alsSecrets).length > 0) return alsSecrets;
+
+  const scopedSecrets = getScopedBridgeContext()?.secrets;
+  if (scopedSecrets && Object.keys(scopedSecrets).length > 0) return scopedSecrets;
+
+  for (let i = _activeBridgeScopes.length - 1; i >= 0; i--) {
+    const scope = _activeBridgeScopes[i];
+    if (scope?.secrets && Object.keys(scope.secrets).length > 0) return scope.secrets;
+  }
+
+  const globalSecrets = (globalThis as any).__stuardActiveBridgeSecrets;
+  if (globalSecrets && typeof globalSecrets === 'object' && globalSecrets.userId) {
+    return globalSecrets;
+  }
+
+  return undefined;
+}
+
 function getResolvedBridgeContext(): ActiveBridgeContext | undefined {
   const bridgeWs = getBridgeWs();
   if (bridgeWs?.readyState === 1) {
@@ -60,6 +85,16 @@ function getResolvedBridgeContext(): ActiveBridgeContext | undefined {
   const fallback = getFallbackBridgeScope();
   if (fallback) {
     return { ws: fallback.ws, secrets: fallback.secrets };
+  }
+
+  const secrets = getResolvedBridgeSecretsFallbackOnly();
+  const userId = typeof secrets?.userId === 'string' ? secrets.userId : '';
+  if (userId) {
+    const desktopWs = getDesktopWs(userId);
+    if (desktopWs?.readyState === 1) {
+      console.log(`[bridge-scope] GET desktop fallback | userId=${userId.slice(0, 8)}`);
+      return { ws: desktopWs, secrets };
+    }
   }
 
   return undefined;
@@ -131,24 +166,11 @@ function hasAnyBridge(): boolean {
  * (e.g. inside Mastra's tool execution pipeline).
  */
 export function getResolvedBridgeSecrets(): Record<string, any> | undefined {
-  const alsSecrets = getBridgeSecrets();
-  if (alsSecrets && Object.keys(alsSecrets).length > 0) return alsSecrets;
+  const fallbackOnly = getResolvedBridgeSecretsFallbackOnly();
+  if (fallbackOnly && Object.keys(fallbackOnly).length > 0) return fallbackOnly;
 
   const resolved = getResolvedBridgeContext()?.secrets;
   if (resolved && Object.keys(resolved).length > 0) return resolved;
-
-  // Last resort: scan module-level stack for ANY entry with secrets,
-  // regardless of WS state (WS may have closed after secrets were captured).
-  for (let i = _activeBridgeScopes.length - 1; i >= 0; i--) {
-    const scope = _activeBridgeScopes[i];
-    if (scope?.secrets && Object.keys(scope.secrets).length > 0) return scope.secrets;
-  }
-
-  // Ultimate fallback: globalThis store that survives all async context breaks.
-  const globalSecrets = (globalThis as any).__stuardActiveBridgeSecrets;
-  if (globalSecrets && typeof globalSecrets === 'object' && globalSecrets.userId) {
-    return globalSecrets;
-  }
 
   return undefined;
 }
@@ -239,6 +261,30 @@ const LOCAL_BROWSER_AUTH_TOKEN = process.env.STUARD_BROWSER_AUTH_TOKEN || proces
 
 let _browserServerProcess: ChildProcess | null = null;
 let _browserServerStarting: Promise<boolean> | null = null;
+let _loggedRemoteLocalBrowserSkip = false;
+
+function canUseLocalBrowserFallback(): boolean {
+  // Cloud Run and similar managed deployments do not have access to the
+  // developer's local Python/browser environment, so localhost fallback is invalid.
+  if (process.env.K_SERVICE || process.env.K_REVISION || process.env.CLOUD_RUN_JOB || process.env.CLOUD_RUN_EXECUTION) {
+    return false;
+  }
+  return true;
+}
+
+function resolveBrowserServerMainScript(): string | null {
+  const candidates = [
+    pathResolve(MODULE_DIR, '..', '..', '..', '..', 'agent', 'browser_server_main.py'),
+    pathResolve(MODULE_DIR, '..', '..', 'agent', 'browser_server_main.py'),
+    pathResolve(process.cwd(), 'apps', 'agent', 'browser_server_main.py'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
 
 /** Check if the local browser server is reachable. */
 async function isBrowserServerRunning(): Promise<boolean> {
@@ -257,14 +303,26 @@ async function isBrowserServerRunning(): Promise<boolean> {
 
 /** Try to start the local Python browser server if not already running. */
 async function ensureBrowserServer(): Promise<boolean> {
+  if (!canUseLocalBrowserFallback()) {
+    if (!_loggedRemoteLocalBrowserSkip) {
+      _loggedRemoteLocalBrowserSkip = true;
+      console.log('[local-browser] Skipping localhost browser fallback in managed cloud environment');
+    }
+    return false;
+  }
+
   if (await isBrowserServerRunning()) return true;
   if (_browserServerStarting) return _browserServerStarting;
 
   _browserServerStarting = (async () => {
     try {
       // Resolve the browser_server_main.py entry point
-      const agentDir = pathResolve(__dirname, '..', '..', '..', '..', 'agent');
-      const mainScript = pathResolve(agentDir, 'browser_server_main.py');
+      const mainScript = resolveBrowserServerMainScript();
+      if (!mainScript) {
+        console.warn('[local-browser] browser_server_main.py not found');
+        return false;
+      }
+      const agentDir = dirname(mainScript);
 
       const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
       const env: Record<string, string> = {
@@ -280,6 +338,7 @@ async function ensureBrowserServer(): Promise<boolean> {
       console.log(`[local-browser] Starting browser server: ${pythonBin} ${mainScript}`);
       _browserServerProcess = spawn(pythonBin, [mainScript], {
         env,
+        cwd: agentDir,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         ...(process.platform === 'win32' ? { windowsHide: true } : {}),
@@ -417,11 +476,19 @@ export function makeLocalTool(
         if (vmResult !== null) return stripNulls(vmResult);
 
         // Try local browser server (direct HTTP to localhost:18082)
-        console.warn(`[makeLocalTool:${id}] No VM — trying local browser server`);
+        if (canUseLocalBrowserFallback()) {
+          console.warn(`[makeLocalTool:${id}] No VM — trying local browser server`);
+        } else {
+          console.warn(`[makeLocalTool:${id}] No VM — skipping local browser server in managed cloud`);
+        }
         const localResult = await execViaLocalBrowser(id, effectiveInput, effectiveTimeout);
         if (localResult !== null) return stripNulls(localResult);
 
-        return { ok: false, error: `No desktop, VM, or local browser server available. ${id} requires a running Stuard desktop app, cloud VM, or local browser server.` };
+        if (canUseLocalBrowserFallback()) {
+          return { ok: false, error: `No desktop, VM, or local browser server available. ${id} requires a running Stuard desktop app, cloud VM, or local browser server.` };
+        }
+
+        return { ok: false, error: `No desktop bridge or VM available. ${id} requires a live Stuard desktop bridge or cloud VM in managed cloud environments.` };
       }
 
       if (noFallback) {

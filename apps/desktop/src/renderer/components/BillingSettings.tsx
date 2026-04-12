@@ -34,6 +34,7 @@ import {
   normalizeUsageLogEntry,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
+import { agentFetchJson, resolveAgentEndpoints } from "../utils/agentEndpoints";
 
 interface Product {
   id: string;
@@ -81,48 +82,6 @@ const CATEGORY_CONFIG: Record<
   string,
   { label: string; color: string; hex: string; icon: React.ElementType }
 > = {
-  inference: {
-    label: "AI Inference",
-    color: "bg-blue-500",
-    hex: "#3b82f6",
-    icon: Bot,
-  },
-  "inference:anthropic": {
-    label: "Anthropic",
-    color: "bg-orange-400",
-    hex: "#da7756",
-    icon: Bot,
-  },
-  "inference:openai": {
-    label: "OpenAI",
-    color: "bg-green-500",
-    hex: "#10a37f",
-    icon: Bot,
-  },
-  "inference:google": {
-    label: "Google",
-    color: "bg-blue-400",
-    hex: "#4285f4",
-    icon: Bot,
-  },
-  "inference:deepseek": {
-    label: "DeepSeek",
-    color: "bg-indigo-500",
-    hex: "#6366f1",
-    icon: Bot,
-  },
-  "inference:meta-llama": {
-    label: "Meta Llama",
-    color: "bg-blue-600",
-    hex: "#1877f2",
-    icon: Bot,
-  },
-  "inference:mistralai": {
-    label: "Mistral",
-    color: "bg-amber-400",
-    hex: "#f59e0b",
-    icon: Bot,
-  },
   subagent: {
     label: "Delegated Agents",
     color: "bg-purple-500",
@@ -154,6 +113,44 @@ const CATEGORY_CONFIG: Record<
     icon: Phone,
   },
 };
+
+const MODEL_COLORS: Array<{ color: string; hex: string }> = [
+  { color: "bg-blue-500", hex: "#3b82f6" },
+  { color: "bg-orange-400", hex: "#da7756" },
+  { color: "bg-green-500", hex: "#10a37f" },
+  { color: "bg-indigo-500", hex: "#6366f1" },
+  { color: "bg-cyan-500", hex: "#06b6d4" },
+  { color: "bg-amber-400", hex: "#f59e0b" },
+  { color: "bg-violet-500", hex: "#8b5cf6" },
+  { color: "bg-emerald-500", hex: "#10b981" },
+  { color: "bg-sky-500", hex: "#0ea5e9" },
+  { color: "bg-fuchsia-500", hex: "#d946ef" },
+  { color: "bg-lime-500", hex: "#84cc16" },
+  { color: "bg-rose-400", hex: "#fb7185" },
+];
+
+const modelColorCache = new Map<string, { color: string; hex: string }>();
+let modelColorIdx = 0;
+
+function getModelColor(category: string): { color: string; hex: string } {
+  if (!modelColorCache.has(category)) {
+    modelColorCache.set(category, MODEL_COLORS[modelColorIdx % MODEL_COLORS.length]);
+    modelColorIdx += 1;
+  }
+  return modelColorCache.get(category)!;
+}
+
+function getCategoryConfig(category: string): { label: string; color: string; hex: string; icon: React.ElementType } {
+  if (CATEGORY_CONFIG[category]) return CATEGORY_CONFIG[category];
+  if (category.startsWith("inference:")) {
+    const model = category.slice("inference:".length);
+    // Strip provider prefix: "openrouter/gemma-4-26b" → "gemma-4-26b"
+    const label = model.includes("/") ? model.split("/").slice(1).join("/") : model;
+    const { color, hex } = getModelColor(category);
+    return { label, color, hex, icon: Bot };
+  }
+  return { label: category, color: "bg-gray-400", hex: "#9ca3af", icon: Zap };
+}
 
 const SectionHeader = ({
   title,
@@ -238,6 +235,18 @@ async function cloudApiFetch<T = any>(
   }
 }
 
+async function agentApiFetch<T = any>(path: string): Promise<T | null> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token || null;
+  try {
+    return await agentFetchJson(resolveAgentEndpoints(), path, {
+      accessToken: token,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /* ---------- Pie chart custom tooltip ---------- */
 const PieTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.[0]) return null;
@@ -246,7 +255,7 @@ const PieTooltip = ({ active, payload }: any) => {
     <div className="bg-theme-card border border-theme rounded-lg px-3 py-2 shadow-lg">
       <p className="text-[11px] font-bold text-theme-fg">{name}</p>
       <p className="text-[10px] text-theme-muted">
-        {Number(value).toFixed(2)} credits ({Number(entry.percent).toFixed(1)}%)
+        {Number(value).toFixed(2)} credits ({Number(entry.pct).toFixed(1)}%)
       </p>
     </div>
   );
@@ -334,33 +343,82 @@ export const BillingSettings: React.FC = () => {
           requestId === activeLogsRequestRef.current &&
           result
         ) {
-          let normalizedLogs = Array.isArray(result.logs)
+          let normalizedLogs: UsageLogEntry[] = Array.isArray(result.logs)
             ? result.logs.map(normalizeUsageLogEntry)
             : [];
 
-          // Resolve conversation titles from local memory API
-          const missingIds = normalizedLogs
-            .map((l) => l.conversationId)
-            .filter((id): id is string => !!id && !convTitleCacheRef.current[id]);
+          // Resolve conversation titles directly from local SQLite-backed memory
+          const missingIds: string[] = Array.from(
+            new Set(
+              normalizedLogs
+                .map((l) => l.conversationId)
+                .filter(
+                  (id): id is string =>
+                    !!id && !convTitleCacheRef.current[id]
+                )
+            )
+          );
           if (missingIds.length > 0) {
-            try {
-              const convResult = await cloudApiFetch<any>(
-                "/v1/memory/conversations?limit=200",
-                signal
-              );
-              if (convResult?.conversations) {
-                for (const c of convResult.conversations) {
-                  const cid = c.id || c.conversation_id;
-                  if (cid && c.title) convTitleCacheRef.current[cid] = c.title;
+            const resolvedTitles: Record<string, string> = {};
+            const titleResults = await Promise.allSettled(
+              missingIds.map(async (id) => {
+                const convResult = await agentApiFetch<any>(
+                  `/v1/memory/conversations/${encodeURIComponent(id)}`,
+                );
+                const title =
+                  typeof convResult?.conversation?.title === "string"
+                    ? convResult.conversation.title.trim()
+                    : "";
+                return { id, title };
+              })
+            );
+
+            if (!signal?.aborted) {
+              for (const titleResult of titleResults) {
+                if (titleResult.status !== "fulfilled") continue;
+                const { id, title } = titleResult.value;
+                if (title) {
+                  resolvedTitles[id] = title;
                 }
               }
-            } catch {}
+            }
+
+            const unresolvedIds = missingIds.filter((id) => !resolvedTitles[id]);
+            if (unresolvedIds.length > 0 && !signal?.aborted) {
+              try {
+                const { data, error } = await supabase
+                  .from("conversations")
+                  .select("id, title")
+                  .in("id", unresolvedIds);
+                if (!error && Array.isArray(data)) {
+                  for (const row of data as Array<{ id?: string; title?: string | null }>) {
+                    const id = typeof row.id === "string" ? row.id : "";
+                    const title =
+                      typeof row.title === "string" ? row.title.trim() : "";
+                    if (id && title) {
+                      resolvedTitles[id] = title;
+                    }
+                  }
+                }
+              } catch {}
+            }
+
+            if (!signal?.aborted) {
+              for (const [id, title] of Object.entries(resolvedTitles)) {
+                if (mountedRef.current && requestId === activeLogsRequestRef.current) {
+                  convTitleCacheRef.current[id] = title;
+                }
+              }
+            }
           }
-          normalizedLogs = normalizedLogs.map((log) =>
-            log.conversationId && convTitleCacheRef.current[log.conversationId] && !log.chatName
-              ? { ...log, chatName: convTitleCacheRef.current[log.conversationId] }
-              : log
-          );
+          normalizedLogs = normalizedLogs.map((log) => {
+            const cachedTitle = log.conversationId
+              ? convTitleCacheRef.current[log.conversationId]
+              : null;
+            return log.conversationId && cachedTitle && !log.chatName
+              ? { ...log, chatName: cachedTitle }
+              : log;
+          });
 
           setUsageLogs(normalizedLogs);
           setLogsTotal(result.total || 0);
@@ -409,6 +467,7 @@ export const BillingSettings: React.FC = () => {
       setCreditSummary(null);
       setUsageBreakdown([]);
       setUsageLogs([]);
+      convTitleCacheRef.current = {};
       setLogsTotal(0);
       setLogsPage(0);
       setProducts([]);
@@ -566,30 +625,18 @@ export const BillingSettings: React.FC = () => {
         )
       : 0;
 
-  // Derive a human label for unknown inference:provider categories
-  const categoryLabel = (cat: string) => {
-    if (cat.startsWith("inference:")) {
-      const provider = cat.slice("inference:".length);
-      return provider.charAt(0).toUpperCase() + provider.slice(1);
-    }
-    return cat.charAt(0).toUpperCase() + cat.slice(1);
-  };
-
   // Pie chart data
   const pieData = usageBreakdown
     .filter((item) => item.credits > 0)
     .map((item) => {
-      const config = CATEGORY_CONFIG[item.category] || {
-        label: categoryLabel(item.category),
-        hex: "#9ca3af",
-      };
+      const config = getCategoryConfig(item.category);
       const pct = usageTotal > 0
         ? Number(((item.credits / usageTotal) * 100).toFixed(1))
         : 0;
       return {
         name: config.label,
         value: item.credits,
-        percent: pct,
+        pct,
         fill: config.hex,
       };
     });
@@ -909,74 +956,54 @@ export const BillingSettings: React.FC = () => {
                 </div>
               )}
 
-              {/* Category list */}
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold uppercase mb-1 px-1">
-                  <span>Category</span>
-                  <div className="flex gap-6">
-                    <span className="w-14 text-right">Credits</span>
-                    <span className="w-10 text-right">Count</span>
-                  </div>
-                </div>
+              {/* Model list */}
+              <div className="flex-1 space-y-1.5">
                 {usageBreakdown.map((item) => {
-                  const config = CATEGORY_CONFIG[item.category] || {
-                    label: categoryLabel(item.category),
-                    color: "bg-gray-400",
-                    hex: "#9ca3af",
-                    icon: Zap,
-                  };
+                  const config = getCategoryConfig(item.category);
                   const pct =
                     usageTotal > 0
                       ? ((item.credits / usageTotal) * 100).toFixed(1)
                       : "0";
-                  const Icon = config.icon;
                   return (
                     <div
                       key={item.category}
-                      className="flex items-center justify-between p-2 bg-theme-hover rounded-theme-button"
+                      className="flex items-center justify-between px-3 py-2 rounded-lg transition-colors"
+                      style={{ backgroundColor: config.hex + "0d" }}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
                         <div
-                          className={`w-7 h-7 rounded-md flex items-center justify-center ${config.color}/20`}
-                        >
-                          <Icon
-                            className="w-3.5 h-3.5"
-                            style={{ color: config.hex }}
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[12px] font-bold text-theme-fg">
-                            {config.label}
-                          </span>
-                          <span className="text-[10px] text-theme-muted ml-2">
-                            {pct}%
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex gap-6">
-                        <span className="text-[12px] font-black text-theme-fg w-14 text-right">
-                          {item.credits.toFixed(1)}
+                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: config.hex }}
+                        />
+                        <span className="text-[12px] font-semibold text-theme-fg">
+                          {config.label}
                         </span>
-                        <span className="text-[11px] text-theme-muted w-10 text-right">
-                          {item.count}
+                        <span className="text-[10px] text-theme-muted">
+                          {item.count} {item.count === 1 ? "call" : "calls"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                          style={{ backgroundColor: config.hex + "18", color: config.hex }}
+                        >
+                          {pct}%
+                        </span>
+                        <span className="text-[12px] font-black text-theme-fg w-14 text-right tabular-nums">
+                          {item.credits.toFixed(1)}
                         </span>
                       </div>
                     </div>
                   );
                 })}
                 {/* Total row */}
-                <div className="flex items-center justify-between px-2 pt-2 border-t border-theme">
+                <div className="flex items-center justify-between px-3 pt-2 mt-1 border-t border-theme">
                   <span className="text-[11px] font-bold text-theme-muted">
                     Total
                   </span>
-                  <div className="flex gap-6">
-                    <span className="text-[12px] font-black text-theme-fg w-14 text-right">
-                      {usageTotal.toFixed(1)}
-                    </span>
-                    <span className="text-[11px] text-theme-muted w-10 text-right">
-                      {usageBreakdown.reduce((s, b) => s + b.count, 0)}
-                    </span>
-                  </div>
+                  <span className="text-[12px] font-black text-theme-fg w-14 text-right tabular-nums">
+                    {usageTotal.toFixed(1)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1027,9 +1054,7 @@ export const BillingSettings: React.FC = () => {
                       log.sourceType,
                       log.subagentKind
                     );
-                    const catConfig = CATEGORY_CONFIG[sourceCategory] || {
-                      hex: "#9ca3af",
-                    };
+                    const catConfig = getCategoryConfig(sourceCategory);
 
                     return (
                       <tr

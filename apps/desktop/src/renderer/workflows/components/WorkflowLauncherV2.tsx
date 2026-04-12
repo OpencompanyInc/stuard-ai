@@ -105,11 +105,19 @@ export function WorkflowLauncherV2({
   const [skillSearch, setSkillSearch] = useState("");
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
 
-  useEffect(() => {
+  const reloadSkills = useCallback(() => {
     window.desktopAPI?.skillsList?.().then((res: any) => {
       if (res?.ok && Array.isArray(res.skills)) setSkills(res.skills as Skill[]);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    reloadSkills();
+    return window.desktopAPI?.onSkillsUpdated?.((nextSkills: any[]) => {
+      if (Array.isArray(nextSkills)) setSkills(nextSkills as Skill[]);
+      else reloadSkills();
+    });
+  }, [reloadSkills]);
 
   useEffect(() => {
     inputRef.current?.focus();

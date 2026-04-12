@@ -451,9 +451,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     media: 'Media Agent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
+  const parentConversationId =
+    typeof bridgeSecrets?.conversationId === 'string' &&
+    bridgeSecrets.conversationId.trim()
+      ? bridgeSecrets.conversationId.trim()
+      : null;
   const billingTracker = new LiveUsageBillingTracker({
     userId: bridgeSecrets?.userId,
-    conversationId: null,
+    conversationId: parentConversationId,
     model: resolvedModelId,
     sourceRef: `subagent:${subagentId}`,
     sourceType: 'subagent',
@@ -463,6 +468,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         sourceRef: summary.sourceRef,
         trigger: summary.trigger,
         stepNumber: summary.stepNumber,
+        conversationId: parentConversationId,
         model: resolvedModelId,
         sourceType: 'subagent',
         sourceLabel,

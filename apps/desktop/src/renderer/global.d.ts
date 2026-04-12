@@ -214,6 +214,7 @@ declare global {
       skillsSave: (skill: any) => Promise<{ ok: boolean; error?: string }>;
       skillsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
       skillsToggle: (id: string) => Promise<{ ok: boolean; isActive?: boolean; error?: string }>;
+      onSkillsUpdated: (cb: (skills: any[]) => void) => () => void;
 
       // Proactive Agent System
       proactiveGetConfig: () => Promise<{ ok: boolean; config?: any; error?: string }>;

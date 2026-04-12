@@ -50,12 +50,13 @@ function buildVoiceSystemPrompt(opts: {
   runtimeMemorySummary?: string;
   runtimeMemorySource?: string;
   customPrompt?: string;
+  enableTools?: boolean;
   identityFacts?: Fact[];
   directiveFacts?: Fact[];
   bioFacts?: Fact[];
 }): string {
   const { userName, direction, callerNumber, recentContext, runtimeMemorySummary, runtimeMemorySource, customPrompt,
-    identityFacts, directiveFacts, bioFacts } = opts;
+    enableTools = true, identityFacts, directiveFacts, bioFacts } = opts;
 
   const userRef = userName ? `The user's name is ${userName}.` : '';
   const directionCtx = direction === 'inbound'
@@ -102,17 +103,28 @@ function buildVoiceSystemPrompt(opts: {
     '- Be concise and conversational — this is a phone call, not a text chat.',
     '- Use natural speech patterns. Avoid bullet points, markdown, or overly structured responses.',
     '- Confirm understanding before taking actions.',
-    '- If the user asks you to do something and you have the tools, do it. Use search_tools, then get_tool_schema when needed, then execute_tool.',
-    '- Use delegate for bigger multi-step jobs that need a focused subagent.',
-    '- Use search_memory when you need history or personal context from past conversations or runtime memory.',
-    '- If the user wants you to send them something (a link, info, confirmation), use send_sms to text it to them.',
-    '- Do not use ask_user, chat_ui, or other visual/UI-only flows during a phone call. If you need more information, ask the caller verbally.',
-    '- If a delegated subagent asks a question, ask the caller verbally and answer it with reply_to_subagent.',
-    '- When calling tools, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
-    '- IMPORTANT — before calling delegate or reply_to_subagent, ALWAYS speak a short acknowledgment out loud first (e.g. "Give me a moment, I\'ll work on that" or "One sec, I\'m checking on it"). Once delegate is running the call will be silent until the subagent returns, so the caller needs to hear you acknowledge the request before you kick it off.',
-    '- Subagents can take a minute or more. If the caller starts talking while you\'re waiting, feel free to chat — and when the result comes back, smoothly continue where you left off.',
-    '- If a tool result comes back with "timedOut": true or an error saying it was released so the call can continue, do NOT silently retry. Tell the caller you\'re still working on it, offer to text them a follow-up with send_sms once it\'s ready, or ask whether they want you to keep trying.',
   );
+
+  if (enableTools) {
+    parts.push(
+      '- If the user asks you to do something and you have the tools, do it. Use search_tools, then get_tool_schema when needed, then execute_tool.',
+      '- Use delegate for bigger multi-step jobs that need a focused subagent.',
+      '- Use search_memory when you need history or personal context from past conversations or runtime memory.',
+      '- If the user wants you to send them something (a link, info, confirmation), use send_sms to text it to them.',
+      '- Do not use ask_user, chat_ui, or other visual/UI-only flows during a phone call. If you need more information, ask the caller verbally.',
+      '- If a delegated subagent asks a question, ask the caller verbally and answer it with reply_to_subagent.',
+      '- When calling tools, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
+      '- IMPORTANT — before calling delegate or reply_to_subagent, ALWAYS speak a short acknowledgment out loud first (e.g. "Give me a moment, I\'ll work on that" or "One sec, I\'m checking on it"). Once delegate is running the call will be silent until the subagent returns, so the caller needs to hear you acknowledge the request before you kick it off.',
+      '- Subagents can take a minute or more. If the caller starts talking while you\'re waiting, feel free to chat — and when the result comes back, smoothly continue where you left off.',
+      '- If a tool result comes back with "timedOut": true or an error saying it was released so the call can continue, do NOT silently retry. Tell the caller you\'re still working on it, offer to text them a follow-up with send_sms once it\'s ready, or ask whether they want you to keep trying.',
+    );
+  } else {
+    parts.push(
+      '- Live tools are unavailable on this call, so do not claim to look things up, send texts, or complete external actions in real time.',
+      '- If the user asks for something that would normally require tools, explain that this call is currently conversation-only and offer the best verbal help you can.',
+      '- Ask follow-up questions verbally instead of referring to any UI or external workflow.',
+    );
+  }
 
   if (customPrompt) {
     parts.push('', 'Additional instructions:', customPrompt);
@@ -261,8 +273,9 @@ export async function buildVoiceContext(opts: {
   callerNumber?: string;
   customPrompt?: string;
   bridgeWs?: WebSocket;
+  enableTools?: boolean;
 }): Promise<VoiceContext> {
-  const { userId, direction, callerNumber, customPrompt, bridgeWs } = opts;
+  const { userId, direction, callerNumber, customPrompt, bridgeWs, enableTools = true } = opts;
 
   // Load recent context + knowledge graph + configured runtime memory in parallel.
   const [recentMessages, userName, knowledge, runtimeMemory] = await Promise.all([
@@ -285,6 +298,7 @@ export async function buildVoiceContext(opts: {
     runtimeMemorySummary: runtimeMemory.summary || undefined,
     runtimeMemorySource: runtimeMemory.source,
     customPrompt,
+    enableTools,
     identityFacts,
     directiveFacts,
     bioFacts,
@@ -292,7 +306,7 @@ export async function buildVoiceContext(opts: {
 
   return {
     systemPrompt,
-    tools: VOICE_TOOLS,
+    tools: enableTools ? VOICE_TOOLS : [],
     userId,
     userName: effectiveName,
   };

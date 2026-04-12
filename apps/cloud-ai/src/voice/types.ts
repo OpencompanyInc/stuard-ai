@@ -63,6 +63,8 @@ export interface VoiceSession {
 export interface VoiceProvider {
   id: string;
   name: string;
+  /** Whether the provider can execute function/tool calls during the live session */
+  supportsToolCalling?: boolean;
   /** Supported input audio formats */
   supportedInputFormats: AudioFormat[];
   /** Supported output audio formats */

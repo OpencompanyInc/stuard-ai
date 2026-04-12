@@ -1113,11 +1113,7 @@ export async function getUsageBreakdown(
       else if (model.startsWith('compute') || model.startsWith('cloud_compute')) category = 'compute';
       else if (model.startsWith('storage')) category = 'storage';
       else if (model.startsWith('subagent') || model.startsWith('browser') || model.startsWith('delegation')) category = 'subagent';
-      else if (model.includes('/')) {
-        const provider = model.split('/')[0].toLowerCase();
-        category = `inference:${provider}`;
-      }
-      else category = 'inference';
+      else category = `inference:${model}`;
       if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
       buckets[category].credits += Number(row.credit_cost) || 0;
       buckets[category].costUsd += Number(row.cost_usd) || 0;

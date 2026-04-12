@@ -237,6 +237,7 @@ class GrokRealtimeSession implements VoiceSession {
 export const grokRealtimeProvider: VoiceProvider = {
   id: 'grok-realtime',
   name: 'Grok Voice Agent (xAI)',
+  supportsToolCalling: true,
   supportedInputFormats: ['pcmu', 'ulaw_8000', 'g711_ulaw', 'g711_alaw', 'pcm_16000', 'pcm_24000'] as AudioFormat[],
   supportedOutputFormats: ['pcmu', 'ulaw_8000', 'g711_ulaw', 'g711_alaw', 'pcm_16000', 'pcm_24000'] as AudioFormat[],
 

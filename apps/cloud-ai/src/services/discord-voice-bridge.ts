@@ -31,6 +31,8 @@ import { Transform, Readable, PassThrough } from 'stream';
 import {
   getVoiceProvider,
   getDefaultProviderId,
+  supportsVoiceToolCalling,
+  findToolCapableVoiceProvider,
   buildVoiceContext,
   type VoiceSession,
   type VoiceSessionConfig,
@@ -146,12 +148,34 @@ export async function bridgeDiscordVoice(opts: {
   }
 
   // Select voice provider
-  const providerId = opts.providerId || getDefaultProviderId();
-  const provider = getVoiceProvider(providerId);
+  const requestedProviderId = opts.providerId || getDefaultProviderId();
+  const requestedProvider = getVoiceProvider(requestedProviderId);
 
-  if (!provider || !provider.isConfigured()) {
-    console.error(LOG_PREFIX, `Voice provider not available: ${providerId}`);
+  if (!requestedProvider || !requestedProvider.isConfigured()) {
+    console.error(LOG_PREFIX, `Voice provider not available: ${requestedProviderId}`);
     return null;
+  }
+
+  let providerId = requestedProviderId;
+  let provider = requestedProvider;
+  let enableVoiceTools = true;
+  if (!supportsVoiceToolCalling(provider)) {
+    const fallbackProvider = findToolCapableVoiceProvider();
+    if (fallbackProvider && fallbackProvider.id !== provider.id) {
+      console.log(LOG_PREFIX, 'Switching to tool-capable provider', {
+        discordUserId,
+        requestedProviderId,
+        providerId: fallbackProvider.id,
+      });
+      provider = fallbackProvider;
+      providerId = fallbackProvider.id;
+    } else {
+      enableVoiceTools = false;
+      console.warn(LOG_PREFIX, 'No tool-capable provider available; continuing without live tools', {
+        discordUserId,
+        providerId,
+      });
+    }
   }
 
   const voiceSessionId = `discord-${discordUserId}-${Date.now()}`;
@@ -174,6 +198,7 @@ export async function bridgeDiscordVoice(opts: {
       direction: 'inbound',
       customPrompt: 'This is a Discord voice call (not a phone call). The user is talking to you through Discord DMs.',
       bridgeWs: bridgeWs || undefined,
+      enableTools: enableVoiceTools,
     });
   } catch (err: any) {
     console.warn(LOG_PREFIX, 'Failed to load voice context:', err?.message);

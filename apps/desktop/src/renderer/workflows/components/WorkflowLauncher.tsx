@@ -61,11 +61,19 @@ export function WorkflowLauncher({
   const [deployStatuses, setDeployStatuses] = useState<Record<string, DeployStatus>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const reloadSkills = useCallback(() => {
     window.desktopAPI?.skillsList?.().then((res) => {
       if (res?.ok && Array.isArray(res.skills)) setSkills(res.skills as Skill[]);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    reloadSkills();
+    return window.desktopAPI?.onSkillsUpdated?.((nextSkills: any[]) => {
+      if (Array.isArray(nextSkills)) setSkills(nextSkills as Skill[]);
+      else reloadSkills();
+    });
+  }, [reloadSkills]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return items;

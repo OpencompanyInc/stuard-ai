@@ -5,6 +5,7 @@ import { buildProviderModel } from '../../utils/models';
 import { writeLog } from '../../utils/logger';
 import { sanitizeToolEvent, sanitizeSteps } from '../../utils/sanitize';
 import { normalizeUsage } from '../../utils/usage';
+import { normalizeThreadTitle, THREAD_TITLE_SYSTEM } from '../../utils/thread-title';
 import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
 import { withClientBridge, getBridgeWs } from '../../tools/bridge';
@@ -634,12 +635,16 @@ function fireAndForgetConversationTitle(
 ) {
   (async () => {
     try {
-      const titlePrompt = `You will create a short, descriptive chat thread title from the user's message. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\n\nTitle:`;
+      const titlePrompt = `User message:\n${prompt}`;
       const titleModelId = getDefaultModelForCategory('fast');
       const titleModel = buildProviderModel(titleModelId);
-      const result = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-      let title = String((result as any)?.text || '').trim();
-      title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+      const result = await generateText({
+        model: titleModel as any,
+        system: THREAD_TITLE_SYSTEM,
+        prompt: titlePrompt,
+        temperature: 0.2,
+      });
+      const title = normalizeThreadTitle((result as any)?.text);
       if (title) {
         await setConversationTitle(userId, conversationId, title);
         send(ws, { type: 'title', conversationId, title }, requestId);

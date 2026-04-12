@@ -542,6 +542,11 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
   skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
   skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
+  onSkillsUpdated: (cb: (skills: any[]) => void) => {
+    const handler = (_e: any, skills: any[]) => cb(skills);
+    ipcRenderer.on('skills:updated', handler);
+    return () => { try { ipcRenderer.off('skills:updated', handler); } catch { } };
+  },
 
   // Subagent protocol events from orchestrator
   onSubagentMessage: (cb: (msg: any) => void) => {

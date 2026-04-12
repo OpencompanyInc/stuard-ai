@@ -84,6 +84,7 @@ import { normalizeUsage } from '../utils/usage';
 import { buildProviderModel } from '../utils/models';
 import { generateWithToolRecovery } from './proactive-utils';
 import { generateText } from 'ai';
+import { normalizeThreadTitle, THREAD_TITLE_SYSTEM } from '../utils/thread-title';
 import type { ModelChoice } from '../router/model-router';
 import { runWithSecrets, withClientBridge } from '../tools/bridge';
 import { getDesktopWs } from '../services/vm-bridge';
@@ -565,12 +566,16 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
 
       if (conversationCreatedNow && responseText) {
         try {
-          const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.\nUser: ${message}\nAssistant: ${responseText}\n\nTitle:`;
+          const titlePrompt = `User:\n${message}\n\nAssistant:\n${responseText}`;
           const titleModelId = getDefaultModelForCategory('fast');
           const titleModel = buildProviderModel(titleModelId);
-          const tRes = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-          let title = String((tRes as any)?.text || '').trim();
-          title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+          const tRes = await generateText({
+            model: titleModel as any,
+            system: THREAD_TITLE_SYSTEM,
+            prompt: titlePrompt,
+            temperature: 0.2,
+          });
+          const title = normalizeThreadTitle((tRes as any)?.text);
           if (title) await setConversationTitle(userId, conversationId, title, true);
         } catch { }
       }

@@ -25,6 +25,18 @@ const HIDDEN_TOOL_NAMES = new Set([
   'retrieve_tool_format',
   'search_tools',
   'get_tool_schema',
+  // Internal memory/segment tools (background processing)
+  'segment_build_topic_drawers',
+  'segment_create',
+  'segment_update',
+  'segment_list',
+  'segment_search',
+  'collection_summary_upsert',
+  'collection_summary_list',
+  'conversation_create',
+  'conversation_get',
+  'conversation_update',
+  'memory_stats',
 ]);
 
 // --- File path detection & actions for tool results ---

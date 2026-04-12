@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 
 import { verifyAccessToken } from '../../auth';
 import { clearRun, buildSyncPayload } from '../../services/run-state';
+import { registerConnection, type ClientType } from '../../services/vm-bridge';
 import { send } from './helpers';
 import { registerWebhookClient, deliverQueuedWebhooks } from '../../webhooks/dispatch';
 import { registerVoiceBridge } from '../../voice/voice-bridge-manager';
@@ -35,6 +36,15 @@ export async function handleAuthMessage(ws: WebSocket, msg: any) {
     if (!authResult?.success || !authResult.userId) {
       send(ws, { type: 'auth_result', ok: false, message: 'invalid_token' });
       return;
+    }
+
+    const clientType = typeof (ws as any)?.__clientType === 'string'
+      ? String((ws as any).__clientType).toLowerCase().trim()
+      : '';
+    if (clientType === 'desktop' || clientType === 'vm-agent') {
+      try {
+        registerConnection(ws, authResult.userId, clientType as ClientType);
+      } catch { }
     }
 
     // If this WS was opened for a voice bridge session, register it

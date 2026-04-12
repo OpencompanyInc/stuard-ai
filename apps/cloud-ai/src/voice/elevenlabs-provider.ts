@@ -146,6 +146,7 @@ class ElevenLabsSession implements VoiceSession {
 export const elevenlabsProvider: VoiceProvider = {
   id: 'elevenlabs',
   name: 'ElevenLabs Conversational AI',
+  supportsToolCalling: false,
   supportedInputFormats: ['ulaw_8000', 'pcmu', 'pcm_16000'] as AudioFormat[],
   supportedOutputFormats: ['ulaw_8000', 'pcmu'] as AudioFormat[],
 

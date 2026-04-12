@@ -9,6 +9,7 @@ import type { VoiceProvider, ActiveCall } from './types';
 
 const providers = new Map<string, VoiceProvider>();
 const activeCalls = new Map<string, ActiveCall>();
+const TOOL_CAPABLE_PROVIDER_ORDER = ['openai-realtime', 'grok-realtime'] as const;
 
 export function registerVoiceProvider(provider: VoiceProvider): void {
   providers.set(provider.id, provider);
@@ -25,6 +26,21 @@ export function listVoiceProviders(): VoiceProvider[] {
 
 export function getConfiguredProviders(): VoiceProvider[] {
   return Array.from(providers.values()).filter(p => p.isConfigured());
+}
+
+export function supportsVoiceToolCalling(providerOrId: VoiceProvider | string | undefined): boolean {
+  if (!providerOrId) return false;
+  const provider = typeof providerOrId === 'string' ? providers.get(providerOrId) : providerOrId;
+  return provider?.supportsToolCalling === true;
+}
+
+export function findToolCapableVoiceProvider(preferredIds: readonly string[] = TOOL_CAPABLE_PROVIDER_ORDER): VoiceProvider | undefined {
+  const configured = getConfiguredProviders().filter((provider) => supportsVoiceToolCalling(provider));
+  for (const id of preferredIds) {
+    const match = configured.find((provider) => provider.id === id);
+    if (match) return match;
+  }
+  return configured[0];
 }
 
 export function getDefaultProviderId(): string {

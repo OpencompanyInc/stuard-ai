@@ -304,6 +304,7 @@ class GeminiLiveSession implements VoiceSession {
 export const geminiLiveProvider: VoiceProvider = {
   id: 'gemini-live',
   name: 'Google Gemini Live',
+  supportsToolCalling: false,
   supportedInputFormats: ['pcm_16000', 'pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
   supportedOutputFormats: ['pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
 

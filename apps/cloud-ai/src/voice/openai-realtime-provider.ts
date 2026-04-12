@@ -254,6 +254,7 @@ class OpenAIRealtimeSession implements VoiceSession {
 export const openaiRealtimeProvider: VoiceProvider = {
   id: 'openai-realtime',
   name: 'OpenAI Realtime (GPT-4o)',
+  supportsToolCalling: true,
   supportedInputFormats: ['g711_ulaw', 'g711_alaw', 'pcmu', 'pcma', 'ulaw_8000', 'pcm_24000'] as AudioFormat[],
   supportedOutputFormats: ['g711_ulaw', 'g711_alaw', 'pcmu', 'pcma', 'ulaw_8000', 'pcm_24000'] as AudioFormat[],
 

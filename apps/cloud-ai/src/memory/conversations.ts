@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 import { contentToText } from '../utils/messages';
+import { normalizeThreadTitle } from '../utils/thread-title';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -276,12 +277,13 @@ export async function generateConversationTitle(
 
     const { text: title } = await generateText({
       model: model as any,
-      system: 'Generate a short (3-6 word) title for this conversation. Output only the title, nothing else.',
+      system:
+        'Generate a short (3-6 word) title for this conversation. Output only the title words — no labels (never "Title:" or similar), no extra text, nothing else.',
       prompt: text,
       temperature: 0.3,
     });
 
-    return title.trim().replace(/^["']|["']$/g, '').slice(0, 80);
+    return normalizeThreadTitle(title);
   } catch (error) {
     return 'New Conversation';
   }
@@ -985,7 +987,7 @@ async function getExistingTopics(): Promise<string[]> {
       limit_topics: 200,
       limit_segments_per_topic: 0,
       segments_scan_limit: 2000,
-    }, undefined, 10000);
+    }, undefined, 10000, { silent: true });
 
     const drawers: any[] = result?.drawers || [];
     const topics = drawers.map((d: any) => String(d.topic || '').trim()).filter(Boolean);

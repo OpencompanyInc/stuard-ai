@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 
 // ============================================================================
 // TYPES
@@ -27,6 +27,8 @@ export interface Skill {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  source?: 'auto' | 'manual';
+  metadata?: Record<string, any>;
 }
 
 // ============================================================================
@@ -51,10 +53,15 @@ export function loadSkills(): Skill[] {
 }
 
 function saveSkills(): void {
-  try {
-    fs.writeFileSync(SKILLS_FILE, JSON.stringify(skillsCache, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[skills] Failed to save skills:', e);
+  fs.mkdirSync(path.dirname(SKILLS_FILE), { recursive: true });
+  fs.writeFileSync(SKILLS_FILE, JSON.stringify(skillsCache, null, 2), 'utf8');
+}
+
+function broadcastSkillsUpdated(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      win.webContents.send('skills:updated', skillsCache);
+    } catch {}
   }
 }
 
@@ -73,35 +80,62 @@ export function skills_get(id: string): { ok: boolean; skill?: Skill; error?: st
 }
 
 export function skills_save(skill: Skill): { ok: boolean; error?: string } {
+  const previousSkills = skillsCache;
   try {
     const idx = skillsCache.findIndex(s => s.id === skill.id);
+    const nextSkills = [...skillsCache];
     if (idx >= 0) {
-      skillsCache[idx] = { ...skill, updatedAt: new Date().toISOString() };
+      nextSkills[idx] = { ...skill, updatedAt: new Date().toISOString() };
     } else {
-      skillsCache.push(skill);
+      nextSkills.push(skill);
     }
+    skillsCache = nextSkills;
     saveSkills();
+    broadcastSkillsUpdated();
     return { ok: true };
   } catch (e: any) {
+    skillsCache = previousSkills;
+    console.error('[skills] Failed to save skills:', e);
     return { ok: false, error: e?.message || 'save_failed' };
   }
 }
 
 export function skills_delete(id: string): { ok: boolean; error?: string } {
-  const before = skillsCache.length;
-  skillsCache = skillsCache.filter(s => s.id !== id);
-  if (skillsCache.length === before) return { ok: false, error: 'skill_not_found' };
-  saveSkills();
-  return { ok: true };
+  const previousSkills = skillsCache;
+  try {
+    const nextSkills = skillsCache.filter(s => s.id !== id);
+    if (nextSkills.length === skillsCache.length) return { ok: false, error: 'skill_not_found' };
+    skillsCache = nextSkills;
+    saveSkills();
+    broadcastSkillsUpdated();
+    return { ok: true };
+  } catch (e: any) {
+    skillsCache = previousSkills;
+    console.error('[skills] Failed to delete skill:', e);
+    return { ok: false, error: e?.message || 'delete_failed' };
+  }
 }
 
 export function skills_toggle(id: string): { ok: boolean; isActive?: boolean; error?: string } {
-  const skill = skillsCache.find(s => s.id === id);
-  if (!skill) return { ok: false, error: 'skill_not_found' };
-  skill.isActive = !skill.isActive;
-  skill.updatedAt = new Date().toISOString();
-  saveSkills();
-  return { ok: true, isActive: skill.isActive };
+  const previousSkills = skillsCache;
+  try {
+    const idx = skillsCache.findIndex(s => s.id === id);
+    if (idx < 0) return { ok: false, error: 'skill_not_found' };
+    const current = skillsCache[idx];
+    const toggled = {
+      ...current,
+      isActive: !current.isActive,
+      updatedAt: new Date().toISOString(),
+    };
+    skillsCache = skillsCache.map((skill, skillIdx) => skillIdx === idx ? toggled : skill);
+    saveSkills();
+    broadcastSkillsUpdated();
+    return { ok: true, isActive: toggled.isActive };
+  } catch (e: any) {
+    skillsCache = previousSkills;
+    console.error('[skills] Failed to toggle skill:', e);
+    return { ok: false, error: e?.message || 'toggle_failed' };
+  }
 }
 
 /**

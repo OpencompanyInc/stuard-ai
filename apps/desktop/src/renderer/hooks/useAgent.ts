@@ -47,6 +47,26 @@ const HIDDEN_TOOL_NAMES = new Set([
   'pending_memory_confirm',
   'pending_memory_reject',
   'pending_memory_delete',
+
+  // Internal memory/segment tools (run in background, should not affect status)
+  'segment_build_topic_drawers',
+  'segment_create',
+  'segment_update',
+  'segment_list',
+  'segment_list_recent',
+  'segment_search',
+  'segment_search_drawers_by_embedding',
+  'collection_summary_upsert',
+  'collection_summary_list',
+  'collection_summary_get',
+  'conversation_create',
+  'conversation_get',
+  'conversation_update',
+  'conversation_list',
+  'conversation_search',
+  'message_add',
+  'message_list',
+  'memory_stats',
 ]);
 
 const HIDDEN_WRAPPER_TOOL_NAMES = new Set([
@@ -1450,12 +1470,17 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
 
               if (!isHiddenTool) {
-                if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed') {
-                  setStreamingAI({ phase: 'responding', tool, toolStatus, statusText: 'Responding…' });
-                } else {
-                  setStreamingAI({ phase: 'tool', tool, toolStatus, statusText: `🔧 ${humanTool} ${actionText}` });
+                // Don't let background tool events resurrect status after response is done
+                const currentTab = tabsRef.current.find(t => t.id === getTargetTabId());
+                const isTabIdle = currentTab?.aiState.phase === 'idle';
+                if (!isTabIdle) {
+                  if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed') {
+                    setStreamingAI({ phase: 'responding', tool, toolStatus, statusText: 'Responding…' });
+                  } else {
+                    setStreamingAI({ phase: 'tool', tool, toolStatus, statusText: `🔧 ${humanTool} ${actionText}` });
+                  }
+                  setState((s) => ({ ...s, status: `tool:${toolStatus}` }));
                 }
-                setState((s) => ({ ...s, status: `tool:${toolStatus}` }));
               }
             } else if (evt.event === 'delta') {
               // Ignore deltas if we've explicitly stopped - the abort signal was sent

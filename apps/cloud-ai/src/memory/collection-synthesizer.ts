@@ -41,11 +41,12 @@ export async function synthesizeCollections(options?: {
       { limit_topics: 200, limit_segments_per_topic: 20, segments_scan_limit: 3000 },
       undefined,
       30000,
+      { silent: true },
     );
     const drawers: any[] = result?.drawers || [];
 
     // Fetch existing summaries to check staleness
-    const existingResult = await execLocalTool('collection_summary_list', { limit: 500 }, undefined, 10000);
+    const existingResult = await execLocalTool('collection_summary_list', { limit: 500 }, undefined, 10000, { silent: true });
     const existingSummaries: Map<string, any> = new Map();
     for (const s of (existingResult?.summaries || [])) {
       existingSummaries.set(String(s.topic || '').toLowerCase(), s);
@@ -120,6 +121,7 @@ export async function synthesizeCollections(options?: {
           },
           undefined,
           10000,
+          { silent: true },
         );
 
         synthesized++;
@@ -160,6 +162,7 @@ async function mergeSimilarTopics(): Promise<number> {
       { limit_topics: 200, limit_segments_per_topic: 0, segments_scan_limit: 2000 },
       undefined,
       15000,
+      { silent: true },
     );
     const drawers: any[] = result?.drawers || [];
     const topics = drawers.map((d: any) => String(d.topic || '').trim()).filter(Boolean);
