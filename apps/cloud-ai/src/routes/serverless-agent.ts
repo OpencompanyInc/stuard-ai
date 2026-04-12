@@ -18,7 +18,6 @@ import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call } from '../tools/telnyx-tools';
 import { waitTool } from '../tools/wait';
 import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
 
@@ -52,6 +51,21 @@ async function getWhatsappSendMessage() {
 async function getWhatsappTools(): Promise<Record<string, any>> {
   await getWhatsappSendMessage();
   return _whatsappTools!;
+}
+
+// Lazy imports to break circular: telnyx-tools → telnyx route → serverless-agent → telnyx-tools
+let _telnyxTools: { telnyx_send_sms: any; telnyx_send_mms: any; telnyx_send_voice_note: any; telnyx_voice_call: any } | undefined;
+async function getTelnyxTools() {
+  if (!_telnyxTools) {
+    const mod = await import('../tools/telnyx-tools');
+    _telnyxTools = {
+      telnyx_send_sms: mod.telnyx_send_sms,
+      telnyx_send_mms: mod.telnyx_send_mms,
+      telnyx_send_voice_note: mod.telnyx_send_voice_note,
+      telnyx_voice_call: mod.telnyx_voice_call,
+    };
+  }
+  return _telnyxTools;
 }
 import { getDefaultModelForCategory } from '../pricing';
 import {
@@ -426,6 +440,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     const cloudMemorySearch = createCloudMemorySearchTool(userId);
 
     const metaTools = await getMetaTools();
+    const telnyxTools = await getTelnyxTools();
     const tools: Record<string, any> = {
       web_search,
       scrape_url,
@@ -437,10 +452,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       wait: waitTool,
       run_sequential: runSequentialTool,
       run_parallel: runParallelTool,
-      telnyx_send_sms,
-      telnyx_send_mms,
-      telnyx_send_voice_note,
-      telnyx_voice_call,
+      ...telnyxTools,
       ...(await getWhatsappTools()),
     };
 

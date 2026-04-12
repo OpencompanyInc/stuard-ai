@@ -7,6 +7,7 @@ import { sanitizeToolEvent, sanitizeSteps } from '../../utils/sanitize';
 import { normalizeUsage } from '../../utils/usage';
 import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
+import { withClientBridge, getBridgeWs } from '../../tools/bridge';
 import {
   addAssistantMessage,
   finishRun,
@@ -97,6 +98,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       setTerminalResult(authUser.userId, requestId, payload);
     }
   };
+
+  // Capture the bridge WS now — the AI SDK's onFinish callback may lose
+  // the AsyncLocalStorage context, so we snapshot it for later re-establishment.
+  const bridgeWs = getBridgeWs();
 
   try {
     console.log('[cloud-ai] Starting stream with model:', modelLabel);
@@ -241,7 +246,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           } catch { }
         }
 
-        startKnowledgeIngestion(history, conversationId, normalizedUsage?.totalTokens);
+        startKnowledgeIngestion(history, conversationId, normalizedUsage?.totalTokens, bridgeWs);
         startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
           userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
           userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
@@ -572,8 +577,13 @@ User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
   } catch { }
 }
 
-function startKnowledgeIngestion(history: any[], conversationId: string | null, totalTokens: number | undefined) {
-  void (async () => {
+function startKnowledgeIngestion(history: any[], conversationId: string | null, totalTokens: number | undefined, bridgeWs?: import('ws').WebSocket) {
+  // Re-establish the bridge context so execLocalTool can reach the desktop.
+  // The onFinish callback from the AI SDK may lose the AsyncLocalStorage context,
+  // so we use the captured bridgeWs to restore it for knowledge_add_fact and auto_skill_store.
+  const hasBridge = bridgeWs && bridgeWs.readyState === bridgeWs.OPEN;
+
+  const run = async () => {
     try {
       const { ingestConversationTurn, analyzeForAutoSkill } = await import('../../knowledge');
       const fullHistory = [...history];
@@ -607,7 +617,13 @@ function startKnowledgeIngestion(history: any[], conversationId: string | null, 
     } catch (error) {
       console.error('[cloud-ai] Knowledge pipeline import failed:', error);
     }
-  })();
+  };
+
+  if (hasBridge) {
+    void withClientBridge(bridgeWs, run);
+  } else {
+    void run();
+  }
 }
 
 function startLocalMemoryPersistence(
