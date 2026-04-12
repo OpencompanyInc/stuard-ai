@@ -71,7 +71,8 @@ import { buildProviderModel } from '../utils/models';
 import { generateWithToolRecovery } from './proactive-utils';
 import { generateText } from 'ai';
 import type { ModelChoice } from '../router/model-router';
-import { runWithSecrets } from '../tools/bridge';
+import { runWithSecrets, withClientBridge } from '../tools/bridge';
+import { getDesktopWs } from '../services/vm-bridge';
 
 // ─── Cloud-Only System Prompt ──────────────────────────────────────────────
 
@@ -350,10 +351,33 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
 
     const syncPrefs = await getSyncPreferences(userId);
 
-    // 2. Build knowledge context from Supabase
-    const knowledgeContext = await buildCloudKnowledgeContext(userId, message, {
-      syncMemories: syncPrefs.sync_memories,
-    });
+    // 2. Build knowledge context — prefer desktop bridge (local SQLite) when available
+    const desktopWsForContext = getDesktopWs(userId);
+    let knowledgeContext = '';
+    if (desktopWsForContext) {
+      try {
+        const { buildKnowledgeContext } = await import('../knowledge');
+        const built = await withClientBridge(desktopWsForContext, () =>
+          buildKnowledgeContext(message, {
+            includeIdentity: true,
+            includeDirectives: true,
+            includeBio: true,
+            maxGlobalFacts: 6,
+            detectEntities: true,
+          })
+        );
+        knowledgeContext = (built as any)?.text || '';
+      } catch (e: any) {
+        console.log('[serverless-agent] Bridge knowledge context failed, falling back to cloud:', e?.message);
+        knowledgeContext = await buildCloudKnowledgeContext(userId, message, {
+          syncMemories: syncPrefs.sync_memories,
+        });
+      }
+    } else {
+      knowledgeContext = await buildCloudKnowledgeContext(userId, message, {
+        syncMemories: syncPrefs.sync_memories,
+      });
+    }
 
     // 3. Load conversation history for multi-turn
     let conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
@@ -491,8 +515,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
     }).catch(() => {});
 
     // 11. Knowledge Graph Ingestion — extract and store knowledge from this turn
-    //     (same as the desktop WS handler in server.ts, so mobile messages get
-    //     the same analysis and knowledge ingestion as desktop messages)
+    //     Uses the desktop bridge when available so actions execute against local SQLite
     try {
       const { ingestConversationTurn } = await import('../knowledge');
       const turnHistory = [
@@ -500,17 +523,26 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
         { role: 'user' as const, content: message },
         { role: 'assistant' as const, content: responseText },
       ];
-      ingestConversationTurn(turnHistory).then(({ extracted, executed }) => {
-        if (extracted.actions.length > 0) {
-          console.log('[serverless-agent] Knowledge ingestion complete:', {
-            actionsExtracted: extracted.actions.length,
-            actionsSucceeded: executed.success,
-            actionsFailed: executed.failed,
-          });
-        }
-      }).catch((err) => {
-        console.error('[serverless-agent] Knowledge ingestion failed:', err);
-      });
+      const desktopWs = getDesktopWs(userId);
+      const runIngestion = () =>
+        ingestConversationTurn(turnHistory).then(({ extracted, executed }) => {
+          if (extracted.actions.length > 0) {
+            console.log('[serverless-agent] Knowledge ingestion complete:', {
+              actionsExtracted: extracted.actions.length,
+              actionsSucceeded: executed.success,
+              actionsFailed: executed.failed,
+            });
+          }
+        }).catch((err) => {
+          console.error('[serverless-agent] Knowledge ingestion failed:', err);
+        });
+
+      if (desktopWs) {
+        withClientBridge(desktopWs, runIngestion);
+      } else {
+        console.log('[serverless-agent] No desktop bridge for knowledge ingestion — actions will not execute');
+        runIngestion();
+      }
     } catch (ingestionErr) {
       console.error('[serverless-agent] Knowledge ingestion import failed:', ingestionErr);
     }
@@ -561,9 +593,31 @@ export async function buildVoiceCallContext(
   taskMessage?: string,
 ): Promise<{ systemPrompt: string; tools: any[] }> {
   const syncPrefs = await getSyncPreferences(userId);
-  const knowledgeContext = await buildCloudKnowledgeContext(userId, taskMessage || 'voice call', {
-    syncMemories: syncPrefs.sync_memories,
-  });
+  const desktopWs = getDesktopWs(userId);
+  let knowledgeContext = '';
+  if (desktopWs) {
+    try {
+      const { buildKnowledgeContext } = await import('../knowledge');
+      const built = await withClientBridge(desktopWs, () =>
+        buildKnowledgeContext(taskMessage || 'voice call', {
+          includeIdentity: true,
+          includeDirectives: true,
+          includeBio: true,
+          maxGlobalFacts: 6,
+          detectEntities: true,
+        })
+      );
+      knowledgeContext = (built as any)?.text || '';
+    } catch {
+      knowledgeContext = await buildCloudKnowledgeContext(userId, taskMessage || 'voice call', {
+        syncMemories: syncPrefs.sync_memories,
+      });
+    }
+  } else {
+    knowledgeContext = await buildCloudKnowledgeContext(userId, taskMessage || 'voice call', {
+      syncMemories: syncPrefs.sync_memories,
+    });
+  }
 
   let systemPrompt = `You are Stuard — a friendly AI assistant on a voice call.
 ${syncPrefs.sync_memories
