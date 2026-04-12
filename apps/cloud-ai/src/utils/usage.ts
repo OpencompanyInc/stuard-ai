@@ -22,6 +22,8 @@ export interface NormalizedUsage {
   cachedPromptTokens?: number;
   thinkingTokens?: number;
   reasoningTokens?: number;
+  costUsd?: number;
+  creditCost?: number;
   [key: string]: any;
 }
 
@@ -76,6 +78,7 @@ export function normalizeUsage(usage: any): NormalizedUsage {
     u.providerMetadata?.anthropic?.tokenDetails?.reasoning,
     u.providerMetadata?.anthropic?.tokenDetails?.thinking,
     u.providerMetadata?.openai?.reasoningTokens,
+    u.providerMetadata?.openrouter?.usage?.completionTokensDetails?.reasoningTokens,
   ]);
 
   const cachedPromptTokens = pickMax([
@@ -90,7 +93,40 @@ export function normalizeUsage(usage: any): NormalizedUsage {
     u.inputTokenDetails?.cached,
     u.tokenDetails?.cacheReadInputTokens,
     u.providerMetadata?.anthropic?.cacheReadInputTokens,
+    u.providerMetadata?.openrouter?.usage?.promptTokensDetails?.cachedTokens,
   ]);
+
+  const explicitCostUsdCandidates = [
+    u.costUsd,
+    u.cost_usd,
+    u.cost,
+    u.providerMetadata?.openrouter?.usage?.cost,
+    u.providerMetadata?.openrouter?.usage?.costUsd,
+    u.providerMetadata?.openrouter?.usage?.cost_usd,
+  ];
+  let costUsd: number | undefined;
+  for (const candidate of explicitCostUsdCandidates) {
+    const n = Number(candidate);
+    if (Number.isFinite(n) && n >= 0) {
+      costUsd = Number(n.toFixed(8));
+      break;
+    }
+  }
+
+  const explicitCreditCostCandidates = [
+    u.creditCost,
+    u.credit_cost,
+    u.providerMetadata?.openrouter?.usage?.creditCost,
+    u.providerMetadata?.openrouter?.usage?.credit_cost,
+  ];
+  let creditCost: number | undefined;
+  for (const candidate of explicitCreditCostCandidates) {
+    const n = Number(candidate);
+    if (Number.isFinite(n) && n >= 0) {
+      creditCost = Number(n.toFixed(4));
+      break;
+    }
+  }
 
   const totalTokens =
     pickMax([u.totalTokens, u.total_tokens, u.totalTokenCount]) ??
@@ -111,6 +147,12 @@ export function normalizeUsage(usage: any): NormalizedUsage {
     if (typeof normalized.reasoningTokens !== 'number') {
       normalized.reasoningTokens = thinkingTokens;
     }
+  }
+  if (typeof costUsd === 'number') {
+    normalized.costUsd = costUsd;
+  }
+  if (typeof creditCost === 'number') {
+    normalized.creditCost = creditCost;
   }
 
   return normalized;

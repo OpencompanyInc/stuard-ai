@@ -41,6 +41,10 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   sms: "SMS",
   reminder_sms: "SMS Reminder",
   reminder_whatsapp: "WhatsApp Reminder",
+  voice: "Voice Call",
+  "voice:telnyx": "Voice Call",
+  "voice:telnyx:inbound": "Inbound Call",
+  "voice:telnyx:outbound": "Outbound Call",
   usage: "Usage",
   unknown: "Unknown",
 };
@@ -134,6 +138,7 @@ function humanizeSourceType(sourceType: string): string {
 function inferSourceTypeFromModel(model: string): string {
   const normalized = String(model || "").trim().toLowerCase();
   if (!normalized || normalized === "unknown") return "usage";
+  if (normalized.startsWith("voice:")) return normalized;
   if (normalized.includes("subagent")) return "subagent";
   if (normalized.includes("whatsapp")) return "messaging:whatsapp";
   if (
@@ -180,16 +185,16 @@ export function getUsageSourceLabel(
 export function getUsageSourceCategory(
   sourceType: string,
   subagentKind?: string | null
-): "inference" | "subagent" | "compute" | "storage" | "messaging" {
+): "inference" | "subagent" | "compute" | "storage" | "messaging" | "voice" {
   const normalized = String(sourceType || "usage").trim().toLowerCase();
   if (subagentKind || normalized === "subagent") return "subagent";
+  if (normalized.startsWith("voice:") || normalized === "voice") return "voice";
   if (normalized === "compute") return "compute";
   if (normalized.includes("storage")) return "storage";
   if (
     normalized.startsWith("messaging") ||
     normalized.includes("discord") ||
     normalized.includes("sms") ||
-    normalized.includes("telnyx") ||
     normalized.includes("whatsapp") ||
     normalized.startsWith("reminder_")
   ) {

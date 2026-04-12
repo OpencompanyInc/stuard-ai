@@ -689,7 +689,10 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
       ? Number(explicitCostUsd.toFixed(8))
       : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
-    const creditCost = creditsFromUsd(costUsd);
+    const explicitCreditCost = Number(u.creditCost ?? u.credit_cost);
+    const creditCost = Number.isFinite(explicitCreditCost) && explicitCreditCost >= 0
+      ? Number(explicitCreditCost.toFixed(4))
+      : creditsFromUsd(costUsd);
     await supabaseService.from('usage_events').insert([
       {
         user_id: userId,
@@ -1104,7 +1107,17 @@ export async function getUsageBreakdown(
     const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
     for (const row of data as any[]) {
       const model = String(row.model || 'unknown');
-      const category = model.split('/')[0] || 'other';
+      let category: string;
+      if (model.startsWith('voice:')) category = 'voice';
+      else if (model.startsWith('messaging:') || ['telnyx', 'sms', 'reminder_sms', 'reminder_whatsapp', 'whatsapp'].includes(model)) category = 'messaging';
+      else if (model.startsWith('compute') || model.startsWith('cloud_compute')) category = 'compute';
+      else if (model.startsWith('storage')) category = 'storage';
+      else if (model.startsWith('subagent') || model.startsWith('browser') || model.startsWith('delegation')) category = 'subagent';
+      else if (model.includes('/')) {
+        const provider = model.split('/')[0].toLowerCase();
+        category = `inference:${provider}`;
+      }
+      else category = 'inference';
       if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
       buckets[category].credits += Number(row.credit_cost) || 0;
       buckets[category].costUsd += Number(row.cost_usd) || 0;

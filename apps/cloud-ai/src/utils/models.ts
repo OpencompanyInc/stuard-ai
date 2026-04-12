@@ -61,12 +61,15 @@ export const buildProviderModel = (id: string): any | null => {
     if (provider === 'openrouter') {
       const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
       if (!apiKey) return null;
-      const createOpenRouter = loadOptionalExport<(args: { apiKey: string }) => (modelId: string) => any>(
+      const createOpenRouter = loadOptionalExport<(args: { apiKey: string; compatibility?: 'strict' | 'compatible' }) => (modelId: string) => any>(
         '@openrouter/ai-sdk-provider',
         'createOpenRouter',
       );
       if (!createOpenRouter) return null;
-      const openrouter = createOpenRouter({ apiKey });
+      const openrouter = createOpenRouter({
+        apiKey,
+        compatibility: 'strict',
+      });
       return openrouter(mid);
     }
     return null;

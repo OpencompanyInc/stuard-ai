@@ -17,6 +17,7 @@ import {
   Cpu,
   Shield,
   TrendingUp,
+  Phone,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import {
@@ -86,6 +87,42 @@ const CATEGORY_CONFIG: Record<
     hex: "#3b82f6",
     icon: Bot,
   },
+  "inference:anthropic": {
+    label: "Anthropic",
+    color: "bg-orange-400",
+    hex: "#da7756",
+    icon: Bot,
+  },
+  "inference:openai": {
+    label: "OpenAI",
+    color: "bg-green-500",
+    hex: "#10a37f",
+    icon: Bot,
+  },
+  "inference:google": {
+    label: "Google",
+    color: "bg-blue-400",
+    hex: "#4285f4",
+    icon: Bot,
+  },
+  "inference:deepseek": {
+    label: "DeepSeek",
+    color: "bg-indigo-500",
+    hex: "#6366f1",
+    icon: Bot,
+  },
+  "inference:meta-llama": {
+    label: "Meta Llama",
+    color: "bg-blue-600",
+    hex: "#1877f2",
+    icon: Bot,
+  },
+  "inference:mistralai": {
+    label: "Mistral",
+    color: "bg-amber-400",
+    hex: "#f59e0b",
+    icon: Bot,
+  },
   subagent: {
     label: "Delegated Agents",
     color: "bg-purple-500",
@@ -109,6 +146,12 @@ const CATEGORY_CONFIG: Record<
     color: "bg-rose-500",
     hex: "#f43f5e",
     icon: MessageSquare,
+  },
+  voice: {
+    label: "Voice Calls",
+    color: "bg-orange-500",
+    hex: "#f97316",
+    icon: Phone,
   },
 };
 
@@ -136,6 +179,9 @@ const formatCurrency = (amount: number, currency: string) => {
 
 const formatModel = (model: string): string => {
   if (!model || model === "unknown") return "Unknown";
+  // Voice calls and messaging don't have a model
+  if (model.startsWith("voice:")) return "-";
+  if (model.startsWith("messaging:") || model === "telnyx" || model === "sms") return "-";
   // Shorten common model names
   return model
     .replace("anthropic/", "")
@@ -200,7 +246,7 @@ const PieTooltip = ({ active, payload }: any) => {
     <div className="bg-theme-card border border-theme rounded-lg px-3 py-2 shadow-lg">
       <p className="text-[11px] font-bold text-theme-fg">{name}</p>
       <p className="text-[10px] text-theme-muted">
-        {Number(value).toFixed(1)} credits ({entry.percent}%)
+        {Number(value).toFixed(2)} credits ({Number(entry.percent).toFixed(1)}%)
       </p>
     </div>
   );
@@ -234,12 +280,15 @@ export const BillingSettings: React.FC = () => {
   const mountedRef = useRef(true);
   const activeLogsRequestRef = useRef(0);
   const backgroundLoadAbortRef = useRef<AbortController | null>(null);
+  const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const convTitleCacheRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     mountedRef.current = true; // Reset on remount (React Strict Mode)
     return () => {
       mountedRef.current = false;
       backgroundLoadAbortRef.current?.abort();
+      if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
     };
   }, []);
 
@@ -285,9 +334,34 @@ export const BillingSettings: React.FC = () => {
           requestId === activeLogsRequestRef.current &&
           result
         ) {
-          const normalizedLogs = Array.isArray(result.logs)
+          let normalizedLogs = Array.isArray(result.logs)
             ? result.logs.map(normalizeUsageLogEntry)
             : [];
+
+          // Resolve conversation titles from local memory API
+          const missingIds = normalizedLogs
+            .map((l) => l.conversationId)
+            .filter((id): id is string => !!id && !convTitleCacheRef.current[id]);
+          if (missingIds.length > 0) {
+            try {
+              const convResult = await cloudApiFetch<any>(
+                "/v1/memory/conversations?limit=200",
+                signal
+              );
+              if (convResult?.conversations) {
+                for (const c of convResult.conversations) {
+                  const cid = c.id || c.conversation_id;
+                  if (cid && c.title) convTitleCacheRef.current[cid] = c.title;
+                }
+              }
+            } catch {}
+          }
+          normalizedLogs = normalizedLogs.map((log) =>
+            log.conversationId && convTitleCacheRef.current[log.conversationId] && !log.chatName
+              ? { ...log, chatName: convTitleCacheRef.current[log.conversationId] }
+              : log
+          );
+
           setUsageLogs(normalizedLogs);
           setLogsTotal(result.total || 0);
           setLogsPage(page);
@@ -418,6 +492,56 @@ export const BillingSettings: React.FC = () => {
     loadData();
   }, [loadData]);
 
+  const refreshLiveBilling = useCallback(async () => {
+    const creditsData = await cloudApiFetch<any>("/v1/credits");
+    if (!mountedRef.current || !creditsData) return;
+    setCreditSummary(creditsData);
+    if (usageLoaded) {
+      await loadUsageBreakdown();
+    }
+    if (logsLoaded) {
+      await loadLogs(logsPage);
+    }
+  }, [logsLoaded, logsPage, usageLoaded, loadLogs, loadUsageBreakdown]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const scheduleRefresh = () => {
+      if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
+      liveRefreshTimerRef.current = setTimeout(() => {
+        refreshLiveBilling().catch(() => {});
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(`billing-live:${userId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'usage_events',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'credit_grants',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'credit_grants',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [refreshLiveBilling, userId]);
+
   const creditPacks = products.filter((p) => !p.isRecurring);
   const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
 
@@ -442,21 +566,30 @@ export const BillingSettings: React.FC = () => {
         )
       : 0;
 
+  // Derive a human label for unknown inference:provider categories
+  const categoryLabel = (cat: string) => {
+    if (cat.startsWith("inference:")) {
+      const provider = cat.slice("inference:".length);
+      return provider.charAt(0).toUpperCase() + provider.slice(1);
+    }
+    return cat.charAt(0).toUpperCase() + cat.slice(1);
+  };
+
   // Pie chart data
   const pieData = usageBreakdown
     .filter((item) => item.credits > 0)
     .map((item) => {
       const config = CATEGORY_CONFIG[item.category] || {
-        label: item.category,
+        label: categoryLabel(item.category),
         hex: "#9ca3af",
       };
+      const pct = usageTotal > 0
+        ? Number(((item.credits / usageTotal) * 100).toFixed(1))
+        : 0;
       return {
         name: config.label,
-        value: Number(item.credits.toFixed(1)),
-        percent:
-          usageTotal > 0
-            ? ((item.credits / usageTotal) * 100).toFixed(1)
-            : "0",
+        value: item.credits,
+        percent: pct,
         fill: config.hex,
       };
     });
@@ -751,6 +884,20 @@ export const BillingSettings: React.FC = () => {
                         dataKey="value"
                         nameKey="name"
                         strokeWidth={0}
+                        label={({ cx, cy, midAngle, innerRadius: ir, outerRadius: or, percent: pct }: any) => {
+                          const RADIAN = Math.PI / 180;
+                          const radius = ir + (or - ir) * 0.5;
+                          const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                          const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                          const displayPct = Math.round((pct ?? 0) * 100);
+                          if (displayPct < 5) return null;
+                          return (
+                            <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
+                              {displayPct}%
+                            </text>
+                          );
+                        }}
+                        labelLine={false}
                       >
                         {pieData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.fill} />
@@ -773,7 +920,7 @@ export const BillingSettings: React.FC = () => {
                 </div>
                 {usageBreakdown.map((item) => {
                   const config = CATEGORY_CONFIG[item.category] || {
-                    label: item.category,
+                    label: categoryLabel(item.category),
                     color: "bg-gray-400",
                     hex: "#9ca3af",
                     icon: Zap,

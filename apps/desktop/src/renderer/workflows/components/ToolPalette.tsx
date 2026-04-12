@@ -183,29 +183,30 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
                   {cat.items.map((item, i) => {
                     const ItemIcon = item.icon;
                     const dragData = { ...item, icon: undefined };
+                    const itemDisabled = disabled || !!item.disabled;
 
                     return (
                       <div
                         key={`${item.t}-${i}`}
-                        draggable={!disabled}
-                        onDragStart={e => !disabled && onDragStart(e, dragData)}
-                        className={`flex items-center gap-3 px-3 py-2 bg-transparent border wf-border-subtle rounded-lg transition-all group/item relative overflow-hidden ${disabled
+                        draggable={!itemDisabled}
+                        onDragStart={e => !itemDisabled && onDragStart(e, dragData)}
+                        className={`flex items-center gap-3 px-3 py-2 bg-transparent border wf-border-subtle rounded-lg transition-all group/item relative overflow-hidden ${itemDisabled
                           ? 'opacity-50 cursor-not-allowed'
                           : `cursor-grab wf-hover-bg hover:border-[var(--wf-border)] hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`
                           }`}
                       >
                         {/* Hover accent strip */}
-                        <div className={`absolute left-0 top-0 bottom-0 w-1 opacity-0 ${!disabled && 'group-hover/item:opacity-100'} transition-opacity`} style={{ background: 'var(--wf-accent)' }} />
+                        <div className={`absolute left-0 top-0 bottom-0 w-1 opacity-0 ${!itemDisabled && 'group-hover/item:opacity-100'} transition-opacity`} style={{ background: 'var(--wf-accent)' }} />
 
-                        <div className={`p-1.5 rounded-md wf-fg-muted ${!disabled && 'group-hover/item:wf-fg group-hover/item:bg-[var(--wf-hover)]'} transition-colors`}>
+                        <div className={`p-1.5 rounded-md wf-fg-muted ${!itemDisabled && 'group-hover/item:wf-fg group-hover/item:bg-[var(--wf-hover)]'} transition-colors`}>
                           <ItemIcon className="w-3.5 h-3.5" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className={`text-xs font-semibold truncate ${disabled ? 'wf-fg-muted opacity-60' : 'wf-fg group-hover/item:wf-fg'}`}>
+                          <div className={`text-xs font-semibold truncate ${itemDisabled ? 'wf-fg-muted opacity-60' : 'wf-fg group-hover/item:wf-fg'}`}>
                             {item.label}
                           </div>
                         </div>
-                        {!disabled && (
+                        {!itemDisabled && (
                           <GripVertical className="w-3 h-3 wf-fg-muted group-hover/item:wf-fg opacity-0 group-hover/item:opacity-100 transition-all" />
                         )}
                       </div>

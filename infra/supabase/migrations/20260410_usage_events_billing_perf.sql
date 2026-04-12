@@ -31,7 +31,23 @@ LANGUAGE sql
 STABLE
 AS $$
   SELECT
-    COALESCE(NULLIF(split_part(COALESCE(model, 'unknown'), '/', 1), ''), 'other') AS category,
+    CASE
+      WHEN COALESCE(model, '') LIKE 'voice:%' THEN 'voice'
+      WHEN COALESCE(model, '') LIKE 'messaging:%'
+        OR COALESCE(model, '') IN ('telnyx', 'sms', 'reminder_sms', 'reminder_whatsapp', 'whatsapp')
+        THEN 'messaging'
+      WHEN COALESCE(model, '') LIKE 'compute%'
+        OR COALESCE(model, '') LIKE 'cloud_compute%'
+        THEN 'compute'
+      WHEN COALESCE(model, '') LIKE 'storage%' THEN 'storage'
+      WHEN COALESCE(model, '') LIKE 'subagent%'
+        OR COALESCE(model, '') LIKE 'browser%'
+        OR COALESCE(model, '') LIKE 'delegation%'
+        THEN 'subagent'
+      WHEN COALESCE(model, '') LIKE '%/%'
+        THEN 'inference:' || LOWER(SPLIT_PART(COALESCE(model, ''), '/', 1))
+      ELSE 'inference'
+    END AS category,
     ROUND(SUM(COALESCE(credit_cost, 0))::NUMERIC, 2) AS credits,
     ROUND(SUM(COALESCE(cost_usd, 0))::NUMERIC, 6) AS cost_usd,
     COUNT(*)::BIGINT AS event_count

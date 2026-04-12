@@ -11,9 +11,9 @@ import { withClientBridge, getBridgeWs } from '../../tools/bridge';
 import {
   addAssistantMessage,
   finishRun,
-  logUsageEvent,
   setConversationTitle,
 } from '../../supabase';
+import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import {
   addPendingApproval,
   registerRun,
@@ -66,6 +66,33 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   };
   const toolCallsMap = new Map<string, any>();
   const streamChunks: StreamChunkRecord[] = [];
+  const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
+  const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : 'Chat';
+  const billingTracker = new LiveUsageBillingTracker({
+    userId: authUser?.userId ?? null,
+    conversationId,
+    model: chosenModelId || routedTier,
+    sourceRef: `chat:${requestId || conversationId || Date.now()}`,
+    sourceType: 'inference',
+    sourceLabel,
+    onSettlement: (summary) => {
+      send(ws, {
+        type: 'progress',
+        event: 'billing_update',
+        data: {
+          sourceRef: summary.sourceRef,
+          trigger: summary.trigger,
+          stepNumber: summary.stepNumber,
+          conversationId,
+          model: chosenModelId || routedTier,
+          sourceType: 'inference',
+          sourceLabel,
+          delta: summary.delta,
+          cumulative: summary.cumulative,
+        },
+      }, requestId);
+    },
+  });
 
   const buildMetadata = (finishReason?: string) => {
     const filteredToolCalls = Array.from(toolCallsMap.values()).filter((toolCall) => !isSISMetaTool(toolCall.tool));
@@ -111,6 +138,11 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       registerRun(authUser.userId, requestId);
     }
 
+    // Fire title generation early in parallel with the stream
+    if (authUser && conversationId && conversationCreatedNow && prompt) {
+      fireAndForgetConversationTitle(authUser.userId, conversationId, prompt, ws, requestId);
+    }
+
     abortController = new AbortController();
     setAbortController(ws, requestId, abortController);
 
@@ -143,8 +175,12 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       providerOptions,
       abortSignal: abortController.signal,
       ...(activeToolNames ? { activeTools: activeToolNames } : {}),
-      onStepFinish: (stepData: any) => {
+      onStepFinish: async (stepData: any) => {
         stepCount++;
+        finishedSteps.push({
+          usage: stepData?.usage,
+          providerMetadata: stepData?.providerMetadata,
+        });
         const stepUsage = stepData?.usage;
         const normalized = stepUsage ? normalizeUsage(stepUsage) : null;
         if (normalized) {
@@ -166,8 +202,12 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           ? `input: ${normalized.promptTokens} tok | output: ${normalized.completionTokens} tok | cumulative input: ${cumulativeInputTokens} tok`
           : 'no usage';
         console.log(`[cloud-ai] ── Step ${stepCount} ── ${inputTokens}${toolNames ? ` | tools: ${toolNames}` : ''}`);
+        await billingTracker.settleIncrement(stepData, {
+          trigger: 'step_finish',
+          stepNumber: stepCount,
+        });
       },
-      onFinish: async ({ text, steps, finishReason, usage }: any) => {
+      onFinish: async ({ text, steps, finishReason, usage, totalUsage }: any) => {
         if (runtime.didSendFinal) {
           try {
             if (hardTimeout) clearTimeout(hardTimeout);
@@ -180,10 +220,35 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           if (hardTimeout) clearTimeout(hardTimeout);
         } catch { }
 
-        const normalizedUsage = normalizeUsage(usage);
+        const normalizedUsage = normalizeUsage(totalUsage || usage);
         try {
           console.log('[cloud-ai] onFinish reason:', finishReason, 'usage:', normalizedUsage);
         } catch { }
+
+        const billableSteps = finishedSteps.length > 0
+          ? finishedSteps
+          : Array.isArray(steps) && steps.length > 0
+            ? steps.map((step: any) => ({
+                usage: step?.usage,
+                providerMetadata: step?.providerMetadata,
+              }))
+            : (totalUsage || usage)
+              ? [{ usage: totalUsage || usage, providerMetadata: (totalUsage || usage)?.providerMetadata }]
+              : [];
+        await billingTracker.settleToUsageList(billableSteps, { trigger: 'finish' });
+        const billedTotals = billingTracker.getCumulativeTotals();
+        const finalUsage = billedTotals.totalTokens > 0 || billedTotals.credits > 0
+          ? {
+              ...normalizedUsage,
+              promptTokens: billedTotals.promptTokens,
+              completionTokens: billedTotals.completionTokens,
+              totalTokens: billedTotals.totalTokens,
+              cachedPromptTokens: billedTotals.cachedPromptTokens,
+              reasoningTokens: billedTotals.reasoningTokens,
+              costUsd: billedTotals.costUsd,
+              creditCost: billedTotals.credits,
+            }
+          : normalizedUsage;
 
         let finalText = String(text || '').trim();
         if (!finalText && runtime.aggregatedText) {
@@ -192,7 +257,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
         writeLog('stream_finish', {
           finishReason,
-          usage: normalizedUsage,
+          usage: finalUsage,
           textLength: finalText.length,
           sawToolCall: runtime.sawToolCall,
           sawAnyTextDelta: runtime.sawAnyTextDelta,
@@ -216,7 +281,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           origin: 'cloud-ai',
           model: chosenModelId || routedTier,
           conversationId,
-          result: { text: finalText, steps: safeSteps, finishReason, usage: normalizedUsage },
+          result: { text: finalText, steps: safeSteps, finishReason, usage: finalUsage },
         }, requestId);
 
         setRequestTerminalResult({
@@ -226,19 +291,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           conversationId: conversationId || undefined,
         });
 
-        if (authUser && conversationId && conversationCreatedNow) {
-          await maybeGenerateConversationTitle(authUser.userId, conversationId, prompt, finalText, ws, requestId);
-        }
-
         if (authUser) {
-          try {
-            const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : 'Chat';
-            await logUsageEvent(authUser.userId, conversationId, chosenModelId || routedTier, {
-              ...normalizedUsage,
-              source_label: sourceLabel,
-            });
-          } catch { }
-
           try {
             if (conversationId) {
               await finishRun(authUser.userId, conversationId, finalText || '');
@@ -246,7 +299,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           } catch { }
         }
 
-        startKnowledgeIngestion(history, conversationId, normalizedUsage?.totalTokens, bridgeWs);
+        startKnowledgeIngestion(history, conversationId, finalUsage?.totalTokens, bridgeWs);
         startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
           userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
           userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
@@ -305,6 +358,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       const messageText = String(streamIterationError?.message || streamIterationError || 'Agent stream failed');
       const errorFinalText = runtime.aggregatedText ? runtime.aggregatedText.trim() : `Error: ${messageText}`;
       await persistAssistantText(errorFinalText, 'error');
+      await billingTracker.settleToUsageList(finishedSteps, {
+        trigger: 'iteration_error',
+        partial: true,
+      });
 
       send(ws, {
         type: 'final',
@@ -351,6 +408,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       if (partialText) {
         await persistAssistantText(partialText, 'aborted');
       }
+      await billingTracker.settleToUsageList(finishedSteps, {
+        trigger: 'aborted',
+        partial: true,
+      });
 
       send(ws, {
         type: 'final',
@@ -423,6 +484,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       if (partialText) {
         await persistAssistantText(partialText, 'aborted');
       }
+      await billingTracker.settleToUsageList(finishedSteps, {
+        trigger: 'abort_error',
+        partial: true,
+      });
 
       send(ws, {
         type: 'final',
@@ -498,6 +563,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
     const errorText = runtime.aggregatedText ? runtime.aggregatedText.trim() : `Error: ${error?.message || String(error)}`;
     await persistAssistantText(errorText, 'error');
+    await billingTracker.settleToUsageList(finishedSteps, {
+      trigger: 'stream_error',
+      partial: true,
+    });
 
     send(ws, { type: 'error', message: error?.message || String(error) }, requestId);
     setRequestTerminalResult({
@@ -556,25 +625,27 @@ function scheduleHistoryCompaction(ws: PreparedChatRequest['ws'], history: any[]
   });
 }
 
-async function maybeGenerateConversationTitle(
+function fireAndForgetConversationTitle(
   userId: string,
   conversationId: string,
   prompt: string,
-  finalText: string,
   ws: PreparedChatRequest['ws'],
   requestId: string | undefined,
 ) {
-  try {
-    const titlePrompt = `You will create a short, descriptive chat thread title from the user's question and the assistant's answer. At most 6 words. No quotes or punctuation.
-User: ${prompt}\nAssistant: ${finalText}\n\nTitle:`;
-    const titleModelId = getDefaultModelForCategory('fast');
-    const titleModel = buildProviderModel(titleModelId);
-    const result = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
-    let title = String((result as any)?.text || '').trim();
-    title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
-    await setConversationTitle(userId, conversationId, title);
-    send(ws, { type: 'title', conversationId, title }, requestId);
-  } catch { }
+  (async () => {
+    try {
+      const titlePrompt = `You will create a short, descriptive chat thread title from the user's message. At most 6 words. No quotes or punctuation.\nUser: ${prompt}\n\nTitle:`;
+      const titleModelId = getDefaultModelForCategory('fast');
+      const titleModel = buildProviderModel(titleModelId);
+      const result = await generateText({ model: titleModel as any, prompt: titlePrompt, temperature: 0.2 });
+      let title = String((result as any)?.text || '').trim();
+      title = title.replace(/^"+|"+$/g, '').replace(/[\.\!?]+$/g, '').slice(0, 80);
+      if (title) {
+        await setConversationTitle(userId, conversationId, title);
+        send(ws, { type: 'title', conversationId, title }, requestId);
+      }
+    } catch { }
+  })();
 }
 
 function startKnowledgeIngestion(history: any[], conversationId: string | null, totalTokens: number | undefined, bridgeWs?: import('ws').WebSocket) {

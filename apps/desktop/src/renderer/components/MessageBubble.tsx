@@ -1907,7 +1907,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       return <code className="bg-slate-100 border border-slate-200 text-slate-800 rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>;
     },
     table: (props: any) => (
-      <div className="overflow-x-auto my-3 rounded-xl border border-theme/20 shadow-sm">
+      <div className="overflow-x-auto scrollbar-none my-3 rounded-xl border border-theme/20 shadow-sm">
         <table className="min-w-full divide-y divide-theme/15 text-sm" {...props} />
       </div>
     ),

@@ -250,6 +250,7 @@ function DashboardApp() {
   const [convLoading, setConvLoading] = useState<boolean>(false);
   const [creditsInfo, setCreditsInfo] = useState<null | { ok?: boolean; plan?: string; limit?: number; used?: number; remaining?: number; unlimited?: boolean; creditsPerUsd?: number }>(null);
   const [appVersion, setAppVersion] = useState<string>('0.1.10');
+  const billingRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preferences
   const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, terminalEnabled, setTerminalEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
@@ -554,6 +555,50 @@ function DashboardApp() {
       setUsageCountLoading(false);
     }
   }, [session, usageCountLoaded, usageCountLoading]);
+
+  const refreshBillingOverview = useCallback(() => {
+    loadProfileAndCredits().catch(() => { });
+    loadUsageCount(true).catch(() => { });
+  }, [loadProfileAndCredits, loadUsageCount]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const scheduleRefresh = () => {
+      if (billingRefreshTimerRef.current) clearTimeout(billingRefreshTimerRef.current);
+      billingRefreshTimerRef.current = setTimeout(() => {
+        refreshBillingOverview();
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(`dashboard-billing:${userId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'usage_events',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'credit_grants',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'credit_grants',
+        filter: `user_id=eq.${userId}`,
+      }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      if (billingRefreshTimerRef.current) clearTimeout(billingRefreshTimerRef.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [refreshBillingOverview, session?.user?.id]);
 
   const handleDeleteConversation = async (id: string) => {
     try {

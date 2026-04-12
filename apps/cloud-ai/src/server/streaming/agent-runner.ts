@@ -18,7 +18,7 @@ import {
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
-import { logUsageEvent } from '../../supabase';
+import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -262,6 +262,37 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     const _sStart = Date.now();
     let fullText = '';
     let usage: any = null;
+    const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
+    const sourceLabel = agentType === 'workflow'
+      ? 'Workflow Architect'
+      : agentType === 'skill'
+        ? 'Skill Agent'
+        : 'Chat';
+    const billingTracker = new LiveUsageBillingTracker({
+      userId,
+      conversationId,
+      model: chosenModelId || model,
+      sourceRef: `agent:${requestId || conversationId || Date.now()}`,
+      sourceType: 'inference',
+      sourceLabel,
+      onSettlement: (summary) => {
+        send(ws, {
+          type: 'progress',
+          event: 'billing_update',
+          data: {
+            sourceRef: summary.sourceRef,
+            trigger: summary.trigger,
+            stepNumber: summary.stepNumber,
+            conversationId,
+            model: chosenModelId || model,
+            sourceType: 'inference',
+            sourceLabel,
+            delta: summary.delta,
+            cumulative: summary.cumulative,
+          },
+        });
+      },
+    });
 
     try {
       // Select agent based on type
@@ -399,8 +430,13 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
           return {};
         },
-        onStepFinish: ({ usage: stepUsage }: any) => {
+        onStepFinish: async (stepData: any) => {
+          const stepUsage = stepData?.usage;
           if (!stepUsage) return;
+          finishedSteps.push({
+            usage: stepUsage,
+            providerMetadata: stepData?.providerMetadata,
+          });
           const normalized = normalizeUsage(stepUsage);
           cumulativeInputTokens += normalized.promptTokens;
           // Emit live usage update so the UI can update token counts mid-stream
@@ -414,6 +450,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
               contextWindow: budget.contextWindow,
               modelId: chosenModelId || model,
             },
+          });
+          await billingTracker.settleIncrement(stepData, {
+            trigger: 'step_finish',
+            stepNumber: finishedSteps.length,
           });
         },
       };
@@ -570,7 +610,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
               if (chunk?.type === 'finish') {
                 const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
                 if (finishUsage) {
-                  usage = normalizeUsage(finishUsage);
+                  usage = normalizeUsage({
+                    ...finishUsage,
+                    providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                  });
                 }
               }
               // Debug: log thinking/reasoning chunks
@@ -710,7 +753,26 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         }
       }
 
-      if (usage) {
+      const billableSteps = finishedSteps.length > 0
+        ? finishedSteps
+        : usage
+          ? [{ usage, providerMetadata: usage?.providerMetadata }]
+          : [];
+      await billingTracker.settleToUsageList(billableSteps, { trigger: 'finish' });
+
+      const billedTotals = billingTracker.getCumulativeTotals();
+      if (billedTotals.totalTokens > 0 || billedTotals.credits > 0) {
+        usage = {
+          ...(usage || {}),
+          promptTokens: billedTotals.promptTokens,
+          completionTokens: billedTotals.completionTokens,
+          totalTokens: billedTotals.totalTokens,
+          cachedPromptTokens: billedTotals.cachedPromptTokens,
+          reasoningTokens: billedTotals.reasoningTokens,
+          costUsd: billedTotals.costUsd,
+          creditCost: billedTotals.credits,
+        };
+      } else if (usage) {
         const promptTokens = Math.max(usage.promptTokens || 0, cumulativeInputTokens);
         usage = {
           ...usage,
@@ -734,16 +796,6 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         usage,
       });
 
-      // Persist usage to billing
-      if (userId && usage) {
-        try {
-          const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'skill' ? 'Skill Agent' : 'Chat';
-          await logUsageEvent(userId, conversationId || null, chosenModelId || model, { ...usage, source_label: sourceLabel });
-        } catch (e: any) {
-          console.error('[AgentRunner] Failed to log usage:', e?.message);
-        }
-      }
-
       resultText = fullText;
 
     } catch (error: any) {
@@ -756,18 +808,31 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)', modelId: chosenModelId || model },
           aborted: true
         });
-        // Bill partial usage even on abort
-        if (userId && usage) {
-          try {
-            const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'skill' ? 'Skill Agent' : 'Chat';
-            await logUsageEvent(userId, conversationId || null, chosenModelId || model, { ...usage, source_label: sourceLabel });
-          } catch (e: any) {
-            console.error('[AgentRunner] Failed to log aborted usage:', e?.message);
-          }
-        }
+        await billingTracker.settleToUsageList(
+          finishedSteps.length > 0
+            ? finishedSteps
+            : usage
+              ? [{ usage, providerMetadata: usage?.providerMetadata }]
+              : [],
+          {
+            trigger: 'aborted',
+            partial: true,
+          },
+        );
         resultText = fullText || '(Stopped)';
       } else {
         console.error('[AgentRunner] Error:', error);
+        await billingTracker.settleToUsageList(
+          finishedSteps.length > 0
+            ? finishedSteps
+            : usage
+              ? [{ usage, providerMetadata: usage?.providerMetadata }]
+              : [],
+          {
+            trigger: 'error',
+            partial: true,
+          },
+        );
 
         // Check for tool errors that exhausted retries
         const toolError = detectToolError(error);

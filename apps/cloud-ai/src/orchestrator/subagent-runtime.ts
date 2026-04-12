@@ -31,7 +31,7 @@ import type {
   SubagentAnswer,
 } from './types';
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
-import { logUsageEvent } from '../supabase';
+import { LiveUsageBillingTracker } from '../services/live-usage-billing';
 import type { ModelChoice } from '../router/model-router';
 import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
@@ -442,6 +442,36 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   emitToClient('started', { kind: request.kind, label: request.kind });
 
   let streamUsage: any = null;
+  const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
+  const resolvedModelId = modelId || (typeof model === 'string' ? model : 'balanced');
+  const kindLabels: Record<string, string> = {
+    browser: 'Browser Agent',
+    file_ops: 'File Agent',
+    workflow: 'Workflow Agent',
+    media: 'Media Agent',
+  };
+  const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
+  const billingTracker = new LiveUsageBillingTracker({
+    userId: bridgeSecrets?.userId,
+    conversationId: null,
+    model: resolvedModelId,
+    sourceRef: `subagent:${subagentId}`,
+    sourceType: 'subagent',
+    sourceLabel,
+    onSettlement: (summary) => {
+      emitToClient('billing_update', {
+        sourceRef: summary.sourceRef,
+        trigger: summary.trigger,
+        stepNumber: summary.stepNumber,
+        model: resolvedModelId,
+        sourceType: 'subagent',
+        sourceLabel,
+        subagentKind: request.kind,
+        delta: summary.delta,
+        cumulative: summary.cumulative,
+      });
+    },
+  });
 
   try {
     // Only create a timeout promise if timeoutMs > 0 (0 = no timeout)
@@ -484,7 +514,19 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
       try {
         const streamAgent = async () => {
-          const streamResult: any = await (agent as any).stream(messages, { maxSteps: pack.maxSteps });
+          const streamResult: any = await (agent as any).stream(messages, {
+            maxSteps: pack.maxSteps,
+            onStepFinish: async (stepData: any) => {
+              finishedSteps.push({
+                usage: stepData?.usage,
+                providerMetadata: stepData?.providerMetadata,
+              });
+              await billingTracker.settleIncrement(stepData, {
+                trigger: 'step_finish',
+                stepNumber: finishedSteps.length,
+              });
+            },
+          });
           const stream = streamResult?.fullStream || streamResult;
 
           if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
@@ -545,7 +587,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               // Finish — capture usage
               else if (ct === 'finish') {
                 const payload = chunk.payload || chunk;
-                if (payload?.usage) streamUsage = payload.usage;
+                if (payload?.usage) {
+                  streamUsage = {
+                    ...payload.usage,
+                    providerMetadata: chunk?.providerMetadata ?? payload?.providerMetadata,
+                  };
+                }
               }
               // Fallback: plain text or textDelta
               else if (typeof chunk === 'string' && chunk) {
@@ -614,47 +661,36 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         }
 
         // ── Bill subagent usage ──
-        const resolvedModelId = modelId || (typeof model === 'string' ? model : 'balanced');
-        // Aggregate usage from steps as fallback when streamUsage is empty
-        let usageData = streamUsage || {};
-        if ((!usageData.promptTokens && !usageData.prompt_tokens && !usageData.inputTokens) && steps.length > 0) {
-          let aggPrompt = 0, aggCompletion = 0, aggTotal = 0;
-          for (const step of steps) {
-            const su = (step as any)?.usage;
-            if (su) {
-              aggPrompt += Number(su.promptTokens || su.prompt_tokens || su.inputTokens || 0);
-              aggCompletion += Number(su.completionTokens || su.completion_tokens || su.outputTokens || 0);
-              aggTotal += Number(su.totalTokens || su.total_tokens || 0);
+        const billableSteps = finishedSteps.length > 0
+          ? finishedSteps
+          : steps.length > 0
+            ? steps.map((step: any) => ({
+                usage: step?.usage,
+                providerMetadata: step?.providerMetadata,
+              }))
+            : streamUsage
+              ? [{ usage: streamUsage, providerMetadata: streamUsage?.providerMetadata }]
+              : [];
+        await billingTracker.settleToUsageList(billableSteps, { trigger: 'finish' });
+        const billedTotals = billingTracker.getCumulativeTotals();
+        const usageSummary = billedTotals.totalTokens > 0 || billedTotals.credits > 0
+          ? {
+              promptTokens: billedTotals.promptTokens,
+              completionTokens: billedTotals.completionTokens,
+              totalTokens: billedTotals.totalTokens,
+              cachedPromptTokens: billedTotals.cachedPromptTokens,
+              reasoningTokens: billedTotals.reasoningTokens,
+              costUsd: billedTotals.costUsd,
+              creditCost: billedTotals.credits,
+              model: resolvedModelId,
             }
-          }
-          if (aggPrompt > 0 || aggCompletion > 0) {
-            usageData = { promptTokens: aggPrompt, completionTokens: aggCompletion, totalTokens: aggTotal || (aggPrompt + aggCompletion) };
-          }
-        }
-        const promptTokens = Number(usageData.promptTokens || usageData.prompt_tokens || usageData.inputTokens || 0);
-        const completionTokens = Number(usageData.completionTokens || usageData.completion_tokens || usageData.outputTokens || 0);
-        const totalTokens = Number(usageData.totalTokens || usageData.total_tokens || 0) || (promptTokens + completionTokens);
-        const usageSummary = { promptTokens, completionTokens, totalTokens, model: resolvedModelId };
-
-        // Log to usage_events with sourceType='subagent' so it shows in billing
-        const userId = bridgeSecrets?.userId;
-        if (userId && (promptTokens > 0 || completionTokens > 0)) {
-          try {
-            const kindLabels: Record<string, string> = { browser: 'Browser Agent', file_ops: 'File Agent', workflow: 'Workflow Agent', media: 'Media Agent' };
-            await logUsageEvent(userId, null, resolvedModelId, {
-              ...usageData,
-              promptTokens,
-              completionTokens,
-              totalTokens,
-              sourceType: 'subagent',
-              subagentKind: request.kind,
-              subagentId,
-              source_label: `Subagent: ${kindLabels[request.kind] || request.kind}`,
-            });
-          } catch (e: any) {
-            console.error(`[subagent:${subagentId}] failed to log usage:`, e?.message);
-          }
-        }
+          : (() => {
+              const usageData = streamUsage || {};
+              const promptTokens = Number(usageData.promptTokens || usageData.prompt_tokens || usageData.inputTokens || 0);
+              const completionTokens = Number(usageData.completionTokens || usageData.completion_tokens || usageData.outputTokens || 0);
+              const totalTokens = Number(usageData.totalTokens || usageData.total_tokens || 0) || (promptTokens + completionTokens);
+              return { promptTokens, completionTokens, totalTokens, model: resolvedModelId };
+            })();
 
         writeLog('subagent_complete', { subagentId, ok: true, durationMs, textLength: finalResult.length, toolCallCount: toolCalls.length, stepsCount: steps.length, usage: usageSummary });
         emitToClient('completed', { ok: true, durationMs, usage: usageSummary });
@@ -698,28 +734,17 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     const durationMs = Date.now() - startTime;
     const isAborted = localAbort.signal.aborted || error?.message === 'Subagent aborted';
 
-    // Bill partial usage on abort/error so credits are not silently lost
-    const resolvedModel = modelId || (typeof model === 'string' ? model : 'balanced');
-    const partialUserId = bridgeSecrets?.userId;
-    const partialPt = Number(streamUsage?.promptTokens || streamUsage?.prompt_tokens || streamUsage?.inputTokens || 0);
-    const partialCt = Number(streamUsage?.completionTokens || streamUsage?.completion_tokens || streamUsage?.outputTokens || 0);
-    if (partialUserId && (partialPt > 0 || partialCt > 0)) {
-      try {
-        const kindLabels: Record<string, string> = { browser: 'Browser Agent', file_ops: 'File Agent', workflow: 'Workflow Agent', media: 'Media Agent' };
-        await logUsageEvent(partialUserId, null, resolvedModel, {
-          promptTokens: partialPt,
-          completionTokens: partialCt,
-          totalTokens: partialPt + partialCt,
-          sourceType: 'subagent',
-          subagentKind: request.kind,
-          subagentId,
-          partial: true,
-          source_label: `Subagent: ${kindLabels[request.kind] || request.kind}`,
-        });
-      } catch (e: any) {
-        console.error(`[subagent:${subagentId}] failed to log partial usage:`, e?.message);
-      }
-    }
+    await billingTracker.settleToUsageList(
+      finishedSteps.length > 0
+        ? finishedSteps
+        : streamUsage
+          ? [{ usage: streamUsage, providerMetadata: streamUsage?.providerMetadata }]
+          : [],
+      {
+        trigger: isAborted ? 'aborted' : 'error',
+        partial: true,
+      },
+    );
 
     if (isAborted) {
       writeLog('subagent_aborted', { subagentId, durationMs });
