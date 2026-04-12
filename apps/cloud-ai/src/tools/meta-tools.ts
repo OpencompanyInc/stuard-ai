@@ -16,13 +16,15 @@ import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
 import * as telnyxTools from './telnyx-tools';
 import * as whatsappTools from './whatsapp-tools';
+import * as metaSocialTools from './meta-social-tools';
+import * as cloudStorageTools from './cloud-storage-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
-import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
+import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
@@ -58,7 +60,6 @@ const MEMORY_AI_TOOL_IDS = new Set([
 
 const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
 
-let _syncPromise: Promise<void> | null = null;
 let _initialized = false;
 
 /** Initialize tool registry if not already done */
@@ -495,15 +496,24 @@ Object.values(telnyxTools).forEach(t => {
 Object.values(whatsappTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'WhatsApp');
 });
+Object.values(metaSocialTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'MetaSocial');
+});
+Object.values(cloudStorageTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'CloudStorage');
+});
 
 // 2. Meta Tools
 
 export const search_tools = createTool({
     id: 'search_tools',
-    description: 'Search for available tools by category or query string. Returns tool names and descriptions.',
+    description: 'Search for available tools by category, free-text query, or list all categories. Backed by the Supabase tool_embeddings table (with pgvector-powered semantic search for free-text queries).',
     inputSchema: z.object({
-        category: z.enum(['Core', 'FileSystem', 'FileSearch', 'System', 'GUI', 'Media', 'Streaming', 'Workflow', 'Memory', 'Knowledge', 'Productivity', 'AI', 'Google', 'Outlook', 'GitHub', 'Discord', 'Reddit', 'YouTube', 'Marketplace', 'Variables', 'Database', 'Embeddings', 'Math', 'Feedback', 'Webhooks', 'Integrations', 'Telnyx', 'WhatsApp', 'Canvas', 'Other']).optional(),
-        query: z.string().optional(),
+        query: z.string().optional().describe('Free-text query for semantic search.'),
+        category: z.string().optional().describe('Filter results to a specific tool category.'),
+        kind: z.string().optional().describe('Filter results to a specific tool kind (local, cloud, orchestration).'),
+        list_categories: z.boolean().optional().describe('If true, returns the distinct list of tool categories instead of individual tools.'),
+        limit: z.number().int().positive().optional().describe('Maximum number of results to return.'),
     }),
     outputSchema: z.object({
         tools: z.array(z.object({
@@ -513,86 +523,116 @@ export const search_tools = createTool({
         })),
     }),
     execute: async (inputData) => {
-        const { category, query } = inputData;
-        const registry = getToolRegistry();
-        const categories = getToolCategories();
+        const { query, category, kind, list_categories, limit } = inputData as {
+            query?: string;
+            category?: string;
+            kind?: string;
+            list_categories?: boolean;
+            limit?: number;
+        };
+        const supabase = getSupabaseService();
 
-        const keywordSearch = () => {
+        const keywordFallback = () => {
+            const registry = getToolRegistry();
+            const categories = getToolCategories();
             const results: Array<{ name: string; description: string; category: string }> = [];
             const q = (query || '').toLowerCase();
 
             for (const [cat, names] of categories.entries()) {
                 if (category && cat !== category) continue;
-
                 for (const name of names) {
                     const tool = registry.get(name);
                     if (!tool) continue;
-
                     const desc = tool.description || '';
                     if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
-
-                    results.push({
-                        name,
-                        description: desc,
-                        category: cat,
-                    });
+                    results.push({ name, description: desc, category: cat });
                 }
             }
 
-            return { tools: results };
+            const sliced = typeof limit === 'number' ? results.slice(0, limit) : results;
+            return { tools: sliced };
         };
 
-        const supabase = getSupabaseService();
+        // Mode 1: list distinct categories from tool_embeddings
+        if (list_categories) {
+            if (!supabase) {
+                const cats = Array.from(getToolCategories().keys()).sort();
+                return { tools: cats.map((c) => ({ name: c, description: '', category: c })) };
+            }
+            try {
+                const { data, error } = await supabase
+                    .from('tool_embeddings')
+                    .select('category')
+                    .eq('enabled', true);
+                if (error || !data) return { tools: [] };
+                const unique = Array.from(
+                    new Set((data as any[]).map((r) => r.category).filter(Boolean))
+                ).sort() as string[];
+                return { tools: unique.map((c) => ({ name: c, description: '', category: c })) };
+            } catch {
+                return { tools: [] };
+            }
+        }
+
         const hasQuery = typeof query === 'string' && query.trim().length > 0;
 
-        if (!hasQuery || !supabase) {
-            return keywordSearch();
-        }
+        // Mode 2: free-text semantic search via pgvector RPC
+        if (hasQuery) {
+            if (!supabase) return keywordFallback();
+            try {
+                const { embedder } = await resolveEmbedder();
+                const { embeddings } = await embedMany({ model: embedder as any, values: [query as string] });
+                const queryEmbedding = embeddings[0];
 
-        // Vector Search Logic
-        if (!_syncPromise) {
-            _syncPromise = ensureToolEmbeddings().catch(e => console.error('Tool embedding sync failed', e));
-        }
-        try { await _syncPromise; } catch { }
-
-        try {
-            const { embedder } = await resolveEmbedder();
-            const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
-            const queryVector = embeddings[0];
-
-            // Fetch all tools (caching in memory would be better, but for <1000 tools this is fast enough)
-            const { data: rows, error } = await supabase.from('tool_embeddings').select('name, description, category, embedding');
-            if (error || !rows) throw error;
-
-            let candidates = rows;
-            if (category) {
-                candidates = rows.filter((r: any) => r.category === category);
+                const { data, error } = await supabase.rpc('search_tools', {
+                    query_embedding: queryEmbedding,
+                    match_threshold: 0.25,
+                    match_count: typeof limit === 'number' ? limit : 10,
+                    filter_category: category ?? null,
+                    filter_kind: kind ?? null,
+                    enabled_only: true,
+                });
+                if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
+                return {
+                    tools: (data as any[]).map((r) => ({
+                        name: r.name,
+                        description: r.description ?? '',
+                        category: r.category ?? '',
+                    })),
+                };
+            } catch (e) {
+                console.warn('Vector search failed, falling back to keyword search', e);
+                return keywordFallback();
             }
-
-            const withScores = candidates.map((r: any) => {
-                let vec = r.embedding;
-                if (typeof vec === 'string') {
-                    try { vec = JSON.parse(vec); } catch { }
-                }
-                const sim = Array.isArray(vec) ? cosineSimilarity(queryVector, vec) : -1;
-                return { ...r, score: sim };
-            });
-
-            withScores.sort((a: any, b: any) => b.score - a.score);
-
-            // Return top 10
-            const top = withScores.slice(0, 10).map((t: any) => ({
-                name: t.name,
-                description: t.description,
-                category: t.category,
-            }));
-
-            return { tools: top };
-
-        } catch (e) {
-            console.warn('Vector search failed, falling back to keyword search', e);
-            return keywordSearch();
         }
+
+        // Mode 3: category / catalog listing from tool_embeddings
+        if (supabase) {
+            try {
+                let builder: any = supabase
+                    .from('tool_embeddings')
+                    .select('name, description, category')
+                    .eq('enabled', true);
+                if (category) builder = builder.eq('category', category);
+                builder = builder.order('name', { ascending: true });
+                if (typeof limit === 'number') builder = builder.limit(limit);
+
+                const { data, error } = await builder;
+                if (!error && data) {
+                    return {
+                        tools: (data as any[]).map((r) => ({
+                            name: r.name,
+                            description: r.description ?? '',
+                            category: r.category ?? '',
+                        })),
+                    };
+                }
+            } catch (e) {
+                console.warn('Category listing failed, falling back to keyword search', e);
+            }
+        }
+
+        return keywordFallback();
     },
 });
 

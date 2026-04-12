@@ -222,6 +222,7 @@ export const ALL_TOOLS = {
   process_pending_file_index,
   semantic_file_search,
 
+  file_read,
   file_edit,
   glob,
   grep,
