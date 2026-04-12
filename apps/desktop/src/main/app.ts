@@ -8,7 +8,7 @@ import { setupIpc } from "./ipc/index";
 import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
-import { initCustomUiIpc } from "./tools/index";
+import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
 import logger from "./utils/logger";
 
 initEnv();
@@ -376,22 +376,59 @@ try {
   });
 });
 
+let shutdownCleanupPromise: Promise<void> | null = null;
+let shutdownCleanupComplete = false;
+
+async function runShutdownCleanup(): Promise<void> {
+  if (shutdownCleanupPromise) {
+    return shutdownCleanupPromise;
+  }
+
+  shutdownCleanupPromise = (async () => {
+    logger.info("App quitting...");
+
+    try { globalShortcut.unregisterAll(); } catch {}
+    try { disposeUpdates(); } catch (e) { logger.error("Failed to dispose updates during shutdown:", e); }
+    try { stopReminderScheduler(); } catch (e) { logger.error("Failed to stop reminder scheduler during shutdown:", e); }
+    try { stopSmsInbox(); } catch (e) { logger.error("Failed to stop SMS inbox during shutdown:", e); }
+    try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
+    try { require('./workflow-variables').saveVariablesSync(); } catch (e) { logger.error("Failed to flush workflow variables during shutdown:", e); }
+
+    await Promise.allSettled([
+      shutdownAllBrowserUseServers().catch((e) => {
+        logger.error("Failed to stop browser-use servers during shutdown:", e);
+      }),
+      stopAllAgents().catch((e) => {
+        logger.error("Failed to stop agents during shutdown:", e);
+      }),
+    ]);
+
+    logger.info("Cleanup complete");
+    shutdownCleanupComplete = true;
+  })();
+
+  return shutdownCleanupPromise;
+}
+
 app.on("browser-window-focus", () => {
   // re-register just in case
   // no-op
 });
 
+app.on("before-quit", (event) => {
+  if (shutdownCleanupComplete) return;
+
+  event.preventDefault();
+  void runShutdownCleanup().finally(() => {
+    shutdownCleanupComplete = true;
+    app.quit();
+  });
+});
+
 app.on("will-quit", () => {
-  logger.info("App quitting...");
-  globalShortcut.unregisterAll();
-  disposeUpdates();
-  stopAllAgents();
-  stopReminderScheduler();
-  stopSmsInbox();
-  stopVoiceBridgeService();
-  // Flush any debounced variable saves before exit
-  try { require('./workflow-variables').saveVariablesSync(); } catch {}
-  logger.info("Cleanup complete");
+  if (!shutdownCleanupComplete) {
+    logger.warn("will-quit fired before async shutdown cleanup completed");
+  }
 });
 
 app.on("window-all-closed", () => {

@@ -43,7 +43,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "file_edit": ("system", "Edit file contents using string-based matching"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
     "glob": ("system", "Find files and folders using a glob pattern"),
-    "grep": ("system", "Search text in files (regex or literal)"),
+    "grep": ("system", "Search text in files (regex or literal). Supports searching inside PDFs, XLSX, and XLS by extracting document text first."),
 
     # Filesystem Checkpoints
     "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),

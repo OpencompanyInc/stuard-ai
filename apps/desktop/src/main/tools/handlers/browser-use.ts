@@ -449,6 +449,25 @@ async function killOrphanChromeForProfile(profileDir: string): Promise<void> {
   } catch {}
 }
 
+async function terminateBrowserUseProcess(runtime: BrowserUseRuntime): Promise<void> {
+  const proc = runtime.process;
+  if (!proc || proc.killed) return;
+
+  try {
+    const pid = proc.pid;
+    if (process.platform === 'win32' && pid) {
+      await runCmd('taskkill', ['/PID', String(pid), '/T', '/F'], 5000);
+      return;
+    }
+
+    try { proc.kill('SIGTERM'); } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (proc.exitCode === null) {
+      try { proc.kill('SIGKILL'); } catch {}
+    }
+  } catch {}
+}
+
 async function ensureBrowserPageOpen(sessionId = 'default', {} = {}): Promise<{ ok: boolean; error?: string }> {
   try {
     const statusResp = await browserUseFetch('/status', { timeoutMs: 5000 }, sessionId);
@@ -594,7 +613,7 @@ export async function stopBrowserUseServer(sessionId = 'default'): Promise<{ ok:
   }
 
   if (runtime.process && !runtime.process.killed) {
-    try { runtime.process.kill(); } catch {}
+    await terminateBrowserUseProcess(runtime);
     runtime.process = null;
   }
   runtime.ready = false;
@@ -637,7 +656,7 @@ async function stopAllBrowserUseServers(): Promise<void> {
   // Now force-kill any remaining server processes
   for (const runtime of browserUseRuntimes.values()) {
     if (runtime.process && !runtime.process.killed) {
-      try { runtime.process.kill(); } catch {}
+      await terminateBrowserUseProcess(runtime);
     }
     runtime.process = null;
     runtime.ready = false;

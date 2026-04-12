@@ -505,6 +505,15 @@ def _extract_pdf_text_fallback(path: str) -> tuple[str, Dict[str, Any]]:
     return "\n\n".join(blocks), metadata
 
 
+def _is_meaningful_text(text: str, threshold: float = 0.3) -> bool:
+    """Check if extracted text is mostly readable (not binary garbage)."""
+    if not text:
+        return False
+    sample = text[:2000]
+    printable = sum(1 for ch in sample if ch.isprintable() or ch in '\n\r\t')
+    return (printable / len(sample)) >= threshold
+
+
 def _extract_pdf_text(path: str) -> tuple[str, Dict[str, Any]]:
     try:
         from pypdf import PdfReader  # type: ignore
@@ -516,17 +525,41 @@ def _extract_pdf_text(path: str) -> tuple[str, Dict[str, Any]]:
             if text:
                 pages.append(f"[Page {idx}]\n{text}")
         if pages:
-            return (
-                "\n\n".join(pages),
-                {
-                    "document_type": "pdf",
-                    "page_count": len(reader.pages),
-                },
-            )
+            combined = "\n\n".join(pages)
+            if _is_meaningful_text(combined):
+                return (
+                    combined,
+                    {
+                        "document_type": "pdf",
+                        "page_count": len(reader.pages),
+                    },
+                )
+    except ImportError:
+        pass
     except Exception:
         pass
 
-    return _extract_pdf_text_fallback(path)
+    # Try raw-stream fallback
+    try:
+        text, metadata = _extract_pdf_text_fallback(path)
+        if _is_meaningful_text(text):
+            return text, metadata
+    except Exception:
+        pass
+
+    # Count pages even when text extraction fails
+    page_count = 0
+    try:
+        with open(path, "rb") as f:
+            page_count = len(re.findall(rb"/Type\s*/Page\b", f.read()))
+    except Exception:
+        pass
+
+    raise ValueError(
+        f"Could not extract readable text from PDF ({page_count} pages). "
+        "The file may be image-based (scanned) or use non-standard encoding. "
+        "Install 'pypdf' for best results: pip install pypdf"
+    )
 
 
 def _read_text_like_file(path: str) -> Dict[str, Any]:
@@ -1145,6 +1178,8 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     else:
         return {"ok": False, "error": f"path not found: {p}"}
 
+    document_extensions = PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS
+
     results = []
     truncated = False
     skipped_too_large = 0
@@ -1153,23 +1188,53 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
         if not _is_safe_path(fp):
             continue
         try:
-            if max_file_size and os.path.getsize(fp) > max_file_size:
-                skipped_too_large += 1
-                continue
-            with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                for line_no, line in enumerate(f, 1):
-                    m = rx.search(line)
+            file_size = os.path.getsize(fp)
+            ext = os.path.splitext(fp)[1].lower()
+
+            if ext in document_extensions:
+                # Extract text from documents (PDF, XLSX, XLS) then search
+                if file_size > MAX_READ_FILE_DOCUMENT_BYTES:
+                    skipped_too_large += 1
+                    continue
+                try:
+                    payload = _read_text_like_file(fp)
+                    lines = payload.get("lines", [])
+                except Exception:
+                    continue
+                for line_no, line in enumerate(lines, 1):
+                    line_text = line.rstrip("\n")
+                    m = rx.search(line_text)
                     if not m:
                         continue
                     results.append({
                         "path": fp,
                         "line_number": line_no,
-                        "line": line.rstrip("\n"),
-                        "match": m.group(0)
+                        "line": line_text,
+                        "match": m.group(0),
+                        "document_type": ext.lstrip("."),
                     })
                     if len(results) >= max_results:
                         truncated = True
                         break
+            else:
+                # Plain text files — read directly
+                if max_file_size and file_size > max_file_size:
+                    skipped_too_large += 1
+                    continue
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    for line_no, line in enumerate(f, 1):
+                        m = rx.search(line)
+                        if not m:
+                            continue
+                        results.append({
+                            "path": fp,
+                            "line_number": line_no,
+                            "line": line.rstrip("\n"),
+                            "match": m.group(0)
+                        })
+                        if len(results) >= max_results:
+                            truncated = True
+                            break
             if truncated:
                 break
         except Exception:

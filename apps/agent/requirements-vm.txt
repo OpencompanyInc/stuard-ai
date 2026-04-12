@@ -22,6 +22,8 @@ numpy>=1.26.0
 # Database (local SQLite wrapper used by db_* tools)
 # (stdlib sqlite3 is sufficient, no extra package needed)
 
+# PDF text extraction
+pypdf>=4.0.0
 # Encryption (for secure storage)
 cryptography>=42.0.0
 
