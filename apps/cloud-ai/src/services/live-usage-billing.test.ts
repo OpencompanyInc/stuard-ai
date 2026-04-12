@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const logUsageEventMock = vi.fn(async () => {});
+const { logUsageEventMock } = vi.hoisted(() => ({
+  logUsageEventMock: vi.fn(async () => {}),
+}));
 
 vi.mock('../supabase', () => ({
   logUsageEvent: logUsageEventMock,
