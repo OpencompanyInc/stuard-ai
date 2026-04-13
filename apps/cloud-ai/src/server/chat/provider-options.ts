@@ -28,7 +28,8 @@ export function getHardTimeoutMs(agentType: AgentType) {
   if (!Number.isNaN(raw) && raw > 0) {
     return raw;
   }
-  return agentType === 'workflow' ? 12 * 60 * 1000 : 8 * 60 * 1000;
+  // 0 = no timeout
+  return 0;
 }
 
 export function buildProviderOptions({

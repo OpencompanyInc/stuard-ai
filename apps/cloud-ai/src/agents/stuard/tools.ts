@@ -25,6 +25,7 @@ import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
+import { get_skill_info } from '../../tools/skill-tools';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
@@ -261,6 +262,8 @@ export const ALL_TOOLS = {
   get_tool_schema,
   execute_tool,
   search_tools,
+  // Skills
+  get_skill_info,
   // Subagent routing
   route_to_workflow_agent: routeToWorkflowAgent,
   // Telnyx (SMS, MMS, voice calls)
@@ -353,6 +356,9 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Meta-tools for lazy-loading (3) — discover & run any other tool
   'get_tool_schema', 'execute_tool', 'search_tools',
+
+  // Skills — fetch full step details for a user-defined skill
+  'get_skill_info',
 
   // Subagent routing — delegate to workflow architect
   'route_to_workflow_agent',

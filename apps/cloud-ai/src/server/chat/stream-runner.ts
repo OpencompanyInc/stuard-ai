@@ -147,26 +147,29 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     abortController = new AbortController();
     setAbortController(ws, requestId, abortController);
 
-    hardTimeout = setTimeout(() => {
-      if (runtime.didSendFinal) return;
-      runtime.didSendFinal = true;
-      try {
-        abortController?.abort();
-      } catch { }
-      try {
-        deleteAbortController(ws, requestId);
-      } catch { }
+    const hardTimeoutMs = getHardTimeoutMs(agentType);
+    if (hardTimeoutMs > 0) {
+      hardTimeout = setTimeout(() => {
+        if (runtime.didSendFinal) return;
+        runtime.didSendFinal = true;
+        try {
+          abortController?.abort();
+        } catch { }
+        try {
+          deleteAbortController(ws, requestId);
+        } catch { }
 
-      const timeoutText = runtime.aggregatedText.trim() || 'Request timed out. Please retry.';
-      send(ws, {
-        type: 'final',
-        origin: 'cloud-ai',
-        model: chosenModelId || routedTier,
-        conversationId,
-        result: { text: timeoutText, steps: [], finishReason: 'timeout' },
-        timedOut: true,
-      }, requestId);
-    }, getHardTimeoutMs(agentType));
+        const timeoutText = runtime.aggregatedText.trim() || 'Request timed out. Please retry.';
+        send(ws, {
+          type: 'final',
+          origin: 'cloud-ai',
+          model: chosenModelId || routedTier,
+          conversationId,
+          result: { text: timeoutText, steps: [], finishReason: 'timeout' },
+          timedOut: true,
+        }, requestId);
+      }, hardTimeoutMs);
+    }
 
     let stepCount = 0;
     let cumulativeInputTokens = 0;
