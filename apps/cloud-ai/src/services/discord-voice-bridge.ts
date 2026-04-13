@@ -32,7 +32,6 @@ import {
   getVoiceProvider,
   getDefaultProviderId,
   supportsVoiceToolCalling,
-  findToolCapableVoiceProvider,
   buildVoiceContext,
   type VoiceSession,
   type VoiceSessionConfig,
@@ -156,26 +155,15 @@ export async function bridgeDiscordVoice(opts: {
     return null;
   }
 
-  let providerId = requestedProviderId;
-  let provider = requestedProvider;
+  const providerId = requestedProviderId;
+  const provider = requestedProvider;
   let enableVoiceTools = true;
   if (!supportsVoiceToolCalling(provider)) {
-    const fallbackProvider = findToolCapableVoiceProvider();
-    if (fallbackProvider && fallbackProvider.id !== provider.id) {
-      console.log(LOG_PREFIX, 'Switching to tool-capable provider', {
-        discordUserId,
-        requestedProviderId,
-        providerId: fallbackProvider.id,
-      });
-      provider = fallbackProvider;
-      providerId = fallbackProvider.id;
-    } else {
-      enableVoiceTools = false;
-      console.warn(LOG_PREFIX, 'No tool-capable provider available; continuing without live tools', {
-        discordUserId,
-        providerId,
-      });
-    }
+    enableVoiceTools = false;
+    console.log(LOG_PREFIX, 'Provider does not support tool calling, continuing without live tools', {
+      discordUserId,
+      providerId,
+    });
   }
 
   const voiceSessionId = `discord-${discordUserId}-${Date.now()}`;

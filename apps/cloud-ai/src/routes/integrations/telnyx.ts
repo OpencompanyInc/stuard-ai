@@ -552,7 +552,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
       if (configuredProviders.length > 0) {
         // Pick best provider for outbound proactive calls
-        const preferredOrder = ['openai-realtime', 'grok-realtime', 'elevenlabs', 'gemini-live'];
+        const preferredOrder = ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
         let providerId = '';
         for (const id of preferredOrder) {
           const p = configuredProviders.find(cp => cp.id === id);
@@ -1696,8 +1696,8 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
     return;
   }
 
-  // Pick the best provider for inbound calls — GPT-4o Realtime is the default
-  const preferredOrder = ['openai-realtime', 'grok-realtime', 'gemini-live', 'elevenlabs'];
+  // Pick the best provider for inbound calls — Gemini Live is the default
+  const preferredOrder = ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
   let providerId = '';
 
   for (const id of preferredOrder) {
@@ -1744,6 +1744,8 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
 
   if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
     bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+  } else if (providerId === 'gemini-live') {
+    bridgeConfig.voiceId = process.env.GEMINI_LIVE_VOICE || 'Aoede';
   }
 
   const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');

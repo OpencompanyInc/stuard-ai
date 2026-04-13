@@ -46,7 +46,7 @@ export function findToolCapableVoiceProvider(preferredIds: readonly string[] = T
 export function getDefaultProviderId(): string {
   const configured = getConfiguredProviders();
   if (configured.length === 0) return '';
-  const preferred = ['openai-realtime', 'elevenlabs'];
+  const preferred = ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
   for (const id of preferred) {
     if (configured.find(p => p.id === id)) return id;
   }

@@ -24,7 +24,6 @@ import {
   getVoiceProvider,
   getDefaultProviderId,
   supportsVoiceToolCalling,
-  findToolCapableVoiceProvider,
   registerActiveCall,
   removeActiveCall,
   buildVoiceContext,
@@ -72,23 +71,21 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
     return;
   }
 
-  const requestedProviderId = params.providerId || getDefaultProviderId();
-  const requestedProvider = getVoiceProvider(requestedProviderId);
+  const providerId = params.providerId || getDefaultProviderId();
+  const provider = getVoiceProvider(providerId);
 
-  if (!requestedProvider) {
-    console.error(`[telnyx-bridge] Unknown voice provider: ${requestedProviderId}`);
+  if (!provider) {
+    console.error(`[telnyx-bridge] Unknown voice provider: ${providerId}`);
     telnyxWs.close(1008, 'unknown_provider');
     return;
   }
 
-  if (!requestedProvider.isConfigured()) {
-    console.error(`[telnyx-bridge] Provider ${requestedProviderId} is not configured`);
+  if (!provider.isConfigured()) {
+    console.error(`[telnyx-bridge] Provider ${providerId} is not configured`);
     telnyxWs.close(1008, 'provider_not_configured');
     return;
   }
 
-  let providerId = requestedProviderId;
-  let provider = requestedProvider;
   let enableVoiceTools = !!params.userId;
 
   console.log('[telnyx-bridge] New bridge connection', {
@@ -158,22 +155,11 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
 
   if (params.userId) {
     if (!supportsVoiceToolCalling(provider)) {
-      const fallbackProvider = findToolCapableVoiceProvider();
-      if (fallbackProvider && fallbackProvider.id !== provider.id) {
-        console.log('[telnyx-bridge] Switching to tool-capable provider', {
-          callControlId,
-          requestedProviderId,
-          providerId: fallbackProvider.id,
-        });
-        provider = fallbackProvider;
-        providerId = fallbackProvider.id;
-      } else {
-        enableVoiceTools = false;
-        console.warn('[telnyx-bridge] No tool-capable provider available; continuing without live tools', {
-          callControlId,
-          providerId,
-        });
-      }
+      enableVoiceTools = false;
+      console.log('[telnyx-bridge] Provider does not support tool calling, continuing without live tools', {
+        callControlId,
+        providerId,
+      });
     }
 
     const bridgeWs = await requestDesktopBridge(params.userId, voiceSessionId, 'telnyx').catch(() => null);
