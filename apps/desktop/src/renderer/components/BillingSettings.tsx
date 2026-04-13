@@ -1086,9 +1086,16 @@ export const BillingSettings: React.FC = () => {
                           {log.credits.toFixed(2)}
                         </td>
                         <td className="px-2 py-2 text-right text-theme-muted tabular-nums">
-                          {log.totalTokens > 0
-                            ? log.totalTokens.toLocaleString()
-                            : "-"}
+                          <div className="flex items-center justify-end gap-1.5">
+                            {log.totalTokens > 0
+                              ? log.totalTokens.toLocaleString()
+                              : "-"}
+                            {log.stepCount > 1 && (
+                              <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-theme-hover text-theme-muted tabular-nums">
+                                {log.stepCount}×
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-2 py-2 text-right text-theme-muted whitespace-nowrap">
                           {formatRelativeTime(log.createdAt)}

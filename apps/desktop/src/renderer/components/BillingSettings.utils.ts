@@ -1,5 +1,6 @@
 export interface UsageLogEntry {
   id: string;
+  sourceRef: string | null;
   model: string;
   chatName: string | null;
   conversationId: string | null;
@@ -12,6 +13,7 @@ export interface UsageLogEntry {
   completionTokens: number;
   totalTokens: number;
   createdAt: string;
+  stepCount: number;
 }
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -227,10 +229,19 @@ export function normalizeUsageLogEntry(entry: any): UsageLogEntry {
     ) ||
     promptTokens + completionTokens;
 
+  const sourceRef =
+    pickFirstString(
+      entry?.sourceRef,
+      entry?.source_ref,
+      raw?.sourceRef,
+      raw?.source_ref
+    ) || null;
+
   return {
     id:
-      pickFirstString(entry?.id) ||
+      pickFirstString(entry?.id, sourceRef) ||
       `usage-log:${pickFirstString(entry?.createdAt, entry?.created_at) || "unknown"}`,
+    sourceRef,
     model,
     chatName:
       pickFirstString(
@@ -291,5 +302,9 @@ export function normalizeUsageLogEntry(entry: any): UsageLogEntry {
         raw?.createdAt,
         raw?.created_at
       ) || "",
+    stepCount: Math.max(
+      1,
+      pickFirstNumber(entry?.stepCount, entry?.step_count)
+    ),
   };
 }

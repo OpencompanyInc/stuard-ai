@@ -1158,16 +1158,71 @@ export async function getUsageLogs(
   since?: Date,
 ): Promise<{ logs: any[]; total: number }> {
   if (!supabaseService) return { logs: [], total: 0 };
+  const start = resolveUsagePeriodStart(since);
   try {
+    // Use aggregated RPC so that multi-step chat turns and subagent runs
+    // appear as a single entry instead of one row per settlement step.
+    const { data: rpcData, error: rpcError } = await supabaseService.rpc('get_usage_logs_aggregated', {
+      p_user_id: userId,
+      p_limit: limit,
+      p_offset: offset,
+      p_since: start.toISOString(),
+    });
+    if (!rpcError && Array.isArray(rpcData) && rpcData.length > 0) {
+      const total = Number(rpcData[0]?.total_count ?? rpcData.length);
+      return { logs: rpcData, total };
+    }
+    // Fallback: fetch raw events and aggregate by sourceRef in JS.
+    // Fetch a larger window so we can group properly before applying the page slice.
+    const fetchLimit = Math.max(limit * 8, 200);
     let q = supabaseService
       .from('usage_events')
       .select('id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at', { count: 'exact' })
       .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    if (since) q = q.gte('created_at', since.toISOString());
-    const { data, error, count } = await q.range(offset, offset + limit - 1);
-    if (error || !data) return { logs: [], total: 0 };
-    return { logs: data, total: count ?? data.length };
+      .gte('created_at', start.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(fetchLimit);
+    const { data: rawData, error: rawError } = await q;
+    if (rawError || !rawData) return { logs: [], total: 0 };
+
+    // Group by sourceRef
+    const groups = new Map<string, any>();
+    for (const row of rawData as any[]) {
+      const raw = row.raw && typeof row.raw === 'object' ? row.raw : {};
+      const key = raw.sourceRef || row.id;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          source_ref: key,
+          model: row.model,
+          conversation_id: row.conversation_id,
+          source_type: raw.sourceType || raw.source_type || null,
+          source_label: raw.source_label || raw.sourceLabel || null,
+          subagent_kind: raw.subagentKind || raw.subagent_kind || null,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          cost_usd: 0,
+          credit_cost: 0,
+          step_count: 0,
+          created_at: row.created_at,
+        });
+      }
+      const g = groups.get(key)!;
+      g.prompt_tokens += Number(row.prompt_tokens || 0);
+      g.completion_tokens += Number(row.completion_tokens || 0);
+      g.total_tokens += Number(row.total_tokens || 0);
+      g.cost_usd += Number(row.cost_usd || 0);
+      g.credit_cost += Number(row.credit_cost || 0);
+      g.step_count += 1;
+      // Keep latest timestamp
+      if (row.created_at > g.created_at) g.created_at = row.created_at;
+    }
+
+    const allGroups = Array.from(groups.values())
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    const total = allGroups.length;
+    const logs = allGroups.slice(offset, offset + limit);
+    return { logs, total };
   } catch {
     return { logs: [], total: 0 };
   }
