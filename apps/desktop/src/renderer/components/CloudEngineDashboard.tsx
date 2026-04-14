@@ -4,7 +4,7 @@ import {
   Cloud, Server, Activity, Power, Trash2,
   RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
   Download, Upload, Sparkles, Zap, Shield,
-  CreditCard, Camera, RotateCcw, Plus, X, Rocket, Play, Square,
+  CreditCard, Plus, X, Rocket, Play, Square,
   ScrollText, AlertCircle, CheckCircle2, Circle,
 } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
@@ -14,6 +14,7 @@ import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
 import { CloudVmPermissions } from './CloudVmPermissions';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
+import { ProactiveView } from './ProactiveView';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -69,9 +70,8 @@ const PLANS = [
 
 export function CloudEngineDashboard() {
   const {
-    engine, loading, error, metrics, billing, syncStatus, isSyncing, snapshots, deployments,
+    engine, loading, error, metrics, billing, syncStatus, isSyncing, deployments,
     provision, start, stop, destroy, syncData, listFiles, readFile, refresh,
-    createSnapshot, restoreSnapshot, deleteSnapshot,
     createDeployment, stopDeployment, restartDeployment, deleteDeployment,
     getDeployLogs, fetchDeployments,
   } = useCloudEngine();
@@ -658,14 +658,9 @@ export function CloudEngineDashboard() {
               <BillingTab billing={billing} engine={engine} />
             </div>
           ),
-          snapshots: (
-            <div className="custom-scrollbar h-full overflow-y-auto p-6">
-              <SnapshotsTab
-                snapshots={snapshots}
-                createSnapshot={createSnapshot}
-                restoreSnapshot={restoreSnapshot}
-                deleteSnapshot={deleteSnapshot}
-              />
+          proactive: (
+            <div className="custom-scrollbar h-full overflow-y-auto">
+              <ProactiveView />
             </div>
           ),
           deploys: (
@@ -838,134 +833,6 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ─── Snapshots Tab ───────────────────────────────────────────────── */
-
-function SnapshotsTab({
-  snapshots,
-  createSnapshot,
-  restoreSnapshot,
-  deleteSnapshot,
-}: {
-  snapshots: any[];
-  createSnapshot: (name: string, description?: string) => Promise<any>;
-  restoreSnapshot: (id: string) => Promise<any>;
-  deleteSnapshot: (id: string) => Promise<any>;
-}) {
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [actionId, setActionId] = useState<string | null>(null);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    await createSnapshot(newName.trim());
-    setNewName('');
-    setCreating(false);
-  };
-
-  const handleRestore = async (id: string) => {
-    if (!confirm('Restore this snapshot? Current VM data will be overwritten.')) return;
-    setActionId(id);
-    await restoreSnapshot(id);
-    setActionId(null);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this snapshot permanently?')) return;
-    setActionId(id);
-    await deleteSnapshot(id);
-    setActionId(null);
-  };
-
-  const formatSize = (bytes?: number) => {
-    if (!bytes) return '—';
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <input
-            type="text"
-            placeholder="Snapshot name (e.g. before-update)..."
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            className="w-full px-4 py-3 text-sm bg-theme-card/30 border border-theme/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all text-theme-fg placeholder:text-theme-muted/50"
-          />
-        </div>
-        <button
-          onClick={handleCreate}
-          disabled={creating || !newName.trim()}
-          className="flex items-center gap-2 px-5 py-3 text-sm font-black bg-primary text-primary-fg rounded-xl hover:opacity-90 disabled:opacity-50 transition-all"
-        >
-          {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          {creating ? 'Creating...' : 'Create Snapshot'}
-        </button>
-      </div>
-
-      {snapshots.length === 0 ? (
-        <div className="dashboard-card p-8 flex flex-col items-center justify-center py-16 text-theme-muted">
-          <Camera className="w-8 h-8 mb-3 opacity-30" />
-          <div className="text-sm font-bold">No snapshots yet</div>
-          <div className="text-xs mt-1">Create one to save your VM state</div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {snapshots.map(snap => (
-            <div
-              key={snap.id}
-              className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Camera className="w-3.5 h-3.5 text-theme-muted shrink-0" />
-                  <span className="text-sm font-bold text-theme-fg truncate">{snap.name}</span>
-                  <span className={clsx(
-                    'px-2 py-0.5 rounded-full text-[9px] font-black shrink-0',
-                    snap.status === 'ready' ? 'bg-green-500/10 text-green-500' :
-                    snap.status === 'creating' ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
-                    snap.status === 'failed' ? 'bg-red-500/10 text-red-500' :
-                    'bg-theme-hover text-theme-muted'
-                  )}>
-                    {snap.status}
-                  </span>
-                </div>
-                <div className="flex gap-4 mt-1 text-[10px] text-theme-muted pl-6">
-                  <span>{new Date(snap.created_at).toLocaleString()}</span>
-                  <span>{formatSize(snap.size_bytes)}</span>
-                </div>
-              </div>
-              <div className="flex gap-2 shrink-0 ml-4">
-                {snap.status === 'ready' && (
-                  <button
-                    onClick={() => handleRestore(snap.id)}
-                    disabled={actionId === snap.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/20 disabled:opacity-50 transition-all"
-                  >
-                    {actionId === snap.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                    Restore
-                  </button>
-                )}
-                <button
-                  onClick={() => handleDelete(snap.id)}
-                  disabled={actionId === snap.id}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 disabled:opacity-50 transition-all"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

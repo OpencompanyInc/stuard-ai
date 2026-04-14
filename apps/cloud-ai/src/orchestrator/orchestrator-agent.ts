@@ -15,7 +15,7 @@ import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
 import { wrapToolWithBridge } from './subagent-runtime';
 
 // Re-use meta tools from the existing registry
-import { search_tools, get_tool_schema, execute_tool } from '../tools/meta-tools';
+import { search_tools, get_tool_schema, execute_tool, chatUiTool } from '../tools/meta-tools';
 import { ask_user } from '../tools/ask-user';
 import { waitTool } from '../tools/wait';
 import { web_search } from '../tools/perplexity-tools';
@@ -174,10 +174,7 @@ function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<
 
   // Desktop UI tools only when bridge is active
   if (hasClientBridge()) {
-    try {
-      const { chat_ui } = require('../tools/device-tools');
-      if (chat_ui) tools.chat_ui = chat_ui;
-    } catch { }
+    tools.chat_ui = chatUiTool;
   }
 
   return tools;

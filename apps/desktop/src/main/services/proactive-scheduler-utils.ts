@@ -255,6 +255,33 @@ export function extractAgentTextFromWsMessage(msg: any, fallback = ''): string {
   return fallback;
 }
 
+/**
+ * Strip leaked tool-call artifacts (XML tags, function-call syntax) from
+ * proactive agent responses.  Models sometimes output these as plain text
+ * when the tool isn't registered in the current chat session.
+ */
+export function cleanProactiveResponseText(text: string): string {
+  if (!text) return text;
+  let cleaned = text;
+
+  // Remove XML tool-call blocks (greedy across lines):
+  //   <invoke name="write_session_summary"><parameter name="summary">...</parameter></invoke>
+  //   </minimax:tool_call>   etc.
+  cleaned = cleaned.replace(/<\/?(?:invoke|parameter|antml:[a-z_]+|minimax:[a-z_]+|tool_call|function_call|tool_use)[^>]*>/gi, '');
+
+  // Remove function-call syntax:  write_session_summary("...")  or  write_session_summary('...')
+  cleaned = cleaned.replace(/\b[a-z_]{2,}\s*\(\s*["'][\s\S]*?["']\s*\)/gi, '');
+
+  // Remove stray "or" connectors left between stripped blocks (e.g. "or write_session_summary(...)")
+  cleaned = cleaned.replace(/\bor\s+[a-z_]{2,}\s*\(/gi, '');
+
+  // Collapse runs of whitespace / blank lines
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+  return cleaned;
+}
+
+
 export interface AgentToolRequest {
   id: string;
   tool: string;
@@ -336,7 +363,7 @@ export function buildLocalProactivePrompt(payload: any): string {
     parts.push('Only bring up a topic from above if it has meaningfully escalated.');
   }
 
-  parts.push('\nYour response becomes the user notification. If you have nothing new or important to say, skip the notification and just record a session summary.');
+  parts.push('\nYour response becomes the user notification. Write only the plain text message you want the user to see — no tool calls, no XML, no code blocks. If you have nothing new or important to say, respond with just the word "skip".');
   return parts.join('\n');
 }
 
@@ -366,10 +393,11 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     'If the same activity keeps showing up across the last 5 wake-up summaries, call out the persistence and change your approach instead of repeating the same generic reminder.',
     '',
     '## TASKS',
-    'Claim → work → complete. Use proactive_task_update to change status. Create tasks for things YOU can do, not reminders for the user.',
+    'Claim → work → complete. Create tasks for things YOU can do, not reminders for the user.',
     '',
-    '## SESSION MEMORY',
-    'Call write_session_summary before finishing. Note: what user was doing, what you did (or skipped), patterns observed.',
+    '## RESPONSE FORMAT',
+    'Your text response IS the notification the user sees. Do NOT include tool calls, function calls, XML tags, or code blocks in your response.',
+    'Just write the plain message you want the user to read. Keep it brief and conversational.',
   ];
 
   // Inject time context

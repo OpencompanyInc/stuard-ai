@@ -301,7 +301,7 @@ const logTool = createTool({
     }
 });
 
-const chatUiTool = createTool({
+export const chatUiTool = createTool({
     id: 'chat_ui',
     description: `Render a custom interactive React component inline in the chat conversation.
 Unlike custom_ui (which opens a separate window), chat_ui embeds the UI directly in the chat bubble.

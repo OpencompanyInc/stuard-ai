@@ -13,7 +13,7 @@
 import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
-import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
@@ -421,7 +421,7 @@ ${contextToUse}
         context: {},
         tasks: proactiveService.getActiveTasks(),
       });
-      reply = result.text;
+      reply = cleanProactiveResponseText(result.text);
     } else {
       emitStage(replyLogId, 'thinking', 'Local agent processing follow-up');
       const ws = await waitForAgentWs();
@@ -463,7 +463,7 @@ ${contextToUse}
             if (msg?.type === 'progress' && msg?.data?.text) chunks.push(msg.data.text);
             if (msg?.type === 'final' || msg?.type === 'proactive_result') {
               resolved = true; cleanup();
-              resolve(extractAgentTextFromWsMessage(msg, chunks.join('') || 'I got your message.'));
+              resolve(cleanProactiveResponseText(extractAgentTextFromWsMessage(msg, chunks.join('') || 'I got your message.')));
             }
             if (msg?.type === 'error') {
               resolved = true; cleanup();
@@ -709,7 +709,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
         const partialResponse = chunks.join('').trim();
         const timeoutReason = `Agent did not respond within ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`;
         resolve({
-          text: partialResponse || timeoutReason,
+          text: cleanProactiveResponseText(partialResponse) || timeoutReason,
           partialResponse: partialResponse || undefined,
           timedOut: true,
           failureReason: timeoutReason,
@@ -795,7 +795,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
           const finalUsage = msg?.result?.usage || msg?.usage || undefined;
           const finalModelId = typeof msg?.model === 'string' ? msg.model : (modelSelection.modelId || undefined);
           resolve({
-            text: extractAgentTextFromWsMessage(msg, chunks.join('') || ''),
+            text: cleanProactiveResponseText(extractAgentTextFromWsMessage(msg, chunks.join('') || '')),
             partialResponse: chunks.join('').trim() || undefined,
             taskUpdates: [],
             newTasks: [],
@@ -809,7 +809,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
           publishPartialResponse(true);
           cleanup();
           resolve({
-            text: extractAgentTextFromWsMessage(msg, chunks.join('') || ''),
+            text: cleanProactiveResponseText(extractAgentTextFromWsMessage(msg, chunks.join('') || '')),
             partialResponse: chunks.join('').trim() || undefined,
             taskUpdates: [],
             newTasks: [],

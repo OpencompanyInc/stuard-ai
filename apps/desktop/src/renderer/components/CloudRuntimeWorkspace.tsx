@@ -12,7 +12,7 @@ import {
   Shield,
   Terminal,
   Trash2,
-  Camera,
+  Sparkles,
   X,
   Loader2,
   ChevronDown,
@@ -24,7 +24,7 @@ export type CloudRuntimeView =
   | 'overview'
   | 'monitoring'
   | 'billing'
-  | 'snapshots'
+  | 'proactive'
   | 'deploys'
   | 'permissions';
 
@@ -54,7 +54,7 @@ const VIEW_ITEMS: Array<{
   { id: 'overview', icon: Server, label: 'Overview' },
   { id: 'monitoring', icon: Activity, label: 'Monitoring' },
   { id: 'deploys', icon: Rocket, label: 'Deploys' },
-  { id: 'snapshots', icon: Camera, label: 'Snapshots' },
+  { id: 'proactive', icon: Sparkles, label: 'Proactive' },
   { id: 'billing', icon: CreditCard, label: 'Billing' },
   { id: 'permissions', icon: Shield, label: 'Permissions' },
   { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal' },

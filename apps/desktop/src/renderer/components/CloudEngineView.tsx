@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
-import { Cloud, Terminal, FolderOpen, Activity, Power, PowerOff, Trash2, RefreshCw, Server, Loader2, Sparkles, CreditCard, Camera, RotateCcw, Plus, X, MessageSquare } from 'lucide-react';
+import { Cloud, Terminal, FolderOpen, Activity, Power, PowerOff, Trash2, RefreshCw, Server, Loader2, Sparkles, CreditCard, MessageSquare } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
+import { ProactiveView } from './ProactiveView';
 
-type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'snapshots';
+type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'proactive';
 
 interface CloudEngineViewProps {
   className?: string;
@@ -34,7 +35,7 @@ const PLANS = [
 ];
 
 export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) => {
-  const { engine, loading, error, metrics, billing, snapshots, provision, start, stop, destroy, listFiles, readFile, refresh, fetchSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } = useCloudEngine();
+  const { engine, loading, error, metrics, billing, provision, start, stop, destroy, listFiles, readFile, refresh } = useCloudEngine();
   const [tab, setTab] = useState<CloudTab>('overview');
   const [selectedPlan, setSelectedPlan] = useState('basic');
   const [provDisk, setProvDisk] = useState(20);
@@ -148,7 +149,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
     { id: 'files', label: 'Files', icon: FolderOpen },
     { id: 'monitoring', label: 'Stats', icon: Activity },
     { id: 'billing', label: 'Bill', icon: CreditCard },
-    { id: 'snapshots', label: 'Snaps', icon: Camera },
+    { id: 'proactive', label: 'Proactive', icon: Sparkles },
   ];
 
   // ─── Main View ───────────────────────────────────────────────────────
@@ -291,13 +292,8 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
           <SidebarBillingTab billing={billing} engine={engine} />
         )}
 
-        {tab === 'snapshots' && (
-          <SidebarSnapshotsTab
-            snapshots={snapshots}
-            createSnapshot={createSnapshot}
-            restoreSnapshot={restoreSnapshot}
-            deleteSnapshot={deleteSnapshot}
-          />
+        {tab === 'proactive' && (
+          <ProactiveView />
         )}
       </div>
     </div>
@@ -346,109 +342,3 @@ function SidebarBillingTab({ billing, engine }: { billing: any; engine: any }) {
   );
 }
 
-/* ─── Compact Snapshots Tab ───────────────────────────────────────── */
-
-function SidebarSnapshotsTab({
-  snapshots,
-  createSnapshot,
-  restoreSnapshot,
-  deleteSnapshot,
-}: {
-  snapshots: any[];
-  createSnapshot: (name: string, description?: string) => Promise<any>;
-  restoreSnapshot: (id: string) => Promise<any>;
-  deleteSnapshot: (id: string) => Promise<any>;
-}) {
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [actionId, setActionId] = useState<string | null>(null);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    await createSnapshot(newName.trim());
-    setNewName('');
-    setCreating(false);
-  };
-
-  return (
-    <div className="p-3 space-y-3 overflow-y-auto h-full">
-      {/* Create */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          placeholder="Snapshot name..."
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleCreate()}
-          className="flex-1 px-2.5 py-1.5 text-[10px] bg-theme-card/30 border border-theme/10 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/20 text-theme-fg placeholder:text-theme-muted/50"
-        />
-        <button
-          onClick={handleCreate}
-          disabled={creating || !newName.trim()}
-          className="p-1.5 rounded-lg bg-primary text-primary-fg disabled:opacity-50 transition-all"
-        >
-          {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-        </button>
-      </div>
-
-      {/* List */}
-      {snapshots.length === 0 ? (
-        <div className="text-center py-6 text-theme-muted">
-          <Camera className="w-5 h-5 mx-auto mb-2 opacity-30" />
-          <div className="text-[10px] font-bold">No snapshots</div>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {snapshots.map(snap => (
-            <div key={snap.id} className="rounded-xl border border-theme/10 bg-theme-card/30 p-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Camera className="w-3 h-3 text-theme-muted shrink-0" />
-                  <span className="text-[10px] font-bold text-theme-fg truncate">{snap.name}</span>
-                  <span className={clsx(
-                    'px-1.5 py-0.5 rounded-full text-[8px] font-black shrink-0',
-                    snap.status === 'ready' ? 'bg-green-500/10 text-green-500' :
-                    snap.status === 'creating' ? 'bg-blue-500/10 text-blue-400' :
-                    'bg-theme-hover text-theme-muted'
-                  )}>{snap.status}</span>
-                </div>
-                <div className="flex gap-1 shrink-0 ml-2">
-                  {snap.status === 'ready' && (
-                    <button
-                      onClick={async () => {
-                        if (!confirm('Restore this snapshot?')) return;
-                        setActionId(snap.id);
-                        await restoreSnapshot(snap.id);
-                        setActionId(null);
-                      }}
-                      disabled={actionId === snap.id}
-                      className="p-1 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 disabled:opacity-50"
-                    >
-                      {actionId === snap.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RotateCcw className="w-2.5 h-2.5" />}
-                    </button>
-                  )}
-                  <button
-                    onClick={async () => {
-                      if (!confirm('Delete this snapshot?')) return;
-                      setActionId(snap.id);
-                      await deleteSnapshot(snap.id);
-                      setActionId(null);
-                    }}
-                    disabled={actionId === snap.id}
-                    className="p-1 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-50"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              </div>
-              <div className="text-[8px] text-theme-muted mt-1 pl-4">
-                {new Date(snap.created_at).toLocaleString()}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
