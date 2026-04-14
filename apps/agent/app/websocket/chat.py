@@ -65,6 +65,7 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
             ws_url = ws_url + sep + "client=vm-agent"
         logger.info("cloud_connect url=%s", ws_url)
 
+        cws_lock = asyncio.Lock()
         async with websockets.connect(ws_url, max_size=None) as cws:
             payload: Dict[str, Any] = {
                 "type": "chat",
@@ -175,9 +176,11 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                 elif ctype == "tool_request":
                     from .tools import handle_cloud_tool_request
                     # Spawn as concurrent task so multiple tool_requests run in parallel
-                    # (cloud-ai fires them via Promise.all but this loop is sequential)
+                    # (cloud-ai fires them via Promise.all but this loop is sequential).
+                    # cws_lock serializes cws.send() calls across parallel tasks to prevent
+                    # ConcurrencyError from websockets>=12.0 when tools run in parallel.
                     tool_task = asyncio.create_task(
-                        handle_cloud_tool_request(cdata, session, cws, request_id=rid)
+                        handle_cloud_tool_request(cdata, session, cws, request_id=rid, cws_lock=cws_lock)
                     )
                     session.active_tool_tasks.add(tool_task)
                     def _cleanup_tool(_t: asyncio.Task) -> None:

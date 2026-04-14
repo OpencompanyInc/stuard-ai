@@ -65,10 +65,11 @@ def _tool_requires_approval(tool: str, args: Optional[Dict[str, Any]] = None) ->
     return tool in SENSITIVE_TOOLS
 
 async def handle_cloud_tool_request(
-    cdata: Dict[str, Any], 
-    session: WebSocketSession, 
+    cdata: Dict[str, Any],
+    session: WebSocketSession,
     cws: websockets.WebSocketClientProtocol,
-    request_id: Optional[str] = None
+    request_id: Optional[str] = None,
+    cws_lock: Optional[asyncio.Lock] = None,
 ) -> None:
     try:
         raw_tool = str(cdata.get("tool") or "").strip()
@@ -77,6 +78,14 @@ async def handle_cloud_tool_request(
         req_id = cdata.get("id") or f"tool-{int(asyncio.get_event_loop().time()*1000)}"
         is_silent = bool(cdata.get("silent"))  # Silent tools don't show in UI
         logger.info("cloud_tool_request id=%s tool=%s silent=%s", req_id, tool, is_silent)
+
+        async def _cws_send(data: str) -> None:
+            """Serialize all sends on the shared cws connection to avoid ConcurrencyError."""
+            if cws_lock is not None:
+                async with cws_lock:
+                    await cws.send(data)
+            else:
+                await cws.send(data)
 
         async def emit(status: str, extra: Dict[str, Any] | None = None):
             if status == "delta" and extra and "text" in extra:
@@ -95,7 +104,7 @@ async def handle_cloud_tool_request(
                 tool_payload.update(extra)
             # Send to cloud (to resolve execLocalTool)
             try:
-                await cws.send(json.dumps(tool_payload))
+                await _cws_send(json.dumps(tool_payload))
             except Exception:
                 pass
             # Only mirror to desktop UI if not silent
@@ -125,7 +134,7 @@ async def handle_cloud_tool_request(
                 result = {"ok": False, "error": "access_denied", "reason": "approval_timeout"}
                 await emit("completed", {"result": result})
                 try:
-                    await cws.send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
+                    await _cws_send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
                 except Exception:
                     pass
                 session.pending_approvals.pop(req_id, None)
@@ -136,7 +145,7 @@ async def handle_cloud_tool_request(
                     result = {"ok": False, "error": "access_denied", "denied": True}
                     await emit("completed", {"result": result})
                     try:
-                        await cws.send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
+                        await _cws_send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
                     except Exception:
                         pass
                     session.pending_approvals.pop(req_id, None)
@@ -198,7 +207,7 @@ async def handle_cloud_tool_request(
         safe_result = sanitize_result(result)
         await emit("completed", {"result": safe_result})
         try:
-            await cws.send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
+            await _cws_send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
         except Exception:
             pass
     except Exception:

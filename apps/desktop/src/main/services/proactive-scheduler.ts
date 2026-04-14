@@ -574,9 +574,12 @@ function humanizeAgentToolName(tool: string): string {
 
 function sanitizeWakeUpValue(value: any, depth = 0): any {
   if (value === null || value === undefined) return value;
-  if (depth >= 3) return '[truncated]';
   if (typeof value === 'string') return value.length > 600 ? `${value.slice(0, 600)}…` : value;
   if (typeof value === 'number' || typeof value === 'boolean') return value;
+  // Only collapse nested containers past the depth cap — primitives above are safe
+  // to surface at any depth (e.g. delegate({tasks:[{subagent,instruction,context}]})
+  // has strings at depth 3 that must render, not show as "[truncated]").
+  if (depth >= 3) return '[truncated]';
   if (Array.isArray(value)) return value.slice(0, 12).map(item => sanitizeWakeUpValue(item, depth + 1));
   if (typeof value === 'object') {
     const entries = Object.entries(value).slice(0, 20);
@@ -701,26 +704,35 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
       broadcastUpdate({ type: 'agent-progress', logId, partialResponse });
     };
 
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        publishPartialResponse(true);
-        cleanup();
-        const partialResponse = chunks.join('').trim();
-        const timeoutReason = `Agent did not respond within ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`;
-        resolve({
-          text: cleanProactiveResponseText(partialResponse) || timeoutReason,
-          partialResponse: partialResponse || undefined,
-          timedOut: true,
-          failureReason: timeoutReason,
-          taskUpdates: [],
-          newTasks: [],
-        });
-      }
-    }, AGENT_RESPONSE_TIMEOUT_MS);
+    // Idle-reset timer: the 180s budget is per-silence, not per-run. Any matching message
+    // (progress, tool_request, subagent_event, final, etc.) resets it. This lets delegation
+    // subagents run long-form without tripping the check-in budget, while still failing fast
+    // if the stream goes truly quiet.
+    let timeout: NodeJS.Timeout | null = null;
+    const onIdleTimeout = () => {
+      if (resolved) return;
+      resolved = true;
+      publishPartialResponse(true);
+      cleanup();
+      const partialResponse = chunks.join('').trim();
+      const timeoutReason = `Agent went silent for ${Math.round(AGENT_RESPONSE_TIMEOUT_MS / 1000)} seconds.`;
+      resolve({
+        text: cleanProactiveResponseText(partialResponse) || timeoutReason,
+        partialResponse: partialResponse || undefined,
+        timedOut: true,
+        failureReason: timeoutReason,
+        taskUpdates: [],
+        newTasks: [],
+      });
+    };
+    const resetIdleTimer = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(onIdleTimeout, AGENT_RESPONSE_TIMEOUT_MS);
+    };
+    resetIdleTimer();
 
     const cleanup = () => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       ws.off('message', onMessage);
     };
 
@@ -729,6 +741,14 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
       try {
         const msg = JSON.parse(raw.toString('utf8'));
         const toolRequest = extractAgentToolRequest(msg);
+        const matchesRequest = msg?.requestId === logId || msg?.id === logId;
+        // Keep the idle timer alive on any activity for this run — tool_request frames
+        // don't carry requestId, and subagent_event frames use non-progress types that
+        // the handlers below ignore. Without this reset, a delegate call that takes
+        // longer than 180s would trip the timeout even though the stream is active.
+        if (toolRequest || matchesRequest || String(msg?.type || '').startsWith('subagent_')) {
+          resetIdleTimer();
+        }
         if (toolRequest) {
           // Intercept write_session_summary — capture it locally without forwarding to execTool
           if (toolRequest.tool === 'write_session_summary') {
@@ -750,7 +770,6 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
           return;
         }
 
-        const matchesRequest = msg?.requestId === logId || msg?.id === logId;
         if (!matchesRequest) return;
 
         if (msg?.type === 'progress') {

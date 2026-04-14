@@ -1,29 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion, Send, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Send, X } from 'lucide-react';
 import { buildAskUserResult, isQuestionAnswered, normalizeAskUserPrompt } from './askUserPromptUtils';
-
-const panelStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in srgb, var(--card-bg) 88%, var(--foreground) 8%)',
-  borderColor: 'color-mix(in srgb, var(--border) 82%, var(--foreground) 18%)',
-};
-
-const surfaceStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in srgb, var(--input-bg) 84%, var(--foreground) 8%)',
-  borderColor: 'color-mix(in srgb, var(--border) 78%, var(--foreground) 22%)',
-  color: 'var(--foreground)',
-};
-
-const selectedStyle: React.CSSProperties = {
-  backgroundColor: 'var(--primary)',
-  borderColor: 'var(--primary)',
-  color: 'var(--primary-foreground)',
-};
-
-const iconStyle: React.CSSProperties = {
-  backgroundColor: 'color-mix(in srgb, var(--primary) 18%, transparent)',
-  color: 'var(--primary)',
-};
 
 export const AskUserPrompt: React.FC<{
   prompt: { id: string; args: any };
@@ -35,6 +13,7 @@ export const AskUserPrompt: React.FC<{
   const firstTextRef = useRef<HTMLTextAreaElement | null>(null);
   const page = normalized.pages[currentPageIndex];
   const totalPages = normalized.pages.length;
+  const singleQuestion = totalPages === 1 && (page?.questions.length ?? 0) === 1;
 
   useEffect(() => {
     firstTextRef.current?.focus();
@@ -49,54 +28,67 @@ export const AskUserPrompt: React.FC<{
   const canContinue = page?.questions.every((question) => isQuestionAnswered(question, answers[question.id])) ?? false;
   const isLastPage = currentPageIndex === totalPages - 1;
 
+  const choiceBase = 'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors';
+  const choiceIdle = 'bg-theme-input border-theme text-theme-fg hover:bg-theme-hover';
+  const choiceSelected = 'border-transparent text-white';
+  const choiceSelectedStyle: React.CSSProperties = { backgroundColor: 'var(--primary)', color: 'var(--primary-foreground)' };
+
   return (
-    <div className="mx-3 mb-2 overflow-hidden rounded-2xl border shadow-sm backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-200" style={panelStyle}>
-      <div className="flex items-start gap-3 border-b border-theme px-4 py-3">
-        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={iconStyle}>
-          <MessageCircleQuestion className="h-4 w-4" />
-        </div>
+    <div className="mx-3 mb-2 overflow-hidden rounded-xl border border-theme bg-theme-card animate-in slide-in-from-bottom-1 duration-150">
+      <div className="flex items-center gap-2 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-theme-fg">{normalized.title}</p>
-              {normalized.description && <p className="mt-1 text-xs text-theme-muted">{normalized.description}</p>}
-            </div>
-            <button onClick={dismiss} className="rounded-lg p-1.5 text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg" title="Dismiss">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          {totalPages > 1 && (
-            <div className="mt-3 space-y-1.5">
-              <div className="flex gap-1.5">
-                {normalized.pages.map((step, index) => (
-                  <div key={step.id} className={clsx('h-1.5 flex-1 rounded-full', index <= currentPageIndex ? 'bg-primary' : 'bg-theme-hover')} />
-                ))}
-              </div>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-theme-muted">Step {currentPageIndex + 1} of {totalPages}</p>
-            </div>
+          <p className="truncate text-xs font-semibold text-theme-fg">{normalized.title}</p>
+          {normalized.description && (
+            <p className="mt-0.5 line-clamp-2 text-[11px] text-theme-muted">{normalized.description}</p>
           )}
         </div>
+        {totalPages > 1 && (
+          <span className="shrink-0 text-[10px] uppercase tracking-wider text-theme-muted">
+            {currentPageIndex + 1}/{totalPages}
+          </span>
+        )}
+        <button
+          onClick={dismiss}
+          className="shrink-0 rounded-md p-1 text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+          title="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      <div className="space-y-3 px-4 py-4">
-        {totalPages > 1 && (
+      {totalPages > 1 && (
+        <div className="flex gap-1 px-3 pb-2">
+          {normalized.pages.map((step, index) => (
+            <div
+              key={step.id}
+              className={clsx(
+                'h-1 flex-1 rounded-full transition-colors',
+                index <= currentPageIndex ? 'bg-primary' : 'bg-theme-hover',
+              )}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-2.5 border-t border-theme px-3 py-2.5">
+        {totalPages > 1 && page?.title && (
           <div>
-            <p className="text-xs font-semibold text-theme-fg">{page?.title}</p>
-            {page?.description && <p className="mt-1 text-xs text-theme-muted">{page.description}</p>}
+            <p className="text-xs font-semibold text-theme-fg">{page.title}</p>
+            {page.description && <p className="mt-0.5 text-[11px] text-theme-muted">{page.description}</p>}
           </div>
         )}
 
         {page?.questions.map((question, questionIndex) => {
           const answer = answers[question.id];
           return (
-            <div key={question.id} className="rounded-xl border p-3" style={surfaceStyle}>
-              <p className="text-sm font-medium text-theme-fg">
+            <div key={question.id} className={clsx(questionIndex > 0 && 'pt-2.5 border-t border-theme')}>
+              <p className="text-xs font-medium text-theme-fg">
                 {question.message}
                 {question.required && <span className="ml-1 text-rose-500">*</span>}
               </p>
 
               {question.type === 'confirm' && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   {[
                     { label: 'Yes', value: true },
                     { label: 'No', value: false },
@@ -111,10 +103,9 @@ export const AskUserPrompt: React.FC<{
                           setAnswer(question.id, choice.value);
                           if (normalized.isLegacySingle) submit(nextAnswers);
                         }}
-                        className="rounded-xl border px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
-                        style={selected ? selectedStyle : surfaceStyle}
+                        className={clsx(choiceBase, selected ? choiceSelected : choiceIdle)}
+                        style={selected ? choiceSelectedStyle : undefined}
                       >
-                        {selected && choice.value ? <Check className="mr-1 inline h-3.5 w-3.5" /> : null}
                         {choice.label}
                       </button>
                     );
@@ -123,7 +114,7 @@ export const AskUserPrompt: React.FC<{
               )}
 
               {question.type === 'choices' && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   {question.options.map((option) => {
                     const selected = answer === option.id;
                     return (
@@ -135,8 +126,8 @@ export const AskUserPrompt: React.FC<{
                           setAnswer(question.id, option.id);
                           if (normalized.isLegacySingle) submit(nextAnswers);
                         }}
-                        className="rounded-xl border px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
-                        style={selected ? selectedStyle : surfaceStyle}
+                        className={clsx(choiceBase, selected ? choiceSelected : choiceIdle)}
+                        style={selected ? choiceSelectedStyle : undefined}
                       >
                         {option.label}
                       </button>
@@ -151,9 +142,8 @@ export const AskUserPrompt: React.FC<{
                   value={typeof answer === 'string' ? answer : ''}
                   onChange={(event) => setAnswer(question.id, event.target.value)}
                   placeholder={question.placeholder || 'Type your answer…'}
-                  rows={3}
-                  className="mt-3 w-full resize-y rounded-xl border px-3 py-2 text-sm outline-none transition-shadow placeholder:opacity-60"
-                  style={surfaceStyle}
+                  rows={singleQuestion ? 2 : 3}
+                  className="input-field mt-2 w-full resize-y rounded-lg px-2.5 py-1.5 text-xs outline-none placeholder:text-theme-muted"
                 />
               )}
             </div>
@@ -161,30 +151,38 @@ export const AskUserPrompt: React.FC<{
         })}
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-theme px-4 py-3">
+      <div className="flex items-center justify-between gap-2 border-t border-theme px-3 py-2">
         <div>
           {currentPageIndex > 0 && (
-            <button type="button" onClick={() => setCurrentPageIndex((index) => Math.max(0, index - 1))} className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg">
-              <ChevronLeft className="h-3.5 w-3.5" />
+            <button
+              type="button"
+              onClick={() => setCurrentPageIndex((index) => Math.max(0, index - 1))}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+            >
+              <ChevronLeft className="h-3 w-3" />
               {normalized.backLabel}
             </button>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={dismiss} className="rounded-xl border border-theme px-3 py-2 text-xs font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={dismiss}
+            className="rounded-md px-2 py-1 text-[11px] font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+          >
             {normalized.cancelLabel}
           </button>
           <button
             type="button"
             onClick={() => (isLastPage ? submit() : setCurrentPageIndex((index) => Math.min(totalPages - 1, index + 1)))}
             disabled={!canContinue}
-            className="inline-flex items-center gap-1 rounded-xl px-4 py-2 text-xs font-semibold transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-            style={selectedStyle}
+            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ backgroundColor: 'var(--primary)', color: 'var(--primary-foreground)' }}
           >
-            {isLastPage ? <Send className="h-3.5 w-3.5" /> : null}
+            {isLastPage ? <Send className="h-3 w-3" /> : null}
             {isLastPage ? normalized.submitLabel : normalized.nextLabel}
-            {!isLastPage ? <ChevronRight className="h-3.5 w-3.5" /> : null}
+            {!isLastPage ? <ChevronRight className="h-3 w-3" /> : null}
           </button>
         </div>
       </div>
