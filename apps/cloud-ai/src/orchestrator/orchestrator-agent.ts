@@ -30,7 +30,8 @@ import {
   search_past_conversations,
   get_conversation_context,
   agent_todo,
-  capture_screen,
+  search_local_workflows,
+  run_workflow,
 } from '../tools/device-tools';
 import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
 
@@ -111,6 +112,13 @@ DEFAULT for any structured data. Prefer over plain text for tables, stats, lists
 - \`stuard.submit(data)\` (blocking), \`stuard.close()\`, \`designScheme.mode\`/\`.colors\`.
 - Non-blocking (\`blocking:false\`): display-only. Blocking (\`blocking:true\`): custom input forms.
 
+## Local Workflows — search_local_workflows / run_workflow
+
+User-authored Stuard workflows act as custom tools. When a request matches something the user has already automated, run it instead of reinventing the steps.
+- \`search_local_workflows({ query?, limit? })\` — list/filter local workflows. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
+- \`run_workflow({ id | name, args?, timeoutMs? })\` — execute a workflow synchronously. Match \`args\` keys to the workflow's \`inputSchema\` names.
+- Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+
 ## Rules
 
 1. **Act > Ask** — complete requests end-to-end, don't over-confirm
@@ -156,9 +164,6 @@ function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<
     // Task tracking
     agent_todo,
 
-    // Vision
-    capture_screen,
-
     // Background agents
     deploy_headless_agent: deployHeadlessAgent,
     get_headless_agent_status: getHeadlessAgentStatus,
@@ -175,6 +180,8 @@ function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<
   // Desktop UI tools only when bridge is active
   if (hasClientBridge()) {
     tools.chat_ui = chatUiTool;
+    tools.search_local_workflows = search_local_workflows;
+    tools.run_workflow = run_workflow;
   }
 
   return tools;

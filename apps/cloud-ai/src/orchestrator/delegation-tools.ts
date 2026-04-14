@@ -113,7 +113,7 @@ async function runDelegateTask(
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
   const isIntegration = !['browser', 'file_ops', 'workflow', 'media'].includes(name);
-  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
+  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow' | 'media';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   writeLog('delegate_start', {
