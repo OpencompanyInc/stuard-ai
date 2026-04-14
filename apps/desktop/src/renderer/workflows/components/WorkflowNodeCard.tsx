@@ -15,6 +15,7 @@ export const STREAM_CAPABLE_TOOLS = new Set([
   'capture_media',
   'capture_screen',
   'capture_system_audio',
+  'ollama_agent',
   'ollama_chat',
   'ollama_generate',
 ]);
@@ -242,4 +243,3 @@ export function WorkflowNode({
     </div>
   );
 }
-

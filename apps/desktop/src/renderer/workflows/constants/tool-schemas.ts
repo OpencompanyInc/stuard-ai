@@ -182,6 +182,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- OLLAMA (Local AI) ---
   { id: 'ollama_status', category: 'ollama', kind: 'local', description: 'Check if Ollama is running locally and list available models', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', host: 'string', modelCount: 'number', models: 'any[]', runningCount: 'number', running: 'any[]', error: 'string' } },
+  { id: 'ollama_agent', category: 'ollama', kind: 'local', description: 'Run a local Ollama model like a workflow AI agent. Combines prompt/chat/image input, memory injected into the system prompt, and smart workflow tool access.', argsTemplate: { model: 'llama3.2', prompt: '', context: '', systemPrompt: '', outputMode: 'text', toolMode: 'curated', maxSteps: 8, timeoutMs: 300000, injectMemory: false, stream: false, think: false, temperature: 0.7, num_predict: 2048 }, outputSchema: { ok: 'boolean', model: 'string', text: 'string', json: 'any', thinking: 'string', toolCalls: 'number', usedTools: 'string[]', streamed: 'boolean', streamId: 'string', totalDuration: 'number', evalCount: 'number', error: 'string' } },
   { id: 'ollama_chat', category: 'ollama', kind: 'local', description: 'Multi-turn chat with a local LLM via Ollama. Supports system prompts, temperature, JSON mode, streaming, thinking (reasoning models), and tool calling.', argsTemplate: { model: 'llama3.2', messages: [{ role: 'user', content: '' }], system: '', stream: false, think: false, tools: [], temperature: 0.7, num_predict: 2048, json_mode: false }, outputSchema: { ok: 'boolean', model: 'string', message: 'object', text: 'string', thinking: 'string', toolCalls: 'any[]', streamed: 'boolean', streamId: 'string', totalDuration: 'number', evalCount: 'number', error: 'string' } },
   { id: 'ollama_generate', category: 'ollama', kind: 'local', description: 'Single-prompt text completion with a local LLM. Simpler than chat for one-shot tasks. Supports thinking mode for reasoning models.', argsTemplate: { model: 'llama3.2', prompt: '', system: '', stream: false, think: false, temperature: 0.7, num_predict: 2048, json_mode: false }, outputSchema: { ok: 'boolean', model: 'string', text: 'string', thinking: 'string', streamed: 'boolean', streamId: 'string', totalDuration: 'number', evalCount: 'number', error: 'string' } },
   { id: 'ollama_vision', category: 'ollama', kind: 'local', description: 'Analyze images using a local multimodal model (e.g. llava). Reads local files — no cloud upload.', argsTemplate: { model: 'llava', prompt: 'Describe this image in detail.', imagePath: '', temperature: 0.7, num_predict: 2048 }, outputSchema: { ok: 'boolean', model: 'string', text: 'string', totalDuration: 'number', imageCount: 'number', error: 'string' } },
@@ -3162,7 +3163,7 @@ if (TOOL_SCHEMAS['mediapipe_process_video']) {
 // Must be AFTER all schema definitions (agent_node is defined last)
 // ============================================================================
 
-for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_script', 'capture_media', 'capture_screen', 'capture_system_audio']) {
+for (const toolId of ['agent_node', 'ai_inference', 'http_request', 'run_python_script', 'capture_media', 'capture_screen', 'capture_system_audio', 'ollama_agent']) {
   if (TOOL_SCHEMAS[toolId]) {
     TOOL_SCHEMAS[toolId].args.stream = {
       type: 'boolean' as any,
@@ -3201,6 +3202,150 @@ if (TOOL_SCHEMAS['ollama_status']) {
 }
 
 // ollama_chat — multi-turn conversation
+if (TOOL_SCHEMAS['ollama_agent']) {
+  TOOL_SCHEMAS['ollama_agent'].label = 'Ollama Agent';
+  TOOL_SCHEMAS['ollama_agent'].description = 'One combined local AI node for prompt/chat/image tasks. It can inject local memory into the system prompt and use a curated set of workflow tools through one smart bridge.';
+  TOOL_SCHEMAS['ollama_agent'].args = {
+    model: {
+      type: 'select',
+      label: 'Model',
+      description: 'Which local Ollama model to use. Pick a preset or type your own model name.',
+      options: OLLAMA_CHAT_MODEL_OPTIONS,
+      default: 'llama3.2',
+      required: true,
+      allowFreeform: true,
+      placeholder: 'e.g. llama3.2, qwen3, mistral',
+    },
+    prompt: {
+      type: 'string',
+      label: 'Prompt',
+      description: 'Main task for the local agent. You can reference previous step outputs with {{step.field}}.',
+      placeholder: 'Summarize these notes and draft a reply...',
+    },
+    context: {
+      type: 'string',
+      label: 'Extra Context',
+      description: 'Optional extra text appended after the main prompt.',
+      placeholder: 'Additional background, constraints, or raw data...',
+    },
+    messages: {
+      type: 'array',
+      label: 'Conversation History',
+      description: 'Optional prior chat messages for multi-turn local conversations.',
+      itemType: 'object',
+      advanced: true,
+    },
+    systemPrompt: {
+      type: 'string',
+      label: 'System Prompt',
+      description: 'Additional instructions that shape the agent behavior.',
+      placeholder: 'You are a careful code reviewer...',
+    },
+    outputMode: {
+      type: 'select',
+      label: 'Output Mode',
+      description: 'Return plain text or parse the final answer as JSON.',
+      options: [
+        { value: 'text', label: 'Text' },
+        { value: 'json', label: 'JSON' },
+      ],
+      default: 'text',
+    },
+    outputSchema: {
+      type: 'json',
+      label: 'Target JSON Schema',
+      description: 'Optional schema hint for the final JSON answer.',
+      placeholder: '{ "summary": "string", "priority": "number" }',
+      showWhen: { field: 'outputMode', value: 'json' },
+      advanced: true,
+    },
+    toolMode: {
+      type: 'select',
+      label: 'Tool Access',
+      description: 'Choose whether the local agent gets the built-in curated tools, only selected tools, or no tools.',
+      options: [
+        { value: 'curated', label: 'Curated Default' },
+        { value: 'selected', label: 'Selected Only' },
+        { value: 'none', label: 'No Tools' },
+      ],
+      default: 'curated',
+    },
+    tools: {
+      type: 'array',
+      label: 'Selected Tools',
+      description: 'The exact workflow tools the local agent may use when Tool Access is set to Selected Only.',
+      itemType: 'string',
+      advanced: true,
+      showWhen: { field: 'toolMode', value: 'selected' },
+    },
+    maxSteps: {
+      type: 'number',
+      label: 'Max Tool Steps',
+      description: 'Maximum number of tool rounds before the local agent stops.',
+      default: 8,
+    },
+    timeoutMs: {
+      type: 'number',
+      label: 'Timeout (ms)',
+      description: 'Total timeout for the full local agent run.',
+      default: 300000,
+      advanced: true,
+    },
+    injectMemory: {
+      type: 'boolean',
+      label: 'Inject Memory',
+      description: 'Add local identity, directives, bio, and related memories to the system prompt.',
+      default: false,
+    },
+    memory: {
+      type: 'object',
+      label: 'Advanced Memory Config',
+      description: 'Optional granular memory settings, custom facts, and conversation history.',
+      advanced: true,
+    },
+    imagePath: {
+      type: 'path',
+      label: 'Image File',
+      description: 'Optional image for multimodal local models.',
+      placeholder: 'C:/images/reference.png',
+      advanced: true,
+    },
+    images: {
+      type: 'array',
+      label: 'Image Inputs',
+      description: 'Optional multiple images, each with { path } or { data }.',
+      itemType: 'object',
+      advanced: true,
+    },
+    stream: {
+      type: 'boolean',
+      label: 'Stream Result',
+      description: 'Write the final result into a workflow stream so downstream nodes can consume it.',
+      default: false,
+    },
+    think: {
+      type: 'boolean',
+      label: 'Enable Thinking',
+      description: 'For reasoning-capable local models that expose a separate thinking trace.',
+      default: false,
+    },
+    temperature: {
+      type: 'number',
+      label: 'Temperature',
+      description: 'Creativity level (0.0 = focused, 1.0 = creative).',
+      default: 0.7,
+      advanced: true,
+    },
+    num_predict: {
+      type: 'number',
+      label: 'Max Tokens',
+      description: 'Maximum tokens to generate in the final answer.',
+      default: 2048,
+      advanced: true,
+    },
+  };
+}
+
 if (TOOL_SCHEMAS['ollama_chat']) {
   TOOL_SCHEMAS['ollama_chat'].label = 'Ollama Chat';
   TOOL_SCHEMAS['ollama_chat'].args = {

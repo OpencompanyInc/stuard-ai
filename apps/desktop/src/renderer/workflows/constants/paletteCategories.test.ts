@@ -53,4 +53,26 @@ describe('workflow palette categories', () => {
       ])
     );
   });
+
+  it('prefers the combined Ollama agent node in the local AI toolbox', () => {
+    const ollamaCategory = PALETTE_CATEGORIES.find((category) => category.id === 'ollama');
+
+    expect(ollamaCategory).toBeDefined();
+    expect(ollamaCategory?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          t: 'ollama_agent',
+          label: 'Local AI Agent',
+          args: expect.objectContaining({
+            model: 'llama3.2',
+            prompt: '',
+            outputMode: 'text',
+          }),
+        }),
+      ])
+    );
+    expect(ollamaCategory?.items.some((item) => item.t === 'ollama_chat')).toBe(false);
+    expect(ollamaCategory?.items.some((item) => item.t === 'ollama_generate')).toBe(false);
+    expect(ollamaCategory?.items.some((item) => item.t === 'ollama_vision')).toBe(false);
+  });
 });

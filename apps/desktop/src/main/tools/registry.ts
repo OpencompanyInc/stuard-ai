@@ -253,6 +253,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   // Ollama (Local AI models)
   'ollama_status': { kind: 'electron' },
   'ollama_start': { kind: 'electron' },
+  'ollama_agent': { kind: 'electron' },
   'ollama_chat': { kind: 'electron' },
   'ollama_generate': { kind: 'electron' },
   'ollama_vision': { kind: 'electron' },

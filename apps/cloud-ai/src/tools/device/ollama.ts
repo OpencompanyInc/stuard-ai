@@ -29,6 +29,73 @@ export const ollama_status = makeLocalTool(
 
 // ─── ollama_chat ─────────────────────────────────────────────────────────────
 
+export const ollama_agent = makeLocalTool(
+  'ollama_agent',
+  'Run a local Ollama model like a workflow AI agent. Combines text generation, multi-turn chat, optional image inputs, memory injected into the system prompt, and a smart workflow tool bridge for search/describe/run.',
+  z.object({
+    model: z.string().optional().default('llama3.2').describe('Local Ollama model name (e.g. "llama3.2", "qwen3", "mistral").'),
+    prompt: z.string().optional().describe('Main task or user message. Required unless messages are provided.'),
+    context: z.string().optional().describe('Extra context appended to the prompt.'),
+    messages: z.array(z.object({
+      role: z.enum(['system', 'user', 'assistant']),
+      content: z.string(),
+    })).optional().describe('Optional prior conversation messages.'),
+    systemPrompt: z.string().optional().describe('Additional system instructions for the local agent.'),
+    system: z.string().optional().describe('Alias for systemPrompt.'),
+    outputMode: z.enum(['text', 'json']).optional().default('text').describe('Final output mode.'),
+    outputSchema: z.record(z.string(), z.any()).optional().describe('Optional target schema when outputMode="json".'),
+    toolMode: z.enum(['curated', 'selected', 'none']).optional().default('curated').describe('curated = built-in default tools, selected = only the tools array, none = disable tools entirely.'),
+    tools: z.array(z.string()).optional().describe('Allowed workflow tool names. Omit for a curated default set. Use [] for no tools.'),
+    maxSteps: z.coerce.number().int().min(1).max(20).optional().default(8).describe('Maximum tool rounds before stopping.'),
+    timeoutMs: z.coerce.number().int().min(5000).max(600000).optional().default(300000).describe('Total timeout for the full agent run.'),
+    injectMemory: z.boolean().optional().default(false).describe('Legacy toggle to inject local memory into the system prompt.'),
+    memory: z.object({
+      enabled: z.boolean().optional().default(false),
+      lenses: z.object({
+        identity: z.boolean().optional().default(true),
+        directives: z.boolean().optional().default(true),
+        bio: z.boolean().optional().default(true),
+        relatedMemories: z.boolean().optional().default(true),
+      }).optional(),
+      maxFacts: z.number().optional().default(6),
+      conversationHistory: z.array(z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string(),
+      })).optional(),
+      customFacts: z.array(z.string()).optional(),
+    }).optional().describe('Local memory configuration to inject into the system prompt.'),
+    images: z.array(z.object({
+      path: z.string().optional().describe('Local file path to an image'),
+      data: z.string().optional().describe('Base64 encoded image data'),
+    })).optional().describe('Optional images for multimodal models.'),
+    imagePath: z.string().optional().describe('Convenience single-image path.'),
+    stream: z.boolean().optional().default(false).describe('When true, returns a streamId and writes the final result to a workflow stream.'),
+    json_mode: z.boolean().optional().describe('Alias for outputMode="json".'),
+    temperature: z.number().optional().describe('Sampling temperature.'),
+    num_predict: z.number().optional().describe('Maximum tokens to generate.'),
+    top_p: z.number().optional().describe('Nucleus sampling threshold.'),
+    top_k: z.number().optional().describe('Top-K sampling.'),
+    think: z.boolean().optional().describe('Enable thinking mode for reasoning-capable models.'),
+    keep_alive: z.string().optional().describe('How long to keep the model loaded (e.g. "5m").'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    model: z.string().optional(),
+    text: z.string().optional(),
+    json: z.any().optional(),
+    thinking: z.string().optional(),
+    toolCalls: z.number().optional(),
+    usedTools: z.array(z.string()).optional(),
+    streamId: z.string().optional(),
+    streamed: z.boolean().optional(),
+    totalDuration: z.number().optional(),
+    evalCount: z.number().optional(),
+    error: z.string().optional(),
+  }),
+  600000,
+  { noFallback: true },
+);
+
 export const ollama_chat = makeLocalTool(
   'ollama_chat',
   'Multi-turn chat with a local LLM via Ollama. Supports system prompts, temperature, JSON output format, and streaming. Models run privately on-device with no API key needed.',

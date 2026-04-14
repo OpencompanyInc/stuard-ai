@@ -12,7 +12,7 @@ import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handler
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
 import { skills_save, skills_list } from '../skills';
-import { execOllamaStatus, execOllamaStart, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
+import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse, shutdownAllBrowserUseServers } from './handlers/browser-use';
 import { captureToolMedia, registerLocalMedia } from '../services/media-library';
 
@@ -240,6 +240,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       // Ollama (Local AI) tools
       if (toolName === 'ollama_status') return execOllamaStatus(args, ctx);
       if (toolName === 'ollama_start') return execOllamaStart(args, ctx);
+      if (toolName === 'ollama_agent') return execOllamaAgent(args, ctx);
       if (toolName === 'ollama_chat') return execOllamaChat(args, ctx);
       if (toolName === 'ollama_generate') return execOllamaGenerate(args, ctx);
       if (toolName === 'ollama_vision') return execOllamaVision(args, ctx);

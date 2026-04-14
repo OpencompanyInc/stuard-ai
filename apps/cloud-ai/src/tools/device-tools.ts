@@ -221,6 +221,7 @@ export {
 // ═══════════════════════════════════════════════════════════════════════════════
 export {
   ollama_status,
+  ollama_agent,
   ollama_chat,
   ollama_generate,
   ollama_vision,

@@ -36,6 +36,7 @@ describe('Tool Registry - Extended Tests', () => {
       'play_audio',
       'get_clipboard_content',
       'set_clipboard_content',
+      'ollama_agent',
       'call_workspace_function',
       'list_workspace_functions',
     ];
