@@ -15,6 +15,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { app, BrowserWindow } from "electron";
 import { warmDiscoveredAppIconCache } from "./icon-cache";
+import { prewarmWindowsAppIcons } from "./app-icon-extractor";
 import logger from "../utils/logger";
 
 const execAsync = promisify(exec);
@@ -81,7 +82,15 @@ export async function getInstalledApps(forceRefresh = false): Promise<Discovered
 export async function refreshAppCache(): Promise<void> {
   await getInstalledApps(true);
   notifyAppsUpdated({ count: cachedApps.length, iconsReady: false });
-  warmDiscoveredAppIconCache(cachedApps, { size: "normal" })
+
+  // Two-stage icon warming:
+  // 1. Pre-extract via Shell COM (IShellItemImageFactory) for the most reliable
+  //    icons — handles UWP shell:AppsFolder and DLL-resource icons that
+  //    SHGetFileInfo (Electron's getFileIcon) can't resolve. Mutates iconHint.
+  // 2. Warm Electron's nativeImage cache from the now-stable iconHint paths.
+  prewarmWindowsAppIcons(cachedApps)
+    .catch((e) => logger.warn("[app-discovery] Shell COM icon prewarm failed:", e?.message))
+    .then(() => warmDiscoveredAppIconCache(cachedApps, { size: "normal" }))
     .then(() => notifyAppsUpdated({ count: cachedApps.length, iconsReady: true }))
     .catch(() => {
       // Discovery is still valid even if icon warming fails.
@@ -211,6 +220,29 @@ async function discoverWindows(): Promise<DiscoveredApp[]> {
       '    }',
       '  }',
       '}',
+      // UWP package logos: Get-AppxPackage exposes .Logo as a manifest reference, but the
+      // actual file on disk is a scale-suffixed variant (e.g. StoreLogo.scale-100.png).
+      // Resolve the closest-existing file so iconHint points at a real PNG that Electron's
+      // nativeImage can read — shell:AppsFolder URIs cannot be resolved by getFileIcon.
+      '$uwpLogos = @{}',
+      'try {',
+      '  Get-AppxPackage -ErrorAction SilentlyContinue | ForEach-Object {',
+      '    $pfn = $_.PackageFamilyName',
+      '    if (-not $pfn) { return }',
+      '    $logo = $_.Logo -as [string]',
+      '    if (-not $logo) { return }',
+      '    if (-not (Test-Path -LiteralPath $logo)) {',
+      '      $dir = Split-Path -Parent $logo',
+      '      $base = [IO.Path]::GetFileNameWithoutExtension($logo)',
+      '      if ($dir -and (Test-Path -LiteralPath $dir)) {',
+      '        $alt = Get-ChildItem -LiteralPath $dir -Filter "$base.scale-*.png" -ErrorAction SilentlyContinue | Select-Object -First 1',
+      '        if (-not $alt) { $alt = Get-ChildItem -LiteralPath $dir -Filter "$base.targetsize-*.png" -ErrorAction SilentlyContinue | Select-Object -First 1 }',
+      '        if ($alt) { $logo = $alt.FullName }',
+      '      }',
+      '    }',
+      '    if ($logo -and (Test-Path -LiteralPath $logo)) { $uwpLogos[$pfn.ToLower()] = $logo }',
+      '  }',
+      '} catch {}',
       'Get-StartApps | Select-Object -First 2000 | ForEach-Object {',
       '  $exe = ""',
       '  $link = ""',
@@ -222,6 +254,11 @@ async function discoverWindows(): Promise<DiscoveredApp[]> {
       '    if ($entry.Target) { $exe = $entry.Target }',
       '    if ($entry.Link) { $link = $entry.Link }',
       '    if ($entry.Icon) { $icon = $entry.Icon }',
+      '  }',
+      // UWP AppID is "<PackageFamilyName>!<EntryPoint>" — match the family name to its logo.
+      '  if ($_.AppID -match "^([^!]+)!") {',
+      '    $pfn = $matches[1].ToLower()',
+      '    if ($uwpLogos.ContainsKey($pfn)) { $icon = $uwpLogos[$pfn] }',
       '  }',
       '  [PSCustomObject]@{ Name=$_.Name; AppID=$_.AppID; Exe=$exe; Link=$link; Icon=$icon }',
       '} | ConvertTo-Json -Compress',

@@ -1251,11 +1251,15 @@ export default function App() {
   }, [state?.connecting, state?.connected, state?.status]);
 
   const chatStatusText = useMemo(() => {
-    if (connectionStatus === 'connecting') return 'Connecting…';
+    if (connectionStatus === 'connecting') {
+      const aiText = ai?.statusText;
+      if (aiText === 'Starting…') return 'Starting…';
+      return 'Connecting…';
+    }
     if (connectionStatus === 'disconnected') return 'Offline';
     if (connectionStatus === 'error') return 'Connection error';
     return statusLabel;
-  }, [connectionStatus, statusLabel]);
+  }, [connectionStatus, statusLabel, ai?.statusText]);
 
   const handleShowSidebar = useCallback(() => {
     setOverlayMode('sidebar');

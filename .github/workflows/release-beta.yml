@@ -233,7 +233,7 @@ jobs:
             --service-account "${{ secrets.GCP_RUN_SA }}" \
             --memory 1Gi \
             --cpu 2 \
-            --timeout 300 \
+            --timeout 3600 \
             --concurrency 80 \
             --min-instances 0 \
             --max-instances 3 \

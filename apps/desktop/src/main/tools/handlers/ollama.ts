@@ -270,7 +270,11 @@ function summarizeArgSchema(arg: any): any {
   return summary;
 }
 
-async function resolveAllowedOllamaTools(requestedTools: any, toolMode?: any): Promise<string[]> {
+async function resolveAllowedOllamaTools(
+  requestedTools: any,
+  toolMode?: any,
+  options?: { toolsProvided?: boolean },
+): Promise<string[]> {
   const toolSchemas = await loadWorkflowToolSchemas();
   const knownTools = new Set<string>(toolSchemas.getAllToolNames());
   const normalizedMode = String(toolMode || '').trim().toLowerCase();
@@ -283,7 +287,7 @@ async function resolveAllowedOllamaTools(requestedTools: any, toolMode?: any): P
     ? requestedTools.map((tool) => String(tool || '').trim()).filter(Boolean)
     : [];
 
-  const shouldUseSelected = normalizedMode === 'selected' || requestedList.length > 0;
+  const shouldUseSelected = normalizedMode === 'selected' || options?.toolsProvided === true;
   const requested = shouldUseSelected ? requestedList : [...OLLAMA_AGENT_DEFAULT_TOOLS];
 
   const seen = new Set<string>();
@@ -505,7 +509,7 @@ async function buildOllamaAgentMemoryContext(args: any, ctx: RouterContext): Pro
       .map((fact: any) => String(fact || '').trim())
       .filter(Boolean);
     if (customFacts.length > 0) {
-      sections.push(`[CUSTOM FACTS]\n${customFacts.map((fact) => `- ${fact}`).join('\n')}`);
+      sections.push(`[CUSTOM FACTS]\n${customFacts.map((fact: string) => `- ${fact}`).join('\n')}`);
     }
   }
 
@@ -970,7 +974,9 @@ export async function execOllamaStart(_args: any, _ctx: RouterContext): Promise<
 // ─── ollama_chat ─────────────────────────────────────────────────────────────
 
 export async function execOllamaAgent(args: any, ctx: RouterContext): Promise<any> {
-  const allowedTools = await resolveAllowedOllamaTools(args?.tools, args?.toolMode);
+  const allowedTools = await resolveAllowedOllamaTools(args?.tools, args?.toolMode, {
+    toolsProvided: !!args && Object.prototype.hasOwnProperty.call(args, 'tools'),
+  });
   const model = String(args?.model || 'llama3.2');
   const stream = args?.stream === true;
   const outputMode = String(args?.outputMode || args?.mode || (args?.json_mode ? 'json' : 'text')).trim().toLowerCase();

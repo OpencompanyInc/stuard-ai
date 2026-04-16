@@ -106,6 +106,8 @@ def format_file_result(f: db.IndexedFile, score: float = 0.0, match_type: str = 
         "score": round(score, 4),
         "match_type": match_type,
         "is_folder": effective_kind == 'folder',
+        "preview_kind": f.preview_kind,
+        "preview_eligible": bool(f.preview_eligible),
     }
     
     # For application-type files, resolve friendly display name and target
@@ -162,17 +164,100 @@ def _deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def format_folder_result(f: db.FolderSummary, score: float = 0.0) -> Dict[str, Any]:
     """Format a folder result for API response."""
+    folder_name = os.path.basename(f.path.rstrip("\\/")) or f.path
     return {
         "id": f.id,
         "path": f.path,
-        "folder_name": os.path.basename(f.path),
+        "filename": folder_name,
+        "display_name": folder_name,
+        "folder_name": folder_name,
+        "extension": "",
+        "kind": "folder",
+        "size": 0,
         "file_count": f.file_count,
         "subfolder_count": f.subfolder_count,
         "summary": f.summary,
         "keywords": f.keywords,
         "score": round(score, 4),
-        "type": "folder",
+        "match_type": "folder",
+        "is_folder": True,
+        "preview_kind": "icon",
+        "preview_eligible": True,
     }
+
+
+def format_root_result(root: db.IndexedRoot, score: float = 0.0, match_type: str = "root") -> Dict[str, Any]:
+    """Format an indexed root folder as a normal search result."""
+    folder_name = os.path.basename(root.path.rstrip("\\/")) or root.path
+    return {
+        "id": f"root:{root.id}",
+        "path": root.path,
+        "filename": folder_name,
+        "display_name": folder_name,
+        "extension": "",
+        "kind": "folder",
+        "size": 0,
+        "summary": None,
+        "keywords": None,
+        "status": "indexed",
+        "indexed_at": root.last_scan_at,
+        "score": round(score, 4),
+        "match_type": match_type,
+        "is_folder": True,
+        "preview_kind": "icon",
+        "preview_eligible": True,
+    }
+
+
+def _normalize_search_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", re.sub(r"[/\\]+", " ", str(value or "").lower()))).strip()
+
+
+def _tokenize_search_text(value: str) -> List[str]:
+    normalized = _normalize_search_text(value)
+    return [token for token in normalized.split(" ") if token]
+
+
+def _score_root_match(root: db.IndexedRoot, query: str) -> float:
+    q = _normalize_search_text(query)
+    if not q:
+        return 0.0
+
+    folder_name = os.path.basename(root.path.rstrip("\\/")) or root.path
+    normalized_name = _normalize_search_text(folder_name)
+    normalized_path = _normalize_search_text(root.path)
+    tokens = set(_tokenize_search_text(folder_name) + _tokenize_search_text(root.path))
+    query_tokens = _tokenize_search_text(query)
+
+    if normalized_name == q:
+        return 2.2
+    if q in tokens:
+        return 2.0
+    if normalized_name.startswith(q):
+        return 1.85
+    if q in normalized_name:
+        return 1.55
+    if query_tokens and all(any(token == qt or token.startswith(qt) for token in tokens) for qt in query_tokens):
+        return 1.35
+    if q in normalized_path:
+        return 1.15
+    return 0.0
+
+
+def _search_root_folders(query: str, limit: int = 20, root_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Search indexed root folders so top-level roots like Downloads show up in normal search."""
+    roots = db.list_roots(enabled_only=True)
+    if root_id:
+        roots = [root for root in roots if root.id == root_id]
+
+    scored: List[Tuple[float, db.IndexedRoot]] = []
+    for root in roots:
+        score = _score_root_match(root, query)
+        if score > 0:
+            scored.append((score, root))
+
+    scored.sort(key=lambda item: (-item[0], len(item[1].path), item[1].path.lower()))
+    return [format_root_result(root, score, "root") for score, root in scored[:limit]]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -288,6 +373,20 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
             vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id)
             for f, score in vec_results:
                 results.append(format_file_result(f, score, 'vector'))
+
+    if query:
+        existing_paths = {
+            os.path.normcase(os.path.normpath(str(result.get("path") or "")))
+            for result in results
+            if result.get("path")
+        }
+        for root_result in _search_root_folders(query, limit=max(limit, 8), root_id=root_id):
+            normalized_path = os.path.normcase(os.path.normpath(str(root_result.get("path") or "")))
+            if normalized_path and normalized_path in existing_paths:
+                continue
+            results.append(root_result)
+            if normalized_path:
+                existing_paths.add(normalized_path)
     
     # Sort: applications first (kind priority), then by score descending
     # This ensures apps always appear above folders/files when scores are close

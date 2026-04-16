@@ -125,6 +125,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // System helpers
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
   getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
+  getFilePreview: (filePath: string, options?: { size?: 'small' | 'normal' | 'large'; preferThumbnail?: boolean }) =>
+    ipcRenderer.invoke('system:getFilePreview', filePath, options),
   getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
   // App Discovery & Unified Search
   listApps: (forceRefresh?: boolean) => ipcRenderer.invoke('apps:list', forceRefresh),

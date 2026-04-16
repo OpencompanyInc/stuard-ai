@@ -22,6 +22,7 @@ export interface PaletteCategoryItem {
   label: string;
   icon: LucideIcon;
   args: Record<string, any>;
+  disabled?: boolean;
 }
 
 export interface PaletteCategory {

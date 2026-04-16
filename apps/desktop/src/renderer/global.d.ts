@@ -206,6 +206,7 @@ declare global {
       onTerminalExit: (cb: (data: { sessionId: string; exitCode: number }) => void) => () => void;
 
       // File Icons
+      getFilePreview: (filePath: string, options?: { size?: 'small' | 'normal' | 'large'; preferThumbnail?: boolean }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
       getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
 
       // Skills

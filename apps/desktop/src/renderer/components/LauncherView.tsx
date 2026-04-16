@@ -684,6 +684,54 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     })();
   }, [appResults]);
 
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api?.getFilePreview || fileResults.length === 0) return;
+
+    const uniquePaths = (values: string[]) =>
+      Array.from(new Set(values.filter(Boolean)));
+
+    const reqId = ++fileIconReqIdRef.current;
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        fileResults.slice(0, 8).map(async (f: any) => {
+          const key = String(f?.path || "").trim();
+          if (!key || fileIconCacheRef.current[key]) return;
+
+          const preferThumbnail = String(f?.preview_kind || "icon") === "thumbnail";
+          const candidates = preferThumbnail
+            ? [key]
+            : uniquePaths([
+                String(f?.icon_path || "").trim(),
+                String(f?.target_path || "").trim(),
+                key,
+              ]);
+
+          for (const candidate of candidates) {
+            try {
+              const res = await api.getFilePreview(candidate, {
+                size: "normal",
+                preferThumbnail,
+              });
+              if (fileIconReqIdRef.current !== reqId) return;
+              if (res?.ok && typeof res.dataUrl === "string" && res.dataUrl) {
+                updates[key] = res.dataUrl;
+                return;
+              }
+            } catch {}
+          }
+        }),
+      );
+
+      if (fileIconReqIdRef.current !== reqId) return;
+      const keys = Object.keys(updates);
+      if (keys.length === 0) return;
+      for (const k of keys) fileIconCacheRef.current[k] = updates[k];
+      setFileIconDataUrls((prev) => ({ ...prev, ...updates }));
+    })();
+  }, [fileResults]);
+
   // Resolve icons for discovered apps shown in quick shortcuts
   useEffect(() => {
     const api = (window as any).desktopAPI;
@@ -1035,7 +1083,14 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                                 }
                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/app text-left border border-transparent hover:border-blue-500/30"
                               >
-                                <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-500/10 text-blue-500 border border-theme/20">
+                                <div
+                                  className={clsx(
+                                    "w-7 h-7 rounded-lg flex items-center justify-center",
+                                    iconUrl
+                                      ? "bg-transparent border-transparent"
+                                      : "bg-blue-500/10 text-blue-500 border border-theme/20",
+                                  )}
+                                >
                                   {iconUrl ? (
                                     <img
                                       src={iconUrl}
@@ -1080,10 +1135,9 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                               String(f.kind || "other").toLowerCase(),
                             );
                             const iconUrl =
-                              String(f.kind || "other").toLowerCase() ===
-                                "application" && f?.path
-                                ? fileIconDataUrls[String(f.path)]
-                                : undefined;
+                              f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                            const isThumbnail =
+                              String(f?.preview_kind || "icon") === "thumbnail";
                             return (
                               <button
                                 key={f.path}
@@ -1092,9 +1146,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                               >
                                 <div
                                   className={clsx(
-                                    "w-7 h-7 rounded-lg flex items-center justify-center border border-theme/20",
-                                    cfg.bg,
-                                    cfg.color,
+                                    "w-7 h-7 rounded-lg flex items-center justify-center",
+                                    iconUrl
+                                      ? "bg-transparent border-transparent"
+                                      : [cfg.bg, cfg.color, "border border-theme/20"],
+                                    isThumbnail && "overflow-hidden",
                                   )}
                                 >
                                   {iconUrl ? (
@@ -1102,7 +1158,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                                       src={iconUrl}
                                       alt=""
                                       loading="lazy"
-                                      className="w-5 h-5 object-contain"
+                                      className={clsx(
+                                        isThumbnail
+                                          ? "w-full h-full object-cover"
+                                          : "w-5 h-5 object-contain",
+                                      )}
                                     />
                                   ) : (
                                     <cfg.icon className="w-3.5 h-3.5" />

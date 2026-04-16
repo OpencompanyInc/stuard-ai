@@ -1,9 +1,14 @@
 import { app, nativeImage } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import logger from "../utils/logger";
 
 type IconSize = "small" | "normal" | "large";
+type PreviewMode = "icon" | "thumbnail";
+
+interface FilePreviewOptions {
+  size?: IconSize;
+  preferThumbnail?: boolean;
+}
 
 interface CachedIconEntry {
   expiresAt: number;
@@ -22,9 +27,33 @@ const SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
 const MISS_TTL_MS = 30 * 60 * 1000;
 const fileIconCache = new Map<string, CachedIconEntry>();
 const inFlightIconLoads = new Map<string, Promise<{ ok: boolean; dataUrl?: string; error?: string }>>();
+const THUMBNAIL_EXTENSIONS = new Set([
+  ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico",
+  ".heic", ".heif", ".tiff", ".tif",
+]);
 
-function cacheKeyFor(filePath: string, size: IconSize = "normal"): string {
-  return `${size}:${normalizeIconPath(filePath).toLowerCase()}`;
+function iconSizeToPixels(size: IconSize): number {
+  switch (size) {
+    case "small":
+      return 16;
+    case "large":
+      return 64;
+    default:
+      return 32;
+  }
+}
+
+function cacheKeyFor(filePath: string, size: IconSize = "normal", mode: PreviewMode = "icon"): string {
+  const normalized = normalizeIconPath(filePath);
+  const fingerprint = (() => {
+    try {
+      const stat = fs.statSync(normalized);
+      return `${Math.trunc(stat.mtimeMs)}:${stat.size}`;
+    } catch {
+      return "missing";
+    }
+  })();
+  return `${mode}:${size}:${normalized.toLowerCase()}:${fingerprint}`;
 }
 
 function normalizeIconPath(input: string): string {
@@ -137,14 +166,54 @@ async function loadFileIcon(filePath: string, size: IconSize = "normal"): Promis
   return { ok: false, error: "no_icon" };
 }
 
+function isThumbnailEligible(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return THUMBNAIL_EXTENSIONS.has(ext);
+}
+
+function loadImageThumbnail(filePath: string, size: IconSize): { ok: boolean; dataUrl?: string; error?: string } {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, error: "missing_file" };
+    }
+    const image = nativeImage.createFromPath(filePath);
+    if (!image || image.isEmpty()) {
+      return { ok: false, error: "invalid_image" };
+    }
+    const pixels = iconSizeToPixels(size);
+    const resized = image.resize({ width: pixels, height: pixels, quality: "best" });
+    if (!resized || resized.isEmpty()) {
+      return { ok: false, error: "thumbnail_failed" };
+    }
+    return { ok: true, dataUrl: resized.toDataURL() };
+  } catch (error: any) {
+    return { ok: false, error: String(error?.message || "thumbnail_failed") };
+  }
+}
+
+async function loadFilePreview(
+  filePath: string,
+  size: IconSize = "normal",
+  mode: PreviewMode = "icon",
+): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
+  const cleaned = normalizeIconPath(filePath);
+  if (!cleaned) return { ok: false, error: "invalid_path" };
+  if (mode === "thumbnail" && isThumbnailEligible(cleaned)) {
+    const thumbnail = loadImageThumbnail(cleaned, size);
+    if (thumbnail.ok) return thumbnail;
+  }
+  return loadFileIcon(cleaned, size);
+}
+
 export function peekCachedFileIcon(pathsToTry: string[], size: IconSize = "normal"): string | undefined {
   for (const rawPath of pathsToTry) {
     const normalized = normalizeIconPath(rawPath);
     if (!normalized) continue;
-    const entry = fileIconCache.get(cacheKeyFor(normalized, size));
+    const entry = fileIconCache.get(cacheKeyFor(normalized, size, "icon"));
     if (!entry) continue;
+    const key = cacheKeyFor(normalized, size, "icon");
     if (entry.expiresAt <= Date.now()) {
-      fileIconCache.delete(cacheKeyFor(normalized, size));
+      fileIconCache.delete(key);
       continue;
     }
     if (entry.ok && entry.dataUrl) return entry.dataUrl;
@@ -152,15 +221,16 @@ export function peekCachedFileIcon(pathsToTry: string[], size: IconSize = "norma
   return undefined;
 }
 
-export async function getFileIconCached(
+export async function getFilePreviewCached(
   filePath: string,
-  options?: { size?: IconSize }
+  options?: FilePreviewOptions
 ): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
   const size = options?.size || "normal";
+  const mode: PreviewMode = options?.preferThumbnail ? "thumbnail" : "icon";
   const normalized = normalizeIconPath(filePath);
   if (!normalized) return { ok: false, error: "invalid_path" };
 
-  const key = cacheKeyFor(normalized, size);
+  const key = cacheKeyFor(normalized, size, mode);
   const cached = fileIconCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.ok
@@ -172,7 +242,7 @@ export async function getFileIconCached(
   if (inFlight) return inFlight;
 
   const loadPromise = (async () => {
-    const result = await loadFileIcon(normalized, size);
+    const result = await loadFilePreview(normalized, size, mode);
     fileIconCache.set(key, {
       expiresAt: Date.now() + (result.ok ? SUCCESS_TTL_MS : MISS_TTL_MS),
       ok: result.ok,
@@ -200,6 +270,13 @@ export async function getFileIconCached(
   } finally {
     inFlightIconLoads.delete(key);
   }
+}
+
+export async function getFileIconCached(
+  filePath: string,
+  options?: { size?: IconSize }
+): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
+  return getFilePreviewCached(filePath, { size: options?.size, preferThumbnail: false });
 }
 
 export async function warmFileIconCache(pathsToTry: string[], options?: { size?: IconSize }): Promise<void> {

@@ -491,7 +491,8 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
       headers['Authorization'] = `Bearer ${ctx.accessToken}`;
     }
     
-    const model = args?.mode === 'detailed' ? 'gemini-3.1-pro-preview' : '';
+    const modeModel = args?.mode === 'detailed' ? 'gemini-3.1-pro-preview' : '';
+    const model = args?.mode === 'custom' ? (args?.model || '') : (args?.model || modeModel);
     const resp = await net.fetch(url, {
       method: 'POST',
       headers,

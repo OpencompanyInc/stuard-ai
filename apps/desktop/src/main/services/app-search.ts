@@ -41,6 +41,8 @@ export interface SearchResult {
   filename?: string;
   target_path?: string;
   icon_path?: string;
+  preview_kind?: "icon" | "thumbnail";
+  preview_eligible?: boolean;
 }
 
 export interface UnifiedSearchOptions {
@@ -133,9 +135,11 @@ export async function unifiedSearch(
     }
 
     const results = merged.slice(0, limit);
-    const hasFiles = fileResults.length > 0;
+    // Cache empty/file-less results for the same window as full results — the previous
+    // 2s window meant the same keystroke would re-hit the agent on every paint, which
+    // dominated the perceived "search is slow" feel when the file index was cold.
     searchCache.set(cacheKey, {
-      expiresAt: Date.now() + (hasFiles ? SEARCH_CACHE_TTL_MS : 2000),
+      expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
       results,
     });
     if (searchCache.size > 100) {
@@ -343,6 +347,8 @@ async function searchFileIndex(
       filename: f.filename,
       target_path: f.target_path,
       icon_path: f.icon_path,
+      preview_kind: f.preview_kind,
+      preview_eligible: f.preview_eligible,
     }));
   } catch (e) {
     logger.debug("[app-search] File search failed:", e);

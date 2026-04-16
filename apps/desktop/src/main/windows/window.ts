@@ -155,8 +155,18 @@ function getNativeWindowHandleString(target: BrowserWindow | null) {
   }
 }
 
+// Circuit breaker for captureForegroundWindowHandle.
+// PowerShell invocations are synchronous and block the main process. When
+// spawnSync keeps timing out (e.g. slow PowerShell startup or broken cmd.exe),
+// we back off entirely instead of freezing the UI every focus/blur.
+let captureHandleConsecutiveFailures = 0;
+let captureHandleDisabledUntil = 0;
+const CAPTURE_HANDLE_FAILURE_THRESHOLD = 3;
+const CAPTURE_HANDLE_BACKOFF_MS = 60_000;
+
 function captureForegroundWindowHandle(excludeHandles?: Array<string | null>) {
   if (process.platform !== "win32") return null;
+  if (Date.now() < captureHandleDisabledUntil) return null;
   try {
     const { execSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
@@ -212,10 +222,20 @@ $target.ToInt64()
 
     let capturedHandle: string | null = null;
     try {
-      const result = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${getHandleScript}"`, { encoding: "utf8", timeout: 2000 });
+      const result = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${getHandleScript}"`, { encoding: "utf8", timeout: 1200 });
       capturedHandle = result.trim();
+      captureHandleConsecutiveFailures = 0;
     } catch (e) {
-      logger.warn("Failed to capture foreground window handle:", e);
+      captureHandleConsecutiveFailures += 1;
+      if (captureHandleConsecutiveFailures >= CAPTURE_HANDLE_FAILURE_THRESHOLD) {
+        captureHandleDisabledUntil = Date.now() + CAPTURE_HANDLE_BACKOFF_MS;
+        logger.warn(
+          `Disabling foreground window capture for ${CAPTURE_HANDLE_BACKOFF_MS / 1000}s after ${captureHandleConsecutiveFailures} failures:`,
+          e,
+        );
+      } else {
+        logger.warn("Failed to capture foreground window handle:", e);
+      }
     }
     try { fs.unlinkSync(getHandleScript); } catch { }
 

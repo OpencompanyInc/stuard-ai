@@ -158,7 +158,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'find_text', category: 'vision', kind: 'cloud', description: 'Find text on screen with OCR and return coordinates for the best match plus all detected matches.', argsTemplate: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false }, outputSchema: { ok: 'boolean', found: 'boolean', ambiguous: 'boolean', matchCount: 'number', matchedText: 'string', x: 'number', y: 'number', centerX: 'number', centerY: 'number', boundingBox: 'object', matches: 'any[]', allMatches: 'any[]', fullText: 'string', error: 'string' } },
   { id: 'find_and_click_text', category: 'vision', kind: 'cloud', description: 'Find matching text on screen with OCR and click only when there is a single unambiguous match.', argsTemplate: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false }, outputSchema: { ok: 'boolean', found: 'boolean', clicked: 'boolean', ambiguous: 'boolean', matchCount: 'number', matchedText: 'string', x: 'number', y: 'number', centerX: 'number', centerY: 'number', boundingBox: 'object', matches: 'any[]', allMatches: 'any[]', fullText: 'string', error: 'string' } },
   { id: 'google_cloud_ocr', category: 'vision', kind: 'cloud', description: 'Extract text from an image file, URL, or fresh screenshot using Google Cloud Vision OCR.', argsTemplate: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: false, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'document', languageHints: [], includeWordBoxes: true }, outputSchema: { ok: 'boolean', text: 'string', wordCount: 'number', words: 'any[]', detectedLanguages: 'string[]', source: 'object', mimeType: 'string', screenshotPath: 'string', error: 'string' } },
-  { id: 'analyze_media', category: 'vision', kind: 'cloud', description: 'Analyze video/audio files or transcribe audio. The task determines the output - use task="transcribe" for transcription.', argsTemplate: { task: 'Summarize this media', sources: [{ path: '' }], mode: 'fast' }, outputSchema: { summary: 'string' } },
+  { id: 'analyze_media', category: 'vision', kind: 'cloud', description: 'Analyze video/audio files or transcribe audio. The task determines the output - use task="transcribe" for transcription.', argsTemplate: { task: 'Summarize this media', sources: [{ path: '' }], mode: 'fast', model: '' }, outputSchema: { summary: 'string' } },
   { id: 'stream_speech', category: 'vision', kind: 'local', description: 'Stream microphone audio to the cloud speech proxy', argsTemplate: { accessToken: '', device: '', busId: 'default', durationMs: 60000, sampleRate: 16000 }, outputSchema: { ok: 'boolean', sessionId: 'string' } },
   { id: 'stop_stream_speech', category: 'vision', kind: 'local', description: 'Stop an active stream_speech audio session', argsTemplate: { busId: 'default' }, outputSchema: { ok: 'boolean', busId: 'string' } },
   { id: 'play_audio', category: 'vision', kind: 'local', description: 'Play an audio file (MP3, WAV, etc.)', argsTemplate: { path: '', block: true }, outputSchema: { ok: 'boolean', played: 'string', method: 'string', error: 'string' } },
@@ -465,6 +465,7 @@ const AI_INFERENCE_MODE_OPTIONS: ArgOption[] = [
 const ANALYZE_MEDIA_MODE_OPTIONS: ArgOption[] = [
   { value: 'fast', label: 'Fast', description: 'Quick analysis, lower cost' },
   { value: 'detailed', label: 'Detailed', description: 'Thorough analysis, higher quality' },
+  { value: 'custom', label: 'Custom', description: 'Pick a specific AI model from the full OpenRouter catalog' },
 ];
 
 const FILE_EDIT_MODE_OPTIONS: ArgOption[] = [
@@ -2924,6 +2925,20 @@ function buildModelOptions(models: ModelEntry[]): ArgOption[] {
 }
 
 const AGENT_MODEL_OPTIONS: ArgOption[] = buildModelOptions(modelsData as ModelEntry[]);
+
+// ANALYZE MEDIA — model picker (uses full AGENT_MODEL_OPTIONS, shown only when mode=custom)
+if (TOOL_SCHEMAS['analyze_media']) {
+  TOOL_SCHEMAS['analyze_media'].args.model = {
+    type: 'select',
+    label: 'Model',
+    description: 'Choose any model from the OpenRouter catalog to use for media analysis.',
+    options: AGENT_MODEL_OPTIONS,
+    default: '',
+    allowFreeform: true,
+    placeholder: 'Search for a model...',
+    showWhen: { field: 'mode', value: 'custom' },
+  };
+}
 
 const AGENT_OUTPUT_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Free-form text response' },

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { generateText, generateObject, embed, embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google, buildProviderEmbeddingModel } from '../utils/models';
+import { google, buildProviderEmbeddingModel, buildProviderModel } from '../utils/models';
 import { z } from 'zod';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
@@ -405,7 +405,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       const body = await readJsonBody(req);
       const task = String(body?.task || 'Analyze this media and provide a summary.');
       const media = Array.isArray(body?.media) ? body.media : [];
-      const requestedModel = String(body?.model || '').trim().toLowerCase();
+      const requestedModel = String(body?.model || '').trim();
       const callerLabel = typeof body?.source_label === 'string' ? body.source_label.trim() : '';
       
       if (media.length === 0) {
@@ -414,30 +414,40 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       }
       
       try {
-        // Use Gemini for multimodal analysis (default fast; allow explicit 3.1 pro selection)
-        const model = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1'
-          ? google('gemini-3.1-pro-preview')
-          : google('gemini-3.1-flash-lite-preview');
-        
-        // Build content parts in the correct format for AI SDK
-        // Must use 'mimeType' and keep data as base64 string
+        // Resolve the AI model: honour custom model from the request, fall back to defaults
+        let model: any;
+        let mediaModelId: string;
+        if (requestedModel && requestedModel !== 'fast') {
+          // Normalise bare model names (e.g. "gemini-3-flash-preview") to provider-prefixed IDs
+          const fullId = requestedModel.includes('/') ? requestedModel : `google/${requestedModel}`;
+          const customModel = buildProviderModel(fullId);
+          if (customModel) {
+            model = customModel;
+            mediaModelId = fullId;
+          } else {
+            model = google('gemini-3.1-flash-lite-preview');
+            mediaModelId = 'google/gemini-3.1-flash-lite-preview';
+          }
+        } else {
+          model = google('gemini-3.1-flash-lite-preview');
+          mediaModelId = 'google/gemini-3.1-flash-lite-preview';
+        }
+
         const contentParts: any[] = [{ type: 'text', text: task }];
-        
+
         for (const m of media) {
           const data = String(m?.data || '');
           const mediaType = String(m?.mimeType || 'application/octet-stream');
           if (!data) continue;
-          
-          // Use the file part format with base64 string data and 'mimeType'
+
           contentParts.push({
             type: 'file',
-            data,  // Keep as base64 string, not Buffer
+            data,
             mediaType: mediaType,
           });
         }
-        
-        const isProModel = requestedModel === 'gemini-3.1-pro-preview' || requestedModel === '3.1';
-        const mediaModelId = isProModel ? 'google/gemini-3.1-pro-preview' : 'google/gemini-3.1-flash-lite-preview';
+
+        const isProModel = mediaModelId.includes('pro');
         const out = await generateText({
           model: model as any,
           messages: [{ role: 'user' as const, content: contentParts }],
@@ -833,7 +843,6 @@ Filename: ${filename}`;
         return true;
       }
 
-      const { buildProviderModel } = await import('../utils/models');
       const modelCandidates = buildProxyModelCandidates(modelRaw);
 
       const normalizedMessages: Array<{ role: string; content: string }> = messages.map((m: any) => ({

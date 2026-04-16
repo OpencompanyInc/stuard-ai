@@ -786,37 +786,71 @@ export function useAgent(options?: string | UseAgentOptions) {
     } catch { }
   }, []);
 
+  const agentHealthyRef = useRef<boolean>(false);
+
   const connect = useCallback(() => {
     const ready = wsRef.current?.readyState;
     if (ready === WebSocket.OPEN || ready === WebSocket.CONNECTING) return;
+
+    const w: any = window as any;
+    const hintedWs = String(w.__AGENT_WS__ || '').trim();
+    const hintedHttp = String(w.__AGENT_HTTP__ || '').trim();
+    const httpToWs = (httpUrl: string) => {
+      try {
+        let wsBase = httpUrl.replace(/\/+$/, '');
+        if (wsBase.startsWith('https://')) wsBase = 'wss://' + wsBase.slice('https://'.length);
+        else if (wsBase.startsWith('http://')) wsBase = 'ws://' + wsBase.slice('http://'.length);
+        if (!wsBase.endsWith('/ws')) wsBase = wsBase + '/ws';
+        return wsBase;
+      } catch {
+        return '';
+      }
+    };
+    const wsToHttp = (wsUrl: string) => {
+      try {
+        let base = wsUrl.replace(/\/ws\/?$/, '');
+        if (base.startsWith('wss://')) base = 'https://' + base.slice(6);
+        else if (base.startsWith('ws://')) base = 'http://' + base.slice(5);
+        return base;
+      } catch {
+        return 'http://127.0.0.1:8765';
+      }
+    };
+    const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
+    const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
+    const healthUrl = (hintedHttp || wsToHttp(target)) + '/health';
+
+    if (!agentHealthyRef.current) {
+      setState((s) => ({ ...s, connecting: true, status: 'connecting' }));
+      setAI({ phase: 'connecting', statusText: 'Starting…' });
+      fetch(healthUrl, { signal: AbortSignal.timeout(2000) })
+        .then(r => {
+          if (!r.ok) throw new Error('not ready');
+          agentHealthyRef.current = true;
+          connect();
+        })
+        .catch(() => {
+          if (!reconnectTimerRef.current) {
+            reconnectTimerRef.current = setTimeout(() => {
+              reconnectTimerRef.current = null;
+              connect();
+            }, 1500);
+          }
+        });
+      return;
+    }
 
     setState((s) => ({ ...s, connecting: true, status: 'connecting' }));
     setAI({ phase: 'connecting', statusText: 'Connecting…' });
 
     try {
-      const w: any = window as any;
-      const hintedWs = String(w.__AGENT_WS__ || '').trim();
-      const hintedHttp = String(w.__AGENT_HTTP__ || '').trim();
-      const httpToWs = (httpUrl: string) => {
-        try {
-          let wsBase = httpUrl.replace(/\/+$/, '');
-          if (wsBase.startsWith('https://')) wsBase = 'wss://' + wsBase.slice('https://'.length);
-          else if (wsBase.startsWith('http://')) wsBase = 'ws://' + wsBase.slice('http://'.length);
-          if (!wsBase.endsWith('/ws')) wsBase = wsBase + '/ws';
-          return wsBase;
-        } catch {
-          return '';
-        }
-      };
-      const hinted = hintedWs || (hintedHttp ? httpToWs(hintedHttp) : '');
-      const target = customAgentUrl || hinted || 'ws://127.0.0.1:8765/ws';
       const ws = new WebSocket(target);
       wsRef.current = ws;
 
       ws.onopen = () => {
         console.log('[agent] Connected');
         setState({ connected: true, connecting: false, status: 'connected' });
-        setAI({ phase: 'connected', statusText: 'Connected' });
+        setAI({ phase: 'idle', statusText: 'Ready' });
         if (reconnectTimerRef.current) {
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
@@ -1834,21 +1868,14 @@ export function useAgent(options?: string | UseAgentOptions) {
 
       ws.onerror = (err) => {
         console.error('[agent] WebSocket error:', err);
-        setState((s) => ({ ...s, connected: false, connecting: false, status: 'error' }));
-        setAI({ phase: 'error', statusText: 'Connection error' });
-        if (!reconnectTimerRef.current) {
-          const attempt = (reconnectAttemptsRef.current || 0) + 1;
-          reconnectAttemptsRef.current = attempt;
-          const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, attempt - 1), MAX_RECONNECT_DELAY);
-          reconnectTimerRef.current = setTimeout(() => {
-            reconnectTimerRef.current = null;
-            connect();
-          }, delay);
-        }
+        // onclose always fires after onerror — let it handle reconnect
       };
 
       ws.onclose = () => {
+        // Guard: if a new WS was already created, don't clobber its state
+        if (wsRef.current !== ws) return;
         console.log('[agent] Disconnected');
+        agentHealthyRef.current = false;
         setTabs(prev => prev.map(t => {
           const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
           if (!hasWork) return { ...t, aiState: { ...t.aiState, phase: 'disconnected', statusText: 'Disconnected' } };

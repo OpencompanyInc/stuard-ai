@@ -167,12 +167,15 @@ export function resolveAgentEndpoints(customAgentUrl?: string): AgentEndpointRes
   };
 }
 
+const DEFAULT_AGENT_FETCH_TIMEOUT_MS = 8000;
+
 export async function agentFetchJson(
   target: AgentEndpointResolution,
   path: string,
   options?: AgentFetchOptions,
 ): Promise<any> {
   const method = String(options?.method || 'GET').toUpperCase();
+  const timeoutMs = Math.max(500, Number(options?.timeoutMs) || DEFAULT_AGENT_FETCH_TIMEOUT_MS);
   if (target.usesVmRelay) {
     if (!target.relayUrl) throw new Error('vm_relay_unavailable');
     const accessToken = String(options?.accessToken || '').trim();
@@ -190,6 +193,7 @@ export async function agentFetchJson(
         body: options?.body,
         timeoutMs: options?.timeoutMs,
       }),
+      signal: AbortSignal.timeout(timeoutMs + 2000),
     });
     const relayJson = await relayResp.json().catch(() => null);
     if (relayJson && typeof relayJson === 'object' && 'result' in relayJson) {
@@ -213,6 +217,7 @@ export async function agentFetchJson(
     method,
     headers,
     body,
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return resp.json();
 }

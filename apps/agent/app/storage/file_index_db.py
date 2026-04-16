@@ -37,6 +37,9 @@ VECTOR_DIM = 3072  # text-embedding-3-large
 FileKind = Literal['document', 'image', 'video', 'audio', 'code', 'binary', 'archive', 'folder', 'application', 'other']
 FileStatus = Literal['pending', 'indexed', 'stale', 'error', 'deleted']
 ScanSchedule = Literal['off', 'hourly', 'daily', 'weekly', 'custom']
+PreviewKind = Literal['icon', 'thumbnail']
+RootBackend = Literal['generic', 'win32']
+WatchState = Literal['inactive', 'active', 'error']
 
 # Extension mappings
 EXT_TO_KIND: Dict[str, FileKind] = {
@@ -108,6 +111,13 @@ METADATA_ONLY_EXTENSIONS = frozenset([
     '.lnk', '.url',
 ])
 
+THUMBNAIL_EXTENSIONS = frozenset([
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
+    '.heic', '.heif', '.tiff', '.tif',
+])
+
+_UNSET = object()
+
 
 def _get_user_data_dir() -> str:
     """Get platform-appropriate user data directory."""
@@ -143,6 +153,10 @@ class IndexedRoot:
     last_scan_at: Optional[str]
     next_scan_at: Optional[str]
     last_scan_id: int
+    backend: RootBackend
+    watch_state: WatchState
+    volume_serial: Optional[str]
+    last_reconcile_at: Optional[str]
     created_at: str
     
     def to_dict(self) -> Dict[str, Any]:
@@ -159,7 +173,13 @@ class IndexedFile:
     kind: FileKind
     size: int
     mtime_ms: int
+    volume_serial: Optional[str]
+    file_id: Optional[str]
+    parent_file_id: Optional[str]
+    win_attrs: Optional[int]
     content_hash: Optional[str]
+    preview_kind: PreviewKind
+    preview_eligible: bool
     status: FileStatus
     last_seen_scan_id: int
     summary: Optional[str]
@@ -174,6 +194,7 @@ class IndexedFile:
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d['vector'] = None  # Don't serialize vector in API responses
+        d['preview_eligible'] = bool(d['preview_eligible'])
         return d
 
 
@@ -224,10 +245,54 @@ def _deserialize_vector(data: Optional[bytes]) -> Optional[List[float]]:
     return np.frombuffer(data, dtype=np.float32).tolist()
 
 
+def _normalize_volume_serial(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized or None
+    try:
+        return f"{int(value):016x}"
+    except (TypeError, ValueError):
+        return str(value).strip().lower() or None
+
+
+def _get_preview_fields(extension: str, kind: FileKind) -> Tuple[PreviewKind, bool]:
+    ext = (extension or '').lower()
+    if kind == 'image' and ext in THUMBNAIL_EXTENSIONS:
+        return 'thumbnail', True
+    return 'icon', True
+
+
+def _row_to_root(row: sqlite3.Row) -> IndexedRoot:
+    return IndexedRoot(
+        id=row['id'],
+        path=row['path'],
+        enabled=bool(row['enabled']),
+        schedule=row['schedule'],
+        interval_hours=row['interval_hours'],
+        last_scan_at=row['last_scan_at'],
+        next_scan_at=row['next_scan_at'],
+        last_scan_id=row['last_scan_id'],
+        backend=row['backend'] or 'generic',
+        watch_state=row['watch_state'] or 'inactive',
+        volume_serial=_normalize_volume_serial(row['volume_serial']),
+        last_reconcile_at=row['last_reconcile_at'],
+        created_at=row['created_at'],
+    )
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init() -> None:
     """Initialize the file index database schema."""
     with get_conn() as conn:
         cur = conn.cursor()
+        rebuild_fts = False
         
         # Indexed roots table
         cur.execute("""
@@ -240,6 +305,10 @@ def init() -> None:
                 last_scan_at TEXT,
                 next_scan_at TEXT,
                 last_scan_id INTEGER DEFAULT 0,
+                backend TEXT DEFAULT 'generic',
+                watch_state TEXT DEFAULT 'inactive',
+                volume_serial TEXT,
+                last_reconcile_at TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -255,7 +324,13 @@ def init() -> None:
                 kind TEXT DEFAULT 'other' CHECK(kind IN ('document', 'image', 'video', 'audio', 'code', 'binary', 'archive', 'folder', 'application', 'other')),
                 size INTEGER NOT NULL,
                 mtime_ms INTEGER NOT NULL,
+                volume_serial TEXT,
+                file_id TEXT,
+                parent_file_id TEXT,
+                win_attrs INTEGER,
                 content_hash TEXT,
+                preview_kind TEXT DEFAULT 'icon',
+                preview_eligible INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'indexed', 'stale', 'error', 'deleted')),
                 last_seen_scan_id INTEGER DEFAULT 0,
                 summary TEXT,
@@ -268,18 +343,15 @@ def init() -> None:
                 error_message TEXT
             )
         """)
-        
-        # Check if migration is needed (if 'application' is missing from constraints)
+
         try:
-            schema = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='indexed_files'").fetchone()[0]
-            if "'application'" not in schema:
-                # Migration needed
+            schema_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='indexed_files'"
+            ).fetchone()
+            schema = schema_row[0] if schema_row else ""
+            if schema and "'application'" not in schema:
                 print("Migrating database schema to include 'application' kind...")
-                
-                # 1. Rename old table
                 conn.execute("ALTER TABLE indexed_files RENAME TO indexed_files_old")
-                
-                # 2. Create new table
                 conn.execute("""
                     CREATE TABLE indexed_files (
                         id TEXT PRIMARY KEY,
@@ -290,7 +362,13 @@ def init() -> None:
                         kind TEXT DEFAULT 'other' CHECK(kind IN ('document', 'image', 'video', 'audio', 'code', 'binary', 'archive', 'folder', 'application', 'other')),
                         size INTEGER NOT NULL,
                         mtime_ms INTEGER NOT NULL,
+                        volume_serial TEXT,
+                        file_id TEXT,
+                        parent_file_id TEXT,
+                        win_attrs INTEGER,
                         content_hash TEXT,
+                        preview_kind TEXT DEFAULT 'icon',
+                        preview_eligible INTEGER DEFAULT 1,
                         status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'indexed', 'stale', 'error', 'deleted')),
                         last_seen_scan_id INTEGER DEFAULT 0,
                         summary TEXT,
@@ -303,19 +381,31 @@ def init() -> None:
                         error_message TEXT
                     )
                 """)
-                
-                # 3. Copy data
-                conn.execute("INSERT INTO indexed_files SELECT * FROM indexed_files_old")
-                
-                # 4. Drop old table
+                old_cols = [r[1] for r in conn.execute("PRAGMA table_info(indexed_files_old)").fetchall()]
+                new_cols = [r[1] for r in conn.execute("PRAGMA table_info(indexed_files)").fetchall()]
+                copy_cols = [c for c in new_cols if c in old_cols]
+                if copy_cols:
+                    cols_sql = ", ".join(copy_cols)
+                    conn.execute(
+                        f"INSERT INTO indexed_files ({cols_sql}) SELECT {cols_sql} FROM indexed_files_old"
+                    )
                 conn.execute("DROP TABLE indexed_files_old")
-                
-                # 5. Recreate/ensure triggers exist (handled by code below)
                 rebuild_fts = True
         except Exception as e:
             print(f"Migration check failed: {e}")
 
-        rebuild_fts = False
+        _ensure_column(conn, "indexed_roots", "backend", "TEXT DEFAULT 'generic'")
+        _ensure_column(conn, "indexed_roots", "watch_state", "TEXT DEFAULT 'inactive'")
+        _ensure_column(conn, "indexed_roots", "volume_serial", "TEXT")
+        _ensure_column(conn, "indexed_roots", "last_reconcile_at", "TEXT")
+
+        _ensure_column(conn, "indexed_files", "volume_serial", "TEXT")
+        _ensure_column(conn, "indexed_files", "file_id", "TEXT")
+        _ensure_column(conn, "indexed_files", "parent_file_id", "TEXT")
+        _ensure_column(conn, "indexed_files", "win_attrs", "INTEGER")
+        _ensure_column(conn, "indexed_files", "preview_kind", "TEXT DEFAULT 'icon'")
+        _ensure_column(conn, "indexed_files", "preview_eligible", "INTEGER DEFAULT 1")
+
         try:
             cols = [r[1] for r in cur.execute("PRAGMA table_info(files_fts)").fetchall()]
             if not cols or 'file_id' in cols:
@@ -390,6 +480,9 @@ def init() -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_ext ON indexed_files(extension)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON indexed_files(content_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_scan ON indexed_files(last_seen_scan_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_identity ON indexed_files(root_id, volume_serial, file_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_parent_identity ON indexed_files(root_id, volume_serial, parent_file_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_roots_backend ON indexed_roots(backend)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folders_root ON folder_summaries(root_id)")
         
         conn.commit()
@@ -404,19 +497,31 @@ def add_root(path: str, schedule: ScanSchedule = 'daily', interval_hours: Option
     rid = str(uuid.uuid4())
     now = _now_iso()
     path = os.path.normpath(os.path.abspath(path))
+    backend: RootBackend = 'win32' if sys.platform == 'win32' else 'generic'
     
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO indexed_roots (id, path, enabled, schedule, interval_hours, last_scan_id, created_at)
-               VALUES (?, ?, 1, ?, ?, 0, ?)""",
-            (rid, path, schedule, interval_hours, now)
+            """INSERT INTO indexed_roots
+               (id, path, enabled, schedule, interval_hours, last_scan_id, backend, watch_state, created_at)
+               VALUES (?, ?, 1, ?, ?, 0, ?, 'inactive', ?)""",
+            (rid, path, schedule, interval_hours, backend, now)
         )
         conn.commit()
     
     return IndexedRoot(
-        id=rid, path=path, enabled=True, schedule=schedule,
-        interval_hours=interval_hours, last_scan_at=None, next_scan_at=None,
-        last_scan_id=0, created_at=now
+        id=rid,
+        path=path,
+        enabled=True,
+        schedule=schedule,
+        interval_hours=interval_hours,
+        last_scan_at=None,
+        next_scan_at=None,
+        last_scan_id=0,
+        backend=backend,
+        watch_state='inactive',
+        volume_serial=None,
+        last_reconcile_at=None,
+        created_at=now,
     )
 
 
@@ -424,14 +529,7 @@ def get_root(root_id: str) -> Optional[IndexedRoot]:
     """Get a root by ID."""
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM indexed_roots WHERE id = ?", (root_id,)).fetchone()
-        if not row:
-            return None
-        return IndexedRoot(
-            id=row['id'], path=row['path'], enabled=bool(row['enabled']),
-            schedule=row['schedule'], interval_hours=row['interval_hours'],
-            last_scan_at=row['last_scan_at'], next_scan_at=row['next_scan_at'],
-            last_scan_id=row['last_scan_id'], created_at=row['created_at']
-        )
+    return _row_to_root(row) if row else None
 
 
 def get_root_by_path(path: str) -> Optional[IndexedRoot]:
@@ -439,14 +537,7 @@ def get_root_by_path(path: str) -> Optional[IndexedRoot]:
     path = os.path.normpath(os.path.abspath(path))
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM indexed_roots WHERE path = ?", (path,)).fetchone()
-        if not row:
-            return None
-        return IndexedRoot(
-            id=row['id'], path=row['path'], enabled=bool(row['enabled']),
-            schedule=row['schedule'], interval_hours=row['interval_hours'],
-            last_scan_at=row['last_scan_at'], next_scan_at=row['next_scan_at'],
-            last_scan_id=row['last_scan_id'], created_at=row['created_at']
-        )
+    return _row_to_root(row) if row else None
 
 
 def list_roots(enabled_only: bool = False) -> List[IndexedRoot]:
@@ -457,19 +548,13 @@ def list_roots(enabled_only: bool = False) -> List[IndexedRoot]:
         else:
             rows = conn.execute("SELECT * FROM indexed_roots ORDER BY path").fetchall()
     
-    return [
-        IndexedRoot(
-            id=r['id'], path=r['path'], enabled=bool(r['enabled']),
-            schedule=r['schedule'], interval_hours=r['interval_hours'],
-            last_scan_at=r['last_scan_at'], next_scan_at=r['next_scan_at'],
-            last_scan_id=r['last_scan_id'], created_at=r['created_at']
-        )
-        for r in rows
-    ]
+    return [_row_to_root(r) for r in rows]
 
 
 def update_root(root_id: str, enabled: Optional[bool] = None, schedule: Optional[ScanSchedule] = None,
-                interval_hours: Optional[int] = None) -> Optional[IndexedRoot]:
+                interval_hours: Optional[int] = None, backend: Optional[RootBackend] = None,
+                watch_state: Optional[WatchState] = None, volume_serial: Any = _UNSET,
+                last_reconcile_at: Any = _UNSET, next_scan_at: Any = _UNSET) -> Optional[IndexedRoot]:
     """Update root settings."""
     updates = []
     values = []
@@ -483,6 +568,21 @@ def update_root(root_id: str, enabled: Optional[bool] = None, schedule: Optional
     if interval_hours is not None:
         updates.append("interval_hours = ?")
         values.append(interval_hours)
+    if backend is not None:
+        updates.append("backend = ?")
+        values.append(backend)
+    if watch_state is not None:
+        updates.append("watch_state = ?")
+        values.append(watch_state)
+    if volume_serial is not _UNSET:
+        updates.append("volume_serial = ?")
+        values.append(_normalize_volume_serial(volume_serial))
+    if last_reconcile_at is not _UNSET:
+        updates.append("last_reconcile_at = ?")
+        values.append(last_reconcile_at)
+    if next_scan_at is not _UNSET:
+        updates.append("next_scan_at = ?")
+        values.append(next_scan_at)
     
     if not updates:
         return get_root(root_id)
@@ -504,12 +604,25 @@ def delete_root(root_id: str) -> bool:
         return cur.rowcount > 0
 
 
-def increment_scan_id(root_id: str) -> int:
+def increment_scan_id(root_id: str, backend: Optional[RootBackend] = None,
+                      volume_serial: Optional[str] = None, last_reconcile_at: Any = _UNSET) -> int:
     """Increment and return the scan ID for a root."""
+    now = _now_iso()
+    updates = ["last_scan_id = last_scan_id + 1", "last_scan_at = ?"]
+    values: List[Any] = [now]
+    if backend is not None:
+        updates.append("backend = ?")
+        values.append(backend)
+    if volume_serial is not None:
+        updates.append("volume_serial = ?")
+        values.append(_normalize_volume_serial(volume_serial))
+    if last_reconcile_at is not _UNSET:
+        updates.append("last_reconcile_at = ?")
+        values.append(last_reconcile_at if last_reconcile_at is not None else now)
     with get_conn() as conn:
         conn.execute(
-            "UPDATE indexed_roots SET last_scan_id = last_scan_id + 1, last_scan_at = ? WHERE id = ?",
-            (_now_iso(), root_id)
+            f"UPDATE indexed_roots SET {', '.join(updates)} WHERE id = ?",
+            (*values, root_id)
         )
         row = conn.execute("SELECT last_scan_id FROM indexed_roots WHERE id = ?", (root_id,)).fetchone()
         conn.commit()
@@ -554,8 +667,256 @@ def should_skip_path(path: str) -> bool:
     return False
 
 
+def _build_indexed_file(
+    *,
+    id: str,
+    root_id: str,
+    path: str,
+    filename: str,
+    extension: str,
+    kind: FileKind,
+    size: int,
+    mtime_ms: int,
+    volume_serial: Optional[str],
+    file_id: Optional[str],
+    parent_file_id: Optional[str],
+    win_attrs: Optional[int],
+    content_hash: Optional[str],
+    preview_kind: PreviewKind,
+    preview_eligible: bool,
+    status: FileStatus,
+    last_seen_scan_id: int,
+    summary: Optional[str],
+    keywords: Optional[str],
+    vector: Optional[List[float]],
+    summary_model_version: Optional[str],
+    embedding_model_version: Optional[str],
+    indexed_at: Optional[str],
+    created_at: str,
+    error_message: Optional[str],
+) -> IndexedFile:
+    return IndexedFile(
+        id=id,
+        root_id=root_id,
+        path=path,
+        filename=filename,
+        extension=extension,
+        kind=kind,
+        size=size,
+        mtime_ms=mtime_ms,
+        volume_serial=_normalize_volume_serial(volume_serial),
+        file_id=file_id,
+        parent_file_id=parent_file_id,
+        win_attrs=win_attrs,
+        content_hash=content_hash,
+        preview_kind=preview_kind,
+        preview_eligible=bool(preview_eligible),
+        status=status,
+        last_seen_scan_id=last_seen_scan_id,
+        summary=summary,
+        keywords=keywords,
+        vector=vector,
+        summary_model_version=summary_model_version,
+        embedding_model_version=embedding_model_version,
+        indexed_at=indexed_at,
+        created_at=created_at,
+        error_message=error_message,
+    )
+
+
+def _upsert_file_row(
+    conn: sqlite3.Connection,
+    root_id: str,
+    path: str,
+    size: int,
+    mtime_ms: int,
+    scan_id: int,
+    content_hash: Optional[str] = None,
+    kind_override: Optional[FileKind] = None,
+    volume_serial: Optional[str] = None,
+    file_id: Optional[str] = None,
+    parent_file_id: Optional[str] = None,
+    win_attrs: Optional[int] = None,
+    preview_kind: Optional[PreviewKind] = None,
+    preview_eligible: Optional[bool] = None,
+) -> Tuple[IndexedFile, str]:
+    path = os.path.normpath(os.path.abspath(path))
+    filename = os.path.basename(path)
+    extension = os.path.splitext(filename)[1].lower() if '.' in filename else ''
+    kind = kind_override if kind_override else get_file_kind(extension)
+    resolved_preview_kind, resolved_preview_eligible = _get_preview_fields(extension, kind)
+    preview_kind = preview_kind or resolved_preview_kind
+    if preview_eligible is None:
+        preview_eligible = resolved_preview_eligible
+    volume_serial = _normalize_volume_serial(volume_serial)
+    now = _now_iso()
+
+    existing = conn.execute("SELECT * FROM indexed_files WHERE path = ?", (path,)).fetchone()
+    matched_by_identity = False
+    if not existing and volume_serial and file_id:
+        existing = conn.execute(
+            """SELECT * FROM indexed_files
+               WHERE root_id = ? AND volume_serial = ? AND file_id = ?
+               ORDER BY CASE WHEN status = 'deleted' THEN 1 ELSE 0 END, created_at
+               LIMIT 1""",
+            (root_id, volume_serial, file_id),
+        ).fetchone()
+        matched_by_identity = existing is not None
+
+    if existing:
+        # Preserve existing identity columns when caller didn't supply new ones.
+        # Why: the Windows fast-path scanner now skips per-file CreateFileW for speed,
+        # so file_id/volume_serial/parent_file_id/win_attrs come in as None for files.
+        # Clobbering with None would lose previously-collected identity data.
+        existing_volume_norm = _normalize_volume_serial(existing['volume_serial'])
+        effective_volume_serial = volume_serial if volume_serial else existing_volume_norm
+        effective_file_id = file_id if file_id is not None else existing['file_id']
+        effective_parent_file_id = parent_file_id if parent_file_id is not None else existing['parent_file_id']
+        effective_win_attrs = win_attrs if win_attrs is not None else existing['win_attrs']
+
+        identity_changed = (
+            bool(file_id)
+            and bool(existing['file_id'])
+            and (
+                existing['file_id'] != file_id
+                or existing_volume_norm != volume_serial
+            )
+        )
+        changed = identity_changed
+        kind_mismatch = existing['kind'] != kind
+
+        if existing['size'] != size or existing['mtime_ms'] != mtime_ms:
+            if content_hash and existing['content_hash'] == content_hash:
+                changed = changed or False
+            else:
+                changed = True
+
+        next_status: FileStatus
+        if changed or kind_mismatch:
+            next_status = 'stale'
+        elif existing['status'] == 'deleted':
+            next_status = 'indexed' if existing['summary'] or existing['vector'] else 'pending'
+        else:
+            next_status = existing['status']
+
+        conn.execute(
+            """UPDATE indexed_files SET
+               root_id = ?, path = ?, filename = ?, extension = ?, kind = ?, size = ?, mtime_ms = ?,
+               volume_serial = ?, file_id = ?, parent_file_id = ?, win_attrs = ?, content_hash = ?,
+               preview_kind = ?, preview_eligible = ?, status = ?, last_seen_scan_id = ?
+               WHERE id = ?""",
+            (
+                root_id,
+                path,
+                filename,
+                extension,
+                kind,
+                size,
+                mtime_ms,
+                effective_volume_serial,
+                effective_file_id,
+                effective_parent_file_id,
+                effective_win_attrs,
+                content_hash or existing['content_hash'],
+                preview_kind,
+                1 if preview_eligible else 0,
+                next_status,
+                scan_id,
+                existing['id'],
+            ),
+        )
+
+        outcome = 'changed' if (changed or kind_mismatch or matched_by_identity or existing['status'] == 'deleted') else 'unchanged'
+        return _build_indexed_file(
+            id=existing['id'],
+            root_id=root_id,
+            path=path,
+            filename=filename,
+            extension=extension,
+            kind=kind,
+            size=size,
+            mtime_ms=mtime_ms,
+            volume_serial=effective_volume_serial,
+            file_id=effective_file_id,
+            parent_file_id=effective_parent_file_id,
+            win_attrs=effective_win_attrs,
+            content_hash=content_hash or existing['content_hash'],
+            preview_kind=preview_kind,
+            preview_eligible=preview_eligible,
+            status=next_status,
+            last_seen_scan_id=scan_id,
+            summary=existing['summary'],
+            keywords=existing['keywords'],
+            vector=_deserialize_vector(existing['vector']),
+            summary_model_version=existing['summary_model_version'],
+            embedding_model_version=existing['embedding_model_version'],
+            indexed_at=existing['indexed_at'],
+            created_at=existing['created_at'],
+            error_message=existing['error_message'],
+        ), outcome
+
+    fid = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO indexed_files
+           (id, root_id, path, filename, extension, kind, size, mtime_ms,
+            volume_serial, file_id, parent_file_id, win_attrs, content_hash,
+            preview_kind, preview_eligible, status, last_seen_scan_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+        (
+            fid,
+            root_id,
+            path,
+            filename,
+            extension,
+            kind,
+            size,
+            mtime_ms,
+            volume_serial,
+            file_id,
+            parent_file_id,
+            win_attrs,
+            content_hash,
+            preview_kind,
+            1 if preview_eligible else 0,
+            scan_id,
+            now,
+        ),
+    )
+    return _build_indexed_file(
+        id=fid,
+        root_id=root_id,
+        path=path,
+        filename=filename,
+        extension=extension,
+        kind=kind,
+        size=size,
+        mtime_ms=mtime_ms,
+        volume_serial=volume_serial,
+        file_id=file_id,
+        parent_file_id=parent_file_id,
+        win_attrs=win_attrs,
+        content_hash=content_hash,
+        preview_kind=preview_kind,
+        preview_eligible=preview_eligible,
+        status='pending',
+        last_seen_scan_id=scan_id,
+        summary=None,
+        keywords=None,
+        vector=None,
+        summary_model_version=None,
+        embedding_model_version=None,
+        indexed_at=None,
+        created_at=now,
+        error_message=None,
+    ), 'new'
+
+
 def upsert_file(root_id: str, path: str, size: int, mtime_ms: int, scan_id: int,
-                content_hash: Optional[str] = None, kind_override: Optional[FileKind] = None) -> Tuple[IndexedFile, bool]:
+                content_hash: Optional[str] = None, kind_override: Optional[FileKind] = None,
+                volume_serial: Optional[str] = None, file_id: Optional[str] = None,
+                parent_file_id: Optional[str] = None, win_attrs: Optional[int] = None,
+                preview_kind: Optional[PreviewKind] = None,
+                preview_eligible: Optional[bool] = None) -> Tuple[IndexedFile, bool]:
     """
     Insert or update a file record. Returns (file, is_new_or_changed).
     
@@ -563,75 +924,25 @@ def upsert_file(root_id: str, path: str, size: int, mtime_ms: int, scan_id: int,
     - If exists and unchanged (same size/mtime or same hash): just update last_seen_scan_id
     - If exists and changed: mark as 'stale' for re-indexing
     """
-    path = os.path.normpath(os.path.abspath(path))
-    filename = os.path.basename(path)
-    extension = os.path.splitext(filename)[1].lower() if '.' in filename else ''
-    kind = kind_override if kind_override else get_file_kind(extension)
-    now = _now_iso()
-    
     with get_conn() as conn:
-        existing = conn.execute("SELECT * FROM indexed_files WHERE path = ?", (path,)).fetchone()
-        
-        if existing:
-            # Check if content changed
-            changed = False
-            if existing['size'] != size or existing['mtime_ms'] != mtime_ms:
-                # Stats changed - check hash if provided
-                if content_hash and existing['content_hash'] == content_hash:
-                    changed = False  # Content same despite stat change
-                else:
-                    changed = True
-            
-            if changed:
-                # Mark as stale for re-indexing
-                conn.execute(
-                    """UPDATE indexed_files SET 
-                       size = ?, mtime_ms = ?, content_hash = ?, status = 'stale', 
-                       last_seen_scan_id = ? WHERE id = ?""",
-                    (size, mtime_ms, content_hash, scan_id, existing['id'])
-                )
-            else:
-                # Just update last seen
-                conn.execute(
-                    "UPDATE indexed_files SET last_seen_scan_id = ? WHERE id = ?",
-                    (scan_id, existing['id'])
-                )
-            
-            conn.commit()
-            
-            return IndexedFile(
-                id=existing['id'], root_id=root_id, path=path, filename=filename,
-                extension=extension, kind=kind, size=size, mtime_ms=mtime_ms,
-                content_hash=content_hash or existing['content_hash'],
-                status='stale' if changed else existing['status'],
-                last_seen_scan_id=scan_id, summary=existing['summary'],
-                keywords=existing['keywords'], vector=_deserialize_vector(existing['vector']),
-                summary_model_version=existing['summary_model_version'],
-                embedding_model_version=existing['embedding_model_version'],
-                indexed_at=existing['indexed_at'], created_at=existing['created_at'],
-                error_message=existing['error_message']
-            ), changed
-        else:
-            # New file
-            fid = str(uuid.uuid4())
-            conn.execute(
-                """INSERT INTO indexed_files 
-                   (id, root_id, path, filename, extension, kind, size, mtime_ms, 
-                    content_hash, status, last_seen_scan_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                (fid, root_id, path, filename, extension, kind, size, mtime_ms,
-                 content_hash, scan_id, now)
-            )
-            conn.commit()
-            
-            return IndexedFile(
-                id=fid, root_id=root_id, path=path, filename=filename,
-                extension=extension, kind=kind, size=size, mtime_ms=mtime_ms,
-                content_hash=content_hash, status='pending', last_seen_scan_id=scan_id,
-                summary=None, keywords=None, vector=None,
-                summary_model_version=None, embedding_model_version=None,
-                indexed_at=None, created_at=now, error_message=None
-            ), True
+        record, outcome = _upsert_file_row(
+            conn,
+            root_id=root_id,
+            path=path,
+            size=size,
+            mtime_ms=mtime_ms,
+            scan_id=scan_id,
+            content_hash=content_hash,
+            kind_override=kind_override,
+            volume_serial=volume_serial,
+            file_id=file_id,
+            parent_file_id=parent_file_id,
+            win_attrs=win_attrs,
+            preview_kind=preview_kind,
+            preview_eligible=preview_eligible,
+        )
+        conn.commit()
+        return record, outcome != 'unchanged'
 
 
 def upsert_files_batch(files_data: List[Dict[str, Any]]) -> Tuple[int, int, int]:
@@ -642,79 +953,67 @@ def upsert_files_batch(files_data: List[Dict[str, Any]]) -> Tuple[int, int, int]
     new_count = 0
     changed_count = 0
     unchanged_count = 0
-    now = _now_iso()
     
     with get_conn() as conn:
         for data in files_data:
-            path = os.path.normpath(os.path.abspath(data['path']))
-            filename = os.path.basename(path)
-            extension = os.path.splitext(filename)[1].lower() if '.' in filename else ''
-            kind = data.get('kind_override') or get_file_kind(extension)
-            
-            size = data['size']
-            mtime_ms = data['mtime_ms']
-            scan_id = data['scan_id']
-            content_hash = data.get('content_hash')
-            root_id = data['root_id']
-            
-            existing = conn.execute("SELECT id, size, mtime_ms, content_hash, status, kind FROM indexed_files WHERE path = ?", (path,)).fetchone()
-            
-            if existing:
-                # Check if content changed
-                changed = False
-                kind_mismatch = existing['kind'] != kind
-                
-                if existing['size'] != size or existing['mtime_ms'] != mtime_ms:
-                    # Stats changed - check hash if provided
-                    if content_hash and existing['content_hash'] == content_hash:
-                        changed = False
-                    else:
-                        changed = True
-                
-                if changed or kind_mismatch:
-                    # If kind changed, we must update it. If content changed, we update that too.
-                    conn.execute(
-                        """UPDATE indexed_files SET 
-                           size = ?, mtime_ms = ?, content_hash = ?, status = 'stale', 
-                           kind = ?, last_seen_scan_id = ? WHERE id = ?""",
-                        (size, mtime_ms, content_hash, kind, scan_id, existing['id'])
-                    )
-                    changed_count += 1
-                else:
-                    conn.execute(
-                        "UPDATE indexed_files SET last_seen_scan_id = ? WHERE id = ?",
-                        (scan_id, existing['id'])
-                    )
-                    unchanged_count += 1
-            else:
-                # New file
-                fid = str(uuid.uuid4())
-                conn.execute(
-                    """INSERT INTO indexed_files 
-                       (id, root_id, path, filename, extension, kind, size, mtime_ms, 
-                        content_hash, status, last_seen_scan_id, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                    (fid, root_id, path, filename, extension, kind, size, mtime_ms,
-                     content_hash, scan_id, now)
-                )
+            _, outcome = _upsert_file_row(
+                conn,
+                root_id=data['root_id'],
+                path=data['path'],
+                size=data['size'],
+                mtime_ms=data['mtime_ms'],
+                scan_id=data['scan_id'],
+                content_hash=data.get('content_hash'),
+                kind_override=data.get('kind_override'),
+                volume_serial=data.get('volume_serial'),
+                file_id=data.get('file_id'),
+                parent_file_id=data.get('parent_file_id'),
+                win_attrs=data.get('win_attrs'),
+                preview_kind=data.get('preview_kind'),
+                preview_eligible=data.get('preview_eligible'),
+            )
+            if outcome == 'new':
                 new_count += 1
+            elif outcome == 'changed':
+                changed_count += 1
+            else:
+                unchanged_count += 1
         
         conn.commit()
         
     return new_count, changed_count, unchanged_count
 
 
-def get_root_file_metadata(root_id: str) -> Dict[str, Tuple[int, int, Optional[str]]]:
+def get_root_file_metadata(root_id: str) -> Dict[str, Dict[str, Any]]:
     """
-    Get a map of path -> (size, mtime_ms, content_hash) for all files in a root.
+    Get a map of path -> metadata for all files in a root.
     Used for fast change detection during scanning.
     """
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT path, size, mtime_ms, content_hash FROM indexed_files WHERE root_id = ? AND status != 'deleted'",
+            """SELECT path, size, mtime_ms, content_hash, status, kind,
+                      volume_serial, file_id, parent_file_id, win_attrs,
+                      preview_kind, preview_eligible
+               FROM indexed_files
+               WHERE root_id = ? AND status != 'deleted'""",
             (root_id,)
         ).fetchall()
-        return {r['path']: (r['size'], r['mtime_ms'], r['content_hash']) for r in rows}
+        return {
+            r['path']: {
+                'size': r['size'],
+                'mtime_ms': r['mtime_ms'],
+                'content_hash': r['content_hash'],
+                'status': r['status'],
+                'kind': r['kind'],
+                'volume_serial': _normalize_volume_serial(r['volume_serial']),
+                'file_id': r['file_id'],
+                'parent_file_id': r['parent_file_id'],
+                'win_attrs': r['win_attrs'],
+                'preview_kind': r['preview_kind'] or 'icon',
+                'preview_eligible': bool(r['preview_eligible']),
+            }
+            for r in rows
+        }
 
 
 def get_file(file_id: str) -> Optional[IndexedFile]:
@@ -737,17 +1036,34 @@ def get_file_by_path(path: str) -> Optional[IndexedFile]:
 
 
 def _row_to_file(row: sqlite3.Row) -> IndexedFile:
-    return IndexedFile(
-        id=row['id'], root_id=row['root_id'], path=row['path'],
-        filename=row['filename'], extension=row['extension'], kind=row['kind'],
-        size=row['size'], mtime_ms=row['mtime_ms'], content_hash=row['content_hash'],
-        status=row['status'], last_seen_scan_id=row['last_seen_scan_id'],
-        summary=row['summary'], keywords=row['keywords'],
+    preview_kind = row['preview_kind'] or _get_preview_fields(row['extension'], row['kind'])[0]
+    preview_eligible = bool(row['preview_eligible']) if 'preview_eligible' in row.keys() else _get_preview_fields(row['extension'], row['kind'])[1]
+    return _build_indexed_file(
+        id=row['id'],
+        root_id=row['root_id'],
+        path=row['path'],
+        filename=row['filename'],
+        extension=row['extension'],
+        kind=row['kind'],
+        size=row['size'],
+        mtime_ms=row['mtime_ms'],
+        volume_serial=row['volume_serial'] if 'volume_serial' in row.keys() else None,
+        file_id=row['file_id'] if 'file_id' in row.keys() else None,
+        parent_file_id=row['parent_file_id'] if 'parent_file_id' in row.keys() else None,
+        win_attrs=row['win_attrs'] if 'win_attrs' in row.keys() else None,
+        content_hash=row['content_hash'],
+        preview_kind=preview_kind,
+        preview_eligible=preview_eligible,
+        status=row['status'],
+        last_seen_scan_id=row['last_seen_scan_id'],
+        summary=row['summary'],
+        keywords=row['keywords'],
         vector=_deserialize_vector(row['vector']),
         summary_model_version=row['summary_model_version'],
         embedding_model_version=row['embedding_model_version'],
-        indexed_at=row['indexed_at'], created_at=row['created_at'],
-        error_message=row['error_message']
+        indexed_at=row['indexed_at'],
+        created_at=row['created_at'],
+        error_message=row['error_message'],
     )
 
 
@@ -761,6 +1077,27 @@ def mark_deleted_files(root_id: str, scan_id: int) -> int:
         )
         conn.commit()
         return cur.rowcount
+
+
+def mark_path_deleted(root_id: str, path: str) -> int:
+    """Mark a file or folder subtree as deleted."""
+    path = os.path.normpath(os.path.abspath(path))
+    prefix = path + os.sep + '%'
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE indexed_files
+               SET status = 'deleted'
+               WHERE root_id = ? AND status != 'deleted' AND (path = ? OR path LIKE ?)""",
+            (root_id, path, prefix),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def set_root_watch_state(root_id: str, watch_state: WatchState) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE indexed_roots SET watch_state = ? WHERE id = ?", (watch_state, root_id))
+        conn.commit()
 
 
 def get_pending_files(limit: int = 100) -> List[IndexedFile]:

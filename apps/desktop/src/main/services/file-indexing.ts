@@ -38,6 +38,10 @@ interface IndexedRoot {
   last_scan_at: string | null;
   next_scan_at: string | null;
   last_scan_id: number;
+  backend: "generic" | "win32";
+  watch_state: "inactive" | "active" | "error";
+  volume_serial: string | null;
+  last_reconcile_at: string | null;
   created_at: string;
   // UI-only fields
   semantic_enabled?: boolean;
@@ -72,6 +76,7 @@ interface IndexStats {
 let isScanning = false;
 let currentScanRootId: string | null = null;
 let lastScanProgress: ScanProgress | null = null;
+const sessionReconciledRoots = new Set<string>();
 
 /**
  * Check if the agent is available
@@ -265,6 +270,19 @@ function isRootDueForScan(root: IndexedRoot): boolean {
     default:
       return false;
   }
+}
+
+function needsWindowsSessionReconcile(root: IndexedRoot): boolean {
+  return process.platform === "win32" && root.enabled && !sessionReconciledRoots.has(root.id);
+}
+
+function needsWindowsSafetyRescan(root: IndexedRoot): boolean {
+  if (process.platform !== "win32" || !root.enabled) return false;
+  if (!root.last_reconcile_at) return true;
+  if (root.watch_state !== "active") return true;
+  const lastReconcile = new Date(root.last_reconcile_at).getTime();
+  if (!Number.isFinite(lastReconcile)) return true;
+  return Date.now() - lastReconcile >= 6 * 60 * 60 * 1000;
 }
 
 /**
@@ -462,7 +480,13 @@ export async function runStartupIndexing(): Promise<void> {
 
     // Get all roots and filter for those due for scanning
     const roots = await listRoots();
-    const dueRoots = roots.filter((r) => r.enabled && isRootDueForScan(r));
+    const dueRoots = roots.filter((r) =>
+      r.enabled && (
+        isRootDueForScan(r)
+        || needsWindowsSessionReconcile(r)
+        || needsWindowsSafetyRescan(r)
+      )
+    );
 
     if (dueRoots.length === 0) {
       // logger.debug("[file-indexing] No roots due for scanning");
@@ -500,6 +524,9 @@ export async function runStartupIndexing(): Promise<void> {
 
       if (progress) {
         logger.info(`[file-indexing] Completed ${root.path}: ${progress.total_files} files, ${progress.new_files} new`);
+      }
+      if (process.platform === "win32") {
+        sessionReconciledRoots.add(root.id);
       }
 
       // Update overall progress
@@ -553,7 +580,7 @@ export async function searchFiles(
     limit: options.limit || 50,
     root_id: options.rootId,
   });
-  return result?.files || [];
+  return result?.results || result?.files || [];
 }
 
 /**

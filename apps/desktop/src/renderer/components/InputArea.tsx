@@ -94,6 +94,22 @@ interface InputAreaProps {
   onGenUIResponse?: (component: string, result: any) => void;
 }
 
+const normalizeInputSearchText = (value: string): string =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[/\\]+/g, ' ')
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const shouldRunInputSemanticSearch = (query: string): boolean => {
+  const normalized = normalizeInputSearchText(query);
+  const compactLen = normalized.replace(/\s+/g, '').length;
+  const tokenCount = normalized ? normalized.split(' ').length : 0;
+  return tokenCount > 1 && compactLen >= 6;
+};
+
 // Helper component for attachments & context
 const AttachmentBar = memo(({
   attachments,
@@ -562,7 +578,7 @@ const InputArea = forwardRef(function InputArea(
   const doSemanticRefine = useCallback(async (q: string) => {
     const token = typeof accessToken === 'string' ? accessToken : '';
     const indexed = Number(indexStats?.indexed_files || 0);
-    if (!token || indexed <= 0) return;
+    if (!token || indexed <= 0 || !shouldRunInputSemanticSearch(q)) return;
     if (!(window as any).desktopAPI?.execTool) return;
 
     const reqId = ++semanticReqIdRef.current;
@@ -628,10 +644,16 @@ const InputArea = forwardRef(function InputArea(
       doQuickFileSearch(q);
     }, 150);
 
-    // Semantic refine (slower, only if embeddings exist)
-    semanticDebounceRef.current = setTimeout(() => {
-      doSemanticRefine(q);
-    }, 650);
+    if (shouldRunInputSemanticSearch(q)) {
+      // Semantic refine (slower, only if embeddings exist and the query is broad enough)
+      semanticDebounceRef.current = setTimeout(() => {
+        doSemanticRefine(q);
+      }, 650);
+    } else {
+      // Cancel any older semantic request so quick-search results stay visible
+      semanticReqIdRef.current += 1;
+      setFileSemanticLoading(false);
+    }
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
@@ -641,10 +663,10 @@ const InputArea = forwardRef(function InputArea(
 
   useEffect(() => {
     const api = (window as any).desktopAPI;
-    if (!api?.getFileIcon) return;
+    if (!api?.getFileIcon && !api?.getFilePreview) return;
 
-    // Build a list of (displayPath, iconSourcePath) pairs for all results that can have icons
-    const iconRequests: { displayPath: string; iconPath: string }[] = [];
+    const uniquePaths = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
+    const iconRequests: { displayPath: string; pathsToTry: string[]; preferThumbnail: boolean }[] = [];
     // App results (from unified search / app-discovery)
     for (const a of (Array.isArray(appResults) ? appResults : [])) {
       if (!a) continue;
@@ -652,23 +674,30 @@ const InputArea = forwardRef(function InputArea(
       const iconHint = String(a.iconHint || a.launchTarget || '').trim();
       if (!filePath) continue;
       if (iconHint || filePath) {
-        iconRequests.push({ displayPath: filePath, iconPath: iconHint || filePath });
+        iconRequests.push({
+          displayPath: filePath,
+          pathsToTry: uniquePaths([iconHint || filePath, filePath]),
+          preferThumbnail: false,
+        });
       }
     }
     // File results
     for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
       if (!f) continue;
-      const kind = String(f.kind || '').toLowerCase();
       const filePath = String(f.path || '').trim();
       if (!filePath) continue;
-      
-      // Fetch icons for applications, executables, and any file with a target_path
-      if (kind === 'application' || kind === 'binary' || f.icon_path || f.target_path ||
-          String(f.extension || '').toLowerCase() === '.exe') {
-        // Let IPC handle .lnk resolution natively, but fallback to indexer's resolved paths if needed
-        const iconPath = String(filePath || f.icon_path || f.target_path).trim();
-        iconRequests.push({ displayPath: filePath, iconPath });
-      }
+      const preferThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
+      iconRequests.push({
+        displayPath: filePath,
+        pathsToTry: preferThumbnail
+          ? [filePath]
+          : uniquePaths([
+              String(f.icon_path || '').trim(),
+              String(f.target_path || '').trim(),
+              filePath,
+            ]),
+        preferThumbnail,
+      });
     }
     if (iconRequests.length === 0) return;
 
@@ -676,12 +705,13 @@ const InputArea = forwardRef(function InputArea(
     (async () => {
       const updates: Record<string, string> = {};
       await Promise.all(
-        iconRequests.map(async ({ displayPath, iconPath }) => {
+        iconRequests.map(async ({ displayPath, pathsToTry, preferThumbnail }) => {
           if (fileIconCacheRef.current[displayPath]) return;
-          // Try the best icon source first, fall back to original path
-          const pathsToTry = iconPath !== displayPath ? [iconPath, displayPath] : [displayPath];
           for (const p of pathsToTry) {
-            const res = await api.getFileIcon(p, { size: 'normal' }).catch(() => null);
+            const res = await (api.getFilePreview
+              ? api.getFilePreview(p, { size: 'normal', preferThumbnail })
+              : api.getFileIcon(p, { size: 'normal' })
+            ).catch(() => null);
             if (fileIconReqIdRef.current !== reqId) return;
             if (res?.ok && typeof res.dataUrl === 'string' && res.dataUrl) {
               updates[displayPath] = res.dataUrl;
@@ -1269,7 +1299,14 @@ const InputArea = forwardRef(function InputArea(
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-blue-500/10 shadow-sm hover:border-blue-500/30 hover:shadow-md transition-all group text-left mb-1"
                           >
-                            <div className="w-7 h-7 rounded-lg border border-blue-500/20 bg-blue-500/10 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all">
+                            <div
+                              className={clsx(
+                                "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all",
+                                iconUrl
+                                  ? "bg-transparent border-transparent"
+                                  : "border border-blue-500/20 bg-blue-500/10",
+                              )}
+                            >
                               {iconUrl ? (
                                 <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
                               ) : (
@@ -1324,6 +1361,7 @@ const InputArea = forwardRef(function InputArea(
                         const cfg = getFileKindConfig(kind);
                         const Icon = cfg.icon;
                         const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                        const isThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
 
                         return (
                           <button
@@ -1339,9 +1377,17 @@ const InputArea = forwardRef(function InputArea(
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
                           >
-                            <div className={clsx("w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all", cfg.bg, cfg.color)}>
+                            <div
+                              className={clsx(
+                                "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all",
+                                iconUrl
+                                  ? "bg-transparent border-transparent"
+                                  : [cfg.bg, cfg.color, "border border-theme/20"],
+                                isThumbnail && "overflow-hidden",
+                              )}
+                            >
                               {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
+                                <img src={iconUrl} alt="" className={clsx(isThumbnail ? "w-full h-full object-cover" : "w-5 h-5 object-contain")} />
                               ) : (
                                 <Icon className="w-3.5 h-3.5" />
                               )}

@@ -12,6 +12,7 @@ import { updates_getState, updates_check, updates_download, updates_install, upd
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
+import { getFileIconCached, getFilePreviewCached } from "../services/icon-cache";
 import * as fs from "fs";
 import { Buffer } from "node:buffer";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
@@ -736,10 +737,24 @@ export function setupIpc() {
     };
   });
 
+  ipcMain.handle('system:getFilePreview', async (_e, filePath: string, options?: { size?: 'small' | 'normal' | 'large'; preferThumbnail?: boolean }) => {
+    try {
+      const p = String(filePath || '').trim();
+      if (!p) return { ok: false, error: 'invalid_path' };
+      return await getFilePreviewCached(p, {
+        size: options?.size,
+        preferThumbnail: !!options?.preferThumbnail,
+      });
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
   ipcMain.handle('system:getFileIcon', async (_e, filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => {
     try {
       const p = String(filePath || '').trim();
       if (!p) return { ok: false, error: 'invalid_path' };
+      return await getFileIconCached(p, { size: options?.size });
       const size = options?.size;
 
       // Expand %ENV_VAR% on Windows and strip quotes / trailing ",N" resource index
@@ -773,7 +788,10 @@ export function setupIpc() {
             const exes = fs.readdirSync(latestDir).filter((f: string) => f.toLowerCase().endsWith('.exe') && f.toLowerCase() !== 'update.exe' && !f.toLowerCase().includes('squirrel') && !f.toLowerCase().includes('unins'));
             if (exes.length > 0) {
               const candidate = path.join(latestDir, exes[0]);
-              const img = await app.getFileIcon(candidate, size ? { size } : undefined);
+              const img = await app.getFileIcon(
+                candidate,
+                size ? { size: size as 'small' | 'normal' | 'large' } : undefined,
+              );
               if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
             }
           }
@@ -793,7 +811,10 @@ export function setupIpc() {
 
       // Use Electron's built-in app.getFileIcon() — works for .exe, .app, and any file
       try {
-        const img = await app.getFileIcon(cleaned, size ? { size } : undefined);
+        const img = await app.getFileIcon(
+          cleaned,
+          size ? { size: size as 'small' | 'normal' | 'large' } : undefined,
+        );
         if (img && !img.isEmpty()) return { ok: true, dataUrl: img.toDataURL() };
       } catch { }
 
@@ -1235,7 +1256,7 @@ export function setupIpc() {
   ipcMain.handle('fileIndex:search', async (_e, query: string, options?: any) => {
     try {
       const files = await searchFiles(query, options || {});
-      return { ok: true, files };
+      return { ok: true, files, results: files };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     }
