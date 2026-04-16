@@ -85,6 +85,18 @@ MAX_READ_FILE_DOCUMENT_BYTES = int(os.getenv("READ_FILE_DOCUMENT_MAX_BYTES", "52
 MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "20000"))
 MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "2000"))
 MAX_GREP_FILE_BYTES = int(os.getenv("GREP_MAX_FILE_BYTES", "5242880"))  # 5MB
+
+# Directories the grep tool always skips. Dominant cost on real repos — pruning
+# these in os.walk cuts file counts by >100x on node-heavy projects.
+EXCLUDED_GREP_DIRS = {
+    "node_modules", ".git", ".hg", ".svn", "dist", "build",
+    ".next", ".nuxt", ".output", ".turbo", ".parcel-cache", ".cache",
+    "target", "out", "bin", "obj",
+    "venv", ".venv", "env", ".env",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".tox", ".ruff_cache",
+    ".idea", ".vscode", ".gradle", ".angular",
+    "coverage", ".nyc_output",
+}
 CHECKPOINT_DIR = os.environ.get(
     "STUARD_CHECKPOINT_DIR",
     os.path.join(os.environ.get("TMPDIR", "/tmp"), "stuard-checkpoints")
@@ -1112,9 +1124,122 @@ async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "items": items, "count": len(items), "truncated": truncated}
 
 
-async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
-    import re
+def _normalize_glob_list(val: Any) -> list[str]:
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return [str(v) for v in val if str(v).strip()]
+    v = str(val).strip()
+    return [v] if v else []
 
+
+def _looks_binary(fp: str, probe_bytes: int = 512) -> bool:
+    """NUL byte in the first chunk is the standard heuristic for binary files."""
+    try:
+        with open(fp, "rb") as f:
+            chunk = f.read(probe_bytes)
+        return b"\x00" in chunk
+    except Exception:
+        return True
+
+
+def _grep_ripgrep(
+    path: str,
+    pattern: str,
+    regex: bool,
+    case_sensitive: bool,
+    includes: list[str],
+    excludes: list[str],
+    max_results: int,
+    max_file_size: int,
+) -> Optional[Dict[str, Any]]:
+    """Fast path via `rg`. Returns None if ripgrep is unavailable or errors — caller falls back to Python."""
+    rg = shutil.which("rg")
+    if not rg:
+        return None
+
+    cmd: list[str] = [
+        rg, "--json", "--no-messages", "--no-heading",
+        # Match the Python impl's semantics: do not consult .gitignore, do
+        # include hidden files. Junk dirs are pruned explicitly below so
+        # we still get the speed win.
+        "--no-ignore", "--hidden",
+    ]
+    cmd.append("-s" if case_sensitive else "-i")
+    if not regex:
+        cmd.append("-F")
+    if max_file_size and max_file_size > 0:
+        cmd.extend(["--max-filesize", f"{max_file_size}B"])
+
+    # Always prune junk directories.
+    for d in EXCLUDED_GREP_DIRS:
+        cmd.extend(["-g", f"!{d}"])
+    for g in includes:
+        cmd.extend(["-g", g])
+    for g in excludes:
+        cmd.extend(["-g", f"!{g}"])
+
+    cmd.extend(["--", pattern, path])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    # rg exit codes: 0=matches found, 1=no matches, 2=error.
+    if proc.returncode not in (0, 1):
+        return None
+
+    stdout = proc.stdout.decode("utf-8", errors="replace")
+    results: list[Dict[str, Any]] = []
+    truncated = False
+
+    for raw in stdout.splitlines():
+        if not raw:
+            continue
+        try:
+            evt = json.loads(raw)
+        except Exception:
+            continue
+        if evt.get("type") != "match":
+            continue
+        data = evt.get("data") or {}
+        fp_obj = data.get("path") or {}
+        fp = fp_obj.get("text") or ""
+        if not fp or not _is_safe_path(fp):
+            continue
+        line_no = int(data.get("line_number") or 0)
+        line_text = ((data.get("lines") or {}).get("text") or "").rstrip("\r\n")
+        submatches = data.get("submatches") or []
+        match_text = ""
+        if submatches:
+            m0 = submatches[0].get("match") or {}
+            match_text = m0.get("text") or ""
+        results.append({
+            "path": fp,
+            "line_number": line_no,
+            "line": line_text,
+            "match": match_text,
+        })
+        if len(results) >= max_results:
+            truncated = True
+            break
+
+    return {
+        "ok": True,
+        "results": results,
+        "count": len(results),
+        "truncated": truncated,
+        "skipped_too_large": 0,
+        "engine": "ripgrep",
+    }
+
+
+async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     p = str(args.get("path") or "").strip()
     pattern = str(args.get("pattern") or args.get("query") or "").strip()
 
@@ -1144,17 +1269,28 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     if max_file_size < 0:
         max_file_size = MAX_GREP_FILE_BYTES
 
-    def normalize_globs(val: Any) -> list[str]:
-        if val is None:
-            return []
-        if isinstance(val, (list, tuple)):
-            return [str(v) for v in val if str(v).strip()]
-        v = str(val).strip()
-        return [v] if v else []
+    includes = _normalize_glob_list(include_glob)
+    excludes = _normalize_glob_list(exclude_glob)
 
-    includes = normalize_globs(include_glob)
-    excludes = normalize_globs(exclude_glob)
+    if not os.path.exists(p):
+        return {"ok": False, "error": f"path not found: {p}"}
 
+    # Fast path: ripgrep. 10–100x faster, parallel, auto-skips binaries.
+    if os.getenv("STUARD_GREP_DISABLE_RG") != "1":
+        rg_result = _grep_ripgrep(
+            path=p,
+            pattern=pattern,
+            regex=bool(regex),
+            case_sensitive=bool(case_sensitive),
+            includes=includes,
+            excludes=excludes,
+            max_results=max_results,
+            max_file_size=max_file_size,
+        )
+        if rg_result is not None:
+            return rg_result
+
+    # Fallback: pure Python.
     flags = 0 if case_sensitive else re.IGNORECASE
     if regex:
         try:
@@ -1167,16 +1303,20 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
     files: list[str] = []
     if os.path.isfile(p):
         files = [p]
-    elif os.path.isdir(p):
-        for root, _, filenames in os.walk(p):
+    else:
+        # dir — prune junk dirs in-place so we never descend into them.
+        for root, dirnames, filenames in os.walk(p):
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in EXCLUDED_GREP_DIRS
+                and not (excludes and any(fnmatch.fnmatch(d, g) for g in excludes))
+            ]
             for name in filenames:
                 if includes and not any(fnmatch.fnmatch(name, g) for g in includes):
                     continue
                 if excludes and any(fnmatch.fnmatch(name, g) for g in excludes):
                     continue
                 files.append(os.path.join(root, name))
-    else:
-        return {"ok": False, "error": f"path not found: {p}"}
 
     document_extensions = PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS
 
@@ -1221,6 +1361,8 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
                 if max_file_size and file_size > max_file_size:
                     skipped_too_large += 1
                     continue
+                if _looks_binary(fp):
+                    continue
                 with open(fp, "r", encoding="utf-8", errors="replace") as f:
                     for line_no, line in enumerate(f, 1):
                         m = rx.search(line)
@@ -1245,7 +1387,8 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
         "results": results,
         "count": len(results),
         "truncated": truncated,
-        "skipped_too_large": skipped_too_large
+        "skipped_too_large": skipped_too_large,
+        "engine": "python",
     }
 
 
