@@ -6,6 +6,7 @@ import {
   serializeChatAttachment,
   type ChatAttachment,
 } from '../utils/attachments';
+import { mergeStreamingText } from '../utils/streamMerge';
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
 const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
@@ -161,6 +162,71 @@ export interface HiddenStateSummary {
   terminals: Array<{ terminalId: string; command: string; status: string; exitCode?: number; }>;
   subagents: Array<{ taskId: string; objective: string; status: string; resultPreview?: string; }>;
   recentToolResults: Array<{ tool: string; resultPreview: string; timestamp: number; }>;
+}
+
+function getTerminalSessionId(payload: any): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+
+  const directId = typeof payload.sessionId === 'string'
+    ? payload.sessionId
+    : typeof payload.terminalId === 'string'
+      ? payload.terminalId
+      : undefined;
+  if (directId) return directId;
+
+  const sessionId = typeof payload.session?.id === 'string' ? payload.session.id : undefined;
+  return sessionId || undefined;
+}
+
+function getTerminalStatus(payload: any): 'running' | 'exited' | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+
+  const sessionStatus = typeof payload.session?.status === 'string'
+    ? payload.session.status.toLowerCase()
+    : undefined;
+  if (sessionStatus === 'running') return 'running';
+  if (sessionStatus === 'exited') return 'exited';
+
+  if (typeof payload.done === 'boolean') {
+    return payload.done ? 'exited' : 'running';
+  }
+
+  return undefined;
+}
+
+function getRunningTerminalIds(toolCalls: ToolCall[]): string[] {
+  const running = new Set<string>();
+
+  for (const tc of toolCalls) {
+    const toolName = String(tc.tool || '').trim();
+    const result = tc.result;
+    const args = tc.args;
+
+    if (toolName === 'terminal_create' && tc.status === 'completed') {
+      const sessionId = getTerminalSessionId(result);
+      const status = getTerminalStatus(result);
+      if (sessionId && status !== 'exited') {
+        running.add(sessionId);
+      }
+      continue;
+    }
+
+    if (toolName === 'terminal_destroy' && tc.status === 'completed') {
+      const sessionId = getTerminalSessionId(result) || (typeof args?.sessionId === 'string' ? args.sessionId : undefined);
+      if (sessionId) running.delete(sessionId);
+      continue;
+    }
+
+    if ((toolName === 'terminal_read' || toolName === 'terminal_wait_for' || toolName === 'terminal_get') && tc.status === 'completed') {
+      const sessionId = getTerminalSessionId(result) || (typeof args?.sessionId === 'string' ? args.sessionId : undefined);
+      const status = getTerminalStatus(result);
+      if (!sessionId || !status) continue;
+      if (status === 'exited') running.delete(sessionId);
+      else running.add(sessionId);
+    }
+  }
+
+  return Array.from(running);
 }
 
 export function createEmptyHiddenState(): HiddenState {
@@ -1134,37 +1200,21 @@ export function useAgent(options?: string | UseAgentOptions) {
                 reasoningStartTimeRef.current = Date.now();
               }
               const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
-              const isFinal = evt.data?.final === true;
               if (chunk) {
-                if (isFinal) {
-                  updateStreamingTab(t => {
-                    if (!t.currentReasoning.trim()) {
-                      const chunks = [...t.currentStreamChunks];
-                      const lastChunk = chunks[chunks.length - 1];
-                      if (lastChunk?.type === 'reasoning') {
-                        chunks[chunks.length - 1] = { type: 'reasoning', content: chunk };
-                      } else {
-                        chunks.push({ type: 'reasoning', content: chunk });
-                      }
-                      return { ...t, currentReasoning: chunk, currentStreamChunks: chunks };
-                    }
-                    return t;
-                  });
-                } else {
-                  updateStreamingTab(t => {
-                    // Append to currentReasoning
-                    const newReasoning = t.currentReasoning + chunk;
-                    // Also update stream chunks - append to last reasoning chunk or create new
-                    const chunks = [...t.currentStreamChunks];
-                    const lastChunk = chunks[chunks.length - 1];
-                    if (lastChunk?.type === 'reasoning') {
-                      chunks[chunks.length - 1] = { type: 'reasoning', content: lastChunk.content + chunk };
-                    } else {
-                      chunks.push({ type: 'reasoning', content: chunk });
-                    }
-                    return { ...t, currentReasoning: newReasoning, currentStreamChunks: chunks };
-                  });
-                }
+                updateStreamingTab(t => {
+                  const newReasoning = mergeStreamingText(t.currentReasoning, chunk);
+                  const chunks = [...t.currentStreamChunks];
+                  const lastChunk = chunks[chunks.length - 1];
+                  if (lastChunk?.type === 'reasoning') {
+                    chunks[chunks.length - 1] = {
+                      type: 'reasoning',
+                      content: mergeStreamingText(lastChunk.content, chunk),
+                    };
+                  } else {
+                    chunks.push({ type: 'reasoning', content: chunk });
+                  }
+                  return { ...t, currentReasoning: newReasoning, currentStreamChunks: chunks };
+                });
               }
               setStreamingAI((prev) => {
                 if (prev.phase === 'tool') return prev;
@@ -1403,7 +1453,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                         }
                         newHiddenState.toolResults = resultMap;
                         
-                        // Track terminal creation
+                        // Track terminal creation / lifecycle
                         if ((tool === 'start_terminal' || tool === 'run_terminal_command') && result?.terminalId) {
                           const termMap = new Map(t.hiddenState.terminals);
                           const existingArgs = t.currentToolCalls.find(findMatch)?.args;
@@ -1415,6 +1465,46 @@ export function useAgent(options?: string | UseAgentOptions) {
                             createdAt: Date.now(),
                           });
                           newHiddenState.terminals = termMap;
+                        }
+                        if (tool === 'terminal_create') {
+                          const termMap = new Map(t.hiddenState.terminals);
+                          const terminalId = getTerminalSessionId(result);
+                          const existingArgs = t.currentToolCalls.find(findMatch)?.args;
+                          if (terminalId) {
+                            termMap.set(terminalId, {
+                              terminalId,
+                              command: existingArgs?.description || existingArgs?.command || '',
+                              status: getTerminalStatus(result) || 'running',
+                              exitCode: result?.session?.exitCode,
+                              createdAt: Date.now(),
+                            });
+                            newHiddenState.terminals = termMap;
+                          }
+                        }
+                        if (tool === 'terminal_read' || tool === 'terminal_wait_for' || tool === 'terminal_get') {
+                          const termMap = new Map(t.hiddenState.terminals);
+                          const terminalId = getTerminalSessionId(result) || t.currentToolCalls.find(findMatch)?.args?.sessionId;
+                          if (terminalId && termMap.has(terminalId)) {
+                            const prevTerm = termMap.get(terminalId)!;
+                            termMap.set(terminalId, {
+                              ...prevTerm,
+                              status: getTerminalStatus(result) || prevTerm.status,
+                              exitCode: typeof result?.exitCode === 'number' ? result.exitCode : prevTerm.exitCode,
+                            });
+                            newHiddenState.terminals = termMap;
+                          }
+                        }
+                        if (tool === 'terminal_destroy') {
+                          const termMap = new Map(t.hiddenState.terminals);
+                          const terminalId = getTerminalSessionId(result) || t.currentToolCalls.find(findMatch)?.args?.sessionId;
+                          if (terminalId && termMap.has(terminalId)) {
+                            const prevTerm = termMap.get(terminalId)!;
+                            termMap.set(terminalId, {
+                              ...prevTerm,
+                              status: 'exited',
+                            });
+                            newHiddenState.terminals = termMap;
+                          }
                         }
                         // Track subagent creation
                         if ((tool === 'subagent_create' || tool === 'run_subagent' || tool === 'spawn_agent') && result?.taskId) {
@@ -1611,6 +1701,9 @@ export function useAgent(options?: string | UseAgentOptions) {
 
             // Always commit accumulated work into a message - even when text is empty
             // but tools were called or chunks streamed, so users see what happened.
+            const completedTabId = getTargetTabId();
+            const currentStreamingTab = tabsRef.current.find(t => t.id === completedTabId);
+            const keepTerminalStatus = !isAborted && !!currentStreamingTab && getRunningTerminalIds(currentStreamingTab.currentToolCalls).length > 0;
             updateStreamingTab(t => {
               // For aborted, prefer the current streamed response over server text
               const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
@@ -1638,16 +1731,17 @@ export function useAgent(options?: string | UseAgentOptions) {
                 currentReasoning: '',
                 currentToolCalls: [],
                 currentStreamChunks: [],
-                aiState: { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
+                aiState: keepTerminalStatus
+                  ? { ...t.aiState, phase: 'tool', tool: 'terminal', toolStatus: 'running', statusText: 'Terminal still running' }
+                  : { ...t.aiState, phase: 'idle', statusText: isAborted ? 'Stopped' : 'Idle' }
               };
             });
 
-            setState((s) => ({ ...s, status: 'idle' }));
+            setState((s) => ({ ...s, status: keepTerminalStatus ? 'tool:terminal_running' : 'idle' }));
 
             refreshPendingMemories();
 
             // Clean up request tracking and mark tab as no longer running
-            const completedTabId = getTargetTabId();
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
             }
@@ -1691,15 +1785,40 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }));
                 setState((s) => ({ ...s, status: 'responding' }));
               }
-            } else if (eventType === 'reasoning' || eventType === 'reasoning_start') {
+            } else if (eventType === 'reasoning_start') {
+              if (!reasoningStartTimeRef.current) {
+                reasoningStartTimeRef.current = Date.now();
+              }
+              updateStreamingTab(t => {
+                const chunks = [...t.currentStreamChunks];
+                const lastChunk = chunks[chunks.length - 1];
+                if (lastChunk?.type !== 'reasoning') {
+                  chunks.push({ type: 'reasoning', content: '', nested: true });
+                }
+                return { ...t, currentStreamChunks: chunks };
+              });
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'responding',
+                statusText: 'Thinking…'
+              }));
+              setState((s) => ({ ...s, status: 'reasoning' }));
+            } else if (eventType === 'reasoning') {
               const text = typeof data.text === 'string' ? data.text : '';
               if (text) {
+                if (!reasoningStartTimeRef.current) {
+                  reasoningStartTimeRef.current = Date.now();
+                }
                 updateStreamingTab(t => {
-                  const newReasoning = t.currentReasoning + text;
+                  const newReasoning = mergeStreamingText(t.currentReasoning, text);
                   const chunks = [...t.currentStreamChunks];
                   const lastChunk = chunks[chunks.length - 1];
                   if (lastChunk?.type === 'reasoning') {
-                    chunks[chunks.length - 1] = { type: 'reasoning', content: lastChunk.content + text, nested: true };
+                    chunks[chunks.length - 1] = {
+                      type: 'reasoning',
+                      content: mergeStreamingText(lastChunk.content, text),
+                      nested: true,
+                    };
                   } else {
                     chunks.push({ type: 'reasoning', content: text, nested: true });
                   }
@@ -1710,6 +1829,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   phase: 'responding',
                   statusText: 'Thinking…'
                 }));
+                setState((s) => ({ ...s, status: 'reasoning' }));
               }
             } else if (eventType === 'tool_call') {
               const toolName = data.tool || data.name || 'tool';
@@ -1734,6 +1854,14 @@ export function useAgent(options?: string | UseAgentOptions) {
                   currentStreamChunks: [...t.currentStreamChunks, { type: 'tool' as const, tool: newCall }],
                 };
               });
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'tool',
+                tool: toolName,
+                toolStatus: 'running',
+                statusText: `🔧 ${humanizeToolName(toolName)} running…`,
+              }));
+              setState((s) => ({ ...s, status: 'tool:running' }));
             } else if (eventType === 'tool_result') {
               const toolId = data.toolCallId || data.id || '';
               if (toolId) {
@@ -1749,6 +1877,12 @@ export function useAgent(options?: string | UseAgentOptions) {
                   ),
                 }));
               }
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'responding',
+                statusText: 'Responding…'
+              }));
+              setState((s) => ({ ...s, status: 'responding' }));
             }
           } else if (msg.type === 'conversation') {
             const cid = msg.conversationId;

@@ -214,18 +214,18 @@ function OverviewMetricCard({
   className?: string;
 }) {
   return (
-    <div className={clsx('dashboard-card min-h-[120px] p-5', className)}>
-      <div className="text-[36px] font-semibold tracking-tight text-theme-fg leading-none">{value}</div>
-      <div className="mt-3 text-sm font-medium text-theme-muted">{label}</div>
+    <div className={clsx('dashboard-card p-4', className)}>
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">{label}</div>
+      <div className="mt-2 text-[24px] font-semibold tracking-tight text-theme-fg leading-none">{value}</div>
     </div>
   );
 }
 
 function ConfigMetricCard({ value, label }: { value: React.ReactNode; label: string }) {
   return (
-    <div className="dashboard-card-muted min-h-[92px] p-4">
-      <div className="text-[20px] font-semibold tracking-tight text-theme-fg">{value}</div>
-      <div className="mt-2 text-sm text-theme-muted">{label}</div>
+    <div className="dashboard-card-muted p-3.5">
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">{label}</div>
+      <div className="mt-1.5 text-[15px] font-semibold tracking-tight text-theme-fg truncate">{value}</div>
     </div>
   );
 }
@@ -756,7 +756,6 @@ export function ProactiveView() {
   const modelMode = (config.modelMode || 'balanced') as ProactiveModelMode;
   const executionTargetMeta = EXECUTION_TARGET_LABELS[config.executionTarget];
   const modelModeMeta = PROACTIVE_MODEL_MODE_LABELS[modelMode];
-  const sectionTitle = activeTab === 'overview' ? 'Overview' : activeTab === 'activity' ? 'Activity' : 'Configuration';
   const activeTasks = useMemo(
     () => [...tasksByStatus.in_progress, ...tasksByStatus.queued],
     [tasksByStatus.in_progress, tasksByStatus.queued],
@@ -794,51 +793,48 @@ export function ProactiveView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col animate-in fade-in duration-300">
-      <div className="flex-shrink-0 px-1 pb-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0">
-            <h1 className="font-stuard text-[32px] font-semibold tracking-tight text-theme-fg">Proactive</h1>
-            <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-              <span>Configure autonomous agent behavior and monitoring parameters.</span>
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {saving && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-            <button
-              onClick={handleTriggerNow}
-              disabled={wakeUpRunning}
-              className="dashboard-button-secondary inline-flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {wakeUpRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
-              {wakeUpRunning ? 'Running...' : 'Run Once'}
-            </button>
-            <button
-              onClick={handleToggleEnabled}
-              disabled={saving}
-              className={clsx(
-                'inline-flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
-                config.enabled
-                  ? 'dashboard-button-secondary text-theme-fg'
-                  : 'dashboard-button-primary',
-              )}
-            >
-              {config.enabled ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-              {config.enabled ? 'Pause' : 'Resume'}
-            </button>
-          </div>
+      <div className="flex-shrink-0 mb-5 flex items-start justify-between gap-4 px-1">
+        <div className="min-w-0">
+          <h1 className="text-[30px] font-semibold text-theme-fg tracking-tight font-stuard leading-none">
+            Proactive
+          </h1>
+          <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            <span>Configure autonomous agent behavior and monitoring parameters.</span>
+          </p>
+        </div>
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+          <DashboardBadge label={schedulerState.label} tone={schedulerState.tone} />
+          <button
+            onClick={handleTriggerNow}
+            disabled={wakeUpRunning}
+            className="dashboard-refresh-button inline-flex items-center gap-2 px-3.5 py-2 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {wakeUpRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            {wakeUpRunning ? 'Running' : 'Run Once'}
+          </button>
+          <button
+            onClick={handleToggleEnabled}
+            disabled={saving}
+            className={clsx(
+              'inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-[13px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
+              config.enabled ? 'dashboard-button-secondary' : 'dashboard-button-primary',
+            )}
+          >
+            {config.enabled ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+            {config.enabled ? 'Pause' : 'Resume'}
+          </button>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 scrollbar-minimal">
-        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="text-[22px] font-semibold tracking-tight text-theme-fg">{sectionTitle}</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <DashboardBadge label={schedulerState.label} tone={schedulerState.tone} />
+        <div className="mb-5 flex justify-center">
+          <div className="inline-flex items-center gap-1 rounded-full border border-theme bg-theme-hover/60 p-1 shadow-sm">
             {([
-              { id: 'overview' as const, label: 'Tasks', icon: ListTodo },
-              { id: 'activity' as const, label: 'Activity', icon: Activity },
-              { id: 'settings' as const, label: 'Configuration', icon: Settings2 },
+              { id: 'overview' as const, label: 'Tasks', icon: ListTodo, showCount: true },
+              { id: 'activity' as const, label: 'Activity', icon: Activity, showCount: false },
+              { id: 'settings' as const, label: 'Configuration', icon: Settings2, showCount: false },
             ]).map(tab => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -847,19 +843,19 @@ export function ProactiveView() {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   className={clsx(
-                    'inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium transition',
+                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium transition-all',
                     active
-                      ? 'border-primary/45 bg-theme-card/80 text-theme-fg shadow-[0_0_0_1px_rgba(59,130,246,0.18)]'
-                      : 'border-theme/10 bg-theme-card/45 text-theme-muted hover:bg-theme-hover/25 hover:text-theme-fg',
+                      ? 'bg-theme-bg text-theme-fg shadow-sm'
+                      : 'text-theme-muted hover:text-theme-fg',
                   )}
                 >
                   <Icon className="h-3.5 w-3.5" />
                   <span>{tab.label}</span>
-                  {tab.id === 'overview' && (
+                  {tab.showCount && pendingCount > 0 && (
                     <span
                       className={clsx(
-                        'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
-                        active ? 'bg-white text-slate-900' : 'bg-theme-hover/60 text-theme-muted',
+                        'inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold',
+                        active ? 'bg-primary/15 text-primary' : 'bg-theme-hover/80 text-theme-muted',
                       )}
                     >
                       {pendingCount}
@@ -873,13 +869,13 @@ export function ProactiveView() {
 
         {/* ─── Overview tab ─────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="space-y-6 animate-in fade-in duration-300">
+          <div className="space-y-5 animate-in fade-in duration-300">
 
             {/* Live progress (only while running) */}
             {stageState && (
-              <div className="dashboard-card p-5">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-theme-fg">Live check-in</div>
+              <div className="dashboard-card p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-[13px] font-semibold text-theme-fg">Live check-in</div>
                   <DashboardBadge label="In progress" tone="warning" icon={Loader2} />
                 </div>
                 <StageProgress stageState={stageState} />
@@ -887,50 +883,50 @@ export function ProactiveView() {
               </div>
             )}
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.15fr)]">
-              <div className="space-y-6">
-                <section className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <OverviewMetricCard label="Next Check-in" value={nextCheckInValue} />
-                    <OverviewMetricCard label="Pending Tasks" value={pendingCount} />
-                    <OverviewMetricCard label="Total Check-ins" value={padCount(logs.length)} className="md:col-span-2" />
+            {/* Top metrics row */}
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <OverviewMetricCard label="Next Check-in" value={nextCheckInValue} />
+              <OverviewMetricCard label="Pending Tasks" value={pendingCount} />
+              <OverviewMetricCard label="Total Check-ins" value={padCount(logs.length)} />
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+              <div className="space-y-5">
+                <section className="space-y-3">
+                  <div className="text-[13px] font-semibold text-theme-fg">Configuration</div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <ConfigMetricCard value={executionTargetMeta.label} label="Run Location" />
+                    <ConfigMetricCard value={modelModeMeta.label} label="Intelligence" />
+                    <ConfigMetricCard value={formatShortScheduleLabel(config.interval)} label="Interval" />
                   </div>
                 </section>
 
-                <section className="space-y-4">
-                  <div className="text-sm font-semibold text-theme-fg">Config</div>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <ConfigMetricCard value={executionTargetMeta.label} label={config.enabled ? 'Enabled' : 'Disabled'} />
-                    <ConfigMetricCard value={modelModeMeta.label} label="Intelligence Level" />
-                    <ConfigMetricCard value={formatShortScheduleLabel(config.interval)} label="Check-in Interval" />
-                  </div>
-                </section>
-
-                <section className="space-y-4">
+                <section className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-theme-fg">Focus Brief</div>
-                    {saving && <span className="text-[11px] font-medium text-primary">Saving...</span>}
+                    <div className="text-[13px] font-semibold text-theme-fg">Focus Brief</div>
+                    {saving && <span className="text-[11px] font-medium text-primary">Saving…</span>}
                   </div>
-                  <div className="dashboard-card p-4">
+                  <div className="dashboard-card p-3.5">
                     <textarea
                       value={config.instructions}
                       onChange={e => setConfig(prev => ({ ...prev, instructions: e.target.value }))}
                       onBlur={() => updateConfig({ instructions: config.instructions })}
                       placeholder="Monitor localhost ports, alert on prolonged inactivity, and surface action items from meetings."
                       rows={5}
-                      className="min-h-[140px] w-full resize-none rounded-2xl border border-theme/10 bg-theme-bg/30 px-4 py-3 text-sm leading-7 text-theme-fg placeholder:text-theme-muted/35 focus:border-primary/30 focus:outline-none"
+                      className="min-h-[128px] w-full resize-none rounded-xl border border-theme/10 bg-theme-bg/30 px-3.5 py-2.5 text-[13px] leading-6 text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
                     />
+                    <div className="mt-1.5 text-[10px] text-theme-muted/60">Auto-saves on blur.</div>
                   </div>
                 </section>
               </div>
 
-              <div className="space-y-6">
-                <section className="space-y-4">
+              <div className="space-y-5">
+                <section className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-theme-fg">Current Task</div>
+                    <div className="text-[13px] font-semibold text-theme-fg">Current Task</div>
                     <button
                       onClick={() => setShowAddTask(prev => !prev)}
-                      className="dashboard-button-secondary inline-flex h-9 items-center gap-2 rounded-2xl px-3 text-xs font-medium transition"
+                      className="dashboard-refresh-button inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium transition"
                     >
                       <Plus className="h-3 w-3" />
                       Add Task
@@ -938,7 +934,7 @@ export function ProactiveView() {
                   </div>
 
                   {showAddTask && (
-                    <div className="dashboard-card-muted p-4 animate-in slide-in-from-top-1 duration-200">
+                    <div className="dashboard-card-muted p-3.5 animate-in slide-in-from-top-1 duration-200">
                       <input
                         type="text"
                         value={newTitle}
@@ -946,26 +942,26 @@ export function ProactiveView() {
                         placeholder="Task title"
                         autoFocus
                         onKeyDown={e => e.key === 'Enter' && handleAddTask()}
-                        className="w-full rounded-2xl border border-theme/10 bg-theme-bg/35 px-4 py-3 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
+                        className="w-full rounded-xl border border-theme/10 bg-theme-bg/35 px-3.5 py-2.5 text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
                       />
                       <textarea
                         value={newInstructions}
                         onChange={e => setNewInstructions(e.target.value)}
-                        placeholder="Optional instructions..."
+                        placeholder="Optional instructions…"
                         rows={3}
-                        className="mt-3 w-full resize-none rounded-2xl border border-theme/10 bg-theme-bg/35 px-4 py-3 text-sm text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
+                        className="mt-2.5 w-full resize-none rounded-xl border border-theme/10 bg-theme-bg/35 px-3.5 py-2.5 text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
                       />
-                      <div className="mt-3 flex items-center justify-end gap-2">
+                      <div className="mt-2.5 flex items-center justify-end gap-2">
                         <button
                           onClick={() => { setShowAddTask(false); setNewTitle(''); setNewInstructions(''); }}
-                          className="rounded-2xl px-4 py-2 text-xs font-medium text-theme-muted transition hover:text-theme-fg"
+                          className="rounded-xl px-3 py-1.5 text-[12px] font-medium text-theme-muted transition hover:text-theme-fg"
                         >
                           Cancel
                         </button>
                         <button
                           onClick={handleAddTask}
                           disabled={!newTitle.trim()}
-                          className="dashboard-button-primary rounded-2xl px-4 py-2 text-xs font-semibold text-primary-fg transition disabled:cursor-not-allowed disabled:opacity-50"
+                          className="dashboard-button-primary rounded-xl px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Save Task
                         </button>
@@ -973,51 +969,60 @@ export function ProactiveView() {
                     </div>
                   )}
 
-                  <div className="dashboard-card min-h-[194px] p-5">
-                    {currentTask ? (
-                      <div className="flex h-full flex-col justify-between gap-6">
-                        <div className="space-y-4">
+                  {currentTask ? (
+                    <div className="dashboard-card p-4">
+                      <div className="flex flex-col gap-3.5">
+                        <div className="space-y-2.5">
                           <DashboardBadge label={currentTaskLabel} tone={currentTaskTone} />
-                          <div className="text-[26px] font-medium tracking-tight text-theme-fg leading-[1.3]">
+                          <div className="text-[16px] font-semibold tracking-tight text-theme-fg leading-snug">
                             {currentTask.title}
                           </div>
-                          <div className="max-w-2xl text-sm leading-7 text-theme-muted">
-                            {currentTask.instructions || 'This task will stay ready for Stuard to pick up on the next check-in.'}
-                          </div>
+                          {currentTask.instructions && (
+                            <div className="text-[13px] leading-6 text-theme-muted line-clamp-3">
+                              {currentTask.instructions}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs text-theme-muted">
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <div className="text-[11px] text-theme-muted">
                             Updated {timeAgo(currentTask.updatedAt)}
                           </div>
                           <button
                             onClick={() => handleDeleteTask(currentTask.id)}
-                            className="dashboard-button-secondary inline-flex h-9 items-center gap-2 rounded-2xl px-3 text-xs font-medium transition"
+                            className="dashboard-refresh-button inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium transition"
                           >
                             <Trash2 className="h-3 w-3" />
                             End Task
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex h-full min-h-[154px] items-center justify-center rounded-[26px] border border-dashed border-theme/10 bg-theme-bg/20 px-6 text-center">
-                        <div>
-                          <div className="text-base font-medium text-theme-fg">No current task</div>
-                          <div className="mt-2 text-sm leading-6 text-theme-muted">
-                            Add a proactive task to give Stuard something concrete to monitor or complete during check-ins.
-                          </div>
+                    </div>
+                  ) : (
+                    <div className="dashboard-card flex items-center justify-center rounded-[24px] border-dashed p-6 text-center">
+                      <div>
+                        <div className="text-[14px] font-medium text-theme-fg">No current task</div>
+                        <div className="mt-1.5 text-[12px] leading-5 text-theme-muted max-w-sm">
+                          Add a proactive task to give Stuard something concrete to monitor or complete during check-ins.
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </section>
 
-                <section className="space-y-4">
+                <section className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-theme-fg">Queued</div>
+                    <div className="text-[13px] font-semibold text-theme-fg">
+                      Queued
+                      {queuedTasks.length > 0 && (
+                        <span className="ml-2 inline-flex items-center justify-center rounded-full bg-theme-hover/60 px-2 py-0.5 text-[10px] font-semibold text-theme-muted">
+                          {queuedTasks.length}
+                        </span>
+                      )}
+                    </div>
                     {queuedTasks.length > 0 && (
                       <button
                         onClick={() => handleClearQueued(queuedTasks)}
-                        className="rounded-2xl px-3 py-1.5 text-xs font-medium text-theme-muted transition hover:bg-theme-hover/20 hover:text-theme-fg"
+                        className="rounded-xl px-2.5 py-1 text-[12px] font-medium text-theme-muted transition hover:bg-theme-hover/20 hover:text-theme-fg"
                       >
                         Clear all
                       </button>
@@ -1025,18 +1030,13 @@ export function ProactiveView() {
                   </div>
 
                   {queuedTasks.length > 0 ? (
-                    <div className="space-y-3">
+                    <div className="space-y-2.5">
                       {queuedTasks.map(task => <TaskCard key={task.id} task={task} onDelete={handleDeleteTask} />)}
                     </div>
                   ) : (
-                    <div className="dashboard-card min-h-[176px] p-5">
-                      <div className="flex h-full min-h-[132px] items-center justify-center rounded-[26px] border border-dashed border-theme/10 bg-theme-bg/20 px-6 text-center">
-                        <div>
-                          <div className="text-base font-medium text-theme-fg">Nothing queued</div>
-                          <div className="mt-2 text-sm leading-6 text-theme-muted">
-                            When you add more proactive tasks, they will show up here in the order Stuard will handle them.
-                          </div>
-                        </div>
+                    <div className="dashboard-card flex items-center justify-center rounded-[24px] border-dashed p-5 text-center">
+                      <div className="text-[12px] leading-5 text-theme-muted max-w-sm">
+                        Nothing queued — additional proactive tasks will show up here in the order Stuard will handle them.
                       </div>
                     </div>
                   )}
@@ -1048,22 +1048,22 @@ export function ProactiveView() {
 
         {/* ─── Activity tab ─────────────────────────────────────────── */}
         {activeTab === 'activity' && (
-          <div className="space-y-4 max-w-5xl animate-in fade-in duration-300">
+          <div className="space-y-5 animate-in fade-in duration-300">
             {stageState && (
-              <div className="space-y-3">
-                <div className="text-sm font-semibold text-theme-fg">Live</div>
+              <div className="dashboard-card space-y-3 p-4">
+                <div className="text-[13px] font-semibold text-theme-fg">Live</div>
                 <StageProgress stageState={stageState} />
                 {currentStageLog && <WakeUpDiagnostics log={currentStageLog} modelById={modelById} />}
               </div>
             )}
 
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-theme-fg">Check-in history</div>
-              <span className="text-[11px] text-theme-muted/50">{logs.length} entries</span>
+              <div className="text-[13px] font-semibold text-theme-fg">Check-in history</div>
+              <span className="text-[11px] text-theme-muted/60">{logs.length} {logs.length === 1 ? 'entry' : 'entries'}</span>
             </div>
 
             {logs.length === 0 ? (
-              <div className="dashboard-card rounded-[28px] border-dashed bg-theme-bg/10 px-4 py-12 text-center text-xs text-theme-muted/60">
+              <div className="dashboard-card flex items-center justify-center rounded-[24px] border-dashed p-8 text-center text-[12px] text-theme-muted">
                 No proactive history yet. Run a check-in to see results here.
               </div>
             ) : (
@@ -1076,31 +1076,31 @@ export function ProactiveView() {
 
         {/* ─── Settings tab ─────────────────────────────────────────── */}
         {activeTab === 'settings' && (
-          <div className="space-y-6 max-w-4xl animate-in fade-in duration-300">
+          <div className="mx-auto max-w-4xl space-y-5 animate-in fade-in duration-300">
 
             {/* Behavior */}
-            <section>
-              <div className="text-sm font-semibold text-theme-fg mb-3">Behavior</div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
+            <section className="space-y-3">
+              <div className="text-[13px] font-semibold text-theme-fg">Behavior</div>
+              <div className="dashboard-card divide-y divide-[color:var(--dashboard-panel-border)] overflow-hidden">
                 {/* Enable toggle */}
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <div className="text-sm font-medium text-theme-fg">Enable proactive help</div>
-                    <div className="text-xs text-theme-muted mt-0.5">Stuard wakes up on the schedule below</div>
+                <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-medium text-theme-fg">Enable proactive help</div>
+                    <div className="mt-0.5 text-[11px] text-theme-muted">Stuard wakes up on the schedule below</div>
                   </div>
                   <Toggle checked={config.enabled} onChange={v => updateConfig({ enabled: v })} />
                 </div>
 
                 {/* Schedule */}
-                <div className="px-4 py-3">
-                  <div className="text-xs font-medium text-theme-muted mb-2">Check-in frequency</div>
+                <div className="px-4 py-3.5">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Check-in frequency</div>
                   <div className="flex flex-wrap gap-1.5">
                     {(Object.entries(SCHEDULE_LABELS) as [ScheduleInterval, string][]).map(([key, label]) => (
                       <button
                         key={key} onClick={() => updateConfig({ interval: key })}
                         className={clsx(
-                          'rounded-md border px-3 py-1.5 text-xs font-medium transition',
-                          config.interval === key ? 'border-primary bg-primary/10 text-primary' : 'border-theme/10 text-theme-muted hover:text-theme-fg hover:border-theme/20'
+                          'rounded-lg border px-3 py-1.5 text-[12px] font-medium transition',
+                          config.interval === key ? 'border-primary/40 bg-primary/10 text-primary' : 'border-[color:var(--dashboard-panel-border)] text-theme-muted hover:text-theme-fg hover:border-theme/30'
                         )}
                       >
                         {label}
@@ -1110,23 +1110,23 @@ export function ProactiveView() {
                 </div>
 
                 {/* Execution target */}
-                <div className="px-4 py-3">
-                  <div className="text-xs font-medium text-theme-muted mb-2">Run location</div>
+                <div className="px-4 py-3.5">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Run location</div>
                   <div className="grid grid-cols-2 gap-2">
                     {(Object.entries(EXECUTION_TARGET_LABELS) as [ExecutionTarget, { label: string; description: string }][]).map(([key, meta]) => (
                       <button
                         key={key} onClick={() => updateConfig({ executionTarget: key })}
                         className={clsx(
-                          'flex items-center gap-3 rounded-lg border p-3 text-left transition',
-                          config.executionTarget === key ? 'border-primary/30 bg-primary/5' : 'border-theme/10 hover:bg-theme-hover/15'
+                          'flex items-center gap-3 rounded-xl border p-3 text-left transition',
+                          config.executionTarget === key ? 'border-primary/40 bg-primary/5' : 'border-[color:var(--dashboard-panel-border)] hover:bg-theme-hover/15'
                         )}
                       >
-                        <div className={clsx('rounded-md p-1.5', config.executionTarget === key ? 'bg-primary text-white' : 'bg-theme-hover/40 text-theme-muted')}>
+                        <div className={clsx('rounded-lg p-1.5', config.executionTarget === key ? 'bg-primary text-white' : 'bg-theme-hover/40 text-theme-muted')}>
                           {key === 'local' ? <Monitor className="h-4 w-4" /> : <Cloud className="h-4 w-4" />}
                         </div>
-                        <div>
-                          <div className="text-xs font-semibold text-theme-fg">{meta.label}</div>
-                          <div className="text-[10px] text-theme-muted mt-0.5">{meta.description}</div>
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-semibold text-theme-fg">{meta.label}</div>
+                          <div className="mt-0.5 text-[10px] text-theme-muted">{meta.description}</div>
                         </div>
                       </button>
                     ))}
@@ -1136,18 +1136,18 @@ export function ProactiveView() {
             </section>
 
             {/* Model */}
-            <section>
-              <div className="text-sm font-semibold text-theme-fg mb-3">Model</div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
-                <div className="px-4 py-3">
-                  <div className="text-xs font-medium text-theme-muted mb-2">Intelligence level</div>
+            <section className="space-y-3">
+              <div className="text-[13px] font-semibold text-theme-fg">Model</div>
+              <div className="dashboard-card divide-y divide-[color:var(--dashboard-panel-border)] overflow-hidden">
+                <div className="px-4 py-3.5">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Intelligence level</div>
                   <div className="flex flex-wrap gap-1.5">
                     {(Object.entries(PROACTIVE_MODEL_MODE_LABELS) as [ProactiveModelMode, { label: string; description: string }][]).map(([key, meta]) => (
                       <button
                         key={key} onClick={() => updateConfig({ modelMode: key })} title={meta.description}
                         className={clsx(
-                          'rounded-md border px-3 py-1.5 text-xs font-medium transition',
-                          modelMode === key ? 'border-primary/30 bg-primary/10 text-primary' : 'border-theme/10 text-theme-muted hover:text-theme-fg hover:border-theme/20'
+                          'rounded-lg border px-3 py-1.5 text-[12px] font-medium transition',
+                          modelMode === key ? 'border-primary/40 bg-primary/10 text-primary' : 'border-[color:var(--dashboard-panel-border)] text-theme-muted hover:text-theme-fg hover:border-theme/30'
                         )}
                       >
                         {meta.label}
@@ -1155,36 +1155,36 @@ export function ProactiveView() {
                     ))}
                   </div>
                 </div>
-                <div className="px-4 py-3">
-                  <div className="text-xs font-medium text-theme-muted mb-2">Custom model ID</div>
+                <div className="px-4 py-3.5">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Custom model ID</div>
                   <input
                     type="text"
                     value={config.modelId || ''}
                     onChange={e => setConfig(prev => ({ ...prev, modelId: e.target.value }))}
                     onBlur={() => updateConfig({ modelId: String(config.modelId || '').trim() })}
                     placeholder="Optional — e.g. google/gemini-3.1-pro-preview"
-                    className="w-full rounded-md border border-theme/10 bg-theme-bg/30 px-3 py-2 text-xs text-theme-fg placeholder:text-theme-muted/35 focus:border-primary/30 focus:outline-none"
+                    className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-bg/30 px-3 py-2 text-[12px] text-theme-fg placeholder:text-theme-muted/40 focus:border-primary/30 focus:outline-none"
                   />
                 </div>
               </div>
             </section>
 
             {/* Context & permissions */}
-            <section>
-              <div className="text-sm font-semibold text-theme-fg mb-3">Context & permissions</div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
+            <section className="space-y-3">
+              <div className="text-[13px] font-semibold text-theme-fg">Context &amp; permissions</div>
+              <div className="dashboard-card divide-y divide-[color:var(--dashboard-panel-border)] overflow-hidden">
                 {[
                   { key: 'screenshot' as const, label: 'Screen capture', icon: Camera, desc: 'Inspect the active window during check-ins' },
                   { key: 'systemAudio' as const, label: 'System audio', icon: Volume2, desc: 'Use playback audio as context' },
                   { key: 'micAudio' as const, label: 'Microphone', icon: Mic, desc: 'Use voice input as context' },
                 ].map(perm => (
-                  <div key={perm.key} className="flex items-center gap-3 px-4 py-3">
-                    <div className={clsx('rounded-md p-1.5', config.contextPermissions[perm.key] ? 'bg-primary/10 text-primary' : 'bg-theme-hover/30 text-theme-muted')}>
+                  <div key={perm.key} className="flex items-center gap-3 px-4 py-3.5">
+                    <div className={clsx('rounded-lg p-1.5', config.contextPermissions[perm.key] ? 'bg-primary/10 text-primary' : 'bg-theme-hover/30 text-theme-muted')}>
                       <perm.icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-theme-fg">{perm.label}</div>
-                      <div className="text-[10px] text-theme-muted mt-0.5">{perm.desc}</div>
+                      <div className="text-[13px] font-medium text-theme-fg">{perm.label}</div>
+                      <div className="mt-0.5 text-[11px] text-theme-muted">{perm.desc}</div>
                     </div>
                     <Toggle
                       checked={config.contextPermissions[perm.key]}
@@ -1192,32 +1192,32 @@ export function ProactiveView() {
                     />
                   </div>
                 ))}
-                <div className="px-4 py-3">
-                  <div className="text-xs font-medium text-theme-muted mb-2">Allowed tools</div>
+                <div className="px-4 py-3.5">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Allowed tools</div>
                   <ToolSelector
                     selected={config.allowedTools} available={availableTools}
                     onChange={tools => updateConfig({ allowedTools: tools })}
                   />
-                  <div className="mt-1.5 text-[10px] text-theme-muted/50">Leave empty for full tool access.</div>
+                  <div className="mt-1.5 text-[10px] text-theme-muted/60">Leave empty for full tool access.</div>
                 </div>
               </div>
             </section>
 
             {/* Notifications */}
-            <section>
-              <div className="text-sm font-semibold text-theme-fg mb-3">Notifications</div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 divide-y divide-theme/8">
+            <section className="space-y-3">
+              <div className="text-[13px] font-semibold text-theme-fg">Notifications</div>
+              <div className="dashboard-card divide-y divide-[color:var(--dashboard-panel-border)] overflow-hidden">
                 {(Object.entries(NOTIFICATION_CHANNEL_LABELS) as Array<[NotificationChannel, { label: string; description: string }]>).map(([ch, info]) => {
                   const isActive = notificationChannels.includes(ch);
                   const Icon = ch === 'sms' ? MessageSquare : ch === 'call' ? Phone : Bell;
                   return (
-                    <div key={ch} className="flex items-center gap-3 px-4 py-3">
-                      <div className={clsx('rounded-md p-1.5', isActive ? 'bg-blue-500/10 text-blue-400' : 'bg-theme-hover/30 text-theme-muted')}>
+                    <div key={ch} className="flex items-center gap-3 px-4 py-3.5">
+                      <div className={clsx('rounded-lg p-1.5', isActive ? 'bg-blue-500/10 text-blue-400' : 'bg-theme-hover/30 text-theme-muted')}>
                         <Icon className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-theme-fg">{info.label}</div>
-                        <div className="text-[10px] text-theme-muted mt-0.5">{info.description}</div>
+                        <div className="text-[13px] font-medium text-theme-fg">{info.label}</div>
+                        <div className="mt-0.5 text-[11px] text-theme-muted">{info.description}</div>
                       </div>
                       <Toggle
                         checked={isActive}
@@ -1230,25 +1230,6 @@ export function ProactiveView() {
                     </div>
                   );
                 })}
-              </div>
-            </section>
-
-            {/* Focus brief (in settings too for convenience) */}
-            <section>
-              <div className="text-sm font-semibold text-theme-fg mb-3">Focus brief</div>
-              <div className="rounded-lg border border-theme/8 bg-theme-card/20 p-3.5">
-                <textarea
-                  value={config.instructions}
-                  onChange={e => setConfig(prev => ({ ...prev, instructions: e.target.value }))}
-                  onBlur={() => updateConfig({ instructions: config.instructions })}
-                  placeholder="What should Stuard pay attention to, when to stay quiet, and how to help..."
-                  rows={4}
-                  className="w-full resize-none rounded-md border border-theme/8 bg-theme-bg/30 px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/35 focus:border-primary/30 focus:outline-none leading-relaxed"
-                />
-                <div className="mt-2 flex items-center justify-between text-[10px] text-theme-muted/50">
-                  <span>Auto-saves on blur</span>
-                  {saving && <span className="text-primary font-medium">Saving...</span>}
-                </div>
               </div>
             </section>
           </div>

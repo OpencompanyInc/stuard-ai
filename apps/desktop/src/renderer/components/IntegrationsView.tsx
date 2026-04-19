@@ -194,51 +194,47 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
 
   return (
     <div className={clsx(
-      "col-span-full bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
-      anyConnected ? "border-primary/30" : "border-theme hover:border-theme-hover"
+      "dashboard-card flex flex-col transition-all duration-300",
+      anyConnected && "border-primary/30"
     )}>
       {/* Header */}
-      <div className="p-5 pb-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
+      <div className="p-5 pb-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
             <div className={clsx(
-              "w-11 h-11 rounded-lg border shadow-sm flex items-center justify-center transition-all",
-              anyConnected ? "bg-primary/10 border-primary/20" : "bg-theme-hover border-theme"
+              "w-10 h-10 rounded-lg border flex items-center justify-center transition-all flex-shrink-0",
+              anyConnected ? "bg-primary/5 border-primary/20" : "bg-theme-hover border-theme"
             )}>
-              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
                 <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
                 <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
               </svg>
             </div>
-            <div>
-              <h3 className="font-bold text-[15px] text-theme-fg tracking-tight">Google Account</h3>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">Google</h3>
               {defaultProfile?.account_email ? (
-                <span className="text-[11px] text-theme-muted font-medium">{defaultProfile.account_email}</span>
+                <span className="block truncate text-[11px] text-theme-muted font-medium">{defaultProfile.account_email}</span>
               ) : defaultProfile?.profile_label ? (
-                <span className="text-[11px] text-theme-muted font-medium">Profile: {defaultProfile.profile_label}</span>
-              ) : anyConnected ? (
-                <span className="text-[11px] text-emerald-400 font-medium">Connected</span>
+                <span className="block truncate text-[11px] text-theme-muted font-medium">{defaultProfile.profile_label}</span>
               ) : (
-                <span className="text-[11px] text-theme-muted font-medium">Connect your Google workspace</span>
+                <span className="text-[11px] text-theme-muted font-medium">Drive · Gmail · Calendar · Docs · Sheets</span>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {anyConnected && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-900/20 text-emerald-400 text-[10px] font-bold border border-emerald-900/30 tracking-wide uppercase">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {connectedProducts.length} Active
-              </span>
-            )}
-          </div>
+          {anyConnected && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/20 flex-shrink-0">
+              <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+              {connectedProducts.length}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Products Grid */}
       <div className="px-5 pb-2">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-5 gap-1.5">
           {googleProducts.map((product: any) => {
             const isActive = !!connectedMap[product.slug];
             const isConnecting = connectingSlug === product.slug;
@@ -247,85 +243,73 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                 key={product.slug}
                 onClick={() => isActive ? undefined : handleConnectProduct(product.slug)}
                 disabled={isConnecting}
+                title={productLabel(product.slug)}
                 className={clsx(
-                  "relative flex flex-col items-center gap-2 p-3 rounded-lg border transition-all duration-200 group/product",
+                  "relative flex flex-col items-center gap-1 py-2 rounded-md border transition-all duration-200 group/product",
                   isActive
                     ? "bg-primary/5 border-primary/25 cursor-default"
-                    : "bg-theme-bg border-theme hover:border-primary/30 hover:bg-primary/5 cursor-pointer active:scale-95",
+                    : "bg-theme-bg/50 border-theme/60 hover:border-primary/30 hover:bg-primary/5 cursor-pointer active:scale-95",
                   isConnecting && "opacity-60"
                 )}
               >
                 <div className={clsx(
-                  "w-8 h-8 rounded-md flex items-center justify-center transition-all",
+                  "flex items-center justify-center transition-all",
                   isActive ? "text-primary" : "text-theme-muted group-hover/product:text-primary"
                 )}>
                   {isConnecting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    getIntegrationIcon(product.slug, "w-4 h-4")
+                    getIntegrationIcon(product.slug, "w-3.5 h-3.5")
                   )}
                 </div>
                 <span className={clsx(
-                  "text-[10px] font-semibold leading-tight text-center",
-                  isActive ? "text-primary" : "text-theme-fg"
+                  "text-[9px] font-semibold leading-none tracking-tight text-center",
+                  isActive ? "text-primary" : "text-theme-muted"
                 )}>
                   {productLabel(product.slug)}
                 </span>
                 {isActive && (
-                  <div className="absolute top-1.5 right-1.5">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                  </div>
-                )}
-                {!isActive && !isConnecting && (
-                  <div className="absolute top-1.5 right-1.5 opacity-0 group-hover/product:opacity-100 transition-opacity">
-                    <Plus className="w-3 h-3 text-theme-muted" />
-                  </div>
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 )}
               </button>
             );
           })}
         </div>
-        {!anyConnected && (
-          <p className="text-[11px] text-theme-muted font-medium mt-3 text-center">
-            Click any product above to connect your Google account. All products share one login — no need to sign in multiple times.
-          </p>
-        )}
       </div>
 
       {/* Profiles & Actions */}
-      <div className="px-5 pb-4 pt-3 border-t border-theme/30 mt-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {anyConnected && googleProfiles.length > 0 && (
-              <button
-                onClick={() => setShowProfiles(!showProfiles)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
-              >
-                <Shield className="w-3 h-3" />
-                {googleProfiles.length} Profile{googleProfiles.length !== 1 ? 's' : ''}
-                {showProfiles ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {anyConnected && (
-              <>
+      <div className="px-5 pb-4 pt-3 mt-auto border-t border-theme border-dashed">
+        <div className="flex items-center gap-2">
+          {anyConnected ? (
+            <>
+              {googleProfiles.length > 0 && (
+                <button
+                  onClick={() => setShowProfiles(!showProfiles)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                >
+                  {googleProfiles.length} profile{googleProfiles.length !== 1 ? 's' : ''}
+                  {showProfiles ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+              )}
+              <div className="ml-auto flex items-center gap-1">
                 <button
                   onClick={() => setAddingProfile(true)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-semibold text-theme-muted hover:text-primary hover:bg-primary/5 transition-all"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-primary hover:bg-primary/5 transition-all"
                 >
                   <Plus className="w-3 h-3" />
-                  Add Account
+                  Add
                 </button>
                 <button
                   onClick={() => handleDisconnect(connectedProducts[0] || 'gmail')}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-semibold text-theme-muted hover:text-red-400 hover:bg-red-400/5 transition-all"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-red-400 hover:bg-red-400/5 transition-all"
                 >
                   Disconnect
                 </button>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-[10px] text-theme-muted font-medium">Click any product to connect — one login covers them all.</p>
+          )}
         </div>
 
         {/* Profile list */}
@@ -344,7 +328,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     {p.is_default && <Star className="w-3 h-3 text-amber-400 flex-shrink-0" fill="currentColor" />}
-                    <span className={clsx("font-bold truncate", p.is_default ? "text-primary" : "text-theme-fg")}>{displayLabel}</span>
+                    <span className={clsx("font-semibold truncate tracking-tight", p.is_default ? "text-primary" : "text-theme-fg")}>{displayLabel}</span>
                     {displayEmail && <span className="text-theme-muted truncate">({displayEmail})</span>}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -380,7 +364,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
         {/* Add profile form */}
         {addingProfile && (
           <div className="mt-3 p-3 bg-theme-bg rounded-lg border border-dashed border-theme">
-            <div className="text-[10px] font-semibold text-theme-muted mb-2 uppercase tracking-wide">New Account Label</div>
+            <div className="text-[10px] font-semibold text-theme-muted mb-2 tracking-tight">New account label</div>
             <div className="flex gap-2">
               <input
                 autoFocus
@@ -396,7 +380,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
               <button
                 onClick={confirmAddProfile}
                 disabled={!newProfileName.trim()}
-                className="px-3 py-1.5 rounded-md bg-primary text-primary-fg text-[11px] font-bold hover:opacity-90 disabled:opacity-50 transition-all shadow-sm active:scale-95"
+                className="px-3 py-1.5 rounded-md bg-primary text-primary-fg text-[11px] font-semibold hover:opacity-90 disabled:opacity-50 transition-all shadow-sm active:scale-95"
               >
                 Connect
               </button>
@@ -692,8 +676,8 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
 
   return (
     <div className={clsx(
-      "bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
-      isConnected ? "border-primary/30" : "border-theme hover:border-theme-hover"
+      "dashboard-card transition-all duration-300",
+      isConnected && "border-primary/30"
     )}>
       <div className="p-5">
         <div className="flex items-start justify-between mb-4">
@@ -705,7 +689,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
               <Phone className={clsx("w-5 h-5", isConnected ? "text-emerald-400" : "text-theme-muted")} />
             </div>
             <div>
-              <h3 className="font-bold text-[14px] text-theme-fg">Phone (SMS / Call)</h3>
+              <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">Phone (SMS / Call)</h3>
               {isConnected && primaryPhone ? (
                 <span className="text-[11px] text-emerald-400 font-medium">{phones.length} phone{phones.length !== 1 ? 's' : ''} verified</span>
               ) : (
@@ -863,8 +847,8 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
 
   return (
     <div className={clsx(
-      "bg-theme-card rounded-theme-card border shadow-sm transition-all duration-300",
-      isConnected ? "border-[#25D366]/30" : "border-theme hover:border-theme-hover"
+      "dashboard-card transition-all duration-300",
+      isConnected && "border-[#25D366]/30"
     )}>
       <div className="p-5">
         {/* Header */}
@@ -879,7 +863,7 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
               </span>
             </div>
             <div>
-              <h3 className="font-bold text-[14px] text-theme-fg">WhatsApp</h3>
+              <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">WhatsApp</h3>
               {isConnected && phone ? (
                 <span className="text-[11px] text-[#25D366] font-medium">{phone}</span>
               ) : linking ? (
@@ -1086,8 +1070,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
 
   return (
     <div className={clsx(
-      "group relative flex flex-col bg-theme-card rounded-theme-card border p-5 shadow-sm transition-all duration-300",
-      isConnected ? "border-primary/30 hover:border-primary/50 hover:shadow-md" : "border-theme hover:border-theme-hover hover:shadow-md"
+      "dashboard-card group relative flex flex-col p-5 transition-all duration-300",
+      isConnected && "border-primary/30"
     )}>
       {/* Header */}
       <div className="flex justify-between items-start mb-4">
@@ -1099,7 +1083,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             {getIntegrationIcon(i.slug)}
           </div>
           <div>
-            <h3 className="font-bold text-[14px] text-theme-fg tracking-tight">{i.name}</h3>
+            <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">{i.name}</h3>
             {isOAuth && isConnected && defaultProfile ? (
               <span className="text-[10px] text-theme-muted font-medium">
                 {defaultProfile.account_email || defaultProfile.profile_label || 'Connected'}
@@ -1734,31 +1718,31 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
   const showGoogleCard = googleProducts.length > 0;
 
   return (
-    <div className="pb-16 max-w-6xl mx-auto">
+    <div className="pb-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10 relative overflow-hidden">
-        <div className="absolute -top-8 -left-4 text-[100px] font-black text-theme-fg opacity-[0.02] select-none pointer-events-none font-stuard leading-none tracking-tighter">
-          integrations
-        </div>
-        <div className="space-y-2 relative z-10">
-          <h2 className="text-5xl font-stuard text-theme-fg tracking-tight">Integrations</h2>
-          <p className="text-theme-muted text-sm font-medium pl-1">Connect your tools and services to expand Stuard's capabilities.</p>
+      <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[30px] font-semibold text-theme-fg tracking-tight font-stuard leading-none">Connected Apps</h1>
+          <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
+            <Link2 className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            <span>Manage the tools and services connected to Stuard.</span>
+          </p>
         </div>
 
-        <div className="flex gap-4 relative z-10">
-          <div className="relative group">
-            <Search className="absolute left-4 top-3 w-4 h-4 text-theme-muted group-focus-within:text-primary transition-colors" />
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
             <input
               value={intQuery}
               onChange={(e) => setIntQuery(e.target.value)}
-              placeholder="Search tools..."
-              className="pl-11 pr-4 py-2.5 rounded-xl border border-theme/50 bg-theme-hover/50 text-theme-fg text-[14px] font-medium shadow-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/50 w-72 transition-all placeholder:text-theme-muted/50"
+              placeholder="Search tools…"
+              className="dashboard-refresh-button w-60 pl-9 pr-3 py-2 text-[13px] font-medium placeholder:text-theme-muted/60 focus:border-primary/40 focus:outline-none"
             />
           </div>
           <select
             value={intCategory}
             onChange={(e) => setIntCategory(e.target.value)}
-            className="px-5 py-2.5 rounded-xl border border-theme/50 bg-theme-hover/50 text-theme-fg text-[14px] font-medium shadow-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/50 cursor-pointer transition-all hover:bg-theme-hover"
+            className="dashboard-refresh-button px-3 py-2 text-[13px] font-medium cursor-pointer focus:outline-none"
           >
             {intCategories.map((c) => (
               <option key={c} value={c} className="bg-theme-card text-theme-fg">{c}</option>
@@ -1768,43 +1752,39 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
       </div>
 
       {/* Stats bar */}
-      <div className="mb-8 flex items-center gap-4 border-b border-theme/50 pb-6">
-        <div className="flex items-center gap-2">
-          <span className="px-2.5 py-1 rounded-full bg-theme-hover text-[11px] font-bold text-theme-fg border border-theme">
-            {filteredIntegrations.length} Available
-          </span>
-          {connectedCount > 0 && (
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20 flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-              {connectedCount} Active
+      <div className="mb-5 flex items-center gap-2">
+        <span className="dashboard-pill px-2.5 py-1 text-[11px] font-semibold text-theme-muted">
+          {filteredIntegrations.length} Available
+        </span>
+        {connectedCount > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
             </span>
-          )}
-        </div>
-        <div className="flex-1" />
+            {connectedCount} Active
+          </span>
+        )}
       </div>
 
       {filteredIntegrations.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center bg-theme-card/50 rounded-theme-card border border-theme border-dashed">
-          <div className="w-16 h-16 bg-theme-bg rounded-full flex items-center justify-center mb-4 shadow-sm border border-theme">
-            <Search className="w-8 h-8 text-theme-muted opacity-50" />
+        <div className="dashboard-card flex flex-col items-center justify-center rounded-[24px] border-dashed px-6 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-theme-hover/40">
+            <Search className="h-6 w-6 text-theme-muted/70" />
           </div>
-          <h3 className="text-base font-bold text-theme-fg mb-1.5">No matching integrations</h3>
-          <p className="text-sm text-theme-muted font-medium max-w-xs mx-auto">
-            We couldn't find any tools matching "{intQuery}" in {intCategory}.
+          <h3 className="text-[15px] font-semibold text-theme-fg">No matching apps</h3>
+          <p className="mt-1.5 text-[12px] text-theme-muted max-w-xs">
+            We couldn't find any tools matching “{intQuery}” in {intCategory}.
           </p>
           <button
             onClick={() => { setIntQuery(""); setIntCategory("All"); }}
-            className="mt-5 px-4 py-2 rounded-md bg-theme-hover text-theme-fg text-[12px] font-bold hover:bg-theme-active border border-theme transition-all"
+            className="dashboard-refresh-button mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium"
           >
             Clear Filters
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {/* Google unified card — spans full width */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {showGoogleCard && (
             <GoogleAccountCard
               googleProducts={googleProducts}

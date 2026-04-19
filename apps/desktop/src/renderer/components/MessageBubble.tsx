@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import clsx from 'clsx';
+import { isRedundantStreamingUpdate, mergeStreamingText } from '../utils/streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import 'katex/dist/katex.min.css';
 import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send } from 'lucide-react';
@@ -1462,6 +1463,37 @@ function summarizeReasoningLabel(content: string): string {
   return summary.split(' ').length >= 2 ? summary : 'Planning next moves';
 }
 
+function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantTraceStepData[] {
+  const compacted: AssistantTraceStepData[] = [];
+
+  for (const step of steps) {
+    const last = compacted[compacted.length - 1];
+    if (
+      step.kind === 'reasoning'
+      && last?.kind === 'reasoning'
+      && step.content
+      && last.content
+      && Boolean(step.nested) === Boolean(last.nested)
+      && isRedundantStreamingUpdate(last.content, step.content)
+    ) {
+      const mergedContent = mergeStreamingText(last.content, step.content);
+      compacted[compacted.length - 1] = {
+        ...last,
+        id: step.id,
+        label: summarizeReasoningLabel(mergedContent),
+        status: step.status === 'active' ? 'active' : last.status,
+        content: mergedContent,
+        nested: step.nested,
+      };
+      continue;
+    }
+
+    compacted.push(step);
+  }
+
+  return compacted;
+}
+
 function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
   if (tool.status === 'completed') return 'complete';
   if (tool.status === 'error') return 'error';
@@ -1526,7 +1558,7 @@ const AssistantTracePanel: React.FC<{
         }
       });
 
-      return steps;
+      return compactReasoningTraceSteps(steps);
     }
 
     if (reasoning && reasoning.trim().length > 0) {
@@ -1552,7 +1584,7 @@ const AssistantTracePanel: React.FC<{
         });
       });
 
-    return steps;
+    return compactReasoningTraceSteps(steps);
   }, [isStreaming, reasoning, streamChunks, toolCalls]);
 
   if (traceSteps.length === 0) return null;

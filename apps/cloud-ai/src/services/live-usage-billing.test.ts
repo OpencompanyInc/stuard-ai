@@ -9,6 +9,7 @@ vi.mock('../supabase', () => ({
 }));
 
 import { LiveUsageBillingTracker, usageLikeToTotals } from './live-usage-billing';
+import { isEmbeddingModel, isNonBillableUsageEvent } from '../utils/billing-usage';
 import { normalizeUsage } from '../utils/usage';
 
 describe('normalizeUsage', () => {
@@ -34,6 +35,20 @@ describe('normalizeUsage', () => {
     expect(normalized.cachedPromptTokens).toBe(12);
     expect(normalized.reasoningTokens).toBe(7);
     expect(normalized.costUsd).toBe(0.008);
+  });
+});
+
+describe('billing exclusions', () => {
+  it('recognizes embedding models and labels as non-billable', () => {
+    expect(isEmbeddingModel('google/gemini-embedding-2-preview')).toBe(true);
+    expect(isNonBillableUsageEvent({
+      model: 'openai/gpt-5-chat-latest',
+      raw: { source_label: 'Embedding (batch)' },
+    })).toBe(true);
+    expect(isNonBillableUsageEvent({
+      model: 'openai/gpt-5-chat-latest',
+      raw: { sourceType: 'inference' },
+    })).toBe(false);
   });
 });
 
@@ -104,5 +119,24 @@ describe('LiveUsageBillingTracker', () => {
     expect(totals.reasoningTokens).toBe(9);
     expect(totals.costUsd).toBe(0.01);
     expect(totals.credits).toBe(0.5);
+  });
+
+  it('treats embedding usage as non-billable totals', () => {
+    const totals = usageLikeToTotals('google/gemini-embedding-2-preview', {
+      inputTokens: 250,
+      totalTokens: 250,
+      costUsd: 0.01,
+      sourceType: 'embedding',
+    });
+
+    expect(totals).toEqual({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedPromptTokens: 0,
+      reasoningTokens: 0,
+      costUsd: 0,
+      credits: 0,
+    });
   });
 });

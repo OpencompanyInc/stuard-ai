@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
+import { isNonBillableUsageEvent } from './utils/billing-usage';
 import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
@@ -655,6 +656,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
   if (!supabaseService) return;
   try {
     const u = normalizeUsage(usage);
+    const billingExcluded = isNonBillableUsageEvent({ model, raw: usage });
     const promptTokens = u.promptTokens;
     const completionTokens = u.completionTokens;
     const totalTokens = u.totalTokens;
@@ -686,13 +688,18 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
       cachedPromptTokens = 0;
     }
     const explicitCostUsd = Number(u.costUsd ?? u.cost_usd);
-    const costUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0
+    const hasExplicitCostUsd = Number.isFinite(explicitCostUsd) && explicitCostUsd >= 0;
+    const costUsd = hasExplicitCostUsd
       ? Number(explicitCostUsd.toFixed(8))
-      : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
+      : billingExcluded
+        ? 0
+        : estimateCostUsd(model, promptTokens, completionTokens, cachedPromptTokens);
     const explicitCreditCost = Number(u.creditCost ?? u.credit_cost);
-    const creditCost = Number.isFinite(explicitCreditCost) && explicitCreditCost >= 0
-      ? Number(explicitCreditCost.toFixed(4))
-      : creditsFromUsd(costUsd);
+    const creditCost = billingExcluded
+      ? 0
+      : Number.isFinite(explicitCreditCost) && explicitCreditCost >= 0
+        ? Number(explicitCreditCost.toFixed(4))
+        : creditsFromUsd(costUsd);
     await supabaseService.from('usage_events').insert([
       {
         user_id: userId,
@@ -703,12 +710,15 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
         total_tokens: totalTokens,
         cost_usd: costUsd,
         credit_cost: creditCost,
-        raw: u,
+        raw: {
+          ...u,
+          ...(billingExcluded ? { billingExcluded: true } : {}),
+        },
       },
     ]);
 
     // Debit credit grants so remaining balance decreases
-    if (creditCost > 0) {
+    if (!billingExcluded && creditCost > 0) {
       try {
         await debitCreditGrants(userId, creditCost);
       } catch {}
@@ -919,6 +929,7 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
     // Avoid per-event rounding: sum USD first, then convert once
     let totalUsd = 0;
     for (const r of data as any[]) {
+      if (isNonBillableUsageEvent({ model: r.model, raw: r.raw })) continue;
       const explicitCreditCost = Number((r as any).credit_cost);
       if (Number.isFinite(explicitCreditCost) && explicitCreditCost > 0) {
         totalUsd += explicitCreditCost / creditsPerUsd();
@@ -1099,13 +1110,14 @@ export async function getUsageBreakdown(
     }
     const { data, error } = await supabaseService
       .from('usage_events')
-      .select('model, cost_usd, credit_cost')
+      .select('model, cost_usd, credit_cost, raw')
       .eq('user_id', userId)
       .gte('created_at', start.toISOString());
     if (error || !data) return [];
 
     const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
     for (const row of data as any[]) {
+      if (isNonBillableUsageEvent({ model: row.model, raw: row.raw })) continue;
       const model = String(row.model || 'unknown');
       let category: string;
       if (model.startsWith('voice:')) category = 'voice';
@@ -1189,6 +1201,7 @@ export async function getUsageLogs(
     const groups = new Map<string, any>();
     for (const row of rawData as any[]) {
       const raw = row.raw && typeof row.raw === 'object' ? row.raw : {};
+      if (isNonBillableUsageEvent({ model: row.model, raw })) continue;
       const key = raw.sourceRef || row.id;
       if (!groups.has(key)) {
         groups.set(key, {

@@ -56,7 +56,7 @@ function captureWindowSnapshotByHandle(handle: string): SplitTargetSnapshot | nu
   if (process.platform !== "win32") return null;
   if (!handle || handle === "0") return null;
   try {
-    const { execSync } = require("child_process");
+    const { execFileSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
     const scriptPath = path.join(tmpDir, "stuard_get_bounds.ps1");
     const ps = `
@@ -85,7 +85,17 @@ $isMin = [Win32Bounds]::IsIconic($h)
 Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
 `;
     fs.writeFileSync(scriptPath, ps, "utf8");
-    const out = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: "utf8", timeout: 2000 }).trim();
+    const out = execFileSync("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+    ], {
+      encoding: "utf8",
+      timeout: 2000,
+      windowsHide: true,
+    }).trim();
     try { fs.unlinkSync(scriptPath); } catch { }
 
     const m = /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(out);
@@ -222,7 +232,17 @@ $target.ToInt64()
 
     let capturedHandle: string | null = null;
     try {
-      const result = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${getHandleScript}"`, { encoding: "utf8", timeout: 1200 });
+      const result = execFileSync("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        getHandleScript,
+      ], {
+        encoding: "utf8",
+        timeout: 1200,
+        windowsHide: true,
+      });
       capturedHandle = result.trim();
       captureHandleConsecutiveFailures = 0;
     } catch (e) {

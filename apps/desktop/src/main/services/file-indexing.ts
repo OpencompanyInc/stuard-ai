@@ -23,6 +23,8 @@ const getAgentHttp = () => {
 };
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+const FILE_INDEX_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Track if agent is available
 let agentAvailable = false;
@@ -132,7 +134,7 @@ async function execAgentTool(tool: string, args: Record<string, any>): Promise<a
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tool, args }),
-        signal: AbortSignal.timeout(30000), // 30 second timeout
+        signal: AbortSignal.timeout(tool === "file_index_scan" ? FILE_INDEX_SCAN_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS),
       });
       if (!resp.ok) {
         throw new Error(`Agent returned ${resp.status}`);
@@ -141,8 +143,11 @@ async function execAgentTool(tool: string, args: Record<string, any>): Promise<a
       return await resp.json();
     } catch (error: any) {
       const isLastAttempt = attempt === MAX_RETRIES;
-      if (error?.name === 'AbortError' || error?.cause?.code === 'ECONNREFUSED') {
+      if (error?.cause?.code === 'ECONNREFUSED') {
         agentAvailable = false;
+        lastAgentCheck = Date.now();
+      } else if (error?.name === 'AbortError') {
+        lastAgentCheck = 0;
       }
 
       if (isLastAttempt) {
@@ -283,6 +288,38 @@ function needsWindowsSafetyRescan(root: IndexedRoot): boolean {
   const lastReconcile = new Date(root.last_reconcile_at).getTime();
   if (!Number.isFinite(lastReconcile)) return true;
   return Date.now() - lastReconcile >= 6 * 60 * 60 * 1000;
+}
+
+function normalizeIndexedRootPath(target: string | null | undefined): string | null {
+  if (!target) return null;
+  try {
+    return path.resolve(target).replace(/[\\/]+/g, "\\").replace(/\\+$/, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isLegacyWindowsAppDiscoveryRoot(root: IndexedRoot): boolean {
+  if (process.platform !== "win32" || !root?.path) return false;
+
+  const homeDir = app.getPath("home");
+  const legacyRoots = [
+    process.env.ProgramFiles,
+    process.env.ProgramW6432,
+    process.env["ProgramFiles(x86)"],
+    process.env.PROGRAMDATA ? path.join(process.env.PROGRAMDATA, "Microsoft", "Windows", "Start Menu", "Programs") : null,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps") : null,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Packages") : null,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs") : null,
+    path.join(homeDir, "scoop", "apps"),
+    path.join(homeDir, "scoop", "shims"),
+  ]
+    .map(normalizeIndexedRootPath)
+    .filter((candidate): candidate is string => !!candidate);
+
+  const normalizedRootPath = normalizeIndexedRootPath(root.path);
+  if (!normalizedRootPath) return false;
+  return legacyRoots.includes(normalizedRootPath);
 }
 
 /**
@@ -480,11 +517,22 @@ export async function runStartupIndexing(): Promise<void> {
 
     // Get all roots and filter for those due for scanning
     const roots = await listRoots();
+    const skippedLegacyRootIds = new Set(
+      roots
+        .filter((root) => isLegacyWindowsAppDiscoveryRoot(root))
+        .map((root) => root.id),
+    );
+    if (skippedLegacyRootIds.size > 0) {
+      logger.info(`[file-indexing] Skipping ${skippedLegacyRootIds.size} legacy Windows app root(s) from background scanning`);
+    }
     const dueRoots = roots.filter((r) =>
+      !skippedLegacyRootIds.has(r.id)
+      && (
       r.enabled && (
         isRootDueForScan(r)
         || needsWindowsSessionReconcile(r)
         || needsWindowsSafetyRescan(r)
+      )
       )
     );
 

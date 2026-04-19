@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   FolderSearch,
   Plus,
   Trash2,
   RefreshCw,
-  HardDrive,
   FileText,
   Image,
   Code,
@@ -13,30 +12,14 @@ import {
   Archive,
   Box,
   Loader2,
-  ChevronDown,
-  Sparkles,
   Clock,
-  AlertCircle,
-  CheckCircle,
   FolderOpen,
   Wand2,
-  PlayCircle,
   Search,
-  Brain,
-  Zap,
-  Filter,
-  X,
   ChevronRight,
-  File,
   AppWindow,
-  Bookmark,
-  Settings2,
-  FileType,
-  ToggleLeft,
-  ToggleRight,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { supabase } from "../lib/supabaseClient";
 
 interface IndexedRoot {
   id: string;
@@ -57,35 +40,13 @@ interface IndexStats {
   files_by_kind: Record<string, number>;
 }
 
-interface ScanProgress {
-  total_files: number;
-  new_files: number;
-  changed_files: number;
-  deleted_files: number;
-  elapsed_seconds: number;
+interface IndexingStatus {
+  status: "idle" | "scanning" | "complete" | "error";
+  totalRoots?: number;
+  completedRoots?: number;
+  currentPath?: string;
+  error?: string;
 }
-
-interface SemanticFile {
-  id: string;
-  path: string;
-  filename: string;
-  kind: string;
-  status: "pending" | "indexed" | "stale" | "error";
-  summary?: string;
-  indexed_at?: string;
-}
-
-const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
-
-const SectionHeader = ({ title, description, icon: Icon }: { title: string; description: string; icon?: React.ComponentType<{ className?: string }> }) => (
-  <div className="mb-4">
-    <div className="flex items-center gap-2">
-      {Icon && <Icon className="w-5 h-5 text-primary" />}
-      <h3 className="text-lg font-stuard text-theme-fg tracking-tight">{title}</h3>
-    </div>
-    <p className="text-sm text-theme-muted font-medium mt-0.5">{description}</p>
-  </div>
-);
 
 const KindIcon: React.FC<{ kind: string; className?: string }> = ({ kind, className = "w-4 h-4" }) => {
   switch (kind) {
@@ -111,8 +72,8 @@ const KindIcon: React.FC<{ kind: string; className?: string }> = ({ kind, classN
 };
 
 const formatNumber = (n: number): string => {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return n.toString();
 };
 
@@ -129,22 +90,6 @@ const formatTime = (iso: string | null): string => {
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 };
-
-interface IndexingStatus {
-  status: "idle" | "scanning" | "complete" | "error";
-  totalRoots?: number;
-  completedRoots?: number;
-  currentPath?: string;
-  error?: string;
-}
-
-const KIND_OPTIONS = [
-  { kind: "document", label: "Documents", desc: "PDFs, Word, text files" },
-  { kind: "code", label: "Code", desc: "Scripts, configs, markup" },
-  { kind: "image", label: "Images", desc: "Photos, screenshots, graphics" },
-  { kind: "video", label: "Video", desc: "Movies, clips, recordings" },
-  { kind: "audio", label: "Audio", desc: "Music, podcasts, voice notes" },
-];
 
 const KIND_COLORS: Record<string, string> = {
   document: "text-sky-500",
@@ -170,32 +115,10 @@ export const FileIndexSettings: React.FC = () => {
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState<string | null>(null);
-  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [addingFolder, setAddingFolder] = useState(false);
-  const [semanticLimit, setSemanticLimit] = useState(100);
-  const [processingBatch, setProcessingBatch] = useState(false);
-  const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [indexingStatus, setIndexingStatus] = useState<IndexingStatus>({ status: "idle" });
   const [initializingDefaults, setInitializingDefaults] = useState(false);
-  const [semanticProgress, setSemanticProgress] = useState<{
-    total: number;
-    processed: number;
-    successful: number;
-    failed: number;
-    currentFile?: string;
-  } | null>(null);
-
-  // Semantic file selection
-  const [showSemanticManager, setShowSemanticManager] = useState(false);
-  const [semanticFiles, setSemanticFiles] = useState<SemanticFile[]>([]);
-  const [semanticFilter, setSemanticFilter] = useState<"all" | "pending" | "indexed">("pending");
-  const [semanticKindFilter, setSemanticKindFilter] = useState<string | null>(null);
-  const [loadingSemanticFiles, setLoadingSemanticFiles] = useState(false);
-  const [selectedKinds, setSelectedKinds] = useState<Set<string>>(new Set(["document", "code", "image"]));
-
-  // Folder config panel
   const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
-  const [addedToShortcuts, setAddedToShortcuts] = useState(false);
 
   const api = (window as any).desktopAPI;
 
@@ -214,41 +137,8 @@ export const FileIndexSettings: React.FC = () => {
     }
   }, [api]);
 
-  const loadSemanticFiles = useCallback(async () => {
-    setLoadingSemanticFiles(true);
-    try {
-      const res = await api?.execTool?.("file_search", {
-        mode: "quick",
-        limit: 500,
-      });
-      if (res?.ok && res.results) {
-        setSemanticFiles(
-          res.results.map((f: any) => ({
-            id: f.id,
-            path: f.path,
-            filename: f.filename,
-            kind: f.kind,
-            status: f.status || (f.summary ? "indexed" : "pending"),
-            summary: f.summary,
-            indexed_at: f.indexed_at,
-          }))
-        );
-      }
-    } catch (e) {
-      console.error("[FileIndexSettings] Load semantic files error:", e);
-    } finally {
-      setLoadingSemanticFiles(false);
-    }
-  }, [api]);
-
   useEffect(() => {
     loadData();
-
-    const unsubProgress = api?.onFileIndexScanProgress?.((data: any) => {
-      if (data?.progress) {
-        setScanProgress(data.progress);
-      }
-    });
 
     const unsubStatus = api?.onFileIndexStatus?.((data: IndexingStatus) => {
       setIndexingStatus(data);
@@ -257,22 +147,10 @@ export const FileIndexSettings: React.FC = () => {
       }
     });
 
-    const unsubSemantic = api?.onFileIndexSemanticProgress?.((data: any) => {
-      setSemanticProgress(data);
-    });
-
     return () => {
-      if (typeof unsubProgress === "function") unsubProgress();
       if (typeof unsubStatus === "function") unsubStatus();
-      if (typeof unsubSemantic === "function") unsubSemantic();
     };
   }, [loadData, api]);
-
-  useEffect(() => {
-    if (showSemanticManager) {
-      loadSemanticFiles();
-    }
-  }, [showSemanticManager, loadSemanticFiles]);
 
   const handleAddFolder = async () => {
     setAddingFolder(true);
@@ -308,7 +186,6 @@ export const FileIndexSettings: React.FC = () => {
 
   const handleScan = async (rootId: string) => {
     setScanning(rootId);
-    setScanProgress(null);
     try {
       await api?.fileIndexScan?.(rootId);
       await loadData();
@@ -316,7 +193,6 @@ export const FileIndexSettings: React.FC = () => {
       console.error("[FileIndexSettings] Scan error:", e);
     } finally {
       setScanning(null);
-      setScanProgress(null);
     }
   };
 
@@ -345,111 +221,6 @@ export const FileIndexSettings: React.FC = () => {
     }
   };
 
-  const handleStartSemanticIndexing = async () => {
-    setProcessingBatch(true);
-    setSemanticProgress(null);
-    setBatchStatus("Starting semantic indexing...");
-    try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        setBatchStatus("Error: Not authenticated. Please log in first.");
-        setProcessingBatch(false);
-        setTimeout(() => setBatchStatus(null), 5000);
-        return;
-      }
-
-      const result = await api?.fileIndexProcessSemanticIndexing?.(session.access_token, semanticLimit);
-      if (result?.ok) {
-        const p = result.progress;
-        setBatchStatus(`Completed: ${p.successful} succeeded, ${p.failed} failed`);
-        await loadData();
-        if (showSemanticManager) {
-          loadSemanticFiles();
-        }
-      } else {
-        setBatchStatus(`Error: ${result?.error || "Unknown error"}`);
-      }
-    } catch (e: any) {
-      setBatchStatus(`Error: ${e?.message || "Failed to process"}`);
-    } finally {
-      setProcessingBatch(false);
-      setSemanticProgress(null);
-      setTimeout(() => setBatchStatus(null), 5000);
-    }
-  };
-
-  const toggleKind = (kind: string) => {
-    setSelectedKinds((prev) => {
-      const next = new Set(prev);
-      if (next.has(kind)) {
-        next.delete(kind);
-      } else {
-        next.add(kind);
-      }
-      return next;
-    });
-  };
-
-  // Persist selected kinds to main-process settings
-  useEffect(() => {
-    try {
-      (window as any).desktopAPI?.prefsSet?.('semanticIndexKinds', Array.from(selectedKinds));
-    } catch { }
-  }, [selectedKinds]);
-
-  // Load persisted kinds on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await (window as any).desktopAPI?.prefsGetAll?.();
-        if (res?.ok && Array.isArray(res.prefs?.semanticIndexKinds)) {
-          setSelectedKinds(new Set(res.prefs.semanticIndexKinds));
-        }
-      } catch { }
-    })();
-  }, []);
-
-  const handleAddToShortcuts = async () => {
-    try {
-      const bookmark = {
-        id: `bm_semantic_${Date.now()}`,
-        name: 'Semantic Search',
-        type: 'semantic-search',
-        target: 'semantic-search',
-      };
-      await api?.bookmarksAdd?.(bookmark);
-      setAddedToShortcuts(true);
-      setTimeout(() => setAddedToShortcuts(false), 3000);
-    } catch { }
-  };
-
-  const filteredSemanticFiles = semanticFiles.filter((f) => {
-    if (semanticFilter === "pending" && f.status !== "pending" && f.status !== "stale") return false;
-    if (semanticFilter === "indexed" && f.status !== "indexed") return false;
-    if (semanticKindFilter && f.kind !== semanticKindFilter) return false;
-    return true;
-  });
-
-  const pendingByKind = semanticFiles.reduce(
-    (acc, f) => {
-      if (f.status === "pending" || f.status === "stale") {
-        acc[f.kind] = (acc[f.kind] || 0) + 1;
-      }
-      return acc;
-    },
-    {} as Record<string, number>
-  );
-
-  const indexedByKind = semanticFiles.reduce(
-    (acc, f) => {
-      if (f.status === "indexed") {
-        acc[f.kind] = (acc[f.kind] || 0) + 1;
-      }
-      return acc;
-    },
-    {} as Record<string, number>
-  );
-
   if (loading) {
     return (
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-6">
@@ -462,7 +233,6 @@ export const FileIndexSettings: React.FC = () => {
 
   return (
     <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-6">
-      {/* Hero Stats */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -499,52 +269,41 @@ export const FileIndexSettings: React.FC = () => {
           </div>
         </div>
 
-        {/* Two-column stats */}
         <div className="grid grid-cols-2 gap-4">
-          {/* Left: Lexical Index */}
           <div className="p-4 bg-theme-hover rounded-xl border border-theme">
             <div className="flex items-center gap-2 mb-3">
               <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
                 <Search className="w-4 h-4 text-blue-500" />
               </div>
               <div>
-                <div className="text-sm font-bold text-theme-fg">Lexical Index</div>
-                <div className="text-[10px] text-theme-muted">Fast filename & keyword search</div>
+                <div className="text-sm font-bold text-theme-fg">Indexed Files</div>
+                <div className="text-[10px] text-theme-muted">Filename and text search</div>
               </div>
             </div>
             <div className="text-3xl font-bold text-blue-500 font-stuard">
               {formatNumber(stats?.total_files || 0)}
             </div>
-            <div className="text-[11px] text-theme-muted font-medium">files indexed</div>
+            <div className="text-[11px] text-theme-muted font-medium">files searchable</div>
           </div>
 
-          {/* Right: Semantic Index */}
           <div className="p-4 bg-theme-hover rounded-xl border border-theme">
             <div className="flex items-center gap-2 mb-3">
-              <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                <Brain className="w-4 h-4 text-purple-500" />
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                <FolderOpen className="w-4 h-4 text-emerald-500" />
               </div>
               <div>
-                <div className="text-sm font-bold text-theme-fg">Semantic Index</div>
-                <div className="text-[10px] text-theme-muted">AI-powered content search</div>
+                <div className="text-sm font-bold text-theme-fg">Tracked Folders</div>
+                <div className="text-[10px] text-theme-muted">Monitored for refresh and rescans</div>
               </div>
             </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-purple-500 font-stuard">
-                {formatNumber(stats?.indexed_files || 0)}
-              </span>
-              {stats && stats.pending_files > 0 && (
-                <span className="text-sm text-amber-500 font-medium">
-                  +{formatNumber(stats.pending_files)} pending
-                </span>
-              )}
+            <div className="text-3xl font-bold text-emerald-500 font-stuard">
+              {formatNumber(stats?.roots || roots.length)}
             </div>
-            <div className="text-[11px] text-theme-muted font-medium">files with AI embeddings</div>
+            <div className="text-[11px] text-theme-muted font-medium">folders configured</div>
           </div>
         </div>
       </div>
 
-      {/* Global Indexing Status */}
       {indexingStatus.status === "scanning" && (
         <div className="mb-4 p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl">
           <div className="flex items-center gap-3">
@@ -554,7 +313,7 @@ export const FileIndexSettings: React.FC = () => {
               <div className="text-xs text-theme-muted">
                 {indexingStatus.completedRoots}/{indexingStatus.totalRoots} folders
                 {indexingStatus.currentPath && (
-                  <span className="ml-2 truncate">• {indexingStatus.currentPath}</span>
+                  <span className="ml-2 truncate">- {indexingStatus.currentPath}</span>
                 )}
               </div>
             </div>
@@ -562,7 +321,6 @@ export const FileIndexSettings: React.FC = () => {
         </div>
       )}
 
-      {/* Indexed Folders */}
       <div className="mb-6">
         <div className="text-[10px] text-theme-muted font-bold uppercase tracking-widest mb-2">
           Indexed Folders ({roots.length})
@@ -606,13 +364,16 @@ export const FileIndexSettings: React.FC = () => {
                       <div className="flex items-center gap-2 text-[10px] text-theme-muted mt-0.5">
                         <Clock className="w-3 h-3" />
                         <span>{formatTime(root.last_scan_at)}</span>
-                        <span className="text-theme/50">•</span>
+                        <span className="text-theme/50">|</span>
                         <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[9px] font-bold uppercase">{root.schedule}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleScan(root.id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleScan(root.id);
+                        }}
                         disabled={scanning === root.id}
                         className="p-1.5 rounded-md hover:bg-theme-active text-theme-muted hover:text-theme-fg transition-colors"
                         title="Rescan"
@@ -624,7 +385,10 @@ export const FileIndexSettings: React.FC = () => {
                         )}
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleRemoveRoot(root.id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveRoot(root.id);
+                        }}
                         className="p-1.5 rounded-md hover:bg-red-500/10 text-theme-muted hover:text-red-500 transition-colors"
                         title="Remove"
                       >
@@ -634,10 +398,8 @@ export const FileIndexSettings: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Expanded folder config */}
                   {isExpanded && (
                     <div className="px-3 py-3 bg-theme-card border-t border-theme space-y-3">
-                      {/* Schedule selector */}
                       <div>
                         <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Scan Schedule</div>
                         <div className="flex flex-wrap gap-1.5">
@@ -649,7 +411,8 @@ export const FileIndexSettings: React.FC = () => {
                                   await api?.fileIndexRemoveRoot?.(root.id);
                                   await api?.fileIndexAddRoot?.(root.path, sched);
                                   await loadData();
-                                } catch { }
+                                } catch {
+                                }
                               }}
                               className={clsx(
                                 "px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all capitalize",
@@ -664,7 +427,6 @@ export const FileIndexSettings: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* File types info */}
                       <div>
                         <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Indexed File Types</div>
                         <div className="flex flex-wrap gap-1.5">
@@ -679,7 +441,9 @@ export const FileIndexSettings: React.FC = () => {
                             </div>
                           ))}
                         </div>
-                        <p className="text-[9px] text-theme-muted mt-1.5">All file types within this folder are scanned. Use the Semantic Indexing section below to choose which types get AI embeddings.</p>
+                        <p className="text-[9px] text-theme-muted mt-1.5">
+                          Supported file types inside this folder are scanned for name and content search.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -690,290 +454,6 @@ export const FileIndexSettings: React.FC = () => {
         )}
       </div>
 
-      {/* Semantic Indexing Section */}
-      <div className="border-t border-theme pt-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Brain className="w-4 h-4 text-purple-500" />
-            <span className="text-sm font-bold text-theme-fg">Semantic Indexing</span>
-            <span className="text-[10px] text-theme-muted font-medium">AI-powered file search</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Add to Quick Shortcuts */}
-            <button
-              onClick={handleAddToShortcuts}
-              disabled={addedToShortcuts}
-              className={clsx(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
-                addedToShortcuts
-                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500/20"
-              )}
-            >
-              {addedToShortcuts ? (
-                <>
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Added!
-                </>
-              ) : (
-                <>
-                  <Bookmark className="w-3.5 h-3.5" />
-                  Add to Shortcuts
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => setShowSemanticManager(!showSemanticManager)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              Configure
-              <ChevronRight className={clsx("w-3.5 h-3.5 transition-transform", showSemanticManager && "rotate-90")} />
-            </button>
-          </div>
-        </div>
-
-        {/* Semantic Manager Panel */}
-        {showSemanticManager && (
-          <div className="mb-4 rounded-xl border border-purple-500/20 overflow-hidden">
-            {/* Header */}
-            <div className="p-4 bg-purple-500/5 border-b border-purple-500/20">
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles className="w-4 h-4 text-purple-500" />
-                <span className="text-sm font-bold text-theme-fg">Embedding Configuration</span>
-              </div>
-              <p className="text-[11px] text-theme-muted">
-                Select which file types get AI embeddings for semantic search. Embedded files can be found by meaning, not just keywords.
-              </p>
-            </div>
-
-            <div className="p-4 bg-theme-hover space-y-4">
-              {/* Kind Selection - Card style */}
-              <div>
-                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-2">File Types to Embed</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {KIND_OPTIONS.map((opt) => {
-                    const pending = pendingByKind[opt.kind] || 0;
-                    const indexed = indexedByKind[opt.kind] || 0;
-                    const isSelected = selectedKinds.has(opt.kind);
-                    const colorClass = KIND_COLORS[opt.kind] || "text-theme-muted";
-
-                    return (
-                      <button
-                        key={opt.kind}
-                        onClick={() => toggleKind(opt.kind)}
-                        className={clsx(
-                          "flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left",
-                          isSelected
-                            ? "bg-primary/10 border-primary/30 shadow-sm"
-                            : "bg-theme-card border-theme hover:border-primary/20"
-                        )}
-                      >
-                        <div className={clsx(
-                          "w-8 h-8 rounded-lg flex items-center justify-center",
-                          isSelected ? "bg-primary/20" : "bg-theme-hover"
-                        )}>
-                          <KindIcon kind={opt.kind} className={clsx("w-4 h-4", isSelected ? "text-primary" : colorClass)} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className={clsx("text-xs font-bold", isSelected ? "text-primary" : "text-theme-fg")}>{opt.label}</span>
-                            {isSelected ? (
-                              <ToggleRight className="w-4 h-4 text-primary" />
-                            ) : (
-                              <ToggleLeft className="w-4 h-4 text-theme-muted" />
-                            )}
-                          </div>
-                          <div className="text-[10px] text-theme-muted">{opt.desc}</div>
-                          {(pending > 0 || indexed > 0) && (
-                            <div className="flex items-center gap-2 mt-0.5">
-                              {indexed > 0 && <span className="text-[9px] text-emerald-500 font-bold">{indexed} indexed</span>}
-                              {pending > 0 && <span className="text-[9px] text-amber-500 font-bold">{pending} pending</span>}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Extension detail */}
-              <div>
-                <div className="text-[10px] font-bold text-theme-muted uppercase tracking-widest mb-1.5">Supported Extensions</div>
-                <div className="flex flex-wrap gap-1">
-                  {EXTENSION_GROUPS
-                    .filter((g) => selectedKinds.has(g.kind))
-                    .flatMap((g) => g.extensions)
-                    .map((ext) => (
-                      <span key={ext} className="px-1.5 py-0.5 rounded bg-theme-card border border-theme text-[9px] font-mono text-theme-muted">
-                        {ext}
-                      </span>
-                    ))}
-                </div>
-              </div>
-
-              {/* File List Preview */}
-              <div className="border-t border-theme pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={semanticFilter}
-                      onChange={(e) => setSemanticFilter(e.target.value as any)}
-                      className="px-2 py-1 rounded-lg border border-theme bg-theme-card text-xs font-medium text-theme-fg"
-                    >
-                      <option value="pending">Pending ({stats?.pending_files || 0})</option>
-                      <option value="indexed">Indexed ({stats?.indexed_files || 0})</option>
-                      <option value="all">All Files</option>
-                    </select>
-                    {/* Kind sub-filter */}
-                    <select
-                      value={semanticKindFilter || ""}
-                      onChange={(e) => setSemanticKindFilter(e.target.value || null)}
-                      className="px-2 py-1 rounded-lg border border-theme bg-theme-card text-xs font-medium text-theme-fg"
-                    >
-                      <option value="">All Types</option>
-                      {KIND_OPTIONS.map((opt) => (
-                        <option key={opt.kind} value={opt.kind}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {loadingSemanticFiles && <Loader2 className="w-3.5 h-3.5 animate-spin text-theme-muted" />}
-                    <span className="text-[10px] text-theme-muted font-medium">
-                      {filteredSemanticFiles.length} files
-                    </span>
-                  </div>
-                </div>
-
-                <div className="max-h-56 overflow-y-auto space-y-1 scrollbar-hidden rounded-lg">
-                  {filteredSemanticFiles.slice(0, 50).map((f) => (
-                    <div
-                      key={f.id}
-                      className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-theme-card/50 text-xs hover:bg-theme-card transition-colors group"
-                    >
-                      <KindIcon kind={f.kind} className={clsx("w-3.5 h-3.5 flex-shrink-0", KIND_COLORS[f.kind])} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-theme-fg font-medium truncate">{f.filename}</div>
-                        {f.summary && (
-                          <div className="text-[10px] text-theme-muted truncate">{f.summary}</div>
-                        )}
-                      </div>
-                      <span
-                        className={clsx(
-                          "px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0",
-                          f.status === "indexed"
-                            ? "bg-emerald-500/10 text-emerald-500"
-                            : f.status === "error"
-                            ? "bg-red-500/10 text-red-500"
-                            : "bg-amber-500/10 text-amber-500"
-                        )}
-                      >
-                        {f.status === "indexed" ? "Embedded" : f.status === "error" ? "Error" : "Pending"}
-                      </span>
-                    </div>
-                  ))}
-                  {filteredSemanticFiles.length === 0 && (
-                    <div className="text-center py-6 text-xs text-theme-muted">
-                      <FileType className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
-                      No files match the current filter
-                    </div>
-                  )}
-                  {filteredSemanticFiles.length > 50 && (
-                    <div className="text-center py-2 text-xs text-theme-muted font-medium">
-                      +{filteredSemanticFiles.length - 50} more files
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Progress / Batch Controls */}
-        {stats && stats.pending_files > 0 && (
-          <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-500" />
-                <span className="text-sm font-bold text-theme-fg">
-                  {formatNumber(stats.pending_files)} files pending semantic indexing
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-theme-muted font-medium">Process:</label>
-                <select
-                  value={semanticLimit}
-                  onChange={(e) => setSemanticLimit(Number(e.target.value))}
-                  className="px-2 py-1 rounded border border-theme bg-theme-card text-theme-fg text-xs font-medium"
-                >
-                  <option value={100}>100 files</option>
-                  <option value={250}>250 files</option>
-                  <option value={500}>500 files</option>
-                  <option value={1000}>1,000 files</option>
-                </select>
-              </div>
-              <button
-                onClick={handleStartSemanticIndexing}
-                disabled={processingBatch}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500 text-white text-xs font-bold hover:bg-purple-600 transition-all disabled:opacity-50"
-              >
-                {processingBatch ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Start Indexing
-                  </>
-                )}
-              </button>
-            </div>
-
-            {semanticProgress && processingBatch && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-theme-muted">
-                <span className="font-medium">
-                  {semanticProgress.processed}/{semanticProgress.total}
-                </span>
-                {semanticProgress.currentFile && (
-                  <span className="truncate max-w-[200px]">{semanticProgress.currentFile}</span>
-                )}
-              </div>
-            )}
-
-            {batchStatus && (
-              <div
-                className={clsx(
-                  "mt-2 flex items-center gap-2 text-xs font-medium",
-                  batchStatus.startsWith("Error") ? "text-red-500" : "text-emerald-500"
-                )}
-              >
-                {batchStatus.startsWith("Error") ? (
-                  <AlertCircle className="w-4 h-4" />
-                ) : (
-                  <CheckCircle className="w-4 h-4" />
-                )}
-                {batchStatus}
-              </div>
-            )}
-          </div>
-        )}
-
-        {stats && stats.pending_files === 0 && stats.indexed_files > 0 && (
-          <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-500" />
-              <span className="text-sm font-bold text-theme-fg">All indexed files have semantic embeddings</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Files by Type */}
       {stats?.files_by_kind && Object.keys(stats.files_by_kind).length > 0 && (
         <div className="border-t border-theme pt-4 mt-4">
           <div className="text-[10px] text-theme-muted font-bold uppercase tracking-widest mb-2">

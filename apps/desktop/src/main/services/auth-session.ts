@@ -14,12 +14,20 @@ const SUPABASE_PUBLISHABLE_KEY =
 
 let supabaseMain: SupabaseClient | null = null;
 let currentSession: Session | null = null;
+let currentSessionKey = 'signed-out';
 const listeners = new Set<(session: Session | null) => void>();
 
 function emitSessionChange() {
   for (const listener of listeners) {
     try { listener(currentSession); } catch { }
   }
+}
+
+function getSessionKey(session: Session | null): string {
+  if (!session?.access_token || !session?.refresh_token) {
+    return 'signed-out';
+  }
+  return `${session.user?.id || 'unknown'}:${session.access_token}:${session.refresh_token}`;
 }
 
 export function getMainSupabaseClient(): SupabaseClient | null {
@@ -53,9 +61,20 @@ export async function syncMainAuthSession(session: Session | null): Promise<{ ok
   const client = getMainSupabaseClient()!;
   try {
     if (!session?.access_token || !session?.refresh_token) {
+      const hadSession = currentSessionKey !== 'signed-out';
       currentSession = null;
+      currentSessionKey = 'signed-out';
       try { await client.auth.signOut(); } catch { }
-      emitSessionChange();
+      if (hadSession) {
+        emitSessionChange();
+      }
+      return { ok: true };
+    }
+
+    const incomingSessionKey = getSessionKey(session);
+    if (incomingSessionKey === currentSessionKey) {
+      currentSession = session;
+      try { client.realtime.setAuth(session.access_token); } catch { }
       return { ok: true };
     }
 
@@ -69,9 +88,14 @@ export async function syncMainAuthSession(session: Session | null): Promise<{ ok
     }
 
     currentSession = data.session || session;
+    const nextSessionKey = getSessionKey(currentSession);
+    const sessionChanged = nextSessionKey !== currentSessionKey;
+    currentSessionKey = nextSessionKey;
     logger.info(`[auth-session] Session synced for user ${currentSession?.user?.id}`);
     try { client.realtime.setAuth(currentSession.access_token); } catch { }
-    emitSessionChange();
+    if (sessionChanged) {
+      emitSessionChange();
+    }
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || e) };

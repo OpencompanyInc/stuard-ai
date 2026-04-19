@@ -46,13 +46,20 @@ async function validateStrictBearerAuth(req: IncomingMessage): Promise<{ userId:
 }
 
 /** Log inference usage after a successful generateText/embed call. */
-async function logInferenceUsage(userId: string | null, model: string, usage?: any, sourceLabel?: string): Promise<void> {
+async function logInferenceUsage(
+  userId: string | null,
+  model: string,
+  usage?: any,
+  sourceLabel?: string,
+  options?: { sourceType?: string; billingExcluded?: boolean },
+): Promise<void> {
   if (!userId) return;
   try {
     await logUsageEvent(userId, null, model, {
       ...(usage || {}),
-      sourceType: 'inference',
+      sourceType: options?.sourceType || 'inference',
       ...(sourceLabel ? { source_label: sourceLabel } : {}),
+      ...(options?.billingExcluded ? { billingExcluded: true } : {}),
     });
   } catch {}
 }
@@ -345,12 +352,6 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
         return true;
       }
-      const creditErr = await requireCredits(embUserId);
-      if (creditErr) {
-        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
-        return true;
-      }
-
       const body = await readJsonBody(req);
       const texts = Array.isArray(body?.texts) ? body.texts : [];
       const modelId = String(body?.model || 'google/gemini-embedding-2-preview').trim() || 'google/gemini-embedding-2-preview';
@@ -376,7 +377,10 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         values,
       });
 
-      await logInferenceUsage(embUserId, modelId, out.usage, 'Embedding (batch)');
+      await logInferenceUsage(embUserId, modelId, out.usage, 'Embedding (batch)', {
+        sourceType: 'embedding',
+        billingExcluded: true,
+      });
       writeJson(res, 200, { ok: true, embeddings: out.embeddings, model: modelId }, corsOrigin);
       return true;
     } catch (e: any) {
@@ -573,11 +577,6 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
         return true;
       }
-      const creditErr = await requireCredits(textUserId);
-      if (creditErr) {
-        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
-        return true;
-      }
       const body = await readJsonBody(req);
       const prompt = String(body?.prompt || '');
       const input = body?.input ? String(body.input) : undefined;
@@ -591,6 +590,14 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       if (!prompt) {
         writeJson(res, 400, { ok: false, error: 'prompt_required' }, corsOrigin);
         return true;
+      }
+
+      if (mode !== 'embedding') {
+        const creditErr = await requireCredits(textUserId);
+        if (creditErr) {
+          writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
+          return true;
+        }
       }
 
       if (mode === 'embedding') {
@@ -609,7 +616,10 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             model: aiEmbeddingModel,
             value: textToEmbed,
           });
-          await logInferenceUsage(textUserId, embeddingModelId, embResult.usage, textCallerLabel || 'Embedding');
+          await logInferenceUsage(textUserId, embeddingModelId, embResult.usage, textCallerLabel || 'Embedding', {
+            sourceType: 'embedding',
+            billingExcluded: true,
+          });
 
           writeJson(res, 200, { ok: true, embedding: embResult.embedding, model: embeddingModelId }, corsOrigin);
           return true;
@@ -702,12 +712,6 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
         return true;
       }
-      const creditErr = await requireCredits(singleEmbUserId);
-      if (creditErr) {
-        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
-        return true;
-      }
-
       const body = await readJsonBody(req);
       const text = String(body?.text || '').trim();
       const modelId = String(body?.model || 'google/gemini-embedding-2-preview').trim() || 'google/gemini-embedding-2-preview';
@@ -726,7 +730,10 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         model: embModel,
         value: text.slice(0, 12000),
       });
-      await logInferenceUsage(singleEmbUserId, modelId, out.usage, 'Embedding');
+      await logInferenceUsage(singleEmbUserId, modelId, out.usage, 'Embedding', {
+        sourceType: 'embedding',
+        billingExcluded: true,
+      });
 
       writeJson(res, 200, { ok: true, embedding: out.embedding, model: modelId }, corsOrigin);
       return true;

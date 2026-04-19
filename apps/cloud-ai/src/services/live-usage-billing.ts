@@ -1,5 +1,6 @@
 import { creditsFromUsd, estimateCostUsd } from '../pricing';
 import { logUsageEvent } from '../supabase';
+import { isNonBillableUsageEvent } from '../utils/billing-usage';
 import { writeLog } from '../utils/logger';
 import { normalizeUsage } from '../utils/usage';
 
@@ -65,6 +66,9 @@ function toUsageLike(input: any): any {
 }
 
 export function usageLikeToTotals(model: string, input: any): BillingTotals {
+  if (isNonBillableUsageEvent({ model, raw: input })) {
+    return emptyBillingTotals();
+  }
   const usage = normalizeUsage(toUsageLike(input));
   const promptTokens = Math.max(0, Number(usage.promptTokens || 0));
   const completionTokens = Math.max(0, Number(usage.completionTokens || 0));

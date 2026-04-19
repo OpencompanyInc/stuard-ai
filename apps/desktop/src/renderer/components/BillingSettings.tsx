@@ -34,7 +34,6 @@ import {
   normalizeUsageLogEntry,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
-import { agentFetchJson, resolveAgentEndpoints } from "../utils/agentEndpoints";
 
 interface Product {
   id: string;
@@ -235,18 +234,6 @@ async function cloudApiFetch<T = any>(
   }
 }
 
-async function agentApiFetch<T = any>(path: string): Promise<T | null> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token || null;
-  try {
-    return await agentFetchJson(resolveAgentEndpoints(), path, {
-      accessToken: token,
-    });
-  } catch {
-    return null;
-  }
-}
-
 /* ---------- Pie chart custom tooltip ---------- */
 const PieTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.[0]) return null;
@@ -338,80 +325,20 @@ export const BillingSettings: React.FC = () => {
           signal
         );
         if (
-          mountedRef.current &&
-          !signal?.aborted &&
-          requestId === activeLogsRequestRef.current &&
-          result
+          !mountedRef.current ||
+          signal?.aborted ||
+          requestId !== activeLogsRequestRef.current ||
+          !result
         ) {
-          let normalizedLogs: UsageLogEntry[] = Array.isArray(result.logs)
-            ? result.logs.map(normalizeUsageLogEntry)
-            : [];
+          return;
+        }
 
-          // Resolve conversation titles directly from local SQLite-backed memory
-          const missingIds: string[] = Array.from(
-            new Set(
-              normalizedLogs
-                .map((l) => l.conversationId)
-                .filter(
-                  (id): id is string =>
-                    !!id && !convTitleCacheRef.current[id]
-                )
-            )
-          );
-          if (missingIds.length > 0) {
-            const resolvedTitles: Record<string, string> = {};
-            const titleResults = await Promise.allSettled(
-              missingIds.map(async (id) => {
-                const convResult = await agentApiFetch<any>(
-                  `/v1/memory/conversations/${encodeURIComponent(id)}`,
-                );
-                const title =
-                  typeof convResult?.conversation?.title === "string"
-                    ? convResult.conversation.title.trim()
-                    : "";
-                return { id, title };
-              })
-            );
+        const normalizedLogs: UsageLogEntry[] = Array.isArray(result.logs)
+          ? result.logs.map(normalizeUsageLogEntry)
+          : [];
 
-            if (!signal?.aborted) {
-              for (const titleResult of titleResults) {
-                if (titleResult.status !== "fulfilled") continue;
-                const { id, title } = titleResult.value;
-                if (title) {
-                  resolvedTitles[id] = title;
-                }
-              }
-            }
-
-            const unresolvedIds = missingIds.filter((id) => !resolvedTitles[id]);
-            if (unresolvedIds.length > 0 && !signal?.aborted) {
-              try {
-                const { data, error } = await supabase
-                  .from("conversations")
-                  .select("id, title")
-                  .in("id", unresolvedIds);
-                if (!error && Array.isArray(data)) {
-                  for (const row of data as Array<{ id?: string; title?: string | null }>) {
-                    const id = typeof row.id === "string" ? row.id : "";
-                    const title =
-                      typeof row.title === "string" ? row.title.trim() : "";
-                    if (id && title) {
-                      resolvedTitles[id] = title;
-                    }
-                  }
-                }
-              } catch {}
-            }
-
-            if (!signal?.aborted) {
-              for (const [id, title] of Object.entries(resolvedTitles)) {
-                if (mountedRef.current && requestId === activeLogsRequestRef.current) {
-                  convTitleCacheRef.current[id] = title;
-                }
-              }
-            }
-          }
-          normalizedLogs = normalizedLogs.map((log) => {
+        const applyCache = (logs: UsageLogEntry[]): UsageLogEntry[] =>
+          logs.map((log) => {
             const cachedTitle = log.conversationId
               ? convTitleCacheRef.current[log.conversationId]
               : null;
@@ -420,10 +347,56 @@ export const BillingSettings: React.FC = () => {
               : log;
           });
 
-          setUsageLogs(normalizedLogs);
-          setLogsTotal(result.total || 0);
-          setLogsPage(page);
-        }
+        // Render logs immediately with any cached titles; don't block on
+        // conversation title lookups, which were the source of the hang.
+        setUsageLogs(applyCache(normalizedLogs));
+        setLogsTotal(result.total || 0);
+        setLogsPage(page);
+        setLogsLoading(false);
+        setLogsLoaded(true);
+
+        const missingIds = Array.from(
+          new Set(
+            normalizedLogs
+              .map((l) => l.conversationId)
+              .filter(
+                (id): id is string => !!id && !convTitleCacheRef.current[id],
+              ),
+          ),
+        );
+        if (missingIds.length === 0) return;
+
+        // Resolve titles in the background. Supabase is authoritative for
+        // billing-visible conversations and is a single roundtrip, so prefer
+        // it over N parallel agent calls that can stall for seconds if the
+        // local agent is unreachable.
+        void (async () => {
+          try {
+            const { data, error } = await supabase
+              .from("conversations")
+              .select("id, title")
+              .in("id", missingIds);
+            if (
+              error ||
+              !Array.isArray(data) ||
+              !mountedRef.current ||
+              signal?.aborted ||
+              requestId !== activeLogsRequestRef.current
+            ) {
+              return;
+            }
+            let changed = false;
+            for (const row of data as Array<{ id?: string; title?: string | null }>) {
+              const id = typeof row.id === "string" ? row.id : "";
+              const title = typeof row.title === "string" ? row.title.trim() : "";
+              if (id && title && !convTitleCacheRef.current[id]) {
+                convTitleCacheRef.current[id] = title;
+                changed = true;
+              }
+            }
+            if (changed) setUsageLogs((prev) => applyCache(prev));
+          } catch {}
+        })();
       } finally {
         if (!mountedRef.current || signal?.aborted) return;
         setLogsLoading(false);
@@ -527,25 +500,33 @@ export const BillingSettings: React.FC = () => {
     }
   }, []);
 
-  // Lazy-load usage breakdown after credit summary is ready
+  // Once the credit summary is ready, fetch breakdown, logs, and products
+  // in parallel — chaining them was making the logs section hang long after
+  // the pie chart had already rendered.
   useEffect(() => {
-    if (!creditSummary || usageLoaded || usageLoading) return;
+    if (!creditSummary) return;
     const abort = backgroundLoadAbortRef.current;
-    loadUsageBreakdown(abort?.signal).catch(() => {});
-  }, [creditSummary, usageLoaded, usageLoading, loadUsageBreakdown]);
-
-  // Lazy-load logs after usage breakdown is ready
-  useEffect(() => {
-    if (!usageLoaded || logsLoaded || logsLoading) return;
-    const abort = backgroundLoadAbortRef.current;
-    loadLogs(0, abort?.signal).catch(() => {});
-  }, [usageLoaded, logsLoaded, logsLoading, loadLogs]);
-
-  // Lazy-load products after logs are ready
-  useEffect(() => {
-    if (!logsLoaded || productsLoaded || productsLoading) return;
-    loadProducts().catch(() => {});
-  }, [logsLoaded, productsLoaded, productsLoading, loadProducts]);
+    if (!usageLoaded && !usageLoading) {
+      loadUsageBreakdown(abort?.signal).catch(() => {});
+    }
+    if (!logsLoaded && !logsLoading) {
+      loadLogs(0, abort?.signal).catch(() => {});
+    }
+    if (!productsLoaded && !productsLoading) {
+      loadProducts().catch(() => {});
+    }
+  }, [
+    creditSummary,
+    usageLoaded,
+    usageLoading,
+    logsLoaded,
+    logsLoading,
+    productsLoaded,
+    productsLoading,
+    loadUsageBreakdown,
+    loadLogs,
+    loadProducts,
+  ]);
 
   useEffect(() => {
     loadData();

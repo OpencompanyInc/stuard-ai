@@ -108,9 +108,25 @@ let started = false;
 let authUnsub: (() => void) | null = null;
 let currentChannel: any = null;
 let currentChannelUserId: string | null = null;
+let currentChannelStatus: 'idle' | 'connecting' | 'subscribed' | 'closed' | 'error' | 'timed_out' = 'idle';
 let draining = false;
 let drainQueued = false;
 let reconnectTimer: NodeJS.Timeout | null = null;
+
+function mapRealtimeChannelStatus(status: string): typeof currentChannelStatus {
+  switch (status) {
+    case 'SUBSCRIBED':
+      return 'subscribed';
+    case 'CHANNEL_ERROR':
+      return 'error';
+    case 'TIMED_OUT':
+      return 'timed_out';
+    case 'CLOSED':
+      return 'closed';
+    default:
+      return 'connecting';
+  }
+}
 
 function defaultSmsState(): SmsUserState {
   return {
@@ -917,10 +933,23 @@ async function reconnectListener(): Promise<void> {
   logger.info(`[sms-inbox] reconnectListener: client=${!!client} session=${!!session} userId=${userId} started=${started}`);
   if (!client) return;
 
+  if (
+    started
+    && session
+    && userId
+    && currentChannel
+    && currentChannelUserId === userId
+    && (currentChannelStatus === 'connecting' || currentChannelStatus === 'subscribed')
+  ) {
+    void drainInbox('auth-sync');
+    return;
+  }
+
   if (currentChannel) {
     try { await client.removeChannel(currentChannel); } catch { }
     currentChannel = null;
     currentChannelUserId = null;
+    currentChannelStatus = 'idle';
   }
 
   if (!started || !session || !userId) return;
@@ -954,8 +983,13 @@ async function reconnectListener(): Promise<void> {
       }
     });
 
+  currentChannel = ch;
+  currentChannelUserId = userId;
+  currentChannelStatus = 'connecting';
+
   ch.subscribe((status: string) => {
     if (ch !== currentChannel) return; // stale channel removed intentionally, ignore
+    currentChannelStatus = mapRealtimeChannelStatus(status);
     logger.info(`[sms-inbox] Realtime channel status for ${userId}: ${status}`);
     if (status === 'SUBSCRIBED') {
       if (reconnectTimer) {
@@ -968,9 +1002,6 @@ async function reconnectListener(): Promise<void> {
       scheduleReconnect(5000);
     }
   });
-
-  currentChannel = ch;
-  currentChannelUserId = userId;
 }
 
 export function startSmsInbox(): void {
@@ -998,6 +1029,7 @@ export function stopSmsInbox(): void {
   }
   currentChannel = null;
   currentChannelUserId = null;
+  currentChannelStatus = 'idle';
 }
 
 export function getSmsInboxStatus(): { started: boolean; subscribedUserId: string | null; draining: boolean } {

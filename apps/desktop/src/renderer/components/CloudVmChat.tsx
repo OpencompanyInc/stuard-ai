@@ -11,6 +11,7 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import type { ModelMeta } from '../hooks/usePreferences';
+import { mergeStreamingText } from '../utils/streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import { Shimmer } from './ai-elements/Shimmer';
 import {
@@ -613,7 +614,10 @@ export function CloudVmChat({
                   const chunk = d.text || '';
                   if (chunk) { accText += chunk; setStreamText(accText); }
                 } else if (ev === 'reasoning' || ev === 'reasoning_start') {
-                  if (d.text) { accReasoning += d.text; setStreamReasoning(accReasoning); }
+                  if (d.text) {
+                    accReasoning = mergeStreamingText(accReasoning, d.text);
+                    setStreamReasoning(accReasoning);
+                  }
                 }
                 break;
               }
@@ -656,7 +660,10 @@ export function CloudVmChat({
                 const subEvent = event.event || '';
                 const subData = event.data || {};
                 if (subEvent === 'delta' && subData.text) { accText += subData.text; setStreamText(accText); }
-                else if ((subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) { accReasoning += subData.text; setStreamReasoning(accReasoning); }
+                else if ((subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
+                  accReasoning = mergeStreamingText(accReasoning, subData.text);
+                  setStreamReasoning(accReasoning);
+                }
                 else if (subEvent === 'tool_call') { accTools = [...accTools, { tool: subData.tool || subData.name || 'tool', status: 'called' }]; setStreamTools([...accTools]); }
                 else if (subEvent === 'tool_result') {
                   const tn = subData.tool || '';

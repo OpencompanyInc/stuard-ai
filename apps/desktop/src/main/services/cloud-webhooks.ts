@@ -492,8 +492,25 @@ async function connect() {
 
 const VOICE_BRIDGE_TABLE = 'voice_bridge_requests';
 let voiceBridgeChannel: any = null;
+let voiceBridgeChannelUserId: string | null = null;
+let voiceBridgeChannelStatus: 'idle' | 'connecting' | 'subscribed' | 'closed' | 'error' | 'timed_out' = 'idle';
 let voiceBridgeAuthUnsub: (() => void) | null = null;
 const activeVoiceBridges = new Map<string, WebSocket>();
+
+function mapVoiceBridgeChannelStatus(status: string): typeof voiceBridgeChannelStatus {
+    switch (status) {
+        case 'SUBSCRIBED':
+            return 'subscribed';
+        case 'CHANNEL_ERROR':
+            return 'error';
+        case 'TIMED_OUT':
+            return 'timed_out';
+        case 'CLOSED':
+            return 'closed';
+        default:
+            return 'connecting';
+    }
+}
 
 function getCloudAiWsUrl(): string {
     const http = getCloudAiHttpBase().replace(/\/+$/, '');
@@ -579,9 +596,19 @@ async function startVoiceBridgeListener(): Promise<void> {
     const userId = session?.user?.id;
     if (!client || !userId) return;
 
+    if (
+        voiceBridgeChannel
+        && voiceBridgeChannelUserId === userId
+        && (voiceBridgeChannelStatus === 'connecting' || voiceBridgeChannelStatus === 'subscribed')
+    ) {
+        return;
+    }
+
     if (voiceBridgeChannel) {
         try { await client.removeChannel(voiceBridgeChannel); } catch { }
         voiceBridgeChannel = null;
+        voiceBridgeChannelUserId = null;
+        voiceBridgeChannelStatus = 'idle';
     }
 
     try { client.realtime.setAuth(session.access_token); } catch { }
@@ -595,16 +622,19 @@ async function startVoiceBridgeListener(): Promise<void> {
             filter: `user_id=eq.${userId}`,
         }, handleVoiceBridgeRealtime);
 
+    voiceBridgeChannel = ch;
+    voiceBridgeChannelUserId = userId;
+    voiceBridgeChannelStatus = 'connecting';
+
     ch.subscribe((status: string) => {
         if (ch !== voiceBridgeChannel) return;
+        voiceBridgeChannelStatus = mapVoiceBridgeChannelStatus(status);
         if (status === 'SUBSCRIBED') {
             logger.info(`[voice-bridge] Realtime subscribed for ${userId}`);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             logger.warn(`[voice-bridge] Realtime channel ${status}, will retry on next auth change`);
         }
     });
-
-    voiceBridgeChannel = ch;
 }
 
 function stopVoiceBridgeListener(): void {
@@ -617,6 +647,8 @@ function stopVoiceBridgeListener(): void {
         try { client.removeChannel(voiceBridgeChannel); } catch { }
     }
     voiceBridgeChannel = null;
+    voiceBridgeChannelUserId = null;
+    voiceBridgeChannelStatus = 'idle';
     for (const [, bridgeWs] of activeVoiceBridges) {
         try { bridgeWs.close(); } catch { }
     }

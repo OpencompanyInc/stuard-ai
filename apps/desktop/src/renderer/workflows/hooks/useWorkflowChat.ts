@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
+import { mergeStreamingText } from '../../utils/streamMerge';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
 import { formatWorkflowSchematic, type WorkflowValidationIssue } from '../../../../../../shared/workflow-topology';
@@ -500,9 +501,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 if (evt.event === 'reasoning_end') return;
                 const r = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!r) return;
-                const isFinal = evt.data?.final === true;
-                if (isFinal) currentReasoning = r;
-                else currentReasoning += r;
+                currentReasoning = mergeStreamingText(currentReasoning, r);
                 setReasoningText(currentReasoning);
                 setShowReasoning(true);
 

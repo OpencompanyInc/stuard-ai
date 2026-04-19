@@ -10,6 +10,7 @@ type UsageEvent = {
     cost_usd: number | null;
     created_at: string;
     model?: string | null;
+    raw?: Record<string, any> | null;
 };
 
 type CreditSummaryResponse = {
@@ -25,6 +26,26 @@ type CreditSummaryResponse = {
 const CREDITS_PER_USD = 33;
 const DAYS_RANGE = 14;
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
+
+function isEmbeddingModel(model: string | null | undefined): boolean {
+    const normalized = String(model || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('embedding')
+        || normalized.includes('embed-text')
+        || normalized.includes('nomic-embed')
+        || normalized.includes('mxbai-embed');
+}
+
+function isNonBillableEmbeddingUsage(event: UsageEvent): boolean {
+    const raw = event?.raw && typeof event.raw === 'object' ? event.raw : {};
+    const sourceType = String(raw.sourceType || raw.source_type || '').trim().toLowerCase();
+    const sourceLabel = String(raw.source_label || raw.sourceLabel || '').trim().toLowerCase();
+    const billingExcluded = String(raw.billingExcluded || raw.billing_excluded || '').trim().toLowerCase();
+    return sourceType === 'embedding'
+        || sourceLabel.startsWith('embedding')
+        || billingExcluded === 'true'
+        || isEmbeddingModel(event.model);
+}
 
 export default function DashboardPage() {
     const { user, userData } = useAuthContext();
@@ -71,7 +92,7 @@ export default function DashboardPage() {
                 const [{ data: usageEvents }, creditsResponse, { count: workflowCount }] = await Promise.all([
                     supabase
                         .from('usage_events')
-                        .select('cost_usd, credit_cost, created_at, model')
+                        .select('cost_usd, credit_cost, created_at, model, raw')
                         .eq('user_id', userId)
                         .gte('created_at', startOfMonth),
                     token
@@ -85,7 +106,8 @@ export default function DashboardPage() {
                         .eq('user_id', userId)
                 ]);
 
-                const usageList = (usageEvents || []) as UsageEvent[];
+                const usageList = ((usageEvents || []) as UsageEvent[])
+                    .filter((event) => !isNonBillableEmbeddingUsage(event));
                 const totalCostUsd = usageList.reduce((acc, curr) => acc + (curr.cost_usd || 0), 0);
                 const summary = (creditsResponse && (creditsResponse as CreditSummaryResponse).ok)
                     ? creditsResponse as CreditSummaryResponse

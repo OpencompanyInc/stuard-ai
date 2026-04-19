@@ -2,6 +2,7 @@ import { useMemo, useState, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { Message, StreamItem, ToolEvent } from './useWorkflowChat';
 import type { Skill } from '../components/Skills';
+import { mergeStreamingText } from '../../utils/streamMerge';
 
 const CLOUD_AI_HTTP_DEFAULT = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
 
@@ -256,9 +257,7 @@ IMPORTANT:
                 if (evt.event === 'reasoning_end') return;
                 const r = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!r) return;
-                const isFinal = evt.data?.final === true;
-                if (isFinal) currentReasoning = r;
-                else currentReasoning += r;
+                currentReasoning = mergeStreamingText(currentReasoning, r);
                 setReasoningText(currentReasoning);
                 setShowReasoning(true);
 

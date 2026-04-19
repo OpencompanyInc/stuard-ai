@@ -19,7 +19,6 @@ import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
 import { MediaLibraryView } from "./components/MediaLibraryView";
 import { ProactiveView } from "./components/ProactiveView";
-import { VaultView } from "./components/VaultView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
 import {
   LayoutDashboard,
@@ -36,7 +35,6 @@ import {
   HardDrive,
   Image as ImageIcon,
   Sparkles,
-  Shield
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
@@ -229,7 +227,7 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'vault'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -376,7 +374,7 @@ function DashboardApp() {
   // Listen for navigation events from main process (when dashboard is already open)
   useEffect(() => {
     const unsub = window.desktopAPI?.onDashboardNavigate?.((data) => {
-      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'integrations', 'settings', 'vault'].includes(data.tab)) {
+      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'integrations', 'settings'].includes(data.tab)) {
         setTab(data.tab);
       }
     });
@@ -1168,7 +1166,6 @@ function DashboardApp() {
       items: [
         { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
         { id: 'media', label: 'Media', icon: ImageIcon },
-        { id: 'vault', label: 'Vault', icon: Shield },
         { id: 'storage', label: 'Storage', icon: HardDrive },
       ],
     },
@@ -1193,7 +1190,6 @@ function DashboardApp() {
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
     media: { title: 'Media', subtitle: 'Browse imported files, generated media, and message attachments in one gallery.' },
     storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
-    vault: { title: 'Vault', subtitle: 'Keep protected data, secure items, and private resources organized.' },
   };
 
   const currentTabMeta = tabMeta[tab as keyof typeof tabMeta] ?? {
@@ -1447,10 +1443,6 @@ function DashboardApp() {
 
                           {tab === 'media' && (
                             <MediaLibraryView />
-                          )}
-
-                          {tab === 'vault' && (
-                            <VaultView />
                           )}
 
                           {tab === 'storage' && (

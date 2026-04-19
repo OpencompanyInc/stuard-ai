@@ -8,7 +8,7 @@ export interface UserSettings {
   globalHotkey?: string;
   /** IANA timezone override (e.g. 'America/New_York'). null/undefined = use OS default. */
   timezone?: string | null;
-  // ── Renderer preferences (persisted across restarts) ──
+  // Renderer preferences (persisted across restarts)
   themeMode?: string;
   themeDarkShade?: string;
   themeLightShade?: string;
@@ -27,16 +27,10 @@ export interface UserSettings {
   tourComplete?: boolean;
   timezoneOverride?: boolean;
 
-  // ── Embedding / file-index preferences ──
-  /** File kinds the user has selected for semantic indexing */
-  semanticIndexKinds?: string[];
-  /** File extensions to exclude from semantic indexing */
-  semanticExcludeExtensions?: string[];
-
-  // ── Credits settings ──
+  // Credits settings
   autoRefillCredits?: boolean;
 
-  // ── Browser-use Chrome sync settings ──
+  // Browser-use Chrome sync settings
   chromeSyncEnabled?: boolean;
   chromeSyncBrowserName?: string | null;
   chromeSyncProfileName?: string | null;
@@ -96,7 +90,7 @@ export function setTimezone(tz: string | null) {
   saveSettings({ timezone: tz });
 }
 
-// ── Renderer preference helpers ──
+// Renderer preference helpers
 
 /** Keys that the renderer is allowed to persist via the prefs:set IPC. */
 const RENDERER_PREF_KEYS = new Set<string>([
@@ -104,8 +98,7 @@ const RENDERER_PREF_KEYS = new Set<string>([
   'translucentMode', 'tone', 'toneCustom', 'persona',
   'chatMode', 'chatModels', 'wakewordEnabled', 'terminalEnabled',
   'browserEnabled', 'screenCaptureInvisible', 'onboardingComplete',
-  'tourComplete', 'timezoneOverride', 'semanticIndexKinds',
-  'semanticExcludeExtensions',
+  'tourComplete', 'timezoneOverride',
   'autoRefillCredits',
 ]);
 

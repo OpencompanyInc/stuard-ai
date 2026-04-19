@@ -164,12 +164,15 @@ async def handle_cloud_tool_request(
             try:
                 fut = asyncio.get_event_loop().create_future()
                 session.pending_client_tool_results[req_id] = fut
-                await session.ws.send_text(json.dumps({
+                # Route forwarded desktop tool requests through the session send lock.
+                # Parallel tool batches can emit multiple tool_request messages at once,
+                # and raw concurrent ws.send_text() calls can wedge the desktop bridge.
+                await session.send_json({
                     "type": "tool_request",
                     "id": req_id,
                     "tool": tool,
                     "args": args,
-                }))
+                }, request_id=request_id)
                 # browser_use_task can take up to 10 min; others default to 5 min
                 client_timeout = 660.0 if tool == "browser_use_task" else 300.0
                 result = await asyncio.wait_for(fut, timeout=client_timeout)
@@ -191,12 +194,12 @@ async def handle_cloud_tool_request(
                 fut = asyncio.get_event_loop().create_future()
                 session.pending_client_tool_results[req_id] = fut
                 try:
-                    await session.ws.send_text(json.dumps({
+                    await session.send_json({
                         "type": "tool_request",
                         "id": req_id,
                         "tool": tool,
                         "args": args,
-                    }))
+                    }, request_id=request_id)
                     result = await asyncio.wait_for(fut, timeout=300.0)
                 except Exception:
                     # Keep original unknown_tool result on failure

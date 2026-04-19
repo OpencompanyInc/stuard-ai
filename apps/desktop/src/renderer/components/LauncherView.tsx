@@ -554,7 +554,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ text: q, model: "text-embedding-3-large" }),
+            body: JSON.stringify({ text: q, model: "google/gemini-embedding-2-preview" }),
           },
         );
         const j = await resp.json().catch(() => ({}));
