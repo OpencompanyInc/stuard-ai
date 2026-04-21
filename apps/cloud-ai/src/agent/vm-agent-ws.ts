@@ -164,7 +164,9 @@ export async function getAgentWs(connectTimeoutMs = DEFAULT_AGENT_WS_CONNECT_TIM
       }
 
       const delay = Math.min(2000 + attempt * 1000, 8000, Math.max(250, remainingMs));
-      console.warn(`[vm-agent-ws] Connection attempt ${attempt}/${MAX_ATTEMPTS} failed: ${err?.message}. Retrying in ${delay}ms...`);
+      console.warn(
+        `[vm-agent-ws] Connection attempt ${attempt} failed: ${err?.message}. Retrying in ${delay}ms (${Math.ceil(remainingMs / 1000)}s remaining)...`,
+      );
       await new Promise(r => setTimeout(r, delay));
       attempt += 1;
     }
