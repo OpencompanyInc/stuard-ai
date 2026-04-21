@@ -2,56 +2,97 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCloudEngineStatus } from '@/lib/cloudApi';
+import { useAuthContext } from '@/components/providers/AuthProvider';
 import { CloudOverview } from './components/CloudOverview';
 import { ProvisionFlow } from './components/ProvisionFlow';
 import { CloudIDELayout } from './components/CloudIDELayout';
 
 export default function CloudDashboardPage() {
+  const { user, loading: authLoading } = useAuthContext();
   const [engine, setEngine] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const hasEngine = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadStatus = useCallback(async () => {
+    if (authLoading) return;
+    if (!user) {
+      setEngine(null);
+      setError('Sign in to load your cloud engine.');
+      setLoading(false);
+      hasEngine.current = false;
+      return;
+    }
+
     // Abort any in-flight status request
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const data = await getCloudEngineStatus();
+      const data = await getCloudEngineStatus({ signal: controller.signal, timeoutMs: 30_000 });
       if (controller.signal.aborted) return;
       if (data.ok) {
         setEngine(data.engine);
-        hasEngine.current = true;
-      } else {
-        setEngine(null);
-        hasEngine.current = false;
+        hasEngine.current = Boolean(data.engine);
+        setError(null);
+      } else if (!controller.signal.aborted) {
+        setError(data.message || data.error || 'Could not load your cloud engine.');
       }
     } catch {
       if (controller.signal.aborted) return;
-      setEngine(null);
-      hasEngine.current = false;
+      setError('Unable to connect to Stuard Cloud right now.');
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, []);
+  }, [authLoading, user]);
 
-  useEffect(() => { loadStatus(); }, [loadStatus]);
+  useEffect(() => {
+    if (authLoading) return;
+    setLoading(true);
+    void loadStatus();
+  }, [authLoading, loadStatus]);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   // Poll status — faster during transitional states, slower when stable
   useEffect(() => {
+    if (authLoading || !user) return;
     if (!hasEngine.current && !engine) return;
     const isTransitional = engine && ['provisioning', 'starting', 'stopping'].includes(engine.status);
     const interval = isTransitional ? 5_000 : 30_000;
     const timer = setInterval(loadStatus, interval);
     return () => clearInterval(timer);
-  }, [engine?.status, loadStatus]);
+  }, [authLoading, user, engine?.status, loadStatus]);
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">Loading cloud engine...</div>
+      </div>
+    );
+  }
+
+  if (!engine && error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center gap-4">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">Unable to load your cloud engine</div>
+          <div className="text-sm text-gray-500 mt-1">{error}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            void loadStatus();
+          }}
+          className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }

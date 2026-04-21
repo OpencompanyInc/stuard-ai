@@ -1,6 +1,59 @@
 import { ptyManager } from '../../terminal';
 import { RouterContext } from '../types';
 
+const DEFAULT_TERMINAL_MAX_CHARS = 4000;
+
+type TerminalChunkPayload = {
+  seq: number;
+  ts: number;
+  stream?: string;
+  text: string;
+  raw?: string;
+};
+
+function summarizeTerminalSession(session: any) {
+  return {
+    id: session.id,
+    shell: session.shell,
+    cwd: session.cwd,
+    title: session.title,
+    status: session.status,
+    exitCode: session.exitCode,
+  };
+}
+
+function stripTerminalText(text: string): string {
+  return String(text || '')
+    .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[\(\)][0-9A-Za-z]/g, '')
+    .replace(/\r/g, '\n');
+}
+
+function coalesceTerminalChunks(chunks: TerminalChunkPayload[]): TerminalChunkPayload[] {
+  const merged: TerminalChunkPayload[] = [];
+
+  for (const chunk of chunks) {
+    const hasContent = chunk.text.length > 0 || (chunk.raw?.length ?? 0) > 0;
+    if (!hasContent) continue;
+
+    const last = merged[merged.length - 1];
+    if (last && last.stream === chunk.stream) {
+      last.seq = chunk.seq;
+      last.ts = chunk.ts;
+      last.text += chunk.text;
+      if (last.raw !== undefined || chunk.raw !== undefined) {
+        last.raw = `${last.raw || ''}${chunk.raw || ''}`;
+      }
+      continue;
+    }
+
+    merged.push({ ...chunk });
+  }
+
+  return merged;
+}
+
 export async function execTerminalCreate(args: any, ctx: RouterContext): Promise<any> {
   try {
     const session = ptyManager.create({
@@ -11,7 +64,7 @@ export async function execTerminalCreate(args: any, ctx: RouterContext): Promise
       rows: args?.rows,
     });
     ctx.logFn(`🖥️ Created terminal: ${session.id} (${session.shell})`);
-    return { ok: true, session };
+    return { ok: true, session: summarizeTerminalSession(session) };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_create_failed' };
   }
@@ -19,7 +72,7 @@ export async function execTerminalCreate(args: any, ctx: RouterContext): Promise
 
 export async function execTerminalList(args: any, ctx: RouterContext): Promise<any> {
   try {
-    const sessions = ptyManager.list();
+    const sessions = ptyManager.list().map(summarizeTerminalSession);
     return { ok: true, sessions };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_list_failed' };
@@ -32,7 +85,7 @@ export async function execTerminalGet(args: any, ctx: RouterContext): Promise<an
     if (!sessionId) return { ok: false, error: 'missing_session_id' };
     const session = ptyManager.get(sessionId);
     if (!session) return { ok: false, error: 'session_not_found' };
-    return { ok: true, session };
+    return { ok: true, session: summarizeTerminalSession(session) };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_get_failed' };
   }
@@ -51,7 +104,7 @@ export async function execTerminalSendInput(args: any, ctx: RouterContext): Prom
     const success = ptyManager.write(sessionId, data);
     if (!success) return { ok: false, error: 'write_failed_or_session_not_running' };
     ctx.logFn(`⌨️ Sent ${enter ? 'command' : 'input'} to terminal ${sessionId}: ${input.slice(0, 50)}${input.length > 50 ? '...' : ''}`);
-    return { ok: true, sessionId, inputLength: data.length };
+    return { ok: true, sessionId };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_send_input_failed' };
   }
@@ -66,7 +119,7 @@ export async function execTerminalSendRaw(args: any, ctx: RouterContext): Promis
     const success = ptyManager.write(sessionId, data);
     if (!success) return { ok: false, error: 'write_failed_or_session_not_running' };
     ctx.logFn(`⌨️ Sent raw input to terminal ${sessionId} (${data.length} chars)`);
-    return { ok: true, sessionId, length: data.length };
+    return { ok: true, sessionId };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_send_raw_failed' };
   }
@@ -120,29 +173,26 @@ export async function execTerminalRead(args: any, ctx: RouterContext): Promise<a
   try {
     const sessionId = String(args?.sessionId || args?.session_id || args?.id || '');
     const sinceSeq = Number(args?.sinceSeq ?? args?.since_seq ?? args?.since ?? 0) || 0;
-    const maxChars = Math.max(0, Number(args?.maxChars ?? args?.max_chars ?? args?.max ?? 8000) || 8000);
+    const maxChars = Math.max(0, Number(args?.maxChars ?? args?.max_chars ?? args?.max ?? DEFAULT_TERMINAL_MAX_CHARS) || DEFAULT_TERMINAL_MAX_CHARS);
     const stripAnsi = args?.stripAnsi !== false;
+    const includeRaw = args?.includeRaw === true;
     if (!sessionId) return { ok: false, error: 'missing_session_id' };
 
     const res = ptyManager.read(sessionId, sinceSeq, maxChars);
     if (!res.ok) return { ok: false, error: 'session_not_found', sessionId };
 
-    const strip = (s: string) => {
-      // Basic ANSI escape stripping for AI readability (keeps plain text)
-      // Covers CSI, OSC, and a few common sequences.
-      return String(s || '')
-        .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '') // OSC ... BEL or ST
-        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')   // CSI ... cmd
-        .replace(/\x1b[\(\)][0-9A-Za-z]/g, '')       // Charset select
-        .replace(/\r/g, '\n');                       // Normalize CR to LF
-    };
-
-    const chunks = res.chunks.map(c => ({
-      seq: c.seq,
-      ts: c.ts,
-      stream: c.stream,
-      text: stripAnsi ? strip(c.text) : c.text,
-      raw: c.text,
+    const chunks = coalesceTerminalChunks(
+      res.chunks.map((chunk) => ({
+        seq: chunk.seq,
+        ts: chunk.ts,
+        stream: chunk.stream,
+        text: stripAnsi ? stripTerminalText(chunk.text) : chunk.text,
+        ...(includeRaw ? { raw: chunk.text } : {}),
+      })),
+    ).map((chunk) => ({
+      seq: chunk.seq,
+      text: chunk.text,
+      ...(chunk.raw !== undefined ? { raw: chunk.raw } : {}),
     }));
 
     return {
@@ -165,7 +215,7 @@ export async function execTerminalWaitFor(args: any, ctx: RouterContext): Promis
     const needle = String(args?.text ?? args?.needle ?? args?.contains ?? '');
     const timeoutMs = Math.max(0, Number(args?.timeoutMs ?? args?.timeout_ms ?? 15000) || 15000);
     const pollMs = Math.max(50, Number(args?.pollMs ?? args?.poll_ms ?? 200) || 200);
-    const maxChars = Math.max(0, Number(args?.maxChars ?? 8000) || 8000);
+    const maxChars = Math.max(0, Number(args?.maxChars ?? DEFAULT_TERMINAL_MAX_CHARS) || DEFAULT_TERMINAL_MAX_CHARS);
     const stripAnsi = args?.stripAnsi !== false;
     const exitOnDone = args?.exitOnDone !== false; // Default true
     if (!sessionId) return { ok: false, error: 'missing_session_id' };
@@ -179,28 +229,22 @@ export async function execTerminalWaitFor(args: any, ctx: RouterContext): Promis
       if (!r.ok) return { ok: false, error: 'session_not_found', sessionId };
 
       const pieces = r.chunks.map(c => c.text || '').join('');
-      const text = stripAnsi
-        ? pieces
-            .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
-            .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-            .replace(/\x1b[\(\)][0-9A-Za-z]/g, '')
-            .replace(/\r/g, '\n')
-        : pieces;
+      const text = stripAnsi ? stripTerminalText(pieces) : pieces;
 
       if (text) collected += text;
       sinceSeq = r.seq || sinceSeq;
 
       if (collected.includes(needle)) {
-        return { ok: true, sessionId, matched: true, needle, seq: sinceSeq, done: r.done, exitCode: r.exitCode };
+        return { ok: true, sessionId, matched: true, seq: sinceSeq, done: r.done, exitCode: r.exitCode };
       }
       if (r.done && exitOnDone) {
-        return { ok: true, sessionId, matched: false, needle, seq: sinceSeq, done: true, exitCode: r.exitCode };
+        return { ok: true, sessionId, matched: false, seq: sinceSeq, done: true, exitCode: r.exitCode };
       }
 
       await new Promise(r2 => setTimeout(r2, pollMs));
     }
 
-    return { ok: true, sessionId, matched: collected.includes(needle), needle, timeout: true, seq: sinceSeq };
+    return { ok: true, sessionId, matched: collected.includes(needle), timeout: true, seq: sinceSeq };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'terminal_wait_for_failed' };
   }

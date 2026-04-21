@@ -142,4 +142,76 @@ describe('Delegation question coordination', () => {
     expect(finalResult.completed).toBe(true);
     expect(finalResult.result).toBe('Finished after two answers.');
   });
+
+  it('injects the selected skill into delegated subagent context', async () => {
+    getBridgeSecretsMock.mockReturnValue({
+      __skills: [
+        {
+          id: 'skill_email',
+          name: 'Email Helper',
+          description: 'Draft concise follow-up emails',
+          trigger: 'when the user asks for email help',
+          steps: [{ id: 'step_1', type: 'prompt', label: 'Draft', content: 'Write the email.' }],
+        },
+      ],
+    });
+    runSubagentMock.mockResolvedValue({
+      ok: true,
+      subagentId: 'sa-skill',
+      result: 'Completed with the selected skill.',
+      durationMs: 21,
+    });
+
+    const { delegate } = await import('./delegation-tools');
+
+    const result = await (delegate as any).execute({
+      tasks: [{
+        subagent: 'browser',
+        instruction: 'Use the delegated skill while you work.',
+        skill: 'email helper',
+        context: 'Conversation context goes here.',
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runSubagentMock).toHaveBeenCalledTimes(1);
+    expect(runSubagentMock).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        context: expect.stringContaining('## SELECTED SKILL'),
+      }),
+    }));
+
+    const [{ request }] = runSubagentMock.mock.calls[0];
+    expect(request.context).toContain('Name: Email Helper');
+    expect(request.context).toContain('1. [prompt] Draft');
+    expect(request.context).toContain('Conversation context goes here.');
+  });
+
+  it('returns an error when the requested skill is not available', async () => {
+    getBridgeSecretsMock.mockReturnValue({
+      __skills: [
+        {
+          id: 'skill_email',
+          name: 'Email Helper',
+          description: 'Draft concise follow-up emails',
+          trigger: 'when the user asks for email help',
+          steps: [],
+        },
+      ],
+    });
+
+    const { delegate } = await import('./delegation-tools');
+
+    const result = await (delegate as any).execute({
+      tasks: [{
+        subagent: 'browser',
+        instruction: 'Try to use a missing skill.',
+        skill: 'missing skill',
+      }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Unknown skill "missing skill"');
+    expect(runSubagentMock).not.toHaveBeenCalled();
+  });
 });

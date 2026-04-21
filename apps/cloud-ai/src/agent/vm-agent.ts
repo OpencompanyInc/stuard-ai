@@ -456,7 +456,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
 
   try {
     // Build memory context
-    writeLine({ type: 'status', message: 'Loading memory context...' });
+    writeLine({ type: 'status', message: 'Reviewing context...' });
     const memoryContext = await buildVMMemoryContext(
       args.memoryQuery || message,
       args.queryEmbedding,
@@ -473,7 +473,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
       : undefined;
 
-    writeLine({ type: 'status', message: 'Generating response...' });
+    writeLine({ type: 'status', message: 'Thinking...' });
 
     // Stream chat to Python agent — onEvent fires for every WS message
     const result = await sendToAgentStreaming(

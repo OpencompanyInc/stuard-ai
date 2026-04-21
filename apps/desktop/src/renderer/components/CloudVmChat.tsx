@@ -23,7 +23,15 @@ interface ConversationEntry {
   message_count: number;
 }
 
-async function vmRelay(path: string, body?: any, method = 'POST'): Promise<any> {
+function normalizeStatusMessage(message: string): string {
+  const trimmed = String(message || '').trim();
+  if (!trimmed) return '';
+  if (trimmed === 'Loading memory context...') return 'Reviewing context...';
+  if (trimmed === 'Generating response...') return 'Thinking...';
+  return trimmed;
+}
+
+async function vmRelay(path: string, body?: any, method = 'POST', options?: { timeoutMs?: number }): Promise<any> {
   try {
     const { data } = await supabase.auth.getSession();
     const token = data?.session?.access_token || '';
@@ -33,7 +41,7 @@ async function vmRelay(path: string, body?: any, method = 'POST'): Promise<any> 
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ path, method, body }),
+      body: JSON.stringify({ path, method, body, timeoutMs: options?.timeoutMs }),
     });
     return await resp.json();
   } catch {
@@ -80,6 +88,27 @@ export function CloudVmChat({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [loadingConvId, setLoadingConvId] = useState<string | null>(null);
   const historyPanelRef = useRef<HTMLDivElement>(null);
+
+  const upsertConversationEntry = useCallback((conversation: Partial<ConversationEntry> & { id: string; incrementMessageCountBy?: number }) => {
+    setConversations((prev) => {
+      const existing = prev.find((entry) => entry.id === conversation.id);
+      const nextEntry: ConversationEntry = {
+        id: conversation.id,
+        title: conversation.title || existing?.title || 'Untitled',
+        updated_at: conversation.updated_at || new Date().toISOString(),
+        message_count: conversation.message_count
+          ?? Math.max(0, (existing?.message_count || 0) + (conversation.incrementMessageCountBy || 0)),
+      };
+
+      const next = existing
+        ? prev.map((entry) => (entry.id === conversation.id ? { ...entry, ...nextEntry } : entry))
+        : [nextEntry, ...prev];
+
+      return next
+        .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())
+        .slice(0, 30);
+    });
+  }, []);
 
   const { models, modelById } = useModelRegistry();
   const isRunning = engine?.status === 'running';
@@ -156,7 +185,7 @@ export function CloudVmChat({
     setHistoryLoading(true);
     try {
       // 1. Try VM memory store first (fast, in-memory)
-      const vmRes = await vmRelay('/memory/conversations_list', { limit: 30 });
+      const vmRes = await vmRelay('/memory/conversations_list', { limit: 30 }, 'POST', { timeoutMs: 4_000 });
       let rawConvs: any[] = vmRes?.result?.conversations || vmRes?.conversations || [];
 
       // 2. If empty, try the cloud-ai memory API (reads from Supabase / local DB)
@@ -204,8 +233,10 @@ export function CloudVmChat({
   }, [isRunning]);
 
   useEffect(() => {
-    if (isRunning) fetchHistory();
-  }, [isRunning, fetchHistory]);
+    if (isRunning && showHistory) {
+      void fetchHistory();
+    }
+  }, [isRunning, showHistory, fetchHistory]);
 
   // Load a conversation from history — try VM relay, then cloud-ai, then Supabase
   const loadConversation = useCallback(async (convId: string) => {
@@ -214,7 +245,7 @@ export function CloudVmChat({
 
     try {
       // 1. VM relay (Python agent DB)
-      const res = await vmRelay('/memory/messages_list', { conversation_id: convId, limit: 100 });
+      const res = await vmRelay('/memory/messages_list', { conversation_id: convId, limit: 100 }, 'POST', { timeoutMs: 5_000 });
       rawMsgs = res?.result?.messages || res?.messages || [];
 
       // 2. Cloud-ai memory API
@@ -510,7 +541,7 @@ export function CloudVmChat({
                 setStatusMessage(event.model ? `Routing → ${event.model}` : '');
                 break;
               case 'status':
-                setStatusMessage(event.message || '');
+                setStatusMessage(normalizeStatusMessage(event.message || ''));
                 break;
               case 'start':
                 if (event.conversationId) conversationIdRef.current = event.conversationId;
@@ -523,7 +554,11 @@ export function CloudVmChat({
                   conversationTitleRef.current = event.title;
                   const cid = event.conversationId || conversationIdRef.current;
                   if (cid) {
-                    setConversations(prev => prev.map(c => c.id === cid ? { ...c, title: event.title } : c));
+                    upsertConversationEntry({
+                      id: cid,
+                      title: event.title,
+                      updated_at: new Date().toISOString(),
+                    });
                   }
                 }
                 break;
@@ -565,6 +600,18 @@ export function CloudVmChat({
         { id: `error-${Date.now()}`, role: 'assistant', text: `Error: ${e?.message || 'Failed to reach VM agent'}`, timestamp: Date.now() },
       ]);
     } finally {
+      const activeConversationId = conversationIdRef.current;
+      if (activeConversationId) {
+        const fallbackTitle = (conversationTitleRef.current || text.slice(0, 80) || 'Untitled').trim();
+        conversationTitleRef.current = fallbackTitle;
+        upsertConversationEntry({
+          id: activeConversationId,
+          title: fallbackTitle,
+          updated_at: new Date().toISOString(),
+          incrementMessageCountBy: 2,
+        });
+      }
+
       setLoading(false);
       setStreamText('');
       setStreamReasoning('');
@@ -572,9 +619,11 @@ export function CloudVmChat({
       setStreamChunks([]);
       setStatusMessage('');
       abortRef.current = null;
-      fetchHistory();
+      if (showHistory) {
+        void fetchHistory();
+      }
     }
-  }, [input, loading, isRunning, selectedModel, modelById, fetchHistory]);
+  }, [input, loading, isRunning, selectedModel, modelById, fetchHistory, showHistory, upsertConversationEntry]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -671,7 +720,15 @@ export function CloudVmChat({
     <div className="relative" ref={historyPanelRef}>
       <button
         type="button"
-        onClick={() => { setShowHistory(v => !v); if (!showHistory) fetchHistory(); }}
+        onClick={() => {
+          setShowHistory((open) => {
+            const next = !open;
+            if (next) {
+              void fetchHistory();
+            }
+            return next;
+          });
+        }}
         className="dashboard-refresh-button inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs !rounded-xl"
         title="Chat history"
       >

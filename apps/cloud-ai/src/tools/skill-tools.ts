@@ -24,6 +24,12 @@ export interface SkillSummary {
   isActive?: boolean;
 }
 
+export interface SkillLookupInput {
+  skill_id?: string;
+  skill_name?: string;
+  request_text?: string;
+}
+
 const MAX_SKILLS = 30;
 const MAX_STEPS_PER_SKILL = 40;
 
@@ -78,6 +84,74 @@ export function getSkillsFromContext(): SkillSummary[] {
     }
   } catch { }
   return [];
+}
+
+export function findSkillInList(skills: SkillSummary[], lookup: SkillLookupInput): SkillSummary | undefined {
+  const { skill_id, skill_name, request_text } = lookup;
+  let match: SkillSummary | undefined;
+
+  if (skill_id) {
+    match = skills.find(s => s.id === skill_id);
+  }
+
+  if (!match && skill_name) {
+    const query = skill_name.toLowerCase().trim();
+    if (query) {
+      match = skills.find(s => s.name.toLowerCase() === query)
+        || skills.find(s => s.name.toLowerCase().includes(query));
+    }
+  }
+
+  if (!match && request_text) {
+    const query = request_text.toLowerCase().trim();
+    if (query) {
+      match = skills.find((skill) =>
+        skill.trigger.toLowerCase().includes(query)
+        || skill.description.toLowerCase().includes(query)
+        || skill.name.toLowerCase().includes(query)
+      );
+    }
+  }
+
+  return match;
+}
+
+export function findSkillInContext(lookup: SkillLookupInput): SkillSummary | undefined {
+  return findSkillInList(getSkillsFromContext(), lookup);
+}
+
+export function buildSkillContextSection(skill: SkillSummary): string {
+  const lines = [
+    '## SELECTED SKILL',
+    'The orchestrator explicitly delegated this task with the following skill. Apply it while completing the task.',
+    `Name: ${safeText(skill.name, 256)}`,
+  ];
+
+  const description = safeText(skill.description, 4000);
+  if (description) {
+    lines.push(`Description: ${description}`);
+  }
+
+  const trigger = safeText(skill.trigger, 2000);
+  if (trigger) {
+    lines.push(`Trigger: ${trigger}`);
+  }
+
+  if (Array.isArray(skill.steps) && skill.steps.length > 0) {
+    lines.push('Steps:');
+    skill.steps.slice(0, MAX_STEPS_PER_SKILL).forEach((step, index) => {
+      const type = safeText(step.type, 64) || 'prompt';
+      const label = safeText(step.label, 256) || `Step ${index + 1}`;
+      const toolName = safeText(step.toolName, 256);
+      const content = safeText(step.content, 4000);
+      lines.push(`${index + 1}. [${type}] ${label}${toolName ? ` (tool: ${toolName})` : ''}`);
+      if (content) {
+        lines.push(`   ${content}`);
+      }
+    });
+  }
+
+  return lines.join('\n');
 }
 
 export function buildAvailableSkillsPromptSection(skills: SkillSummary[] = getSkillsFromContext()): string {
@@ -136,31 +210,7 @@ export const get_skill_info = createTool({
       return { found: false, error: 'No skills are currently active. The user has not configured any skills.' };
     }
 
-    let match: SkillSummary | undefined;
-
-    // Match by ID first
-    if (skill_id) {
-      match = skills.find(s => s.id === skill_id);
-    }
-
-    // Then by name (case-insensitive partial match)
-    if (!match && skill_name) {
-      const q = skill_name.toLowerCase().trim();
-      match = skills.find(s => s.name.toLowerCase() === q)
-        || skills.find(s => s.name.toLowerCase().includes(q));
-    }
-
-    // Optionally match by request text against trigger/description/name.
-    if (!match && request_text) {
-      const q = request_text.toLowerCase().trim();
-      if (q) {
-        match = skills.find((s) =>
-          s.trigger.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
-          s.name.toLowerCase().includes(q)
-        );
-      }
-    }
+    const match = findSkillInList(skills, { skill_id, skill_name, request_text });
 
     if (!match) {
       return {

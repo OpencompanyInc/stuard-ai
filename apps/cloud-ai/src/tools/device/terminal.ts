@@ -4,14 +4,31 @@ import { makeLocalTool } from './shared';
 // NOTE: These tools are executed on the user's machine (Desktop/Electron) via the local agent bridge.
 // They provide a true PTY so interactive CLIs (Claude Code, Codex, etc.) can receive input while running.
 
+const DEFAULT_TERMINAL_MAX_CHARS = 4000;
+
+const terminalSessionSchema = z.object({
+  id: z.string(),
+  shell: z.string(),
+  cwd: z.string(),
+  title: z.string().optional(),
+  status: z.enum(['running', 'exited']),
+  exitCode: z.number().int().optional(),
+});
+
+const terminalChunkSchema = z.object({
+  seq: z.number().int(),
+  text: z.string(),
+  raw: z.string().optional(),
+});
+
 const terminalPermissionFields = {
   isPermissionRequired: z
     .boolean()
-    .describe('Required. Set to false for safe/read-only terminal operations. Set to true for operations that could be destructive or run untrusted commands.'),
+    .describe('Set true for destructive or untrusted commands.'),
   description: z
     .string()
     .optional()
-    .describe('Required when isPermissionRequired is true. A clear, non-technical explanation of what this terminal operation does and why. Shown to the user for approval.'),
+    .describe('Required when permission is needed. Shown to the user.'),
 };
 
 function withTerminalPermission<T extends z.ZodRawShape>(shape: T) {
@@ -29,7 +46,7 @@ function withTerminalPermission<T extends z.ZodRawShape>(shape: T) {
 
 export const terminal_create = makeLocalTool(
   'terminal_create',
-  'Create an interactive PTY terminal session. Use this for interactive CLIs (claude, codex) or anything that needs live stdin while running. Set isPermissionRequired=false for safe sessions and true for potentially destructive ones.',
+  'Start a persistent PTY terminal session.',
   withTerminalPermission({
     shell: z
       .enum(['auto', 'powershell', 'pwsh', 'cmd', 'bash', 'zsh', 'sh'])
@@ -38,91 +55,48 @@ export const terminal_create = makeLocalTool(
     cwd: z.string().optional(),
     cols: z.number().int().min(20).max(400).optional().default(120),
     rows: z.number().int().min(5).max(200).optional().default(30),
-    env: z.any().optional().describe('Environment variables as a key-value object.'),
+    env: z.any().optional().describe('Environment variables.'),
   }),
   z.object({
     ok: z.boolean(),
-    session: z
-      .object({
-        id: z.string(),
-        pid: z.number().int(),
-        shell: z.string(),
-        cwd: z.string(),
-        title: z.string(),
-        createdAt: z.number().int(),
-        lastActivity: z.number().int(),
-        cols: z.number().int(),
-        rows: z.number().int(),
-        status: z.enum(['running', 'exited']),
-        exitCode: z.number().int().optional(),
-      })
-      .optional(),
+    session: terminalSessionSchema.optional(),
     error: z.string().optional(),
   }),
 );
 
 export const terminal_list = makeLocalTool(
   'terminal_list',
-  'List active PTY terminal sessions.',
+  'List PTY terminal sessions.',
   z.object({}),
   z.object({
     ok: z.boolean(),
-    sessions: z
-      .array(
-        z.object({
-          id: z.string(),
-          pid: z.number().int(),
-          shell: z.string(),
-          cwd: z.string(),
-          title: z.string(),
-          createdAt: z.number().int(),
-          lastActivity: z.number().int(),
-          cols: z.number().int(),
-          rows: z.number().int(),
-          status: z.enum(['running', 'exited']),
-          exitCode: z.number().int().optional(),
-        }),
-      )
-      .optional(),
+    sessions: z.array(terminalSessionSchema).optional(),
     error: z.string().optional(),
   }),
 );
 
 export const terminal_get = makeLocalTool(
   'terminal_get',
-  'Get details for a PTY terminal session.',
+  'Get PTY session details.',
   z.object({
-    sessionId: z.string().describe('The PTY session id (from terminal_create).'),
+    sessionId: z.string().describe('PTY session id.'),
   }),
   z.object({
     ok: z.boolean(),
-    session: z
-      .object({
-        id: z.string(),
-        pid: z.number().int(),
-        shell: z.string(),
-        cwd: z.string(),
-        title: z.string(),
-        createdAt: z.number().int(),
-        lastActivity: z.number().int(),
-        cols: z.number().int(),
-        rows: z.number().int(),
-        status: z.enum(['running', 'exited']),
-        exitCode: z.number().int().optional(),
-      })
-      .optional(),
+    session: terminalSessionSchema.optional(),
     error: z.string().optional(),
   }),
 );
 
 export const terminal_read = makeLocalTool(
   'terminal_read',
-  'Read incremental PTY output using a seq cursor. Use repeatedly to stream output and to detect prompts before sending more input.',
+  'Read new PTY output since a seq cursor.',
   z.object({
     sessionId: z.string(),
     sinceSeq: z.number().int().optional().default(0),
-    maxChars: z.number().int().min(100).max(50000).optional().default(8000),
+    maxChars: z.number().int().min(100).max(50000).optional().default(DEFAULT_TERMINAL_MAX_CHARS),
     stripAnsi: z.boolean().optional().default(true),
+    includeRaw: z.boolean().optional().default(false),
   }),
   z.object({
     ok: z.boolean(),
@@ -131,17 +105,7 @@ export const terminal_read = makeLocalTool(
     exitCode: z.number().int().optional(),
     seq: z.number().int().optional(),
     truncated: z.boolean().optional(),
-    chunks: z
-      .array(
-        z.object({
-          seq: z.number().int(),
-          ts: z.number().int(),
-          stream: z.string().optional(),
-          text: z.string(),
-          raw: z.string().optional(),
-        }),
-      )
-      .optional(),
+    chunks: z.array(terminalChunkSchema).optional(),
     error: z.string().optional(),
   }),
   // Reads are fast; keep short-ish. If user is in a long-running interactive command, the model can call repeatedly.
@@ -150,7 +114,7 @@ export const terminal_read = makeLocalTool(
 
 export const terminal_send_input = makeLocalTool(
   'terminal_send_input',
-  'Send input to the PTY. By default it adds a newline (executes command), but can be set to just type. Set isPermissionRequired=false for safe read-only commands and true for write/destructive ones.',
+  'Send text to a PTY. Adds enter by default.',
   withTerminalPermission({
     sessionId: z.string(),
     input: z.string(),
@@ -158,53 +122,52 @@ export const terminal_send_input = makeLocalTool(
       .boolean()
       .optional()
       .default(true)
-      .describe('Whether to press enter after typing the input. Defaults to true.'),
+      .describe('Press enter after typing. Defaults to true.'),
   }),
-  z.object({ ok: z.boolean(), sessionId: z.string().optional(), inputLength: z.number().int().optional(), error: z.string().optional() }),
+  z.object({ ok: z.boolean(), sessionId: z.string().optional(), error: z.string().optional() }),
 );
 
 export const terminal_send_raw = makeLocalTool(
   'terminal_send_raw',
-  'Send raw input to the PTY (no newline). Use for incremental typing, escape sequences, or when you need full control. Set isPermissionRequired=false for safe input and true for destructive operations.',
+  'Send raw bytes to a PTY.',
   withTerminalPermission({
     sessionId: z.string(),
     data: z.string(),
   }),
-  z.object({ ok: z.boolean(), sessionId: z.string().optional(), length: z.number().int().optional(), error: z.string().optional() }),
+  z.object({ ok: z.boolean(), sessionId: z.string().optional(), error: z.string().optional() }),
 );
 
 export const terminal_send_keys = makeLocalTool(
   'terminal_send_keys',
-  'Send special keys to the PTY (enter, ctrl+c, arrows, etc.). Set isPermissionRequired=false for navigation keys and true for potentially destructive key combos.',
+  'Send special keys to a PTY.',
   withTerminalPermission({
     sessionId: z.string(),
-    keys: z.any().describe('The key or keys to send. Can be a string like "enter" or an array of strings like ["up","enter"].'),
+    keys: z.any().describe('A key or list of keys.'),
   }),
   z.object({ ok: z.boolean(), sessionId: z.string().optional(), error: z.string().optional() }),
 );
 
 export const terminal_wait_for = makeLocalTool(
   'terminal_wait_for',
-  'Wait until PTY output contains a substring (polling terminal_read internally). Handy to pause until a prompt appears. Returns early if the session exits (exitOnDone=true by default) so you don\'t wait for a full timeout on a finished process.',
+  'Wait until PTY output contains text.',
   z.object({
     sessionId: z.string(),
-    text: z.string().describe('Substring to wait for in output.'),
+    text: z.string().describe('Text to wait for.'),
     sinceSeq: z.number().int().optional().default(0),
     timeoutMs: z.number().int().min(100).max(600000).optional().default(15000),
     pollMs: z.number().int().min(50).max(2000).optional().default(200),
-    maxChars: z.number().int().min(100).max(50000).optional().default(8000),
+    maxChars: z.number().int().min(100).max(50000).optional().default(DEFAULT_TERMINAL_MAX_CHARS),
     stripAnsi: z.boolean().optional().default(true),
     exitOnDone: z
       .boolean()
       .optional()
       .default(true)
-      .describe('When true (default), return immediately if the terminal session exits/finishes, even if the text was not matched. Prevents waiting the full timeout on a process that already finished.'),
+      .describe('Return early if the session exits.'),
   }),
   z.object({
     ok: z.boolean(),
     sessionId: z.string().optional(),
     matched: z.boolean().optional(),
-    needle: z.string().optional(),
     timeout: z.boolean().optional(),
     seq: z.number().int().optional(),
     done: z.boolean().optional(),
@@ -222,7 +185,7 @@ export const terminal_wait_for = makeLocalTool(
 
 export const terminal_destroy = makeLocalTool(
   'terminal_destroy',
-  'Destroy/kill a PTY terminal session. Set isPermissionRequired=false for routine cleanup and true when destroying sessions that may have unsaved state.',
+  'Close a PTY session.',
   withTerminalPermission({
     sessionId: z.string(),
   }),

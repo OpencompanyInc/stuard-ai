@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { getCloudAccessToken } from '@/lib/cloudApi';
 
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 const TERMINAL_HEARTBEAT_MS = 20_000;
@@ -32,8 +33,8 @@ export function useCloudTerminal() {
     }
   };
 
-  const openSocket = useCallback((opts?: TerminalConnectOptions) => {
-    const token = localStorage.getItem('stuard_access_token');
+  const openSocket = useCallback(async (opts?: TerminalConnectOptions) => {
+    const token = await getCloudAccessToken();
     if (!token) return;
 
     optsRef.current = opts;
@@ -109,7 +110,7 @@ export function useCloudTerminal() {
       clearReconnectTimer();
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
-        openSocket(optsRef.current);
+        void openSocket(optsRef.current);
       }, delay);
     };
 
@@ -131,7 +132,7 @@ export function useCloudTerminal() {
     stoppedRef.current = false;
     reconnectAttemptsRef.current = 0;
     clearReconnectTimer();
-    openSocket(opts);
+    void openSocket(opts);
     return () => {
       stoppedRef.current = true;
       clearReconnectTimer();

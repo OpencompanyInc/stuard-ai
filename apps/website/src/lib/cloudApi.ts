@@ -4,17 +4,27 @@
  * API client with auth header injection for all cloud-engine endpoints.
  */
 
+import { supabase } from './supabaseClient';
+
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 
-function getToken(): string | null {
+export async function getCloudAccessToken(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
-  // Try to get from cookie or local storage
-  return localStorage.getItem('stuard_access_token') || null;
+
+  const storedToken = localStorage.getItem('stuard_access_token');
+  if (storedToken) return storedToken;
+
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token || null;
+  } catch {
+    return null;
+  }
 }
 
-function buildHeaders(extra?: HeadersInit): Record<string, string> {
+async function buildHeaders(extra?: HeadersInit): Promise<Record<string, string>> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  const t = getToken();
+  const t = await getCloudAccessToken();
   if (t) h['Authorization'] = `Bearer ${t}`;
   if (extra) {
     const entries = extra instanceof Headers ? Array.from(extra.entries()) : Object.entries(extra as Record<string, string>);
@@ -32,16 +42,16 @@ async function apiFetch<T = any>(
   const timer = setTimeout(() => controller.abort(), timeout);
 
   // Allow caller to chain their own signal
-  if (opts?.signal) {
-    opts.signal.addEventListener('abort', () => controller.abort());
-  }
+  const signal = opts?.signal
+    ? AbortSignal.any([opts.signal, controller.signal])
+    : controller.signal;
 
   try {
     const { timeoutMs: _, ...fetchOpts } = opts ?? {} as any;
     const res = await fetch(`${CLOUD_API_URL}${path}`, {
       ...fetchOpts,
-      headers: buildHeaders(fetchOpts?.headers),
-      signal: controller.signal,
+      headers: await buildHeaders(fetchOpts?.headers),
+      signal,
     });
     const data = await res.json();
     return data;
@@ -57,8 +67,8 @@ async function apiFetch<T = any>(
 
 // ── Engine ─────────────────────────────────────────────────────────────────
 
-export async function getCloudEngineStatus() {
-  return apiFetch('/v1/cloud-engine/status');
+export async function getCloudEngineStatus(opts?: RequestInit & { timeoutMs?: number }) {
+  return apiFetch('/v1/cloud-engine/status', opts);
 }
 
 export async function getCloudEngineTiers() {
@@ -192,9 +202,11 @@ export async function openVMAgentChatStream(options: {
   modelId?: string;
   signal?: AbortSignal;
 }) {
+  const headers = await buildHeaders();
+
   return fetch(`${CLOUD_API_URL}/v1/vm/agent/chat`, {
     method: 'POST',
-    headers: buildHeaders(),
+    headers,
     body: JSON.stringify({
       message: options.message,
       conversationId: options.conversationId,

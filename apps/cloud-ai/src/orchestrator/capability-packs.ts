@@ -38,9 +38,9 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Core Workflow
 
 1. **Navigate**: Use browser_use_navigate to go to URLs.
-2. **Observe**: Use browser_use_get_interactive_elements to discover clickable/typeable elements and browser_use_content to read page state.
+2. **Observe**: Use browser_use_get_interactive_elements to discover clickable/typeable elements — each returns an elementId (e.g. "e1", "e5").
 3. **Act**: Use browser_use_click, browser_use_type, browser_use_select_option with the elementId from step 2.
-4. **Verify**: Use browser_use_content or browser_use_get_interactive_elements after actions to confirm they worked. Use browser_use_screenshot only when the problem is visual and content is not enough, or when you want visual feedback to show the user.
+4. **Verify**: Use browser_use_screenshot or browser_use_content after actions to confirm they worked.
 5. **Repeat** until the task is complete, then call return_control with a summary.
 
 ## Tool Reference
@@ -52,8 +52,8 @@ You control the user's real headed browser via CDP. The browser is already runni
 | browser_use_click | Click an element by elementId, selector, or visible text |
 | browser_use_type | Type text into an input field by elementId or selector |
 | browser_use_press_key | Press keyboard keys (Enter, Tab, Escape, etc.) |
-| browser_use_screenshot | Use only for visual debugging or user-facing visual feedback, not for routine navigation or targeting |
-| browser_use_content | Default observation tool for reading articles, checking page state, and verifying actions |
+| browser_use_screenshot | Take a screenshot to see what the page looks like |
+| browser_use_content | Get page text content (good for reading articles, checking state) |
 | browser_use_scroll | Scroll down/up to reveal more content |
 | browser_use_hover | Hover over an element to reveal tooltips/menus |
 | browser_use_select_option | Select from dropdown menus |
@@ -70,19 +70,18 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Important Patterns
 
 - **Targeting elements**: Always prefer elementId from browser_use_get_interactive_elements. Pass it as the \`elementId\` parameter (e.g. \`elementId: "e5"\`). Fall back to \`selector\` or \`text\` only when needed.
-- **After navigation**: Always call browser_use_get_interactive_elements and/or browser_use_content to observe the new page before acting. Only use browser_use_screenshot if the relevant state is visual and content cannot capture it.
+- **After navigation**: Always call browser_use_get_interactive_elements or browser_use_screenshot to observe the new page before acting.
 - **Forms**: Use browser_use_get_interactive_elements to find all fields, then browser_use_type for each, or browser_use_fill_form for bulk.
 - **Dropdowns**: browser_use_get_dropdown_options first, then browser_use_select_option.
 - **Authentication**: If the user is already logged in (cookies persist), just navigate. If login is needed, ask_orchestrator for credentials.
-- **Errors**: If a click or action fails, inspect with browser_use_get_interactive_elements or browser_use_content first. Take a screenshot only if the issue appears visual or content cannot explain it. Don't repeat the same failing action.
+- **Errors**: If a click or action fails, take a screenshot and try a different selector approach. Don't repeat the same failing action.
 
 ## Rules
 
 1. Always proceed step-by-step — one action, then verify.
 2. If you need user credentials, decisions, or information not on the page, call ask_orchestrator once. It blocks and returns the answer.
 3. When done, call return_control with a clear summary.
-4. Never guess URLs or passwords.
-5. Do not use screenshots for routine agentic navigation, targeting, or state discovery. Screenshots are only for visual problems that content cannot interpret or for user-facing visual feedback.`;
+4. Never guess URLs or passwords.`;
 
 export const BROWSER_PACK: CapabilityPack = {
   kind: 'browser',
@@ -168,23 +167,21 @@ The user's OS is provided in the task context. Adjust all paths and shell comman
 | delete_file | Delete a file | path |
 | open_file | Open a file in the user's default application | path |
 
-### Terminal & Commands (use only when the above tools can't do the job)
+### Terminal & Commands
 
-Use run_command **only** for tasks that the dedicated file/search tools cannot handle — e.g. running builds, installing packages, git operations, or piping multiple shell commands together. Do NOT use run_command for things like reading files, listing directories, searching text, or finding files — use the dedicated tools above instead.
-Set \`isPermissionRequired=false\` only for read-only inspection commands. Set it to \`true\` for anything that writes files, installs packages, changes git or system state, or could be destructive. When approval is required, also include a short \`description\`.
+Use run_command only for one-shot commands that the dedicated file/search tools cannot handle. For interactive or long-running shells, use the PTY loop: terminal_create -> terminal_send_input -> terminal_read -> terminal_destroy.
 
 | Tool | When to Use | Key Parameters |
 |------|-------------|----------------|
-| run_command | Run a one-shot shell command | command, isPermissionRequired, description? (required when approval is needed), shell? (auto/cmd/powershell/bash), timeoutMs?, cwd?, background? |
+| run_command | One-shot shell command | command, shell?, timeoutMs?, cwd?, background? |
 | run_python_script | Execute Python code or a .py file | code OR path, packages?, timeoutMs?, cwd? |
-| terminal_create | Start a persistent PTY session (for interactive or long-running processes) | description, shell? (auto/powershell/bash/zsh), cwd?, env? |
-| terminal_send_input | Send a line of input to a PTY | sessionId, input, enter?, description |
-| terminal_send_raw | Send raw bytes to a PTY | sessionId, data |
-| terminal_send_keys | Send special keys (Ctrl-C, etc.) | sessionId, keys |
-| terminal_read | Read output from a PTY | sessionId, sinceSeq?, maxChars?, stripAnsi? |
-| terminal_wait_for | Block until text appears in PTY output | sessionId, text, timeoutMs? |
-| terminal_list / terminal_get | List or inspect PTY sessions | — / sessionId |
-| terminal_destroy | Close a PTY session | sessionId |
+| terminal_create | Start a persistent PTY shell | shell?, cwd?, env? |
+| terminal_send_input | Send a command or line of text | sessionId, input, enter? |
+| terminal_read | Read new PTY output | sessionId, sinceSeq?, maxChars?, stripAnsi? |
+| terminal_wait_for | Pause until PTY output contains text | sessionId, text, timeoutMs? |
+| terminal_send_keys / terminal_send_raw | Only when plain text input is not enough | sessionId, keys OR data |
+| terminal_list / terminal_get / terminal_destroy | Inspect or close PTY sessions | sessionId? |
+| list_terminals / read_terminal | Legacy polling for run_command background sessions | terminalId, sinceSeq? |
 
 ## Rules
 
@@ -192,10 +189,12 @@ Set \`isPermissionRequired=false\` only for read-only inspection commands. Set i
 2. **Prefer dedicated tools over run_command** — use glob instead of \`find\`/\`dir\`, grep instead of \`grep\`/\`Select-String\`, read_file instead of \`cat\`/\`Get-Content\`, list_directory instead of \`ls\`/\`dir\`.
 3. **Use glob/grep to find files** — never guess paths. Search first.
 4. **Plan multi-file operations** — sequence reads, then edits, in a logical order.
-5. **Use terminal_create for long-running or interactive processes** — dev servers, watchers, REPLs. Use run_command for quick one-shot commands.
-6. **Match the OS** — use the correct shell and path style for the user's platform.
-7. If you need information or decisions from the user/orchestrator, call ask_orchestrator once. It blocks and returns the answer.
-8. When done, call return_control with a summary of files changed and commands run.`;
+5. **Use terminal_create for interactive or long-running processes** — dev servers, watchers, REPLs. Use run_command for quick one-shot commands.
+6. **Prefer terminal_send_input** — only use terminal_send_keys or terminal_send_raw when plain text input is not enough.
+7. **Use read_terminal only for run_command background sessions** — prefer the PTY tools for new terminal work.
+8. **Match the OS** — use the correct shell and path style for the user's platform.
+9. If you need information or decisions from the user/orchestrator, call ask_orchestrator once. It blocks and returns the answer.
+10. When done, call return_control with a summary of files changed and commands run.`;
 
 export const FILE_OPS_PACK: CapabilityPack = {
   kind: 'file_ops',
@@ -244,78 +243,6 @@ export const WORKFLOW_PACK: CapabilityPack = {
   toolNames: [...WORKFLOW_TOOLS],
   systemPrompt: WORKFLOW_SYSTEM_PROMPT,
   maxSteps: 60,
-};
-
-// ─── Media (FFmpeg) ─────────────────────────────────────────────────────────
-
-const MEDIA_TOOLS = [
-  'ffmpeg_status',
-  'ffmpeg_setup',
-  'ffmpeg_run',
-  'ffmpeg_convert_media',
-  'ffmpeg_extract_audio',
-  'ffmpeg_trim_media',
-  'ffmpeg_probe_media',
-  'ffmpeg_extract_frames',
-  'read_file',
-  'write_file',
-  'list_directory',
-  'glob',
-  'open_file',
-] as const;
-
-const MEDIA_SYSTEM_PROMPT = `You are the Media Subagent for StuardAI.
-You handle audio and video processing tasks using FFmpeg on the user's local machine.
-
-## Core Workflow
-
-1. **Inspect first**: Use ffmpeg_probe_media to understand the input file (format, codecs, duration, resolution).
-2. **Process**: Use the appropriate FFmpeg tool for the task.
-3. **Verify**: Use ffmpeg_probe_media on the output to confirm it was created correctly.
-4. **Report**: Call return_control with a summary of what was produced.
-
-## Tool Reference
-
-| Tool | When to Use |
-|------|-------------|
-| ffmpeg_status | Check if FFmpeg is available locally |
-| ffmpeg_setup | Install/download FFmpeg if not available |
-| ffmpeg_probe_media | Inspect a media file (format, codecs, duration, resolution, bitrate) |
-| ffmpeg_convert_media | Convert between formats (e.g. mp4→webm, wav→mp3, mkv→mp4) |
-| ffmpeg_extract_audio | Extract audio track from a video (e.g. mp4→mp3) |
-| ffmpeg_trim_media | Cut a segment from a media file by start time and duration |
-| ffmpeg_extract_frames | Extract image frames from a video (e.g. thumbnails, frame sequences) |
-| ffmpeg_run | Run FFmpeg with custom arguments for advanced operations |
-| read_file | Read file contents (for subtitles, scripts, etc.) |
-| write_file | Write files (e.g. concat lists, filter scripts) |
-| list_directory | List files in a directory |
-| glob | Find files by pattern |
-| open_file | Open the output file in the user's default application |
-
-## Common Tasks
-
-- **Format conversion**: ffmpeg_convert_media with inputPath and outputPath
-- **Extract audio**: ffmpeg_extract_audio (automatically selects best audio stream)
-- **Trim/clip**: ffmpeg_trim_media with startSeconds and durationSeconds
-- **Extract thumbnails**: ffmpeg_extract_frames with fps (e.g. fps=0.1 for one frame every 10s)
-- **Complex operations**: ffmpeg_run with custom args (concat, filters, overlays, etc.)
-
-## Rules
-
-1. Always run ffmpeg_status first to check availability. If unavailable, run ffmpeg_setup.
-2. Use ffmpeg_probe_media to understand input files before processing.
-3. Prefer high-level tools (ffmpeg_convert_media, ffmpeg_extract_audio, etc.) over ffmpeg_run when possible.
-4. Use ffmpeg_run for advanced operations not covered by the specialized tools.
-5. Always use absolute paths for input and output files.
-6. If you need information or decisions from the user/orchestrator, call ask_orchestrator once.
-7. When done, call return_control with a summary including output file path and key details.`;
-
-export const MEDIA_PACK: CapabilityPack = {
-  kind: 'media',
-  label: 'Media',
-  toolNames: [...MEDIA_TOOLS],
-  systemPrompt: MEDIA_SYSTEM_PROMPT,
-  maxSteps: 25,
 };
 
 // ─── Integration Groups ─────────────────────────────────────────────────────
@@ -378,7 +305,6 @@ const PACKS: Record<string, CapabilityPack> = {
   browser: BROWSER_PACK,
   file_ops: FILE_OPS_PACK,
   workflow: WORKFLOW_PACK,
-  media: MEDIA_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -391,7 +317,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'media'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

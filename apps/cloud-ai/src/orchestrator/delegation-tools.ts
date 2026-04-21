@@ -18,6 +18,7 @@ import { writeLog } from '../utils/logger';
 import { KNOWN_SUBAGENT_NAMES, type SubagentName } from './capability-packs';
 import type { DelegationResult, SubagentQuestion, SubagentAnswer } from './types';
 import { getBridgeWs, getBridgeSecrets, withClientBridge } from '../tools/bridge';
+import { buildSkillContextSection, findSkillInContext, getSkillsFromContext } from '../tools/skill-tools';
 
 // ─── Background subagent coordination ────────────────────────────────────────
 
@@ -100,11 +101,55 @@ function buildQuestionResponse(question: SubagentQuestion) {
   };
 }
 
+interface DelegateTaskInput {
+  subagent: string;
+  instruction: string;
+  context?: string;
+  skill?: string;
+}
+
+interface PreparedDelegateTask extends DelegateTaskInput {
+  skillContext?: string;
+}
+
+function joinContextSections(...sections: Array<string | undefined>): string | undefined {
+  const normalized = sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => !!section);
+
+  return normalized.length > 0 ? normalized.join('\n\n') : undefined;
+}
+
+function prepareDelegateTask(task: DelegateTaskInput): { preparedTask?: PreparedDelegateTask; error?: string } {
+  const skillName = task.skill?.trim();
+  if (!skillName) {
+    return { preparedTask: { ...task } };
+  }
+
+  const skill = findSkillInContext({ skill_name: skillName });
+  if (!skill) {
+    const availableSkills = getSkillsFromContext().map(({ name }) => name);
+    return {
+      error: availableSkills.length > 0
+        ? `Unknown skill "${task.skill}". Available skills: ${availableSkills.join(', ')}`
+        : `Unknown skill "${task.skill}". No active skills are available in the current context.`,
+    };
+  }
+
+  return {
+    preparedTask: {
+      ...task,
+      skill: skill.name,
+      skillContext: buildSkillContextSection(skill),
+    },
+  };
+}
+
 // ─── The one delegation tool ─────────────────────────────────────────────────
 
 /** Shared logic: spin up one subagent task, race completion vs question */
 async function runDelegateTask(
-  task: { subagent: string; instruction: string; context?: string },
+  task: PreparedDelegateTask,
   index: number,
   bridgeWs: any,
   bridgeSecrets: Record<string, any> | undefined,
@@ -112,12 +157,13 @@ async function runDelegateTask(
   parentModelId: string | undefined,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const isIntegration = !['browser', 'file_ops', 'workflow', 'media'].includes(name);
-  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow' | 'media';
+  const isIntegration = !['browser', 'file_ops', 'workflow'].includes(name);
+  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   writeLog('delegate_start', {
     subagent: name,
+    skill: task.skill,
     instruction: task.instruction.slice(0, 200),
     hasBridge: !!bridgeWs,
     parentModelTier,
@@ -190,9 +236,11 @@ async function runDelegateTask(
     request: {
       kind,
       instruction: task.instruction,
-      context: isIntegration
-        ? `Integration group: ${name}\n${task.context || ''}`
-        : task.context,
+      context: joinContextSections(
+        isIntegration ? `Integration group: ${name}` : undefined,
+        task.skillContext,
+        task.context,
+      ),
     },
     runId,
     parentRunId: runId,
@@ -212,8 +260,7 @@ async function runDelegateTask(
   const race = await raceCompletionOrQuestion(coordinator);
 
   if (race.type === 'completed') {
-    const resultPreview = String(race.result.result || race.result.error || '').slice(0, 120);
-    console.log(`[delegation] ✅ DELEGATE COMPLETE (no question) | subagent=${name} ok=${race.result.ok} | result="${resultPreview}"`);
+    console.log(`[delegation] ✅ DELEGATE COMPLETE (no question) | subagent=${name} ok=${race.result.ok} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
     return { index, subagent: name, ...buildCompletionResponse(race.result) };
   }
 
@@ -240,11 +287,11 @@ export const delegate = createTool({
   description:
     'Delegate one or more tasks to specialized subagents.\n' +
     'Pass a single task or multiple independent tasks — multiple tasks run in parallel.\n\n' +
+    'If you pass skill, the matching user-defined skill is loaded into the delegated subagent context automatically.\n\n' +
     'Available subagents:\n' +
     '  browser     — web browsing, form filling, page scraping, screenshots\n' +
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
-    '  media       — audio/video processing with FFmpeg (convert, trim, extract audio, probe, extract frames)\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +
@@ -267,6 +314,10 @@ export const delegate = createTool({
         .string()
         .optional()
         .describe('Additional context (conversation history, IDs, user preferences).'),
+      skill: z
+        .string()
+        .optional()
+        .describe('Optional user-defined skill name to inject into the delegated subagent context automatically.'),
     })).min(1).max(10).describe('Array of tasks to delegate. Use 1 for a single task, or multiple for parallel execution.'),
   }),
   execute: async ({ tasks }) => {
@@ -274,6 +325,7 @@ export const delegate = createTool({
     const bridgeSecrets = getBridgeSecrets();
     const parentModelTier = bridgeSecrets?.__modelTier as string | undefined;
     const parentModelId = bridgeSecrets?.__modelId as string | undefined;
+    const preparedTasks: PreparedDelegateTask[] = [];
 
     // Validate all subagent names upfront
     for (const task of tasks) {
@@ -284,24 +336,34 @@ export const delegate = createTool({
           error: `Unknown subagent "${task.subagent}". Valid names: ${KNOWN_SUBAGENT_NAMES.join(', ')}`,
         };
       }
+
+      const { preparedTask, error } = prepareDelegateTask(task);
+      if (!preparedTask || error) {
+        return {
+          ok: false,
+          error: error || 'Failed to prepare delegated task.',
+        };
+      }
+
+      preparedTasks.push(preparedTask);
     }
 
-    if (tasks.length === 1) {
+    if (preparedTasks.length === 1) {
       // Single task — return flat result (backwards-compatible shape)
-      const result = await runDelegateTask(tasks[0], 0, bridgeWs, bridgeSecrets, parentModelTier, parentModelId);
+      const result = await runDelegateTask(preparedTasks[0], 0, bridgeWs, bridgeSecrets, parentModelTier, parentModelId);
       const { index: _index, ...rest } = result;
       return rest;
     }
 
     // Multiple tasks — run in parallel
     writeLog('delegate_multi_start', {
-      taskCount: tasks.length,
-      subagents: tasks.map(t => t.subagent),
+      taskCount: preparedTasks.length,
+      subagents: preparedTasks.map(t => t.subagent),
     });
-    console.log(`[delegation] ▶▶ DELEGATE PARALLEL | ${tasks.length} tasks | subagents=[${tasks.map(t => t.subagent).join(', ')}]`);
+    console.log(`[delegation] ▶▶ DELEGATE PARALLEL | ${preparedTasks.length} tasks | subagents=[${preparedTasks.map(t => t.subagent).join(', ')}]`);
 
     const results = await Promise.all(
-      tasks.map((task, index) =>
+      preparedTasks.map((task, index) =>
         runDelegateTask(task, index, bridgeWs, bridgeSecrets, parentModelTier, parentModelId),
       ),
     );
@@ -311,7 +373,7 @@ export const delegate = createTool({
 
     console.log(`[delegation] 🏁 DELEGATE PARALLEL DONE | ${completed.length} completed, ${pending.length} awaiting replies`);
     writeLog('delegate_multi_complete', {
-      totalTasks: tasks.length,
+      totalTasks: preparedTasks.length,
       completed: completed.length,
       pendingQuestions: pending.length,
     });
@@ -319,7 +381,7 @@ export const delegate = createTool({
     return {
       ok: true,
       results,
-      summary: `${completed.length}/${tasks.length} tasks completed${pending.length > 0 ? `, ${pending.length} awaiting reply (use reply_to_subagent with the questionId)` : ''}`,
+      summary: `${completed.length}/${preparedTasks.length} tasks completed${pending.length > 0 ? `, ${pending.length} awaiting reply (use reply_to_subagent with the questionId)` : ''}`,
     };
   },
 });
@@ -422,8 +484,7 @@ export const replyToSubagent = createTool({
 
     let result: any;
     if (race.type === 'completed') {
-      const replyResultPreview = String(race.result.result || race.result.error || '').slice(0, 120);
-      console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${replyResultPreview}"`);
+      console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
       result = buildCompletionResponse(race.result);
     } else {
       // Another question from the subagent — store and return it

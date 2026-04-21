@@ -5,7 +5,7 @@
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken } from '../supabase';
+import { getConversationMessages, getSupabaseService, verifyToken } from '../supabase';
 import { hasClientBridge } from '../tools/bridge';
 import * as memory from '../memory/conversations';
 
@@ -34,6 +34,64 @@ async function getAuth(req: IncomingMessage): Promise<{ userId: string } | null>
   return verifyToken(token);
 }
 
+async function requireAuth(req: IncomingMessage, res: ServerResponse): Promise<{ userId: string } | null> {
+  const user = await getAuth(req);
+  if (!user) {
+    json(res, { ok: false, error: 'unauthorized' }, 401);
+    return null;
+  }
+  return user;
+}
+
+function requireBridge(res: ServerResponse): true {
+  json(res, { ok: false, error: 'No client bridge available' }, 503);
+  return true;
+}
+
+async function listCloudConversations(userId: string, limit: number, offset: number): Promise<any[] | null> {
+  const supabase = getSupabaseService();
+  if (!supabase) return null;
+
+  try {
+    const safeLimit = Math.max(1, Math.min(limit, 100));
+    const start = Math.max(0, offset);
+    const end = start + safeLimit - 1;
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('id, title, model, source, status, created_at, updated_at, message_count')
+      .eq('user_id', userId)
+      .neq('source', 'workflow')
+      .order('updated_at', { ascending: false })
+      .range(start, end);
+
+    if (error || !Array.isArray(data)) return [];
+    return data;
+  } catch {
+    return [];
+  }
+}
+
+async function getCloudConversation(userId: string, conversationId: string): Promise<any | null | undefined> {
+  const supabase = getSupabaseService();
+  if (!supabase) return undefined;
+
+  try {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('id, title, model, source, status, created_at, updated_at, message_count')
+      .eq('user_id', userId)
+      .eq('id', conversationId)
+      .neq('source', 'workflow')
+      .single();
+
+    if (error) return null;
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function handleMemoryRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -41,12 +99,7 @@ export async function handleMemoryRoutes(
 ): Promise<boolean> {
   const path = url.pathname;
   const method = req.method || 'GET';
-
-  // Check bridge availability for routes that need it
-  const needsBridge = path.startsWith('/v1/memory/');
-  if (needsBridge && !hasClientBridge()) {
-    return json(res, { ok: false, error: 'No client bridge available' }, 503), true;
-  }
+  const bridgeAvailable = hasClientBridge();
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // CONVERSATIONS
@@ -57,6 +110,21 @@ export async function handleMemoryRoutes(
     const status = url.searchParams.get('status') as 'active' | 'archived' | null;
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
+    if (!bridgeAvailable) {
+      const user = await requireAuth(req, res);
+      if (!user) return true;
+      if (status === 'archived') {
+        return json(res, { ok: true, conversations: [], count: 0 }), true;
+      }
+
+      const conversations = await listCloudConversations(user.userId, limit, offset);
+      if (conversations === null) {
+        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+      }
+
+      return json(res, { ok: true, conversations, count: conversations.length }), true;
+    }
 
     try {
       const conversations = await memory.listConversations({ 
@@ -72,6 +140,8 @@ export async function handleMemoryRoutes(
 
   // POST /v1/memory/conversations - Create conversation
   if (path === '/v1/memory/conversations' && method === 'POST') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const body = await readBody(req);
     const { title, model, conversation_id } = body;
 
@@ -88,6 +158,8 @@ export async function handleMemoryRoutes(
 
   // POST /v1/memory/conversations/search - Search conversations
   if (path === '/v1/memory/conversations/search' && method === 'POST') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const body = await readBody(req);
     const { query, limit, threshold } = body;
 
@@ -107,6 +179,21 @@ export async function handleMemoryRoutes(
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+$/) && method === 'GET') {
     const id = path.split('/v1/memory/conversations/')[1];
 
+    if (!bridgeAvailable) {
+      const user = await requireAuth(req, res);
+      if (!user) return true;
+
+      const conversation = await getCloudConversation(user.userId, id);
+      if (conversation === undefined) {
+        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+      }
+      if (!conversation) {
+        return json(res, { ok: false, error: 'not_found' }, 404), true;
+      }
+
+      return json(res, { ok: true, conversation }), true;
+    }
+
     try {
       const conversation = await memory.getConversation(id);
       if (!conversation) {
@@ -120,6 +207,8 @@ export async function handleMemoryRoutes(
 
   // PATCH /v1/memory/conversations/:id - Update conversation
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+$/) && method === 'PATCH') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const id = path.split('/v1/memory/conversations/')[1];
     const body = await readBody(req);
     const { title, status } = body;
@@ -146,6 +235,17 @@ export async function handleMemoryRoutes(
     const end_turn = url.searchParams.get('end_turn');
     const limit = url.searchParams.get('limit');
 
+    if (!bridgeAvailable) {
+      const user = await requireAuth(req, res);
+      if (!user) return true;
+      if (!getSupabaseService()) {
+        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+      }
+
+      const messages = await getConversationMessages(user.userId, id, limit ? parseInt(limit, 10) : 100);
+      return json(res, { ok: true, messages, count: messages.length }), true;
+    }
+
     try {
       const messages = await memory.getMessages(id, {
         start_turn: start_turn ? parseInt(start_turn, 10) : undefined,
@@ -160,6 +260,8 @@ export async function handleMemoryRoutes(
 
   // POST /v1/memory/conversations/:id/messages - Add message
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+\/messages$/) && method === 'POST') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const id = path.split('/v1/memory/conversations/')[1].replace('/messages', '');
     const body = await readBody(req);
     const { role, content, tool_calls, tool_results, attachments } = body;
@@ -189,6 +291,8 @@ export async function handleMemoryRoutes(
 
   // GET /v1/memory/conversations/:id/segments - Get segments
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+\/segments$/) && method === 'GET') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const id = path.split('/v1/memory/conversations/')[1].replace('/segments', '');
 
     try {
@@ -201,6 +305,8 @@ export async function handleMemoryRoutes(
 
   // POST /v1/memory/segments/search - Search segments
   if (path === '/v1/memory/segments/search' && method === 'POST') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const body = await readBody(req);
     const { query, limit, threshold } = body;
 
@@ -222,6 +328,8 @@ export async function handleMemoryRoutes(
 
   // GET /v1/memory/spaces - List spaces
   if (path === '/v1/memory/spaces' && method === 'GET') {
+    if (!bridgeAvailable) return requireBridge(res);
+
     const type = url.searchParams.get('type') as any;
     const include_archived = url.searchParams.get('include_archived') === 'true';
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
