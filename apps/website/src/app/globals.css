@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 :root {
   /* Force light mode regardless of system preference */
@@ -129,6 +130,13 @@ body.grid-faded::after {
   --ide-input-bg: #1a1d27;
   --ide-msg-user: #2563eb;
   --ide-msg-assistant: #1e2030;
+  --background: var(--ide-bg);
+  --foreground: var(--ide-text);
+  --foreground-muted: var(--ide-text-muted);
+  --sidebar-item-hover: var(--ide-hover);
+  --sidebar-item-active: var(--ide-active);
+  --border: var(--ide-border);
+  --primary-foreground: #ffffff;
 
   position: fixed;
   inset: 0;
@@ -137,6 +145,38 @@ body.grid-faded::after {
   background: var(--ide-bg);
   color: var(--ide-text);
   font-family: var(--font-primary);
+}
+
+.bg-theme-bg {
+  background-color: var(--background);
+}
+
+.bg-theme-card {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 68%, transparent);
+}
+
+.bg-theme-hover {
+  background-color: var(--sidebar-item-hover);
+}
+
+.bg-theme-active {
+  background-color: var(--sidebar-item-active);
+}
+
+.text-theme-fg {
+  color: var(--foreground);
+}
+
+.text-theme-muted {
+  color: var(--foreground-muted);
+}
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.text-primary-fg {
+  color: var(--primary-foreground);
 }
 
 /* ── Icon Sidebar ── */

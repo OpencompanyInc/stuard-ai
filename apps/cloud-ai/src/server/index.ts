@@ -2,6 +2,7 @@ import { createHttpServer } from './http/app';
 import { createChatWebSocketServer } from './socket/server';
 import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-bootstrap';
 import { handleSpeechConnection } from '../routes/speech';
+import { handleTerminalConnection } from '../routes/terminal-relay';
 import { PORT } from '../utils/config';
 import { startVMHealthMonitor } from '../services/vm-health';
 import { initVoiceProviders } from '../voice';
@@ -28,6 +29,10 @@ export function startCloudAiServer() {
     } else if (url === '/speech' || url.startsWith('/speech?')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         handleSpeechConnection(ws, req);
+      });
+    } else if (url === '/terminal' || url.startsWith('/terminal?')) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        handleTerminalConnection(ws, req);
       });
     } else {
       socket.destroy();

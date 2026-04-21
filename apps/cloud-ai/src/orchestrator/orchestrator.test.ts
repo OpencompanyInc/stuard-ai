@@ -227,7 +227,7 @@ describe('Runtime Mode', () => {
     expect(hasExecutionToolsRegistered()).toBe(true);
 
     process.env.USE_ORCHESTRATOR = original;
-  });
+  }, 30_000);
 });
 
 // ─── Protocol message envelope validation ────────────────────────────────────

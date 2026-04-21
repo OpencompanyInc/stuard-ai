@@ -184,3 +184,23 @@ export async function sendVMAgentChat(message: string, conversationId?: string, 
     timeoutMs: 180_000, // 3 min — agent can take a while
   });
 }
+
+export async function openVMAgentChatStream(options: {
+  message: string;
+  conversationId?: string;
+  model?: string;
+  modelId?: string;
+  signal?: AbortSignal;
+}) {
+  return fetch(`${CLOUD_API_URL}/v1/vm/agent/chat`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({
+      message: options.message,
+      conversationId: options.conversationId,
+      model: options.model,
+      modelId: options.modelId,
+    }),
+    signal: options.signal,
+  });
+}

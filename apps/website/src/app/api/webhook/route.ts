@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Webhooks } from '@polar-sh/nextjs';
+import { creditsFromAmountCents } from '@/lib/creditPricing';
 
 export const runtime = 'nodejs';
 
@@ -10,7 +11,6 @@ const webhookSecret = process.env.POLAR_WEBHOOK_SECRET || '';
 type PlanTier = 'free' | 'starter' | 'pro' | 'power';
 type GrantSourceType = 'subscription_cycle' | 'addon_purchase';
 
-const BASE_CREDITS_PER_USD = 33;
 const supabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
@@ -46,12 +46,6 @@ function getAmountCents(payload: any): number | null {
     if (Number.isFinite(n) && n > 0) return n;
   }
   return null;
-}
-
-function tierFromAmount(amountDollars: number): { plan: PlanTier; multiplier: number } {
-  if (amountDollars >= 100) return { plan: 'power', multiplier: 0.75 };
-  if (amountDollars >= 30) return { plan: 'pro', multiplier: 0.70 };
-  return { plan: 'starter', multiplier: 0.65 };
 }
 
 function getStringCandidate(...candidates: any[]): string | null {
@@ -121,17 +115,6 @@ function extractPeriodBounds(obj: any): { start: string | null; end: string | nu
       obj?.endsAt,
       obj?.ends_at,
     ),
-  };
-}
-
-function creditsFromAmount(amountCents: number): { amountDollars: number; plan: PlanTier; credits: number; multiplier: number } {
-  const amountDollars = amountCents / 100;
-  const { plan, multiplier } = tierFromAmount(amountDollars);
-  return {
-    amountDollars,
-    plan,
-    multiplier,
-    credits: Math.max(0, Math.floor(amountDollars * BASE_CREDITS_PER_USD * multiplier)),
   };
 }
 
@@ -235,7 +218,7 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   const productId = extractProductId(payload);
   const subscriptionId = extractSubscriptionId(payload);
   const period = extractPeriodBounds(payload);
-  const amount = amountCents ? creditsFromAmount(amountCents) : null;
+  const amount = amountCents ? creditsFromAmountCents(amountCents) : null;
   const plan = planFromProductId(productId) || amount?.plan || 'starter';
   const sourceRef = `${subscriptionId || productId || 'subscription'}:${period.end || period.start || 'current'}`;
 
@@ -273,7 +256,7 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
 async function applyAddonGrant(userId: string, payload: any) {
   const amountCents = getAmountCents(payload);
   if (!amountCents) return;
-  const amount = creditsFromAmount(amountCents);
+  const amount = creditsFromAmountCents(amountCents);
   const productId = extractProductId(payload);
   const orderRef = getStringCandidate(
     payload?.orderId,

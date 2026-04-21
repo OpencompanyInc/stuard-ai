@@ -1,10 +1,14 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { sendVMAgentChat, listFiles } from '@/lib/cloudApi';
+import { listFiles, openVMAgentChatStream } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
 import Link from 'next/link';
+import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/components/PortableMessageBubble';
+import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../../../shared/chat-ui/streamState';
+import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMerge';
+import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';
 
 interface CloudIDELayoutProps {
   engine: any;
@@ -19,11 +23,6 @@ interface FileEntry {
   modified: string;
 }
 
-type ChatMessage = {
-  role: 'user' | 'assistant';
-  content: string;
-};
-
 export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const { user, userData } = useAuthContext();
 
@@ -36,6 +35,12 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [streamText, setStreamText] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [streamTools, setStreamTools] = useState<ToolCall[]>([]);
+  const [streamChunks, setStreamChunks] = useState<StreamChunk[]>([]);
+  const [statusMessage, setStatusMessage] = useState('');
+  const streamStartRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -67,7 +72,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   // ── Auto-scroll chat ──
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, chatLoading]);
+  }, [messages, chatLoading, streamText, streamReasoning, streamTools, streamChunks, statusMessage]);
 
   // ── Terminal xterm lifecycle ──
   useEffect(() => {
@@ -176,27 +181,260 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     if (!text || chatLoading) return;
 
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', text }]);
     setChatLoading(true);
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setStreamChunks([]);
+    setStatusMessage('Connecting...');
+    streamStartRef.current = Date.now();
+
+    let accText = '';
+    let accReasoning = '';
+    let accTools: ToolCall[] = [];
+    let accChunks: StreamChunk[] = [];
+    let gotFinal = false;
+
+    const normalizeToolStatus = (status: string | undefined): ToolCall['status'] => {
+      switch (String(status || '').toLowerCase()) {
+        case 'completed':
+        case 'result':
+        case 'step_completed':
+          return 'completed';
+        case 'error':
+        case 'failed':
+        case 'timeout':
+        case 'step_error':
+          return 'error';
+        case 'running':
+        case 'started':
+        case 'step_started':
+          return 'running';
+        default:
+          return 'called';
+      }
+    };
+
+    const pushText = (chunk: string) => {
+      if (!chunk) return;
+      accText = mergeStreamingText(accText, chunk);
+      accChunks = appendTextChunk(accChunks, chunk);
+      setStreamText(accText);
+      setStreamChunks([...accChunks]);
+    };
+
+    const pushReasoning = (chunk: string, nested = false) => {
+      if (!chunk) return;
+      if (!nested) {
+        accReasoning = mergeStreamingText(accReasoning, chunk);
+        setStreamReasoning(accReasoning);
+      }
+      accChunks = appendReasoningChunk(accChunks, chunk, nested);
+      setStreamChunks([...accChunks]);
+    };
+
+    const pushTool = (tool: ToolCall) => {
+      const next = applyToolCallUpdate(accTools, accChunks, {
+        ...tool,
+        timestamp: tool.timestamp || Date.now(),
+      });
+      accTools = next.toolCalls;
+      accChunks = next.streamChunks;
+      setStreamTools([...accTools]);
+      setStreamChunks([...accChunks]);
+    };
 
     try {
-      const res = await sendVMAgentChat(text, conversationId || undefined);
-      if (res.ok && res.text) {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.text! }]);
-        if (res.conversationId) setConversationId(res.conversationId);
+      const res = await openVMAgentChatStream({
+        message: text,
+        conversationId: conversationId || undefined,
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream') && res.body) {
+        setStatusMessage('');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const jsonStr = trimmed.startsWith('data: ') ? trimmed.slice(6) : trimmed;
+            if (!jsonStr) continue;
+
+            let event: any;
+            try { event = JSON.parse(jsonStr); } catch { continue; }
+
+            switch (event.type) {
+              case 'start':
+              case 'conversation':
+                if (event.conversationId) setConversationId(event.conversationId);
+                break;
+
+              case 'status':
+                setStatusMessage(event.message || '');
+                break;
+
+              case 'routing':
+                setStatusMessage(event.model ? `Routing → ${event.model}` : '');
+                break;
+
+              case 'progress': {
+                setStatusMessage('');
+                const ev = event.event || '';
+                const data = event.data || {};
+                if (ev === 'delta' || ev === 'text') {
+                  pushText(data.text || '');
+                } else if (ev === 'reasoning' || ev === 'reasoning_start') {
+                  pushReasoning(data.text || '');
+                }
+                break;
+              }
+
+              case 'tool_event': {
+                setStatusMessage('');
+                const toolName = event.tool || event.data?.tool || '';
+                const toolStatus = event.status || event.data?.status || '';
+                const toolData = event.data || {};
+                const toolId = toolData.id || toolData.toolCallId || event.id || '';
+                if (toolName) {
+                  const normalizedStatus = normalizeToolStatus(toolStatus);
+                  pushTool({
+                    id: toolId || `${toolName}-${Date.now()}`,
+                    tool: toolName,
+                    status: normalizedStatus,
+                    args: toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined),
+                    result: toolData.result ?? (normalizedStatus === 'completed' ? toolData : undefined),
+                    error: toolData.error ?? (normalizedStatus === 'error' ? toolData : undefined),
+                    liveOutput: typeof toolData.liveOutput === 'string'
+                      ? toolData.liveOutput
+                      : typeof toolData.output === 'string'
+                        ? toolData.output
+                        : undefined,
+                    timestamp: Date.now(),
+                  });
+                }
+                break;
+              }
+
+              case 'tool_request': {
+                const toolName = event.tool || '';
+                if (toolName) {
+                  pushTool({
+                    id: event.id || `tool-${Date.now()}`,
+                    tool: toolName,
+                    status: 'called',
+                    args: event.args || {},
+                    timestamp: Date.now(),
+                  });
+                }
+                break;
+              }
+
+              case 'subagent_event': {
+                const subEvent = event.event || '';
+                const subData = event.data || {};
+                const subagentId = event.subagentId || subData.subagentId || '';
+
+                if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
+                  pushReasoning(subData.text, true);
+                } else if (subEvent === 'tool_call') {
+                  pushTool({
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
+                    tool: subData.tool || subData.name || 'tool',
+                    status: 'called',
+                    args: subData.args,
+                    timestamp: Date.now(),
+                    subagentId: subagentId || undefined,
+                    nested: true,
+                  });
+                } else if (subEvent === 'tool_result') {
+                  pushTool({
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
+                    tool: subData.tool || subData.name || 'tool',
+                    status: subData.error ? 'error' : 'completed',
+                    result: subData.result,
+                    error: subData.error,
+                    timestamp: Date.now(),
+                    subagentId: subagentId || undefined,
+                    nested: true,
+                  });
+                }
+                break;
+              }
+
+              case 'final': {
+                gotFinal = true;
+                if (event.conversationId) setConversationId(event.conversationId);
+                const finalText = event.text || event.data?.text || accText;
+                if (finalText) accText = finalText;
+                break;
+              }
+
+              case 'error': {
+                gotFinal = true;
+                setMessages(prev => [...prev, {
+                  id: `assistant-error-${Date.now()}`,
+                  role: 'assistant',
+                  text: accText || `Error: ${event.error || 'unknown'}`,
+                  reasoning: accReasoning || undefined,
+                  toolCalls: accTools.length > 0 ? accTools : undefined,
+                  streamChunks: accChunks.length > 0 ? accChunks : undefined,
+                }]);
+                accText = '';
+                accReasoning = '';
+                accTools = [];
+                accChunks = [];
+                break;
+              }
+            }
+          }
+        }
+
+        if (!gotFinal || accText || accReasoning || accTools.length > 0) {
+          setMessages(prev => [...prev, {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            text: accText || 'No response',
+            reasoning: accReasoning || undefined,
+            reasoningDuration: streamStartRef.current ? (Date.now() - streamStartRef.current) / 1000 : undefined,
+            toolCalls: accTools.length > 0 ? accTools : undefined,
+            streamChunks: accChunks.length > 0 ? accChunks : undefined,
+          }]);
+        }
       } else {
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: res.error || 'Something went wrong.' },
-        ]);
+        const data = await res.json() as any;
+        const replyText = String(data?.text || data?.result?.text || data?.error || 'Something went wrong.').trim();
+        setMessages(prev => [...prev, {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          text: replyText,
+        }]);
+        if (data?.conversationId) setConversationId(data.conversationId);
       }
     } catch {
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: 'Connection error. Please try again.' },
+        { id: `assistant-error-${Date.now()}`, role: 'assistant', text: 'Connection error. Please try again.' },
       ]);
     } finally {
       setChatLoading(false);
+      setStreamText('');
+      setStreamReasoning('');
+      setStreamTools([]);
+      setStreamChunks([]);
+      setStatusMessage('');
       inputRef.current?.focus();
     }
   }, [input, chatLoading, conversationId]);
@@ -434,7 +672,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         </div>
         {/* Chat area */}
         <div className="ide-chat-area">
-          {messages.length === 0 && !chatLoading ? (
+          {messages.length === 0 && !chatLoading && !streamText && streamChunks.length === 0 ? (
             /* ── Empty state: centered greeting ── */
             <div className="ide-chat-empty">
               <div className="ide-chat-empty-inner">
@@ -469,30 +707,26 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             <>
               <div className="ide-chat-messages">
                 <div className="ide-chat-messages-inner">
-                  {messages.map((msg, i) => (
-                    <div
-                      key={i}
-                      className={`ide-chat-row ${msg.role === 'user' ? 'ide-chat-row-user' : 'ide-chat-row-assistant'}`}
-                    >
-                      <div
-                        className={`ide-chat-bubble ${
-                          msg.role === 'user' ? 'ide-chat-bubble-user' : 'ide-chat-bubble-assistant'
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
-                    </div>
+                  {messages.map((msg) => (
+                    <PortableMessageBubble
+                      key={msg.id}
+                      message={msg}
+                    />
                   ))}
                   {chatLoading && (
-                    <div className="ide-chat-row ide-chat-row-assistant">
-                      <div className="ide-chat-bubble ide-chat-bubble-assistant">
-                        <div className="ide-typing-dots">
-                          <span style={{ animationDelay: '0ms' }} />
-                          <span style={{ animationDelay: '150ms' }} />
-                          <span style={{ animationDelay: '300ms' }} />
-                        </div>
-                      </div>
-                    </div>
+                    <PortableMessageBubble
+                      message={{
+                        id: 'streaming-message-website',
+                        role: 'assistant',
+                        text: streamText,
+                        reasoning: streamReasoning || undefined,
+                        toolCalls: streamTools.length > 0 ? streamTools : undefined,
+                        streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                      }}
+                      isStreaming
+                      startedAt={streamStartRef.current}
+                      statusMessage={statusMessage || 'Planning next moves'}
+                    />
                   )}
                   <div ref={bottomRef} />
                 </div>

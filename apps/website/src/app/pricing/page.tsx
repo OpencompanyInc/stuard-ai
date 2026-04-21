@@ -2,6 +2,15 @@
 
 import { Container } from '@/components/ui/Container';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
+import {
+  CREDIT_ANCHORS,
+  MONTHLY_AMOUNT_MARKERS,
+  MONTHLY_AMOUNT_MAX,
+  MONTHLY_AMOUNT_MIN,
+  estimateCredits,
+  planTierFromAmount,
+  sliderMarkerPercent,
+} from '@/lib/creditPricing';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useMemo, useState } from 'react';
@@ -15,18 +24,18 @@ export default function PricingPage() {
     process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID ||
     process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID;
 
-  const baseRate = 33;
   const tier = useMemo(() => {
-    if (amount >= 100) {
-      return { name: 'Whale', multiplier: 0.75, badge: 'Best Rate', accent: 'text-amber-600' };
+    switch (planTierFromAmount(amount)) {
+      case 'power':
+      return { name: 'Whale', badge: 'Best Rate', accent: 'text-amber-600' };
+      case 'pro':
+      return { name: 'Pro', badge: 'Boosted Rate', accent: 'text-indigo-600' };
+      default:
+        return { name: 'Starter', badge: 'Standard Rate', accent: 'text-emerald-600' };
     }
-    if (amount >= 30) {
-      return { name: 'Pro', multiplier: 0.70, badge: 'Boosted Rate', accent: 'text-indigo-600' };
-    }
-    return { name: 'Starter', multiplier: 0.65, badge: 'Standard Rate', accent: 'text-emerald-600' };
   }, [amount]);
 
-  const credits = Math.floor(amount * baseRate * tier.multiplier);
+  const credits = useMemo(() => estimateCredits(amount), [amount]);
 
   const handleCheckout = (e: React.MouseEvent) => {
     if (!user) {
@@ -125,7 +134,7 @@ export default function PricingPage() {
           {/* Pricing Preview */}
           <div className="text-center mb-12">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Pay What You Want</h3>
-            <p className="text-gray-600 max-w-2xl mx-auto">Your monthly payment funds a rolling credit ledger. Larger amounts unlock better credit multipliers.</p>
+            <p className="text-gray-600 max-w-2xl mx-auto">Your monthly payment funds a rolling credit ledger. Larger amounts unlock better credit rates with cleaner, easier-to-read bundles.</p>
           </div>
 
           <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
@@ -133,7 +142,7 @@ export default function PricingPage() {
               <CardHeader>
                 <CardTitle className="text-2xl">Pick your monthly amount</CardTitle>
                 <CardDescription>
-                  Drag the slider or tap a quick amount. Minimum $5. Unused credits roll over for 30 days.
+                  Drag the slider or tap a quick amount. Minimum $5. Credits round to clean bundle sizes, and unused credits roll over for 30 days.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
@@ -155,24 +164,33 @@ export default function PricingPage() {
                   <div className="mt-6">
                     <input
                       type="range"
-                      min={5}
-                      max={200}
+                      min={MONTHLY_AMOUNT_MIN}
+                      max={MONTHLY_AMOUNT_MAX}
                       step={1}
                       value={amount}
                       onChange={(event) => setAmount(Number(event.target.value))}
                       className="w-full accent-indigo-600"
                     />
-                    <div className="flex justify-between text-xs text-gray-500 mt-2">
-                      <span>$5</span>
-                      <span>$30</span>
-                      <span>$100</span>
-                      <span>$200</span>
+                    <div className="relative mt-2 h-5 text-xs text-gray-500">
+                      {MONTHLY_AMOUNT_MARKERS.map((marker) => {
+                        const percent = sliderMarkerPercent(marker);
+                        const translateX = percent === 0 ? '0%' : percent === 100 ? '-100%' : '-50%';
+                        return (
+                          <span
+                            key={marker}
+                            className="absolute top-0 whitespace-nowrap"
+                            style={{ left: `${percent}%`, transform: `translateX(${translateX})` }}
+                          >
+                            ${marker}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-3">
-                  {[10, 30, 60, 100].map((preset) => (
+                  {[5, 10, 30, 60, 100].map((preset) => (
                     <button
                       key={preset}
                       onClick={() => setAmount(preset)}
@@ -180,6 +198,15 @@ export default function PricingPage() {
                     >
                       ${preset}
                     </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 md:grid-cols-4">
+                  {CREDIT_ANCHORS.slice(0, 4).map((anchor) => (
+                    <div key={anchor.amount}>
+                      <p className="text-xs uppercase tracking-wide text-gray-400">${anchor.amount}/mo</p>
+                      <p className="mt-1 font-semibold text-gray-900">{anchor.credits.toLocaleString()} credits</p>
+                    </div>
                   ))}
                 </div>
 

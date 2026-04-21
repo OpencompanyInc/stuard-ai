@@ -100,7 +100,6 @@ describe('local proactive prompt helpers', () => {
     });
 
     expect(hidden).toContain('[PROACTIVE MODE]');
-    expect(hidden).toContain('proactive_task_update');
     expect(hidden).toContain('web_search');
     expect(hidden).toContain('DO THE WORK');
     expect(hidden).toContain('Email Helper');

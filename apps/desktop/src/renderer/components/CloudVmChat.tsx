@@ -1,168 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import {
-  Send, Loader2, Trash2, Bot, User, WifiOff,
-  Check, ChevronDown, Copy, MessageSquare, Plus, Clock, X, Square,
+  Send, Loader2, Trash2, Bot, WifiOff,
+  Check, ChevronDown, MessageSquare, Plus, Clock, X, Square,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import type { ModelMeta } from '../hooks/usePreferences';
 import { mergeStreamingText } from '../utils/streamMerge';
-import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
-import { Shimmer } from './ai-elements/Shimmer';
-import {
-  ChainOfThought,
-  ChainOfThoughtContent,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-} from './ai-elements/ChainOfThought';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
 import { AskUserPrompt } from './chat-view/AskUserPrompt';
+import { PortableMessageBubble } from '../../../../../shared/chat-ui/components/PortableMessageBubble';
+import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../shared/chat-ui/streamState';
+import type { Message as ChatMessage, StreamChunk, ToolCall as VmToolCall } from '../../../../../shared/chat-ui/types';
 
 const CLOUD_AI_HTTP = ((window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082').replace(/\/+$/, '');
-
-const GENUI_TOOLS = new Set([
-  'ask_confirmation', 'show_choices', 'request_files', 'show_files', 'show_form', 'chat_ui',
-]);
-
-const INTERACTIVE_TOOLS = new Set([...GENUI_TOOLS, 'ask_user']);
-
-function humanizeToolName(tool: string): string {
-  return tool
-    .replace(/_/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-    .trim();
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 1) return '<1s';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
-const StreamingTracePanel: React.FC<{
-  reasoning: string;
-  tools: Array<{ tool: string; status: string; args?: any }>;
-  statusMessage: string;
-  startTime: number;
-  isStreaming: boolean;
-}> = React.memo(({ reasoning, tools, statusMessage, startTime, isStreaming }) => {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    if (!isStreaming) return;
-    const interval = setInterval(() => {
-      setElapsed((Date.now() - (startTime || Date.now())) / 1000);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [startTime, isStreaming]);
-
-  // Freeze final elapsed when streaming stops
-  useEffect(() => {
-    if (!isStreaming && startTime) {
-      setElapsed((Date.now() - startTime) / 1000);
-    }
-  }, [isStreaming, startTime]);
-
-  const nonInteractiveTools = tools.filter(t => !INTERACTIVE_TOOLS.has(t.tool));
-  const hasContent = reasoning.trim().length > 0 || nonInteractiveTools.length > 0;
-  const headerLabel = isStreaming
-    ? `Thinking\u2026 ${formatDuration(elapsed)}`
-    : `Thought for ${formatDuration(elapsed)}`;
-
-  return (
-    <ChainOfThought defaultOpen={isStreaming} className="w-full max-w-[85%] md:max-w-[60%] mb-3">
-      <ChainOfThoughtHeader>
-        {isStreaming ? (
-          <Shimmer as="span" className="text-[13px] text-theme-muted" duration={1.8} spread={3}>
-            {headerLabel}
-          </Shimmer>
-        ) : (
-          <span className="text-[13px] text-theme-muted">{headerLabel}</span>
-        )}
-      </ChainOfThoughtHeader>
-
-      {hasContent && (
-        <ChainOfThoughtContent>
-          {reasoning.trim().length > 0 && (
-            <ChainOfThoughtStep
-              label={
-                isStreaming
-                  ? <Shimmer as="span" duration={2} spread={3}>Reasoning</Shimmer>
-                  : 'Reasoning'
-              }
-              status={isStreaming ? 'active' : 'complete'}
-              isLast={tools.length === 0}
-            >
-              <div
-                className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
-                style={{
-                  backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
-                  color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
-                }}
-              >
-                {reasoning}
-                {isStreaming && (
-                  <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
-                )}
-              </div>
-            </ChainOfThoughtStep>
-          )}
-
-          {nonInteractiveTools.map((t, i) => (
-            <ChainOfThoughtStep
-              key={`${t.tool}-${i}`}
-              label={
-                t.status === 'completed'
-                  ? humanizeToolName(t.tool)
-                  : <Shimmer as="span" duration={2} spread={3}>{humanizeToolName(t.tool)}</Shimmer>
-              }
-              status={t.status === 'completed' ? 'complete' : 'active'}
-              isLast={i === nonInteractiveTools.length - 1}
-            />
-          ))}
-        </ChainOfThoughtContent>
-      )}
-
-      {!hasContent && isStreaming && (
-        <ChainOfThoughtContent>
-          <ChainOfThoughtStep
-            label={
-              <Shimmer as="span" duration={2} spread={3}>{statusMessage || 'Planning next moves'}</Shimmer>
-            }
-            status="active"
-            isLast
-          />
-        </ChainOfThoughtContent>
-      )}
-    </ChainOfThought>
-  );
-});
-
-interface VmToolCall {
-  tool: string;
-  status: string;
-  args?: any;
-  result?: any;
-  id?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  text: string;
-  timestamp: number;
-  reasoning?: string;
-  tools?: VmToolCall[];
-  thinkDuration?: number;
-}
 
 interface ConversationEntry {
   id: string;
@@ -189,100 +41,6 @@ async function vmRelay(path: string, body?: any, method = 'POST'): Promise<any> 
   }
 }
 
-function normalizeMarkdownSpacing(input: string): string {
-  const raw = String(input || '').replace(/\r\n/g, '\n');
-  const parts = raw.split('```');
-  const normalized = parts.map((part, idx) => {
-    if (idx % 2 === 1) return part;
-    return part.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
-  });
-  return normalized.join('```');
-}
-
-// Markdown components for assistant messages
-function useMarkdownComponents() {
-  return useMemo(() => ({
-    p: ({ children, ...props }: any) => {
-      const childArr = Array.isArray(children) ? children : [children];
-      const isEmpty = childArr
-        .filter((c: any) => c !== null && c !== undefined)
-        .every((c: any) => typeof c === 'string' && String(c).trim().length === 0);
-      if (isEmpty) return null;
-      return <p className="mb-3 last:mb-0 leading-[1.7] text-theme-fg/95" {...props}>{children}</p>;
-    },
-    a: ({ href, children, ...props }: any) => (
-      <a
-        className="text-indigo-400 underline underline-offset-3 decoration-indigo-400/40 hover:decoration-indigo-400/70 hover:text-indigo-300 cursor-pointer transition-all font-medium"
-        href={href}
-        onClick={(e: React.MouseEvent) => {
-          if (typeof href === 'string' && !/^(javascript|vbscript):/i.test(href)) {
-            e.preventDefault();
-            try { (window as any).desktopAPI?.openExternal?.(href); } catch {}
-          }
-        }}
-        {...props}
-      >{children}</a>
-    ),
-    ul: (props: any) => <ul className="list-disc pl-5 mb-3 space-y-1 marker:text-theme/50" {...props} />,
-    ol: (props: any) => <ol className="list-decimal pl-5 mb-3 space-y-1 marker:text-theme/50 marker:font-semibold" {...props} />,
-    li: (props: any) => <li className="leading-[1.6] text-theme-fg/95 pl-0.5" {...props} />,
-    blockquote: (props: any) => (
-      <blockquote className="border-l-3 border-indigo-500/40 pl-3 my-3 py-1 bg-indigo-500/5 rounded-r-lg" {...props}>
-        <span className="text-theme-muted/90 italic leading-[1.6]">{props.children}</span>
-      </blockquote>
-    ),
-    h1: (props: any) => <h1 className="text-xl font-bold mb-3 mt-4 first:mt-0 text-theme-fg border-b border-theme/10 pb-1" {...props} />,
-    h2: (props: any) => <h2 className="text-lg font-bold mb-2.5 mt-3.5 first:mt-0 text-theme-fg" {...props} />,
-    h3: (props: any) => <h3 className="text-base font-bold mb-2 mt-3 first:mt-0 text-theme-fg/95" {...props} />,
-    h4: (props: any) => <h4 className="text-sm font-semibold mb-1.5 mt-2.5 first:mt-0 text-theme-fg/90" {...props} />,
-    strong: (props: any) => <strong className="font-bold text-theme-fg" {...props} />,
-    em: (props: any) => <em className="italic text-theme-fg/95" {...props} />,
-    code: ({ className, children, ...props }: any) => {
-      const isBlock = className?.startsWith('language-');
-      if (isBlock) {
-        return <code className={clsx(className, 'text-[12px]')} {...props}>{children}</code>;
-      }
-      return (
-        <code className="text-primary bg-theme-hover px-1.5 py-0.5 rounded text-[12px] font-mono" {...props}>
-          {children}
-        </code>
-      );
-    },
-    pre: ({ children, ...props }: any) => {
-      let childProps: any = {};
-      let codeContent = children;
-      if (React.isValidElement(children)) {
-        childProps = (children as any).props || {};
-        codeContent = childProps.children;
-      }
-      const langClass = childProps.className || '';
-      const language = langClass.replace('language-', '') || 'code';
-      return (
-        <div className="my-3 rounded-xl overflow-hidden border border-theme/10 bg-black/20">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-theme/10 bg-theme-card/20">
-            <span className="text-[10px] text-theme-muted font-mono font-bold uppercase tracking-wider">{language}</span>
-            <button
-              onClick={() => navigator.clipboard.writeText(String(codeContent).replace(/\n$/, ''))}
-              className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-theme-hover rounded text-theme-muted hover:text-theme-fg text-[10px] transition-colors"
-            >
-              <Copy className="w-3 h-3" /> Copy
-            </button>
-          </div>
-          <pre className="p-3 overflow-x-auto text-[12px] leading-relaxed" {...props}>{children}</pre>
-        </div>
-      );
-    },
-    table: (props: any) => (
-      <div className="my-3 overflow-x-auto rounded-lg border border-theme/10">
-        <table className="min-w-full text-sm" {...props} />
-      </div>
-    ),
-    th: (props: any) => <th className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-theme-muted bg-theme-card/30 border-b border-theme/10" {...props} />,
-    td: (props: any) => <td className="px-3 py-2 text-sm text-theme-fg/90 border-b border-theme/5" {...props} />,
-    hr: () => <hr className="my-4 border-theme/10" />,
-  }), []);
-}
-
 export function CloudVmChat({
   engine,
   className,
@@ -304,12 +62,12 @@ export function CloudVmChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
-  const mdComponents = useMarkdownComponents();
 
   // Streaming state
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamTools, setStreamTools] = useState<VmToolCall[]>([]);
+  const [streamChunks, setStreamChunks] = useState<StreamChunk[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
   const streamStartRef = useRef<number>(0);
 
@@ -492,6 +250,11 @@ export function CloudVmChat({
           text: String(m.content || m.text || ''),
           timestamp: m.created_at ? new Date(m.created_at).getTime() : Date.now() - (rawMsgs.length - i) * 1000,
         }));
+        setStreamText('');
+        setStreamReasoning('');
+        setStreamTools([]);
+        setStreamChunks([]);
+        setStatusMessage('');
         setMessages(loaded);
         conversationIdRef.current = convId;
         const conv = conversations.find(c => c.id === convId);
@@ -509,6 +272,11 @@ export function CloudVmChat({
     abortRef.current?.abort();
     setMessages([]);
     setLoading(false);
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setStreamChunks([]);
+    setStatusMessage('');
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
     setShowHistory(false);
@@ -525,7 +293,7 @@ export function CloudVmChat({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, loading, streamText, streamReasoning, streamTools, scrollToBottom]);
+  }, [messages, loading, streamText, streamReasoning, streamTools, streamChunks, scrollToBottom]);
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
@@ -543,6 +311,7 @@ export function CloudVmChat({
     setStreamText('');
     setStreamReasoning('');
     setStreamTools([]);
+    setStreamChunks([]);
     setStatusMessage('Connecting...');
     streamStartRef.current = Date.now();
 
@@ -552,6 +321,56 @@ export function CloudVmChat({
     let accText = '';
     let accReasoning = '';
     let accTools: VmToolCall[] = [];
+    let accChunks: StreamChunk[] = [];
+
+    const normalizeToolStatus = (status: string | undefined): VmToolCall['status'] => {
+      switch (String(status || '').toLowerCase()) {
+        case 'completed':
+        case 'result':
+        case 'step_completed':
+          return 'completed';
+        case 'error':
+        case 'failed':
+        case 'timeout':
+        case 'step_error':
+          return 'error';
+        case 'running':
+        case 'started':
+        case 'step_started':
+          return 'running';
+        default:
+          return 'called';
+      }
+    };
+
+    const pushText = (chunk: string) => {
+      if (!chunk) return;
+      accText = mergeStreamingText(accText, chunk);
+      accChunks = appendTextChunk(accChunks, chunk);
+      setStreamText(accText);
+      setStreamChunks([...accChunks]);
+    };
+
+    const pushReasoning = (chunk: string, nested = false) => {
+      if (!chunk) return;
+      if (!nested) {
+        accReasoning = mergeStreamingText(accReasoning, chunk);
+        setStreamReasoning(accReasoning);
+      }
+      accChunks = appendReasoningChunk(accChunks, chunk, nested);
+      setStreamChunks([...accChunks]);
+    };
+
+    const pushTool = (tool: VmToolCall) => {
+      const next = applyToolCallUpdate(accTools, accChunks, {
+        ...tool,
+        timestamp: tool.timestamp || Date.now(),
+      });
+      accTools = next.toolCalls;
+      accChunks = next.streamChunks;
+      setStreamTools([...accTools]);
+      setStreamChunks([...accChunks]);
+    };
 
     try {
       let token = '';
@@ -611,38 +430,33 @@ export function CloudVmChat({
                 const ev = event.event || '';
                 const d = event.data || {};
                 if (ev === 'delta') {
-                  const chunk = d.text || '';
-                  if (chunk) { accText += chunk; setStreamText(accText); }
+                  pushText(d.text || '');
                 } else if (ev === 'reasoning' || ev === 'reasoning_start') {
-                  if (d.text) {
-                    accReasoning = mergeStreamingText(accReasoning, d.text);
-                    setStreamReasoning(accReasoning);
-                  }
+                  pushReasoning(d.text || '');
                 }
                 break;
               }
               case 'tool_event': {
-                const toolName = event.tool || '';
-                const toolStatus = event.status || '';
+                const toolName = event.tool || event.data?.tool || '';
+                const toolStatus = event.status || event.data?.status || '';
                 const toolData = event.data || {};
                 const toolId = toolData.id || toolData.toolCallId || event.id || '';
                 if (toolName) {
-                  if (toolStatus === 'called' || toolStatus === 'running' || toolStatus === 'started') {
-                    accTools = [...accTools, { tool: toolName, status: 'called', args: toolData.args || toolData, id: toolId }];
-                  } else if (toolStatus === 'completed' || toolStatus === 'result') {
-                    accTools = accTools.map(t =>
-                      t.tool === toolName && t.status === 'called'
-                        ? { ...t, status: 'completed', result: toolData.result || toolData }
-                        : t,
-                    );
-                  } else {
-                    accTools = accTools.map(t =>
-                      t.tool === toolName && t.status === 'called'
-                        ? { ...t, status: toolStatus || 'completed' }
-                        : t,
-                    );
-                  }
-                  setStreamTools([...accTools]);
+                  const normalizedStatus = normalizeToolStatus(toolStatus);
+                  pushTool({
+                    id: toolId || `${toolName}-${Date.now()}`,
+                    tool: toolName,
+                    status: normalizedStatus,
+                    args: toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined),
+                    result: toolData.result ?? (normalizedStatus === 'completed' ? toolData : undefined),
+                    error: toolData.error ?? (normalizedStatus === 'error' ? toolData : undefined),
+                    liveOutput: typeof toolData.liveOutput === 'string'
+                      ? toolData.liveOutput
+                      : typeof toolData.output === 'string'
+                        ? toolData.output
+                        : undefined,
+                    timestamp: Date.now(),
+                  });
                 }
                 break;
               }
@@ -651,23 +465,44 @@ export function CloudVmChat({
                 const toolArgs = event.args || {};
                 const toolId = event.id || `tr-${Date.now()}`;
                 if (toolName) {
-                  accTools = [...accTools, { tool: toolName, status: 'called', args: toolArgs, id: toolId }];
-                  setStreamTools([...accTools]);
+                  pushTool({
+                    id: toolId,
+                    tool: toolName,
+                    status: 'called',
+                    args: toolArgs,
+                    timestamp: Date.now(),
+                  });
                 }
                 break;
               }
               case 'subagent_event': {
                 const subEvent = event.event || '';
                 const subData = event.data || {};
-                if (subEvent === 'delta' && subData.text) { accText += subData.text; setStreamText(accText); }
-                else if ((subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
-                  accReasoning = mergeStreamingText(accReasoning, subData.text);
-                  setStreamReasoning(accReasoning);
-                }
-                else if (subEvent === 'tool_call') { accTools = [...accTools, { tool: subData.tool || subData.name || 'tool', status: 'called' }]; setStreamTools([...accTools]); }
-                else if (subEvent === 'tool_result') {
-                  const tn = subData.tool || '';
-                  if (tn) { accTools = accTools.map(t => t.tool === tn && t.status === 'called' ? { ...t, status: 'completed' } : t); setStreamTools([...accTools]); }
+                const subagentId = event.subagentId || subData.subagentId || '';
+
+                if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
+                  pushReasoning(subData.text, true);
+                } else if (subEvent === 'tool_call') {
+                  pushTool({
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
+                    tool: subData.tool || subData.name || 'tool',
+                    status: 'called',
+                    args: subData.args,
+                    timestamp: Date.now(),
+                    subagentId: subagentId || undefined,
+                    nested: true,
+                  });
+                } else if (subEvent === 'tool_result') {
+                  pushTool({
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
+                    tool: subData.tool || subData.name || 'tool',
+                    status: subData.error ? 'error' : 'completed',
+                    result: subData.result,
+                    error: subData.error,
+                    timestamp: Date.now(),
+                    subagentId: subagentId || undefined,
+                    nested: true,
+                  });
                 }
                 break;
               }
@@ -708,8 +543,9 @@ export function CloudVmChat({
           {
             id: `assistant-${Date.now()}`, role: 'assistant', text: accText || 'No response', timestamp: Date.now(),
             reasoning: accReasoning || undefined,
-            tools: accTools.length > 0 ? accTools : undefined,
-            thinkDuration,
+            toolCalls: accTools.length > 0 ? accTools : undefined,
+            streamChunks: accChunks.length > 0 ? accChunks : undefined,
+            reasoningDuration: thinkDuration,
           },
         ]);
       } else {
@@ -733,6 +569,7 @@ export function CloudVmChat({
       setStreamText('');
       setStreamReasoning('');
       setStreamTools([]);
+      setStreamChunks([]);
       setStatusMessage('');
       abortRef.current = null;
       fetchHistory();
@@ -755,6 +592,7 @@ export function CloudVmChat({
     setStreamText('');
     setStreamReasoning('');
     setStreamTools([]);
+    setStreamChunks([]);
     setStatusMessage('');
     abortRef.current = null;
   }, []);
@@ -772,6 +610,11 @@ export function CloudVmChat({
     abortRef.current?.abort();
     setMessages([]);
     setLoading(false);
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setStreamChunks([]);
+    setStatusMessage('');
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
   }, []);
@@ -781,16 +624,36 @@ export function CloudVmChat({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
-  // Render markdown content
-  const renderMarkdown = (text: string) => (
-    <ReactMarkdown
-      remarkPlugins={[remarkMath, remarkGfm]}
-      rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-      components={mdComponents}
-    >
-      {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(text)))}
-    </ReactMarkdown>
-  );
+  const renderInteractiveTool = useCallback((tool: VmToolCall, key: string) => {
+    if (!tool.args) return null;
+
+    const toolKey = tool.id || key;
+
+    return (
+      <GenUIErrorBoundary componentName={tool.tool}>
+        {tool.tool === 'ask_user' ? (
+          <AskUserPrompt
+            prompt={{ id: toolKey, args: tool.args }}
+            onRespond={(id, result) => {
+              setGenUIResults((prev) => ({ ...prev, [id]: result }));
+              submitVmToolResult(id, result);
+            }}
+          />
+        ) : (
+          <GenUIContainer
+            toolName={tool.tool}
+            args={tool.args}
+            isCompleted={tool.status === 'completed' || !!genUIResults[toolKey]}
+            result={genUIResults[toolKey] || tool.result}
+            onResult={(result) => {
+              setGenUIResults((prev) => ({ ...prev, [toolKey]: result }));
+              submitVmToolResult(toolKey, result);
+            }}
+          />
+        )}
+      </GenUIErrorBoundary>
+    );
+  }, [genUIResults, submitVmToolResult]);
 
   const formatTimeAgo = (dateStr: string) => {
     if (!dateStr) return '';
@@ -1110,122 +973,28 @@ export function CloudVmChat({
             <div className="px-6 py-5">
               <div className="mx-auto flex max-w-[760px] flex-col gap-4">
                 {messages.map((msg) => (
-                  <div key={msg.id} className="flex flex-col w-full">
-                    {/* Trace panel for completed assistant messages */}
-                    {msg.role === 'assistant' && (msg.reasoning || (msg.tools && msg.tools.length > 0)) && (
-                      <StreamingTracePanel
-                        reasoning={msg.reasoning || ''}
-                        tools={msg.tools || []}
-                        statusMessage=""
-                        startTime={msg.timestamp - (msg.thinkDuration ? msg.thinkDuration * 1000 : 0)}
-                        isStreaming={false}
-                      />
-                    )}
-                    {/* GenUI tools for completed messages */}
-                    {msg.role === 'assistant' && msg.tools?.filter(t => INTERACTIVE_TOOLS.has(t.tool) && t.args).map((tc, i) => (
-                      <div key={`genui-${msg.id}-${i}`} className="max-w-[85%] ml-9 mb-2">
-                        <GenUIErrorBoundary componentName={tc.tool}>
-                          {tc.tool === 'ask_user' ? (
-                            <AskUserPrompt
-                              prompt={{ id: tc.id || `ask-${i}`, args: tc.args }}
-                              onRespond={(id, result) => {
-                                setGenUIResults(prev => ({ ...prev, [id]: result }));
-                                submitVmToolResult(id, result);
-                              }}
-                            />
-                          ) : (
-                            <GenUIContainer
-                              toolName={tc.tool}
-                              args={tc.args}
-                              isCompleted={tc.status === 'completed' || !!genUIResults[tc.id || `g-${i}`]}
-                              result={genUIResults[tc.id || `g-${i}`] || tc.result}
-                              onResult={(result) => {
-                                const tid = tc.id || `g-${i}`;
-                                setGenUIResults(prev => ({ ...prev, [tid]: result }));
-                                submitVmToolResult(tid, result);
-                              }}
-                            />
-                          )}
-                        </GenUIErrorBoundary>
-                      </div>
-                    ))}
-                    <div className={clsx('flex gap-2.5', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                      {msg.role === 'assistant' && (
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <Bot className="h-3.5 w-3.5 text-primary" />
-                        </div>
-                      )}
-                      <div
-                        className={clsx(
-                          'max-w-[80%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed',
-                          msg.role === 'user'
-                            ? 'bg-primary/12 text-theme-fg whitespace-pre-wrap break-words'
-                            : 'bg-theme-card/40 prose-vm text-theme-fg',
-                        )}
-                      >
-                        {msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text}
-                      </div>
-                      {msg.role === 'user' && (
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-theme-hover/60">
-                          <User className="h-3.5 w-3.5 text-theme-muted" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <PortableMessageBubble
+                    key={msg.id}
+                    message={msg}
+                    interactiveToolRenderer={renderInteractiveTool}
+                  />
                 ))}
 
-                {/* Live streaming: trace panel, GenUI tools, text */}
                 {loading && (
-                  <>
-                    {(streamReasoning || streamTools.length > 0 || !streamText) && (
-                      <StreamingTracePanel
-                        reasoning={streamReasoning}
-                        tools={streamTools}
-                        statusMessage={statusMessage}
-                        startTime={streamStartRef.current}
-                        isStreaming
-                      />
-                    )}
-                    {/* Live GenUI tools */}
-                    {streamTools.filter(t => INTERACTIVE_TOOLS.has(t.tool) && t.args).map((tc, i) => (
-                      <div key={`live-genui-${i}`} className="max-w-[85%] ml-9 mb-2">
-                        <GenUIErrorBoundary componentName={tc.tool}>
-                          {tc.tool === 'ask_user' ? (
-                            <AskUserPrompt
-                              prompt={{ id: tc.id || `live-ask-${i}`, args: tc.args }}
-                              onRespond={(id, result) => {
-                                setGenUIResults(prev => ({ ...prev, [id]: result }));
-                                submitVmToolResult(id, result);
-                              }}
-                            />
-                          ) : (
-                            <GenUIContainer
-                              toolName={tc.tool}
-                              args={tc.args}
-                              isCompleted={!!genUIResults[tc.id || `live-g-${i}`]}
-                              result={genUIResults[tc.id || `live-g-${i}`]}
-                              onResult={(result) => {
-                                const tid = tc.id || `live-g-${i}`;
-                                setGenUIResults(prev => ({ ...prev, [tid]: result }));
-                                submitVmToolResult(tid, result);
-                              }}
-                            />
-                          )}
-                        </GenUIErrorBoundary>
-                      </div>
-                    ))}
-                    {streamText && (
-                      <div className="flex gap-2.5 justify-start">
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <Bot className="h-3.5 w-3.5 text-primary" />
-                        </div>
-                        <div className="max-w-[80%] rounded-2xl px-4 py-2.5 text-[13px] bg-theme-card/40 text-theme-fg">
-                          {renderMarkdown(streamText)}
-                          <span className="inline-block w-[2px] h-3.5 bg-primary/50 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
-                        </div>
-                      </div>
-                    )}
-                  </>
+                  <PortableMessageBubble
+                    message={{
+                      id: 'streaming-message-workspace',
+                      role: 'assistant',
+                      text: streamText,
+                      reasoning: streamReasoning || undefined,
+                      toolCalls: streamTools.length > 0 ? streamTools : undefined,
+                      streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                    }}
+                    isStreaming
+                    startedAt={streamStartRef.current}
+                    statusMessage={statusMessage || 'Planning next moves'}
+                    interactiveToolRenderer={renderInteractiveTool}
+                  />
                 )}
               </div>
             </div>
@@ -1269,119 +1038,28 @@ export function CloudVmChat({
           )}
 
           {messages.map((msg) => (
-            <div key={msg.id} className="flex flex-col w-full gap-1">
-              {msg.role === 'assistant' && (msg.reasoning || (msg.tools && msg.tools.length > 0)) && (
-                <StreamingTracePanel
-                  reasoning={msg.reasoning || ''}
-                  tools={msg.tools || []}
-                  statusMessage=""
-                  startTime={msg.timestamp - (msg.thinkDuration ? msg.thinkDuration * 1000 : 0)}
-                  isStreaming={false}
-                />
-              )}
-              {/* GenUI tools */}
-              {msg.role === 'assistant' && msg.tools?.filter(t => INTERACTIVE_TOOLS.has(t.tool) && t.args).map((tc, i) => (
-                <div key={`genui-${msg.id}-${i}`} className="max-w-[85%] ml-9 mb-1">
-                  <GenUIErrorBoundary componentName={tc.tool}>
-                    {tc.tool === 'ask_user' ? (
-                      <AskUserPrompt
-                        prompt={{ id: tc.id || `ask-${i}`, args: tc.args }}
-                        onRespond={(id, result) => {
-                          setGenUIResults(prev => ({ ...prev, [id]: result }));
-                          submitVmToolResult(id, result);
-                        }}
-                      />
-                    ) : (
-                      <GenUIContainer
-                        toolName={tc.tool}
-                        args={tc.args}
-                        isCompleted={tc.status === 'completed' || !!genUIResults[tc.id || `g-${i}`]}
-                        result={genUIResults[tc.id || `g-${i}`] || tc.result}
-                        onResult={(result) => {
-                          const tid = tc.id || `g-${i}`;
-                          setGenUIResults(prev => ({ ...prev, [tid]: result }));
-                          submitVmToolResult(tid, result);
-                        }}
-                      />
-                    )}
-                  </GenUIErrorBoundary>
-                </div>
-              ))}
-              <div className={clsx('flex gap-2.5', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                {msg.role === 'assistant' && (
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Bot className="w-4 h-4 text-primary" />
-                  </div>
-                )}
-                <div
-                  className={clsx(
-                    'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-fg whitespace-pre-wrap break-words'
-                      : 'bg-theme-card/50 text-theme-fg border border-theme/5 prose-vm',
-                  )}
-                >
-                  {msg.role === 'assistant' ? renderMarkdown(msg.text) : msg.text}
-                </div>
-                {msg.role === 'user' && (
-                  <div className="w-7 h-7 rounded-full bg-theme-hover/60 flex items-center justify-center shrink-0 mt-0.5">
-                    <User className="w-4 h-4 text-theme-muted" />
-                  </div>
-                )}
-              </div>
-            </div>
+            <PortableMessageBubble
+              key={msg.id}
+              message={msg}
+              interactiveToolRenderer={renderInteractiveTool}
+            />
           ))}
 
           {loading && (
-            <>
-              {(streamReasoning || streamTools.length > 0 || !streamText) && (
-                <StreamingTracePanel
-                  reasoning={streamReasoning}
-                  tools={streamTools}
-                  statusMessage={statusMessage}
-                  startTime={streamStartRef.current}
-                  isStreaming
-                />
-              )}
-              {streamTools.filter(t => INTERACTIVE_TOOLS.has(t.tool) && t.args).map((tc, i) => (
-                <div key={`live-genui-d-${i}`} className="max-w-[85%] ml-9 mb-1">
-                  <GenUIErrorBoundary componentName={tc.tool}>
-                    {tc.tool === 'ask_user' ? (
-                      <AskUserPrompt
-                        prompt={{ id: tc.id || `live-ask-${i}`, args: tc.args }}
-                        onRespond={(id, result) => {
-                          setGenUIResults(prev => ({ ...prev, [id]: result }));
-                          submitVmToolResult(id, result);
-                        }}
-                      />
-                    ) : (
-                      <GenUIContainer
-                        toolName={tc.tool}
-                        args={tc.args}
-                        isCompleted={!!genUIResults[tc.id || `live-g-${i}`]}
-                        result={genUIResults[tc.id || `live-g-${i}`]}
-                        onResult={(result) => {
-                          const tid = tc.id || `live-g-${i}`;
-                          setGenUIResults(prev => ({ ...prev, [tid]: result }));
-                          submitVmToolResult(tid, result);
-                        }}
-                      />
-                    )}
-                  </GenUIErrorBoundary>
-                </div>
-              ))}
-              {streamText && (
-                <div className="flex gap-2.5 justify-start">
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Bot className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-theme-card/50 border border-theme/5 text-theme-fg">
-                    {renderMarkdown(streamText)}
-                    <span className="inline-block w-[2px] h-3.5 bg-primary/50 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
-                  </div>
-                </div>
-              )}
-            </>
+            <PortableMessageBubble
+              message={{
+                id: 'streaming-message-default',
+                role: 'assistant',
+                text: streamText,
+                reasoning: streamReasoning || undefined,
+                toolCalls: streamTools.length > 0 ? streamTools : undefined,
+                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+              }}
+              isStreaming
+              startedAt={streamStartRef.current}
+              statusMessage={statusMessage || 'Planning next moves'}
+              interactiveToolRenderer={renderInteractiveTool}
+            />
           )}
         </div>
       </div>

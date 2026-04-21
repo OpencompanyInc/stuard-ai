@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
+import { billingApiFetch } from '@/lib/billingApi';
 import { supabase } from '@/lib/supabaseClient';
 
 type UsageEvent = {
@@ -25,7 +26,6 @@ type CreditSummaryResponse = {
 
 const CREDITS_PER_USD = 33;
 const DAYS_RANGE = 14;
-const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 
 function isEmbeddingModel(model: string | null | undefined): boolean {
     const normalized = String(model || '').trim().toLowerCase();
@@ -86,8 +86,6 @@ export default function DashboardPage() {
                 const rangeStart = new Date();
                 rangeStart.setDate(rangeStart.getDate() - (DAYS_RANGE - 1));
                 rangeStart.setHours(0, 0, 0, 0);
-                const { data: sessionDataRes } = await supabase.auth.getSession();
-                const token = sessionDataRes.session?.access_token || '';
 
                 const [{ data: usageEvents }, creditsResponse, { count: workflowCount }] = await Promise.all([
                     supabase
@@ -95,11 +93,7 @@ export default function DashboardPage() {
                         .select('cost_usd, credit_cost, created_at, model, raw')
                         .eq('user_id', userId)
                         .gte('created_at', startOfMonth),
-                    token
-                        ? fetch(`${CLOUD_API_URL}/v1/credits`, {
-                            headers: { Authorization: `Bearer ${token}` },
-                        }).then((res) => res.json()).catch(() => null)
-                        : Promise.resolve(null),
+                    billingApiFetch<CreditSummaryResponse>('/credits').catch(() => null),
                     supabase
                         .from('conversations')
                         .select('*', { count: 'exact', head: true })

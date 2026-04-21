@@ -11,5 +11,6 @@
     "types": ["node"],
     "outDir": "dist"
   },
-  "include": ["src/**/*", "../../shared/**/*.ts"]
+  "include": ["src/**/*", "../../shared/**/*.ts"],
+  "exclude": ["../../shared/chat-ui/**"]
 }

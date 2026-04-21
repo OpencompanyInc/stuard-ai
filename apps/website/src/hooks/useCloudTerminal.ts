@@ -4,6 +4,11 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 const TERMINAL_HEARTBEAT_MS = 20_000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+
+type TerminalConnectOptions = { cols?: number; rows?: number };
 
 /**
  * WebSocket hook for cloud terminal I/O.
@@ -12,12 +17,26 @@ export function useCloudTerminal() {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [idleTimedOut, setIdleTimedOut] = useState(false);
   const onDataRef = useRef<((data: string) => void) | null>(null);
   const onClosedRef = useRef<(() => void) | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const optsRef = useRef<TerminalConnectOptions | undefined>(undefined);
+  const stoppedRef = useRef(false);
 
-  const connect = useCallback((opts?: { cols?: number; rows?: number }) => {
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  };
+
+  const openSocket = useCallback((opts?: TerminalConnectOptions) => {
     const token = localStorage.getItem('stuard_access_token');
-    if (!token) return undefined;
+    if (!token) return;
+
+    optsRef.current = opts;
 
     wsRef.current?.close();
     setConnected(false);
@@ -48,9 +67,10 @@ export function useCloudTerminal() {
     };
 
     ws.onopen = () => {
-      // The terminal relay authenticates + opens the PTY automatically.
-      // Keep these values around for future protocol expansion if needed.
       void opts;
+      // A clean open resets the backoff counter so any future drop starts fresh.
+      reconnectAttemptsRef.current = 0;
+      setIdleTimedOut(false);
       startHeartbeat();
     };
 
@@ -64,7 +84,14 @@ export function useCloudTerminal() {
           onDataRef.current(msg.data);
         } else if (msg.type === 'terminal_pong') {
           // Keepalive acknowledgement only.
-        } else if (msg.type === 'terminal_idle_timeout' || msg.type === 'terminal_closed') {
+        } else if (msg.type === 'terminal_idle_timeout') {
+          // Server closed us for inactivity — don't auto-reconnect. Let the
+          // UI show "Session idle" and wait for a user gesture.
+          setIdleTimedOut(true);
+          stoppedRef.current = true;
+          setConnected(false);
+          onClosedRef.current?.();
+        } else if (msg.type === 'terminal_closed') {
           setConnected(false);
           onClosedRef.current?.();
         } else if (msg.type === 'error') {
@@ -73,24 +100,45 @@ export function useCloudTerminal() {
       } catch {}
     };
 
+    const scheduleReconnect = () => {
+      if (stoppedRef.current) return;
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) return;
+      const attempt = reconnectAttemptsRef.current;
+      const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, attempt), RECONNECT_MAX_MS);
+      reconnectAttemptsRef.current = attempt + 1;
+      clearReconnectTimer();
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        openSocket(optsRef.current);
+      }, delay);
+    };
+
     ws.onclose = () => {
       stopHeartbeat();
       setConnected(false);
       setSessionId(null);
       onClosedRef.current?.();
+      if (!stoppedRef.current) scheduleReconnect();
     };
 
     ws.onerror = () => {
       stopHeartbeat();
       setConnected(false);
     };
-
-    return () => {
-      stopHeartbeat();
-      ws.close();
-      if (wsRef.current === ws) wsRef.current = null;
-    };
   }, []);
+
+  const connect = useCallback((opts?: TerminalConnectOptions) => {
+    stoppedRef.current = false;
+    reconnectAttemptsRef.current = 0;
+    clearReconnectTimer();
+    openSocket(opts);
+    return () => {
+      stoppedRef.current = true;
+      clearReconnectTimer();
+      wsRef.current?.close();
+      if (wsRef.current) wsRef.current = null;
+    };
+  }, [openSocket]);
 
   const sendData = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && data) {
@@ -112,6 +160,8 @@ export function useCloudTerminal() {
   }, []);
 
   const close = useCallback(() => {
+    stoppedRef.current = true;
+    clearReconnectTimer();
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'terminal_close',
@@ -133,8 +183,10 @@ export function useCloudTerminal() {
 
   // Cleanup on unmount
   useEffect(() => () => {
+    stoppedRef.current = true;
+    clearReconnectTimer();
     wsRef.current?.close();
   }, []);
 
-  return { connected, sessionId, connect, sendData, resize, close, onData, onClosed };
+  return { connected, sessionId, idleTimedOut, connect, sendData, resize, close, onData, onClosed };
 }

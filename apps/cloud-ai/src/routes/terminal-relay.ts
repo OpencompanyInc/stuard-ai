@@ -71,6 +71,9 @@ export async function handleTerminalConnection(ws: WebSocket, req: IncomingMessa
       const result = await sendVMTerminalCommand(userId, 'read', { sessionId });
       if (result.ok && result.result?.data) {
         ws.send(JSON.stringify({ type: 'terminal_data', data: result.result.data }));
+        // VM produced output — count that as activity so a user watching a long
+        // command doesn't get culled by the 10-min idle timer.
+        lastActivity = Date.now();
       }
     } catch {
       // Ignore transient poll errors. The next poll will retry.

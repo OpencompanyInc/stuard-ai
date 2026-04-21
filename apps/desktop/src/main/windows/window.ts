@@ -56,7 +56,7 @@ function captureWindowSnapshotByHandle(handle: string): SplitTargetSnapshot | nu
   if (process.platform !== "win32") return null;
   if (!handle || handle === "0") return null;
   try {
-    const { execFileSync } = require("child_process");
+    const { execSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
     const scriptPath = path.join(tmpDir, "stuard_get_bounds.ps1");
     const ps = `
@@ -85,17 +85,7 @@ $isMin = [Win32Bounds]::IsIconic($h)
 Write-Output "x=$($rect.Left) y=$($rect.Top) w=$w h=$hgt max=$isMax min=$isMin"
 `;
     fs.writeFileSync(scriptPath, ps, "utf8");
-    const out = execFileSync("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      scriptPath,
-    ], {
-      encoding: "utf8",
-      timeout: 2000,
-      windowsHide: true,
-    }).trim();
+    const out = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { encoding: "utf8", timeout: 2000 }).trim();
     try { fs.unlinkSync(scriptPath); } catch { }
 
     const m = /x=([-\d]+)\s+y=([-\d]+)\s+w=(\d+)\s+h=(\d+)\s+max=(True|False)\s+min=(True|False)/.exec(out);
@@ -165,18 +155,8 @@ function getNativeWindowHandleString(target: BrowserWindow | null) {
   }
 }
 
-// Circuit breaker for captureForegroundWindowHandle.
-// PowerShell invocations are synchronous and block the main process. When
-// spawnSync keeps timing out (e.g. slow PowerShell startup or broken cmd.exe),
-// we back off entirely instead of freezing the UI every focus/blur.
-let captureHandleConsecutiveFailures = 0;
-let captureHandleDisabledUntil = 0;
-const CAPTURE_HANDLE_FAILURE_THRESHOLD = 3;
-const CAPTURE_HANDLE_BACKOFF_MS = 60_000;
-
 function captureForegroundWindowHandle(excludeHandles?: Array<string | null>) {
   if (process.platform !== "win32") return null;
-  if (Date.now() < captureHandleDisabledUntil) return null;
   try {
     const { execSync } = require("child_process");
     const tmpDir = require("os").tmpdir();
@@ -232,30 +212,10 @@ $target.ToInt64()
 
     let capturedHandle: string | null = null;
     try {
-      const result = execFileSync("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        getHandleScript,
-      ], {
-        encoding: "utf8",
-        timeout: 1200,
-        windowsHide: true,
-      });
+      const result = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${getHandleScript}"`, { encoding: "utf8", timeout: 2000 });
       capturedHandle = result.trim();
-      captureHandleConsecutiveFailures = 0;
     } catch (e) {
-      captureHandleConsecutiveFailures += 1;
-      if (captureHandleConsecutiveFailures >= CAPTURE_HANDLE_FAILURE_THRESHOLD) {
-        captureHandleDisabledUntil = Date.now() + CAPTURE_HANDLE_BACKOFF_MS;
-        logger.warn(
-          `Disabling foreground window capture for ${CAPTURE_HANDLE_BACKOFF_MS / 1000}s after ${captureHandleConsecutiveFailures} failures:`,
-          e,
-        );
-      } else {
-        logger.warn("Failed to capture foreground window handle:", e);
-      }
+      logger.warn("Failed to capture foreground window handle:", e);
     }
     try { fs.unlinkSync(getHandleScript); } catch { }
 

@@ -2,7 +2,17 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthContext } from '@/components/providers/AuthProvider';
-import { supabase } from '@/lib/supabaseClient';
+import { billingApiFetch, getBillingAuthToken } from '@/lib/billingApi';
+import {
+    CREDIT_ANCHORS,
+    MONTHLY_AMOUNT_MARKERS,
+    MONTHLY_AMOUNT_MAX,
+    MONTHLY_AMOUNT_MIN,
+    TOP_UP_AMOUNTS,
+    estimateCredits,
+    planTierFromAmount,
+    sliderMarkerPercent,
+} from '@/lib/creditPricing';
 
 type CreditSummary = {
     ok?: boolean;
@@ -36,14 +46,13 @@ type CreditTransaction = {
     createdAt: string;
 };
 
-const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
-
-const ADDON_PACKS = [
-    { id: 'addon_5', label: '$5', amount: 500, credits: '~107', desc: 'Quick top-up' },
-    { id: 'addon_10', label: '$10', amount: 1000, credits: '~231', desc: 'Standard pack' },
-    { id: 'addon_25', label: '$25', amount: 2500, credits: '~577', desc: 'Popular choice' },
-    { id: 'addon_50', label: '$50', amount: 5000, credits: '~1,237', desc: 'Power pack' },
-];
+const ADDON_PACKS = TOP_UP_AMOUNTS.map((amount, index) => ({
+    id: `addon_${amount}`,
+    label: `$${amount}`,
+    amount: amount * 100,
+    credits: estimateCredits(amount).toLocaleString(),
+    desc: ['Quick top-up', 'Standard pack', 'Popular choice', 'Power pack'][index],
+}));
 
 const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
     inference: { label: 'AI Inference', color: 'bg-blue-500' },
@@ -76,29 +85,17 @@ function formatDate(iso: string): string {
     } catch { return iso; }
 }
 
-async function getAuthToken(): Promise<string | null> {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token || null;
-}
-
-async function apiFetch<T = any>(path: string): Promise<T | null> {
-    const token = await getAuthToken();
-    if (!token) return null;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
-    try {
-        const res = await fetch(`${CLOUD_API_URL}${path}`, {
-            headers: { Authorization: `Bearer ${token}` },
-            signal: controller.signal,
-        });
-        const data = await res.json();
-        return data?.ok ? data : null;
-    } catch (e: any) {
-        if (e?.name === 'AbortError') throw new Error('Request timed out. Please try again.');
-        throw e;
-    } finally {
-        clearTimeout(timeout);
-    }
+function normalizeTransaction(tx: any): CreditTransaction {
+    return {
+        id: String(tx?.id || ''),
+        entryType: String(tx?.entryType || tx?.entry_type || 'grant'),
+        sourceType: String(tx?.sourceType || tx?.source_type || 'subscription_cycle'),
+        sourceRef: String(tx?.sourceRef || tx?.source_ref || ''),
+        credits: Number(tx?.credits ?? tx?.total_credits ?? 0),
+        amountUsd: tx?.amountUsd ?? tx?.amount_usd ?? null,
+        metadata: tx?.metadata ?? null,
+        createdAt: String(tx?.createdAt || tx?.created_at || ''),
+    };
 }
 
 export default function BillingPage() {
@@ -121,13 +118,16 @@ export default function BillingPage() {
             setCreditsLoading(true);
             setError(null);
             const [creditsData, usageData, txData] = await Promise.all([
-                apiFetch<any>('/v1/credits'),
-                apiFetch<any>('/v1/credits/usage'),
-                apiFetch<any>('/v1/credits/transactions?limit=20'),
+                billingApiFetch<any>('/credits'),
+                billingApiFetch<any>('/credits/usage'),
+                billingApiFetch<any>('/credits/transactions?limit=20'),
             ]);
             if (creditsData) setCreditSummary(creditsData);
             if (usageData?.breakdown) setUsageBreakdown(usageData.breakdown);
-            if (txData?.transactions) { setTransactions(txData.transactions); setTxTotal(txData.total || 0); }
+            if (txData?.transactions) {
+                setTransactions(txData.transactions.map(normalizeTransaction));
+                setTxTotal(txData.total || 0);
+            }
             if (!creditsData && !usageData && !txData) {
                 setError('Could not load billing data. The server may be temporarily unavailable.');
             }
@@ -154,14 +154,18 @@ export default function BillingPage() {
         process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID ||
         process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID;
 
-    const baseRate = 33;
     const tier = useMemo(() => {
-        if (amount >= 100) return { name: 'Whale', multiplier: 0.75, badge: 'Best Rate', color: 'text-amber-600' };
-        if (amount >= 30) return { name: 'Pro', multiplier: 0.70, badge: 'Boosted Rate', color: 'text-gray-900' };
-        return { name: 'Starter', multiplier: 0.65, badge: 'Standard Rate', color: 'text-gray-600' };
+        switch (planTierFromAmount(amount)) {
+            case 'power':
+                return { name: 'Whale', badge: 'Best Rate', color: 'text-amber-600' };
+            case 'pro':
+                return { name: 'Pro', badge: 'Boosted Rate', color: 'text-gray-900' };
+            default:
+                return { name: 'Starter', badge: 'Standard Rate', color: 'text-gray-600' };
+        }
     }, [amount]);
 
-    const credits = Math.floor(amount * baseRate * tier.multiplier);
+    const credits = useMemo(() => estimateCredits(amount), [amount]);
     const canManage = Boolean(user);
     const isFreePlan = currentPlan === 'free';
 
@@ -216,7 +220,7 @@ export default function BillingPage() {
         if (!user) { setError('Please sign in to manage your subscription.'); return; }
         setIsManaging(true);
         try {
-            const token = await getAuthToken();
+            const token = await getBillingAuthToken();
             if (!token) { setError('Missing session token.'); return; }
             const response = await fetch('/api/polar/portal', {
                 method: 'POST',
@@ -237,9 +241,9 @@ export default function BillingPage() {
         if (txLoading || transactions.length >= txTotal) return;
         setTxLoading(true);
         try {
-            const data = await apiFetch<any>(`/v1/credits/transactions?limit=20&offset=${transactions.length}`);
+            const data = await billingApiFetch<any>(`/credits/transactions?limit=20&offset=${transactions.length}`);
             if (data?.transactions) {
-                setTransactions(prev => [...prev, ...data.transactions]);
+                setTransactions(prev => [...prev, ...data.transactions.map(normalizeTransaction)]);
                 setTxTotal(data.total || txTotal);
             }
         } catch {} finally { setTxLoading(false); }
@@ -447,7 +451,7 @@ export default function BillingPage() {
                         <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
                             <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6">
                                 <p className="text-[13px] font-medium text-gray-900 mb-1">Pick your price</p>
-                                <p className="text-[12px] text-gray-500 mb-5">Pay what you want. Minimum $5. Credits roll over for 30 days.</p>
+                                <p className="text-[12px] text-gray-500 mb-5">Pay what you want. Minimum $5. Credits round to clean bundle sizes, and unused credits roll over for 30 days.</p>
                                 <div className="rounded-lg border border-gray-100 bg-gray-50 p-5">
                                     <div className="flex items-end justify-between mb-1">
                                         <div>
@@ -466,20 +470,32 @@ export default function BillingPage() {
                                     <div className="mt-5">
                                         <input
                                             type="range"
-                                            min={5}
-                                            max={200}
+                                            min={MONTHLY_AMOUNT_MIN}
+                                            max={MONTHLY_AMOUNT_MAX}
                                             step={1}
                                             value={amount}
                                             onChange={(e) => setAmount(Number(e.target.value))}
                                             className="w-full accent-gray-900"
                                         />
-                                        <div className="flex justify-between text-[11px] text-gray-400 mt-1">
-                                            <span>$5</span><span>$30</span><span>$100</span><span>$200</span>
+                                        <div className="relative mt-1 h-4 text-[11px] text-gray-400">
+                                            {MONTHLY_AMOUNT_MARKERS.map((marker) => {
+                                                const percent = sliderMarkerPercent(marker);
+                                                const translateX = percent === 0 ? '0%' : percent === 100 ? '-100%' : '-50%';
+                                                return (
+                                                    <span
+                                                        key={marker}
+                                                        className="absolute top-0 whitespace-nowrap"
+                                                        style={{ left: `${percent}%`, transform: `translateX(${translateX})` }}
+                                                    >
+                                                        ${marker}
+                                                    </span>
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 </div>
                                 <div className="flex flex-wrap gap-2 mt-4">
-                                    {[10, 30, 60, 100].map((preset) => (
+                                    {[5, 10, 30, 60, 100].map((preset) => (
                                         <button
                                             key={preset}
                                             onClick={() => setAmount(preset)}
@@ -491,6 +507,14 @@ export default function BillingPage() {
                                         >
                                             ${preset}
                                         </button>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                                    {CREDIT_ANCHORS.slice(0, 4).map((anchor) => (
+                                        <div key={anchor.amount}>
+                                            <p className="text-[10px] uppercase tracking-wide text-gray-400">${anchor.amount}/mo</p>
+                                            <p className="text-[13px] font-semibold text-gray-900 mt-1">{anchor.credits.toLocaleString()} credits</p>
+                                        </div>
                                     ))}
                                 </div>
                             </div>
