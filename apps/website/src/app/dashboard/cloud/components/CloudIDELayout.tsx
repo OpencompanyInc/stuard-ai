@@ -5,7 +5,7 @@ import { listFiles, openVMAgentChatStream } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
 import Link from 'next/link';
-import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/components/PortableMessageBubble';
+import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/ui';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../../../shared/chat-ui/streamState';
 import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMerge';
 import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';

@@ -10,7 +10,7 @@ import type { ModelMeta } from '../hooks/usePreferences';
 import { mergeStreamingText } from '../utils/streamMerge';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
 import { AskUserPrompt } from './chat-view/AskUserPrompt';
-import { PortableMessageBubble } from '../../../../../shared/chat-ui/components/PortableMessageBubble';
+import { PortableMessageBubble } from '../../../../../shared/chat-ui/ui';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../shared/chat-ui/streamState';
 import type { Message as ChatMessage, StreamChunk, ToolCall as VmToolCall } from '../../../../../shared/chat-ui/types';
 
