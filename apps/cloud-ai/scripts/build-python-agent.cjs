@@ -24,30 +24,10 @@ const AGENT_DIR = path.resolve(ROOT, '..', 'agent');
 const OUTPUT_DIR = path.resolve(ROOT, 'dist');
 const STAGING_DIR = path.resolve(OUTPUT_DIR, '_python_staging');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'stuard-python-agent.tar.gz');
-const GCS_BUCKET = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
+const GCS_BUCKET = 'stuard-user-data';
 const GCS_PATH = `gs://${GCS_BUCKET}/agent/stuard-python-agent.tar.gz`;
 
 const doUpload = process.argv.includes('--upload');
-
-/**
- * Upload a file to GCS using the JSON API directly.
- * Only requires storage.objects.create — avoids the LIST/GET pre-checks
- * that gsutil and gcloud storage cp perform.
- */
-function uploadToGCS(localPath, bucket, objectName, contentType) {
-  const sa = process.env.GCS_SERVICE_ACCOUNT;
-  const acctFlag = sa ? ` --account=${sa}` : '';
-  const token = execSync(`gcloud auth print-access-token${acctFlag}`, { encoding: 'utf8' }).trim();
-  const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
-
-  execSync(
-    `curl -sf -X POST "${url}" ` +
-    `-H "Authorization: Bearer ${token}" ` +
-    `-H "Content-Type: ${contentType}" ` +
-    `--data-binary @"${localPath}"`,
-    { stdio: ['pipe', 'pipe', 'inherit'] }
-  );
-}
 const keepSource = process.argv.includes('--keep-source');
 
 // Desktop-only modules to exclude from VM bundle
@@ -89,6 +69,16 @@ const EXCLUDE_PATTERNS = [
   'scripts',
 ];
 
+const EXCLUDE_PREFIXES = [
+  '.pytest-',
+  '_tmp',
+  'test-temp',
+];
+
+function isSkippableFsError(error) {
+  return error && (error.code === 'ENOENT' || error.code === 'EPERM' || error.code === 'EACCES');
+}
+
 // ── 1. Verify agent directory exists ────────────────────────────────────────
 if (!fs.existsSync(path.join(AGENT_DIR, 'app', 'main.py'))) {
   console.error('❌ Agent directory not found at:', AGENT_DIR);
@@ -107,6 +97,7 @@ console.log('📂 Copying agent source to staging...');
 
 function shouldExclude(name) {
   if (EXCLUDE_PATTERNS.includes(name)) return true;
+  if (EXCLUDE_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (name.endsWith('.pyc')) return true;
   if (name === '__pycache__') return true;
   return false;
@@ -114,40 +105,66 @@ function shouldExclude(name) {
 
 function copyDirFiltered(src, dest, depth = 0) {
   if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
-  
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+
+  let entries;
+  try {
+    entries = fs.readdirSync(src, { withFileTypes: true });
+  } catch (error) {
+    if (isSkippableFsError(error)) {
+      console.warn(`  ⚠️ Skipping unreadable directory: ${src}`);
+      return;
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
-    
+
     if (shouldExclude(entry.name)) continue;
-    
+
     // Exclude desktop-only tool modules (only from app/tools/)
     if (depth === 2 && entry.isFile() && DESKTOP_ONLY_MODULES.includes(entry.name)) {
       console.log(`  ⊘ Excluding desktop-only: app/tools/${entry.name}`);
       continue;
     }
-    
+
     if (entry.isDirectory()) {
       copyDirFiltered(srcPath, destPath, depth + 1);
+    } else if (entry.isSymbolicLink()) {
+      console.log(`  ⊘ Skipping symlink: ${srcPath}`);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      try {
+        fs.copyFileSync(srcPath, destPath);
+      } catch (error) {
+        if (isSkippableFsError(error)) {
+          console.warn(`  ⚠️ Skipping unreadable file: ${srcPath}`);
+          continue;
+        }
+        throw error;
+      }
     }
   }
 }
 
 copyDirFiltered(AGENT_DIR, path.join(STAGING_DIR, 'agent'), 0);
 
-// ── 4. Use the proper vm_main.py from agent source ──────────────────────────
-// vm_main.py uses the lightweight 'websockets' library (in requirements-vm.txt)
-// instead of FastAPI/uvicorn (not in requirements-vm.txt)
-const vmMainSrc = path.join(AGENT_DIR, 'vm_main.py');
-if (fs.existsSync(vmMainSrc)) {
-  fs.copyFileSync(vmMainSrc, path.join(STAGING_DIR, 'agent', 'vm_main.py'));
-  console.log('  ✓ Copied vm_main.py from source');
-} else {
-  console.error('❌ vm_main.py not found at:', vmMainSrc);
-  process.exit(1);
-}
+// ── 4. Replace dispatch.py import with dispatch_vm in the staging copy ──────
+// Copy dispatch_vm.py is already included, but ensure the websocket handler
+// uses it by injecting the env var in the entrypoint
+const vmEntrypoint = `#!/usr/bin/env python3
+"""VM entrypoint — sets STUARD_AGENT_MODE=vm then runs the standard main."""
+import os
+os.environ["STUARD_AGENT_MODE"] = "vm"
+
+# Run the standard agent
+from app.main import app
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8765, workers=1)
+`;
+fs.writeFileSync(path.join(STAGING_DIR, 'agent', 'vm_main.py'), vmEntrypoint);
+console.log('  ✓ Created vm_main.py entrypoint');
 
 // Also copy requirements-vm.txt to the staging root
 const reqVm = path.join(AGENT_DIR, 'requirements-vm.txt');
@@ -215,10 +232,9 @@ try {
 
 // ── 8. Upload to GCS ───────────────────────────────────────────────────────
 if (doUpload) {
-  const objectName = 'agent/stuard-python-agent.tar.gz';
-  console.log(`☁️ Uploading to gs://${GCS_BUCKET}/${objectName}...`);
+  console.log(`☁️ Uploading to ${GCS_PATH}...`);
   try {
-    uploadToGCS(OUTPUT_FILE, GCS_BUCKET, objectName, 'application/gzip');
+    execSync(`gsutil cp "${OUTPUT_FILE}" "${GCS_PATH}"`, { stdio: 'inherit' });
     console.log(`✅ Uploaded to ${GCS_PATH}`);
   } catch (e) {
     console.error('❌ Upload failed:', e.message);
