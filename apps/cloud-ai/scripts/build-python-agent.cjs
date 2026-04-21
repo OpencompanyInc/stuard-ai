@@ -24,7 +24,7 @@ const AGENT_DIR = path.resolve(ROOT, '..', 'agent');
 const OUTPUT_DIR = path.resolve(ROOT, 'dist');
 const STAGING_DIR = path.resolve(OUTPUT_DIR, '_python_staging');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'stuard-python-agent.tar.gz');
-const GCS_BUCKET = 'stuard-user-data';
+const GCS_BUCKET = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
 const GCS_PATH = `gs://${GCS_BUCKET}/agent/stuard-python-agent.tar.gz`;
 
 const doUpload = process.argv.includes('--upload');
@@ -149,22 +149,14 @@ function copyDirFiltered(src, dest, depth = 0) {
 
 copyDirFiltered(AGENT_DIR, path.join(STAGING_DIR, 'agent'), 0);
 
-// ── 4. Replace dispatch.py import with dispatch_vm in the staging copy ──────
-// Copy dispatch_vm.py is already included, but ensure the websocket handler
-// uses it by injecting the env var in the entrypoint
-const vmEntrypoint = `#!/usr/bin/env python3
-"""VM entrypoint — sets STUARD_AGENT_MODE=vm then runs the standard main."""
-import os
-os.environ["STUARD_AGENT_MODE"] = "vm"
-
-# Run the standard agent
-from app.main import app
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8765, workers=1)
-`;
-fs.writeFileSync(path.join(STAGING_DIR, 'agent', 'vm_main.py'), vmEntrypoint);
-console.log('  ✓ Created vm_main.py entrypoint');
+// ── 4. Verify vm_main.py was copied from source (websockets entrypoint that
+//      uses dispatch_vm.py and avoids the desktop-only routes/dispatch chain). ─
+const stagedVmMain = path.join(STAGING_DIR, 'agent', 'vm_main.py');
+if (!fs.existsSync(stagedVmMain)) {
+  console.error('❌ vm_main.py missing from staging — expected at apps/agent/vm_main.py');
+  process.exit(1);
+}
+console.log('  ✓ Using source vm_main.py (websockets entrypoint)');
 
 // Also copy requirements-vm.txt to the staging root
 const reqVm = path.join(AGENT_DIR, 'requirements-vm.txt');
