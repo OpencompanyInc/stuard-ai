@@ -2,15 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clsx } from 'clsx';
 import {
   Send, Loader2, Trash2, Bot, WifiOff,
-  Check, ChevronDown, MessageSquare, Plus, Clock, X, Square,
+  Check, ChevronDown, MessageSquare, Plus, Clock, X, Square, Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import type { ModelMeta } from '../hooks/usePreferences';
 import { mergeStreamingText } from '../utils/streamMerge';
-import { GenUIContainer, GenUIErrorBoundary } from './genui';
+import MessageBubble from './MessageBubble';
 import { AskUserPrompt } from './chat-view/AskUserPrompt';
-import { PortableMessageBubble } from '../../../../../shared/chat-ui/ui';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../shared/chat-ui/streamState';
 import type { Message as ChatMessage, StreamChunk, ToolCall as VmToolCall } from '../../../../../shared/chat-ui/types';
 
@@ -21,14 +20,6 @@ interface ConversationEntry {
   title: string;
   updated_at: string;
   message_count: number;
-}
-
-function normalizeStatusMessage(message: string): string {
-  const trimmed = String(message || '').trim();
-  if (!trimmed) return '';
-  if (trimmed === 'Loading memory context...') return 'Reviewing context...';
-  if (trimmed === 'Generating response...') return 'Thinking...';
-  return trimmed;
 }
 
 async function vmRelay(path: string, body?: any, method = 'POST', options?: { timeoutMs?: number }): Promise<any> {
@@ -63,6 +54,7 @@ export function CloudVmChat({
   const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
   const [displayName, setDisplayName] = useState('there');
   const conversationIdRef = useRef<string | null>(null);
   const conversationTitleRef = useRef<string>('');
@@ -70,17 +62,17 @@ export function CloudVmChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
 
   // Streaming state
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamTools, setStreamTools] = useState<VmToolCall[]>([]);
   const [streamChunks, setStreamChunks] = useState<StreamChunk[]>([]);
-  const [statusMessage, setStatusMessage] = useState('');
   const streamStartRef = useRef<number>(0);
 
-  // GenUI / ask_user state
-  const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
+  // ask_user inline prompts (rendered outside MessageBubble — bubble hides ask_user)
+  const [askUserPrompts, setAskUserPrompts] = useState<Array<{ id: string; args: any; status: 'pending' | 'completed' }>>([]);
 
   // Chat history state
   const [conversations, setConversations] = useState<ConversationEntry[]>([]);
@@ -117,6 +109,25 @@ export function CloudVmChat({
     if (selectedModel === 'auto') return null;
     return models.find((m) => m.id === selectedModel) || null;
   }, [selectedModel, models]);
+
+  const filteredModels = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) return models;
+
+    return models.filter((model) => {
+      const haystack = [
+        model.name,
+        model.provider,
+        model.id,
+        model.category,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(query);
+    });
+  }, [modelSearch, models]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -167,6 +178,16 @@ export function CloudVmChat({
     return () => document.removeEventListener('mousedown', handler);
   }, [showModelPicker]);
 
+  useEffect(() => {
+    if (!showModelPicker) {
+      setModelSearch('');
+      return;
+    }
+
+    const timeout = window.setTimeout(() => modelSearchRef.current?.focus(), 40);
+    return () => window.clearTimeout(timeout);
+  }, [showModelPicker]);
+
   // Close history panel on outside click
   useEffect(() => {
     if (!showHistory) return;
@@ -179,55 +200,88 @@ export function CloudVmChat({
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
 
-  // Fetch conversation history — try multiple sources
+  // Fetch conversation history — query all sources in parallel and merge.
+  // Always preserves any in-memory entries (e.g. a just-sent chat) that the
+  // backends haven't indexed yet, so the list never flashes empty after a send.
   const fetchHistory = useCallback(async () => {
     if (!isRunning) return;
     setHistoryLoading(true);
     try {
-      // 1. Try VM memory store first (fast, in-memory)
-      const vmRes = await vmRelay('/memory/conversations_list', { limit: 30 }, 'POST', { timeoutMs: 4_000 });
-      let rawConvs: any[] = vmRes?.result?.conversations || vmRes?.conversations || [];
+      const sessionRes = await supabase.auth.getSession().catch(() => null);
+      const token = sessionRes?.data?.session?.access_token || '';
 
-      // 2. If empty, try the cloud-ai memory API (reads from Supabase / local DB)
-      if (rawConvs.length === 0) {
-        try {
-          const { data } = await supabase.auth.getSession();
-          const token = data?.session?.access_token || '';
-          const fallbackRes = await fetch(`${CLOUD_AI_HTTP}/v1/memory/conversations?limit=30&status=active`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          const fallbackData = await fallbackRes.json();
-          if (fallbackData.ok && Array.isArray(fallbackData.conversations)) {
-            rawConvs = fallbackData.conversations;
+      const [vmRes, cloudRes, supaRes] = await Promise.all([
+        vmRelay('/memory/conversations_list', { limit: 30 }, 'POST', { timeoutMs: 4_000 })
+          .catch(() => null),
+        fetch(`${CLOUD_AI_HTTP}/v1/memory/conversations?limit=30&status=active`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+          .then((r) => r.json())
+          .catch(() => null),
+        (async () => {
+          try {
+            return await supabase
+              .from('conversations')
+              .select('id, title, created_at, updated_at, message_count, source')
+              .neq('source', 'workflow')
+              .order('updated_at', { ascending: false })
+              .limit(30);
+          } catch {
+            return null;
           }
-        } catch { /* silent */ }
+        })(),
+      ]);
+
+      const sources: any[][] = [];
+      // Relay wraps as {ok,status,result: <vmBody>}; VM wraps as {ok, result: <handlerReturn>};
+      // handler returns {ok, conversations}. So the real list is at result.result.conversations.
+      const vmList = vmRes?.result?.result?.conversations
+        || vmRes?.result?.conversations
+        || vmRes?.conversations;
+      if (Array.isArray(vmList)) sources.push(vmList);
+      if (cloudRes?.ok && Array.isArray(cloudRes.conversations)) sources.push(cloudRes.conversations);
+      if (supaRes && !supaRes.error && Array.isArray(supaRes.data)) sources.push(supaRes.data);
+
+      const byId = new Map<string, ConversationEntry>();
+      for (const list of sources) {
+        for (const c of list) {
+          if (!c || c.source === 'workflow') continue;
+          const id = c.id || c.conversation_id;
+          if (!id) continue;
+          const entry: ConversationEntry = {
+            id,
+            title: c.title || 'Untitled',
+            updated_at: c.updated_at || c.created_at || '',
+            message_count: c.message_count || 0,
+          };
+          const existing = byId.get(id);
+          if (!existing) {
+            byId.set(id, entry);
+            continue;
+          }
+          // Merge: prefer non-default title, keep max message_count, newest updated_at.
+          const mergedTitle = existing.title && existing.title !== 'Untitled' ? existing.title : entry.title;
+          const mergedUpdated = new Date(entry.updated_at || 0) > new Date(existing.updated_at || 0)
+            ? entry.updated_at
+            : existing.updated_at;
+          byId.set(id, {
+            id,
+            title: mergedTitle,
+            updated_at: mergedUpdated,
+            message_count: Math.max(existing.message_count, entry.message_count),
+          });
+        }
       }
 
-      // 3. Also try Supabase directly as last resort
-      if (rawConvs.length === 0) {
-        try {
-          const { data, error } = await supabase
-            .from('conversations')
-            .select('id, title, created_at, updated_at, message_count')
-            .neq('source', 'workflow')
-            .order('updated_at', { ascending: false })
-            .limit(30);
-          if (!error && Array.isArray(data)) rawConvs = data;
-        } catch { /* silent */ }
-      }
-
-      const convs: ConversationEntry[] = rawConvs
-        .filter((c: any) => c.source !== 'workflow')
-        .map((c: any) => ({
-          id: c.id || c.conversation_id,
-          title: c.title || 'Untitled',
-          updated_at: c.updated_at || c.created_at || '',
-          message_count: c.message_count || 0,
-        }))
-        .sort((a: ConversationEntry, b: ConversationEntry) =>
-          new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime(),
-        );
-      setConversations(convs);
+      setConversations((prev) => {
+        // Preserve any local/optimistic entries not yet in any backend source.
+        for (const local of prev) {
+          if (!byId.has(local.id)) byId.set(local.id, local);
+        }
+        return Array.from(byId.values())
+          .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())
+          .slice(0, 30);
+      });
     } catch { /* silent */ }
     setHistoryLoading(false);
   }, [isRunning]);
@@ -244,9 +298,9 @@ export function CloudVmChat({
     let rawMsgs: any[] = [];
 
     try {
-      // 1. VM relay (Python agent DB)
+      // 1. VM relay (Python agent DB) — double-wrapped: relay{result} → VM{result} → handler{messages}
       const res = await vmRelay('/memory/messages_list', { conversation_id: convId, limit: 100 }, 'POST', { timeoutMs: 5_000 });
-      rawMsgs = res?.result?.messages || res?.messages || [];
+      rawMsgs = res?.result?.result?.messages || res?.result?.messages || res?.messages || [];
 
       // 2. Cloud-ai memory API
       if (rawMsgs.length === 0) {
@@ -285,7 +339,7 @@ export function CloudVmChat({
         setStreamReasoning('');
         setStreamTools([]);
         setStreamChunks([]);
-        setStatusMessage('');
+        setAskUserPrompts([]);
         setMessages(loaded);
         conversationIdRef.current = convId;
         const conv = conversations.find(c => c.id === convId);
@@ -307,7 +361,7 @@ export function CloudVmChat({
     setStreamReasoning('');
     setStreamTools([]);
     setStreamChunks([]);
-    setStatusMessage('');
+    setAskUserPrompts([]);
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
     setShowHistory(false);
@@ -343,7 +397,6 @@ export function CloudVmChat({
     setStreamReasoning('');
     setStreamTools([]);
     setStreamChunks([]);
-    setStatusMessage('Connecting...');
     streamStartRef.current = Date.now();
 
     const abort = new AbortController();
@@ -434,7 +487,6 @@ export function CloudVmChat({
       const contentType = resp.headers.get('content-type') || '';
 
       if (contentType.includes('text/event-stream') && resp.body) {
-        setStatusMessage('');
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -474,11 +526,12 @@ export function CloudVmChat({
                 const toolId = toolData.id || toolData.toolCallId || event.id || '';
                 if (toolName) {
                   const normalizedStatus = normalizeToolStatus(toolStatus);
+                  const resolvedArgs = toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined);
                   pushTool({
                     id: toolId || `${toolName}-${Date.now()}`,
                     tool: toolName,
                     status: normalizedStatus,
-                    args: toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined),
+                    args: resolvedArgs,
                     result: toolData.result ?? (normalizedStatus === 'completed' ? toolData : undefined),
                     error: toolData.error ?? (normalizedStatus === 'error' ? toolData : undefined),
                     liveOutput: typeof toolData.liveOutput === 'string'
@@ -488,6 +541,12 @@ export function CloudVmChat({
                         : undefined,
                     timestamp: Date.now(),
                   });
+                  if (toolName === 'ask_user' && resolvedArgs && (normalizedStatus === 'called' || normalizedStatus === 'running')) {
+                    const askId = toolId || `ask-${Date.now()}`;
+                    setAskUserPrompts((prev) => prev.find((p) => p.id === askId) ? prev : [...prev, { id: askId, args: resolvedArgs, status: 'pending' }]);
+                  } else if (toolName === 'ask_user' && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
+                    setAskUserPrompts((prev) => prev.map((p) => p.id === toolId ? { ...p, status: 'completed' as const } : p));
+                  }
                 }
                 break;
               }
@@ -503,6 +562,9 @@ export function CloudVmChat({
                     args: toolArgs,
                     timestamp: Date.now(),
                   });
+                  if (toolName === 'ask_user' && toolArgs) {
+                    setAskUserPrompts((prev) => prev.find((p) => p.id === toolId) ? prev : [...prev, { id: toolId, args: toolArgs, status: 'pending' }]);
+                  }
                 }
                 break;
               }
@@ -537,12 +599,6 @@ export function CloudVmChat({
                 }
                 break;
               }
-              case 'routing':
-                setStatusMessage(event.model ? `Routing → ${event.model}` : '');
-                break;
-              case 'status':
-                setStatusMessage(normalizeStatusMessage(event.message || ''));
-                break;
               case 'start':
                 if (event.conversationId) conversationIdRef.current = event.conversationId;
                 break;
@@ -617,7 +673,6 @@ export function CloudVmChat({
       setStreamReasoning('');
       setStreamTools([]);
       setStreamChunks([]);
-      setStatusMessage('');
       abortRef.current = null;
       if (showHistory) {
         void fetchHistory();
@@ -642,7 +697,6 @@ export function CloudVmChat({
     setStreamReasoning('');
     setStreamTools([]);
     setStreamChunks([]);
-    setStatusMessage('');
     abortRef.current = null;
   }, []);
 
@@ -655,6 +709,11 @@ export function CloudVmChat({
     } catch { /* best-effort */ }
   }, []);
 
+  const handleAskUserRespond = useCallback((id: string, result: any) => {
+    setAskUserPrompts((prev) => prev.map((p) => p.id === id ? { ...p, status: 'completed' as const } : p));
+    void submitVmToolResult(id, result);
+  }, [submitVmToolResult]);
+
   const handleClear = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
@@ -663,7 +722,7 @@ export function CloudVmChat({
     setStreamReasoning('');
     setStreamTools([]);
     setStreamChunks([]);
-    setStatusMessage('');
+    setAskUserPrompts([]);
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
   }, []);
@@ -673,36 +732,9 @@ export function CloudVmChat({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
-  const renderInteractiveTool = useCallback((tool: VmToolCall, key: string) => {
-    if (!tool.args) return null;
-
-    const toolKey = tool.id || key;
-
-    return (
-      <GenUIErrorBoundary componentName={tool.tool}>
-        {tool.tool === 'ask_user' ? (
-          <AskUserPrompt
-            prompt={{ id: toolKey, args: tool.args }}
-            onRespond={(id, result) => {
-              setGenUIResults((prev) => ({ ...prev, [id]: result }));
-              submitVmToolResult(id, result);
-            }}
-          />
-        ) : (
-          <GenUIContainer
-            toolName={tool.tool}
-            args={tool.args}
-            isCompleted={tool.status === 'completed' || !!genUIResults[toolKey]}
-            result={genUIResults[toolKey] || tool.result}
-            onResult={(result) => {
-              setGenUIResults((prev) => ({ ...prev, [toolKey]: result }));
-              submitVmToolResult(toolKey, result);
-            }}
-          />
-        )}
-      </GenUIErrorBoundary>
-    );
-  }, [genUIResults, submitVmToolResult]);
+  const handleGenUIResponse = useCallback((component: string, result: any) => {
+    void submitVmToolResult(component, result);
+  }, [submitVmToolResult]);
 
   const formatTimeAgo = (dateStr: string) => {
     if (!dateStr) return '';
@@ -823,12 +855,27 @@ export function CloudVmChat({
       {showModelPicker && (
         <div
           className={clsx(
-            'absolute z-50 max-h-72 w-72 overflow-y-auto scrollbar-none rounded-2xl border border-theme bg-theme-card shadow-elevate p-1',
+            'absolute z-50 w-72 overflow-hidden rounded-2xl border border-theme bg-theme-card shadow-elevate',
             variant === 'workspace'
               ? 'bottom-full left-0 mb-2'
               : 'right-0 top-full mt-1',
           )}
         >
+          <div className="border-b border-theme/10 px-3 py-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
+              <input
+                ref={modelSearchRef}
+                type="text"
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder="Search models..."
+                className="w-full rounded-xl border border-theme/10 bg-theme-hover/40 py-2 pl-9 pr-3 text-xs text-theme-fg outline-none transition-colors placeholder:text-theme-muted/70 focus:border-primary/30 focus:bg-theme-hover/60"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-72 overflow-y-auto scrollbar-none p-1">
           <button
             type="button"
             onClick={() => { setSelectedModel('auto'); setShowModelPicker(false); }}
@@ -845,7 +892,7 @@ export function CloudVmChat({
             {selectedModel === 'auto' && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
           </button>
 
-          {models.map((m) => (
+          {filteredModels.map((m) => (
             <button
               type="button"
               key={m.id}
@@ -869,6 +916,16 @@ export function CloudVmChat({
               {selectedModel === m.id && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
             </button>
           ))}
+
+          {filteredModels.length === 0 && (
+            <div className="px-3 py-8 text-center">
+              <div className="text-xs font-medium text-theme-fg">No models found</div>
+              <div className="mt-1 text-[10px] text-theme-muted">
+                Try a provider, tier, or model ID.
+              </div>
+            </div>
+          )}
+          </div>
         </div>
       )}
     </div>
@@ -883,7 +940,8 @@ export function CloudVmChat({
         onKeyDown={handleKeyDown}
         placeholder="Ask, run, or build anything..."
         rows={1}
-        className="w-full resize-none outline-none bg-transparent text-[13px] text-theme-fg placeholder:text-theme-muted/50 px-4 pt-3 pb-1 min-h-[38px] max-h-[120px] overflow-y-auto disabled:opacity-60"
+        className="w-full resize-none outline-none bg-transparent text-[13px] text-theme-fg placeholder:text-theme-muted/50 px-4 pt-3 pb-1 min-h-[38px] max-h-[120px] overflow-y-auto scrollbar-none disabled:opacity-60"
+        style={{ scrollbarWidth: 'none' }}
         disabled={loading}
       />
       <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
@@ -934,8 +992,8 @@ export function CloudVmChat({
         onKeyDown={handleKeyDown}
         placeholder="Type a message to the VM agent..."
         rows={1}
-        className="w-full resize-none outline-none max-h-32 bg-theme-hover/40 rounded-xl px-4 py-2.5 text-sm text-theme-fg placeholder-theme-muted/50 overflow-y-auto disabled:opacity-60"
-        style={{ minHeight: '40px' }}
+        className="w-full resize-none outline-none max-h-32 bg-theme-hover/40 rounded-xl px-4 py-2.5 text-sm text-theme-fg placeholder-theme-muted/50 overflow-y-auto scrollbar-none disabled:opacity-60"
+        style={{ minHeight: '40px', scrollbarWidth: 'none' }}
         disabled={loading}
       />
       <div className="mt-3 flex items-center justify-between gap-3">
@@ -944,7 +1002,7 @@ export function CloudVmChat({
           {historyButton}
           <div className="dashboard-pill flex items-center gap-2 px-2.5 py-1.5 text-xs text-theme-muted">
             <span className={clsx('h-2 w-2 rounded-full', loading ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
-            {loading ? (statusMessage || (streamText ? 'Streaming' : 'Thinking')) : 'Agent ready'}
+            {loading ? (streamText ? 'Streaming' : 'Thinking') : 'Agent ready'}
           </div>
           {messages.length > 0 && (
             <button type="button" onClick={handleClear} className="dashboard-refresh-button inline-flex items-center gap-2 px-2.5 py-1.5 text-xs !rounded-xl">
@@ -1030,29 +1088,36 @@ export function CloudVmChat({
             <div className="px-6 py-5">
               <div className="mx-auto flex max-w-[760px] flex-col gap-4">
                 {messages.map((msg) => (
-                  <PortableMessageBubble
+                  <MessageBubble
                     key={msg.id}
-                    message={msg}
-                    interactiveToolRenderer={renderInteractiveTool}
+                    role={msg.role === 'assistant' ? 'assistant' : 'user'}
+                    text={msg.text}
+                    reasoning={msg.reasoning}
+                    reasoningDuration={msg.reasoningDuration}
+                    toolCalls={msg.toolCalls as any}
+                    streamChunks={msg.streamChunks as any}
+                    attachments={msg.attachments}
+                    onSubmitToolOutput={submitVmToolResult}
+                    onGenUIResponse={handleGenUIResponse}
                   />
                 ))}
 
                 {loading && (
-                  <PortableMessageBubble
-                    message={{
-                      id: 'streaming-message-workspace',
-                      role: 'assistant',
-                      text: streamText,
-                      reasoning: streamReasoning || undefined,
-                      toolCalls: streamTools.length > 0 ? streamTools : undefined,
-                      streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                    }}
+                  <MessageBubble
+                    role="assistant"
+                    text={streamText}
+                    reasoning={streamReasoning || undefined}
+                    toolCalls={streamTools as any}
+                    streamChunks={streamChunks as any}
                     isStreaming
-                    startedAt={streamStartRef.current}
-                    statusMessage={statusMessage || 'Planning next moves'}
-                    interactiveToolRenderer={renderInteractiveTool}
+                    onSubmitToolOutput={submitVmToolResult}
+                    onGenUIResponse={handleGenUIResponse}
                   />
                 )}
+
+                {askUserPrompts.filter((p) => p.status === 'pending').map((p) => (
+                  <AskUserPrompt key={p.id} prompt={{ id: p.id, args: p.args }} onRespond={handleAskUserRespond} />
+                ))}
               </div>
             </div>
           )}
@@ -1095,29 +1160,36 @@ export function CloudVmChat({
           )}
 
           {messages.map((msg) => (
-            <PortableMessageBubble
+            <MessageBubble
               key={msg.id}
-              message={msg}
-              interactiveToolRenderer={renderInteractiveTool}
+              role={msg.role === 'assistant' ? 'assistant' : 'user'}
+              text={msg.text}
+              reasoning={msg.reasoning}
+              reasoningDuration={msg.reasoningDuration}
+              toolCalls={msg.toolCalls as any}
+              streamChunks={msg.streamChunks as any}
+              attachments={msg.attachments}
+              onSubmitToolOutput={submitVmToolResult}
+              onGenUIResponse={handleGenUIResponse}
             />
           ))}
 
           {loading && (
-            <PortableMessageBubble
-              message={{
-                id: 'streaming-message-default',
-                role: 'assistant',
-                text: streamText,
-                reasoning: streamReasoning || undefined,
-                toolCalls: streamTools.length > 0 ? streamTools : undefined,
-                streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-              }}
+            <MessageBubble
+              role="assistant"
+              text={streamText}
+              reasoning={streamReasoning || undefined}
+              toolCalls={streamTools as any}
+              streamChunks={streamChunks as any}
               isStreaming
-              startedAt={streamStartRef.current}
-              statusMessage={statusMessage || 'Planning next moves'}
-              interactiveToolRenderer={renderInteractiveTool}
+              onSubmitToolOutput={submitVmToolResult}
+              onGenUIResponse={handleGenUIResponse}
             />
           )}
+
+          {askUserPrompts.filter((p) => p.status === 'pending').map((p) => (
+            <AskUserPrompt key={p.id} prompt={{ id: p.id, args: p.args }} onRespond={handleAskUserRespond} />
+          ))}
         </div>
       </div>
 

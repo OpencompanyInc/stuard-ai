@@ -456,7 +456,6 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
 
   try {
     // Build memory context
-    writeLine({ type: 'status', message: 'Reviewing context...' });
     const memoryContext = await buildVMMemoryContext(
       args.memoryQuery || message,
       args.queryEmbedding,
@@ -473,8 +472,6 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
       : undefined;
 
-    writeLine({ type: 'status', message: 'Thinking...' });
-
     // Stream chat to Python agent — onEvent fires for every WS message
     const result = await sendToAgentStreaming(
       {
@@ -490,11 +487,42 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       (event) => {
         const t = String(event.type || '').toLowerCase();
         if (t === 'progress' || t === 'delta') {
+          // Python agent wraps tool events inside progress: {type:'progress', event:'tool_event', data:{...}}.
+          // Unwrap known sub-events so the UI receives them as top-level typed events.
+          const subEvent = String(event.event || '').toLowerCase();
+          const subData = event.data || {};
+          if (subEvent === 'tool_event') {
+            writeLine({
+              type: 'tool_event',
+              tool: subData.tool,
+              status: subData.status,
+              data: subData,
+            });
+            return;
+          }
+          if (subEvent === 'tool_request') {
+            writeLine({
+              type: 'tool_request',
+              id: subData.id,
+              tool: subData.tool,
+              args: subData.args,
+            });
+            return;
+          }
+          if (subEvent === 'subagent_event') {
+            writeLine({
+              type: 'subagent_event',
+              subagentId: subData.subagentId,
+              event: subData.event,
+              data: subData.data ?? subData,
+            });
+            return;
+          }
           writeLine({ type: 'progress', event: event.event || 'delta', data: event.data || { text: event.text } });
         } else if (t === 'routing') {
           writeLine({ type: 'routing', model: event.model, data: event.data });
         } else if (t === 'tool_event') {
-          writeLine({ type: 'tool_event', tool: event.tool, status: event.status, data: event.data });
+          writeLine({ type: 'tool_event', tool: event.tool, status: event.status, data: event.data ?? event });
         } else if (t === 'tool_request') {
           writeLine({ type: 'tool_request', id: event.id, tool: event.tool, args: event.args });
         } else if (t === 'subagent_event') {
@@ -789,26 +817,56 @@ function handleMemoryPreferencesSet(args: any): any {
 }
 
 async function handleMemoryConversationsList(args: any): Promise<any> {
-  // Try VM memory store first
-  const vmConvs = getVMMemoryStore().listConversations(args.limit || 50);
-  if (vmConvs.length > 0) {
-    return { ok: true, conversations: vmConvs };
-  }
+  const limit = Number(args.limit) || 50;
 
-  // Fallback: query Python agent's SQLite DB for real conversation data
+  // Always query both sources: VM in-memory (current boot) and Python SQLite (persisted history)
+  const vmConvs = getVMMemoryStore().listConversations(limit) || [];
+
+  let sqliteConvs: any[] = [];
   try {
     const result = await sendToAgent({
       type: 'tool_exec',
       tool: 'conversation_list',
-      args: { limit: Number(args.limit) || 50, status: 'active' },
+      args: { limit, status: 'active' },
     }, 10_000);
-    const convs = result?.result?.conversations || result?.conversations || [];
-    if (Array.isArray(convs) && convs.length > 0) {
-      return { ok: true, conversations: convs };
-    }
+    const raw = result?.result?.conversations || result?.conversations || [];
+    if (Array.isArray(raw)) sqliteConvs = raw;
   } catch { /* silent */ }
 
-  return { ok: true, conversations: [] };
+  // Merge by id. Python SQLite is canonical (has persisted counts/titles);
+  // VM in-memory may hold the freshest title/count for the active conversation.
+  const byId = new Map<string, any>();
+  for (const c of sqliteConvs) if (c?.id) byId.set(String(c.id), { ...c });
+  for (const c of vmConvs) {
+    if (!c?.id) continue;
+    const id = String(c.id);
+    const existing = byId.get(id);
+    if (!existing) { byId.set(id, { ...c }); continue; }
+    const merged = { ...existing };
+    // Prefer non-empty, non-"Untitled" title
+    const vmTitle = typeof c.title === 'string' ? c.title.trim() : '';
+    const exTitle = typeof existing.title === 'string' ? existing.title.trim() : '';
+    if (vmTitle && vmTitle.toLowerCase() !== 'untitled' && (!exTitle || exTitle.toLowerCase() === 'untitled')) {
+      merged.title = c.title;
+    }
+    // Prefer higher message_count (freshest)
+    const vmCount = Number(c.message_count || 0);
+    const exCount = Number(existing.message_count || 0);
+    if (vmCount > exCount) merged.message_count = vmCount;
+    // Prefer newer updated_at
+    const vmUpd = c.updated_at ? new Date(c.updated_at).getTime() : 0;
+    const exUpd = existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
+    if (vmUpd > exUpd) merged.updated_at = c.updated_at;
+    byId.set(id, merged);
+  }
+
+  const merged = Array.from(byId.values()).sort((a, b) => {
+    const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return tb - ta;
+  }).slice(0, limit);
+
+  return { ok: true, conversations: merged };
 }
 
 function handleMemoryConversationsAdd(args: any): any {

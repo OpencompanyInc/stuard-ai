@@ -87,23 +87,31 @@ function _connectAgentWs(connectTimeoutMs = 10_000): Promise<WebSocket> {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(String(data));
-        const id = msg.id || msg.requestId;
-        if (!id) return;
+        // Stream listeners are keyed by the chat request id, which python echoes as
+        // `requestId` on every message it forwards. For messages carrying their own
+        // object id (e.g. tool_request has id=<toolCallId>, requestId=<chatId>), we
+        // must prefer requestId for stream dispatch, and use id only for resolving
+        // direct sendToAgent promises.
+        const streamKey = msg.requestId || msg.id;
+        const pendingKey = msg.id || msg.requestId;
+        if (!streamKey && !pendingKey) return;
 
         // Forward to stream listener if registered (for streaming chat)
-        const streamCb = _streamListeners.get(id);
-        if (streamCb) {
-          try { streamCb(msg); } catch {}
+        if (streamKey) {
+          const streamCb = _streamListeners.get(streamKey);
+          if (streamCb) {
+            try { streamCb(msg); } catch {}
+          }
         }
 
-        if (!_agentPendingRequests.has(id)) return;
+        if (!pendingKey || !_agentPendingRequests.has(pendingKey)) return;
         // Only resolve on terminal messages — skip progress/delta/routing
         // events which arrive before the actual result.
         const t = String(msg.type || '').toLowerCase();
-        if (t === 'progress' || t === 'delta' || t === 'routing' || t === 'tool_event') return;
-        const pending = _agentPendingRequests.get(id)!;
+        if (t === 'progress' || t === 'delta' || t === 'routing' || t === 'tool_event' || t === 'tool_request') return;
+        const pending = _agentPendingRequests.get(pendingKey)!;
         clearTimeout(pending.timer);
-        _agentPendingRequests.delete(id);
+        _agentPendingRequests.delete(pendingKey);
         pending.resolve(msg);
       } catch { /* non-JSON message, ignore */ }
     });
