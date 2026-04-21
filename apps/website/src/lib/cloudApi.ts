@@ -5,8 +5,7 @@
  */
 
 import { supabase } from './supabaseClient';
-
-const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
+import { buildWebsiteCloudProxyPath } from './cloudApiBase';
 
 export async function getCloudAccessToken(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
@@ -48,7 +47,7 @@ async function apiFetch<T = any>(
 
   try {
     const { timeoutMs: _, ...fetchOpts } = opts ?? {} as any;
-    const res = await fetch(`${CLOUD_API_URL}${path}`, {
+    const res = await fetch(buildWebsiteCloudProxyPath(path), {
       ...fetchOpts,
       headers: await buildHeaders(fetchOpts?.headers),
       signal,
@@ -204,7 +203,7 @@ export async function openVMAgentChatStream(options: {
 }) {
   const headers = await buildHeaders();
 
-  return fetch(`${CLOUD_API_URL}/v1/vm/agent/chat`, {
+  return fetch(buildWebsiteCloudProxyPath('/v1/vm/agent/chat'), {
     method: 'POST',
     headers,
     body: JSON.stringify({

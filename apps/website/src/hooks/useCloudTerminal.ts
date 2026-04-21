@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { getCloudAccessToken } from '@/lib/cloudApi';
+import { resolveBrowserCloudApiOrigin } from '@/lib/cloudApiBase';
 
-const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 const TERMINAL_HEARTBEAT_MS = 20_000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_MS = 1_000;
@@ -43,7 +43,7 @@ export function useCloudTerminal() {
     setConnected(false);
     setSessionId(null);
 
-    const wsUrl = CLOUD_API_URL.replace(/^http/, 'ws') + `/terminal?token=${encodeURIComponent(token)}`;
+    const wsUrl = resolveBrowserCloudApiOrigin().replace(/^http/, 'ws') + `/terminal?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     let heartbeatTimer: number | null = null;
