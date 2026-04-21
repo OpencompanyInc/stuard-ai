@@ -166,12 +166,11 @@ describe('Capability Packs', () => {
   it('getAllCapabilityPacks returns all static packs', async () => {
     const { getAllCapabilityPacks } = await import('./capability-packs');
     const packs = getAllCapabilityPacks();
-    expect(packs.length).toBe(4);
+    expect(packs.length).toBe(3);
     const kinds = packs.map(p => p.kind);
     expect(kinds).toContain('browser');
     expect(kinds).toContain('file_ops');
     expect(kinds).toContain('workflow');
-    expect(kinds).toContain('media');
   });
 
   it('INTEGRATION_PREFIX_MAP covers expected groups', async () => {
@@ -190,7 +189,7 @@ describe('Capability Packs', () => {
   });
 
   it('KNOWN_SUBAGENT_NAMES includes static and integration names', async () => {
-    const { KNOWN_SUBAGENT_NAMES } = await import('./capability-packs');
+    const { KNOWN_SUBAGENT_NAMES, INTEGRATION_PREFIX_MAP } = await import('./capability-packs');
     expect(KNOWN_SUBAGENT_NAMES).toContain('browser');
     expect(KNOWN_SUBAGENT_NAMES).toContain('file_ops');
     expect(KNOWN_SUBAGENT_NAMES).toContain('workflow');
@@ -202,8 +201,7 @@ describe('Capability Packs', () => {
     expect(KNOWN_SUBAGENT_NAMES).toContain('telnyx');
     expect(KNOWN_SUBAGENT_NAMES).toContain('reddit');
     expect(KNOWN_SUBAGENT_NAMES).toContain('discord');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('media');
-    expect(KNOWN_SUBAGENT_NAMES.length).toBe(12);
+    expect(KNOWN_SUBAGENT_NAMES.length).toBe(3 + Object.keys(INTEGRATION_PREFIX_MAP).length);
   });
 });
 
