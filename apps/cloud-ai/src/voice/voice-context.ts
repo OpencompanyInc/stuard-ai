@@ -2,22 +2,16 @@
  * Voice Context Builder
  *
  * Builds user-aware system prompts and tool definitions for AI voice calls.
- * Loads user context from Supabase (recent conversations, profile) and
- * defines the tools the voice AI can call mid-conversation.
- *
- * Design: Keep the pre-call work compact, but preload a short runtime-memory
- * summary from the user's configured desktop/vm route when available. The
- * live model then gets a voice-safe orchestrator-style tool surface for
+ * Call-time memory (knowledge facts + recent conversation context) is loaded
+ * exclusively through the desktop/VM bridge — we intentionally do NOT fall
+ * back to Supabase so voice replies reflect the authoritative device state.
+ * The live model then gets a voice-safe orchestrator-style tool surface for
  * on-demand actions during the call.
  */
 
 import type { WebSocket } from 'ws';
 import type { VoiceToolDefinition } from './types';
-import {
-  getConversationMessages,
-  getSyncPreferences,
-  getSupabaseService,
-} from '../supabase';
+import { getSupabaseService } from '../supabase';
 import {
   getIdentityLens,
   getDirectiveLens,
@@ -163,12 +157,11 @@ export interface VoiceContext {
 }
 
 /**
- * Load knowledge facts through the desktop bridge (if connected).
- * Knowledge graph lives in local SQLite on the user's machine — the desktop
- * client must be online for these to be available. Degrades gracefully.
- *
- * Prefers an explicit bridgeWs (e.g. the voice-session bridge) when provided,
- * so we don't depend on the regular chat WS being connected at call time.
+ * Load knowledge facts through the desktop bridge (or VM relay when available).
+ * Knowledge graph is authoritative on the user's device (desktop SQLite) — we
+ * NEVER fall back to Supabase here because cloud-synced knowledge is a lossy
+ * mirror and the user explicitly wants call-time context to come from the
+ * device that owns the conversation state.
  */
 async function loadKnowledgeFacts(userId: string, bridgeWs?: WebSocket): Promise<{
   identity: Fact[];
@@ -177,51 +170,26 @@ async function loadKnowledgeFacts(userId: string, bridgeWs?: WebSocket): Promise
 }> {
   const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
 
-  // Try the provided bridge first (voice session bridge), then regular desktop WS.
   const desktopWs = bridgeWs || getDesktopWs(userId);
-  if (desktopWs) {
-    try {
-      const result = await withClientBridge(desktopWs, async () => {
-        const [identity, directives, bio] = await Promise.all([
-          getIdentityLens().catch(() => [] as Fact[]),
-          getDirectiveLens().catch(() => [] as Fact[]),
-          getBioLens(10).catch(() => [] as Fact[]),
-        ]);
-        return { identity, directives, bio };
-      }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
-      return result;
-    } catch (e: any) {
-      console.warn('[voice-context] Desktop bridge failed, trying Supabase fallback:', e?.message);
-    }
+  if (!desktopWs) {
+    console.log('[voice-context] No desktop/VM bridge for knowledge facts — proceeding without identity/directive/bio context', {
+      userId: userId.slice(0, 8),
+    });
+    return empty;
   }
 
-  const syncPrefs = await getSyncPreferences(userId);
-  if (!syncPrefs.sync_memories) return empty;
-
-  // Cloud-sync fallback: load knowledge facts directly from Supabase
-  const supabase = getSupabaseService();
-  if (!supabase) return empty;
-
   try {
-    const [identityRes, directiveRes, bioRes] = await Promise.all([
-      supabase.from('knowledge_facts')
-        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
-        .eq('owner', userId).eq('category', 'identity').eq('validity', true).limit(20),
-      supabase.from('knowledge_facts')
-        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
-        .eq('owner', userId).eq('category', 'directive').eq('validity', true).limit(10),
-      supabase.from('knowledge_facts')
-        .select('id, entity_id, category, subtype, attribute_key, text, created_at, validity, source')
-        .eq('owner', userId).eq('category', 'bio').eq('validity', true).limit(10),
-    ]);
-
-    return {
-      identity: (identityRes.data || []) as Fact[],
-      directives: (directiveRes.data || []) as Fact[],
-      bio: (bioRes.data || []) as Fact[],
-    };
+    const result = await withClientBridge(desktopWs, async () => {
+      const [identity, directives, bio] = await Promise.all([
+        getIdentityLens().catch(() => [] as Fact[]),
+        getDirectiveLens().catch(() => [] as Fact[]),
+        getBioLens(10).catch(() => [] as Fact[]),
+      ]);
+      return { identity, directives, bio };
+    }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
+    return result;
   } catch (e: any) {
-    console.warn('[voice-context] Supabase knowledge fallback failed:', e?.message);
+    console.warn('[voice-context] Desktop bridge knowledge lookup failed:', e?.message);
     return empty;
   }
 }
@@ -336,51 +304,14 @@ async function loadUserName(userId: string): Promise<string | undefined> {
 }
 
 /**
- * Load recent conversation context from local SQLite when the desktop bridge
- * is available, otherwise from Supabase when conversation sync is enabled.
- * Returns a compact summary of recent interactions.
+ * Load recent conversation context from the device's local SQLite via the
+ * desktop/VM bridge. We do NOT fall back to Supabase — cloud-synced
+ * conversations are a lossy mirror and call-time recent context should
+ * always come from the device that owns the authoritative store.
  */
 async function loadRecentContext(userId: string, bridgeWs?: WebSocket): Promise<string> {
   try {
-    const desktopRecent = await loadRecentContextFromDesktop(userId, bridgeWs);
-    if (desktopRecent) return desktopRecent;
-
-    const syncPrefs = await getSyncPreferences(userId);
-    if (!syncPrefs.sync_conversations) return '';
-
-    const supabase = getSupabaseService();
-    if (!supabase) return '';
-
-    // Get the 3 most recent conversations with their last messages
-    const { data: convs } = await supabase
-      .from('conversations')
-      .select('id, title, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(3);
-
-    if (!convs || convs.length === 0) return '';
-
-    const summaries: string[] = [];
-    for (const conv of convs) {
-      const title = conv.title || 'Untitled conversation';
-      const date = new Date(conv.created_at).toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric',
-      });
-
-      // Get last 2 messages from each conversation
-      const msgs = await getConversationMessages(userId, conv.id, 2);
-      if (msgs.length > 0) {
-        const preview = msgs.map(m =>
-          `${m.role === 'user' ? 'User' : 'You'}: ${String(m.content).slice(0, 80)}${m.content.length > 80 ? '...' : ''}`
-        ).join(' | ');
-        summaries.push(`[${date}] ${title}: ${preview}`);
-      } else {
-        summaries.push(`[${date}] ${title}`);
-      }
-    }
-
-    return summaries.join('\n');
+    return await loadRecentContextFromDesktop(userId, bridgeWs);
   } catch (e: any) {
     console.warn('[voice-context] Failed to load recent context:', e?.message);
     return '';

@@ -1029,8 +1029,14 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               }
             }
 
-            // ── Cloud serverless handler (fallback for all targets) ──────
-            if (!handled) {
+            // ── Cloud serverless handler ─────────────────────────────────
+            // Only runs when the user explicitly routed to cloud, or as a
+            // fallback from a VM turn. Desktop target must NEVER fall
+            // through here — it's supposed to land in the Supabase
+            // sms_inbox_queue so the desktop claims it via Realtime and
+            // runs the agent locally with the full desktop bridge
+            // (knowledge graph, tools, etc.).
+            if (!handled && (effectiveTarget === 'cloud' || effectiveTarget === 'vm')) {
               try {
                 const cloudResult = await runServerlessAgent({
                   userId,
@@ -1825,7 +1831,19 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
 
 /**
  * Verify Telnyx Call Control Application configuration on startup.
- * Ensures the webhook URL points to the correct Cloud Run URL.
+ *
+ * We ensure three things so inbound calls actually reach this server:
+ *   1. The Call Control App's webhook_event_url + webhook_api_version are
+ *      correct (v2 — which is what processCallWebhook parses).
+ *   2. The phone number is attached to the Call Control App's connection.
+ *   3. The phone number has its own voice webhook URL set to the CCA (as
+ *      a belt-and-braces override in case the app-level setting is ignored
+ *      for some toll-free carriers).
+ *
+ * If inbound webhooks still don't fire after this, the problem is almost
+ * always upstream in Telnyx: toll-free voice termination not enabled for
+ * the number, or the carrier blocking the call before it reaches Telnyx's
+ * network.
  */
 export async function verifyTelnyxConfig(): Promise<void> {
   if (!TELNYX_API_KEY || !CLOUD_PUBLIC_URL) {
@@ -1834,9 +1852,10 @@ export async function verifyTelnyxConfig(): Promise<void> {
   }
 
   const expectedWebhookUrl = `${CLOUD_PUBLIC_URL}/integrations/telnyx/call-webhook`;
+  const expectedApiVersion = '2';
 
   try {
-    // List call control applications
+    // ── 1. Call Control Applications ─────────────────────────────────────
     const res = await fetch(`${TELNYX_API}/call_control_applications`, {
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
     });
@@ -1848,49 +1867,117 @@ export async function verifyTelnyxConfig(): Promise<void> {
     const apps = data?.data || [];
 
     for (const app of apps) {
-      if (app.webhook_event_url !== expectedWebhookUrl) {
-        console.log('[telnyx] Updating Call Control App webhook URL', {
+      const urlMismatch = app.webhook_event_url !== expectedWebhookUrl ||
+        app.webhook_event_failover_url !== expectedWebhookUrl;
+      const versionMismatch = String(app.webhook_api_version || '') !== expectedApiVersion;
+
+      if (urlMismatch || versionMismatch) {
+        console.log('[telnyx] Updating Call Control App config', {
           appId: app.id,
           appName: app.application_name,
           oldUrl: app.webhook_event_url,
+          oldApiVersion: app.webhook_api_version,
           newUrl: expectedWebhookUrl,
+          newApiVersion: expectedApiVersion,
         });
-        await fetch(`${TELNYX_API}/call_control_applications/${app.id}`, {
+        const patchRes = await fetch(`${TELNYX_API}/call_control_applications/${app.id}`, {
           method: 'PATCH',
           headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             webhook_event_url: expectedWebhookUrl,
             webhook_event_failover_url: expectedWebhookUrl,
+            webhook_api_version: expectedApiVersion,
           }),
         });
+        if (!patchRes.ok) {
+          const errBody = await patchRes.text().catch(() => '');
+          console.warn('[telnyx] Failed to PATCH Call Control App', {
+            appId: app.id, status: patchRes.status, body: errBody.slice(0, 300),
+          });
+        }
       } else {
-        console.log('[telnyx] Call Control App webhook URL OK', {
+        console.log('[telnyx] Call Control App config OK', {
           appId: app.id,
           appName: app.application_name,
           webhookUrl: app.webhook_event_url,
+          apiVersion: app.webhook_api_version,
         });
       }
     }
 
-    // Also verify phone number voice connection
+    // ── 2. Phone number connection + voice settings ──────────────────────
     const phoneRes = await fetch(`${TELNYX_API}/phone_numbers?filter[phone_number]=${encodeURIComponent(TELNYX_FROM_NUMBER)}`, {
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
     });
-    if (phoneRes.ok) {
-      const phoneData = await phoneRes.json() as any;
-      const phone = phoneData?.data?.[0];
-      if (phone) {
-        console.log('[telnyx] Phone number config', {
+    if (!phoneRes.ok) return;
+
+    const phoneData = await phoneRes.json() as any;
+    const phone = phoneData?.data?.[0];
+    if (!phone) {
+      console.warn('[telnyx] ⚠ Phone number not found in account', { number: TELNYX_FROM_NUMBER });
+      return;
+    }
+
+    console.log('[telnyx] Phone number config', {
+      number: phone.phone_number,
+      status: phone.status,
+      connectionId: phone.connection_id,
+      connectionName: phone.connection_name,
+      type: phone.phone_number_type,
+    });
+
+    // Expected connection = the first Call Control App (we own one app).
+    const expectedConnectionId = apps[0]?.id;
+    if (expectedConnectionId && phone.connection_id !== expectedConnectionId) {
+      console.warn('[telnyx] ⚠ Phone number is attached to a different connection than our Call Control App — patching', {
+        number: phone.phone_number,
+        currentConnectionId: phone.connection_id,
+        expectedConnectionId,
+      });
+      await fetch(`${TELNYX_API}/phone_numbers/${phone.id}`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: expectedConnectionId }),
+      }).catch(() => {});
+    }
+    if (!phone.connection_id && !expectedConnectionId) {
+      console.warn('[telnyx] ⚠ Phone number has no voice connection! Inbound calls will not work.');
+    }
+
+    // Fetch the per-number voice settings and log them so we can tell
+    // whether toll-free voice is enabled at the carrier level.
+    try {
+      const vRes = await fetch(`${TELNYX_API}/phone_numbers/${phone.id}/voice`, {
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      });
+      if (vRes.ok) {
+        const vData = await vRes.json() as any;
+        const voice = vData?.data || {};
+        console.log('[telnyx] Phone number voice settings', {
           number: phone.phone_number,
-          status: phone.status,
-          connectionId: phone.connection_id,
-          connectionName: phone.connection_name,
-          type: phone.phone_number_type,
+          connection_id: voice.connection_id,
+          usage_payment_method: voice.usage_payment_method,
+          call_forwarding_enabled: voice.call_forwarding?.call_forwarding_enabled,
+          cnam_listing_enabled: voice.cnam_listing?.cnam_listing_enabled,
+          tech_prefix_enabled: voice.tech_prefix_enabled,
         });
-        if (!phone.connection_id) {
-          console.warn('[telnyx] ⚠ Phone number has no voice connection! Inbound calls will not work.');
+        // If call forwarding is on, inbound webhooks go to the forward target
+        // rather than our CCA — force it off.
+        if (voice.call_forwarding?.call_forwarding_enabled) {
+          console.warn('[telnyx] ⚠ Phone number has call forwarding enabled — inbound calls are being forwarded instead of webhooked. Disabling.');
+          await fetch(`${TELNYX_API}/phone_numbers/${phone.id}/voice`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              call_forwarding: { call_forwarding_enabled: false },
+            }),
+          }).catch(() => {});
         }
+      } else {
+        console.warn('[telnyx] Could not fetch phone number voice settings', { status: vRes.status });
       }
+    } catch (e: any) {
+      console.warn('[telnyx] Voice settings lookup error:', e?.message);
     }
   } catch (e: any) {
     console.warn('[telnyx] Config verification error:', e?.message);
