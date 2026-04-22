@@ -21,25 +21,38 @@ const MAX_VOICE_MEMORY_SUMMARY_CHARS = 900;
 const MAX_VOICE_RESULT_JSON_CHARS = 2_000;
 
 // Per-tool execution timeouts. Voice calls are real-time — a tool that hangs
-// blocks the model from responding, leaving the caller in silence. When a
-// timeout fires we return a graceful error payload so the model can at least
-// acknowledge the caller instead of the Realtime session locking up forever.
-// Delegate/reply_to_subagent get the longest window because subagents can
-// legitimately run for several minutes.
+// blocks the model from responding, leaving the caller in silence. Keep
+// timeouts aggressive so the AI can speak again quickly and either follow
+// up, text the caller, or retry, instead of the caller giving up and
+// hanging up while the model is still waiting.
 const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
-  delegate: 8 * 60_000,
-  reply_to_subagent: 8 * 60_000,
-  execute_tool: 2 * 60_000,
-  web_search: 45_000,
-  search_memory: 30_000,
-  search_tools: 30_000,
-  get_tool_schema: 30_000,
-  send_sms: 20_000,
+  delegate: 90_000,
+  reply_to_subagent: 90_000,
+  execute_tool: 45_000,
+  web_search: 30_000,
+  search_memory: 20_000,
+  search_tools: 15_000,
+  get_tool_schema: 15_000,
+  send_sms: 15_000,
 };
-const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 60_000;
+const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 30_000;
 
 function voiceToolTimeoutFor(name: string): number {
   return VOICE_TOOL_TIMEOUTS_MS[name] ?? DEFAULT_VOICE_TOOL_TIMEOUT_MS;
+}
+
+function voiceFriendlyTimeoutMessage(toolName: string, seconds: number): string {
+  switch (toolName) {
+    case 'delegate':
+    case 'reply_to_subagent':
+      return `The background task is still running after ${seconds} seconds. Tell the caller you're still working on it, keep the call going with small talk or a follow-up question, and offer to text them the result with send_sms once it's ready.`;
+    case 'web_search':
+      return `The web search took longer than ${seconds} seconds and was cancelled. Tell the caller search is slow right now and either try a simpler query, offer to text them results later, or move on.`;
+    case 'send_sms':
+      return `The text message is still being delivered after ${seconds} seconds. Let the caller know the message is on its way and continue the call.`;
+    default:
+      return `Tool '${toolName}' took longer than ${seconds} seconds and was cancelled so the call can continue. Acknowledge the caller verbally and decide whether to try again, skip it, or text a follow-up with send_sms.`;
+  }
 }
 
 async function runWithVoiceTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T | { ok: false; error: string; timedOut: true }> {
@@ -50,7 +63,7 @@ async function runWithVoiceTimeout<T>(toolName: string, fn: () => Promise<T>): P
       resolve({
         ok: false,
         timedOut: true,
-        error: `Tool '${toolName}' exceeded ${Math.round(ms / 1000)}s and was released so the call can continue. Let the caller know you're still working on it and offer to follow up.`,
+        error: voiceFriendlyTimeoutMessage(toolName, Math.round(ms / 1000)),
       });
     }, ms);
   });

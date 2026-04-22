@@ -119,9 +119,15 @@ export async function handleVMAgentRoutes(
       const secret = await resolveVMSecret(user.userId);
       const token = mintVMToken(secret, user.userId, 'cloud-ai-chat');
 
-      // Proxy to VM agent's streaming endpoint — returns NDJSON
+      // Proxy to VM agent's streaming endpoint — returns NDJSON.
+      // We DO NOT wrap the entire stream in a hard timeout; SSE responses can
+      // legitimately last several minutes for tool-heavy turns. Instead we
+      // abort the upstream fetch when the client disconnects (handled below).
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 190_000); // slightly longer than VM's 180s
+      // If the client closes the SSE early (navigated away, refreshed, etc.)
+      // propagate the cancellation upstream so the VM can stop work.
+      const onClientClose = () => { try { controller.abort(); } catch {} };
+      try { req.on('close', onClientClose); } catch {}
 
       const vmResp = await fetch(`${base}/agent/chat/stream`, {
         method: 'POST',
@@ -135,12 +141,11 @@ export async function handleVMAgentRoutes(
           model: body.model || 'balanced',
           modelId: body.modelId,
           context: body.context,
+          attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
           memoryQuery: body.memoryQuery,
         }),
         signal: controller.signal,
       });
-
-      clearTimeout(timer);
 
       if (!vmResp.ok || !vmResp.body) {
         const errBody = await vmResp.text().catch(() => '');
@@ -155,11 +160,18 @@ export async function handleVMAgentRoutes(
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
         'X-Content-Type-Options': 'nosniff',
+        'X-Accel-Buffering': 'no',
       });
 
       const reader = vmResp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+
+      // Heartbeat keeps proxies (Vercel, Cloudflare, NGINX) from killing an
+      // idle SSE connection during long tool calls.
+      const keepAlive = setInterval(() => {
+        try { if (!res.writableEnded) res.write(`: ping ${Date.now()}\n\n`); } catch {}
+      }, 15_000);
 
       try {
         while (true) {
@@ -186,7 +198,9 @@ export async function handleVMAgentRoutes(
           try { res.write(`data: ${JSON.stringify({ type: 'error', error: 'stream_interrupted' })}\n\n`); } catch {}
         }
       } finally {
-        res.end();
+        try { clearInterval(keepAlive); } catch {}
+        try { req.off('close', onClientClose); } catch {}
+        try { res.end(); } catch {}
       }
     } catch (e: any) {
       if (!res.headersSent) {

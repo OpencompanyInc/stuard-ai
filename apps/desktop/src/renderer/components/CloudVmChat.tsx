@@ -456,6 +456,29 @@ export function CloudVmChat({
       setStreamChunks([...accChunks]);
     };
 
+    // ask_user dedup: only one pending prompt at a time. If the server sends
+    // a real id, match by id; otherwise treat any pending prompt as the match
+    // so tool_request + tool_event for the same call don't render twice.
+    const upsertAskUserPrompt = (id: string, args: any) => {
+      setAskUserPrompts((prev) => {
+        const byId = id ? prev.find((p) => p.id === id) : undefined;
+        const byPending = byId ? undefined : prev.find((p) => p.status === 'pending');
+        const match = byId || byPending;
+        if (match) {
+          return prev.map((p) => (p === match
+            ? { ...p, id: id || p.id, args }
+            : p));
+        }
+        return [...prev, { id: id || `ask-${Date.now()}`, args, status: 'pending' }];
+      });
+    };
+    const completeAskUserPrompt = (id: string) => {
+      setAskUserPrompts((prev) => prev.map((p) => {
+        const matches = id ? p.id === id : p.status === 'pending';
+        return matches ? { ...p, status: 'completed' as const } : p;
+      }));
+    };
+
     try {
       let token = '';
       try {
@@ -528,7 +551,7 @@ export function CloudVmChat({
                   const normalizedStatus = normalizeToolStatus(toolStatus);
                   const resolvedArgs = toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined);
                   pushTool({
-                    id: toolId || `${toolName}-${Date.now()}`,
+                    id: toolId,
                     tool: toolName,
                     status: normalizedStatus,
                     args: resolvedArgs,
@@ -542,10 +565,9 @@ export function CloudVmChat({
                     timestamp: Date.now(),
                   });
                   if (toolName === 'ask_user' && resolvedArgs && (normalizedStatus === 'called' || normalizedStatus === 'running')) {
-                    const askId = toolId || `ask-${Date.now()}`;
-                    setAskUserPrompts((prev) => prev.find((p) => p.id === askId) ? prev : [...prev, { id: askId, args: resolvedArgs, status: 'pending' }]);
+                    upsertAskUserPrompt(toolId, resolvedArgs);
                   } else if (toolName === 'ask_user' && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
-                    setAskUserPrompts((prev) => prev.map((p) => p.id === toolId ? { ...p, status: 'completed' as const } : p));
+                    completeAskUserPrompt(toolId);
                   }
                 }
                 break;
@@ -553,7 +575,7 @@ export function CloudVmChat({
               case 'tool_request': {
                 const toolName = event.tool || '';
                 const toolArgs = event.args || {};
-                const toolId = event.id || `tr-${Date.now()}`;
+                const toolId = event.id || '';
                 if (toolName) {
                   pushTool({
                     id: toolId,
@@ -563,7 +585,7 @@ export function CloudVmChat({
                     timestamp: Date.now(),
                   });
                   if (toolName === 'ask_user' && toolArgs) {
-                    setAskUserPrompts((prev) => prev.find((p) => p.id === toolId) ? prev : [...prev, { id: toolId, args: toolArgs, status: 'pending' }]);
+                    upsertAskUserPrompt(toolId, toolArgs);
                   }
                 }
                 break;

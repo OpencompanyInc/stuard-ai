@@ -1,12 +1,21 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { uploadFileToVm } from '@/lib/cloudApi';
 
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('stuard_access_token') || null;
+}
+
+interface PendingAttachment {
+  name: string;
+  path: string; // path on the VM (under STUARD_VM_ROOT)
+  size: number;
+  uploading?: boolean;
+  error?: string;
 }
 
 interface CloudChatProps {
@@ -18,6 +27,7 @@ type ChatMessage = {
   content: string;
   reasoning?: string;
   toolCalls?: Array<{ tool: string; status: string }>;
+  attachments?: Array<{ name: string; path: string }>;
 };
 
 function humanizeToolName(tool: string): string {
@@ -35,6 +45,8 @@ export function CloudChat({ engine }: CloudChatProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
 
   // Streaming state
   const [streamText, setStreamText] = useState('');
@@ -47,12 +59,60 @@ export function CloudChat({ engine }: CloudChatProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, streamText, streamReasoning, streamTools, statusMessage]);
 
+  const onAttachClick = () => fileInputRef.current?.click();
+
+  const onFilesPicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (picked.length === 0) return;
+
+    const placeholders: PendingAttachment[] = picked.map(f => ({
+      name: f.name,
+      path: `chat-uploads/${Date.now()}-${f.name}`,
+      size: f.size,
+      uploading: true,
+    }));
+    setPendingAttachments(prev => [...prev, ...placeholders]);
+
+    for (let i = 0; i < picked.length; i++) {
+      const file = picked[i];
+      const placeholder = placeholders[i];
+      try {
+        const res = await uploadFileToVm(placeholder.path, file);
+        setPendingAttachments(prev => prev.map(p => {
+          if (p.path !== placeholder.path) return p;
+          return res.ok
+            ? { ...p, uploading: false }
+            : { ...p, uploading: false, error: res.error || 'upload_failed' };
+        }));
+      } catch (err: any) {
+        setPendingAttachments(prev => prev.map(p =>
+          p.path === placeholder.path ? { ...p, uploading: false, error: err?.message || 'upload_failed' } : p
+        ));
+      }
+    }
+  }, []);
+
+  const removePendingAttachment = (path: string) => {
+    setPendingAttachments(prev => prev.filter(p => p.path !== path));
+  };
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
+    // Wait for any in-flight uploads before sending
+    if (pendingAttachments.some(a => a.uploading)) return;
 
+    const readyAttachments = pendingAttachments.filter(a => !a.error && !a.uploading);
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    setPendingAttachments([]);
+    setMessages(prev => [...prev, {
+      role: 'user',
+      content: text,
+      attachments: readyAttachments.length > 0
+        ? readyAttachments.map(a => ({ name: a.name, path: a.path }))
+        : undefined,
+    }]);
     setLoading(true);
     setStreamText('');
     setStreamReasoning('');
@@ -77,6 +137,12 @@ export function CloudChat({ engine }: CloudChatProps) {
         body: JSON.stringify({
           message: text,
           conversationId: currentConvId || undefined,
+          context: readyAttachments.length > 0
+            ? { paths: readyAttachments.map(a => ({ path: a.path, name: a.name, isDirectory: false })) }
+            : undefined,
+          attachments: readyAttachments.length > 0
+            ? readyAttachments.map(a => ({ type: 'file', name: a.name, path: a.path, source: 'vm' }))
+            : undefined,
         }),
       });
 
@@ -241,7 +307,7 @@ export function CloudChat({ engine }: CloudChatProps) {
       setStatusMessage('');
       inputRef.current?.focus();
     }
-  }, [input, loading, conversationId]);
+  }, [input, loading, conversationId, pendingAttachments]);
 
   if (engine.status !== 'running') {
     return (
@@ -316,6 +382,15 @@ export function CloudChat({ engine }: CloudChatProps) {
                   : 'bg-gray-100 text-gray-800 rounded-bl-md'
               }`}>
                 {msg.content}
+                {msg.role === 'user' && msg.attachments && msg.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {msg.attachments.map((att, ai) => (
+                      <span key={ai} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-blue-500/30 text-white">
+                        📎 {att.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -384,8 +459,51 @@ export function CloudChat({ engine }: CloudChatProps) {
       </div>
 
       {/* Input */}
-      <div className="border-t border-gray-100 px-4 py-3 bg-white">
+      <div className="border-t border-gray-100 px-4 py-3 bg-white space-y-2">
+        {pendingAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {pendingAttachments.map(a => (
+              <span
+                key={a.path}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs border ${
+                  a.error
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : a.uploading
+                    ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                    : 'border-gray-200 bg-gray-50 text-gray-700'
+                }`}
+              >
+                <span className="truncate max-w-[180px]">{a.name}</span>
+                {a.uploading && <span className="text-[10px]">uploading...</span>}
+                {a.error && <span className="text-[10px]">{a.error}</span>}
+                <button
+                  onClick={() => removePendingAttachment(a.path)}
+                  className="ml-1 text-gray-400 hover:text-gray-700"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
+          <button
+            onClick={onAttachClick}
+            disabled={loading}
+            title="Attach file"
+            className="px-2.5 py-2 bg-gray-100 text-gray-600 text-sm rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-40"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+            </svg>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={onFilesPicked}
+            className="hidden"
+          />
           <input
             ref={inputRef}
             type="text"
@@ -399,7 +517,7 @@ export function CloudChat({ engine }: CloudChatProps) {
           />
           <button
             onClick={send}
-            disabled={loading || !input.trim()}
+            disabled={loading || !input.trim() || pendingAttachments.some(a => a.uploading)}
             className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Send

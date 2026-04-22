@@ -19,7 +19,7 @@ function json(res: ServerResponse, status: number, body: any): void {
   res.end(payload);
 }
 
-async function readBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<any> {
+async function readBody(req: IncomingMessage, maxBytes = 64 * 1024 * 1024): Promise<any> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -101,12 +101,40 @@ export async function handleCloudFilesRoutes(req: IncomingMessage, res: ServerRe
         path: body.path,
         content: body.content || '',
         encoding: body.encoding || 'utf-8',
-      });
+      }, 120_000);
       if (!result.ok) {
         json(res, 502, { ok: false, error: result.error || 'vm_command_failed' });
         return true;
       }
       json(res, 200, { ok: true });
+    } catch (e: any) {
+      json(res, 400, { ok: false, error: e?.message || 'invalid_request' });
+    }
+    return true;
+  }
+
+  // POST /v1/cloud-engine/files/upload — binary upload (base64-encoded body)
+  // Body: { path: string, contentBase64: string }
+  // Convenience wrapper around files/write so the UI can stream user-selected
+  // files (images, PDFs, archives) into the VM workspace.
+  if (method === 'POST' && path === '/v1/cloud-engine/files/upload') {
+    try {
+      const body = await readBody(req);
+      const filePath = typeof body.path === 'string' ? body.path.trim() : '';
+      const contentBase64 = typeof body.contentBase64 === 'string' ? body.contentBase64 : '';
+      if (!filePath) { json(res, 400, { ok: false, error: 'path_required' }); return true; }
+      if (!contentBase64) { json(res, 400, { ok: false, error: 'content_required' }); return true; }
+      const result = await sendVMCommand(user.userId, 'file_write', {
+        path: filePath,
+        content: contentBase64,
+        encoding: 'base64',
+      }, 180_000);
+      if (!result.ok) {
+        json(res, 502, { ok: false, error: result.error || 'vm_command_failed' });
+        return true;
+      }
+      const sizeBytes = Math.floor((contentBase64.length * 3) / 4);
+      json(res, 200, { ok: true, path: filePath, size: sizeBytes });
     } catch (e: any) {
       json(res, 400, { ok: false, error: e?.message || 'invalid_request' });
     }

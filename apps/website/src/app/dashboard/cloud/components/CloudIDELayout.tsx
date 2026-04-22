@@ -1,19 +1,74 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { listFiles, openVMAgentChatStream } from '@/lib/cloudApi';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { clsx } from 'clsx';
+import {
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Clock,
+  Cpu,
+  FolderOpen,
+  Globe,
+  Loader2,
+  MessageCircle,
+  MessageSquare,
+  Plus,
+  PowerOff,
+  RefreshCw,
+  RotateCcw,
+  Scale,
+  Search,
+  Send,
+  Server,
+  Sparkles,
+  Square,
+  Terminal,
+  Trash2,
+  X,
+  Zap,
+} from 'lucide-react';
+import {
+  getCloudConversationMessages,
+  getCloudConversations,
+  listFiles,
+  openVMAgentChatStream,
+  sendVmToolResult,
+} from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
-import Link from 'next/link';
+import { useModelRegistry, type ModelMeta } from '@/hooks/useModelRegistry';
 import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/ui';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../../../shared/chat-ui/streamState';
 import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMerge';
 import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';
+import { AskUserPrompt } from '../../../../../../../shared/chat-ui/AskUserPrompt';
+import { ChatUiBlock } from './ChatUiBlock';
 
 interface CloudIDELayoutProps {
   engine: any;
   onRefresh: () => void;
 }
+
+type ActivityView = 'chat' | 'overview';
+
+const VIEW_ITEMS: Array<{
+  id: ActivityView | 'files' | 'terminal';
+  icon: any;
+  label: string;
+  toggle?: 'explorer' | 'terminal';
+}> = [
+  { id: 'files', icon: FolderOpen, label: 'Files', toggle: 'explorer' },
+  { id: 'chat', icon: MessageCircle, label: 'Chat' },
+  { id: 'overview', icon: Server, label: 'Overview' },
+  { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal' },
+];
+
+const MIN_TERMINAL_H = 140;
+const MAX_TERMINAL_H = 500;
+const DEFAULT_TERMINAL_H = 220;
 
 interface FileEntry {
   name: string;
@@ -23,64 +78,242 @@ interface FileEntry {
   modified: string;
 }
 
+interface ConversationEntry {
+  id: string;
+  title: string;
+  updated_at: string;
+  message_count: number;
+}
+
+const QUICK_PROMPTS = [
+  'Review system health',
+  'Summarize current deployments',
+  'Inspect the runtime and open ports',
+];
+
+const PROVIDER_FALLBACK_ICONS: Record<string, React.ReactNode> = {
+  'OpenAI': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-emerald-500 text-white rounded">O</span>,
+  'Google': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-blue-500 text-white rounded">G</span>,
+  'xAI': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-black text-white rounded italic">x</span>,
+  'DeepSeek': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-blue-600 text-white rounded">D</span>,
+  'Perplexity': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-cyan-500 text-white rounded">P</span>,
+  'Anthropic': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-orange-500 text-white rounded">A</span>,
+  'OpenRouter': <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-purple-500 text-white rounded">R</span>,
+};
+
+const TIER_DEFAULTS: Record<'fast' | 'balanced' | 'smart' | 'research', string> = {
+  fast: 'deepseek/deepseek-chat',
+  balanced: 'xai/grok-4-1-fast',
+  smart: 'google/gemini-2.5-pro',
+  research: 'perplexity/sonar-pro',
+};
+
+function hashString(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seededShuffle<T>(arr: T[], seed: string): T[] {
+  const out = [...arr];
+  let x = hashString(seed) || 1;
+  const rnd = () => { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; return (x >>> 0) / 0xffffffff; };
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const { user, userData } = useAuthContext();
+  const { models, modelById } = useModelRegistry();
 
-  // ── Layout state ──
-  const [filePanelOpen, setFilePanelOpen] = useState(true);
+  const [activeView, setActiveView] = useState<ActivityView>('chat');
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
 
-  // ── Chat state ──
+  const handleTerminalResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = terminalHeight;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startY - ev.clientY;
+      setTerminalHeight(Math.max(MIN_TERMINAL_H, Math.min(MAX_TERMINAL_H, startH + delta)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [terminalHeight]);
+
+  const activeLabel = useMemo(
+    () => VIEW_ITEMS.find((item) => item.id === activeView)?.label ?? 'Chat',
+    [activeView],
+  );
+
+  const planLabel = String(engine?.tier || 'cloud').replace(/^\w/, (c: string) => c.toUpperCase());
+  const machineLabel =
+    engine?.vcpus && engine?.ram_gb
+      ? `${engine.vcpus} vCPU / ${engine.ram_gb} GB`
+      : 'Runtime';
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const conversationTitleRef = useRef<string>('');
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamTools, setStreamTools] = useState<ToolCall[]>([]);
   const [streamChunks, setStreamChunks] = useState<StreamChunk[]>([]);
-  const [statusMessage, setStatusMessage] = useState('');
+  const [askUserPrompts, setAskUserPrompts] = useState<Array<{ id: string; args: any; status: 'pending' | 'completed' }>>([]);
   const streamStartRef = useRef(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // ── File tree state ──
+  // Model selector
+  const [selectedModel, setSelectedModel] = useState<string>('auto');
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
+  const modelPickerRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
+
+  // History panel
+  const [conversations, setConversations] = useState<ConversationEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [loadingConvId, setLoadingConvId] = useState<string | null>(null);
+  const historyPanelRef = useRef<HTMLDivElement>(null);
+
+  // File tree
   const [dirContents, setDirContents] = useState<Record<string, FileEntry[]>>({});
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
 
-  // ── Terminal state ──
   const termContainerRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<any>(null);
   const { connected, connect, sendData, resize, onData, close } = useCloudTerminal();
 
-  // ── User greeting ──
+  const isRunning = engine?.status === 'running';
+
   const displayName =
     userData?.displayName ||
+    (user as any)?.user_metadata?.full_name ||
     (user as any)?.user_metadata?.fullName ||
     user?.email?.split('@')[0] ||
     'there';
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = String(displayName).split(/\s+/)[0] || 'there';
 
-  // ── Load root directory on mount ──
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
+
+  const selectedModelMeta = useMemo((): ModelMeta | null => {
+    if (selectedModel === 'auto') return null;
+    return modelById.get(selectedModel) || null;
+  }, [selectedModel, modelById]);
+
+  const filteredModels = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) return models;
+    return models.filter((m) =>
+      [m.name, m.provider, m.id, m.category].filter(Boolean).join(' ').toLowerCase().includes(query),
+    );
+  }, [modelSearch, models]);
+
+  const groupedModels = useMemo(() => {
+    if (modelSearch.trim()) return null;
+    const today = new Date();
+    const seedDay = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const build = (tier: 'fast' | 'balanced' | 'smart' | 'research') => {
+      const list = tier === 'fast'
+        ? models.filter((m) => m.category === 'fast' && !m.isReasoning)
+        : models.filter((m) => m.category === tier);
+      if (!list.length) return [] as typeof models;
+      const def = list.find((m) => m.id === TIER_DEFAULTS[tier]) || list[0];
+      const rest = seededShuffle(list.filter((m) => m.id !== def.id), `${seedDay}:${tier}`);
+      return [def, ...rest.slice(0, 2)];
+    };
+    return { fast: build('fast'), balanced: build('balanced'), smart: build('smart'), research: build('research') };
+  }, [modelSearch, models]);
+
+  // ── Close pickers on outside click ────────────────────────────────────────
+
   useEffect(() => {
-    if (engine.status === 'running') loadDir('.');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine.status]);
+    if (!showModelPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showModelPicker]);
 
-  // ── Auto-scroll chat ──
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, chatLoading, streamText, streamReasoning, streamTools, streamChunks, statusMessage]);
+    if (!showModelPicker) { setModelSearch(''); return; }
+    const t = window.setTimeout(() => modelSearchRef.current?.focus(), 40);
+    return () => window.clearTimeout(t);
+  }, [showModelPicker]);
 
-  // ── Terminal xterm lifecycle ──
   useEffect(() => {
-    if (!terminalOpen || !termContainerRef.current || engine.status !== 'running') return;
+    if (!showHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (historyPanelRef.current && !historyPanelRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHistory]);
 
-    let term: any;
-    let fitAddon: any;
-    let ro: ResizeObserver | null = null;
+  // ── Scroll ─────────────────────────────────────────────────────────────────
+
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, chatLoading, streamText, streamReasoning, streamTools, streamChunks, askUserPrompts, scrollToBottom]);
+
+  // ── File tree ──────────────────────────────────────────────────────────────
+
+  const loadDir = useCallback(async (path: string) => {
+    setLoadingDirs((prev) => new Set(prev).add(path));
+    try {
+      const data = await listFiles(path);
+      if (data.ok) setDirContents((prev) => ({ ...prev, [path]: data.entries || [] }));
+    } finally {
+      setLoadingDirs((prev) => { const next = new Set(prev); next.delete(path); return next; });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isRunning) void loadDir('.');
+  }, [isRunning, loadDir]);
+
+  // ── Terminal ───────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!terminalOpen || !termContainerRef.current || !isRunning) return;
+    let term: any, fitAddon: any, ro: ResizeObserver | null = null;
     let disposeInput: { dispose: () => void } | undefined;
     let disposeWs: (() => void) | undefined;
     let disposed = false;
@@ -91,128 +324,225 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         const { FitAddon } = await import('@xterm/addon-fit');
         const { WebLinksAddon } = await import('@xterm/addon-web-links');
         await import('@xterm/xterm/css/xterm.css');
-
         if (disposed) return;
-
         term = new Terminal({
           fontFamily: '"JetBrains Mono", "Fira Code", monospace',
           fontSize: 13,
           theme: {
-            background: 'var(--ide-bg, #0d0f14)',
-            foreground: '#c0caf5',
-            cursor: '#c0caf5',
-            cursorAccent: '#0d0f14',
-            selectionBackground: 'rgba(59, 130, 246, 0.3)',
+            background: '#0f172a',
+            foreground: '#e2e8f0',
+            cursor: '#e2e8f0',
+            cursorAccent: '#0f172a',
+            selectionBackground: 'rgba(0, 122, 255, 0.35)',
           },
           cursorBlink: true,
         });
-
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         term.loadAddon(new WebLinksAddon());
         term.open(termContainerRef.current!);
         fitAddon.fit();
-
-        xtermRef.current = term;
-
         disposeInput = term.onData((data: string) => sendData(data));
         onData((data: string) => term.write(data));
         disposeWs = connect({ cols: term.cols, rows: term.rows });
-
-        ro = new ResizeObserver(() => {
-          if (!disposed) {
-            fitAddon.fit();
-            resize(term.cols, term.rows);
-          }
-        });
+        ro = new ResizeObserver(() => { if (!disposed) { fitAddon.fit(); resize(term.cols, term.rows); } });
         ro.observe(termContainerRef.current!);
-      } catch (e) {
-        if (!disposed) console.error('Terminal init failed:', e);
+      } catch (error) {
+        if (!disposed) console.error('Terminal init failed:', error);
       }
     };
 
     void init();
-
     return () => {
       disposed = true;
       ro?.disconnect();
       disposeInput?.dispose();
       disposeWs?.();
-      xtermRef.current = null;
       term?.dispose();
       close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminalOpen, engine.status]);
+  }, [terminalOpen, isRunning, close, connect, onData, resize, sendData]);
 
-  // ── File helpers ──
-  const loadDir = async (path: string) => {
-    setLoadingDirs(prev => new Set(prev).add(path));
-    try {
-      const data = await listFiles(path);
-      if (data.ok) {
-        setDirContents(prev => ({ ...prev, [path]: data.entries || [] }));
-      }
-    } finally {
-      setLoadingDirs(prev => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
-    }
-  };
+  // ── History ────────────────────────────────────────────────────────────────
 
-  const toggleDir = (path: string) => {
-    setExpandedDirs(prev => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-        if (!dirContents[path]) loadDir(path);
-      }
-      return next;
+  const upsertConversation = useCallback((entry: Partial<ConversationEntry> & { id: string; incrementBy?: number }) => {
+    setConversations((prev) => {
+      const existing = prev.find((c) => c.id === entry.id);
+      const next: ConversationEntry = {
+        id: entry.id,
+        title: entry.title || existing?.title || 'Untitled',
+        updated_at: entry.updated_at || new Date().toISOString(),
+        message_count: entry.message_count ?? Math.max(0, (existing?.message_count || 0) + (entry.incrementBy || 0)),
+      };
+      return (existing
+        ? prev.map((c) => (c.id === entry.id ? { ...c, ...next } : c))
+        : [next, ...prev]
+      ).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 30);
     });
+  }, []);
+
+  const fetchHistory = useCallback(async () => {
+    if (!isRunning) return;
+    setHistoryLoading(true);
+    try {
+      const res = await getCloudConversations(30);
+      if (res.ok && Array.isArray(res.conversations)) {
+        setConversations((prev) => {
+          const byId = new Map<string, ConversationEntry>();
+          for (const c of res.conversations as any[]) {
+            if (!c?.id) continue;
+            byId.set(c.id, {
+              id: c.id,
+              title: c.title || 'Untitled',
+              updated_at: c.updated_at || c.created_at || '',
+              message_count: c.message_count || 0,
+            });
+          }
+          for (const local of prev) {
+            if (!byId.has(local.id)) byId.set(local.id, local);
+          }
+          return Array.from(byId.values())
+            .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+            .slice(0, 30);
+        });
+      }
+    } catch {}
+    setHistoryLoading(false);
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (isRunning && showHistory) void fetchHistory();
+  }, [isRunning, showHistory, fetchHistory]);
+
+  const loadConversation = useCallback(async (convId: string) => {
+    setLoadingConvId(convId);
+    try {
+      const res = await getCloudConversationMessages(convId, 100);
+      const rawMsgs: any[] = res.ok && Array.isArray(res.messages) ? res.messages : [];
+      if (rawMsgs.length > 0) {
+        const loaded: ChatMessage[] = rawMsgs.map((m: any, i: number) => ({
+          id: `${convId}-${i}`,
+          role: m.role === 'assistant' ? 'assistant' as const : 'user' as const,
+          text: String(m.content || m.text || ''),
+          timestamp: m.created_at ? new Date(m.created_at).getTime() : Date.now(),
+        }));
+        setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]); setAskUserPrompts([]);
+        setMessages(loaded);
+        setConversationId(convId);
+        const conv = conversations.find((c) => c.id === convId);
+        if (conv) conversationTitleRef.current = conv.title;
+      }
+    } catch {}
+    setLoadingConvId(null);
+    setShowHistory(false);
+    scrollToBottom();
+  }, [conversations, scrollToBottom]);
+
+  const startNewChat = useCallback(() => {
+    abortRef.current?.abort();
+    setMessages([]); setChatLoading(false);
+    setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]); setAskUserPrompts([]);
+    setConversationId(null); conversationTitleRef.current = '';
+    setShowHistory(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  const formatTimeAgo = (dateStr: string) => {
+    if (!dateStr) return '';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
   };
 
-  // ── Chat helpers ──
+  // ── Chat ───────────────────────────────────────────────────────────────────
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setChatLoading(false);
+    setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]);
+  }, []);
+
+  const handleClear = useCallback(() => {
+    handleStop();
+    setMessages([]); setConversationId(null); conversationTitleRef.current = ''; setAskUserPrompts([]);
+  }, [handleStop]);
+
+  const applyPrompt = useCallback((prompt: string) => {
+    setInput(prompt);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  const handleAskUserRespond = useCallback((id: string, result: any) => {
+    setAskUserPrompts((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'completed' } : p)));
+    void sendVmToolResult(id, result);
+  }, []);
+
+  const handleGenUIRespond = useCallback((toolId: string, result: any) => {
+    void sendVmToolResult(toolId, result);
+  }, []);
+
+  const interactiveToolRenderer = useCallback(
+    (tool: ToolCall, key: string): React.ReactNode => {
+      if (tool.tool === 'ask_user') {
+        const tracked = askUserPrompts.find((p) => p.id === tool.id);
+        const isPending = tool.status !== 'completed' && tool.status !== 'error'
+          && (!tracked || tracked.status === 'pending');
+        if (!isPending) return null;
+        return (
+          <AskUserPrompt
+            key={key}
+            prompt={{ id: tool.id, args: tool.args }}
+            onRespond={handleAskUserRespond}
+          />
+        );
+      }
+      if (tool.tool === 'chat_ui') {
+        return <ChatUiBlock key={key} tool={tool} />;
+      }
+      // Fallback for other GenUI tools (ask_confirmation, show_choices, ...).
+      // Render the same AskUserPrompt with normalized args when status is pending.
+      if (tool.status !== 'completed' && tool.status !== 'error') {
+        return (
+          <AskUserPrompt
+            key={key}
+            prompt={{ id: tool.id, args: tool.args }}
+            onRespond={handleGenUIRespond}
+          />
+        );
+      }
+      return null;
+    },
+    [askUserPrompts, handleAskUserRespond, handleGenUIRespond],
+  );
+
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || chatLoading) return;
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setInput('');
-    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', text }]);
+    setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', text, timestamp: Date.now() }]);
     setChatLoading(true);
-    setStreamText('');
-    setStreamReasoning('');
-    setStreamTools([]);
-    setStreamChunks([]);
-    setStatusMessage('Connecting...');
+    setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]);
     streamStartRef.current = Date.now();
 
-    let accText = '';
-    let accReasoning = '';
-    let accTools: ToolCall[] = [];
-    let accChunks: StreamChunk[] = [];
+    let accText = '', accReasoning = '';
+    let accTools: ToolCall[] = [], accChunks: StreamChunk[] = [];
     let gotFinal = false;
 
-    const normalizeToolStatus = (status: string | undefined): ToolCall['status'] => {
-      switch (String(status || '').toLowerCase()) {
-        case 'completed':
-        case 'result':
-        case 'step_completed':
-          return 'completed';
-        case 'error':
-        case 'failed':
-        case 'timeout':
-        case 'step_error':
-          return 'error';
-        case 'running':
-        case 'started':
-        case 'step_started':
-          return 'running';
-        default:
-          return 'called';
+    const normalizeToolStatus = (s?: string): ToolCall['status'] => {
+      switch (String(s || '').toLowerCase()) {
+        case 'completed': case 'result': case 'step_completed': return 'completed';
+        case 'error': case 'failed': case 'timeout': case 'step_error': return 'error';
+        case 'running': case 'started': case 'step_started': return 'running';
+        default: return 'called';
       }
     };
 
@@ -226,35 +556,52 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
     const pushReasoning = (chunk: string, nested = false) => {
       if (!chunk) return;
-      if (!nested) {
-        accReasoning = mergeStreamingText(accReasoning, chunk);
-        setStreamReasoning(accReasoning);
-      }
+      if (!nested) { accReasoning = mergeStreamingText(accReasoning, chunk); setStreamReasoning(accReasoning); }
       accChunks = appendReasoningChunk(accChunks, chunk, nested);
       setStreamChunks([...accChunks]);
     };
 
     const pushTool = (tool: ToolCall) => {
-      const next = applyToolCallUpdate(accTools, accChunks, {
-        ...tool,
-        timestamp: tool.timestamp || Date.now(),
-      });
-      accTools = next.toolCalls;
-      accChunks = next.streamChunks;
-      setStreamTools([...accTools]);
-      setStreamChunks([...accChunks]);
+      const next = applyToolCallUpdate(accTools, accChunks, { ...tool, timestamp: tool.timestamp || Date.now() });
+      accTools = next.toolCalls; accChunks = next.streamChunks;
+      setStreamTools([...accTools]); setStreamChunks([...accChunks]);
     };
+
+    const upsertAskUser = (id: string, args: any) => {
+      setAskUserPrompts((prev) => {
+        const byId = id ? prev.find((p) => p.id === id) : undefined;
+        const byPending = byId ? undefined : prev.find((p) => p.status === 'pending');
+        const match = byId || byPending;
+        if (match) return prev.map((p) => (p === match ? { ...p, id: id || p.id, args } : p));
+        return [...prev, { id: id || `ask-${Date.now()}`, args, status: 'pending' }];
+      });
+    };
+
+    const completeAskUser = (id: string) => {
+      setAskUserPrompts((prev) => prev.map((p) => {
+        const matches = id ? p.id === id : p.status === 'pending';
+        return matches ? { ...p, status: 'completed' as const } : p;
+      }));
+    };
+
+    // Derive model tier and explicit model id
+    const isAuto = selectedModel === 'auto';
+    const meta: ModelMeta | undefined = !isAuto ? modelById.get(selectedModel) : undefined;
+    const modelTier = isAuto ? 'auto' : ((meta?.category as string) || (meta?.isReasoning ? 'smart' : 'balanced'));
+    const explicitModelId = !isAuto ? selectedModel : undefined;
 
     try {
       const res = await openVMAgentChatStream({
         message: text,
         conversationId: conversationId || undefined,
+        model: modelTier,
+        modelId: explicitModelId,
+        signal: controller.signal,
       });
 
       const contentType = res.headers.get('content-type') || '';
 
       if (contentType.includes('text/event-stream') && res.body) {
-        setStatusMessage('');
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -262,7 +609,6 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
@@ -282,62 +628,55 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 if (event.conversationId) setConversationId(event.conversationId);
                 break;
 
-              case 'status':
-                setStatusMessage(event.message || '');
-                break;
-
-              case 'routing':
-                setStatusMessage(event.model ? `Routing → ${event.model}` : '');
+              case 'title':
+                if (event.title) {
+                  conversationTitleRef.current = event.title;
+                  const cid = event.conversationId || conversationId;
+                  if (cid) upsertConversation({ id: cid, title: event.title, updated_at: new Date().toISOString() });
+                }
                 break;
 
               case 'progress': {
-                setStatusMessage('');
                 const ev = event.event || '';
-                const data = event.data || {};
-                if (ev === 'delta' || ev === 'text') {
-                  pushText(data.text || '');
-                } else if (ev === 'reasoning' || ev === 'reasoning_start') {
-                  pushReasoning(data.text || '');
-                }
+                const d = event.data || {};
+                if (ev === 'delta' || ev === 'text') pushText(d.text || '');
+                else if (ev === 'reasoning' || ev === 'reasoning_start') pushReasoning(d.text || '');
                 break;
               }
 
               case 'tool_event': {
-                setStatusMessage('');
                 const toolName = event.tool || event.data?.tool || '';
                 const toolStatus = event.status || event.data?.status || '';
                 const toolData = event.data || {};
                 const toolId = toolData.id || toolData.toolCallId || event.id || '';
                 if (toolName) {
-                  const normalizedStatus = normalizeToolStatus(toolStatus);
+                  const ns = normalizeToolStatus(toolStatus);
+                  const resolvedArgs = toolData.args ?? ((ns === 'called' || ns === 'running') ? toolData : undefined);
                   pushTool({
-                    id: toolId || `${toolName}-${Date.now()}`,
-                    tool: toolName,
-                    status: normalizedStatus,
-                    args: toolData.args ?? ((normalizedStatus === 'called' || normalizedStatus === 'running') ? toolData : undefined),
-                    result: toolData.result ?? (normalizedStatus === 'completed' ? toolData : undefined),
-                    error: toolData.error ?? (normalizedStatus === 'error' ? toolData : undefined),
-                    liveOutput: typeof toolData.liveOutput === 'string'
-                      ? toolData.liveOutput
-                      : typeof toolData.output === 'string'
-                        ? toolData.output
-                        : undefined,
+                    id: toolId, tool: toolName, status: ns,
+                    args: resolvedArgs,
+                    result: toolData.result ?? (ns === 'completed' ? toolData : undefined),
+                    error: toolData.error ?? (ns === 'error' ? toolData : undefined),
+                    liveOutput: typeof toolData.liveOutput === 'string' ? toolData.liveOutput
+                      : typeof toolData.output === 'string' ? toolData.output : undefined,
                     timestamp: Date.now(),
                   });
+                  if (toolName === 'ask_user' && resolvedArgs && (ns === 'called' || ns === 'running')) {
+                    upsertAskUser(toolId, resolvedArgs);
+                  } else if (toolName === 'ask_user' && (ns === 'completed' || ns === 'error')) {
+                    completeAskUser(toolId);
+                  }
                 }
                 break;
               }
 
               case 'tool_request': {
                 const toolName = event.tool || '';
+                const toolArgs = event.args || {};
+                const toolId = event.id || '';
                 if (toolName) {
-                  pushTool({
-                    id: event.id || `tool-${Date.now()}`,
-                    tool: toolName,
-                    status: 'called',
-                    args: event.args || {},
-                    timestamp: Date.now(),
-                  });
+                  pushTool({ id: toolId, tool: toolName, status: 'called', args: toolArgs, timestamp: Date.now() });
+                  if (toolName === 'ask_user' && toolArgs) upsertAskUser(toolId, toolArgs);
                 }
                 break;
               }
@@ -346,66 +685,50 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 const subEvent = event.event || '';
                 const subData = event.data || {};
                 const subagentId = event.subagentId || subData.subagentId || '';
-
                 if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
                   pushReasoning(subData.text, true);
                 } else if (subEvent === 'tool_call') {
                   pushTool({
-                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
-                    tool: subData.tool || subData.name || 'tool',
-                    status: 'called',
-                    args: subData.args,
-                    timestamp: Date.now(),
-                    subagentId: subagentId || undefined,
-                    nested: true,
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || 'tool'}`,
+                    tool: subData.tool || subData.name || 'tool', status: 'called',
+                    args: subData.args, timestamp: Date.now(), subagentId: subagentId || undefined, nested: true,
                   });
                 } else if (subEvent === 'tool_result') {
                   pushTool({
-                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || subData.name || 'tool'}`,
+                    id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || 'tool'}`,
                     tool: subData.tool || subData.name || 'tool',
                     status: subData.error ? 'error' : 'completed',
-                    result: subData.result,
-                    error: subData.error,
-                    timestamp: Date.now(),
-                    subagentId: subagentId || undefined,
-                    nested: true,
+                    result: subData.result, error: subData.error, timestamp: Date.now(),
+                    subagentId: subagentId || undefined, nested: true,
                   });
                 }
                 break;
               }
 
-              case 'final': {
+              case 'final':
                 gotFinal = true;
                 if (event.conversationId) setConversationId(event.conversationId);
-                const finalText = event.text || event.data?.text || accText;
-                if (finalText) accText = finalText;
+                if (event.text || event.data?.text) accText = event.text || event.data?.text || accText;
                 break;
-              }
 
-              case 'error': {
+              case 'error':
                 gotFinal = true;
-                setMessages(prev => [...prev, {
-                  id: `assistant-error-${Date.now()}`,
-                  role: 'assistant',
+                setMessages((prev) => [...prev, {
+                  id: `assistant-error-${Date.now()}`, role: 'assistant',
                   text: accText || `Error: ${event.error || 'unknown'}`,
                   reasoning: accReasoning || undefined,
                   toolCalls: accTools.length > 0 ? accTools : undefined,
                   streamChunks: accChunks.length > 0 ? accChunks : undefined,
                 }]);
-                accText = '';
-                accReasoning = '';
-                accTools = [];
-                accChunks = [];
+                accText = ''; accReasoning = ''; accTools = []; accChunks = [];
                 break;
-              }
             }
           }
         }
 
         if (!gotFinal || accText || accReasoning || accTools.length > 0) {
-          setMessages(prev => [...prev, {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
+          setMessages((prev) => [...prev, {
+            id: `assistant-${Date.now()}`, role: 'assistant',
             text: accText || 'No response',
             reasoning: accReasoning || undefined,
             reasoningDuration: streamStartRef.current ? (Date.now() - streamStartRef.current) / 1000 : undefined,
@@ -413,358 +736,684 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             streamChunks: accChunks.length > 0 ? accChunks : undefined,
           }]);
         }
+
+        const cid = conversationId;
+        if (cid) {
+          const fallbackTitle = (conversationTitleRef.current || text.slice(0, 80) || 'Untitled').trim();
+          conversationTitleRef.current = fallbackTitle;
+          upsertConversation({ id: cid, title: fallbackTitle, updated_at: new Date().toISOString(), incrementBy: 2 });
+        }
       } else {
         const data = await res.json() as any;
         const replyText = String(data?.text || data?.result?.text || data?.error || 'Something went wrong.').trim();
-        setMessages(prev => [...prev, {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          text: replyText,
-        }]);
+        setMessages((prev) => [...prev, { id: `assistant-${Date.now()}`, role: 'assistant', text: replyText }]);
         if (data?.conversationId) setConversationId(data.conversationId);
       }
-    } catch {
-      setMessages(prev => [
-        ...prev,
-        { id: `assistant-error-${Date.now()}`, role: 'assistant', text: 'Connection error. Please try again.' },
-      ]);
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
+      setMessages((prev) => [...prev, {
+        id: `assistant-error-${Date.now()}`, role: 'assistant', text: 'Connection error. Please try again.',
+      }]);
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setChatLoading(false);
-      setStreamText('');
-      setStreamReasoning('');
-      setStreamTools([]);
-      setStreamChunks([]);
-      setStatusMessage('');
+      setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]);
       inputRef.current?.focus();
     }
-  }, [input, chatLoading, conversationId]);
+  }, [chatLoading, conversationId, input, selectedModel, modelById, upsertConversation]);
 
-  // ── Keyboard shortcut: Ctrl/Cmd+B → toggle files, Ctrl+` → toggle terminal ──
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === 'b') {
-        e.preventDefault();
-        setFilePanelOpen(p => !p);
-      }
-      if (mod && e.key === '`') {
-        e.preventDefault();
-        setTerminalOpen(p => !p);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); }
+  }, [sendMessage]);
 
-  // ── File tree renderer ──
-  const renderTree = (entries: FileEntry[], depth: number = 0): React.ReactNode => {
-    const sorted = [...entries].sort((a, b) => {
-      if (a.type === 'directory' && b.type !== 'directory') return -1;
-      if (a.type !== 'directory' && b.type === 'directory') return 1;
-      return a.name.localeCompare(b.name);
+  // ── File tree toggle ───────────────────────────────────────────────────────
+
+  const toggleDir = useCallback((path: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) { next.delete(path); } else { next.add(path); if (!dirContents[path]) void loadDir(path); }
+      return next;
     });
+  }, [dirContents, loadDir]);
 
-    return sorted.map(entry => {
-      const isDir = entry.type === 'directory';
-      const isExpanded = expandedDirs.has(entry.path);
-      const children = dirContents[entry.path];
-      const isLoading = loadingDirs.has(entry.path);
+  // ── Model selector ─────────────────────────────────────────────────────────
 
-      return (
-        <div key={entry.path}>
-          <button
-            onClick={() => (isDir ? toggleDir(entry.path) : undefined)}
-            className="ide-tree-item"
-            style={{ paddingLeft: `${8 + depth * 16}px` }}
-          >
-            {isDir ? (
-              <svg
-                className={`ide-tree-chevron ${isExpanded ? 'ide-tree-chevron-open' : ''}`}
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M9 6l6 6-6 6z" />
-              </svg>
-            ) : (
-              <span className="ide-tree-spacer" />
-            )}
-            {isDir ? (
-              <FolderIcon />
-            ) : (
-              <FileIcon name={entry.name} />
-            )}
-            <span className="truncate">{entry.name}</span>
-          </button>
-          {isDir && isExpanded && (
-            isLoading ? (
-              <div
-                className="ide-tree-loading"
-                style={{ paddingLeft: `${24 + depth * 16}px` }}
-              >
-                Loading…
-              </div>
-            ) : children ? (
-              renderTree(children, depth + 1)
-            ) : null
-          )}
-        </div>
-      );
-    });
+  const renderModelIcon = (m: import('@/hooks/useModelRegistry').ModelMeta, size: 'sm' | 'md' = 'sm') => {
+    const sz = size === 'sm' ? 'w-4 h-4' : 'w-5 h-5';
+    if (m.logoUrl) return <img src={m.logoUrl} className={clsx(sz, 'rounded object-contain')} alt="" />;
+    return PROVIDER_FALLBACK_ICONS[m.provider] || <Cpu className={clsx(size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4', 'text-theme-muted')} />;
   };
 
-  // ── Chat input ──
-  const renderChatInput = () => (
-    <div className="ide-chat-input-wrapper">
-      <div className="ide-chat-input-container">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
-            }
-          }}
-          placeholder="Ask, run, build anything. @ to mention files, prompts, or tools"
-          disabled={chatLoading}
-          rows={1}
-          className="ide-chat-textarea"
-        />
-        <div className="ide-chat-input-bar">
-          <div className="ide-chat-input-meta">
-            <span className="ide-chat-agent-badge">
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-              </svg>
-              Agent
-            </span>
-            {connected && (
-              <span className="ide-chat-connected">
-                <span className="ide-status-dot ide-status-dot-green" />
-                Connected
-              </span>
+  const modelSelector = (
+    <div className="relative" ref={modelPickerRef}>
+      <button
+        type="button"
+        onClick={() => setShowModelPicker((v) => !v)}
+        className="dashboard-refresh-button inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs !rounded-xl"
+      >
+        <div className="flex h-4 w-4 items-center justify-center shrink-0">
+          {selectedModel === 'auto'
+            ? <Sparkles className="h-3.5 w-3.5 text-primary" />
+            : selectedModelMeta ? renderModelIcon(selectedModelMeta) : <Cpu className="h-3.5 w-3.5 text-theme-muted" />}
+        </div>
+        <span className="max-w-[110px] truncate font-semibold">
+          {selectedModel === 'auto' ? 'Auto' : (selectedModelMeta?.name || selectedModel.split('/').pop())}
+        </span>
+        <ChevronDown className={clsx('h-3 w-3 text-theme-muted transition-transform', showModelPicker && 'rotate-180')} />
+      </button>
+
+      {showModelPicker && (
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-[360px] overflow-hidden rounded-2xl border border-theme bg-theme-card/95 shadow-elevate backdrop-blur-xl">
+          {/* Search */}
+          <div className="border-b border-theme/10 bg-theme-bg/50 px-3 py-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-theme-muted" />
+              <input
+                ref={modelSearchRef}
+                type="text"
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder="Search any model..."
+                className="w-full rounded-xl border-none bg-theme-hover/50 py-2 pl-10 pr-3 text-sm font-medium text-theme-fg outline-none ring-1 ring-theme/5 transition-all placeholder:text-theme-muted/70 focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-[360px] overflow-y-auto p-2 custom-scrollbar">
+            {modelSearch.trim() ? (
+              /* ── Flat search results ── */
+              <>
+                {filteredModels.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => { setSelectedModel(m.id); setShowModelPicker(false); }}
+                    className={clsx(
+                      'flex w-full items-center gap-3 rounded-2xl p-2 text-left transition-all border border-transparent',
+                      selectedModel === m.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover',
+                    )}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-theme-bg border border-theme/10 shadow-sm">
+                      {renderModelIcon(m, 'md')}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-bold text-theme-fg">{m.name}</div>
+                      <div className="truncate text-[10px] font-bold uppercase tracking-tighter text-theme-muted opacity-70">{m.provider}</div>
+                    </div>
+                    {selectedModel === m.id
+                      ? <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div>
+                      : <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted opacity-30" />}
+                  </button>
+                ))}
+                {filteredModels.length === 0 && (
+                  <div className="px-3 py-12 text-center">
+                    <Search className="mx-auto mb-3 h-8 w-8 text-theme-muted opacity-40" />
+                    <div className="text-xs font-medium text-theme-fg">No models found</div>
+                    <div className="mt-1 text-[10px] text-theme-muted">Try a provider name, tier, or model ID.</div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── Grouped default view ── */
+              <div className="flex flex-col gap-4">
+                {/* Auto */}
+                <div className="px-1">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedModel('auto'); setShowModelPicker(false); }}
+                    className={clsx(
+                      'flex w-full items-center gap-3 rounded-xl p-2 text-left transition-all border border-transparent',
+                      selectedModel === 'auto' ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover',
+                    )}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 shadow-sm">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-bold text-theme-fg">Automatic Routing</div>
+                      <div className="text-[10px] text-theme-muted">Best model for each task</div>
+                    </div>
+                    {selectedModel === 'auto' && <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div>}
+                  </button>
+                </div>
+
+                {/* Fast */}
+                {groupedModels && groupedModels.fast.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 px-2 mb-1">
+                      <Zap className="h-3 w-3 text-amber-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Fast & Efficient</span>
+                    </div>
+                    {groupedModels.fast.map((m) => (
+                      <button key={m.id} type="button" onClick={() => { setSelectedModel(m.id); setShowModelPicker(false); }}
+                        className={clsx('flex w-full items-center gap-3 rounded-2xl p-2 text-left transition-all border border-transparent', selectedModel === m.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover')}>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-theme-bg border border-theme/10 shadow-sm">{renderModelIcon(m, 'md')}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-bold text-theme-fg">{m.name}</div>
+                          <div className="truncate text-[10px] font-bold uppercase tracking-tighter text-theme-muted opacity-70">{m.provider}</div>
+                        </div>
+                        {selectedModel === m.id ? <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div> : <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted opacity-0 group-hover:opacity-30" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Balanced */}
+                {groupedModels && groupedModels.balanced.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 px-2 mb-1">
+                      <Scale className="h-3 w-3 text-emerald-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Balanced</span>
+                    </div>
+                    {groupedModels.balanced.map((m) => (
+                      <button key={m.id} type="button" onClick={() => { setSelectedModel(m.id); setShowModelPicker(false); }}
+                        className={clsx('flex w-full items-center gap-3 rounded-2xl p-2 text-left transition-all border border-transparent', selectedModel === m.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover')}>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-theme-bg border border-theme/10 shadow-sm">{renderModelIcon(m, 'md')}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-bold text-theme-fg">{m.name}</div>
+                          <div className="truncate text-[10px] font-bold uppercase tracking-tighter text-theme-muted opacity-70">{m.provider}</div>
+                        </div>
+                        {selectedModel === m.id ? <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div> : <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted opacity-0" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Smart */}
+                {groupedModels && groupedModels.smart.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 px-2 mb-1">
+                      <Brain className="h-3 w-3 text-purple-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Intelligence</span>
+                    </div>
+                    {groupedModels.smart.map((m) => (
+                      <button key={m.id} type="button" onClick={() => { setSelectedModel(m.id); setShowModelPicker(false); }}
+                        className={clsx('flex w-full items-center gap-3 rounded-2xl p-2 text-left transition-all border border-transparent', selectedModel === m.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover')}>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-theme-bg border border-theme/10 shadow-sm">{renderModelIcon(m, 'md')}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-bold text-theme-fg">{m.name}</div>
+                          <div className="truncate text-[10px] font-bold uppercase tracking-tighter text-theme-muted opacity-70">{m.provider}{m.isReasoning ? ' · Reasoning' : ''}</div>
+                        </div>
+                        {selectedModel === m.id ? <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div> : <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted opacity-0" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Research */}
+                {groupedModels && groupedModels.research.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 px-2 mb-1">
+                      <Globe className="h-3 w-3 text-cyan-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Research</span>
+                    </div>
+                    {groupedModels.research.map((m) => (
+                      <button key={m.id} type="button" onClick={() => { setSelectedModel(m.id); setShowModelPicker(false); }}
+                        className={clsx('flex w-full items-center gap-3 rounded-2xl p-2 text-left transition-all border border-transparent', selectedModel === m.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-theme-hover')}>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-theme-bg border border-theme/10 shadow-sm">{renderModelIcon(m, 'md')}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-bold text-theme-fg">{m.name}</div>
+                          <div className="truncate text-[10px] font-bold uppercase tracking-tighter text-theme-muted opacity-70">{m.provider}</div>
+                        </div>
+                        {selectedModel === m.id ? <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary shadow-sm"><Check className="h-2.5 w-2.5 text-primary-fg" /></div> : <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted opacity-0" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
-          <button
-            onClick={sendMessage}
-            disabled={chatLoading || !input.trim()}
-            className="ide-send-btn"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-            </svg>
-            Send
-          </button>
+
+          {/* Footer */}
+          <div className="border-t border-theme/10 bg-theme-bg/50 px-3 py-2 flex items-center justify-end">
+            <span className="text-[10px] text-theme-muted italic">{models.length} models available</span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // RENDER
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  return (
-    <div className="cloud-ide">
-      {/* ── Icon Sidebar ── */}
-      <div className="ide-icon-sidebar">
-        <div className="ide-icon-group">
-          <Link
-            href="/dashboard"
-            className="ide-icon-btn"
-            title="Back to Dashboard"
-          >
-            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
-            </svg>
-          </Link>
+  // ── History button ─────────────────────────────────────────────────────────
 
-          <button
-            className="ide-icon-btn"
-            title="Search"
-          >
-            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-            </svg>
-          </button>
+  const historyButton = (
+    <div className="relative" ref={historyPanelRef}>
+      <button
+        type="button"
+        onClick={() => setShowHistory((open) => { if (!open) void fetchHistory(); return !open; })}
+        className="dashboard-refresh-button inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs !rounded-xl"
+        title="Chat history"
+      >
+        <Clock className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">History</span>
+      </button>
 
-          <button
-            className={`ide-icon-btn ${filePanelOpen ? 'ide-icon-active' : ''}`}
-            title="Files (Ctrl+B)"
-            onClick={() => setFilePanelOpen(p => !p)}
-          >
-            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-            </svg>
-          </button>
-
-          <button
-            className={`ide-icon-btn ${terminalOpen ? 'ide-icon-active' : ''}`}
-            title="Terminal (Ctrl+`)"
-            onClick={() => setTerminalOpen(p => !p)}
-          >
-            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021.75 18V6a2.25 2.25 0 00-2.25-2.25H4.5A2.25 2.25 0 002.25 6v12A2.25 2.25 0 004.5 20.25z" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="ide-icon-spacer" />
-
-        <div className="ide-icon-group">
-          <div
-            className="ide-icon-btn ide-status-indicator"
-            title={`Engine: ${engine.status}`}
-          >
-            <span className={`ide-status-dot ${engine.status === 'running' ? 'ide-status-dot-green' : ''}`} />
+      {showHistory && (
+        <div className="absolute bottom-full left-0 z-50 mb-2 flex max-h-96 w-80 flex-col rounded-2xl border border-theme bg-theme-card shadow-elevate">
+          <div className="flex items-center justify-between gap-2 border-b border-theme/10 px-3 py-2.5">
+            <span className="text-xs font-semibold text-theme-fg">Conversations</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => { startNewChat(); setShowHistory(false); }}
+                className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1 text-[10px] text-primary transition-colors hover:bg-primary/20"
+              >
+                <Plus className="h-3 w-3" /> New
+              </button>
+              <button type="button" onClick={() => setShowHistory(false)} className="rounded p-0.5 text-theme-muted hover:text-theme-fg">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
-          <button
-            className="ide-icon-btn"
-            title="Settings"
-            onClick={onRefresh}
-          >
-            <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* ── File Panel ── */}
-      {filePanelOpen && (
-        <div className="ide-file-panel">
-          <div className="ide-file-panel-header">
-            <span className="ide-panel-title">Files</span>
-            <button
-              onClick={() => loadDir('.')}
-              className="ide-panel-action"
-              title="Refresh"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
-              </svg>
-            </button>
-          </div>
-          <div className="ide-file-tree">
-            {dirContents['.'] ? (
-              renderTree(dirContents['.'])
-            ) : (
-              <div className="ide-tree-loading" style={{ paddingLeft: '16px' }}>
-                Loading files…
+          <div className="min-h-0 flex-1 overflow-y-auto p-1" style={{ scrollbarWidth: 'none' }}>
+            {historyLoading && conversations.length === 0 ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-4 w-4 animate-spin text-theme-muted" />
               </div>
+            ) : conversations.length === 0 ? (
+              <div className="py-8 text-center text-[11px] italic text-theme-muted">No conversations yet</div>
+            ) : (
+              conversations.map((c) => {
+                const isActive = conversationId === c.id;
+                const isLoadingConv = loadingConvId === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => void loadConversation(c.id)}
+                    disabled={isLoadingConv}
+                    className={clsx(
+                      'w-full rounded-xl px-3 py-2.5 text-left transition-colors',
+                      isActive ? 'bg-primary/10' : 'hover:bg-theme-hover/60',
+                    )}
+                  >
+                    <div className="flex items-start gap-2">
+                      {isLoadingConv ? (
+                        <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                      ) : (
+                        <MessageSquare className={clsx('mt-0.5 h-3.5 w-3.5 shrink-0', isActive ? 'text-primary' : 'text-theme-muted')} />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium text-theme-fg">{c.title}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-theme-muted">
+                          {c.message_count > 0 && <span>{c.message_count} msgs</span>}
+                          {c.updated_at && <span>{formatTimeAgo(c.updated_at)}</span>}
+                        </div>
+                      </div>
+                      {isActive && <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
       )}
+    </div>
+  );
 
-      {/* ── Main Content ── */}
-      <div className="ide-main">
-        {/* Sync notice — website can't sync local memories */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 shrink-0">
-          <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-          </svg>
-          <span>
-            <strong>Memories may be out of sync.</strong> Open the Cloud Engine dashboard in the <strong>Stuard desktop app</strong> to sync your memories and data to the VM.
-          </span>
-        </div>
-        {/* Chat area */}
-        <div className="ide-chat-area">
-          {messages.length === 0 && !chatLoading && !streamText && streamChunks.length === 0 ? (
-            /* ── Empty state: centered greeting ── */
-            <div className="ide-chat-empty">
-              <div className="ide-chat-empty-inner">
-                <h1 className="ide-greeting">
-                  {greeting}, {displayName}. What should we do today?
-                </h1>
-                {renderChatInput()}
-                <div className="ide-quick-actions">
-                  <button className="ide-quick-action">
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Recents
-                  </button>
-                  <button className="ide-quick-action">
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
-                    </svg>
-                    Prompts
-                  </button>
-                  <button className="ide-quick-action">
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
-                    </svg>
-                    Sites
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* ── Chat with messages ── */
-            <>
-              <div className="ide-chat-messages">
-                <div className="ide-chat-messages-inner">
-                  {messages.map((msg) => (
-                    <PortableMessageBubble
-                      key={msg.id}
-                      message={msg}
-                    />
-                  ))}
-                  {chatLoading && (
-                    <PortableMessageBubble
-                      message={{
-                        id: 'streaming-message-website',
-                        role: 'assistant',
-                        text: streamText,
-                        reasoning: streamReasoning || undefined,
-                        toolCalls: streamTools.length > 0 ? streamTools : undefined,
-                        streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
-                      }}
-                      isStreaming
-                      startedAt={streamStartRef.current}
-                      statusMessage={statusMessage || 'Planning next moves'}
-                    />
-                  )}
-                  <div ref={bottomRef} />
-                </div>
-              </div>
-              {renderChatInput()}
-            </>
+  // ── Composer ───────────────────────────────────────────────────────────────
+
+  const composer = (
+    <div className="rounded-2xl border border-theme/10 bg-theme-card/30 transition-colors focus-within:border-primary/30">
+      <textarea
+        ref={inputRef}
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Ask, run, or build anything..."
+        rows={1}
+        disabled={chatLoading}
+        className="min-h-[38px] max-h-[120px] w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-[13px] text-theme-fg outline-none placeholder:text-theme-muted/50 disabled:opacity-60"
+        style={{ scrollbarWidth: 'none' }}
+      />
+      <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
+        <div className="flex items-center gap-1.5">
+          {modelSelector}
+          {historyButton}
+          <span className={clsx('ml-1 h-1.5 w-1.5 rounded-full', chatLoading ? 'animate-pulse bg-amber-500' : 'bg-green-500')} />
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="ml-1 rounded-lg p-1 text-theme-muted transition-colors hover:bg-theme-hover/60 hover:text-theme-fg"
+              title="Clear"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
           )}
         </div>
-
-        {/* ── Terminal Panel ── */}
-        {terminalOpen && (
-          <div className="ide-terminal-panel">
-            <div className="ide-terminal-header">
-              <div className="ide-terminal-header-left">
-                <span className="ide-panel-title">Terminal</span>
-                <span className={`ide-status-dot ${connected ? 'ide-status-dot-green' : ''}`} />
-              </div>
-              <button
-                onClick={() => setTerminalOpen(false)}
-                className="ide-panel-action"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div
-              ref={termContainerRef}
-              className="ide-terminal-body"
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-1">
+          {chatLoading && (
+            <button
+              type="button"
+              onClick={handleStop}
+              className="rounded-lg p-1.5 text-red-400 transition-colors hover:bg-red-500/10"
+              title="Stop"
+            >
+              <Square className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void sendMessage()}
+            disabled={chatLoading || !input.trim()}
+            className={clsx(
+              'rounded-lg p-1.5 transition-colors',
+              input.trim() && !chatLoading ? 'bg-primary text-primary-fg hover:opacity-90' : 'text-theme-muted/30',
+            )}
+            title="Send (Enter)"
+          >
+            {chatLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
     </div>
   );
-}
 
-// ── Tiny icon components ──
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  const renderTree = (entries: FileEntry[], depth = 0): React.ReactNode => {
+    return [...entries]
+      .sort((a, b) => {
+        if (a.type === 'directory' && b.type !== 'directory') return -1;
+        if (a.type !== 'directory' && b.type === 'directory') return 1;
+        return a.name.localeCompare(b.name);
+      })
+      .map((entry) => {
+        const isDir = entry.type === 'directory';
+        const isExpanded = expandedDirs.has(entry.path);
+        const children = dirContents[entry.path];
+        const isLoading = loadingDirs.has(entry.path);
+        return (
+          <div key={entry.path}>
+            <button
+              onClick={() => (isDir ? toggleDir(entry.path) : undefined)}
+              className="ide-tree-item"
+              style={{ paddingLeft: `${8 + depth * 16}px` }}
+            >
+              {isDir ? (
+                <svg className={`ide-tree-chevron ${isExpanded ? 'ide-tree-chevron-open' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M9 6l6 6-6 6z" />
+                </svg>
+              ) : (
+                <span className="ide-tree-spacer" />
+              )}
+              {isDir ? <FolderIcon /> : <FileIcon name={entry.name} />}
+              <span className="truncate">{entry.name}</span>
+            </button>
+            {isDir && isExpanded && (
+              isLoading
+                ? <div className="ide-tree-loading" style={{ paddingLeft: `${24 + depth * 16}px` }}>Loading...</div>
+                : children ? renderTree(children, depth + 1) : null
+            )}
+          </div>
+        );
+      });
+  };
+
+  // ── Active view content ────────────────────────────────────────────────────
+
+  const chatView = (
+    <div className="flex h-full flex-col">
+      <div ref={scrollRef} className="custom-scrollbar flex-1 min-h-0 overflow-y-auto">
+        {messages.length === 0 && !chatLoading && !streamText && streamChunks.length === 0 ? (
+          <div className="flex min-h-full items-end justify-center px-6 pb-8">
+            <div className="w-full max-w-[680px]">
+              <div className="mb-8 text-center">
+                <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-theme-muted">Cloud Agent</div>
+                <h2 className="mx-auto mt-4 max-w-[580px] text-2xl font-semibold tracking-tight text-theme-fg">
+                  {greeting}, {firstName}
+                </h2>
+                <p className="mx-auto mt-2 max-w-[480px] text-[13px] leading-6 text-theme-muted">
+                  Inspect files, run commands, deploy services, or ask anything.
+                </p>
+              </div>
+
+              <div className="mx-auto max-w-[640px]">
+                {composer}
+              </div>
+
+              <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+                {QUICK_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => applyPrompt(prompt)}
+                    className="rounded-lg px-2.5 py-1.5 text-[11px] text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="px-6 py-5">
+            <div className="mx-auto flex max-w-[760px] flex-col gap-4">
+              {messages.map((msg) => (
+                <PortableMessageBubble
+                  key={msg.id}
+                  message={msg}
+                  interactiveToolRenderer={interactiveToolRenderer}
+                />
+              ))}
+
+              {chatLoading && (
+                <PortableMessageBubble
+                  message={{
+                    id: 'streaming',
+                    role: 'assistant',
+                    text: streamText,
+                    reasoning: streamReasoning || undefined,
+                    toolCalls: streamTools.length > 0 ? streamTools : undefined,
+                    streamChunks: streamChunks.length > 0 ? streamChunks : undefined,
+                  }}
+                  isStreaming
+                  startedAt={streamStartRef.current}
+                  interactiveToolRenderer={interactiveToolRenderer}
+                />
+              )}
+
+              {/* Fallback: any pending ask_user prompts not anchored to a live
+                  message bubble (e.g. arrived after stream ended) */}
+              {askUserPrompts
+                .filter((p) => p.status === 'pending')
+                .filter((p) => {
+                  const referenced =
+                    streamTools.some((t) => t.id === p.id)
+                    || messages.some((m) => m.toolCalls?.some((t) => t.id === p.id));
+                  return !referenced;
+                })
+                .map((p) => (
+                  <AskUserPrompt
+                    key={p.id}
+                    prompt={{ id: p.id, args: p.args }}
+                    onRespond={handleAskUserRespond}
+                  />
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {(messages.length > 0 || chatLoading) && (
+        <div className="border-t border-theme bg-theme-card px-6 pb-4 pt-3">
+          <div className="mx-auto max-w-[820px]">
+            {composer}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const overviewView = (
+    <div className="h-full overflow-y-auto px-8 py-8">
+      <div className="mx-auto max-w-3xl">
+        <h2 className="text-xl font-semibold text-theme-fg">Engine overview</h2>
+        <p className="mt-1 text-sm text-theme-muted">Live status and resource summary.</p>
+
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[
+            { label: 'Status', value: engine?.status || '—' },
+            { label: 'Plan', value: planLabel },
+            { label: 'Resources', value: machineLabel },
+            { label: 'Disk', value: engine?.disk_gb ? `${engine.disk_gb} GB` : '—' },
+            { label: 'Region', value: engine?.region || '—' },
+            { label: 'Public IP', value: engine?.externalIp || '—' },
+          ].map((item) => (
+            <div key={item.label} className="rounded-2xl border border-theme bg-theme-card p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted">{item.label}</div>
+              <div className="mt-1 truncate font-mono text-[13px] text-theme-fg" title={String(item.value)}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-theme bg-theme-card p-5">
+          <div className="text-sm font-semibold text-theme-fg">Engine controls</div>
+          <p className="mt-1 text-[12px] text-theme-muted">
+            Manage your cloud engine from the top bar. Use the activity bar on the left to switch
+            between chat, the file explorer, and the terminal.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="cloud-ide">
+      {/* Activity Bar */}
+      <aside className="ide-activity-bar">
+        {VIEW_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive =
+            item.toggle === 'explorer'
+              ? filePanelOpen
+              : item.toggle === 'terminal'
+                ? terminalOpen
+                : activeView === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              title={item.label}
+              onClick={() => {
+                if (item.toggle === 'explorer') { setFilePanelOpen((v) => !v); return; }
+                if (item.toggle === 'terminal') { setTerminalOpen((v) => !v); return; }
+                setActiveView(item.id as ActivityView);
+              }}
+              className={clsx('ide-activity-btn', isActive && 'ide-activity-btn-active')}
+            >
+              <Icon className="h-4 w-4" />
+            </button>
+          );
+        })}
+        <div className="flex-1" />
+        <div title={`Engine: ${engine?.status || 'unknown'}`} className="flex h-8 w-8 items-center justify-center">
+          <span className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]" />
+        </div>
+      </aside>
+
+      {/* Explorer */}
+      {filePanelOpen && (
+        <aside className="ide-file-panel">
+          <div className="ide-file-panel-header">
+            <span className="ide-panel-title">Workspace</span>
+            <button onClick={() => void loadDir('.')} className="ide-panel-action" title="Refresh files">
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="ide-file-tree">
+            {dirContents['.'] ? renderTree(dirContents['.']) : (
+              <div className="ide-tree-loading" style={{ paddingLeft: '16px' }}>Loading files...</div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* Main content */}
+      <section className="ide-main flex-1 min-w-0">
+        {/* Top bar */}
+        <header className="ide-topbar">
+          <div className="ide-topbar-title min-w-0">
+            <span className="truncate text-theme-muted">{engine?.instance_name || 'Cloud Engine'}</span>
+            <span className="text-theme-muted/40">/</span>
+            <strong className="truncate">{activeLabel}</strong>
+            <span className="hidden text-theme-muted/40 sm:inline">·</span>
+            <span className="hidden truncate text-theme-muted sm:inline">{planLabel} · {machineLabel}</span>
+          </div>
+          <div className="ide-topbar-actions">
+            <div className="ide-topbar-pill">
+              <span className="dot" />
+              Running
+            </div>
+            <button
+              type="button"
+              className="ide-topbar-btn"
+              onClick={onRefresh}
+              title="Refresh status"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              className="ide-topbar-btn"
+              onClick={onRefresh}
+              title="Pause"
+            >
+              <PowerOff className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              className="ide-topbar-btn ide-topbar-btn-danger"
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </header>
+
+        {/* Active view */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {activeView === 'chat' ? chatView : overviewView}
+        </div>
+
+        {/* Terminal dock */}
+        {terminalOpen && (
+          <div className="ide-terminal-panel" style={{ height: terminalHeight }}>
+            <div
+              className="h-[3px] cursor-ns-resize bg-transparent transition-colors hover:bg-primary/30"
+              onMouseDown={handleTerminalResize}
+            />
+            <div className="ide-terminal-header">
+              <div className="ide-terminal-header-left">
+                <Terminal className="h-3 w-3 text-theme-muted" />
+                <span className="ide-panel-title">Terminal</span>
+                <span className={`ide-status-dot ${connected ? 'ide-status-dot-green' : ''}`} />
+              </div>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  className="ide-panel-action"
+                  onClick={() => setTerminalHeight((h) => h === MIN_TERMINAL_H ? DEFAULT_TERMINAL_H : MIN_TERMINAL_H)}
+                  title={terminalHeight === MIN_TERMINAL_H ? 'Expand' : 'Minimize'}
+                >
+                  {terminalHeight === MIN_TERMINAL_H ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+                <button onClick={() => setTerminalOpen(false)} className="ide-panel-action" title="Close terminal">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div ref={termContainerRef} className="ide-terminal-body" />
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 
 function FolderIcon() {
   return (
@@ -777,24 +1426,12 @@ function FolderIcon() {
 function FileIcon({ name }: { name: string }) {
   const ext = name.split('.').pop()?.toLowerCase() || '';
   const colorMap: Record<string, string> = {
-    ts: '#3178c6',
-    tsx: '#3178c6',
-    js: '#f7df1e',
-    jsx: '#f7df1e',
-    py: '#3776ab',
-    json: '#a8b1c2',
-    md: '#519aba',
-    css: '#264de4',
-    html: '#e34c26',
-    yml: '#cb171e',
-    yaml: '#cb171e',
-    sh: '#89e051',
-    bash: '#89e051',
+    ts: '#3178c6', tsx: '#3178c6', js: '#f7df1e', jsx: '#f7df1e', py: '#3776ab',
+    json: '#a8b1c2', md: '#519aba', css: '#264de4', html: '#e34c26',
+    yml: '#cb171e', yaml: '#cb171e', sh: '#89e051', bash: '#89e051',
   };
-  const color = colorMap[ext] || 'var(--ide-text-dim)';
-
   return (
-    <svg className="ide-tree-icon" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.5}>
+    <svg className="ide-tree-icon" viewBox="0 0 24 24" fill="none" stroke={colorMap[ext] || 'var(--ide-text-dim)'} strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
     </svg>
   );

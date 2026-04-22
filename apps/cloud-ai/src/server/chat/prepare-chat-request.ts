@@ -12,7 +12,10 @@ import {
   checkAccess,
   incrementDailyRequestCounter,
   getExternalAccount,
+  getConversationMessages,
 } from '../../supabase';
+import { verifyVMToken } from '../../services/vm-tokens';
+import { resolveVMSecret } from '../../services/vm-command';
 import { getSkillsFromContext } from '../../tools/skill-tools';
 import { clearSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
 import { contentToText, normalizeMessages } from '../../utils/messages';
@@ -104,7 +107,28 @@ export async function prepareChatRequest({
     : { enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any> };
 
   const history = conversations.get(ws) || [];
+  // Hydrate from durable storage when this is a fresh socket (typical for the VM
+  // bridge, which opens a brand-new WS per chat turn) and the caller already has
+  // a known conversationId. Without this, every turn would look like a new
+  // conversation to the model and lose all prior context.
+  const hydrationConvId = typeof msg?.conversationId === 'string' ? msg.conversationId.trim() : '';
+  if (authUser && hydrationConvId && history.length === 0) {
+    try {
+      const stored = await getConversationMessages(authUser.userId, hydrationConvId, 100);
+      if (stored && stored.length > 0) {
+        for (const row of stored) {
+          if (!row?.role || typeof row.content !== 'string') continue;
+          if (row.role !== 'user' && row.role !== 'assistant' && row.role !== 'system') continue;
+          history.push({ role: row.role, content: row.content });
+        }
+        conversations.set(ws, history);
+      }
+    } catch { }
+  }
   appendNewUserMessagesToHistory(history, messages);
+  // Persist the in-memory history back so subsequent calls on this same WS
+  // (rare for VM, common for desktop) keep accumulating turns.
+  conversations.set(ws, history);
 
   const prompt = resolvePrompt(messages);
   if (!prompt) {
@@ -215,7 +239,29 @@ export async function prepareChatRequest({
 async function resolveAuth(msg: any): Promise<{ authUser: AuthUser | null; authResult: any }> {
   const accessToken = String(msg?.auth?.accessToken || '');
   const authResult = accessToken ? await verifyAccessToken(accessToken) : null;
-  const authUser = authResult?.success ? { userId: authResult.userId!, email: authResult.email } : null;
+  let authUser: AuthUser | null = authResult?.success
+    ? { userId: authResult.userId!, email: authResult.email }
+    : null;
+
+  // VM agent auth: messages from a user's VM are signed with a per-VM HMAC secret.
+  // The VM does NOT carry a Supabase JWT, so we verify the vmToken against the
+  // user's VM secret and treat the resulting userId as authenticated.
+  if (!authUser) {
+    const vmToken = typeof msg?.auth?.vmToken === 'string' ? msg.auth.vmToken.trim() : '';
+    const claimedUserId = typeof msg?.auth?.userId === 'string' ? msg.auth.userId.trim() : '';
+    if (vmToken && claimedUserId) {
+      try {
+        const secret = await resolveVMSecret(claimedUserId);
+        if (secret) {
+          const payload = verifyVMToken(vmToken, secret);
+          if (payload && payload.userId === claimedUserId) {
+            authUser = { userId: claimedUserId };
+          }
+        }
+      } catch { }
+    }
+  }
+
   return { authUser, authResult };
 }
 

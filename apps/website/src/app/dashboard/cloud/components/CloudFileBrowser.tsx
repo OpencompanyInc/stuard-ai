@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { listFiles, readFile, writeFile, deleteFile, renameFile, createDirectory } from '@/lib/cloudApi';
+import React, { useState, useEffect, useRef } from 'react';
+import { listFiles, readFile, deleteFile, createDirectory, uploadFileToVm } from '@/lib/cloudApi';
 
 interface CloudFileBrowserProps {
   engine: any;
@@ -22,6 +22,9 @@ export function CloudFileBrowser({ engine }: CloudFileBrowserProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<string[]>(['.']);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadDirectory = async (path: string) => {
     setLoading(true);
@@ -80,6 +83,33 @@ export function CloudFileBrowser({ engine }: CloudFileBrowserProps) {
     loadDirectory(currentPath);
   };
 
+  const handleUploadClick = () => {
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+
+    setUploadError(null);
+    for (const file of files) {
+      const targetPath = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
+      setUploading(file.name);
+      try {
+        const res = await uploadFileToVm(targetPath, file);
+        if (!res.ok) {
+          setUploadError(res.error || `Failed to upload ${file.name}`);
+        }
+      } catch (err: any) {
+        setUploadError(err?.message || `Failed to upload ${file.name}`);
+      }
+    }
+    setUploading(null);
+    loadDirectory(currentPath);
+  };
+
   useEffect(() => {
     if (engine.status === 'running') loadDirectory('.');
   }, [engine.status]);
@@ -116,7 +146,14 @@ export function CloudFileBrowser({ engine }: CloudFileBrowserProps) {
       </div>
 
       {/* Toolbar */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={handleUploadClick}
+          disabled={!!uploading}
+          className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all disabled:opacity-60"
+        >
+          {uploading ? `Uploading ${uploading}...` : 'Upload Files'}
+        </button>
         <button
           onClick={handleCreateDir}
           className="px-3 py-1.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all"
@@ -129,6 +166,16 @@ export function CloudFileBrowser({ engine }: CloudFileBrowserProps) {
         >
           Refresh
         </button>
+        {uploadError && (
+          <span className="text-xs text-red-500 ml-2">{uploadError}</span>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          onChange={handleFilesSelected}
+          className="hidden"
+        />
       </div>
 
       <div className="flex gap-4">

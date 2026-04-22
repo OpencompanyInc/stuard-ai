@@ -25,6 +25,7 @@ import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost } from '../../pricing';
 import { MediaProcessor, fromWhatsApp } from '../../media';
 import { runServerlessAgent } from '../serverless-agent';
+import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 
 const WA_API = 'https://graph.facebook.com/v22.0';
 
@@ -460,6 +461,16 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
 
         if (effectiveTarget === 'vm') {
           try {
+            // Generate embedding in cloud-ai so the VM can run similarity
+            // search against its synced SQLite memory DB — mirrors the SMS
+            // path so WhatsApp has the same memory context as website chats.
+            let queryEmbedding: number[] | undefined;
+            try {
+              queryEmbedding = await getOrCreateQueryEmbedding(text);
+            } catch {
+              // Non-fatal: VM will still work with recent-segments fallback
+            }
+
             // Persist conversation in Supabase (same as Telnyx VM route)
             let waConvId = smsState.conversation_id || null;
             let waConvCreatedNow = false;
@@ -479,6 +490,8 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               conversationId: waConvId || undefined,
               model: smsState.preferred_model || 'fast',
               context: { source: 'whatsapp', fromWaId: from },
+              memoryQuery: text,
+              ...(queryEmbedding ? { queryEmbedding } : {}),
               ...(mediaAttachments.length > 0 ? { attachments: mediaAttachments } : {}),
             }, 60_000);
 

@@ -551,8 +551,13 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       let usedProvider = 'tts-fallback';
 
       if (configuredProviders.length > 0) {
-        // Pick best provider for outbound proactive calls
-        const preferredOrder = ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
+        // Pick best provider for outbound proactive calls. Tool-capable
+        // providers come first so proactive calls can use delegate,
+        // web_search, search_memory, and send_sms if the conversation
+        // moves in that direction. Falls back to Gemini/ElevenLabs when
+        // none of the tool-capable ones are configured.
+        const { getTelephonyProviderOrder } = await import('../../voice');
+        const preferredOrder = getTelephonyProviderOrder();
         let providerId = '';
         for (const id of preferredOrder) {
           const p = configuredProviders.find(cp => cp.id === id);
@@ -582,6 +587,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         }
         if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
           bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+        } else if (providerId === 'gemini-live') {
+          bridgeConfig.voiceId = process.env.GEMINI_LIVE_VOICE || 'Aoede';
         }
 
         const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
@@ -1195,6 +1202,15 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
             if (effectiveTarget === 'vm') {
               try {
+                // Generate embedding so the VM can run similarity search
+                // against its synced SQLite memory — mirrors the SMS path.
+                let queryEmbedding: number[] | undefined;
+                try {
+                  queryEmbedding = await getOrCreateQueryEmbedding(messageText);
+                } catch {
+                  // Non-fatal: VM will still work with recent-segments fallback
+                }
+
                 // Persist conversation in Supabase (same as SMS VM route)
                 let mmsConvId = smsState.conversation_id || null;
                 let mmsConvCreatedNow = false;
@@ -1217,6 +1233,8 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                     source: 'mms',
                     fromPhone: from,
                   },
+                  memoryQuery: messageText,
+                  ...(queryEmbedding ? { queryEmbedding } : {}),
                   attachments: mediaResult.attachments,
                 }, 60_000);
 
@@ -1696,8 +1714,13 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
     return;
   }
 
-  // Pick the best provider for inbound calls — Gemini Live is the default
-  const preferredOrder = ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
+  // Pick the best provider for inbound calls. Tool-capable providers
+  // (OpenAI Realtime, Grok Realtime) come first so calls can actually
+  // use delegate, web_search, search_memory, and send_sms. Falls back
+  // to Gemini Live / ElevenLabs for conversation-only calls when no
+  // tool-capable provider is configured.
+  const { getTelephonyProviderOrder } = await import('../../voice');
+  const preferredOrder = getTelephonyProviderOrder();
   let providerId = '';
 
   for (const id of preferredOrder) {

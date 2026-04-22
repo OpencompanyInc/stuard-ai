@@ -6,32 +6,86 @@ import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import { Check, Copy } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Check, ChevronRight, Copy } from 'lucide-react';
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '../ai-elements/ChainOfThought';
 import { Shimmer } from '../ai-elements/Shimmer';
-import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName } from '../helpers';
-import { mergeStreamingText } from '../streamMerge';
+import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath } from '../helpers';
+import { isRedundantStreamingUpdate, mergeStreamingText } from '../streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../text';
 import type { Message, StreamChunk, ToolCall } from '../types';
 
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v']);
 
-const INTERACTIVE_TOOL_NAMES = new Set([
+// GenUI tools that render their own custom UI block (not as tracepills).
+const GENUI_TOOL_NAMES = new Set([
   'ask_confirmation',
   'show_choices',
   'request_files',
   'show_files',
   'show_form',
   'chat_ui',
+]);
+
+// Interactive tools that are inlined into the message body via the renderer prop.
+const INTERACTIVE_TOOL_NAMES = new Set([
+  ...GENUI_TOOL_NAMES,
   'ask_user',
 ]);
 
+// Tools that should never appear in the chain of thought (internal/silent).
+const HIDDEN_TOOL_NAMES = new Set<string>([
+  'segment_create', 'segment_update', 'segment_end', 'segment_list',
+  'segment_list_recent', 'segment_search', 'segment_get',
+  'segment_build_topic_drawers', 'segment_search_drawers_by_embedding',
+  'collection_summary_upsert', 'collection_summary_list', 'collection_summary_get',
+  'memory_store', 'memory_recall', 'memory_update', 'memory_search', 'memory_stats',
+  'conversation_create', 'conversation_get', 'conversation_list', 'conversation_update',
+  'conversation_delete', 'conversation_search', 'conversation_get_spaces',
+  'message_add', 'message_list',
+  'agent_todo',
+  'knowledge_add_fact', 'knowledge_update_fact', 'knowledge_build_context',
+  'knowledge_get_directives', 'knowledge_get_identity',
+  'planner_list_items',
+  'subagent_spawn', 'subagent_update', 'subagent_status', 'subagent_list',
+  'subagent_stop', 'subagent_create', 'run_subagent', 'spawn_agent',
+  'get_tool_schema', 'search_tools', 'reply_to_subagent',
+  'ask_user',
+  ...GENUI_TOOL_NAMES,
+]);
+
+const TOOL_GROUP_LABELS: Record<string, { singular: string; plural: string }> = {
+  list_directory: { singular: 'Listed directory', plural: 'Listed {n} directories' },
+  read_file: { singular: 'Read file', plural: 'Read {n} files' },
+  file_read: { singular: 'Read file', plural: 'Read {n} files' },
+  write_file: { singular: 'Wrote file', plural: 'Wrote {n} files' },
+  file_edit: { singular: 'Edited file', plural: 'Edited {n} files' },
+  search_local_workflows: { singular: 'Searched workflows', plural: 'Searched {n} workflows' },
+  web_search: { singular: 'Searched the web', plural: 'Ran {n} web searches' },
+  scrape_url: { singular: 'Scraped URL', plural: 'Scraped {n} URLs' },
+  glob: { singular: 'Searched files', plural: 'Ran {n} file searches' },
+  grep: { singular: 'Searched code', plural: 'Ran {n} code searches' },
+  run_command: { singular: 'Ran command', plural: 'Ran {n} commands' },
+  capture_screen: { singular: 'Captured screen', plural: 'Captured {n} screenshots' },
+  browser_use_screenshot: { singular: 'Took screenshot', plural: 'Took {n} screenshots' },
+  browser_use_navigate: { singular: 'Navigated', plural: 'Navigated {n} pages' },
+  browser_use_click: { singular: 'Clicked element', plural: 'Clicked {n} elements' },
+};
+
+type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
+
+interface AssistantTraceStepData {
+  id: string;
+  kind: 'reasoning' | 'tool';
+  label: string;
+  status: TraceStatus;
+  content?: string;
+  tool?: ToolCall;
+  nested?: boolean;
+}
+
 type RenderBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool'; tool: ToolCall };
-
-type TraceStep =
-  | { type: 'reasoning'; content: string; nested?: boolean }
   | { type: 'tool'; tool: ToolCall };
 
 type ContentSegment =
@@ -163,7 +217,15 @@ function useMarkdownComponents() {
   }), []);
 }
 
-function CopyActionButton({ value, className }: { value: string; className?: string }) {
+function CopyActionButton({
+  value,
+  className,
+  iconOnly = false,
+}: {
+  value: string;
+  className?: string;
+  iconOnly?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -182,30 +244,76 @@ function CopyActionButton({ value, className }: { value: string; className?: str
         } catch {}
       }}
       className={clsx(
-        'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg',
+        'inline-flex items-center justify-center gap-1 rounded-md font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg',
+        iconOnly ? 'h-7 w-7 text-[11px]' : 'px-2 py-1 text-[11px]',
         className,
       )}
-      title="Copy"
+      title={copied ? 'Copied' : 'Copy'}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
-      <span>{copied ? 'Copied' : 'Copy'}</span>
+      {copied
+        ? <Check className="h-3.5 w-3.5" style={{ color: 'var(--primary)' }} />
+        : <Copy className="h-3.5 w-3.5" />}
+      {iconOnly ? null : <span>{copied ? 'Copied' : 'Copy'}</span>}
     </button>
   );
 }
 
-function stringifyPreview(value: any, maxLength = 700): string {
-  if (value == null) return '';
-  if (typeof value === 'string') {
-    return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+function summarizeReasoningLabel(content: string): string {
+  const plain = content
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!plain) return 'Planning next moves';
+
+  const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
+  const summary = truncatePreviewText(sentence, 72);
+  return summary.split(' ').length >= 2 ? summary : 'Planning next moves';
+}
+
+function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantTraceStepData[] {
+  const compacted: AssistantTraceStepData[] = [];
+
+  for (const step of steps) {
+    const last = compacted[compacted.length - 1];
+    if (
+      step.kind === 'reasoning'
+      && last?.kind === 'reasoning'
+      && step.content
+      && last.content
+      && Boolean(step.nested) === Boolean(last.nested)
+      && isRedundantStreamingUpdate(last.content, step.content)
+    ) {
+      const mergedContent = mergeStreamingText(last.content, step.content);
+      compacted[compacted.length - 1] = {
+        ...last,
+        id: step.id,
+        label: summarizeReasoningLabel(mergedContent),
+        status: step.status === 'active' ? 'active' : last.status,
+        content: mergedContent,
+        nested: step.nested,
+      };
+      continue;
+    }
+
+    compacted.push(step);
   }
 
-  try {
-    const text = JSON.stringify(value, null, 2);
-    return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
-  } catch {
-    const text = String(value);
-    return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
-  }
+  return compacted;
+}
+
+function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
+  if (tool.status === 'completed') return 'complete';
+  if (tool.status === 'error') return 'error';
+  if (tool.status === 'running') return 'active';
+  return isStreaming ? 'active' : 'pending';
+}
+
+function isDelegatedToolCall(tool: ToolCall): boolean {
+  if (tool.nested) return true;
+  if (typeof tool.subagentId === 'string' && tool.subagentId.trim().length > 0) return true;
+  return typeof tool.id === 'string' && tool.id.startsWith('subagent:');
 }
 
 function buildTraceSteps(
@@ -213,40 +321,74 @@ function buildTraceSteps(
   reasoning: string | undefined,
   toolCalls: ToolCall[] | undefined,
   canInlineInteractiveTools: boolean,
-): TraceStep[] {
-  const shouldInlineTool = (tool: ToolCall) => canInlineInteractiveTools && INTERACTIVE_TOOL_NAMES.has(tool.tool) && !!tool.args;
+  isStreaming: boolean,
+): AssistantTraceStepData[] {
+  const shouldInlineTool = (tool: ToolCall) =>
+    canInlineInteractiveTools && INTERACTIVE_TOOL_NAMES.has(tool.tool) && !!tool.args;
+  const shouldHideTool = (tool: ToolCall) =>
+    HIDDEN_TOOL_NAMES.has(tool.tool) || GENUI_TOOL_NAMES.has(tool.tool) || shouldInlineTool(tool);
+
+  const steps: AssistantTraceStepData[] = [];
 
   if (streamChunks && streamChunks.length > 0) {
-    const steps: TraceStep[] = [];
+    const lastReasoningIndex = streamChunks.reduce(
+      (lastIndex, chunk, index) => (chunk.type === 'reasoning' ? index : lastIndex),
+      -1,
+    );
 
-    for (const chunk of streamChunks) {
+    streamChunks.forEach((chunk, index) => {
       if (chunk.type === 'reasoning') {
-        const last = steps[steps.length - 1];
-        if (last?.type === 'reasoning' && Boolean(last.nested) === Boolean(chunk.nested)) {
-          last.content = mergeStreamingText(last.content, chunk.content);
-        } else {
-          steps.push({ type: 'reasoning', content: chunk.content, nested: chunk.nested });
-        }
+        steps.push({
+          id: `reasoning-${index}`,
+          kind: 'reasoning',
+          label: summarizeReasoningLabel(chunk.content),
+          status: isStreaming && index === lastReasoningIndex ? 'active' : 'complete',
+          content: chunk.content,
+          nested: chunk.nested,
+        });
+        return;
       }
 
-      if (chunk.type === 'tool' && !shouldInlineTool(chunk.tool)) {
-        steps.push({ type: 'tool', tool: chunk.tool });
+      if (chunk.type === 'tool') {
+        const tc = chunk.tool;
+        if (shouldHideTool(tc)) return;
+        steps.push({
+          id: tc.id || `tool-${index}`,
+          kind: 'tool',
+          label: tc.description || humanizeToolName(tc.tool),
+          status: mapTraceStatus(tc, isStreaming),
+          tool: tc,
+          nested: isDelegatedToolCall(tc),
+        });
       }
-    }
+    });
 
-    return steps;
+    return compactReasoningTraceSteps(steps);
   }
 
-  const steps: TraceStep[] = [];
-  if (reasoning?.trim()) {
-    steps.push({ type: 'reasoning', content: reasoning, nested: false });
+  if (reasoning && reasoning.trim().length > 0) {
+    steps.push({
+      id: 'reasoning-fallback',
+      kind: 'reasoning',
+      label: summarizeReasoningLabel(reasoning),
+      status: 'complete',
+      content: reasoning,
+    });
   }
-  for (const tool of toolCalls || []) {
-    if (!shouldInlineTool(tool)) {
-      steps.push({ type: 'tool', tool });
-    }
-  }
-  return steps;
+
+  (toolCalls || []).forEach((tool, index) => {
+    if (shouldHideTool(tool)) return;
+    steps.push({
+      id: tool.id || `tool-fallback-${index}`,
+      kind: 'tool',
+      label: tool.description || humanizeToolName(tool.tool),
+      status: mapTraceStatus(tool, isStreaming),
+      tool,
+      nested: isDelegatedToolCall(tool),
+    });
+  });
+
+  return compactReasoningTraceSteps(steps);
 }
 
 function buildRenderBlocks(
@@ -352,42 +494,446 @@ function extractContentSegments(text: string): ContentSegment[] {
   return segments.length > 0 ? segments : [{ type: 'text', value: text }];
 }
 
-function PreviewCard({ title, value }: { title: string; value: any }) {
-  const preview = stringifyPreview(value);
-  if (!preview) return null;
+// ---------------- Tool result preview helpers (mirror desktop) ----------------
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function filterToolPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => filterToolPayload(item))
+      .filter((item) => item !== null && item !== undefined);
+    return items.length > 0 ? items : null;
+  }
+
+  if (isPlainRecord(value)) {
+    const filtered: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (/^(id|.*_id|.*Id|session.*|conversation.*|description)$/i.test(key)) continue;
+      const next = filterToolPayload(entry);
+      if (next !== null && next !== undefined) {
+        filtered[key] = next;
+      }
+    }
+    return Object.keys(filtered).length > 0 ? filtered : null;
+  }
+
+  return value;
+}
+
+function truncatePreviewText(text: string, max = 96): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+}
+
+function summarizePreviewValue(value: unknown): string {
+  if (typeof value === 'string') return truncatePreviewText(value, 88);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.length === 1 ? '1 item' : `${value.length} items`;
+  if (isPlainRecord(value)) {
+    if (typeof value.status === 'string') return truncatePreviewText(value.status, 64);
+    if (typeof value.path === 'string') return truncatePreviewText(value.path, 72);
+    const count = Object.keys(value).length;
+    return count === 1 ? '1 field' : `${count} fields`;
+  }
+  return 'No data';
+}
+
+function PreviewBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px]"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 50%, transparent)',
+        color: 'var(--foreground)',
+      }}
+    >
+      <span className="text-theme-muted">{label}:</span>
+      <span className="truncate font-medium">{value}</span>
+    </div>
+  );
+}
+
+function extractSearchSources(result: unknown): Array<{ title: string; url: string; snippet?: string }> | null {
+  if (!result || typeof result !== 'object') return null;
+  const obj = result as Record<string, unknown>;
+
+  let items: unknown[] | null = null;
+  if (Array.isArray(obj.results)) items = obj.results;
+  else if (Array.isArray(obj.sources)) items = obj.sources;
+  else if (Array.isArray(obj.data)) items = obj.data;
+  else if (Array.isArray(result)) items = result as unknown[];
+
+  if (!items || items.length === 0) return null;
+
+  const sources = items
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === 'object' && item !== null && typeof (item as any).url === 'string',
+    )
+    .map((item) => ({
+      title: typeof item.title === 'string' ? item.title : '',
+      url: item.url as string,
+      snippet: typeof item.snippet === 'string' ? item.snippet : undefined,
+    }));
+
+  return sources.length > 0 ? sources : null;
+}
+
+function faviconUrl(siteUrl: string): string {
+  try {
+    const host = new URL(siteUrl).hostname;
+    return `https://www.google.com/s2/favicons?sz=32&domain=${host}`;
+  } catch {
+    return '';
+  }
+}
+
+function WebSearchSources({
+  query,
+  sources,
+}: {
+  query?: string;
+  sources: Array<{ title: string; url: string }>;
+}) {
+  return (
+    <div className="space-y-2">
+      {query ? (
+        <div
+          className="text-[12px] leading-relaxed"
+          style={{ color: 'color-mix(in srgb, var(--foreground) 60%, transparent)' }}
+        >
+          {query}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-1.5">
+        {sources.slice(0, 8).map((source) => {
+          let hostname = '';
+          try {
+            hostname = new URL(source.url).hostname.replace(/^www\./, '');
+          } catch {
+            hostname = source.url;
+          }
+          return (
+            <a
+              key={source.url}
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium text-theme-muted transition-opacity hover:opacity-80"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 55%, transparent)',
+              }}
+              title={source.title || hostname}
+            >
+              <img
+                src={faviconUrl(source.url)}
+                alt=""
+                className="h-3 w-3 rounded-sm"
+                loading="lazy"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              {hostname}
+            </a>
+          );
+        })}
+        {sources.length > 8 ? (
+          <span className="self-center text-[10px] text-theme-muted">+{sources.length - 8} more</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FilePathChip({ filePath }: { filePath: string }) {
+  const [copied, setCopied] = useState(false);
+  const ext = getFileExt(filePath);
+  const isImage = IMAGE_EXTS.has(ext);
+  const isAudio = AUDIO_EXTS.has(ext);
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
+  const kindLabel = isImage ? 'image' : isAudio ? 'audio' : ext ? ext.toUpperCase() : 'file';
+
+  const copyPath = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard.writeText(filePath);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-theme/10 bg-theme-hover/40">
-      <div className="border-b border-theme/10 bg-theme-card/20 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">
-        {title}
+    <div className="my-0.5 flex items-center gap-2 rounded-lg border border-theme/10 bg-transparent px-2.5 py-1.5">
+      <span className="shrink-0 rounded-full border border-theme/10 px-1.5 py-0.5 text-[9px] font-medium text-theme-muted">
+        {kindLabel}
+      </span>
+      <span className="max-w-[220px] truncate text-[10px] font-medium text-theme-fg/85" title={filePath}>
+        {fileName}
+      </span>
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={copyPath}
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/40 hover:text-theme-fg"
+          title="Copy path"
+        >
+          {copied ? (
+            <Check className="h-3 w-3" style={{ color: 'var(--primary)' }} />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+        </button>
       </div>
-      <pre className="overflow-x-auto px-3 py-2 text-[11px] leading-relaxed text-theme-fg/90 whitespace-pre-wrap break-words">{preview}</pre>
+    </div>
+  );
+}
+
+function ToolPayloadPreview({
+  data,
+  emptyLabel,
+  toolName,
+  toolArgs,
+}: {
+  data: unknown;
+  emptyLabel: string;
+  toolName?: string;
+  toolArgs?: unknown;
+}) {
+  const filtered = filterToolPayload(data);
+
+  if (toolName === 'web_search' && filtered) {
+    const sources = extractSearchSources(filtered);
+    if (sources) {
+      let query: string | undefined;
+      if (toolArgs && typeof toolArgs === 'object') {
+        const args = toolArgs as Record<string, unknown>;
+        if (typeof args.query === 'string') query = args.query;
+        else if (typeof args.search_term === 'string') query = args.search_term;
+        else if (typeof args.q === 'string') query = args.q;
+      }
+      return <WebSearchSources query={query} sources={sources} />;
+    }
+  }
+
+  if (filtered === null || filtered === undefined) {
+    return <div className="text-[11px] text-theme-muted">{emptyLabel}</div>;
+  }
+
+  if (typeof filtered === 'string') {
+    if (isFilePath(filtered)) {
+      return <FilePathChip filePath={filtered} />;
+    }
+    return (
+      <div
+        className="rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+          color: 'color-mix(in srgb, var(--foreground) 75%, transparent)',
+        }}
+      >
+        {truncatePreviewText(filtered, 300)}
+      </div>
+    );
+  }
+
+  if (typeof filtered === 'number' || typeof filtered === 'boolean') {
+    return <PreviewBadge label="Value" value={String(filtered)} />;
+  }
+
+  if (Array.isArray(filtered)) {
+    if (filtered.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {filtered.slice(0, 6).map((item, index) => (
+            <PreviewBadge key={`${String(item)}-${index}`} label={`Item ${index + 1}`} value={String(item)} />
+          ))}
+          {filtered.length > 6 ? (
+            <span className="text-[10px] text-theme-muted">+{filtered.length - 6} more</span>
+          ) : null}
+        </div>
+      );
+    }
+  }
+
+  const filePaths = extractFilePaths(filtered);
+  const rows: Array<{ key: string; value: string }> = [];
+  const longText: Array<{ key: string; value: string }> = [];
+
+  if (Array.isArray(filtered)) {
+    rows.push({ key: 'items', value: String(filtered.length) });
+  } else if (isPlainRecord(filtered)) {
+    for (const [key, value] of Object.entries(filtered)) {
+      if (isFilePath(value)) continue;
+      if (typeof value === 'string' && value.length > 120 && longText.length === 0) {
+        longText.push({ key, value });
+        continue;
+      }
+      rows.push({ key, value: summarizePreviewValue(value) });
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {filePaths.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {filePaths.map((filePath) => (
+            <FilePathChip key={filePath} filePath={filePath} />
+          ))}
+        </div>
+      ) : null}
+
+      {longText.map((entry) => (
+        <div
+          key={entry.key}
+          className="rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+            color: 'color-mix(in srgb, var(--foreground) 75%, transparent)',
+          }}
+        >
+          <div className="mb-1 text-[10px] text-theme-muted">{humanizeToolName(entry.key)}</div>
+          <div className="whitespace-pre-wrap break-words">
+            {truncatePreviewText(entry.value, 240)}
+          </div>
+        </div>
+      ))}
+
+      {rows.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {rows.slice(0, 6).map((row) => (
+            <PreviewBadge
+              key={`${row.key}-${row.value}`}
+              label={humanizeToolName(row.key)}
+              value={row.value}
+            />
+          ))}
+          {rows.length > 6 ? (
+            <span className="text-[10px] text-theme-muted">+{rows.length - 6} more</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function ToolTraceContent({ tool }: { tool: ToolCall }) {
-  const filePaths = useMemo(() => extractFilePaths(tool.result), [tool.result]);
+  if (tool.status === 'error') {
+    const errorText =
+      typeof tool.error === 'string'
+        ? tool.error
+        : JSON.stringify(tool.error || 'Tool failed', null, 2);
+
+    return (
+      <div
+        className="rounded-lg px-3 py-2 text-[11px] leading-relaxed text-red-500/90 whitespace-pre-wrap break-words"
+        style={{ backgroundColor: 'color-mix(in srgb, var(--destructive) 8%, transparent)' }}
+      >
+        {errorText}
+      </div>
+    );
+  }
+
+  if (tool.status === 'completed') {
+    return (
+      <ToolPayloadPreview
+        data={tool.result}
+        toolName={tool.tool}
+        toolArgs={tool.args}
+        emptyLabel=""
+      />
+    );
+  }
+
+  return null;
+}
+
+function getGroupLabel(toolName: string, count: number): string {
+  const entry = TOOL_GROUP_LABELS[toolName];
+  if (!entry) {
+    const humanized = humanizeToolName(toolName);
+    return count === 1 ? humanized : `${humanized} ×${count}`;
+  }
+  return count === 1 ? entry.singular : entry.plural.replace('{n}', String(count));
+}
+
+function CollapsibleToolGroup({
+  toolName,
+  steps,
+  totalSteps,
+}: {
+  toolName: string;
+  steps: { step: AssistantTraceStepData; idx: number }[];
+  totalSteps: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const allComplete = steps.every(({ step }) => step.status === 'complete');
+  const anyActive = steps.some(({ step }) => step.status === 'active');
+  const groupStatus: TraceStatus = anyActive ? 'active' : allComplete ? 'complete' : 'pending';
+  const label = getGroupLabel(toolName, steps.length);
 
   return (
-    <div className="space-y-2.5">
-      {tool.description ? (
-        <div className="text-[11px] leading-relaxed text-theme-muted">{tool.description}</div>
-      ) : null}
-      {tool.args != null ? <PreviewCard title="Arguments" value={tool.args} /> : null}
-      {tool.liveOutput ? <PreviewCard title="Live Output" value={tool.liveOutput} /> : null}
-      {tool.result != null ? <PreviewCard title={tool.status === 'error' ? 'Error' : 'Result'} value={tool.result} /> : null}
-      {tool.error != null ? <PreviewCard title="Error" value={tool.error} /> : null}
-      {filePaths.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {filePaths.map((path) => (
-            <div key={path} className="inline-flex items-center gap-2 rounded-full border border-theme/10 bg-theme-hover/40 px-3 py-1.5 text-[11px] text-theme-fg">
-              <span className="max-w-[280px] truncate">{path}</span>
-              <CopyActionButton value={path} className="px-1.5 py-0.5 text-[10px]" />
-            </div>
-          ))}
-        </div>
-      ) : null}
+    <div>
+      <ChainOfThoughtStep
+        status={groupStatus}
+        isLast={steps[steps.length - 1].idx === totalSteps - 1 && !expanded}
+        label={
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-left"
+            onClick={() => setExpanded(!expanded)}
+          >
+            <ChevronRight
+              className={clsx(
+                'h-3 w-3 shrink-0 transition-transform duration-150',
+                expanded && 'rotate-90',
+              )}
+              style={{ color: 'color-mix(in srgb, var(--foreground-muted) 50%, transparent)' }}
+            />
+            {groupStatus === 'active' ? (
+              <Shimmer as="span" duration={2} spread={3}>
+                {label}
+              </Shimmer>
+            ) : (
+              <span>{label}</span>
+            )}
+          </button>
+        }
+      />
+      <AnimatePresence initial={false}>
+        {expanded ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="overflow-hidden ml-3 border-l-[1.5px] pl-3"
+            style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 15%, transparent)' }}
+          >
+            {steps.map(({ step, idx }) => (
+              <ChainOfThoughtStep
+                key={step.id}
+                status={step.status}
+                isLast={idx === totalSteps - 1}
+                label={
+                  step.status === 'active' ? (
+                    <Shimmer as="span" duration={2} spread={3}>
+                      {step.label}
+                    </Shimmer>
+                  ) : (
+                    step.label
+                  )
+                }
+              >
+                {step.kind === 'tool' && step.tool ? <ToolTraceContent tool={step.tool} /> : null}
+              </ChainOfThoughtStep>
+            ))}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -399,7 +945,7 @@ function AssistantTracePanel({
   duration,
   statusMessage,
 }: {
-  steps: TraceStep[];
+  steps: AssistantTraceStepData[];
   isStreaming: boolean;
   startedAt?: number;
   duration?: number;
@@ -428,11 +974,18 @@ function AssistantTracePanel({
   if (steps.length === 0 && !statusMessage) return null;
 
   const headerLabel = isStreaming
-    ? `Thinking… ${formatSec(Math.max(0, elapsed))}`
-    : `Thought for ${formatSec(Math.max(0, elapsed))}`;
+    ? elapsed > 0
+      ? `Thinking… ${formatSec(Math.max(0, elapsed))}`
+      : 'Thinking…'
+    : duration || elapsed
+      ? `Thought for ${formatSec(Math.max(0, elapsed))}`
+      : 'Thought';
 
   return (
-    <ChainOfThought defaultOpen={isStreaming} className="w-full max-w-[85%]">
+    <ChainOfThought
+      defaultOpen={isStreaming}
+      className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]"
+    >
       <ChainOfThoughtHeader>
         {isStreaming ? (
           <Shimmer as="span" className="text-[13px] text-theme-muted" duration={1.8} spread={3}>
@@ -445,45 +998,138 @@ function AssistantTracePanel({
 
       {steps.length > 0 ? (
         <ChainOfThoughtContent>
-          {steps.map((step, index) => {
-            const isLast = index === steps.length - 1;
+          {(() => {
+            type DisplayItem =
+              | { type: 'step'; step: AssistantTraceStepData; idx: number; nested: boolean }
+              | {
+                  type: 'tool-group';
+                  toolName: string;
+                  steps: { step: AssistantTraceStepData; idx: number }[];
+                  nested: boolean;
+                };
 
-            if (step.type === 'reasoning') {
-              return (
-                <ChainOfThoughtStep
-                  key={`reasoning-${index}`}
-                  label={step.nested ? 'Delegated reasoning' : 'Reasoning'}
-                  status={isStreaming && isLast ? 'active' : 'complete'}
-                  isLast={isLast}
-                  className={step.nested ? 'ml-4' : undefined}
-                >
-                  <div className="max-h-44 overflow-y-auto rounded-xl border border-theme/10 bg-theme-hover/40 px-3 py-2 text-[11px] leading-relaxed text-theme-fg/90 whitespace-pre-wrap break-words">
-                    {step.content}
-                    {isStreaming && isLast ? (
-                      <span className="ml-1 inline-block h-3.5 w-0.5 rounded-full bg-primary/60 align-middle animate-pulse" />
-                    ) : null}
-                  </div>
-                </ChainOfThoughtStep>
-              );
+            const items: DisplayItem[] = [];
+            let i = 0;
+            while (i < steps.length) {
+              const step = steps[i];
+              const isNested = Boolean(step.nested);
+
+              if (step.kind === 'tool' && step.tool) {
+                const toolName = step.tool.tool;
+                const groupSteps: { step: AssistantTraceStepData; idx: number }[] = [
+                  { step, idx: i },
+                ];
+                let j = i + 1;
+                while (j < steps.length) {
+                  const next = steps[j];
+                  if (
+                    next.kind === 'tool' &&
+                    next.tool?.tool === toolName &&
+                    Boolean(next.nested) === isNested
+                  ) {
+                    groupSteps.push({ step: next, idx: j });
+                    j++;
+                  } else {
+                    break;
+                  }
+                }
+                if (groupSteps.length >= 2) {
+                  items.push({ type: 'tool-group', toolName, steps: groupSteps, nested: isNested });
+                } else {
+                  items.push({ type: 'step', step, idx: i, nested: isNested });
+                }
+                i = j;
+              } else {
+                items.push({ type: 'step', step, idx: i, nested: isNested });
+                i++;
+              }
             }
 
-            return (
-              <ChainOfThoughtStep
-                key={step.tool.id || `${step.tool.tool}-${index}`}
-                label={(step.tool.nested || step.tool.subagentId ? 'Delegated · ' : '') + humanizeToolName(step.tool.tool)}
-                status={step.tool.status === 'error' ? 'error' : step.tool.status === 'completed' ? 'complete' : 'active'}
-                isLast={isLast}
-                className={step.tool.nested || step.tool.subagentId ? 'ml-4' : undefined}
-              >
-                <ToolTraceContent tool={step.tool} />
-              </ChainOfThoughtStep>
-            );
-          })}
+            type NestGroup = { nested: boolean; items: DisplayItem[] };
+            const nestGroups: NestGroup[] = [];
+            for (const item of items) {
+              const last = nestGroups[nestGroups.length - 1];
+              if (last && last.nested === item.nested) {
+                last.items.push(item);
+              } else {
+                nestGroups.push({ nested: item.nested, items: [item] });
+              }
+            }
+
+            const renderItem = (item: DisplayItem, key: string) => {
+              if (item.type === 'tool-group') {
+                return (
+                  <CollapsibleToolGroup
+                    key={key}
+                    toolName={item.toolName}
+                    steps={item.steps}
+                    totalSteps={steps.length}
+                  />
+                );
+              }
+              const { step, idx } = item;
+              return (
+                <ChainOfThoughtStep
+                  key={step.id}
+                  status={step.status}
+                  isLast={idx === steps.length - 1}
+                  label={
+                    step.status === 'active' ? (
+                      <Shimmer as="span" duration={2} spread={3}>
+                        {step.label}
+                      </Shimmer>
+                    ) : (
+                      step.label
+                    )
+                  }
+                >
+                  {step.kind === 'reasoning' && step.content ? (
+                    <div
+                      className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                      style={{
+                        backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                        color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                      }}
+                    >
+                      {step.content}
+                    </div>
+                  ) : null}
+                  {step.kind === 'tool' && step.tool ? <ToolTraceContent tool={step.tool} /> : null}
+                </ChainOfThoughtStep>
+              );
+            };
+
+            return nestGroups.map((group, gIdx) => {
+              const rendered = group.items.map((item, iIdx) =>
+                renderItem(item, `${gIdx}-${iIdx}`),
+              );
+
+              if (group.nested) {
+                return (
+                  <div
+                    key={`nested-${gIdx}`}
+                    className="ml-5 border-l-[1.5px] pl-4 py-1"
+                    style={{
+                      borderColor: 'color-mix(in srgb, var(--foreground-muted) 18%, transparent)',
+                    }}
+                  >
+                    {rendered}
+                  </div>
+                );
+              }
+
+              return <React.Fragment key={`group-${gIdx}`}>{rendered}</React.Fragment>;
+            });
+          })()}
         </ChainOfThoughtContent>
       ) : isStreaming && statusMessage ? (
         <ChainOfThoughtContent>
           <ChainOfThoughtStep
-            label={<Shimmer as="span" duration={2} spread={3}>{statusMessage}</Shimmer>}
+            label={
+              <Shimmer as="span" duration={2} spread={3}>
+                {statusMessage}
+              </Shimmer>
+            }
             status="active"
             isLast
           />
@@ -499,9 +1145,13 @@ function AssistantTextBlock({ text, isStreaming }: { text: string; isStreaming: 
 
   return (
     <div className="group relative w-full max-w-[85%] rounded-2xl border border-theme bg-theme-card px-4 py-3 text-[13px] leading-[1.7] text-theme-fg shadow-sm">
-      <CopyActionButton value={text} className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" />
+      <CopyActionButton
+        value={text}
+        iconOnly
+        className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover:opacity-100"
+      />
 
-      <div className="space-y-3 pr-10">
+      <div className="space-y-3">
         {segments.map((segment, index) => {
           if (segment.type === 'text') {
             if (!segment.value.trim()) return null;
@@ -558,8 +1208,8 @@ export function PortableMessageBubble({
 }: PortableMessageBubbleProps) {
   const canInlineInteractiveTools = typeof interactiveToolRenderer === 'function';
   const traceSteps = useMemo(
-    () => buildTraceSteps(message.streamChunks, message.reasoning, message.toolCalls, canInlineInteractiveTools),
-    [message.reasoning, message.streamChunks, message.toolCalls, canInlineInteractiveTools],
+    () => buildTraceSteps(message.streamChunks, message.reasoning, message.toolCalls, canInlineInteractiveTools, isStreaming),
+    [message.reasoning, message.streamChunks, message.toolCalls, canInlineInteractiveTools, isStreaming],
   );
   const blocks = useMemo(
     () => buildRenderBlocks(message.role, message.text, message.toolCalls, message.streamChunks, canInlineInteractiveTools),

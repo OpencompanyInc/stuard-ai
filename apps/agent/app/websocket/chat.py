@@ -124,7 +124,11 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
             while True:
                 try:
                     if final_seen:
-                        cloud_msg = await asyncio.wait_for(cws.recv(), timeout=20.0)
+                        # Once the model has finished, only stay open briefly to
+                        # capture an optional `title` event. The previous 20s
+                        # wait caused the website's SSE stream to appear hung
+                        # for up to 20 seconds after every response.
+                        cloud_msg = await asyncio.wait_for(cws.recv(), timeout=2.0)
                     else:
                         cloud_msg = await cws.recv()
                 except asyncio.CancelledError:

@@ -31,6 +31,7 @@ export {
   getConfiguredProviders,
   supportsVoiceToolCalling,
   findToolCapableVoiceProvider,
+  getTelephonyProviderOrder,
   getDefaultProviderId,
   registerActiveCall,
   getActiveCall,

@@ -639,6 +639,34 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       // Use the result from executeStep (which uses decideNext) for consistent edge selection
       // No next step - end of loop chain
       if (!out.nextId) {
+        // Handle parallel branches emitted from inside the loop body.
+        // executeStep puts multi-edge results in nextIds (not nextId), so they'd otherwise
+        // be silently dropped. Spawn escape branches (those that don't eventually loop back
+        // to loopStartStepId) as detached fire-and-forget tasks — same as top-level parallel.
+        const nextIds = (out as any).nextIds as string[] | undefined;
+        if (nextIds && nextIds.length > 0) {
+          const escapeBranchIds: string[] = [];
+          for (const branchId of nextIds) {
+            const branchStep = map.get(branchId);
+            if (!branchStep) continue;
+            // Skip branches that have a loop-back edge pointing to the loop start —
+            // those are loop-path nodes and the loop controller already handles re-entry.
+            const hasLoopBack = loopStartStepId &&
+              branchStep.next?.some(e => e.loop?.type && e.to === loopStartStepId);
+            if (!hasLoopBack) escapeBranchIds.push(branchId);
+          }
+          if (escapeBranchIds.length > 0) {
+            engineCtx.logFn(`[${current.id}] ⚡ Spawning ${escapeBranchIds.length} detached branch(es) from loop body`);
+            for (const branchId of escapeBranchIds) {
+              const branchStep = map.get(branchId);
+              if (branchStep) {
+                runBranch(branchStep, { ...ctx }, current.id).catch((err: any) => {
+                  engineCtx.logFn(`[${branchId}] ❌ Detached branch error in loop: ${err?.message || err}`);
+                });
+              }
+            }
+          }
+        }
         return { ok: true };
       }
       

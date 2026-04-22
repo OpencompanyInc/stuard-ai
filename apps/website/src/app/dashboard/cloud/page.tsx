@@ -14,6 +14,8 @@ export default function CloudDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const hasEngine = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const hasRenderableEngine = Boolean(engine);
+  const engineStatus = engine?.status;
 
   const loadStatus = useCallback(async () => {
     if (authLoading) return;
@@ -61,14 +63,14 @@ export default function CloudDashboardPage() {
   // Poll status — faster during transitional states, slower when stable
   useEffect(() => {
     if (authLoading || !user) return;
-    if (!hasEngine.current && !engine) return;
-    const isTransitional = engine && ['provisioning', 'starting', 'stopping'].includes(engine.status);
+    if (!hasEngine.current && !hasRenderableEngine) return;
+    const isTransitional = Boolean(engineStatus && ['provisioning', 'starting', 'stopping'].includes(engineStatus));
     const interval = isTransitional ? 5_000 : 30_000;
     const timer = setInterval(loadStatus, interval);
     return () => clearInterval(timer);
-  }, [authLoading, user, engine?.status, loadStatus]);
+  }, [authLoading, user, hasRenderableEngine, engineStatus, loadStatus]);
 
-  if (authLoading || loading) {
+  if ((authLoading || loading) && !engine) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">Loading cloud engine...</div>
@@ -238,9 +240,13 @@ export default function CloudDashboardPage() {
     );
   }
 
-  // When engine is running + healthy → full IDE layout
+  // When engine is running + healthy → full-bleed IDE (breaks out of max-w wrapper)
   if (engine.status === 'running') {
-    return <CloudIDELayout engine={engine} onRefresh={loadStatus} />;
+    return (
+      <div className="fixed inset-0 lg:left-56" style={{ top: '2.5rem' }}>
+        <CloudIDELayout engine={engine} onRefresh={loadStatus} />
+      </div>
+    );
   }
 
   // Stopped / error states → simplified overview with start/delete controls

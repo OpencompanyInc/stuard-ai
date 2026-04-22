@@ -31,6 +31,8 @@ import { Transform, Readable, PassThrough } from 'stream';
 import {
   getVoiceProvider,
   getDefaultProviderId,
+  getConfiguredProviders,
+  getTelephonyProviderOrder,
   supportsVoiceToolCalling,
   buildVoiceContext,
   type VoiceSession,
@@ -146,17 +148,25 @@ export async function bridgeDiscordVoice(opts: {
     return null;
   }
 
-  // Select voice provider
-  const requestedProviderId = opts.providerId || getDefaultProviderId();
-  const requestedProvider = getVoiceProvider(requestedProviderId);
-
-  if (!requestedProvider || !requestedProvider.isConfigured()) {
-    console.error(LOG_PREFIX, `Voice provider not available: ${requestedProviderId}`);
-    return null;
+  // Select voice provider. If the caller didn't pick one, prefer
+  // tool-capable providers (OpenAI Realtime, Grok Realtime) so delegate
+  // and web_search actually work, and fall back to Gemini/ElevenLabs for
+  // conversation-only calls when no tool-capable provider is configured.
+  let providerId = opts.providerId || '';
+  if (!providerId) {
+    const configured = getConfiguredProviders();
+    const preferred = getTelephonyProviderOrder();
+    providerId = preferred.find((id) => configured.some((p) => p.id === id))
+      || configured[0]?.id
+      || getDefaultProviderId();
   }
 
-  const providerId = requestedProviderId;
-  const provider = requestedProvider;
+  const provider = getVoiceProvider(providerId);
+
+  if (!provider || !provider.isConfigured()) {
+    console.error(LOG_PREFIX, `Voice provider not available: ${providerId}`);
+    return null;
+  }
   let enableVoiceTools = true;
   if (!supportsVoiceToolCalling(provider)) {
     enableVoiceTools = false;
@@ -249,7 +259,17 @@ export async function bridgeDiscordVoice(opts: {
       handleFunctionCall(callId, name, argsJson, userId, voiceSessionId, session)
         .catch(err => {
           console.error(LOG_PREFIX, 'Function call error:', err?.message);
-          session?.sendFunctionResult?.(callId, JSON.stringify({ error: err?.message || 'failed' }));
+          // Always feed an error back so the AI can apologise verbally
+          // rather than leaving the caller in silence.
+          try {
+            session?.sendFunctionResult?.(callId, JSON.stringify({
+              ok: false,
+              error: err?.message || 'Tool execution failed',
+              hint: 'Tell the caller you hit an issue, apologise briefly, and either retry, summarise verbally, or move on.',
+            }));
+          } catch (sendErr: any) {
+            console.error(LOG_PREFIX, 'Failed to deliver function error result:', sendErr?.message);
+          }
         });
     },
   };
@@ -409,15 +429,40 @@ async function handleFunctionCall(
 ): Promise<void> {
   const startTime = Date.now();
   console.log(LOG_PREFIX, 'Executing function call', { callId, name, userId: userId.slice(0, 8) });
-  const result = await executeVoiceToolCall({
-    name,
-    argsJson,
-    userId,
-    channel: 'discord',
-    voiceSessionId,
-  });
+
+  let result: any;
+  try {
+    result = await executeVoiceToolCall({
+      name,
+      argsJson,
+      userId,
+      channel: 'discord',
+      voiceSessionId,
+    });
+  } catch (err: any) {
+    console.error(LOG_PREFIX, 'executeVoiceToolCall threw:', err?.message);
+    result = {
+      ok: false,
+      error: err?.message || 'Tool crashed',
+      hint: 'Tell the caller you hit an unexpected error, apologise briefly, and either try again or move on.',
+    };
+  }
 
   const elapsed = Date.now() - startTime;
   console.log(LOG_PREFIX, 'Function call completed', { callId, name, elapsed: `${elapsed}ms` });
-  session?.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
+
+  if (!session || !session.isActive?.()) {
+    console.warn(LOG_PREFIX, 'Function call finished but session is not active; skipping result', {
+      callId,
+      name,
+      elapsed: `${elapsed}ms`,
+    });
+    return;
+  }
+
+  try {
+    session.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
+  } catch (sendErr: any) {
+    console.error(LOG_PREFIX, 'Failed to send function result to session:', sendErr?.message);
+  }
 }

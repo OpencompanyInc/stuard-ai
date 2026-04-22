@@ -232,7 +232,18 @@ telnyxBridgeWss.on('connection', async (telnyxWs: WebSocket, req: IncomingMessag
       handleFunctionCall(callId, name, argsJson, params.userId || '', voiceSessionId, session)
         .catch(err => {
           console.error('[telnyx-bridge] Function call error:', err?.message);
-          session?.sendFunctionResult?.(callId, JSON.stringify({ error: err?.message || 'Tool execution failed' }));
+          // Always feed an error result back so the model can speak and the
+          // caller isn't left with dead air. Wrap in try/catch because the
+          // session may have closed already.
+          try {
+            session?.sendFunctionResult?.(callId, JSON.stringify({
+              ok: false,
+              error: err?.message || 'Tool execution failed',
+              hint: 'Tell the caller you hit an issue, apologise briefly, and either retry, offer to text them a follow-up with send_sms, or move on.',
+            }));
+          } catch (sendErr: any) {
+            console.error('[telnyx-bridge] Failed to deliver function error result:', sendErr?.message);
+          }
         });
     },
   };
@@ -284,17 +295,43 @@ async function handleFunctionCall(
 ): Promise<void> {
   const startTime = Date.now();
   console.log('[telnyx-bridge] Executing function call', { callId, name, userId: userId.slice(0, 8) });
-  const result = await executeVoiceToolCall({
-    name,
-    argsJson,
-    userId,
-    channel: 'telnyx',
-    voiceSessionId,
-  });
+
+  let result: any;
+  try {
+    result = await executeVoiceToolCall({
+      name,
+      argsJson,
+      userId,
+      channel: 'telnyx',
+      voiceSessionId,
+    });
+  } catch (err: any) {
+    console.error('[telnyx-bridge] executeVoiceToolCall threw:', err?.message);
+    result = {
+      ok: false,
+      error: err?.message || 'Tool crashed',
+      hint: 'Tell the caller you hit an unexpected error, apologise briefly, and either try again, offer to text them with send_sms, or move on.',
+    };
+  }
 
   const elapsed = Date.now() - startTime;
   console.log('[telnyx-bridge] Function call completed', { callId, name, elapsed: `${elapsed}ms` });
-  session?.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
+
+  // Keep the call alive even if the session dropped during a long tool run.
+  if (!session || !session.isActive?.()) {
+    console.warn('[telnyx-bridge] Function call finished but session is not active; skipping result', {
+      callId,
+      name,
+      elapsed: `${elapsed}ms`,
+    });
+    return;
+  }
+
+  try {
+    session.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
+  } catch (sendErr: any) {
+    console.error('[telnyx-bridge] Failed to send function result to session:', sendErr?.message);
+  }
 }
 
 function hangupCall(callControlId: string, streamId: string): void {

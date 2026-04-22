@@ -6,8 +6,16 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+function isLocalDevHostname(hostname: string): boolean {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '0.0.0.0'
+    || hostname === '[::1]';
+}
+
 function resolveChannelFromHostname(hostname: string): 'stable' | 'beta' | 'staging' {
   const host = hostname.toLowerCase();
+  if (isLocalDevHostname(host)) return 'beta';
   if (host.includes('beta.stuard.ai')) return 'beta';
   if (host.includes('staging.stuard.ai')) return 'staging';
   return 'stable';

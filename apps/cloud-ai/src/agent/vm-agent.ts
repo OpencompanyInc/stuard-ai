@@ -473,6 +473,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       : undefined;
 
     // Stream chat to Python agent — onEvent fires for every WS message
+    const attachments = Array.isArray(args.attachments) ? args.attachments : undefined;
     const result = await sendToAgentStreaming(
       {
         type: 'chat',
@@ -482,6 +483,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         ...(modelId ? { modelId } : {}),
         context: { isVM: true, userId: USER_ID, ...(args.context || {}) },
         memoryContext,
+        ...(attachments ? { attachments } : {}),
         ...(vmAuth ? { auth: vmAuth } : {}),
       },
       (event) => {

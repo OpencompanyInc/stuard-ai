@@ -43,6 +43,20 @@ export function findToolCapableVoiceProvider(preferredIds: readonly string[] = T
   return configured[0];
 }
 
+/**
+ * Pick the best voice provider for a telephony call. Prefers tool-capable
+ * providers (OpenAI Realtime, Grok Realtime) so voice features like
+ * `delegate`, `web_search`, `search_memory`, and `send_sms` actually work
+ * on calls. Falls back to conversation-only providers (Gemini Live,
+ * ElevenLabs) when no tool-capable provider is configured.
+ */
+export function getTelephonyProviderOrder(options?: { requireToolsCapable?: boolean }): string[] {
+  if (options?.requireToolsCapable) {
+    return ['openai-realtime', 'grok-realtime'];
+  }
+  return ['openai-realtime', 'grok-realtime', 'gemini-live', 'elevenlabs'];
+}
+
 export function getDefaultProviderId(): string {
   const configured = getConfiguredProviders();
   if (configured.length === 0) return '';
