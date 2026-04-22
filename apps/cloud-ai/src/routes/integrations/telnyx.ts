@@ -177,11 +177,19 @@ async function handleSmsSlashCommand(userId: string, fromPhone: string, command:
     }
     case '/model': {
       const model = arg.toLowerCase();
+      if (!model) {
+        const s = await getSmsUserState(userId);
+        await reply(
+          `Current model: ${s.preferred_model}\n` +
+            'Set: /model fast | /model balanced | /model smart | /model research',
+        );
+        return true;
+      }
       if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
-        await upsertSmsUserState({ userId, preferredModel: model as any });
-        await reply(`AI model set to "${model}".`);
+        const s = await upsertSmsUserState({ userId, preferredModel: model as any });
+        await reply(`Saved. Your SMS model is now ${s.preferred_model} (stored in cloud).`);
       } else {
-        await reply('Usage: /model <fast|balanced|smart|research>');
+        await reply('Usage: /model <fast|balanced|smart|research> or /model to see current');
       }
       return true;
     }
@@ -551,11 +559,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       let usedProvider = 'tts-fallback';
 
       if (configuredProviders.length > 0) {
-        // Pick best provider for outbound proactive calls. Tool-capable
-        // providers come first so proactive calls can use delegate,
-        // web_search, search_memory, and send_sms if the conversation
-        // moves in that direction. Falls back to Gemini/ElevenLabs when
-        // none of the tool-capable ones are configured.
+        // First configured provider in getTelephonyProviderOrder (default: gemini-live).
         const { getTelephonyProviderOrder } = await import('../../voice');
         const preferredOrder = getTelephonyProviderOrder();
         let providerId = '';
@@ -1122,7 +1126,20 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
   }
 
   // ── Call webhook (Telnyx sends call events here) ──────────────────────────
+  // Health-check: GET the same URL so operators can verify the route is wired
+  // up without sending a real call event.
+  if (req.method === 'GET' && pathname === '/integrations/telnyx/call-webhook') {
+    sendJson(res, 200, { ok: true, route: 'telnyx_call_webhook', method: 'POST only for events' });
+    return true;
+  }
   if (req.method === 'POST' && pathname === '/integrations/telnyx/call-webhook') {
+    const ua = String(req.headers['user-agent'] || '');
+    const sig = String(req.headers['telnyx-signature-ed25519'] || '');
+    console.log('[telnyx] Call webhook HIT', {
+      ua: ua.slice(0, 80),
+      hasSignature: !!sig,
+      contentType: String(req.headers['content-type'] || ''),
+    });
     // Read body synchronously, then respond 200 immediately so Telnyx doesn't retry.
     // Process the event asynchronously after responding.
     let rawBody = '';
@@ -1142,6 +1159,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
 
     return true;
   }
+
 
   // ── MMS webhook (Telnyx sends inbound MMS/media messages here) ────────────
   if (req.method === 'POST' && pathname === '/webhooks/telnyx/mms') {
@@ -1334,6 +1352,20 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       console.error('[telnyx] MMS webhook error:', e?.message || e);
     }
     })().catch((e: any) => console.error('[telnyx] MMS webhook async error:', e?.message));
+    return true;
+  }
+
+  // ── Catch-all diagnostic for any telnyx path we didn't explicitly handle ──
+  // If Telnyx ever hits an unexpected URL (legacy `/webhooks/telnyx/call`,
+  // trailing slash, wrong CCA webhook URL pasted somewhere, etc.) we want to
+  // see it in logs rather than silently 404 and wonder why webhooks vanish.
+  if (pathname.startsWith('/integrations/telnyx/') || pathname.startsWith('/webhooks/telnyx/')) {
+    console.warn('[telnyx] Unhandled telnyx path — 404', {
+      method: req.method,
+      pathname,
+      ua: String(req.headers['user-agent'] || '').slice(0, 80),
+    });
+    sendJson(res, 404, { ok: false, error: 'telnyx_route_not_found', pathname });
     return true;
   }
 
@@ -1720,11 +1752,8 @@ async function answerWithStreaming(callControlId: string, fromNumber: string): P
     return;
   }
 
-  // Pick the best provider for inbound calls. Tool-capable providers
-  // (OpenAI Realtime, Grok Realtime) come first so calls can actually
-  // use delegate, web_search, search_memory, and send_sms. Falls back
-  // to Gemini Live / ElevenLabs for conversation-only calls when no
-  // tool-capable provider is configured.
+  // Pick the first configured provider (see getTelephonyProviderOrder):
+  // gemini-live is default; OpenAI / Grok follow; ElevenLabs last.
   const { getTelephonyProviderOrder } = await import('../../voice');
   const preferredOrder = getTelephonyProviderOrder();
   let providerId = '';
@@ -1855,7 +1884,7 @@ export async function verifyTelnyxConfig(): Promise<void> {
   const expectedApiVersion = '2';
 
   try {
-    // ── 1. Call Control Applications ─────────────────────────────────────
+    // ── 1. Fetch Call Control Applications ───────────────────────────────
     const res = await fetch(`${TELNYX_API}/call_control_applications`, {
       headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
     });
@@ -1866,7 +1895,42 @@ export async function verifyTelnyxConfig(): Promise<void> {
     const data = await res.json() as any;
     const apps = data?.data || [];
 
-    for (const app of apps) {
+    // ── 2. Fetch phone number first so we know which CCA it's tied to ────
+    const phoneRes = await fetch(`${TELNYX_API}/phone_numbers?filter[phone_number]=${encodeURIComponent(TELNYX_FROM_NUMBER)}`, {
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    });
+    if (!phoneRes.ok) {
+      console.warn('[telnyx] Failed to fetch phone number config:', phoneRes.status);
+      return;
+    }
+    const phoneData = await phoneRes.json() as any;
+    const phone = phoneData?.data?.[0];
+    if (!phone) {
+      console.warn('[telnyx] ⚠ Phone number not found in account', { number: TELNYX_FROM_NUMBER });
+      return;
+    }
+
+    // Pick the CCA that the phone number is currently attached to so we only
+    // patch the one that matters. Fall back to apps[0] if the phone isn't
+    // attached to any CCA yet.
+    const attachedApp = apps.find((a: any) => a.id === phone.connection_id);
+    const targetApp = attachedApp || apps[0];
+    if (!targetApp) {
+      console.warn('[telnyx] ⚠ No Call Control Applications found in Telnyx account — inbound calls cannot be routed');
+      return;
+    }
+
+    console.log('[telnyx] Target Call Control App', {
+      appId: targetApp.id,
+      appName: targetApp.application_name,
+      isAttachedToPhone: !!attachedApp,
+      phoneConnectionId: phone.connection_id,
+      totalAppsInAccount: apps.length,
+    });
+
+    // ── 3. Ensure the target CCA's webhook URL + api version are correct ──
+    {
+      const app = targetApp;
       const urlMismatch = app.webhook_event_url !== expectedWebhookUrl ||
         app.webhook_event_failover_url !== expectedWebhookUrl;
       const versionMismatch = String(app.webhook_api_version || '') !== expectedApiVersion;
@@ -1905,19 +1969,7 @@ export async function verifyTelnyxConfig(): Promise<void> {
       }
     }
 
-    // ── 2. Phone number connection + voice settings ──────────────────────
-    const phoneRes = await fetch(`${TELNYX_API}/phone_numbers?filter[phone_number]=${encodeURIComponent(TELNYX_FROM_NUMBER)}`, {
-      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
-    });
-    if (!phoneRes.ok) return;
-
-    const phoneData = await phoneRes.json() as any;
-    const phone = phoneData?.data?.[0];
-    if (!phone) {
-      console.warn('[telnyx] ⚠ Phone number not found in account', { number: TELNYX_FROM_NUMBER });
-      return;
-    }
-
+    // ── 4. Phone number connection + voice settings ──────────────────────
     console.log('[telnyx] Phone number config', {
       number: phone.phone_number,
       status: phone.status,
@@ -1926,8 +1978,7 @@ export async function verifyTelnyxConfig(): Promise<void> {
       type: phone.phone_number_type,
     });
 
-    // Expected connection = the first Call Control App (we own one app).
-    const expectedConnectionId = apps[0]?.id;
+    const expectedConnectionId = targetApp.id;
     if (expectedConnectionId && phone.connection_id !== expectedConnectionId) {
       console.warn('[telnyx] ⚠ Phone number is attached to a different connection than our Call Control App — patching', {
         number: phone.phone_number,

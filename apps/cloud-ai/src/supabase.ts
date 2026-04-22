@@ -1390,20 +1390,43 @@ const DEFAULT_SMS_USER_STATE: Omit<SmsUserState, 'user_id'> = {
   agent_target: 'auto',
 };
 
+const SMS_USER_STATE_SELECT =
+  'user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, agent_target';
+
 export async function getSmsUserState(userId: string): Promise<SmsUserState> {
   if (!supabaseService) return { user_id: userId, ...DEFAULT_SMS_USER_STATE };
-  try {
-    const { data } = await supabaseService
-      .from('sms_user_state')
-      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, agent_target')
-      .eq('user_id', userId)
-      .single();
-    return data
-      ? { ...DEFAULT_SMS_USER_STATE, ...(data as any) }
-      : { user_id: userId, ...DEFAULT_SMS_USER_STATE };
-  } catch {
-    return { user_id: userId, ...DEFAULT_SMS_USER_STATE };
+  const { data, error } = await supabaseService
+    .from('sms_user_state')
+    .select(SMS_USER_STATE_SELECT)
+    .eq('user_id', userId)
+    // Avoid .single() — 0 rows throws; we need a non-throwing read for existing users
+    .maybeSingle();
+  if (error) {
+    console.error('[supabase] getSmsUserState failed:', error.message, { userId });
   }
+  return data
+    ? { ...DEFAULT_SMS_USER_STATE, ...(data as any) }
+    : { user_id: userId, ...DEFAULT_SMS_USER_STATE };
+}
+
+function isOnlyPreferredModelPatch(input: {
+  mode?: SmsMode;
+  preferredModel?: ModelTier;
+  conversationId?: string | null;
+  resumeConversationId?: string | null;
+  lastReplyToPhone?: string | null;
+  proactiveMessage?: string | null;
+  agentTarget?: AgentTarget;
+}): boolean {
+  if (input.preferredModel === undefined) return false;
+  return (
+    input.mode === undefined
+    && input.conversationId === undefined
+    && input.resumeConversationId === undefined
+    && input.lastReplyToPhone === undefined
+    && input.proactiveMessage === undefined
+    && input.agentTarget === undefined
+  );
 }
 
 export async function upsertSmsUserState(input: {
@@ -1416,29 +1439,58 @@ export async function upsertSmsUserState(input: {
   proactiveMessage?: string | null;
   agentTarget?: AgentTarget;
 }): Promise<SmsUserState> {
-  if (!supabaseService) return { user_id: input.userId, ...DEFAULT_SMS_USER_STATE };
-  try {
-    const row: any = { user_id: input.userId };
-    if (input.mode !== undefined) row.mode = input.mode;
-    if (input.preferredModel !== undefined) row.preferred_model = input.preferredModel;
-    if (input.conversationId !== undefined) row.conversation_id = input.conversationId;
-    if (input.resumeConversationId !== undefined) row.resume_conversation_id = input.resumeConversationId;
-    if (input.lastReplyToPhone !== undefined) row.last_reply_to_phone = input.lastReplyToPhone;
-    if (input.proactiveMessage !== undefined) row.proactive_message = input.proactiveMessage;
-    if (input.agentTarget !== undefined) row.agent_target = input.agentTarget;
-
-    const { data } = await supabaseService
-      .from('sms_user_state')
-      .upsert(row, { onConflict: 'user_id' })
-      .select('user_id, mode, preferred_model, conversation_id, resume_conversation_id, last_reply_to_phone, proactive_message, agent_target')
-      .single();
-
-    return data
-      ? { ...DEFAULT_SMS_USER_STATE, ...(data as any) }
-      : { user_id: input.userId, ...DEFAULT_SMS_USER_STATE };
-  } catch {
+  if (!supabaseService) {
+    console.warn('[supabase] upsertSmsUserState: no service client (SMS state not persisted)');
     return { user_id: input.userId, ...DEFAULT_SMS_USER_STATE };
   }
+  try {
+    // /model and similar: update ONLY preferred_model for existing users (no read-merge
+    // that can mis-apply defaults for the same user_id).
+    if (isOnlyPreferredModelPatch(input) && input.preferredModel !== undefined) {
+      const { data: afterUpdate, error: uErr } = await supabaseService
+        .from('sms_user_state')
+        .update({ preferred_model: input.preferredModel })
+        .eq('user_id', input.userId)
+        .select(SMS_USER_STATE_SELECT)
+        .maybeSingle();
+
+      if (uErr) {
+        console.error('[supabase] upsertSmsUserState preferred_model update failed:', uErr.message, { userId: input.userId });
+      } else if (afterUpdate) {
+        return { ...DEFAULT_SMS_USER_STATE, ...(afterUpdate as any) };
+      }
+      // 0 rows updated: no row yet — fall through to full upsert
+    }
+
+    // Merge onto current row so INSERT has every NOT NULL column.
+    const cur = await getSmsUserState(input.userId);
+    const row: Record<string, unknown> = {
+      user_id: input.userId,
+      mode: input.mode !== undefined ? input.mode : cur.mode,
+      preferred_model: input.preferredModel !== undefined ? input.preferredModel : cur.preferred_model,
+      conversation_id: input.conversationId !== undefined ? input.conversationId : cur.conversation_id,
+      resume_conversation_id: input.resumeConversationId !== undefined ? input.resumeConversationId : cur.resume_conversation_id,
+      last_reply_to_phone: input.lastReplyToPhone !== undefined ? input.lastReplyToPhone : cur.last_reply_to_phone,
+      proactive_message: input.proactiveMessage !== undefined ? input.proactiveMessage : cur.proactive_message,
+      agent_target: input.agentTarget !== undefined ? input.agentTarget : cur.agent_target,
+    };
+
+    const { data, error } = await supabaseService
+      .from('sms_user_state')
+      .upsert(row, { onConflict: 'user_id' })
+      .select(SMS_USER_STATE_SELECT)
+      .single();
+
+    if (error) {
+      console.error('[supabase] upsertSmsUserState failed:', error.message, { userId: input.userId, code: error.code });
+    }
+    if (data) {
+      return { ...DEFAULT_SMS_USER_STATE, ...(data as any) };
+    }
+  } catch (e: any) {
+    console.error('[supabase] upsertSmsUserState error:', e?.message || e);
+  }
+  return getSmsUserState(input.userId);
 }
 
 export async function enqueueSmsInboxItem(input: {

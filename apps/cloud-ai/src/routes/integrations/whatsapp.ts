@@ -934,11 +934,19 @@ async function handleWaSlashCommand(userId: string, waId: string, command: strin
     }
     case '/model': {
       const model = arg.toLowerCase();
+      if (!model) {
+        const s = await getSmsUserState(userId);
+        await reply(
+          `Current model: ${s.preferred_model}\n` +
+            'Set: /model fast | /model balanced | /model smart | /model research',
+        );
+        return true;
+      }
       if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
-        await upsertSmsUserState({ userId, preferredModel: model as any });
-        await reply(`AI model set to "${model}".`);
+        const s = await upsertSmsUserState({ userId, preferredModel: model as any });
+        await reply(`Saved. Your messaging model is now ${s.preferred_model} (stored in cloud).`);
       } else {
-        await reply('Usage: /model <fast|balanced|smart|research>');
+        await reply('Usage: /model <fast|balanced|smart|research> or /model to see current');
       }
       return true;
     }

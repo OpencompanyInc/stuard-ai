@@ -148,10 +148,8 @@ export async function bridgeDiscordVoice(opts: {
     return null;
   }
 
-  // Select voice provider. If the caller didn't pick one, prefer
-  // tool-capable providers (OpenAI Realtime, Grok Realtime) so delegate
-  // and web_search actually work, and fall back to Gemini/ElevenLabs for
-  // conversation-only calls when no tool-capable provider is configured.
+  // If the caller didn't pick one, use the same order as telephony
+  // (getTelephonyProviderOrder: gemini-live first, then others).
   let providerId = opts.providerId || '';
   if (!providerId) {
     const configured = getConfiguredProviders();
