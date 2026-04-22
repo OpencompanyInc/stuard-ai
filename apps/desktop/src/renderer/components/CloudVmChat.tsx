@@ -3,9 +3,11 @@ import { clsx } from 'clsx';
 import {
   Send, Loader2, Trash2, Bot, WifiOff,
   Check, ChevronDown, MessageSquare, Plus, Clock, X, Square, Search,
+  Paperclip, File as FileIcon, AlertCircle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useModelRegistry } from '../hooks/useModelRegistry';
+import { useCloudEngine } from '../hooks/useCloudEngine';
 import type { ModelMeta } from '../hooks/usePreferences';
 import { mergeStreamingText } from '../utils/streamMerge';
 import MessageBubble from './MessageBubble';
@@ -20,6 +22,18 @@ interface ConversationEntry {
   title: string;
   updated_at: string;
   message_count: number;
+}
+
+interface VmChatAttachment {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  mimeType?: string;
+  uploading: boolean;
+  error?: string;
+  /** True when the user picked an existing VM file (no upload needed). */
+  existing?: boolean;
 }
 
 async function vmRelay(path: string, body?: any, method = 'POST', options?: { timeoutMs?: number }): Promise<any> {
@@ -73,6 +87,14 @@ export function CloudVmChat({
 
   // ask_user inline prompts (rendered outside MessageBubble — bubble hides ask_user)
   const [askUserPrompts, setAskUserPrompts] = useState<Array<{ id: string; args: any; status: 'pending' | 'completed' }>>([]);
+
+  // Pending attachments for the next outgoing message (uploaded to VM before send)
+  const [pendingAttachments, setPendingAttachments] = useState<VmChatAttachment[]>([]);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+
+  // File helpers from the cloud-engine hook so CloudVmChat can upload user
+  // selected files into the VM workspace and reference them in messages.
+  const { uploadFileToVm: uploadFileToVmApi } = useCloudEngine();
 
   // Chat history state
   const [conversations, setConversations] = useState<ConversationEntry[]>([]);
@@ -362,6 +384,7 @@ export function CloudVmChat({
     setStreamTools([]);
     setStreamChunks([]);
     setAskUserPrompts([]);
+    setPendingAttachments([]);
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
     setShowHistory(false);
@@ -383,15 +406,28 @@ export function CloudVmChat({
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || loading || !isRunning) return;
+    if (pendingAttachments.some(a => a.uploading)) return;
+
+    const readyAttachments = pendingAttachments.filter(a => !a.error && !a.uploading);
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       text,
       timestamp: Date.now(),
+      attachments: readyAttachments.length > 0
+        ? readyAttachments.map(a => ({
+            type: 'file' as const,
+            name: a.name,
+            path: a.path,
+            mimeType: a.mimeType,
+            source: 'picker' as const,
+          }))
+        : undefined,
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
+    setPendingAttachments([]);
     setLoading(true);
     setStreamText('');
     setStreamReasoning('');
@@ -492,6 +528,20 @@ export function CloudVmChat({
       const modelTier = isAuto ? 'auto' : ((meta?.category as string) || (meta?.isReasoning ? 'smart' : 'balanced'));
       const explicitModelId = !isAuto ? selectedModel : undefined;
 
+      const attachmentsPayload = readyAttachments.length > 0
+        ? readyAttachments.map(a => ({
+            type: 'file',
+            name: a.name,
+            path: a.path,
+            mimeType: a.mimeType,
+            size: a.size,
+            source: 'vm',
+          }))
+        : undefined;
+      const contextPayload = readyAttachments.length > 0
+        ? { paths: readyAttachments.map(a => ({ path: a.path, name: a.name, isDirectory: false })) }
+        : undefined;
+
       const resp = await fetch(`${CLOUD_AI_HTTP}/v1/vm/agent/chat`, {
         method: 'POST',
         headers: {
@@ -503,6 +553,8 @@ export function CloudVmChat({
           conversationId: conversationIdRef.current || undefined,
           model: modelTier,
           modelId: explicitModelId,
+          attachments: attachmentsPayload,
+          context: contextPayload,
         }),
         signal: abort.signal,
       });
@@ -700,7 +752,7 @@ export function CloudVmChat({
         void fetchHistory();
       }
     }
-  }, [input, loading, isRunning, selectedModel, modelById, fetchHistory, showHistory, upsertConversationEntry]);
+  }, [input, loading, isRunning, selectedModel, modelById, fetchHistory, showHistory, upsertConversationEntry, pendingAttachments]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -745,6 +797,7 @@ export function CloudVmChat({
     setStreamTools([]);
     setStreamChunks([]);
     setAskUserPrompts([]);
+    setPendingAttachments([]);
     conversationIdRef.current = null;
     conversationTitleRef.current = '';
   }, []);
@@ -753,6 +806,88 @@ export function CloudVmChat({
     setInput(text);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
+
+  const handleAttachClick = useCallback(() => {
+    if (!isRunning) return;
+    attachmentInputRef.current?.click();
+  }, [isRunning]);
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const handleAttachmentFilesSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const picked = Array.from(input.files || []);
+    input.value = '';
+    if (picked.length === 0 || !uploadFileToVmApi) return;
+
+    // Each chat gets its own folder on the VM under chat-uploads/
+    const convFolder = conversationIdRef.current || 'pending';
+    const stamp = Date.now();
+
+    const placeholders: VmChatAttachment[] = picked.map((file, idx) => ({
+      id: `att-${stamp}-${idx}`,
+      name: file.name,
+      path: `chat-uploads/${convFolder}/${stamp}-${file.name}`,
+      size: file.size,
+      mimeType: file.type || undefined,
+      uploading: true,
+    }));
+
+    setPendingAttachments(prev => [...prev, ...placeholders]);
+
+    for (let i = 0; i < picked.length; i++) {
+      const file = picked[i];
+      const placeholder = placeholders[i];
+      try {
+        const res = await uploadFileToVmApi(placeholder.path, file);
+        setPendingAttachments(prev => prev.map(a => {
+          if (a.id !== placeholder.id) return a;
+          if (!res.ok) {
+            return { ...a, uploading: false, error: res.error || 'upload_failed' };
+          }
+          return { ...a, uploading: false };
+        }));
+      } catch (err: any) {
+        setPendingAttachments(prev => prev.map(a =>
+          a.id === placeholder.id
+            ? { ...a, uploading: false, error: err?.message || 'upload_failed' }
+            : a,
+        ));
+      }
+    }
+  }, [uploadFileToVmApi]);
+
+  /** Add an existing VM file (picked from the file navigator) as a chat
+   *  attachment without re-uploading it. */
+  const attachExistingVmFile = useCallback((entry: { path: string; name: string; size?: number }) => {
+    setPendingAttachments(prev => {
+      if (prev.some(a => a.path === entry.path)) return prev;
+      return [
+        ...prev,
+        {
+          id: `ext-${Date.now()}-${entry.path}`,
+          name: entry.name || entry.path.split('/').pop() || entry.path,
+          path: entry.path,
+          size: entry.size || 0,
+          uploading: false,
+          existing: true,
+        },
+      ];
+    });
+  }, []);
+
+  // Expose the picker so the cloud file navigator can push files into the
+  // active VM chat (desktop:openChat-like flow in the dashboard).
+  useEffect(() => {
+    (window as any).__cloudVmChatAttach = attachExistingVmFile;
+    return () => {
+      if ((window as any).__cloudVmChatAttach === attachExistingVmFile) {
+        delete (window as any).__cloudVmChatAttach;
+      }
+    };
+  }, [attachExistingVmFile]);
 
   const handleGenUIResponse = useCallback((component: string, result: any) => {
     void submitVmToolResult(component, result);
@@ -953,8 +1088,61 @@ export function CloudVmChat({
     </div>
   );
 
+  const hasPending = pendingAttachments.length > 0;
+  const isUploadingAny = pendingAttachments.some(a => a.uploading);
+
+  const attachmentChips = hasPending ? (
+    <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
+      {pendingAttachments.map(a => (
+        <span
+          key={a.id}
+          className={clsx(
+            'inline-flex items-center gap-1.5 max-w-[220px] rounded-lg border px-2 py-1 text-[10.5px]',
+            a.error
+              ? 'border-red-500/30 bg-red-500/10 text-red-400'
+              : a.uploading
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                : 'border-theme/20 bg-theme-hover/50 text-theme-fg',
+          )}
+          title={a.error ? a.error : a.path}
+        >
+          {a.error ? (
+            <AlertCircle className="w-3 h-3 shrink-0" />
+          ) : a.uploading ? (
+            <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+          ) : (
+            <FileIcon className="w-3 h-3 shrink-0" />
+          )}
+          <span className="truncate font-medium">{a.name}</span>
+          {a.existing && (
+            <span className="text-[9px] uppercase tracking-wide opacity-60">vm</span>
+          )}
+          <button
+            type="button"
+            onClick={() => removePendingAttachment(a.id)}
+            className="ml-0.5 rounded text-theme-muted hover:text-theme-fg"
+            title="Remove attachment"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </span>
+      ))}
+    </div>
+  ) : null;
+
+  const attachmentPickerInput = uploadFileToVmApi ? (
+    <input
+      ref={attachmentInputRef}
+      type="file"
+      multiple
+      onChange={handleAttachmentFilesSelected}
+      className="hidden"
+    />
+  ) : null;
+
   const composer = variant === 'workspace' ? (
     <div className="rounded-2xl border border-theme/10 bg-theme-card/30 transition-colors focus-within:border-primary/30">
+      {attachmentChips}
       <textarea
         ref={inputRef}
         value={input}
@@ -966,8 +1154,20 @@ export function CloudVmChat({
         style={{ scrollbarWidth: 'none' }}
         disabled={loading}
       />
+      {attachmentPickerInput}
       <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
         <div className="flex items-center gap-1.5">
+          {uploadFileToVmApi && (
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={loading || !isRunning}
+              className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors disabled:opacity-40"
+              title="Attach files to this VM chat"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+            </button>
+          )}
           {modelSelector}
           {historyButton}
           <span className={clsx('h-1.5 w-1.5 rounded-full ml-1', loading ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
@@ -991,14 +1191,14 @@ export function CloudVmChat({
           <button
             type="button"
             onClick={sendMessage}
-            disabled={!input.trim() || loading}
+            disabled={!input.trim() || loading || isUploadingAny}
             className={clsx(
               'rounded-lg p-1.5 transition-colors',
-              input.trim() && !loading
+              input.trim() && !loading && !isUploadingAny
                 ? 'bg-primary text-primary-fg hover:opacity-90'
                 : 'text-theme-muted/30',
             )}
-            title="Send (Enter)"
+            title={isUploadingAny ? 'Uploading attachments...' : 'Send (Enter)'}
           >
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
@@ -1007,6 +1207,7 @@ export function CloudVmChat({
     </div>
   ) : (
     <div className="dashboard-card-muted p-4 !rounded-2xl">
+      {attachmentChips}
       <textarea
         ref={inputRef}
         value={input}
@@ -1018,8 +1219,20 @@ export function CloudVmChat({
         style={{ minHeight: '40px', scrollbarWidth: 'none' }}
         disabled={loading}
       />
+      {attachmentPickerInput}
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
+          {uploadFileToVmApi && (
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={loading || !isRunning}
+              className="dashboard-refresh-button inline-flex items-center gap-2 px-2.5 py-1.5 text-xs !rounded-xl disabled:opacity-40"
+              title="Attach files to this VM chat"
+            >
+              <Paperclip className="w-3.5 h-3.5" /> Attach
+            </button>
+          )}
           {modelSelector}
           {historyButton}
           <div className="dashboard-pill flex items-center gap-2 px-2.5 py-1.5 text-xs text-theme-muted">
@@ -1046,12 +1259,12 @@ export function CloudVmChat({
           <button
             type="button"
             onClick={sendMessage}
-            disabled={!input.trim() || loading}
+            disabled={!input.trim() || loading || isUploadingAny}
             className={clsx(
               'inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm transition-colors',
-              input.trim() && !loading ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
+              input.trim() && !loading && !isUploadingAny ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
             )}
-            title="Send"
+            title={isUploadingAny ? 'Uploading attachments...' : 'Send'}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             Send

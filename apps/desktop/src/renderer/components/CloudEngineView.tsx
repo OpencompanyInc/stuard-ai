@@ -35,7 +35,7 @@ const PLANS = [
 ];
 
 export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) => {
-  const { engine, loading, error, metrics, billing, provision, start, stop, destroy, listFiles, readFile, refresh } = useCloudEngine();
+  const { engine, loading, error, metrics, billing, provision, start, stop, destroy, listFiles, readFile, uploadFileToVm, createDirectory, deleteFile, refresh } = useCloudEngine();
   const [tab, setTab] = useState<CloudTab>('overview');
   const [selectedPlan, setSelectedPlan] = useState('basic');
   const [provDisk, setProvDisk] = useState(20);
@@ -259,7 +259,25 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
         )}
 
         {tab === 'files' && (
-          <CloudFileBrowser engine={engine} listFiles={listFiles} readFile={readFile} className="w-full h-full" />
+          <CloudFileBrowser
+            engine={engine}
+            listFiles={listFiles}
+            readFile={readFile}
+            uploadFileToVm={uploadFileToVm}
+            createDirectory={createDirectory}
+            deleteFile={deleteFile}
+            onPickFile={(entry) => {
+              try {
+                (window as any).__cloudVmChatAttach?.({
+                  path: entry.path,
+                  name: entry.name,
+                  size: entry.size,
+                });
+                setTab('chat');
+              } catch { /* noop */ }
+            }}
+            className="w-full h-full"
+          />
         )}
 
         {tab === 'monitoring' && (

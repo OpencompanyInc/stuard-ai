@@ -276,6 +276,13 @@ declare global {
       // Cloud Engine agent data sync
       uploadAgentData: (cloudAiUrl: string, token: string) =>
         Promise<{ ok: boolean; skipped?: boolean; reason?: string; bytes?: number; error?: string }>;
+      // Debounced fast-path push. Fire-and-forget from anywhere that mutates
+      // local agent state (conversations, memories, knowledge) so the VM
+      // receives updates within seconds instead of waiting for the periodic
+      // poll window.
+      requestAgentDataPush: () => void;
+      // Subscribe to "agent data just landed locally" events (VM → desktop).
+      onAgentDataSynced: (cb: (payload: { source?: string; files?: number }) => void) => () => void;
     };
   }
 }

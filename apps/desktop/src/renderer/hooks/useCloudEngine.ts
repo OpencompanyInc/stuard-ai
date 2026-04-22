@@ -274,22 +274,31 @@ export function useCloudEngine() {
   const provision = useCallback(async (tier: string, diskSizeGb: number, vcpus?: number, ramGb?: number) => {
     setLoading(true);
     setError(null);
+    // Flip the sync indicator on — provision pushes desktop chat titles,
+    // history, and memories to GCS so the new VM boots with the user's data.
+    setIsSyncing(true);
+    isSyncingRef.current = true;
+    setSyncStatus(prev => ({
+      state: 'syncing',
+      lastSyncAt: prev?.lastSyncAt ?? null,
+      vm: prev?.vm ?? null,
+      desktop: prev?.desktop ?? null,
+    }));
     try {
       // Upload agent databases (knowledge.db, memory.db, tasks.db, vault.db, lancedb)
-      // to GCS before provisioning so the VM starts with the user's full memory
-      let agentDataUploaded = false;
+      // — this includes conversations, messages, titles, and memories — to GCS
+      // BEFORE provisioning so the VM starts with the user's full chat history.
       try {
         const token = await getAuthToken();
         if (token && window.desktopAPI?.uploadAgentData) {
-          console.log('[cloud-engine] Uploading agent data for VM sync...');
+          console.log('[cloud-engine] Uploading chat titles, history, and memories for VM sync...');
           const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
           if (uploadResult?.ok) {
-            agentDataUploaded = !uploadResult.skipped;
             if (uploadResult.skipped) {
               console.log('[cloud-engine] Agent data upload skipped:', uploadResult.reason);
             } else {
               const mb = uploadResult.bytes ? (uploadResult.bytes / 1024 / 1024).toFixed(1) : '?';
-              console.log(`[cloud-engine] Agent data uploaded: ${mb} MB`);
+              console.log(`[cloud-engine] Agent data uploaded: ${mb} MB (chats + memories)`);
             }
           } else {
             console.error('[cloud-engine] Agent data upload FAILED:', uploadResult?.error || uploadResult);
@@ -309,6 +318,11 @@ export function useCloudEngine() {
         body: JSON.stringify(body),
       });
       if (data.ok) {
+        // After the VM is up, trigger a second sync pass so the VM pulls
+        // the latest bundle + oauth / browser profile. Best-effort.
+        cloudFetch('/v1/cloud-engine/sync-agent-data', { method: 'POST' }).catch(() => {});
+        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
+        cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
         await fetchEngine();
       } else {
         setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
@@ -316,6 +330,8 @@ export function useCloudEngine() {
     } catch (e: any) {
       setError('Unable to reach Stuard Cloud. Please check your internet and try again.');
     } finally {
+      setIsSyncing(false);
+      isSyncingRef.current = false;
       setLoading(false);
     }
   }, [fetchEngine]);
@@ -477,6 +493,61 @@ export function useCloudEngine() {
     return data.ok ? data.content : null;
   }, []);
 
+  const writeFile = useCallback(async (path: string, content: string): Promise<{ ok: boolean; error?: string }> => {
+    return await cloudFetch('/v1/cloud-engine/files/write', {
+      method: 'POST',
+      body: JSON.stringify({ path, content }),
+    });
+  }, []);
+
+  const deleteFile = useCallback(async (path: string): Promise<{ ok: boolean; error?: string }> => {
+    return await cloudFetch(`/v1/cloud-engine/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+  }, []);
+
+  const renameFile = useCallback(async (oldPath: string, newPath: string): Promise<{ ok: boolean; error?: string }> => {
+    return await cloudFetch('/v1/cloud-engine/files/rename', {
+      method: 'POST',
+      body: JSON.stringify({ oldPath, newPath }),
+    });
+  }, []);
+
+  const createDirectory = useCallback(async (path: string): Promise<{ ok: boolean; error?: string }> => {
+    return await cloudFetch('/v1/cloud-engine/files/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    });
+  }, []);
+
+  /**
+   * Upload a binary/text File from the renderer to the VM workspace.
+   * Reads the File, base64-encodes it in chunks, and POSTs to the
+   * cloud-ai files/upload endpoint which writes it on the VM.
+   */
+  const uploadFileToVm = useCallback(async (
+    targetPath: string,
+    file: File,
+  ): Promise<{ ok: boolean; error?: string; path?: string; size?: number }> => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)) as any);
+      }
+      const contentBase64 = typeof btoa === 'function'
+        ? btoa(binary)
+        : Buffer.from(binary, 'binary').toString('base64');
+      return await cloudFetch('/v1/cloud-engine/files/upload', {
+        method: 'POST',
+        body: JSON.stringify({ path: targetPath, contentBase64 }),
+        timeoutMs: 5 * 60_000,
+      });
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'upload_failed' };
+    }
+  }, []);
+
   // ── Deploy ops ───────────────────────────────────────────────────────────
   const fetchDeployments = useCallback(async () => {
     try {
@@ -596,6 +667,11 @@ export function useCloudEngine() {
     syncData,
     listFiles,
     readFile,
+    writeFile,
+    deleteFile,
+    renameFile,
+    createDirectory,
+    uploadFileToVm,
     refresh: fetchEngine,
     fetchSnapshots,
     createSnapshot,

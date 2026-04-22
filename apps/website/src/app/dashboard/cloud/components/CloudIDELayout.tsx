@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
 import {
+  AlertCircle,
   Brain,
   Check,
   ChevronDown,
@@ -10,11 +11,14 @@ import {
   ChevronUp,
   Clock,
   Cpu,
+  File as FileLucide,
   FolderOpen,
+  FolderPlus,
   Globe,
   Loader2,
   MessageCircle,
   MessageSquare,
+  Paperclip,
   Plus,
   PowerOff,
   RefreshCw,
@@ -27,15 +31,19 @@ import {
   Square,
   Terminal,
   Trash2,
+  Upload,
   X,
   Zap,
 } from 'lucide-react';
 import {
+  createDirectory,
+  deleteFile,
   getCloudConversationMessages,
   getCloudConversations,
   listFiles,
   openVMAgentChatStream,
   sendVmToolResult,
+  uploadFileToVm,
 } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
@@ -197,6 +205,23 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const [dirContents, setDirContents] = useState<Record<string, FileEntry[]>>({});
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
+  const [fileActionError, setFileActionError] = useState<string | null>(null);
+  const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
+  const fileUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const fileUploadTargetDirRef = useRef<string>('.');
+
+  // Pending chat attachments (files on the VM that will be referenced with the next message)
+  interface VmChatPendingAttachment {
+    id: string;
+    name: string;
+    path: string;
+    size?: number;
+    mimeType?: string;
+    uploading?: boolean;
+    error?: string;
+  }
+  const [pendingAttachments, setPendingAttachments] = useState<VmChatPendingAttachment[]>([]);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   const termContainerRef = useRef<HTMLDivElement>(null);
   const { connected, connect, sendData, resize, onData, close } = useCloudTerminal();
@@ -304,6 +329,102 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   useEffect(() => {
     if (isRunning) void loadDir('.');
   }, [isRunning, loadDir]);
+
+  const triggerUploadInto = useCallback((dirPath: string) => {
+    fileUploadTargetDirRef.current = dirPath || '.';
+    setFileActionError(null);
+    fileUploadInputRef.current?.click();
+  }, []);
+
+  const handleFileUploadSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    const dir = fileUploadTargetDirRef.current || '.';
+    setFileActionError(null);
+    for (const file of files) {
+      const targetPath = dir === '.' ? file.name : `${dir}/${file.name}`;
+      setUploadingFileName(file.name);
+      try {
+        const res = await uploadFileToVm(targetPath, file);
+        if (!res?.ok) {
+          setFileActionError(res?.error || `Failed to upload ${file.name}`);
+        }
+      } catch (err: any) {
+        setFileActionError(err?.message || `Failed to upload ${file.name}`);
+      }
+    }
+    setUploadingFileName(null);
+    void loadDir(dir);
+  }, [loadDir]);
+
+  const handleCreateDir = useCallback(async (parentDir: string) => {
+    const name = typeof window !== 'undefined' ? window.prompt('New folder name:') : null;
+    if (!name) return;
+    const path = parentDir === '.' ? name : `${parentDir}/${name}`;
+    setFileActionError(null);
+    try {
+      const res = await createDirectory(path);
+      if (!res?.ok) setFileActionError(res?.error || 'Failed to create folder');
+    } catch (err: any) {
+      setFileActionError(err?.message || 'Failed to create folder');
+    }
+    void loadDir(parentDir);
+  }, [loadDir]);
+
+  const handleDeleteEntry = useCallback(async (entry: FileEntry) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete ${entry.path}?`)) return;
+    setFileActionError(null);
+    try {
+      const res = await deleteFile(entry.path);
+      if (!res?.ok) setFileActionError(res?.error || `Failed to delete ${entry.name}`);
+    } catch (err: any) {
+      setFileActionError(err?.message || `Failed to delete ${entry.name}`);
+    }
+    const parent = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : '.';
+    void loadDir(parent || '.');
+  }, [loadDir]);
+
+  // ── Pending attachments (VM chat) ──────────────────────────────────────────
+
+  const addExistingFileAttachment = useCallback((entry: { name: string; path: string; size?: number }) => {
+    setPendingAttachments((prev) => {
+      if (prev.some((a) => a.path === entry.path)) return prev;
+      return [...prev, { id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: entry.name, path: entry.path, size: entry.size }];
+    });
+    setActiveView('chat');
+  }, []);
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const handleAttachClick = useCallback(() => {
+    attachmentInputRef.current?.click();
+  }, []);
+
+  const handleAttachmentFilesSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    for (const file of files) {
+      const id = `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const targetPath = `uploads/${file.name}`;
+      setPendingAttachments((prev) => [...prev, { id, name: file.name, path: targetPath, size: file.size, mimeType: file.type, uploading: true }]);
+      try {
+        const res = await uploadFileToVm(targetPath, file);
+        if (!res?.ok) {
+          setPendingAttachments((prev) => prev.map((a) => a.id === id ? { ...a, uploading: false, error: res?.error || 'upload_failed' } : a));
+        } else {
+          setPendingAttachments((prev) => prev.map((a) => a.id === id ? { ...a, uploading: false, path: res.path || targetPath, size: res.size ?? a.size } : a));
+        }
+      } catch (err: any) {
+        setPendingAttachments((prev) => prev.map((a) => a.id === id ? { ...a, uploading: false, error: err?.message || 'upload_failed' } : a));
+      }
+    }
+    // Refresh the explorer once uploads settle
+    void loadDir('.');
+  }, [loadDir]);
 
   // ── Terminal ───────────────────────────────────────────────────────────────
 
@@ -444,6 +565,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]); setAskUserPrompts([]);
     setConversationId(null); conversationTitleRef.current = '';
     setShowHistory(false);
+    setPendingAttachments([]);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
@@ -470,6 +592,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const handleClear = useCallback(() => {
     handleStop();
     setMessages([]); setConversationId(null); conversationTitleRef.current = ''; setAskUserPrompts([]);
+    setPendingAttachments([]);
   }, [handleStop]);
 
   const applyPrompt = useCallback((prompt: string) => {
@@ -523,12 +646,30 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || chatLoading) return;
+    if (pendingAttachments.some((a) => a.uploading)) return;
+
+    const readyAttachments = pendingAttachments.filter((a) => !a.error && !a.uploading);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     setInput('');
-    setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', text, timestamp: Date.now() }]);
+    setMessages((prev) => [...prev, {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      text,
+      timestamp: Date.now(),
+      attachments: readyAttachments.length > 0
+        ? readyAttachments.map((a) => ({
+            type: 'file' as const,
+            name: a.name,
+            path: a.path,
+            mimeType: a.mimeType,
+            source: 'picker' as const,
+          }))
+        : undefined,
+    }]);
+    setPendingAttachments([]);
     setChatLoading(true);
     setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]);
     streamStartRef.current = Date.now();
@@ -591,11 +732,27 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     const explicitModelId = !isAuto ? selectedModel : undefined;
 
     try {
+      const attachmentsPayload = readyAttachments.length > 0
+        ? readyAttachments.map((a) => ({
+            type: 'file',
+            name: a.name,
+            path: a.path,
+            mimeType: a.mimeType,
+            size: a.size,
+            source: 'vm',
+          }))
+        : undefined;
+      const contextPaths = readyAttachments.length > 0
+        ? readyAttachments.map((a) => ({ path: a.path, name: a.name, isDirectory: false }))
+        : undefined;
+
       const res = await openVMAgentChatStream({
         message: text,
         conversationId: conversationId || undefined,
         model: modelTier,
         modelId: explicitModelId,
+        attachments: attachmentsPayload,
+        contextPaths,
         signal: controller.signal,
       });
 
@@ -760,7 +917,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
       setStreamText(''); setStreamReasoning(''); setStreamTools([]); setStreamChunks([]);
       inputRef.current?.focus();
     }
-  }, [chatLoading, conversationId, input, selectedModel, modelById, upsertConversation]);
+  }, [chatLoading, conversationId, input, selectedModel, modelById, upsertConversation, pendingAttachments]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); }
@@ -1054,8 +1211,38 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
   // ── Composer ───────────────────────────────────────────────────────────────
 
+  const isUploadingAny = pendingAttachments.some((a) => a.uploading);
+
   const composer = (
     <div className="rounded-2xl border border-theme/10 bg-theme-card/30 transition-colors focus-within:border-primary/30">
+      {pendingAttachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+          {pendingAttachments.map((a) => (
+            <div
+              key={a.id}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px]',
+                a.error
+                  ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                  : a.uploading
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-500'
+                    : 'border-theme/20 bg-theme-hover/40 text-theme-fg',
+              )}
+            >
+              {a.uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : a.error ? <AlertCircle className="h-3 w-3" /> : <FileLucide className="h-3 w-3" />}
+              <span className="max-w-[180px] truncate" title={a.path}>{a.name}</span>
+              <button
+                type="button"
+                onClick={() => removePendingAttachment(a.id)}
+                className="text-current/60 hover:text-current"
+                title="Remove"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <textarea
         ref={inputRef}
         value={input}
@@ -1067,8 +1254,24 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         className="min-h-[38px] max-h-[120px] w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-[13px] text-theme-fg outline-none placeholder:text-theme-muted/50 disabled:opacity-60"
         style={{ scrollbarWidth: 'none' }}
       />
+      <input
+        ref={attachmentInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleAttachmentFilesSelected}
+      />
       <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleAttachClick}
+            disabled={chatLoading || !isRunning}
+            className="rounded-lg p-1 text-theme-muted transition-colors hover:bg-theme-hover/60 hover:text-theme-fg disabled:opacity-40"
+            title="Attach files"
+          >
+            <Paperclip className="h-3.5 w-3.5" />
+          </button>
           {modelSelector}
           {historyButton}
           <span className={clsx('ml-1 h-1.5 w-1.5 rounded-full', chatLoading ? 'animate-pulse bg-amber-500' : 'bg-green-500')} />
@@ -1097,12 +1300,12 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
           <button
             type="button"
             onClick={() => void sendMessage()}
-            disabled={chatLoading || !input.trim()}
+            disabled={chatLoading || !input.trim() || isUploadingAny}
             className={clsx(
               'rounded-lg p-1.5 transition-colors',
-              input.trim() && !chatLoading ? 'bg-primary text-primary-fg hover:opacity-90' : 'text-theme-muted/30',
+              input.trim() && !chatLoading && !isUploadingAny ? 'bg-primary text-primary-fg hover:opacity-90' : 'text-theme-muted/30',
             )}
-            title="Send (Enter)"
+            title={isUploadingAny ? 'Uploading attachments…' : 'Send (Enter)'}
           >
             {chatLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           </button>
@@ -1126,22 +1329,70 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         const children = dirContents[entry.path];
         const isLoading = loadingDirs.has(entry.path);
         return (
-          <div key={entry.path}>
-            <button
-              onClick={() => (isDir ? toggleDir(entry.path) : undefined)}
-              className="ide-tree-item"
+          <div key={entry.path} className="group/entry">
+            <div
+              className="ide-tree-item group relative flex items-center"
               style={{ paddingLeft: `${8 + depth * 16}px` }}
             >
-              {isDir ? (
-                <svg className={`ide-tree-chevron ${isExpanded ? 'ide-tree-chevron-open' : ''}`} viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M9 6l6 6-6 6z" />
-                </svg>
-              ) : (
-                <span className="ide-tree-spacer" />
-              )}
-              {isDir ? <FolderIcon /> : <FileIcon name={entry.name} />}
-              <span className="truncate">{entry.name}</span>
-            </button>
+              <button
+                onClick={() => {
+                  if (isDir) toggleDir(entry.path);
+                  else addExistingFileAttachment({ name: entry.name, path: entry.path, size: entry.size });
+                }}
+                className="flex flex-1 items-center gap-1 min-w-0 bg-transparent border-none p-0 text-left cursor-pointer"
+                title={isDir ? 'Expand/collapse' : 'Attach file to chat'}
+              >
+                {isDir ? (
+                  <svg className={`ide-tree-chevron ${isExpanded ? 'ide-tree-chevron-open' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 6l6 6-6 6z" />
+                  </svg>
+                ) : (
+                  <span className="ide-tree-spacer" />
+                )}
+                {isDir ? <FolderIcon /> : <FileIcon name={entry.name} />}
+                <span className="truncate">{entry.name}</span>
+              </button>
+              <div className="ml-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity pr-1.5">
+                {isDir && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); triggerUploadInto(entry.path); }}
+                      className="rounded p-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60"
+                      title="Upload files here"
+                    >
+                      <Upload className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void handleCreateDir(entry.path); }}
+                      className="rounded p-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60"
+                      title="New folder"
+                    >
+                      <FolderPlus className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
+                {!isDir && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); addExistingFileAttachment({ name: entry.name, path: entry.path, size: entry.size }); }}
+                    className="rounded p-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60"
+                    title="Attach to chat"
+                  >
+                    <Paperclip className="h-3 w-3" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void handleDeleteEntry(entry); }}
+                  className="rounded p-0.5 text-red-400 hover:text-red-500 hover:bg-red-500/10"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
             {isDir && isExpanded && (
               isLoading
                 ? <div className="ide-tree-loading" style={{ paddingLeft: `${24 + depth * 16}px` }}>Loading...</div>
@@ -1321,15 +1572,49 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         <aside className="ide-file-panel">
           <div className="ide-file-panel-header">
             <span className="ide-panel-title">Workspace</span>
-            <button onClick={() => void loadDir('.')} className="ide-panel-action" title="Refresh files">
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button onClick={() => triggerUploadInto('.')} className="ide-panel-action" title="Upload files to workspace">
+                <Upload className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => void handleCreateDir('.')} className="ide-panel-action" title="New folder">
+                <FolderPlus className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => void loadDir('.')} className="ide-panel-action" title="Refresh files">
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
+          {(fileActionError || uploadingFileName) && (
+            <div className="px-3 py-1.5 text-[10px] border-b border-theme/10 space-y-0.5">
+              {uploadingFileName && (
+                <div className="flex items-center gap-1.5 text-theme-muted">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="truncate">Uploading {uploadingFileName}…</span>
+                </div>
+              )}
+              {fileActionError && (
+                <div className="flex items-start gap-1.5 text-red-400">
+                  <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+                  <span className="truncate">{fileActionError}</span>
+                  <button className="ml-auto text-theme-muted hover:text-theme-fg" onClick={() => setFileActionError(null)}>
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="ide-file-tree">
             {dirContents['.'] ? renderTree(dirContents['.']) : (
               <div className="ide-tree-loading" style={{ paddingLeft: '16px' }}>Loading files...</div>
             )}
           </div>
+          <input
+            ref={fileUploadInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFileUploadSelected}
+          />
         </aside>
       )}
 

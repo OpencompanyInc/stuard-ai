@@ -122,14 +122,56 @@ async function handleAgentDataUpdated(): Promise<void> {
         const extractedAgentDir = path.join(tmpExtract, 'agent');
         const sourceDir = fs.existsSync(extractedAgentDir) ? extractedAgentDir : tmpExtract;
 
+        // Merge-safe copy: only overwrite local file if incoming is newer.
+        // Prevents a race where a stale GCS snapshot clobbers newer local
+        // writes made since the last upload.
+        const mergeCopy = (src: string, dest: string): boolean => {
+            try {
+                const srcStat = fs.statSync(src);
+                if (!srcStat.isFile()) return false;
+                if (fs.existsSync(dest)) {
+                    const destStat = fs.statSync(dest);
+                    if (destStat.size > 0 && destStat.mtimeMs >= srcStat.mtimeMs) {
+                        return false; // keep the local (newer / equal) copy
+                    }
+                }
+                fs.copyFileSync(src, dest);
+                try { fs.utimesSync(dest, srcStat.atime, srcStat.mtime); } catch { /* best-effort */ }
+                return true;
+            } catch {
+                return false;
+            }
+        };
+
         // Copy only DB files (don't overwrite other agent data)
         const dbFiles = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'knowledge.db-shm', 'memory.db-wal', 'memory.db-shm'];
         let copied = 0;
+        let skipped = 0;
         for (const f of fs.readdirSync(sourceDir)) {
             const srcPath = path.join(sourceDir, f);
             if (fs.statSync(srcPath).isFile() && (dbFiles.includes(f) || f.endsWith('.db'))) {
-                fs.copyFileSync(srcPath, path.join(agentDir, f));
-                copied++;
+                if (mergeCopy(srcPath, path.join(agentDir, f))) copied++; else skipped++;
+            }
+        }
+
+        // Install device keys from the archive when present (file-backed
+        // fallback only — we never touch the OS keyring from here).
+        const extractedKeysDir = path.join(tmpExtract, '.stuard_keys');
+        if (fs.existsSync(extractedKeysDir)) {
+            try {
+                const keysDest = path.join(process.env.HOME || process.env.USERPROFILE || '', '.stuard', 'keys');
+                fs.mkdirSync(keysDest, { recursive: true });
+                for (const f of fs.readdirSync(extractedKeysDir)) {
+                    const src = path.join(extractedKeysDir, f);
+                    const dst = path.join(keysDest, f);
+                    if (!fs.statSync(src).isFile()) continue;
+                    if (!fs.existsSync(dst)) {
+                        fs.copyFileSync(src, dst);
+                    }
+                }
+                logger.info('[cloud-webhooks] Device keys installed from archive');
+            } catch (e: any) {
+                logger.warn(`[cloud-webhooks] Device-key install failed: ${e?.message}`);
             }
         }
 
@@ -137,7 +179,7 @@ async function handleAgentDataUpdated(): Promise<void> {
         try { fs.rmSync(tmpExtract, { recursive: true, force: true }); } catch { }
         try { fs.unlinkSync(tmpFile); } catch { }
 
-        logger.info(`[cloud-webhooks] Agent data sync complete: ${copied} files updated in ${agentDir}`);
+        logger.info(`[cloud-webhooks] Agent data sync complete: ${copied} files updated, ${skipped} skipped (local newer) in ${agentDir}`);
 
         // 4. Notify renderer that agent data was updated
         try {
@@ -170,13 +212,55 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
             return false;
         }
 
-        // 1. Create tar.gz of agent data
+        // 1. Create tar.gz of agent data.
+        //    Stage into a temp dir so we can optionally include device keys
+        //    (from ~/.stuard/keys) — the VM needs these to decrypt rows
+        //    written on the desktop. We never copy from the OS keyring; only
+        //    the file-backed fallback is propagated.
         const tmpDir = app.getPath('temp');
-        const tmpFile = path.join(tmpDir, `agent-data-upload-${Date.now()}.tar.gz`);
+        const stageDir = path.join(tmpDir, `agent-data-stage-${Date.now()}`);
+        fs.mkdirSync(stageDir, { recursive: true });
+        const stageAgentDir = path.join(stageDir, 'agent');
+        fs.mkdirSync(stageAgentDir, { recursive: true });
 
+        // Mirror agent files into the stage (preserving mtime)
+        for (const f of fs.readdirSync(agentDir)) {
+            const src = path.join(agentDir, f);
+            try {
+                const st = fs.statSync(src);
+                if (st.isFile()) {
+                    fs.copyFileSync(src, path.join(stageAgentDir, f));
+                    try { fs.utimesSync(path.join(stageAgentDir, f), st.atime, st.mtime); } catch { /* best-effort */ }
+                }
+            } catch { /* skip unreadable */ }
+        }
+
+        // Include file-backed device keys if present. Users on macOS/Windows
+        // normally use the OS keyring so this directory may not exist — in
+        // that case we fall back to the existing "bring your own key on the
+        // VM" behaviour. Linux (headless) desktops always have the file.
+        try {
+            const userHome = process.env.HOME || process.env.USERPROFILE || '';
+            const keysSrc = userHome ? path.join(userHome, '.stuard', 'keys') : '';
+            if (keysSrc && fs.existsSync(keysSrc)) {
+                const stageKeysDir = path.join(stageDir, '.stuard_keys');
+                fs.mkdirSync(stageKeysDir, { recursive: true });
+                for (const f of fs.readdirSync(keysSrc)) {
+                    const src = path.join(keysSrc, f);
+                    if (!fs.statSync(src).isFile()) continue;
+                    fs.copyFileSync(src, path.join(stageKeysDir, f));
+                }
+                logger.info('[cloud-webhooks] Included device keys in sync archive');
+            }
+        } catch (e: any) {
+            logger.warn(`[cloud-webhooks] Device-key staging failed: ${e?.message}`);
+        }
+
+        const tmpFile = path.join(tmpDir, `agent-data-upload-${Date.now()}.tar.gz`);
         const { execFileSync } = await import('child_process');
-        execFileSync('tar', ['-czf', tmpFile, '-C', agentDir, '.'], { timeout: 300_000 });
+        execFileSync('tar', ['-czf', tmpFile, '-C', stageDir, '.'], { timeout: 300_000 });
         const stats = fs.statSync(tmpFile);
+        try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch { /* best-effort */ }
         logger.info(`[cloud-webhooks] Agent data archive: ${stats.size} bytes`);
 
         // 2. Get signed upload URL from cloud-ai
@@ -234,10 +318,15 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
 }
 
 // ── Desktop Periodic Agent Data Sync (Desktop → GCS → VM) ──────────────────
-// Every 5 minutes, check if local knowledge.db/memory.db changed and push to GCS.
-const DESKTOP_SYNC_INTERVAL_MS = 5 * 60_000;
+// A tight mtime watcher pushes any local change within ~15s while a longer
+// interval catches missed updates / WAL checkpoint drift. Pushes coalesce
+// through the _agentDataSyncInFlight / hasDesktopAgentDataChanged guards so
+// rapid successive writes don't fan out into duplicate uploads.
+const DESKTOP_SYNC_INTERVAL_MS = 60_000; // slow-path safety net
+const DESKTOP_FAST_SYNC_DEBOUNCE_MS = 15_000; // fast-path debounce after a change
 const _desktopMtimes = new Map<string, number>();
 let _desktopSyncTimer: NodeJS.Timeout | null = null;
+let _desktopFastSyncTimer: NodeJS.Timeout | null = null;
 
 function hasDesktopAgentDataChanged(): boolean {
     const agentDir = getDesktopAgentDataDir();
@@ -281,7 +370,7 @@ function startDesktopAgentDataSync(): void {
             logger.warn(`[cloud-webhooks] Periodic desktop sync failed: ${e?.message}`);
         });
     }, DESKTOP_SYNC_INTERVAL_MS);
-    logger.info(`[cloud-webhooks] Desktop agent data auto-sync: every ${DESKTOP_SYNC_INTERVAL_MS / 60_000} min`);
+    logger.info(`[cloud-webhooks] Desktop agent data auto-sync: every ${DESKTOP_SYNC_INTERVAL_MS / 60_000} min (plus ${DESKTOP_FAST_SYNC_DEBOUNCE_MS / 1000}s debounced fast-path)`);
 }
 
 function stopDesktopAgentDataSync(): void {
@@ -289,6 +378,30 @@ function stopDesktopAgentDataSync(): void {
         clearInterval(_desktopSyncTimer);
         _desktopSyncTimer = null;
     }
+    if (_desktopFastSyncTimer) {
+        clearTimeout(_desktopFastSyncTimer);
+        _desktopFastSyncTimer = null;
+    }
+}
+
+/**
+ * Request a debounced agent-data push. Callers (conversation-finish hooks,
+ * memory-writes, renderer IPCs) can fire-and-forget this whenever local
+ * agent data changes; multiple requests within the debounce window coalesce
+ * into a single upload.
+ */
+export function requestAgentDataPush(): void {
+    if (_desktopFastSyncTimer) return; // already scheduled
+    _desktopFastSyncTimer = setTimeout(async () => {
+        _desktopFastSyncTimer = null;
+        try {
+            if (!hasDesktopAgentDataChanged()) return;
+            const ok = await pushDesktopAgentDataToVM();
+            if (ok) snapshotDesktopMtimes();
+        } catch (e: any) {
+            logger.warn(`[cloud-webhooks] Fast-path desktop sync failed: ${e?.message}`);
+        }
+    }, DESKTOP_FAST_SYNC_DEBOUNCE_MS);
 }
 
 function getCloudAiHttpBase(): string {

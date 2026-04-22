@@ -106,36 +106,85 @@ export async function handleMemoryRoutes(
   // ═══════════════════════════════════════════════════════════════════════════════
 
   // GET /v1/memory/conversations - List conversations
+  //
+  // Merges results from the client bridge (local encrypted agent DB) and the
+  // central Supabase mirror so that:
+  //   - Desktop conversations are visible on a freshly provisioned VM even if
+  //     the encrypted memory.db cannot be read (device keys differ).
+  //   - VM conversations are visible on the desktop when the local DB lags.
+  // Conflicts resolve with last-updated-wins, preserving the richer title.
   if (path === '/v1/memory/conversations' && method === 'GET') {
     const status = url.searchParams.get('status') as 'active' | 'archived' | null;
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
 
-    if (!bridgeAvailable) {
-      const user = await requireAuth(req, res);
-      if (!user) return true;
-      if (status === 'archived') {
-        return json(res, { ok: true, conversations: [], count: 0 }), true;
-      }
+    const user = await requireAuth(req, res);
+    if (!user) return true;
 
-      const conversations = await listCloudConversations(user.userId, limit, offset);
-      if (conversations === null) {
-        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
-      }
-
-      return json(res, { ok: true, conversations, count: conversations.length }), true;
+    // Always fetch from Supabase when available (central mirror)
+    let cloudConversations: any[] = [];
+    if (status !== 'archived') {
+      const cloud = await listCloudConversations(user.userId, limit + offset, 0);
+      cloudConversations = Array.isArray(cloud) ? cloud : [];
     }
 
-    try {
-      const conversations = await memory.listConversations({ 
-        status: status || undefined, 
-        limit, 
-        offset 
-      });
-      return json(res, { ok: true, conversations, count: conversations.length }), true;
-    } catch (error) {
-      return json(res, { ok: false, error: String(error) }, 500), true;
+    // Also try the bridge (local DB) if it's connected — it often has
+    // fresher titles/message counts than the Supabase mirror.
+    let bridgeConversations: any[] = [];
+    if (bridgeAvailable) {
+      try {
+        const result = await memory.listConversations({
+          status: status || undefined,
+          limit,
+          offset,
+        });
+        bridgeConversations = Array.isArray(result) ? result : [];
+      } catch (error) {
+        console.warn('[memory] bridge listConversations failed, falling back to cloud mirror:', error);
+      }
     }
+
+    // If neither returned anything and Supabase isn't configured, surface that.
+    if (cloudConversations.length === 0 && bridgeConversations.length === 0 && !bridgeAvailable && !getSupabaseService()) {
+      return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+    }
+
+    // Merge with last-updated-wins; prefer bridge when mtimes tie because
+    // bridge has decrypted titles whereas cloud may have placeholders.
+    const byId = new Map<string, any>();
+    const ingest = (row: any, prefer: 'bridge' | 'cloud') => {
+      if (!row?.id) return;
+      const existing = byId.get(row.id);
+      if (!existing) {
+        byId.set(row.id, { ...row, _origin: prefer });
+        return;
+      }
+      const aTs = Date.parse(existing.updated_at || existing.created_at || '') || 0;
+      const bTs = Date.parse(row.updated_at || row.created_at || '') || 0;
+      // Merge fields preferring the newer record but keep the better title
+      const winner = bTs > aTs ? row : existing;
+      const loser = bTs > aTs ? existing : row;
+      const merged = { ...loser, ...winner };
+      // Prefer a non-empty title from either side
+      if (!merged.title || merged.title === 'Untitled') {
+        merged.title = winner.title || loser.title || merged.title;
+      }
+      // Prefer highest message_count observed (monotonic)
+      merged.message_count = Math.max(
+        Number(winner.message_count || 0),
+        Number(loser.message_count || 0),
+      );
+      byId.set(row.id, merged);
+    };
+
+    for (const c of cloudConversations) ingest(c, 'cloud');
+    for (const c of bridgeConversations) ingest(c, 'bridge');
+
+    const merged = Array.from(byId.values())
+      .sort((a, b) => (Date.parse(b.updated_at || '') || 0) - (Date.parse(a.updated_at || '') || 0))
+      .slice(offset, offset + limit);
+
+    return json(res, { ok: true, conversations: merged, count: merged.length }), true;
   }
 
   // POST /v1/memory/conversations - Create conversation
@@ -179,30 +228,31 @@ export async function handleMemoryRoutes(
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+$/) && method === 'GET') {
     const id = path.split('/v1/memory/conversations/')[1];
 
-    if (!bridgeAvailable) {
-      const user = await requireAuth(req, res);
-      if (!user) return true;
+    const user = await requireAuth(req, res);
+    if (!user) return true;
 
-      const conversation = await getCloudConversation(user.userId, id);
-      if (conversation === undefined) {
-        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+    let bridgeConversation: any = null;
+    if (bridgeAvailable) {
+      try {
+        bridgeConversation = await memory.getConversation(id);
+      } catch (error) {
+        console.warn('[memory] bridge getConversation failed, falling back to cloud mirror:', error);
       }
-      if (!conversation) {
-        return json(res, { ok: false, error: 'not_found' }, 404), true;
-      }
-
-      return json(res, { ok: true, conversation }), true;
     }
 
-    try {
-      const conversation = await memory.getConversation(id);
-      if (!conversation) {
-        return json(res, { ok: false, error: 'not_found' }, 404), true;
-      }
-      return json(res, { ok: true, conversation }), true;
-    } catch (error) {
-      return json(res, { ok: false, error: String(error) }, 500), true;
+    if (bridgeConversation) {
+      return json(res, { ok: true, conversation: bridgeConversation }), true;
     }
+
+    const cloudConversation = await getCloudConversation(user.userId, id);
+    if (cloudConversation === undefined) {
+      return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+    }
+    if (!cloudConversation) {
+      return json(res, { ok: false, error: 'not_found' }, 404), true;
+    }
+
+    return json(res, { ok: true, conversation: cloudConversation }), true;
   }
 
   // PATCH /v1/memory/conversations/:id - Update conversation
@@ -229,33 +279,48 @@ export async function handleMemoryRoutes(
   // ═══════════════════════════════════════════════════════════════════════════════
 
   // GET /v1/memory/conversations/:id/messages - Get messages
+  //
+  // Prefer the bridge (local DB) when it has messages, fall back to the
+  // Supabase mirror so cross-device histories are readable even if the
+  // local DB cannot be decrypted on this machine.
   if (path.match(/^\/v1\/memory\/conversations\/[^/]+\/messages$/) && method === 'GET') {
     const id = path.split('/v1/memory/conversations/')[1].replace('/messages', '');
     const start_turn = url.searchParams.get('start_turn');
     const end_turn = url.searchParams.get('end_turn');
     const limit = url.searchParams.get('limit');
 
-    if (!bridgeAvailable) {
-      const user = await requireAuth(req, res);
-      if (!user) return true;
-      if (!getSupabaseService()) {
-        return json(res, { ok: false, error: 'Database not configured' }, 503), true;
+    const user = await requireAuth(req, res);
+    if (!user) return true;
+
+    let bridgeMessages: any[] = [];
+    if (bridgeAvailable) {
+      try {
+        const rows = await memory.getMessages(id, {
+          start_turn: start_turn ? parseInt(start_turn, 10) : undefined,
+          end_turn: end_turn ? parseInt(end_turn, 10) : undefined,
+          limit: limit ? parseInt(limit, 10) : undefined,
+        });
+        bridgeMessages = Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        console.warn('[memory] bridge getMessages failed, falling back to cloud mirror:', error);
       }
-
-      const messages = await getConversationMessages(user.userId, id, limit ? parseInt(limit, 10) : 100);
-      return json(res, { ok: true, messages, count: messages.length }), true;
     }
 
-    try {
-      const messages = await memory.getMessages(id, {
-        start_turn: start_turn ? parseInt(start_turn, 10) : undefined,
-        end_turn: end_turn ? parseInt(end_turn, 10) : undefined,
-        limit: limit ? parseInt(limit, 10) : undefined,
-      });
-      return json(res, { ok: true, messages, count: messages.length }), true;
-    } catch (error) {
-      return json(res, { ok: false, error: String(error) }, 500), true;
+    if (bridgeMessages.length > 0) {
+      return json(res, { ok: true, messages: bridgeMessages, count: bridgeMessages.length }), true;
     }
+
+    if (!getSupabaseService()) {
+      // No bridge messages and no Supabase — return empty rather than erroring.
+      return json(res, { ok: true, messages: [], count: 0 }), true;
+    }
+
+    const cloudMessages = await getConversationMessages(
+      user.userId,
+      id,
+      limit ? parseInt(limit, 10) : 100,
+    );
+    return json(res, { ok: true, messages: cloudMessages, count: cloudMessages.length }), true;
   }
 
   // POST /v1/memory/conversations/:id/messages - Add message

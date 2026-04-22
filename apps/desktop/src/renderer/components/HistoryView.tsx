@@ -6,7 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx } from 'clsx';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
-import { Search, Clock, Trash2, Loader2 } from "lucide-react";
+import { Search, Clock, Trash2, Loader2, Cloud, Monitor } from "lucide-react";
 
 function normalizeMarkdownSpacing(input: string): string {
   const raw = String(input || '').replace(/\r\n/g, '\n');
@@ -82,6 +82,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           ) : (
             conversations.map((c) => {
               const isActive = selectedConversation?.id === c.id;
+              const isVm = c.origin === 'cloud_vm';
               return (
                 <button
                   key={c.id}
@@ -99,9 +100,23 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <div className={clsx("font-medium text-[13px] truncate transition-colors", isActive ? "text-theme-fg" : "text-theme-fg")}>
                         {c.title || "Untitled Conversation"}
                       </div>
-                      <div className={clsx("text-[11px] mt-1 flex items-center gap-1 transition-colors", isActive ? "text-theme-muted" : "text-theme-muted")}>
-                        <Clock className="w-3 h-3" />
-                        {new Date(c.created_at).toLocaleDateString()}
+                      <div className={clsx("text-[11px] mt-1 flex items-center gap-2 transition-colors", isActive ? "text-theme-muted" : "text-theme-muted")}>
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(c.updated_at || c.created_at).toLocaleDateString()}
+                        </span>
+                        <span
+                          className={clsx(
+                            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide",
+                            isVm
+                              ? "bg-sky-500/10 text-sky-500 dark:text-sky-300"
+                              : "bg-theme-hover text-theme-muted",
+                          )}
+                          title={isVm ? 'Conversation from your Cloud Engine' : 'Conversation from this desktop'}
+                        >
+                          {isVm ? <Cloud className="w-2.5 h-2.5" /> : <Monitor className="w-2.5 h-2.5" />}
+                          {isVm ? 'VM' : 'Desktop'}
+                        </span>
                       </div>
                     </div>
                     {onDeleteConversation && (

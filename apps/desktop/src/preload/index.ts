@@ -562,4 +562,15 @@ contextBridge.exposeInMainWorld("desktopAPI", {
 
   // Cloud Engine — upload agent data (knowledge.db, memory.db, file_index.db, etc.) to GCS
   uploadAgentData: (_cloudAiUrl: string, _token: string) => ipcRenderer.invoke('cloud:uploadAgentData'),
+  // Debounced fast-path: call after any local mutation that should propagate
+  // to the VM promptly. Coalesces rapid calls into a single ~15s upload.
+  requestAgentDataPush: () => { try { ipcRenderer.send('cloud:requestAgentDataPush'); } catch { /* noop */ } },
+  // Fires whenever the desktop has just applied a fresh agent-data archive
+  // (typically pulled from the VM). Listeners should reload conversation
+  // history, memories, knowledge, etc.
+  onAgentDataSynced: (cb: (payload: { source?: string; files?: number }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload);
+    ipcRenderer.on('agent:data-synced', handler);
+    return () => { try { ipcRenderer.removeListener('agent:data-synced', handler); } catch { /* noop */ } };
+  },
 });

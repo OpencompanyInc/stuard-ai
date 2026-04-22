@@ -27,7 +27,7 @@ import {
   updateMediaLibraryPrefs,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
-import { pushDesktopAgentDataToVM } from "../services/cloud-webhooks";
+import { pushDesktopAgentDataToVM, requestAgentDataPush } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
 import {
   browserMirrorClickAt,
@@ -905,6 +905,18 @@ export function setupIpc() {
       return { ok };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'upload_failed') };
+    }
+  });
+
+  // Fire-and-forget debounced push. Renderer calls this whenever a local
+  // conversation finishes, a memory is saved, or any other mutation that
+  // should reach the VM promptly without blocking the UI.
+  ipcMain.on('cloud:requestAgentDataPush', () => {
+    try { requestAgentDataPush(); } catch { /* noop */ }
+  });
+  ipcMain.handle('cloud:requestAgentDataPush', async () => {
+    try { requestAgentDataPush(); return { ok: true }; } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'push_failed') };
     }
   });
 

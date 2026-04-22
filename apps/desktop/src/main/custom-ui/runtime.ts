@@ -537,7 +537,21 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
     return { ok: true, navigatedTo: navigateTo };
   }
 
-  // Send data update to window
+  // Propagate each updated data key as a workflow variable so useVar hooks
+  // receive reactive updates (same path execCustomUi uses for existing windows).
+  // Without this, update_custom_ui({ data: { name: "foo" } }) only refreshes
+  // data-bind elements in raw-HTML UIs but leaves React useVar('name') stale.
+  if (updates && typeof updates === 'object') {
+    for (const [key, value] of Object.entries(updates)) {
+      try {
+        setVariable(key, value as VariableValue);
+      } catch (e: any) {
+        ctx.logFn(`update_custom_ui: setVariable failed for "${key}": ${e?.message}`);
+      }
+    }
+  }
+
+  // Send data update to window (for onDataUpdate listeners / data-bind fallback)
   existing.webContents.send('stuard:data-update', winData?.data || updates);
 
   let updateScript = `(function() {

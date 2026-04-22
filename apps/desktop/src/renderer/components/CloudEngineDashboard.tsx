@@ -71,7 +71,9 @@ const PLANS = [
 export function CloudEngineDashboard() {
   const {
     engine, loading, error, metrics, billing, syncStatus, isSyncing, deployments,
-    provision, start, stop, destroy, syncData, listFiles, readFile, refresh,
+    provision, start, stop, destroy, syncData, listFiles, readFile,
+    uploadFileToVm, createDirectory, deleteFile,
+    refresh,
     createDeployment, stopDeployment, restartDeployment, deleteDeployment,
     getDeployLogs, fetchDeployments,
   } = useCloudEngine();
@@ -638,6 +640,18 @@ export function CloudEngineDashboard() {
             engine={engine}
             listFiles={listFiles}
             readFile={readFile}
+            uploadFileToVm={uploadFileToVm}
+            createDirectory={createDirectory}
+            deleteFile={deleteFile}
+            onPickFile={(entry) => {
+              try {
+                (window as any).__cloudVmChatAttach?.({
+                  path: entry.path,
+                  name: entry.name,
+                  size: entry.size,
+                });
+              } catch { /* noop */ }
+            }}
             className="w-full h-full"
             variant="explorer"
           />

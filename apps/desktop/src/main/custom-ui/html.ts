@@ -488,6 +488,9 @@ function buildRuntimeScript(options: {
       // === React-Markdown globals ===
       var ReactMarkdown = window.ReactMarkdown || undefined;
       var Markdown = ReactMarkdown;
+      var remarkGfm = window.remarkGfm || undefined;
+      var remarkMath = window.remarkMath || undefined;
+      var rehypeKatex = window.rehypeKatex || undefined;
 
       // === Built-in utility components ===
       var Badge = function Badge(props) {

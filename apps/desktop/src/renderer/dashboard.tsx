@@ -498,15 +498,73 @@ function DashboardApp() {
     if (!force && (conversationsLoading || conversationsLoadedLimit >= requestedLimit)) return;
     setConversationsLoading(true);
     try {
-      const json = await agentFetchJson(
-        resolveAgentEndpoints(),
-        `/v1/memory/conversations?limit=${requestedLimit}&source=stuard`,
-        { accessToken: session?.access_token || null },
-      );
-      if (json.ok && Array.isArray(json.conversations)) {
-        const convs = json.conversations
-          .map((c: any) => ({ ...c, id: c.id || c.conversation_id }))
-          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+      // Fetch desktop (local agent) and VM (cloud-ai /v1/memory) conversations
+      // in parallel so the History view shows BOTH origins. VM conversations
+      // carry origin='cloud_vm' while desktop-originated ones are origin='desktop'.
+      const token = session?.access_token || null;
+      const [localJson, cloudJson] = await Promise.all([
+        agentFetchJson(
+          resolveAgentEndpoints(),
+          `/v1/memory/conversations?limit=${requestedLimit}&source=stuard`,
+          { accessToken: token },
+        ).catch(() => null),
+        token
+          ? fetch(`${CLOUD_AI_HTTP}/v1/memory/conversations?limit=${requestedLimit}&status=active`, {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+              .then(r => r.json())
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      const byId = new Map<string, any>();
+      const ingest = (list: any[], defaultOrigin: 'desktop' | 'cloud_vm') => {
+        for (const raw of list) {
+          if (!raw) continue;
+          if (raw.source === 'workflow') continue;
+          const id = raw.id || raw.conversation_id;
+          if (!id) continue;
+          const incoming = {
+            ...raw,
+            id,
+            origin: raw.origin || defaultOrigin,
+            created_at: raw.created_at || raw.updated_at || raw.updatedAt,
+            updated_at: raw.updated_at || raw.updatedAt || raw.created_at,
+            title: raw.title || 'Untitled Conversation',
+          };
+          const existing = byId.get(id);
+          if (!existing) {
+            byId.set(id, incoming);
+            continue;
+          }
+          const existingUpdated = new Date(existing.updated_at || existing.created_at || 0).getTime();
+          const incomingUpdated = new Date(incoming.updated_at || incoming.created_at || 0).getTime();
+          byId.set(id, {
+            ...existing,
+            ...incoming,
+            title: (incoming.title && incoming.title !== 'Untitled Conversation')
+              ? incoming.title
+              : (existing.title || incoming.title),
+            origin: existing.origin === 'cloud_vm' ? 'cloud_vm' : incoming.origin,
+            updated_at: incomingUpdated > existingUpdated ? incoming.updated_at : existing.updated_at,
+            created_at: existing.created_at || incoming.created_at,
+          });
+        }
+      };
+
+      if (localJson?.ok && Array.isArray(localJson.conversations)) {
+        ingest(localJson.conversations, 'desktop');
+      }
+      if (cloudJson?.ok && Array.isArray(cloudJson.conversations)) {
+        ingest(cloudJson.conversations, 'cloud_vm');
+      }
+
+      if (byId.size > 0 || localJson?.ok || cloudJson?.ok) {
+        const convs = Array.from(byId.values())
+          .sort((a: any, b: any) =>
+            new Date(b.updated_at || b.created_at || 0).getTime() -
+            new Date(a.updated_at || a.created_at || 0).getTime(),
+          )
           .slice(0, requestedLimit);
         setConversations(convs);
         setConversationsLoadedLimit(requestedLimit);
@@ -653,6 +711,21 @@ function DashboardApp() {
       loadConversations(20).catch(() => { });
     }
   }, [tab, session, loadConversations, loadUsageCount]);
+
+  // Refresh conversations whenever an incoming agent-data archive (pushed by
+  // the VM) has been applied locally — keeps the history panel seamlessly
+  // up-to-date without the user manually refreshing.
+  useEffect(() => {
+    const api = window.desktopAPI as any;
+    if (!api?.onAgentDataSynced) return;
+    const unsubscribe = api.onAgentDataSynced(() => {
+      try {
+        const currentLimit = Math.max(conversationsLoadedLimit || 0, tab === 'history' ? 20 : 10);
+        loadConversations(currentLimit, true).catch(() => { });
+      } catch { /* noop */ }
+    });
+    return () => { try { unsubscribe && unsubscribe(); } catch { /* noop */ } };
+  }, [tab, conversationsLoadedLimit, loadConversations]);
 
   const firstOkJsonPlanner = async (urls: string[]) => {
     for (const u of urls) {
@@ -912,9 +985,24 @@ function DashboardApp() {
           `/v1/memory/conversations/${encodeURIComponent(id)}/messages?limit=500`,
           { accessToken: session?.access_token || null },
         );
-        if (json.ok && Array.isArray(json.messages)) {
+        if (json.ok && Array.isArray(json.messages) && json.messages.length > 0) {
           setConvMessages(repairConversationMessageRows(json.messages as any[]));
           return;
+        }
+      } catch { }
+      // Fallback to cloud-ai memory API (covers VM-only conversations)
+      try {
+        const token = session?.access_token || null;
+        if (token) {
+          const resp = await fetch(
+            `${CLOUD_AI_HTTP}/v1/memory/conversations/${encodeURIComponent(id)}/messages?limit=500`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          const data = await resp.json().catch(() => null) as any;
+          if (data?.ok && Array.isArray(data.messages) && data.messages.length > 0) {
+            setConvMessages(repairConversationMessageRows(data.messages as any[]));
+            return;
+          }
         }
       } catch { }
       // Fallback to Supabase

@@ -1175,25 +1175,83 @@ async function syncAgentData(args: any): Promise<any> {
       fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
       execFileSync('tar', ['-xzf', tempPath, '-C', extractDir], { timeout: 300_000 });
 
+      // Merge-safe copy: only overwrite a destination file if the incoming one
+      // is newer (mtime-based) OR the destination doesn't exist OR the
+      // destination is empty. This prevents the classic "A syncs, then B syncs
+      // stale data and clobbers A's newer changes" race while still letting an
+      // initial sync populate an empty agent-data dir.
+      const mergeCopy = (src: string, dest: string): { copied: boolean; reason: string } => {
+        try {
+          const srcStat = fs.statSync(src);
+          if (!srcStat.isFile()) return { copied: false, reason: 'not_a_file' };
+          if (fs.existsSync(dest)) {
+            const destStat = fs.statSync(dest);
+            if (destStat.size > 0 && destStat.mtimeMs >= srcStat.mtimeMs) {
+              // Local is same-age or newer — keep local; leave the incoming
+              // data available for a Python-side row-level merge later.
+              return { copied: false, reason: 'local_newer_or_equal' };
+            }
+          }
+          fs.copyFileSync(src, dest);
+          // Preserve the incoming mtime so future syncs stay comparable
+          try { fs.utimesSync(dest, srcStat.atime, srcStat.mtime); } catch { /* best-effort */ }
+          return { copied: true, reason: 'copied' };
+        } catch (e: any) {
+          return { copied: false, reason: `error:${e?.message || 'copy_failed'}` };
+        }
+      };
+
       // Handle new archive format (agent/knowledge.db, lancedb/..., workflow.db)
       const extractedAgentDir = `${extractDir}/agent`;
+      let copied = 0;
+      let skipped = 0;
       if (fs.existsSync(extractedAgentDir)) {
         const agentFiles = fs.readdirSync(extractedAgentDir);
         for (const f of agentFiles) {
-          fs.copyFileSync(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
+          const result = mergeCopy(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
+          if (result.copied) copied++; else skipped++;
         }
-        console.log(`[vm-agent] Restored ${agentFiles.length} files from new-format archive`);
+        console.log(`[vm-agent] New-format archive: ${copied} copied, ${skipped} skipped (kept local)`);
       } else {
         const files = fs.readdirSync(extractDir);
         for (const f of files) {
           const src = `${extractDir}/${f}`;
           const st = fs.statSync(src);
-          if (st.isFile()) fs.copyFileSync(src, `${AGENT_DATA_DIR}/${f}`);
+          if (!st.isFile()) continue;
+          const result = mergeCopy(src, `${AGENT_DATA_DIR}/${f}`);
+          if (result.copied) copied++; else skipped++;
         }
-        console.log(`[vm-agent] Restored ${files.length} files from legacy archive`);
+        console.log(`[vm-agent] Legacy archive: ${copied} copied, ${skipped} skipped (kept local)`);
       }
 
-      // Restore lancedb if present
+      // Restore device keys if the archive carries them — this is what lets
+      // the VM actually *decrypt* rows written by the desktop. Without this,
+      // memory.db exists on disk but lists as empty because each row is
+      // AES-GCM encrypted with the desktop's local device key.
+      const extractedKeysDir = `${extractDir}/.stuard_keys`;
+      if (fs.existsSync(extractedKeysDir)) {
+        try {
+          const keysDest = `${require('os').homedir()}/.stuard/keys`;
+          fs.mkdirSync(keysDest, { recursive: true, mode: 0o700 });
+          for (const f of fs.readdirSync(extractedKeysDir)) {
+            const src = `${extractedKeysDir}/${f}`;
+            const dst = `${keysDest}/${f}`;
+            if (!fs.statSync(src).isFile()) continue;
+            // Only install if we don't already have a key; never overwrite a
+            // pre-existing VM-local key silently.
+            if (!fs.existsSync(dst)) {
+              fs.copyFileSync(src, dst);
+              try { fs.chmodSync(dst, 0o600); } catch { /* best-effort */ }
+            }
+          }
+          console.log('[vm-agent] Device keys installed from archive');
+        } catch (e: any) {
+          console.warn('[vm-agent] Failed to install device keys:', e?.message);
+        }
+      }
+
+      // Restore lancedb if present (vector store used by RAG; lancedb manages
+      // its own manifest so a plain cp is acceptable here).
       const extractedLancedb = `${extractDir}/lancedb`;
       if (fs.existsSync(extractedLancedb)) {
         const vmLancedb = `${process.env.STUARD_VM_ROOT || '/home/stuard'}/lancedb`;
