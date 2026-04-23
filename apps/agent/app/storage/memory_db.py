@@ -240,13 +240,19 @@ def _deserialize_vector(data: Optional[bytes]) -> Optional[List[float]]:
 
 
 def _encrypt_content(content: str, crypto: CryptoManager) -> str:
-    """Encrypt content string."""
+    """Encrypt content string (or tag as plaintext in plaintext mode)."""
     return crypto.encrypt_string(content)
 
 
 def _decrypt_content(encrypted: str, crypto: CryptoManager) -> str:
-    """Decrypt content string."""
-    return crypto.decrypt_string(encrypted)
+    """Decrypt content string (or strip plaintext tag)."""
+    try:
+        return crypto.decrypt_string(encrypted)
+    except Exception:
+        # Legacy ciphertext encrypted with a key we no longer have (e.g. VM
+        # restored a desktop-encrypted row before the plaintext migration).
+        # Return empty rather than aborting the whole query.
+        return ""
 
 
 def _encrypt_json(data: Any, crypto: CryptoManager) -> Optional[str]:
@@ -260,7 +266,16 @@ def _decrypt_json(encrypted: Optional[str], crypto: CryptoManager) -> Optional[A
     """Decrypt JSON data."""
     if encrypted is None:
         return None
-    return json.loads(crypto.decrypt_string(encrypted))
+    try:
+        raw = crypto.decrypt_string(encrypted)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

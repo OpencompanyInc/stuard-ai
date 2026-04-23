@@ -37,6 +37,55 @@ function getDesktopAgentDataDir(): string {
 }
 
 /**
+ * Forward a chat_sync event into the local Python agent's memory.db so the
+ * conversation and messages become part of persistent history (not just the
+ * in-memory sidebar list). Tolerates transient agent unavailability — the
+ * periodic full memory.db sync will backfill if this fails.
+ */
+async function persistIncomingChatSync(msg: any): Promise<void> {
+    const action = String(msg?.action || '');
+    const conversationId = String(msg?.conversationId || '');
+    if (!conversationId) return;
+
+    const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+    const data = msg?.data || {};
+
+    const execTool = async (tool: string, args: any): Promise<void> => {
+        try {
+            await fetch(`${agentHttp}/tools/exec`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool, args }),
+                signal: AbortSignal.timeout(10_000),
+            });
+        } catch (e: any) {
+            logger.warn(`[cloud-webhooks] chat_sync ${tool} failed: ${e?.message}`);
+        }
+    };
+
+    if (action === 'new_conversation') {
+        await execTool('conversation_create', {
+            conversation_id: conversationId,
+            title: data.title || undefined,
+            model: data.model || undefined,
+            source: 'stuard',
+        });
+    } else if (action === 'title_update' && typeof data.title === 'string' && data.title) {
+        await execTool('conversation_update', {
+            conversation_id: conversationId,
+            title: data.title,
+        });
+    } else if (action === 'new_message' && typeof data.content === 'string' && data.content) {
+        // message_add auto-creates the conversation if it doesn't exist yet.
+        await execTool('message_add', {
+            conversation_id: conversationId,
+            role: data.role === 'user' ? 'user' : 'assistant',
+            content: data.content,
+        });
+    }
+}
+
+/**
  * Download updated agent databases from GCS via cloud-ai signed URL.
  * Extracts knowledge.db, memory.db, etc. to the desktop agent data directory.
  */
@@ -223,8 +272,13 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
         const stageAgentDir = path.join(stageDir, 'agent');
         fs.mkdirSync(stageAgentDir, { recursive: true });
 
-        // Mirror agent files into the stage (preserving mtime)
+        // Mirror agent files into the stage (preserving mtime).
+        // memory.db is special: the VM runs in plaintext mode and cannot
+        // decrypt desktop-encrypted rows, so we substitute a decrypted
+        // plaintext copy produced by the local Python agent.
+        const MEMORY_DB_FILES = new Set(['memory.db', 'memory.db-wal', 'memory.db-shm']);
         for (const f of fs.readdirSync(agentDir)) {
+            if (MEMORY_DB_FILES.has(f)) continue; // handled below
             const src = path.join(agentDir, f);
             try {
                 const st = fs.statSync(src);
@@ -235,25 +289,41 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
             } catch { /* skip unreadable */ }
         }
 
-        // Include file-backed device keys if present. Users on macOS/Windows
-        // normally use the OS keyring so this directory may not exist — in
-        // that case we fall back to the existing "bring your own key on the
-        // VM" behaviour. Linux (headless) desktops always have the file.
+        // Ask the local Python agent to export memory.db with all encrypted
+        // columns decrypted and tagged as plaintext. The VM reads these rows
+        // directly without needing the desktop's device key.
         try {
-            const userHome = process.env.HOME || process.env.USERPROFILE || '';
-            const keysSrc = userHome ? path.join(userHome, '.stuard', 'keys') : '';
-            if (keysSrc && fs.existsSync(keysSrc)) {
-                const stageKeysDir = path.join(stageDir, '.stuard_keys');
-                fs.mkdirSync(stageKeysDir, { recursive: true });
-                for (const f of fs.readdirSync(keysSrc)) {
-                    const src = path.join(keysSrc, f);
-                    if (!fs.statSync(src).isFile()) continue;
-                    fs.copyFileSync(src, path.join(stageKeysDir, f));
+            const exportPath = path.join(stageAgentDir, 'memory.db');
+            const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+            const resp = await fetch(`${agentHttp}/tools/exec`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tool: 'memory_export_plaintext',
+                    args: { output_path: exportPath },
+                }),
+                signal: AbortSignal.timeout(120_000),
+            });
+            const result: any = await resp.json().catch(() => ({ ok: false }));
+            if (!result?.ok) {
+                logger.warn(`[cloud-webhooks] memory_export_plaintext failed: ${result?.error || 'unknown'}`);
+                // Fall back to copying the encrypted memory.db — VM still
+                // can't read it, but at least we don't ship a broken archive.
+                const src = path.join(agentDir, 'memory.db');
+                if (fs.existsSync(src)) {
+                    fs.copyFileSync(src, exportPath);
                 }
-                logger.info('[cloud-webhooks] Included device keys in sync archive');
+            } else {
+                logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
             }
+            // Force a fresh mtime so the VM's merge-copy treats it as newer
+            // than any legacy encrypted memory.db already on disk.
+            try {
+                const now = new Date();
+                fs.utimesSync(exportPath, now, now);
+            } catch { /* best-effort */ }
         } catch (e: any) {
-            logger.warn(`[cloud-webhooks] Device-key staging failed: ${e?.message}`);
+            logger.warn(`[cloud-webhooks] memory.db plaintext export errored: ${e?.message}`);
         }
 
         const tmpFile = path.join(tmpDir, `agent-data-upload-${Date.now()}.tar.gz`);
@@ -526,6 +596,11 @@ async function connect() {
                     handleToolRequest(msg, ws!);
                 } else if (msg.type === 'chat_sync') {
                     logger.info(`[cloud-webhooks] Chat sync: ${msg.action} conv=${msg.conversationId} from=${msg.source}`);
+                    // Persist to the local Python agent so the conversation
+                    // appears in sidebar history and survives a restart.
+                    persistIncomingChatSync(msg).catch((e: any) => {
+                        logger.warn(`[cloud-webhooks] persistIncomingChatSync failed: ${e?.message}`);
+                    });
                     try {
                         for (const win of BrowserWindow.getAllWindows()) {
                             try { win.webContents.send('chat:sync-event', msg); } catch { }

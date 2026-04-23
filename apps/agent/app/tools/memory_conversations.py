@@ -1262,3 +1262,146 @@ async def memory_stats(args: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.exception("memory_stats failed")
         return {"ok": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PLAINTEXT EXPORT (for VM sync)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Export memory.db to a new file with all encrypted columns decrypted.
+
+    Writes every *_enc column with the PLAINTEXT_PREFIX tag so a VM (or any
+    other process running with STUARD_MEMORY_PLAINTEXT=1) can read the rows
+    without the device key.
+
+    Args:
+        output_path (str): Absolute path to write the plaintext copy to.
+                           Any existing file at this path is replaced.
+
+    Returns:
+        { ok, output_path, conversations, messages, bytes }
+    """
+    import os as _os
+    import shutil as _shutil
+    import sqlite3 as _sqlite3
+
+    from ..storage.memory_db import get_memory_db
+    from ..storage.crypto import PLAINTEXT_PREFIX
+
+    output_path = args.get("output_path") or args.get("dest")
+    if not output_path or not isinstance(output_path, str):
+        return {"ok": False, "error": "missing output_path"}
+
+    db = get_memory_db()
+    crypto = db._crypto  # type: ignore[attr-defined]
+    src_path = db._db_path  # type: ignore[attr-defined]
+
+    # Can't re-encode rows we can't decrypt. The desktop Python agent runs
+    # with the device key so this should only fire in an operator-error case
+    # (calling export from an already-plaintext runtime).
+    if getattr(crypto, "plaintext_mode", False):
+        # Even so, just copy the DB — it's already plaintext-tagged.
+        try:
+            _os.makedirs(_os.path.dirname(output_path) or ".", exist_ok=True)
+            _shutil.copyfile(src_path, output_path)
+            size = _os.path.getsize(output_path)
+            return {"ok": True, "output_path": output_path, "bytes": size, "mode": "copy"}
+        except Exception as e:
+            logger.exception("memory_export_plaintext copy failed")
+            return {"ok": False, "error": str(e)}
+
+    # Re-encode: start from a fresh copy, then rewrite *_enc columns as
+    # plaintext. This preserves all schema, indices, and non-content state.
+    try:
+        _os.makedirs(_os.path.dirname(output_path) or ".", exist_ok=True)
+        # Use SQLite's backup API so we get a consistent snapshot even if
+        # the desktop agent is mid-write.
+        src_conn = _sqlite3.connect(src_path)
+        try:
+            dst_conn = _sqlite3.connect(output_path)
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                dst_conn.close()
+        finally:
+            src_conn.close()
+
+        # Re-encode encrypted columns in the destination copy.
+        dst = _sqlite3.connect(output_path)
+        dst.row_factory = _sqlite3.Row
+        try:
+            def _recode(table: str, pk: str, columns: list[str]) -> int:
+                rows = dst.execute(f"SELECT {pk}, {', '.join(columns)} FROM {table}").fetchall()
+                count = 0
+                for row in rows:
+                    updates = []
+                    values: list = []
+                    for col in columns:
+                        val = row[col]
+                        if val is None:
+                            updates.append(f"{col} = NULL")
+                            continue
+                        if isinstance(val, str) and val.startswith(PLAINTEXT_PREFIX):
+                            # Already plaintext-tagged — leave alone.
+                            continue
+                        try:
+                            plain = crypto.decrypt_string(val)
+                        except Exception:
+                            # Unreadable row (wrong key, corruption). Skip
+                            # rather than failing the whole export.
+                            continue
+                        updates.append(f"{col} = ?")
+                        values.append(PLAINTEXT_PREFIX + plain)
+                    if not updates:
+                        continue
+                    values.append(row[pk])
+                    dst.execute(
+                        f"UPDATE {table} SET {', '.join(updates)} WHERE {pk} = ?",
+                        tuple(values),
+                    )
+                    count += 1
+                return count
+
+            conv_count = _recode("conversations", "id", ["title_enc"])
+            msg_count = _recode(
+                "messages",
+                "id",
+                ["content_enc", "tool_calls_enc", "tool_results_enc", "attachments_enc", "metadata_enc"],
+            )
+            # Segments, spaces, space_items, vault, notes — recode best-effort
+            # so every encrypted column in the schema becomes plaintext.
+            try:
+                _recode("conversation_segments", "id", ["summary_enc"])
+            except Exception:
+                pass
+            try:
+                _recode("spaces", "id", ["name_enc", "description_enc"])
+            except Exception:
+                pass
+            try:
+                _recode("space_items", "id", ["title_enc", "content_enc"])
+            except Exception:
+                pass
+
+            dst.commit()
+        finally:
+            dst.close()
+
+        size = _os.path.getsize(output_path)
+        return {
+            "ok": True,
+            "output_path": output_path,
+            "bytes": size,
+            "conversations": conv_count,
+            "messages": msg_count,
+            "mode": "recoded",
+        }
+    except Exception as e:
+        logger.exception("memory_export_plaintext failed")
+        try:
+            if _os.path.exists(output_path):
+                _os.unlink(output_path)
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)}

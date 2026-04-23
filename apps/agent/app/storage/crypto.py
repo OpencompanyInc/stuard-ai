@@ -36,6 +36,21 @@ KEY_SIZE = 32  # AES-256
 NONCE_SIZE = 12  # GCM standard
 PBKDF2_ITERATIONS = 100_000
 
+# Prefix marker for values stored without encryption. Lets the same column
+# hold either an AES-GCM base64 ciphertext or a plaintext string without an
+# ambiguity (base64 cannot contain ':').
+PLAINTEXT_PREFIX = "pt1:"
+
+
+def _plaintext_mode_enabled() -> bool:
+    """True when the runtime has opted out of memory.db encryption.
+
+    Set on the VM (where the user's device key never lives) so conversation
+    rows remain readable after sync. Desktop runs leave this unset and keep
+    encrypting at rest.
+    """
+    return os.getenv("STUARD_MEMORY_PLAINTEXT", "").strip() in ("1", "true", "yes")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA CLASSES
@@ -320,34 +335,58 @@ def verify_password(password: str, stored_hash: str) -> bool:
 class CryptoManager:
     """
     High-level encryption manager for Stuard memory system.
-    
+
     Handles key management, encryption/decryption, and password verification.
     """
-    
+
     def __init__(self, user_password: Optional[str] = None):
-        self._device_key = get_device_key()
-        self._user_password = user_password
-        self._encryption_key = derive_key(self._device_key, user_password)
-    
+        self.plaintext_mode = _plaintext_mode_enabled()
+        if self.plaintext_mode:
+            # Skip key derivation entirely — no OS keyring access, no new
+            # device key minted, no PBKDF2 work. This is the VM path.
+            self._device_key = b""
+            self._user_password = None
+            self._encryption_key = b""
+        else:
+            self._device_key = get_device_key()
+            self._user_password = user_password
+            self._encryption_key = derive_key(self._device_key, user_password)
+
     @property
     def encryption_key(self) -> bytes:
         """Get the derived encryption key."""
         return self._encryption_key
-    
+
     def encrypt(self, data: bytes) -> EncryptedData:
         """Encrypt data."""
+        if self.plaintext_mode:
+            raise RuntimeError("encrypt() not available in plaintext mode")
         return encrypt(data, self._encryption_key)
-    
+
     def decrypt(self, encrypted: EncryptedData) -> bytes:
         """Decrypt data."""
+        if self.plaintext_mode:
+            raise RuntimeError("decrypt() not available in plaintext mode")
         return decrypt(encrypted, self._encryption_key)
-    
+
     def encrypt_string(self, plaintext: str) -> str:
-        """Encrypt string to base64."""
+        """Encrypt string to base64, or tag as plaintext in plaintext mode."""
+        if self.plaintext_mode:
+            return PLAINTEXT_PREFIX + plaintext
         return encrypt_string(plaintext, self._encryption_key)
-    
+
     def decrypt_string(self, ciphertext: str) -> str:
-        """Decrypt base64 string."""
+        """Decrypt base64 string, or strip plaintext prefix.
+
+        In plaintext mode legacy AES-GCM rows become unreadable — we return
+        an empty string instead of raising so the caller keeps walking the
+        result set. Those rows will be overwritten when the desktop resyncs
+        with a plaintext export.
+        """
+        if isinstance(ciphertext, str) and ciphertext.startswith(PLAINTEXT_PREFIX):
+            return ciphertext[len(PLAINTEXT_PREFIX):]
+        if self.plaintext_mode:
+            return ""
         return decrypt_string(ciphertext, self._encryption_key)
     
     def update_password(self, new_password: Optional[str]) -> None:

@@ -467,6 +467,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       tool: 'message_add',
       args: { conversation_id: conversationId, role: 'user', content: message },
     }, 10_000).catch(() => {});
+    emitChatSyncToDesktop('new_message', conversationId, { role: 'user', content: message });
 
     const vmAuth = VM_SECRET && USER_ID
       ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
@@ -651,6 +652,7 @@ async function processVMConversationTurn(
     tool: 'message_add',
     args: { conversation_id: conversationId, role: 'assistant', content: assistantMessage },
   }, 10_000).catch(() => {});
+  emitChatSyncToDesktop('new_message', conversationId, { role: 'assistant', content: assistantMessage });
 
   // Get existing segments to determine current state
   const segListResult = await sendToAgent({
@@ -881,6 +883,10 @@ function handleMemoryConversationsAdd(args: any): any {
     message_count: Number(args.message_count || 0),
     topics: Array.isArray(args.topics) ? args.topics : [],
   });
+  emitChatSyncToDesktop('new_conversation', conv.id, {
+    title: conv.title,
+    model: conv.model || undefined,
+  });
   return { ok: true, conversation: conv };
 }
 
@@ -894,6 +900,9 @@ function handleMemoryConversationsUpdate(args: any): any {
   if (args.topics != null) updates.topics = args.topics;
   const conv = getVMMemoryStore().updateConversation(id, updates);
   if (!conv) return { ok: false, error: 'not_found' };
+  if (args.title != null) {
+    emitChatSyncToDesktop('title_update', id, { title: String(args.title) });
+  }
   return { ok: true, conversation: conv };
 }
 
@@ -1041,6 +1050,49 @@ async function notifyAgentDataUploaded(): Promise<void> {
   } catch (e: any) {
     console.warn('[vm-agent] Failed to notify cloud-ai of agent data upload:', e?.message);
   }
+}
+
+/**
+ * Fire-and-forget: relay a chat_sync event to the desktop via cloud-ai.
+ * Used when the VM creates or updates conversation state so the desktop's
+ * chat history stays in sync without waiting for a full memory.db upload.
+ */
+function emitChatSyncToDesktop(
+  action: 'new_message' | 'new_conversation' | 'title_update',
+  conversationId: string,
+  data: { role?: 'user' | 'assistant'; content?: string; title?: string; model?: string },
+): void {
+  if (!CLOUD_AI_URL || !VM_SECRET || !USER_ID || !conversationId) return;
+  const event = {
+    type: 'chat_sync',
+    action,
+    conversationId,
+    source: 'vm',
+    data,
+    timestamp: new Date().toISOString(),
+  };
+  (async () => {
+    try {
+      const payload = JSON.stringify({
+        userId: USER_ID,
+        nonce: Date.now().toString(36),
+        iat: Date.now(),
+        exp: Date.now() + 300_000,
+      });
+      const encodedPayload = Buffer.from(payload).toString('base64url');
+      const signature = createHmac('sha256', VM_SECRET).update(encodedPayload).digest('base64url');
+      const vmToken = `${encodedPayload}.${signature}`;
+
+      await fetch(`${CLOUD_AI_URL}/v1/cloud-engine/vm/chat-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: USER_ID, vmToken, event }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (e: any) {
+      console.warn('[vm-agent] chat_sync emit failed:', e?.message);
+    }
+  })();
 }
 
 let _quickSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1390,23 +1442,32 @@ function handleChatSync(args: any): any {
   const { action, conversationId, data } = args || {};
   if (!conversationId) return { ok: false, error: 'missing_conversation_id' };
 
-  // Forward to Python agent's local memory store so conversations stay in sync
-  if (action === 'new_message' || action === 'new_conversation') {
+  if (action === 'new_conversation') {
+    sendToAgent({
+      type: 'tool_exec',
+      tool: 'conversation_create',
+      args: {
+        conversation_id: conversationId,
+        title: data?.title || undefined,
+        model: data?.model || undefined,
+        source: 'stuard',
+      },
+    }, 10_000).catch(() => {});
+  } else if (action === 'new_message') {
     const role = data?.role || 'assistant';
     const content = data?.content || '';
     if (content) {
+      // message_add auto-creates the conversation if it doesn't exist yet.
       sendToAgent({
         type: 'tool_exec',
         tool: 'message_add',
         args: { conversation_id: conversationId, role, content },
       }, 10_000).catch(() => {});
     }
-  }
-
-  if (action === 'title_update' && data?.title) {
+  } else if (action === 'title_update' && data?.title) {
     sendToAgent({
       type: 'tool_exec',
-      tool: 'conversation_title_set',
+      tool: 'conversation_update',
       args: { conversation_id: conversationId, title: data.title },
     }, 10_000).catch(() => {});
   }

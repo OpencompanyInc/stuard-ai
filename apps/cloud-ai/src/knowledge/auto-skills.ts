@@ -381,7 +381,22 @@ async function storeAutoSkillDraft(draft: AutoSkillDraft): Promise<boolean> {
       },
     }, undefined, 10000);
 
-    return result?.ok || false;
+    if (result?.ok) return true;
+
+    // The bridge never throws — it resolves with { ok: false, error } on
+    // bridge_closed / timeout / bad-response. Surface that error instead of
+    // collapsing everything to "stored=false" with no explanation.
+    const bridgeError = String(result?.error || 'unknown');
+    console.error(`[auto-skills] auto_skill_store failed: ${bridgeError}`, {
+      skillName: draft.name,
+      result,
+    });
+    writeLog('auto_skill_store_failed', {
+      skillName: draft.name,
+      error: bridgeError,
+      timedOut: result?.timedOut === true,
+    });
+    return false;
   } catch (error) {
     writeLog('auto_skill_store_error', { error: String(error) });
     // Fallback: persist as a knowledge fact so it's not lost

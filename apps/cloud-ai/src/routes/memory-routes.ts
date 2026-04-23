@@ -8,6 +8,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 import { getConversationMessages, getSupabaseService, verifyToken } from '../supabase';
 import { hasClientBridge } from '../tools/bridge';
 import * as memory from '../memory/conversations';
+import { relayChatEvent } from '../services/chat-sync';
 
 function json(res: ServerResponse, data: unknown, status = 200) {
   res.writeHead(status, {
@@ -193,11 +194,23 @@ export async function handleMemoryRoutes(
 
     const body = await readBody(req);
     const { title, model, conversation_id } = body;
+    const authUser = await getAuth(req);
 
     try {
       const conversation = await memory.createConversation(title, model, conversation_id);
       if (!conversation) {
         return json(res, { ok: false, error: 'failed_to_create' }, 500), true;
+      }
+      // Relay to VM so its chat history mirrors the desktop.
+      if (authUser?.userId && conversation.id) {
+        relayChatEvent(authUser.userId, {
+          type: 'chat_sync',
+          action: 'new_conversation',
+          conversationId: conversation.id,
+          source: 'desktop',
+          data: { title: conversation.title || undefined, model: conversation.model || undefined },
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
       }
       return json(res, { ok: true, conversation }), true;
     } catch (error) {
@@ -262,11 +275,22 @@ export async function handleMemoryRoutes(
     const id = path.split('/v1/memory/conversations/')[1];
     const body = await readBody(req);
     const { title, status } = body;
+    const authUser = await getAuth(req);
 
     try {
       const conversation = await memory.updateConversation(id, { title, status });
       if (!conversation) {
         return json(res, { ok: false, error: 'not_found' }, 404), true;
+      }
+      if (authUser?.userId && typeof title === 'string' && title) {
+        relayChatEvent(authUser.userId, {
+          type: 'chat_sync',
+          action: 'title_update',
+          conversationId: id,
+          source: 'desktop',
+          data: { title },
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
       }
       return json(res, { ok: true, conversation }), true;
     } catch (error) {
@@ -330,6 +354,7 @@ export async function handleMemoryRoutes(
     const id = path.split('/v1/memory/conversations/')[1].replace('/messages', '');
     const body = await readBody(req);
     const { role, content, tool_calls, tool_results, attachments } = body;
+    const authUser = await getAuth(req);
 
     if (!role || !content) {
       return json(res, { ok: false, error: 'missing_role_or_content' }, 400), true;
@@ -343,6 +368,16 @@ export async function handleMemoryRoutes(
       });
       if (!message) {
         return json(res, { ok: false, error: 'failed_to_add' }, 500), true;
+      }
+      if (authUser?.userId && (role === 'user' || role === 'assistant')) {
+        relayChatEvent(authUser.userId, {
+          type: 'chat_sync',
+          action: 'new_message',
+          conversationId: id,
+          source: 'desktop',
+          data: { role, content },
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
       }
       return json(res, { ok: true, message }), true;
     } catch (error) {

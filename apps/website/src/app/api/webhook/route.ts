@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Webhooks } from '@polar-sh/nextjs';
 import { creditsFromAmountCents } from '@/lib/creditPricing';
+import { POLAR_ADDON_ID, POLAR_SUBSCRIPTION_ID } from '@/lib/polarProducts';
 
 export const runtime = 'nodejs';
 
@@ -17,17 +18,20 @@ const supabase = supabaseUrl && supabaseServiceRoleKey
 
 function planFromProductId(productId: string | null | undefined): PlanTier | null {
   if (!productId) return null;
-  const payg = process.env.NEXT_PUBLIC_POLAR_PRODUCT_PAYG_ID || '';
+  // Legacy fixed-tier product IDs (kept for back-compat).
   const starter = process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID || '';
   const pro = process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID || '';
   const power = process.env.NEXT_PUBLIC_POLAR_PRODUCT_POWER_ID || '';
   const free = process.env.NEXT_PUBLIC_POLAR_PRODUCT_FREE_ID || '';
 
-  if (productId && payg && productId === payg) return null;
-  if (productId && starter && productId === starter) return 'starter';
-  if (productId && pro && productId === pro) return 'pro';
-  if (productId && power && productId === power) return 'power';
-  if (productId && free && productId === free) return 'free';
+  // New PWYW products — let amount drive the tier (return null so caller falls back).
+  if (productId === POLAR_SUBSCRIPTION_ID) return null;
+  if (productId === POLAR_ADDON_ID) return null;
+
+  if (starter && productId === starter) return 'starter';
+  if (pro && productId === pro) return 'pro';
+  if (power && productId === power) return 'power';
+  if (free && productId === free) return 'free';
   return null;
 }
 
@@ -304,6 +308,8 @@ export const POST = webhookSecret
     try {
       const userId = extractUserId(order);
       if (!userId) return;
+      // One-time add-on orders have no associated subscription; orders that
+      // belong to a subscription cycle are handled by onSubscription* hooks.
       if (extractSubscriptionId(order)) return;
       await applyAddonGrant(userId, order);
     } catch (e) {

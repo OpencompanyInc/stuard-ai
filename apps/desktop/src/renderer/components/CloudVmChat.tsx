@@ -647,7 +647,9 @@ export function CloudVmChat({
                 const subData = event.data || {};
                 const subagentId = event.subagentId || subData.subagentId || '';
 
-                if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
+                if (subEvent === 'delta' && subData.text) {
+                  pushText(subData.text);
+                } else if ((subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
                   pushReasoning(subData.text, true);
                 } else if (subEvent === 'tool_call') {
                   pushTool({

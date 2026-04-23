@@ -1125,6 +1125,44 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     return true;
   }
 
+  // ── POST /v1/cloud-engine/vm/chat-sync ────────────────────────────────
+  // Called BY the VM agent after a conversation is created/updated or a
+  // message is added on the VM side. Cloud-ai verifies the VM HMAC and
+  // relays the event to the desktop WS (queuing if desktop is offline).
+  if (method === 'POST' && path === '/v1/cloud-engine/vm/chat-sync') {
+    try {
+      const body = await readBody(req, 64 * 1024);
+      const userId = body?.userId;
+      const vmToken = body?.vmToken;
+      const event = body?.event;
+      if (!userId || !vmToken || !event) {
+        json(res, 400, { ok: false, error: 'missing userId, vmToken, or event' });
+        return true;
+      }
+
+      const engine = await getCloudEngine(userId);
+      if (!engine || !engine.vm_secret) {
+        json(res, 403, { ok: false, error: 'no_engine' });
+        return true;
+      }
+      const { verifyVMToken } = await import('../services/vm-tokens');
+      const tokenPayload = verifyVMToken(vmToken, engine.vm_secret);
+      if (!tokenPayload || tokenPayload.userId !== userId) {
+        json(res, 403, { ok: false, error: 'invalid_vm_token' });
+        return true;
+      }
+
+      // Force source=vm regardless of what the client sent — auth proved it.
+      const { relayChatEvent } = await import('../services/chat-sync');
+      await relayChatEvent(userId, { ...event, source: 'vm', type: 'chat_sync' });
+      json(res, 200, { ok: true });
+    } catch (e: any) {
+      console.error('[cloud-engine] vm/chat-sync error:', e?.message);
+      json(res, 500, { ok: false, error: 'failed' });
+    }
+    return true;
+  }
+
   // ── POST /v1/cloud-engine/push-agent-data ─────────────────────────────
   // Called BY the desktop after it uploads new agent data to GCS.
   // Cloud-ai tells the running VM to download the updated data.

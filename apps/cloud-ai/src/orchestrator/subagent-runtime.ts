@@ -682,8 +682,13 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
             }
           }
 
-          // Final text fallback
-          if (!fullText && streamResult?.text) fullText = streamResult.text;
+          // Final text fallback — if the model returned text without streaming
+          // text-delta chunks (common for short responses), the client never saw
+          // any text. Emit it as a single delta so the UI renders it.
+          if (!fullText && streamResult?.text) {
+            fullText = streamResult.text;
+            emitToClient('delta', { text: streamResult.text });
+          }
           // Capture usage from streamResult if not already captured from finish event
           if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
 
@@ -767,7 +772,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                   }
                 }
               }
-              if (!fullText && compactedStreamResult?.text) fullText = compactedStreamResult.text;
+              if (!fullText && compactedStreamResult?.text) {
+                fullText = compactedStreamResult.text;
+                emitToClient('delta', { text: compactedStreamResult.text });
+              }
               if (!streamUsage && compactedStreamResult?.usage) streamUsage = compactedStreamResult.usage;
 
               localAbort.signal.removeEventListener('abort', onLocalAbort2);

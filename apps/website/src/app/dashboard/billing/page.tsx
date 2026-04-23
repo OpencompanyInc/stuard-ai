@@ -1,611 +1,1068 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Coins,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  Sliders,
+  Zap,
+} from 'lucide-react';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { billingApiFetch, getBillingAuthToken } from '@/lib/billingApi';
+import { supabase } from '@/lib/supabaseClient';
 import {
-    CREDIT_ANCHORS,
-    MONTHLY_AMOUNT_MARKERS,
-    MONTHLY_AMOUNT_MAX,
-    MONTHLY_AMOUNT_MIN,
-    TOP_UP_AMOUNTS,
-    estimateCredits,
-    planTierFromAmount,
-    sliderMarkerPercent,
+  buildCreditsApiPath,
+  formatModel,
+  formatRelativeTime,
+  getCategoryDisplay,
+  getUsageSourceCategory,
+  getUsageSourceLabel,
+  normalizeUsageLogEntry,
+  type UsageLogEntry,
+} from '@/lib/billingUtils';
+import {
+  CREDIT_ANCHORS,
+  MONTHLY_AMOUNT_MARKERS,
+  MONTHLY_AMOUNT_MAX,
+  MONTHLY_AMOUNT_MIN,
+  TOP_UP_AMOUNTS,
+  estimateCredits,
+  planTierFromAmount,
+  sliderMarkerPercent,
 } from '@/lib/creditPricing';
+import {
+  DEFAULT_ADDON_AMOUNT_CENTS,
+  POLAR_ADDON_ID,
+  POLAR_SUBSCRIPTION_ID,
+} from '@/lib/polarProducts';
 
 type CreditSummary = {
-    ok?: boolean;
-    plan?: string;
-    limit?: number;
-    used?: number;
-    remaining?: number;
-    unlimited?: boolean;
-    includedCredits?: number;
-    includedRemaining?: number;
-    addonCredits?: number;
-    addonRemaining?: number;
-    creditsPerUsd?: number;
+  ok?: boolean;
+  plan?: string;
+  limit?: number;
+  used?: number;
+  remaining?: number;
+  unlimited?: boolean;
+  includedCredits?: number;
+  includedRemaining?: number;
+  addonCredits?: number;
+  addonRemaining?: number;
+  creditsPerUsd?: number;
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
 };
 
-type UsageBreakdownItem = {
-    category: string;
-    credits: number;
-    costUsd: number;
-    count: number;
+type UsageBreakdownItem = { category: string; credits: number; costUsd: number; count: number };
+
+type BillingPrefs = {
+  autoRefillEnabled: boolean;
+  autoRefillThresholdCredits: number;
+  autoRefillAmountCents: number;
+  monthlyBudgetCents: number | null;
+  hardSpendLimitCents: number | null;
 };
 
-type CreditTransaction = {
-    id: string;
-    entryType: string;
-    sourceType: string;
-    sourceRef: string;
-    credits: number;
-    amountUsd: number | null;
-    metadata: any;
-    createdAt: string;
+type SubscriptionSummary = {
+  id: string;
+  status: string;
+  amount: number | null;
+  currency: string;
+  currentPeriodEnd: string | null;
+  productId: string | null;
+  cancelAtPeriodEnd: boolean;
 };
+
+const LOGS_PER_PAGE = 20;
 
 const ADDON_PACKS = TOP_UP_AMOUNTS.map((amount, index) => ({
-    id: `addon_${amount}`,
-    label: `$${amount}`,
-    amount: amount * 100,
-    credits: estimateCredits(amount).toLocaleString(),
-    desc: ['Quick top-up', 'Standard pack', 'Popular choice', 'Power pack'][index],
+  id: `addon_${amount}`,
+  label: `$${amount}`,
+  amount: amount * 100,
+  credits: estimateCredits(amount).toLocaleString(),
+  desc: ['Quick top-up', 'Standard pack', 'Popular choice', 'Power pack'][index],
 }));
 
-const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
-    inference: { label: 'AI Inference', color: 'bg-blue-500' },
-    subagent: { label: 'Delegated Agents', color: 'bg-purple-500' },
-    compute: { label: 'Cloud Compute', color: 'bg-amber-500' },
-    storage: { label: 'Storage', color: 'bg-teal-500' },
-    messaging: { label: 'Messaging', color: 'bg-rose-500' },
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-    usage: 'AI Inference',
-    inference: 'AI Inference',
-    subagent: 'Delegated Agent',
-    compute: 'Cloud Compute',
-    hot_storage: 'Storage',
-    cold_storage: 'Cold Storage',
-    telnyx: 'SMS (Telnyx)',
-    whatsapp: 'WhatsApp',
-    subscription_cycle: 'Subscription',
-    addon_purchase: 'Add-on Purchase',
-    promo: 'Promotional',
-    trial: 'Trial Credits',
-    admin_adjustment: 'Admin Adjustment',
-    refund: 'Refund',
-};
-
-function formatDate(iso: string): string {
-    try {
-        return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch { return iso; }
+function formatCents(cents: number | null | undefined): string {
+  if (cents == null) return '—';
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
-function normalizeTransaction(tx: any): CreditTransaction {
-    return {
-        id: String(tx?.id || ''),
-        entryType: String(tx?.entryType || tx?.entry_type || 'grant'),
-        sourceType: String(tx?.sourceType || tx?.source_type || 'subscription_cycle'),
-        sourceRef: String(tx?.sourceRef || tx?.source_ref || ''),
-        credits: Number(tx?.credits ?? tx?.total_credits ?? 0),
-        amountUsd: tx?.amountUsd ?? tx?.amount_usd ?? null,
-        metadata: tx?.metadata ?? null,
-        createdAt: String(tx?.createdAt || tx?.created_at || ''),
-    };
-}
+const PieTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.[0]) return null;
+  const { name, value, payload: entry } = payload[0];
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg">
+      <p className="text-[12px] font-bold text-gray-900">{name}</p>
+      <p className="text-[11px] text-gray-500">
+        {Number(value).toFixed(2)} credits ({Number(entry.pct).toFixed(1)}%)
+      </p>
+    </div>
+  );
+};
 
 export default function BillingPage() {
-    const { user, userData, loading } = useAuthContext();
-    const [isManaging, setIsManaging] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [amount, setAmount] = useState(30);
-    const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
-    const [creditsLoading, setCreditsLoading] = useState(true);
-    const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>([]);
-    const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
-    const [txTotal, setTxTotal] = useState(0);
-    const [txLoading, setTxLoading] = useState(false);
-    const [addonLoading, setAddonLoading] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'overview' | 'history'>('overview');
+  const { user, userData, loading } = useAuthContext();
 
-    const loadData = useCallback(async () => {
-        if (!user) { setCreditSummary(null); setCreditsLoading(false); return; }
-        try {
-            setCreditsLoading(true);
-            setError(null);
-            const [creditsData, usageData, txData] = await Promise.all([
-                billingApiFetch<any>('/credits'),
-                billingApiFetch<any>('/credits/usage'),
-                billingApiFetch<any>('/credits/transactions?limit=20'),
-            ]);
-            if (creditsData) setCreditSummary(creditsData);
-            if (usageData?.breakdown) setUsageBreakdown(usageData.breakdown);
-            if (txData?.transactions) {
-                setTransactions(txData.transactions.map(normalizeTransaction));
-                setTxTotal(txData.total || 0);
-            }
-            if (!creditsData && !usageData && !txData) {
-                setError('Could not load billing data. The server may be temporarily unavailable.');
-            }
-        } catch (e: any) {
-            setError(String(e?.message || 'Failed to load billing data.'));
-        } finally {
-            setCreditsLoading(false);
-        }
-    }, [user]);
+  const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
+  const [creditsLoading, setCreditsLoading] = useState(true);
+  const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>([]);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsPage, setLogsPage] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
 
-    useEffect(() => { loadData(); }, [loadData]);
+  const [prefs, setPrefs] = useState<BillingPrefs | null>(null);
+  const [prefsSaving, setPrefsSaving] = useState(false);
 
-    const currentPlan = (() => {
-        const raw = String(creditSummary?.plan || userData?.plan || 'free').trim().toLowerCase();
-        if (raw === 'free_trial' || raw === 'trial') return 'free';
-        if (raw === 'starter') return 'starter';
-        if (raw === 'pro') return 'pro';
-        if (raw === 'power') return 'power';
-        return raw || 'free';
-    })();
+  const [amount, setAmount] = useState(30);
+  const [addonLoading, setAddonLoading] = useState<string | null>(null);
+  const [isManaging, setIsManaging] = useState(false);
+  const [isUpdatingSubscription, setIsUpdatingSubscription] = useState(false);
 
-    const payWhatYouWantProductId =
-        process.env.NEXT_PUBLIC_POLAR_PRODUCT_PAYG_ID ||
-        process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_ID ||
-        process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_ID;
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'usage' | 'logs' | 'settings'>('overview');
 
-    const tier = useMemo(() => {
-        switch (planTierFromAmount(amount)) {
-            case 'power':
-                return { name: 'Whale', badge: 'Best Rate', color: 'text-amber-600' };
-            case 'pro':
-                return { name: 'Pro', badge: 'Boosted Rate', color: 'text-gray-900' };
-            default:
-                return { name: 'Starter', badge: 'Standard Rate', color: 'text-gray-600' };
-        }
-    }, [amount]);
+  const mountedRef = useRef(true);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const credits = useMemo(() => estimateCredits(amount), [amount]);
-    const canManage = Boolean(user);
-    const isFreePlan = currentPlan === 'free';
-
-    const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
-    const usagePercent = creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
-        ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
-        : 0;
-
-    const handleCheckout = async () => {
-        setError(null);
-        if (!user) { setError('Please sign in to upgrade.'); return; }
-        if (!payWhatYouWantProductId) { setError('Missing Polar product id.'); return; }
-        const metadata = JSON.stringify({ userId: user.id });
-        const qs = new URLSearchParams({
-            products: payWhatYouWantProductId,
-            customerEmail: user.email || '',
-            customerExternalId: user.id,
-            metadata,
-            amount: String(Math.round(amount * 100)),
-        });
-        window.location.href = `/api/polar/checkout?${qs.toString()}`;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
+  }, []);
 
-    const handleAddonPurchase = async (pack: typeof ADDON_PACKS[number]) => {
-        setError(null);
-        if (!user) { setError('Please sign in first.'); return; }
-        if (!payWhatYouWantProductId) { setError('Checkout not configured.'); return; }
-        setAddonLoading(pack.id);
-        try {
-            const metadata = JSON.stringify({ userId: user.id, type: 'addon', packId: pack.id });
-            const qs = new URLSearchParams({
-                products: payWhatYouWantProductId,
-                customerEmail: user.email || '',
-                customerExternalId: user.id,
-                metadata,
-                amount: String(pack.amount),
-            });
-            window.location.href = `/api/polar/checkout?${qs.toString()}`;
-        } catch (e: any) {
-            setError(String(e?.message || 'Failed to start checkout.'));
-        } finally {
-            setAddonLoading(null);
-        }
+  const currentPlan = useMemo(() => {
+    const raw = String(creditSummary?.plan || userData?.plan || 'free').trim().toLowerCase();
+    if (raw === 'free_trial' || raw === 'trial') return 'Free';
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }, [creditSummary?.plan, userData?.plan]);
+
+  const billingPeriodStart = typeof creditSummary?.currentPeriodStart === 'string'
+    ? creditSummary.currentPeriodStart
+    : null;
+
+  const isSubscribed = !!(subscription && subscription.status === 'active' && subscription.id);
+
+  // ---------- Loaders ----------
+  const loadCredits = useCallback(async () => {
+    if (!user) { setCreditSummary(null); setCreditsLoading(false); return; }
+    try {
+      setCreditsLoading(true);
+      const data = await billingApiFetch<any>('/credits');
+      if (!mountedRef.current) return;
+      if (data) setCreditSummary(data);
+      else setError('Could not load credit balance.');
+    } finally {
+      if (mountedRef.current) setCreditsLoading(false);
+    }
+  }, [user]);
+
+  const loadUsage = useCallback(async () => {
+    if (!user) return;
+    setUsageLoading(true);
+    try {
+      const data = await billingApiFetch<any>(
+        buildCreditsApiPath('/credits/usage', { since: billingPeriodStart }),
+      );
+      if (!mountedRef.current) return;
+      setUsageBreakdown(data?.breakdown || []);
+    } finally {
+      if (mountedRef.current) setUsageLoading(false);
+    }
+  }, [user, billingPeriodStart]);
+
+  const loadLogs = useCallback(async (page: number) => {
+    if (!user) return;
+    setLogsLoading(true);
+    try {
+      const data = await billingApiFetch<any>(
+        buildCreditsApiPath('/credits/logs', {
+          limit: LOGS_PER_PAGE,
+          offset: page * LOGS_PER_PAGE,
+          since: billingPeriodStart,
+        }),
+      );
+      if (!mountedRef.current) return;
+      const logs = Array.isArray(data?.logs) ? data.logs.map(normalizeUsageLogEntry) : [];
+      setUsageLogs(logs);
+      setLogsTotal(Number(data?.total) || 0);
+      setLogsPage(page);
+    } finally {
+      if (mountedRef.current) setLogsLoading(false);
+    }
+  }, [user, billingPeriodStart]);
+
+  const loadPrefs = useCallback(async () => {
+    const token = await getBillingAuthToken();
+    if (!token) return;
+    const res = await fetch('/api/billing/prefs', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!mountedRef.current) return;
+    setPrefs({
+      autoRefillEnabled: Boolean(data.autoRefillEnabled),
+      autoRefillThresholdCredits: Number(data.autoRefillThresholdCredits) || 100,
+      autoRefillAmountCents: Number(data.autoRefillAmountCents) || DEFAULT_ADDON_AMOUNT_CENTS,
+      monthlyBudgetCents: data.monthlyBudgetCents,
+      hardSpendLimitCents: data.hardSpendLimitCents,
+    });
+  }, []);
+
+  const loadSubscription = useCallback(async () => {
+    const token = await getBillingAuthToken();
+    if (!token) return;
+    const res = await fetch('/api/polar/subscription', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!mountedRef.current) return;
+    setSubscription(data?.subscription || null);
+    if (data?.subscription?.amount) setAmount(Math.round(data.subscription.amount / 100));
+  }, []);
+
+  useEffect(() => {
+    loadCredits();
+  }, [loadCredits]);
+
+  useEffect(() => {
+    if (!creditSummary) return;
+    loadUsage();
+    loadLogs(0);
+    loadPrefs();
+    loadSubscription();
+  }, [creditSummary, loadUsage, loadLogs, loadPrefs, loadSubscription]);
+
+  // Realtime refresh on usage events / credit grant changes
+  useEffect(() => {
+    if (!user) return;
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        loadCredits();
+        loadUsage();
+        loadLogs(logsPage);
+      }, 400);
     };
-
-    const handleManage = async () => {
-        setError(null);
-        if (isFreePlan) {
-            document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            return;
-        }
-        if (!user) { setError('Please sign in to manage your subscription.'); return; }
-        setIsManaging(true);
-        try {
-            const token = await getBillingAuthToken();
-            if (!token) { setError('Missing session token.'); return; }
-            const response = await fetch('/api/polar/portal', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            const data = await response.json();
-            if (!response.ok) { setError(data?.error || 'Failed to open portal.'); return; }
-            if (data?.url) { window.location.href = data.url; return; }
-            setError('No portal URL returned.');
-        } catch (e: any) {
-            setError(String(e?.message || 'Failed to open customer portal.'));
-        } finally {
-            setIsManaging(false);
-        }
+    const channel = supabase
+      .channel(`billing-live:${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'usage_events', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'credit_grants', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'credit_grants', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+      .subscribe();
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      void supabase.removeChannel(channel);
     };
+  }, [user, logsPage, loadCredits, loadUsage, loadLogs]);
 
-    const handleLoadMoreTx = async () => {
-        if (txLoading || transactions.length >= txTotal) return;
-        setTxLoading(true);
-        try {
-            const data = await billingApiFetch<any>(`/credits/transactions?limit=20&offset=${transactions.length}`);
-            if (data?.transactions) {
-                setTransactions(prev => [...prev, ...data.transactions.map(normalizeTransaction)]);
-                setTxTotal(data.total || txTotal);
-            }
-        } catch {} finally { setTxLoading(false); }
-    };
+  // ---------- Derived ----------
+  const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
+  const usagePercent = creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
+    ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
+    : 0;
 
-    return (
-        <div className="space-y-8 max-w-4xl">
-            {/* Header */}
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900">Billing & Credits</h1>
-                <p className="text-sm text-gray-500 mt-1">Manage your subscription, credits, and usage.</p>
-            </div>
+  const pieData = usageBreakdown
+    .filter((item) => item.credits > 0)
+    .map((item) => {
+      const cfg = getCategoryDisplay(item.category);
+      const pct = usageTotal > 0 ? Number(((item.credits / usageTotal) * 100).toFixed(1)) : 0;
+      return { name: cfg.label, value: item.credits, pct, fill: cfg.hex };
+    });
 
-            {error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 flex items-center justify-between">
-                    <span>{error}</span>
-                    <div className="flex items-center gap-2 ml-4">
-                        <button onClick={() => { setError(null); loadData(); }} className="underline font-medium">retry</button>
-                        <button onClick={() => setError(null)} className="underline">dismiss</button>
-                    </div>
-                </div>
-            )}
+  const totalLogsPages = Math.max(1, Math.ceil(logsTotal / LOGS_PER_PAGE));
 
-            {/* Loading skeleton */}
-            {creditsLoading && !creditSummary && (
-                <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
-                        <div className="space-y-2">
-                            <div className="h-3 w-20 bg-gray-200 rounded" />
-                            <div className="h-8 w-32 bg-gray-200 rounded" />
-                            <div className="h-3 w-48 bg-gray-200 rounded" />
-                        </div>
-                        <div className="h-10 w-40 bg-gray-200 rounded-lg" />
-                    </div>
-                    <div className="mt-5 pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        {[1, 2, 3].map(i => (
-                            <div key={i} className="bg-gray-50 rounded-lg px-4 py-3">
-                                <div className="h-2.5 w-16 bg-gray-200 rounded mb-2" />
-                                <div className="h-6 w-20 bg-gray-200 rounded" />
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+  const tier = useMemo(() => {
+    switch (planTierFromAmount(amount)) {
+      case 'power': return { name: 'Whale', badge: 'Best Rate', color: 'text-amber-600' };
+      case 'pro': return { name: 'Pro', badge: 'Boosted Rate', color: 'text-gray-900' };
+      default: return { name: 'Starter', badge: 'Standard Rate', color: 'text-gray-600' };
+    }
+  }, [amount]);
 
-            {/* Current Plan & Balance Card */}
-            {(!creditsLoading || creditSummary) && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
-                    <div>
-                        <p className="text-[13px] font-medium text-gray-500">Current Plan</p>
-                        <p className="text-3xl font-bold text-gray-900 mt-1 capitalize">{currentPlan}</p>
-                        <p className="text-[13px] text-gray-500 mt-1">
-                            {isFreePlan ? 'Upgrade to unlock more power.' : 'Thanks for being a subscriber.'}
-                        </p>
-                    </div>
-                    <button
-                        onClick={handleManage}
-                        disabled={(!canManage && !isFreePlan) || isManaging || loading || creditsLoading}
-                        className="px-4 py-2.5 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                    >
-                        {isManaging ? 'Loading...' : isFreePlan ? 'View Plans' : 'Manage Subscription'}
-                    </button>
-                </div>
+  const credits = useMemo(() => estimateCredits(amount), [amount]);
 
-                {creditSummary && (
-                    <>
-                        {/* Usage progress bar */}
-                        {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
-                            <div className="mt-5">
-                                <div className="flex justify-between text-[12px] text-gray-500 mb-1.5">
-                                    <span>{Number(creditSummary.used || 0).toLocaleString()} used</span>
-                                    <span>{Number(creditSummary.limit).toLocaleString()} total</span>
-                                </div>
-                                <div className="w-full bg-gray-100 rounded-full h-2.5">
-                                    <div
-                                        className={`h-2.5 rounded-full transition-all ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                                        style={{ width: `${usagePercent}%` }}
-                                    />
-                                </div>
-                            </div>
-                        )}
+  // ---------- Actions ----------
+  const handleCheckoutSubscription = () => {
+    setError(null);
+    if (!user) { setError('Please sign in to continue.'); return; }
+    const metadata = JSON.stringify({ userId: user.id });
+    const qs = new URLSearchParams({
+      products: POLAR_SUBSCRIPTION_ID,
+      customerEmail: user.email || '',
+      customerExternalId: user.id,
+      metadata,
+      amount: String(Math.round(amount * 100)),
+    });
+    window.location.href = `/api/polar/checkout?${qs.toString()}`;
+  };
 
-                        <div className="mt-5 pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="bg-gray-50 rounded-lg px-4 py-3">
-                                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Available Now</p>
-                                <p className="text-xl font-semibold text-gray-900 mt-0.5">
-                                    {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
-                                </p>
-                            </div>
-                            <div className="bg-gray-50 rounded-lg px-4 py-3">
-                                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Subscription Pool</p>
-                                <p className="text-xl font-semibold text-gray-900 mt-0.5">
-                                    {Number(creditSummary.includedRemaining || 0).toLocaleString()}
-                                </p>
-                            </div>
-                            <div className="bg-gray-50 rounded-lg px-4 py-3">
-                                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Add-on Pool</p>
-                                <p className="text-xl font-semibold text-gray-900 mt-0.5">
-                                    {Number(creditSummary.addonRemaining || 0).toLocaleString()}
-                                </p>
-                            </div>
-                        </div>
-                    </>
-                )}
-            </div>
-            )}
+  const handleAddonPurchase = (pack: typeof ADDON_PACKS[number]) => {
+    setError(null);
+    if (!user) { setError('Please sign in first.'); return; }
+    setAddonLoading(pack.id);
+    const metadata = JSON.stringify({ userId: user.id, type: 'addon', packId: pack.id });
+    const qs = new URLSearchParams({
+      products: POLAR_ADDON_ID,
+      customerEmail: user.email || '',
+      customerExternalId: user.id,
+      metadata,
+      amount: String(pack.amount),
+    });
+    window.location.href = `/api/polar/checkout?${qs.toString()}`;
+  };
 
-            {/* Tabs: Overview | History */}
-            <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-                {(['overview', 'history'] as const).map(tab => (
-                    <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`px-4 py-2 text-[13px] font-medium rounded-md transition-colors capitalize ${
-                            activeTab === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                    >
-                        {tab}
-                    </button>
-                ))}
-            </div>
+  const handleUpdateSubscriptionAmount = async () => {
+    setError(null);
+    setIsUpdatingSubscription(true);
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) { setError('Missing session token.'); return; }
+      const res = await fetch('/api/polar/subscription', {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: Math.round(amount * 100) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.message || data?.error || 'Failed to update amount.'); return; }
+      await loadSubscription();
+      await loadCredits();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to update amount.');
+    } finally {
+      setIsUpdatingSubscription(false);
+    }
+  };
 
-            {activeTab === 'overview' && (
-                <>
-                    {/* Usage Breakdown */}
-                    {usageBreakdown.length > 0 && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-6">
-                            <h2 className="text-[15px] font-semibold text-gray-900 mb-4">Usage This Period</h2>
+  const handleManagePortal = async () => {
+    setError(null);
+    if (!user) { setError('Please sign in.'); return; }
+    setIsManaging(true);
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) { setError('Missing session token.'); return; }
+      const res = await fetch('/api/polar/portal', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.error || 'Failed to open portal.'); return; }
+      if (data?.url) { window.location.href = data.url; return; }
+      setError('No portal URL returned.');
+    } finally {
+      setIsManaging(false);
+    }
+  };
 
-                            {/* Stacked bar */}
-                            <div className="flex w-full h-4 rounded-full overflow-hidden bg-gray-100 mb-4">
-                                {usageBreakdown.map(item => {
-                                    const pct = usageTotal > 0 ? (item.credits / usageTotal) * 100 : 0;
-                                    if (pct < 0.5) return null;
-                                    const config = CATEGORY_CONFIG[item.category] || { color: 'bg-gray-400' };
-                                    return (
-                                        <div
-                                            key={item.category}
-                                            className={`${config.color} transition-all`}
-                                            style={{ width: `${pct}%` }}
-                                            title={`${config.label || item.category}: ${item.credits.toFixed(1)} credits`}
-                                        />
-                                    );
-                                })}
-                            </div>
+  const handleSavePrefs = async (next: Partial<BillingPrefs>) => {
+    if (!prefs) return;
+    const merged = { ...prefs, ...next };
+    setPrefs(merged);
+    setPrefsSaving(true);
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) { setError('Missing session token.'); return; }
+      await fetch('/api/billing/prefs', {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+    } finally {
+      setPrefsSaving(false);
+    }
+  };
 
-                            {/* Legend table */}
-                            <div className="space-y-2">
-                                {usageBreakdown.map(item => {
-                                    const config = CATEGORY_CONFIG[item.category] || { label: item.category, color: 'bg-gray-400' };
-                                    const pct = usageTotal > 0 ? ((item.credits / usageTotal) * 100).toFixed(1) : '0';
-                                    return (
-                                        <div key={item.category} className="flex items-center justify-between text-[13px]">
-                                            <div className="flex items-center gap-2.5">
-                                                <div className={`w-3 h-3 rounded-sm ${config.color}`} />
-                                                <span className="text-gray-700 font-medium">{config.label}</span>
-                                                <span className="text-gray-400">({item.count} calls)</span>
-                                            </div>
-                                            <div className="flex items-center gap-4">
-                                                <span className="text-gray-500">{pct}%</span>
-                                                <span className="font-semibold text-gray-900 w-20 text-right">
-                                                    {item.credits.toFixed(1)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                <div className="flex items-center justify-between text-[13px] pt-2 border-t border-gray-100">
-                                    <span className="text-gray-500 font-medium">Total</span>
-                                    <span className="font-bold text-gray-900 w-20 text-right">{usageTotal.toFixed(1)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+  // ---------- Render ----------
+  return (
+    <div className="space-y-6 max-w-5xl">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Billing & Credits</h1>
+        <p className="text-sm text-gray-500 mt-1">Manage your subscription, credits, usage, and auto-refill.</p>
+      </div>
 
-                    {/* Quick Add-on Credit Purchase */}
-                    <div className="bg-white rounded-xl border border-gray-200 p-6">
-                        <h2 className="text-[15px] font-semibold text-gray-900 mb-1">Top Up Credits</h2>
-                        <p className="text-[12px] text-gray-500 mb-4">One-time add-on packs. Credits never expire while your account is active.</p>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            {ADDON_PACKS.map(pack => (
-                                <button
-                                    key={pack.id}
-                                    onClick={() => handleAddonPurchase(pack)}
-                                    disabled={!user || !!addonLoading}
-                                    className="p-4 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all text-left group disabled:opacity-50"
-                                >
-                                    <div className="text-xl font-bold text-gray-900 group-hover:text-primary transition-colors">
-                                        {pack.label}
-                                    </div>
-                                    <div className="text-[12px] text-gray-500 mt-0.5">{pack.credits} credits</div>
-                                    <div className="text-[11px] text-gray-400 mt-1">{pack.desc}</div>
-                                    {addonLoading === pack.id && (
-                                        <div className="text-[11px] text-primary mt-1 font-medium">Redirecting...</div>
-                                    )}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Pay What You Want */}
-                    <div id="plans">
-                        <h2 className="text-[15px] font-semibold text-gray-900 mb-4">Choose your monthly amount</h2>
-                        <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-                            <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6">
-                                <p className="text-[13px] font-medium text-gray-900 mb-1">Pick your price</p>
-                                <p className="text-[12px] text-gray-500 mb-5">Pay what you want. Minimum $5. Credits round to clean bundle sizes, and unused credits roll over for 30 days.</p>
-                                <div className="rounded-lg border border-gray-100 bg-gray-50 p-5">
-                                    <div className="flex items-end justify-between mb-1">
-                                        <div>
-                                            <p className="text-[12px] text-gray-500">Your price</p>
-                                            <p className="text-3xl font-bold text-gray-900">${amount}</p>
-                                            <p className="text-[12px] text-gray-500">per month</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-[12px] text-gray-500">Tier</p>
-                                            <p className={`text-xl font-semibold ${tier.color}`}>{tier.name}</p>
-                                            <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-gray-900 text-[11px] font-medium text-white">
-                                                {tier.badge}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div className="mt-5">
-                                        <input
-                                            type="range"
-                                            min={MONTHLY_AMOUNT_MIN}
-                                            max={MONTHLY_AMOUNT_MAX}
-                                            step={1}
-                                            value={amount}
-                                            onChange={(e) => setAmount(Number(e.target.value))}
-                                            className="w-full accent-gray-900"
-                                        />
-                                        <div className="relative mt-1 h-4 text-[11px] text-gray-400">
-                                            {MONTHLY_AMOUNT_MARKERS.map((marker) => {
-                                                const percent = sliderMarkerPercent(marker);
-                                                const translateX = percent === 0 ? '0%' : percent === 100 ? '-100%' : '-50%';
-                                                return (
-                                                    <span
-                                                        key={marker}
-                                                        className="absolute top-0 whitespace-nowrap"
-                                                        style={{ left: `${percent}%`, transform: `translateX(${translateX})` }}
-                                                    >
-                                                        ${marker}
-                                                    </span>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2 mt-4">
-                                    {[5, 10, 30, 60, 100].map((preset) => (
-                                        <button
-                                            key={preset}
-                                            onClick={() => setAmount(preset)}
-                                            className={`rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-colors ${
-                                                amount === preset
-                                                    ? 'border-gray-900 bg-gray-900 text-white'
-                                                    : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                                            }`}
-                                        >
-                                            ${preset}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                                    {CREDIT_ANCHORS.slice(0, 4).map((anchor) => (
-                                        <div key={anchor.amount}>
-                                            <p className="text-[10px] uppercase tracking-wide text-gray-400">${anchor.amount}/mo</p>
-                                            <p className="text-[13px] font-semibold text-gray-900 mt-1">{anchor.credits.toLocaleString()} credits</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-6 flex flex-col">
-                                <p className="text-[13px] font-medium text-gray-900 mb-1">Estimated credits</p>
-                                <p className="text-[12px] text-gray-500 mb-5">
-                                    {creditSummary
-                                        ? `You have ${creditSummary.unlimited ? 'unlimited credits' : `${Number(creditSummary.remaining || 0).toLocaleString()} credits`} now.`
-                                        : 'Based on your chosen amount.'}
-                                </p>
-                                <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
-                                    <p className="text-[12px] text-gray-400">Monthly credits</p>
-                                    <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
-                                    <p className="text-[12px] text-gray-400 mt-1">${amount}/mo &middot; {tier.name} tier</p>
-                                </div>
-                                <div className="space-y-3 text-[13px] mb-5">
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">Credit rollover</span>
-                                        <span className="font-medium text-gray-900">30 days</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">Upgrade anytime</span>
-                                        <span className="font-medium text-gray-900">Instantly applied</span>
-                                    </div>
-                                </div>
-                                <div className="mt-auto space-y-2">
-                                    <button
-                                        disabled={!user || loading || isManaging}
-                                        onClick={handleCheckout}
-                                        className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                    >
-                                        Continue to checkout
-                                    </button>
-                                    <p className="text-[11px] text-gray-400 text-center">Minimum $5/month. Cancel anytime.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </>
-            )}
-
-            {activeTab === 'history' && (
-                <div className="bg-white rounded-xl border border-gray-200 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-[15px] font-semibold text-gray-900">Transaction History</h2>
-                        <span className="text-[12px] text-gray-400">{txTotal} total</span>
-                    </div>
-
-                    {transactions.length === 0 && !creditsLoading && (
-                        <p className="text-[13px] text-gray-400 text-center py-8">No transactions yet.</p>
-                    )}
-
-                    {transactions.length > 0 && (
-                        <div className="divide-y divide-gray-100">
-                            {transactions.map(tx => {
-                                const isGrant = tx.entryType === 'grant' || tx.entryType === 'refund';
-                                const label = SOURCE_LABELS[tx.sourceType] || tx.sourceType;
-                                return (
-                                    <div key={tx.id} className="flex items-center justify-between py-3 text-[13px]">
-                                        <div>
-                                            <p className="font-medium text-gray-900">{label}</p>
-                                            <p className="text-[11px] text-gray-400">{formatDate(tx.createdAt)}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className={`font-semibold ${isGrant ? 'text-emerald-600' : 'text-gray-900'}`}>
-                                                {isGrant ? '+' : '-'}{tx.credits.toFixed(1)}
-                                            </p>
-                                            {tx.amountUsd != null && (
-                                                <p className="text-[11px] text-gray-400">
-                                                    ${Math.abs(tx.amountUsd).toFixed(4)}
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-
-                    {transactions.length < txTotal && (
-                        <button
-                            onClick={handleLoadMoreTx}
-                            disabled={txLoading}
-                            className="mt-4 w-full py-2 text-[13px] font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                        >
-                            {txLoading ? 'Loading...' : 'Load more'}
-                        </button>
-                    )}
-                </div>
-            )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <div className="flex items-center gap-2 ml-4">
+            <button onClick={() => { setError(null); loadCredits(); }} className="underline font-medium">retry</button>
+            <button onClick={() => setError(null)} className="underline">dismiss</button>
+          </div>
         </div>
-    );
+      )}
+
+      {/* Balance card */}
+      {creditsLoading && !creditSummary ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
+          <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
+          <div className="h-8 w-32 bg-gray-200 rounded mb-1" />
+          <div className="h-3 w-48 bg-gray-200 rounded" />
+        </div>
+      ) : creditSummary ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-lg bg-gray-900">
+                <CreditCard className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-[12px] font-medium text-gray-500 uppercase tracking-wide">Current Balance</p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
+                  {!creditSummary.unlimited && <span className="text-sm font-medium text-gray-400 ml-2">credits</span>}
+                </p>
+                <p className="text-[12px] text-gray-500 mt-0.5">
+                  <span className="font-semibold text-gray-700">{currentPlan}</span>
+                  {isSubscribed && subscription?.amount != null && (
+                    <span className="ml-2">· {formatCents(subscription.amount)}/mo</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleManagePortal}
+              disabled={!user || isManaging || loading}
+              className="px-4 py-2.5 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isManaging ? 'Loading...' : 'Manage in Polar'}
+            </button>
+          </div>
+
+          {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
+            <div className="mt-5">
+              <div className="flex justify-between text-[12px] text-gray-500 mb-1.5">
+                <span>{Number(creditSummary.used || 0).toLocaleString()} used</span>
+                <span>{Number(creditSummary.limit).toLocaleString()} total</span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div
+                  className={`h-2.5 rounded-full transition-all ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${usagePercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="mt-5 pt-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-gray-50 rounded-lg px-4 py-3">
+              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Available</p>
+              <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-lg px-4 py-3">
+              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Subscription pool</p>
+              <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                {Number(creditSummary.includedRemaining || 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-lg px-4 py-3">
+              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Add-on pool</p>
+              <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                {Number(creditSummary.addonRemaining || 0).toLocaleString()}
+              </p>
+            </div>
+          </div>
+
+          {usagePercent >= 70 && (
+            <div className={`mt-4 p-3 rounded-lg flex items-center gap-2 ${usagePercent >= 90 ? 'bg-red-50 border border-red-200' : 'bg-amber-50 border border-amber-200'}`}>
+              <AlertCircle className={`w-4 h-4 ${usagePercent >= 90 ? 'text-red-500' : 'text-amber-500'}`} />
+              <span className={`text-[12px] font-medium ${usagePercent >= 90 ? 'text-red-700' : 'text-amber-700'}`}>
+                {usagePercent >= 100
+                  ? 'Credit limit reached. Top up or upgrade to keep going.'
+                  : `You've used ${usagePercent}% of this period's credits.`}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit overflow-x-auto">
+        {([
+          ['overview', 'Overview'],
+          ['usage', 'Usage'],
+          ['logs', 'History'],
+          ['settings', 'Settings'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`px-4 py-2 text-[13px] font-medium rounded-md transition-colors whitespace-nowrap ${
+              activeTab === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ---------- Overview tab ---------- */}
+      {activeTab === 'overview' && (
+        <>
+          {/* Usage snapshot (top 3 categories + mini pie) */}
+          {(usageLoading || usageBreakdown.length > 0) && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-[15px] font-semibold text-gray-900">Usage this period</h2>
+                  <p className="text-[12px] text-gray-500">
+                    {usageTotal.toFixed(1)} credits used across {usageBreakdown.reduce((s, b) => s + b.count, 0)} events.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('usage')}
+                  className="text-[12px] font-medium text-gray-500 hover:text-gray-900"
+                >
+                  See all →
+                </button>
+              </div>
+              {usageLoading && usageBreakdown.length === 0 ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                </div>
+              ) : usageBreakdown.length === 0 ? (
+                <p className="text-[13px] text-gray-400">No usage yet this period.</p>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-5 items-center">
+                  {pieData.length > 0 && (
+                    <div className="flex-shrink-0 w-[160px] h-[160px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={42}
+                            outerRadius={70}
+                            paddingAngle={2}
+                            dataKey="value"
+                            nameKey="name"
+                            strokeWidth={0}
+                            labelLine={false}
+                          >
+                            {pieData.map((entry, i) => (
+                              <Cell key={`cell-${i}`} fill={entry.fill} />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<PieTooltip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  <div className="flex-1 w-full space-y-1.5">
+                    {usageBreakdown
+                      .slice()
+                      .sort((a, b) => b.credits - a.credits)
+                      .slice(0, 4)
+                      .map((item) => {
+                        const cfg = getCategoryDisplay(item.category);
+                        const pct = usageTotal > 0 ? ((item.credits / usageTotal) * 100).toFixed(1) : '0';
+                        return (
+                          <div key={item.category} className="flex items-center justify-between text-[12px]">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.hex }} />
+                              <span className="font-medium text-gray-700">{cfg.label}</span>
+                              <span className="text-gray-400">({item.count})</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-gray-400 tabular-nums">{pct}%</span>
+                              <span className="font-semibold text-gray-900 tabular-nums w-14 text-right">
+                                {item.credits.toFixed(1)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Subscription picker */}
+          <div id="plans" className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-[15px] font-semibold text-gray-900">
+                  {isSubscribed ? 'Change your monthly amount' : 'Choose your monthly amount'}
+                </h2>
+                <p className="text-[12px] text-gray-500 mt-0.5">
+                  Pay what you want. Minimum $5/mo. Credits roll over for 30 days.
+                </p>
+              </div>
+              {isSubscribed && subscription?.amount != null && (
+                <div className="text-right">
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wide">Current</p>
+                  <p className="text-lg font-semibold text-gray-900">{formatCents(subscription.amount)}/mo</p>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+              <div className="lg:col-span-3">
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-5">
+                  <div className="flex items-end justify-between mb-1">
+                    <div>
+                      <p className="text-[12px] text-gray-500">Your price</p>
+                      <p className="text-3xl font-bold text-gray-900">${amount}</p>
+                      <p className="text-[12px] text-gray-500">per month</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[12px] text-gray-500">Tier</p>
+                      <p className={`text-xl font-semibold ${tier.color}`}>{tier.name}</p>
+                      <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-gray-900 text-[11px] font-medium text-white">
+                        {tier.badge}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-5">
+                    <input
+                      type="range"
+                      min={MONTHLY_AMOUNT_MIN}
+                      max={MONTHLY_AMOUNT_MAX}
+                      step={1}
+                      value={amount}
+                      onChange={(e) => setAmount(Number(e.target.value))}
+                      className="w-full accent-gray-900"
+                    />
+                    <div className="relative mt-1 h-4 text-[11px] text-gray-400">
+                      {MONTHLY_AMOUNT_MARKERS.map((marker) => {
+                        const percent = sliderMarkerPercent(marker);
+                        const translateX = percent === 0 ? '0%' : percent === 100 ? '-100%' : '-50%';
+                        return (
+                          <span
+                            key={marker}
+                            className="absolute top-0 whitespace-nowrap"
+                            style={{ left: `${percent}%`, transform: `translateX(${translateX})` }}
+                          >
+                            ${marker}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {[5, 10, 30, 60, 100].map((preset) => (
+                    <button
+                      key={preset}
+                      onClick={() => setAmount(preset)}
+                      className={`rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-colors ${
+                        amount === preset
+                          ? 'border-gray-900 bg-gray-900 text-white'
+                          : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                  {CREDIT_ANCHORS.slice(0, 4).map((anchor) => (
+                    <div key={anchor.amount}>
+                      <p className="text-[10px] uppercase tracking-wide text-gray-400">${anchor.amount}/mo</p>
+                      <p className="text-[13px] font-semibold text-gray-900 mt-1">{anchor.credits.toLocaleString()} credits</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="lg:col-span-2 flex flex-col">
+                <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
+                  <p className="text-[12px] text-gray-400">Monthly credits</p>
+                  <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
+                  <p className="text-[12px] text-gray-400 mt-1">${amount}/mo · {tier.name} tier</p>
+                </div>
+                <div className="space-y-3 text-[13px] mb-5">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Credit rollover</span>
+                    <span className="font-medium text-gray-900">30 days</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Change anytime</span>
+                    <span className="font-medium text-gray-900">Instant</span>
+                  </div>
+                </div>
+                <div className="mt-auto space-y-2">
+                  {isSubscribed ? (
+                    <button
+                      onClick={handleUpdateSubscriptionAmount}
+                      disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
+                      className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {isUpdatingSubscription ? 'Updating…' : 'Change amount'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleCheckoutSubscription}
+                      disabled={!user || loading}
+                      className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Subscribe ${amount}/mo
+                    </button>
+                  )}
+                  <p className="text-[11px] text-gray-400 text-center">Minimum $5/month. Cancel anytime.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Add-on top-up */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-[15px] font-semibold text-gray-900">Top up credits</h2>
+                <p className="text-[12px] text-gray-500">One-time add-on packs. Credits never expire while your account is active.</p>
+              </div>
+              <Coins className="w-5 h-5 text-gray-400" />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {ADDON_PACKS.map((pack) => (
+                <button
+                  key={pack.id}
+                  onClick={() => handleAddonPurchase(pack)}
+                  disabled={!user || !!addonLoading}
+                  className="p-4 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all text-left group disabled:opacity-50"
+                >
+                  <div className="text-xl font-bold text-gray-900 group-hover:text-primary transition-colors">{pack.label}</div>
+                  <div className="text-[12px] text-gray-500 mt-0.5">{pack.credits} credits</div>
+                  <div className="text-[11px] text-gray-400 mt-1">{pack.desc}</div>
+                  {addonLoading === pack.id && (
+                    <div className="text-[11px] text-primary mt-1 font-medium">Redirecting…</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ---------- Usage tab (pie + breakdown) ---------- */}
+      {activeTab === 'usage' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-[15px] font-semibold text-gray-900 mb-4">Usage this period</h2>
+
+          {usageLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+            </div>
+          ) : usageBreakdown.length === 0 ? (
+            <div className="text-center py-10">
+              <Zap className="w-5 h-5 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">No usage yet this period.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-6">
+              {pieData.length > 0 && (
+                <div className="flex-shrink-0 w-full sm:w-[240px] h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={95}
+                        paddingAngle={3}
+                        dataKey="value"
+                        nameKey="name"
+                        strokeWidth={0}
+                        label={({ cx, cy, midAngle, innerRadius: ir, outerRadius: or, percent: pct }: any) => {
+                          const RADIAN = Math.PI / 180;
+                          const radius = ir + (or - ir) * 0.5;
+                          const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                          const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                          const displayPct = Math.round((pct ?? 0) * 100);
+                          if (displayPct < 5) return null;
+                          return (
+                            <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
+                              {displayPct}%
+                            </text>
+                          );
+                        }}
+                        labelLine={false}
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<PieTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              <div className="flex-1 space-y-1.5">
+                {usageBreakdown.map((item) => {
+                  const cfg = getCategoryDisplay(item.category);
+                  const pct = usageTotal > 0 ? ((item.credits / usageTotal) * 100).toFixed(1) : '0';
+                  return (
+                    <div
+                      key={item.category}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg"
+                      style={{ backgroundColor: `${cfg.hex}0d` }}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.hex }} />
+                        <span className="text-[13px] font-semibold text-gray-900">{cfg.label}</span>
+                        <span className="text-[11px] text-gray-400">
+                          {item.count} {item.count === 1 ? 'call' : 'calls'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                          style={{ backgroundColor: `${cfg.hex}18`, color: cfg.hex }}
+                        >
+                          {pct}%
+                        </span>
+                        <span className="text-[13px] font-bold text-gray-900 w-14 text-right tabular-nums">
+                          {item.credits.toFixed(1)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between px-3 pt-2 mt-1 border-t border-gray-200">
+                  <span className="text-[12px] font-bold text-gray-500">Total</span>
+                  <span className="text-[13px] font-bold text-gray-900 w-14 text-right tabular-nums">{usageTotal.toFixed(1)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------- Logs tab ---------- */}
+      {activeTab === 'logs' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[15px] font-semibold text-gray-900">Credit usage logs</h2>
+            <span className="text-[12px] text-gray-400">{logsTotal} events</span>
+          </div>
+
+          {logsLoading && usageLogs.length === 0 ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+            </div>
+          ) : usageLogs.length === 0 ? (
+            <div className="text-center py-10">
+              <Zap className="w-5 h-5 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">No usage events this period.</p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-gray-400 font-bold uppercase text-[10px]">
+                      <th className="text-left px-2 py-2">Type</th>
+                      <th className="text-left px-2 py-2">Model</th>
+                      <th className="text-right px-2 py-2">Credits</th>
+                      <th className="text-right px-2 py-2">Tokens</th>
+                      <th className="text-right px-2 py-2">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageLogs.map((log) => {
+                      const sourceLabel = getUsageSourceLabel(log.sourceType, log.subagentKind, log.sourceLabel);
+                      const category = getUsageSourceCategory(log.sourceType, log.subagentKind);
+                      const cfg = getCategoryDisplay(category);
+                      return (
+                        <tr key={log.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                          <td className="px-2 py-2">
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
+                              style={{ backgroundColor: `${cfg.hex}18`, color: cfg.hex }}
+                            >
+                              {sourceLabel}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 font-mono text-gray-700 max-w-[160px] truncate">{formatModel(log.model)}</td>
+                          <td className="px-2 py-2 text-right font-bold text-gray-900 tabular-nums">{log.credits.toFixed(2)}</td>
+                          <td className="px-2 py-2 text-right text-gray-500 tabular-nums">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {log.totalTokens > 0 ? log.totalTokens.toLocaleString() : '-'}
+                              {log.stepCount > 1 && (
+                                <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-100 text-gray-500 tabular-nums">
+                                  {log.stepCount}×
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-right text-gray-400 whitespace-nowrap">{formatRelativeTime(log.createdAt)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalLogsPages > 1 && (
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
+                  <span className="text-[11px] text-gray-400">{logsTotal} events total</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => loadLogs(logsPage - 1)}
+                      disabled={logsPage === 0 || logsLoading}
+                      className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="w-4 h-4 text-gray-500" />
+                    </button>
+                    <span className="text-[11px] text-gray-500 font-medium tabular-nums">
+                      {logsPage + 1} / {totalLogsPages}
+                    </span>
+                    <button
+                      onClick={() => loadLogs(logsPage + 1)}
+                      disabled={logsPage >= totalLogsPages - 1 || logsLoading}
+                      className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="w-4 h-4 text-gray-500" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'settings' && !prefs && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+        </div>
+      )}
+
+      {/* ---------- Settings tab (auto-refill + limits) ---------- */}
+      {activeTab === 'settings' && prefs && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <RefreshCw className="w-4 h-4 text-gray-900" />
+              <h2 className="text-[15px] font-semibold text-gray-900">Auto-refill</h2>
+              {prefsSaving && <span className="text-[11px] text-gray-400">saving…</span>}
+            </div>
+
+            <label className="flex items-start gap-3 cursor-pointer mb-5">
+              <input
+                type="checkbox"
+                checked={prefs.autoRefillEnabled}
+                onChange={(e) => handleSavePrefs({ autoRefillEnabled: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+              />
+              <div>
+                <p className="text-[13px] font-medium text-gray-900">Automatically top up when low</p>
+                <p className="text-[12px] text-gray-500 mt-0.5">
+                  When your balance drops below the threshold, we'll charge your saved payment method for an add-on pack so you never run out mid-conversation.
+                </p>
+              </div>
+            </label>
+
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${prefs.autoRefillEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Trigger at (credits)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={10}
+                  value={prefs.autoRefillThresholdCredits}
+                  onChange={(e) => setPrefs({ ...prefs, autoRefillThresholdCredits: Number(e.target.value) })}
+                  onBlur={() => handleSavePrefs({ autoRefillThresholdCredits: prefs.autoRefillThresholdCredits })}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] focus:outline-none focus:border-gray-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Refill amount (USD)</label>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">$</span>
+                  <input
+                    type="number"
+                    min={5}
+                    step={1}
+                    value={Math.round(prefs.autoRefillAmountCents / 100)}
+                    onChange={(e) => setPrefs({ ...prefs, autoRefillAmountCents: Math.max(500, Number(e.target.value) * 100) })}
+                    onBlur={() => handleSavePrefs({ autoRefillAmountCents: prefs.autoRefillAmountCents })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Sliders className="w-4 h-4 text-gray-900" />
+              <h2 className="text-[15px] font-semibold text-gray-900">Budgets & limits</h2>
+            </div>
+            <p className="text-[12px] text-gray-500 mb-4">
+              Optional. A soft budget notifies you at 70/90/100% of your spend; a hard limit blocks further usage until the next period.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Monthly soft budget (USD)</label>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={prefs.monthlyBudgetCents == null ? '' : Math.round(prefs.monthlyBudgetCents / 100)}
+                    placeholder="No budget"
+                    onChange={(e) => setPrefs({
+                      ...prefs,
+                      monthlyBudgetCents: e.target.value === '' ? null : Math.max(0, Number(e.target.value) * 100),
+                    })}
+                    onBlur={() => handleSavePrefs({ monthlyBudgetCents: prefs.monthlyBudgetCents })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Hard limit (USD)</label>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={prefs.hardSpendLimitCents == null ? '' : Math.round(prefs.hardSpendLimitCents / 100)}
+                    placeholder="No limit"
+                    onChange={(e) => setPrefs({
+                      ...prefs,
+                      hardSpendLimitCents: e.target.value === '' ? null : Math.max(0, Number(e.target.value) * 100),
+                    })}
+                    onBlur={() => handleSavePrefs({ hardSpendLimitCents: prefs.hardSpendLimitCents })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] focus:outline-none focus:border-gray-900"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <ExternalLink className="w-4 h-4 text-gray-900" />
+              <h2 className="text-[15px] font-semibold text-gray-900">Payment method & invoices</h2>
+            </div>
+            <p className="text-[12px] text-gray-500 mb-4">Managed by Polar. Update your card, view receipts, or cancel there.</p>
+            <button
+              onClick={handleManagePortal}
+              disabled={!user || isManaging}
+              className="px-4 py-2 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            >
+              {isManaging ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+              Open Polar customer portal
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

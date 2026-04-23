@@ -162,6 +162,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "security_update_settings": ("system", "Update security settings"),
     "security_remove_password": ("system", "Remove security password"),
     "memory_stats": ("memory", "Get memory statistics"),
+    "memory_export_plaintext": ("memory", "Export memory.db with all encrypted columns decrypted (for VM sync)"),
 
     # ── Canvas ───────────────────────────────────────────────────────────────
     # ── Tasks / Reminders ────────────────────────────────────────────────────
@@ -744,6 +745,7 @@ _HANDLERS.update({
     "security_update_settings": memory_conversations.security_update_settings,
     "security_remove_password": memory_conversations.security_remove_password,
     "memory_stats": memory_conversations.memory_stats,
+    "memory_export_plaintext": memory_conversations.memory_export_plaintext,
 
     # Canvas (in-memory doc store — works on VM)
 

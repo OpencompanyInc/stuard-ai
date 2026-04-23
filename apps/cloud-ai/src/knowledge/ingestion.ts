@@ -285,14 +285,28 @@ export async function ingestConversationTurn(
   if (bridgeAvailable) {
     try {
       console.log('[knowledge] Fetching existing context...');
-      
+
+      // execLocalTool resolves with { ok: false, error } on bridge_closed /
+      // timeout rather than throwing. Without distinguishing that from a
+      // genuinely-empty list, every failed fetch looked like "DB is empty"
+      // and produced silent Context fetched: 0,0,0 logs.
+      const bridgeErrors: Record<string, string> = {};
+      const parseListResult = (
+        tool: string,
+        result: any,
+        wrappedKey: string,
+      ): any[] => {
+        if (Array.isArray(result)) return result;
+        if (Array.isArray(result?.[wrappedKey])) return result[wrappedKey];
+        if (result && result.ok === false) {
+          bridgeErrors[tool] = String(result.error || 'bridge_error');
+        }
+        return [];
+      };
+
       // Fetch profile (identity lens)
       const profileResult = await execSilentLocalTool('knowledge_get_identity', {}, 5000);
-      const profileFacts: any[] = Array.isArray(profileResult)
-        ? profileResult
-        : Array.isArray((profileResult as any)?.facts)
-          ? (profileResult as any).facts
-          : [];
+      const profileFacts = parseListResult('knowledge_get_identity', profileResult, 'facts');
       if (profileFacts.length > 0) {
         const profile: Record<string, string> = {};
         for (const f of profileFacts) {
@@ -305,14 +319,10 @@ export async function ingestConversationTurn(
           existingContext.profile = profile;
         }
       }
-      
+
       // Fetch entities
       const entitiesResult = await execSilentLocalTool('knowledge_list_entities', { limit: 50 }, 5000);
-      const entitiesList: any[] = Array.isArray(entitiesResult)
-        ? entitiesResult
-        : Array.isArray((entitiesResult as any)?.entities)
-          ? (entitiesResult as any).entities
-          : [];
+      const entitiesList = parseListResult('knowledge_list_entities', entitiesResult, 'entities');
       if (entitiesList.length > 0) {
         const entities = entitiesList
           .map((e: any) => ({
@@ -325,14 +335,10 @@ export async function ingestConversationTurn(
           existingContext.entities = entities;
         }
       }
-      
+
       // Fetch recent facts (bio + recent project facts)
       const bioResult = await execSilentLocalTool('knowledge_get_bio', { limit: 20 }, 5000);
-      const bioFacts: any[] = Array.isArray(bioResult)
-        ? bioResult
-        : Array.isArray((bioResult as any)?.facts)
-          ? (bioResult as any).facts
-          : [];
+      const bioFacts = parseListResult('knowledge_get_bio', bioResult, 'facts');
       if (bioFacts.length > 0) {
         const facts = bioFacts
           .map((f: any) => ({
@@ -344,12 +350,25 @@ export async function ingestConversationTurn(
           existingContext.recentFacts = facts;
         }
       }
-      
-      console.log('[knowledge] Context fetched:', {
+
+      const counts = {
         profileKeys: Object.keys(existingContext.profile || {}).length,
         entityCount: existingContext.entities?.length || 0,
         factCount: existingContext.recentFacts?.length || 0,
-      });
+      };
+      const errorCount = Object.keys(bridgeErrors).length;
+      if (errorCount > 0) {
+        // Bridge returned an error for at least one fetch. Report it so empty
+        // context doesn't silently look like "empty DB" when it's really a
+        // closed/unresponsive client bridge.
+        console.warn('[knowledge] Context fetch had bridge errors:', {
+          ...counts,
+          bridgeErrors,
+        });
+        writeLog('knowledge_context_bridge_errors', { counts, bridgeErrors });
+      } else {
+        console.log('[knowledge] Context fetched:', counts);
+      }
     } catch (err) {
       console.log('[knowledge] Failed to fetch existing context (continuing without):', err);
     }
