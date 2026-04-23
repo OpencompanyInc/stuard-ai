@@ -195,6 +195,7 @@ describe('Capability Packs', () => {
     expect(KNOWN_SUBAGENT_NAMES).toContain('browser');
     expect(KNOWN_SUBAGENT_NAMES).toContain('file_ops');
     expect(KNOWN_SUBAGENT_NAMES).toContain('workflow');
+    expect(KNOWN_SUBAGENT_NAMES).toContain('reminders');
     expect(KNOWN_SUBAGENT_NAMES).toContain('google');
     expect(KNOWN_SUBAGENT_NAMES).toContain('outlook');
     expect(KNOWN_SUBAGENT_NAMES).toContain('github');
@@ -203,7 +204,7 @@ describe('Capability Packs', () => {
     expect(KNOWN_SUBAGENT_NAMES).toContain('telnyx');
     expect(KNOWN_SUBAGENT_NAMES).toContain('reddit');
     expect(KNOWN_SUBAGENT_NAMES).toContain('discord');
-    expect(KNOWN_SUBAGENT_NAMES.length).toBe(3 + Object.keys(INTEGRATION_PREFIX_MAP).length);
+    expect(KNOWN_SUBAGENT_NAMES.length).toBe(4 + Object.keys(INTEGRATION_PREFIX_MAP).length);
   });
 });
 
