@@ -107,6 +107,44 @@ function pcm16_24kTo16k(pcmB64: string): string {
   return outBuf.toString('base64');
 }
 
+/**
+ * Strip schema fields Gemini Live rejects.
+ *
+ * Gemini's function-declaration schema is OpenAPI-subset and chokes on
+ * JSON-Schema extras like `additionalProperties`, `$schema`, `definitions`,
+ * `oneOf`/`anyOf` at unsupported depths. We also normalize empty object
+ * properties to an explicit empty map so the validator doesn't reject
+ * `{ type: 'object' }` with no `properties`.
+ */
+function sanitizeGeminiSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(sanitizeGeminiSchema);
+
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'additionalProperties' || key === '$schema' || key === 'definitions' || key === '$ref') continue;
+    if (key === 'properties' && value && typeof value === 'object') {
+      const props: Record<string, any> = {};
+      for (const [pk, pv] of Object.entries(value as Record<string, any>)) {
+        props[pk] = sanitizeGeminiSchema(pv);
+      }
+      out[key] = props;
+    } else if (key === 'items') {
+      out[key] = sanitizeGeminiSchema(value);
+    } else {
+      out[key] = value;
+    }
+  }
+
+  // If an object type declares no properties, give it an empty map so Gemini
+  // accepts it (its validator rejects bare `{ type: 'object' }`).
+  if (out.type === 'object' && !out.properties) {
+    out.properties = {};
+  }
+
+  return out;
+}
+
 class GeminiLiveSession implements VoiceSession {
   id: string;
   providerId = 'gemini-live';
@@ -116,6 +154,9 @@ class GeminiLiveSession implements VoiceSession {
   private config: VoiceSessionConfig;
   private needsTranscoding: boolean;
   private needsDownsample: boolean;
+  // Gemini requires matching `name` on tool responses, so remember the name
+  // registered against each in-flight call id.
+  private pendingCallNames = new Map<string, string>();
 
   constructor(config: VoiceSessionConfig) {
     this.id = `gem_${randomUUID().slice(0, 12)}`;
@@ -163,6 +204,19 @@ class GeminiLiveSession implements VoiceSession {
           setupMsg.setup.systemInstruction = {
             parts: [{ text: this.config.systemPrompt }],
           };
+        }
+
+        // Register function-calling tools. Gemini groups declarations under a
+        // single tools[0].functionDeclarations array.
+        if (this.config.tools && this.config.tools.length > 0) {
+          setupMsg.setup.tools = [{
+            functionDeclarations: this.config.tools.map((t) => ({
+              name: t.name,
+              description: t.description,
+              parameters: sanitizeGeminiSchema(t.parameters),
+            })),
+          }];
+          console.log('[gemini-live] Registering tools:', this.config.tools.map((t) => t.name).join(', '));
         }
 
         this.ws!.send(JSON.stringify(setupMsg));
@@ -215,6 +269,27 @@ class GeminiLiveSession implements VoiceSession {
               if (part.text) {
                 this.config.onTranscript?.('assistant', part.text, true);
               }
+            }
+          }
+
+          // Tool/function call — Gemini sends { toolCall: { functionCalls: [...] } }
+          if (msg.toolCall?.functionCalls?.length) {
+            for (const call of msg.toolCall.functionCalls) {
+              const callId = String(call.id || call.name || randomUUID());
+              const fnName = String(call.name || '');
+              const args = call.args ?? {};
+              const argsJson = typeof args === 'string' ? args : JSON.stringify(args);
+              this.pendingCallNames.set(callId, fnName);
+              console.log('[gemini-live] Function call:', { callId, fnName });
+              this.config.onFunctionCall?.(callId, fnName, argsJson);
+            }
+          }
+
+          // Tool call cancellation — model bailed before we responded; nothing to send back
+          if (msg.toolCallCancellation?.ids?.length) {
+            console.log('[gemini-live] Tool call cancelled:', msg.toolCallCancellation.ids);
+            for (const id of msg.toolCallCancellation.ids) {
+              this.pendingCallNames.delete(String(id));
             }
           }
 
@@ -283,6 +358,35 @@ class GeminiLiveSession implements VoiceSession {
     }
   }
 
+  sendFunctionResult(callId: string, result: string): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    // Gemini expects response as a JSON object. Our voice runtime hands us a
+    // JSON-encoded string (possibly truncated); parse back when possible and
+    // fall back to wrapping the raw text so the model still gets something.
+    let response: any;
+    try {
+      response = JSON.parse(result);
+      if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+        response = { result: response };
+      }
+    } catch {
+      response = { result };
+    }
+
+    const fnName = this.pendingCallNames.get(callId) || callId;
+    this.pendingCallNames.delete(callId);
+
+    this.ws.send(JSON.stringify({
+      toolResponse: {
+        functionResponses: [{
+          id: callId,
+          name: fnName,
+          response,
+        }],
+      },
+    }));
+  }
+
   interrupt(): void {
     // Gemini handles interruptions via barge-in automatically
   }
@@ -294,6 +398,7 @@ class GeminiLiveSession implements VoiceSession {
     }
     this.ws = null;
     this.audioCallbacks = [];
+    this.pendingCallNames.clear();
   }
 
   isActive(): boolean {
@@ -304,7 +409,7 @@ class GeminiLiveSession implements VoiceSession {
 export const geminiLiveProvider: VoiceProvider = {
   id: 'gemini-live',
   name: 'Google Gemini Live',
-  supportsToolCalling: false,
+  supportsToolCalling: true,
   supportedInputFormats: ['pcm_16000', 'pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
   supportedOutputFormats: ['pcm_24000', 'ulaw_8000', 'pcmu', 'g711_ulaw'] as AudioFormat[],
 

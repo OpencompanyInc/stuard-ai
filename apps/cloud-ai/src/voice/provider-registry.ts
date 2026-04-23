@@ -9,7 +9,7 @@ import type { VoiceProvider, ActiveCall } from './types';
 
 const providers = new Map<string, VoiceProvider>();
 const activeCalls = new Map<string, ActiveCall>();
-const TOOL_CAPABLE_PROVIDER_ORDER = ['openai-realtime', 'grok-realtime'] as const;
+const TOOL_CAPABLE_PROVIDER_ORDER = ['gemini-live', 'openai-realtime', 'grok-realtime'] as const;
 
 export function registerVoiceProvider(provider: VoiceProvider): void {
   providers.set(provider.id, provider);
@@ -52,7 +52,7 @@ export function findToolCapableVoiceProvider(preferredIds: readonly string[] = T
  */
 export function getTelephonyProviderOrder(options?: { requireToolsCapable?: boolean }): string[] {
   if (options?.requireToolsCapable) {
-    return ['openai-realtime', 'grok-realtime'];
+    return ['gemini-live', 'openai-realtime', 'grok-realtime'];
   }
   return ['gemini-live', 'openai-realtime', 'grok-realtime', 'elevenlabs'];
 }
