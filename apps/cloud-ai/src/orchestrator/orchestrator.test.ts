@@ -159,6 +159,7 @@ describe('Capability Packs', () => {
     expect(getCapabilityPack('browser')).toBeDefined();
     expect(getCapabilityPack('file_ops')).toBeDefined();
     expect(getCapabilityPack('workflow')).toBeDefined();
+    expect(getCapabilityPack('reminders')).toBeDefined();
     expect(getCapabilityPack('custom')).toBeUndefined();
     expect(getCapabilityPack('integration')).toBeUndefined(); // dynamic, not static
   });
@@ -166,11 +167,12 @@ describe('Capability Packs', () => {
   it('getAllCapabilityPacks returns all static packs', async () => {
     const { getAllCapabilityPacks } = await import('./capability-packs');
     const packs = getAllCapabilityPacks();
-    expect(packs.length).toBe(3);
+    expect(packs.length).toBe(4);
     const kinds = packs.map(p => p.kind);
     expect(kinds).toContain('browser');
     expect(kinds).toContain('file_ops');
     expect(kinds).toContain('workflow');
+    expect(kinds).toContain('reminders');
   });
 
   it('INTEGRATION_PREFIX_MAP covers expected groups', async () => {

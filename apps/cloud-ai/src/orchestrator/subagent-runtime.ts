@@ -32,6 +32,9 @@ import type {
 } from './types';
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
 import { LiveUsageBillingTracker } from '../services/live-usage-billing';
+import { normalizeUsage } from '../utils/usage';
+import { computeBudget, estimateTokens } from '../memory/token-budget';
+import { compactHistory, pruneToolOutputs } from '../memory/context-compactor';
 import type { ModelChoice } from '../router/model-router';
 import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
@@ -322,6 +325,13 @@ export interface RunSubagentOptions {
   modelId?: string;
   bridgeWs?: any;
   bridgeSecrets?: Record<string, any>;
+  /**
+   * Primary chat WS — where streaming events (`subagent_event`) must flow back
+   * to the user. In the desktop flow this equals `bridgeWs`. In the VM-agent
+   * flow the bridge is the desktop (for device tools) while the chat channel
+   * is the VM-agent WS, which relays back via Python → vm-agent SSE → UI.
+   */
+  chatWs?: any;
   onEvent?: (event: any) => void;
   onQuestion?: (question: SubagentQuestion) => Promise<SubagentAnswer>;
   abortSignal?: AbortSignal;
@@ -338,6 +348,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     modelId,
     bridgeWs: explicitBridgeWs,
     bridgeSecrets: explicitBridgeSecrets,
+    chatWs: explicitChatWs,
     onEvent,
     onQuestion,
     abortSignal: externalSignal,
@@ -400,6 +411,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // Resolve bridge context for wrapping tools (ALS is lost inside agent.generate)
   const bridgeWs = explicitBridgeWs || getBridgeWs();
   const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
+  // Chat WS is the user-facing stream channel — prefer explicit opt, then the
+  // __chatWs stashed on bridgeSecrets by runAgent. Falls back to bridgeWs so
+  // the desktop flow (where chat and bridge are the same) keeps working.
+  const chatWs = explicitChatWs || (bridgeSecrets as any)?.__chatWs || undefined;
 
   const agent = buildSubagent(pack, correlation, model, modelId, bridgeWs, bridgeSecrets, onQuestion);
   const timeoutMs = request.timeoutMs ?? pack.timeoutMs ?? 0;
@@ -427,15 +442,25 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
       event,
       data,
     };
-    try {
-      if (bridgeWs && (bridgeWs as any).readyState === WebSocket.OPEN) {
-        (bridgeWs as any).send(JSON.stringify(msg));
-        // Mirror subagent event to desktop dashboard (for CloudChatPanel streaming).
-        // CloudChatPanel handles subagent_event types directly for delta/reasoning/tool
-        // display — no duplicate progress mirror needed (that caused double text rendering).
-        mirrorToDesktop(bridgeWs as any, msg);
-      }
-    } catch {}
+    // Send to every distinct WS target: the primary chat channel (so the
+    // end-user UI sees streaming updates) AND the bridge (so a desktop user
+    // observing through CloudChatPanel still gets mirrored events when the
+    // chat channel is a different WS — the VM-agent path).
+    const seen = new Set<any>();
+    const targets = [chatWs, bridgeWs];
+    for (const target of targets) {
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      try {
+        if ((target as any).readyState === WebSocket.OPEN) {
+          (target as any).send(JSON.stringify(msg));
+        }
+      } catch {}
+    }
+    // Legacy hook for any registered VM→desktop mirror on the bridge WS.
+    if (bridgeWs) {
+      try { mirrorToDesktop(bridgeWs as any, msg); } catch {}
+    }
     onEvent?.({ ...msg });
   };
 
@@ -448,6 +473,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     browser: 'Browser Agent',
     file_ops: 'File Agent',
     workflow: 'Workflow Agent',
+    reminders: 'Reminders Agent',
     media: 'Media Agent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
@@ -505,8 +531,18 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     let allToolCalls: any[] = [];
     let returnControlResult = '';
 
+    // Halt-and-resume compaction state
+    const resolvedBudgetModelId = modelId || (typeof model === 'string' ? model : 'balanced');
+    const budget = computeBudget(resolvedBudgetModelId);
+    let cumulativeInputTokens = 0;
+    let needsCompaction = false;
+    let compactionAbort: AbortController | null = null;
+    const MAX_COMPACTION_ROUNDS = 3;
+    let compactionRound = 0;
+    let streamAccumulatedMessages: any[] = [];
+
     while (attempt <= MAX_RETRIES) {
-      const messages = toolErrorHistory.length > 0
+      let messages: any[] = toolErrorHistory.length > 0
         ? [
             { role: 'system', content: pack.systemPrompt },
             { role: 'user', content: prompt },
@@ -519,20 +555,55 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           ];
 
       try {
+        // Create per-stream abort controller that chains to the main one
+        compactionAbort = new AbortController();
+        needsCompaction = false;
+        streamAccumulatedMessages = [];
+        const onLocalAbort = () => compactionAbort?.abort();
+        localAbort.signal.addEventListener('abort', onLocalAbort, { once: true });
+
+        const buildStreamOptions = () => ({
+          maxSteps: pack.maxSteps,
+          abortSignal: compactionAbort?.signal ?? localAbort.signal,
+          prepareStep: async ({ messages: stepMessages }: any) => {
+            if (Array.isArray(stepMessages)) {
+              streamAccumulatedMessages = [...stepMessages];
+            }
+            return {};
+          },
+          onStepFinish: async (stepData: any) => {
+            finishedSteps.push({
+              usage: stepData?.usage,
+              providerMetadata: stepData?.providerMetadata,
+            });
+            await billingTracker.settleIncrement(stepData, {
+              trigger: 'step_finish',
+              stepNumber: finishedSteps.length,
+            });
+
+            // Track cumulative tokens for compaction
+            const stepUsage = stepData?.usage;
+            if (stepUsage) {
+              const normalized = normalizeUsage(stepUsage);
+              cumulativeInputTokens += normalized.promptTokens;
+            }
+
+            // Halt-and-resume: if tokens exceed budget, flag for compaction
+            if (
+              !needsCompaction &&
+              compactionRound < MAX_COMPACTION_ROUNDS &&
+              cumulativeInputTokens > budget.historyBudget * 0.85
+            ) {
+              needsCompaction = true;
+              console.log(`[subagent:${subagentId}] Halt-and-resume compaction triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
+              compactionAbort?.abort();
+            }
+          },
+        });
+
         const streamAgent = async () => {
-          const streamResult: any = await (agent as any).stream(messages, {
-            maxSteps: pack.maxSteps,
-            onStepFinish: async (stepData: any) => {
-              finishedSteps.push({
-                usage: stepData?.usage,
-                providerMetadata: stepData?.providerMetadata,
-              });
-              await billingTracker.settleIncrement(stepData, {
-                trigger: 'step_finish',
-                stepNumber: finishedSteps.length,
-              });
-            },
-          });
+          const streamOptions = buildStreamOptions();
+          const streamResult: any = await (agent as any).stream(messages, streamOptions);
           const stream = streamResult?.fullStream || streamResult;
 
           if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
@@ -615,6 +686,93 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           if (!fullText && streamResult?.text) fullText = streamResult.text;
           // Capture usage from streamResult if not already captured from finish event
           if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
+
+          // ── Halt-and-resume compaction check ──
+          if (needsCompaction && !localAbort.signal.aborted && compactionRound < MAX_COMPACTION_ROUNDS) {
+            compactionRound++;
+            console.log(`[subagent:${subagentId}] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
+
+            // Show compacting status to client
+            emitToClient('compacting', {
+              round: compactionRound,
+              maxRounds: MAX_COMPACTION_ROUNDS,
+              tokensBefore: cumulativeInputTokens,
+            });
+            emitToClient('delta', { text: '\n\n⏳ *Compacting context…*\n\n' });
+
+            try {
+              const messagesToCompact = streamAccumulatedMessages.length > 0
+                ? streamAccumulatedMessages
+                : [...messages];
+
+              const compacted = await compactHistory(messagesToCompact, resolvedBudgetModelId);
+              const postEstimate = estimateTokens(compacted as any[]);
+              console.log(`[subagent:${subagentId}] Compacted: ${cumulativeInputTokens} -> ${postEstimate.totalTokens} tokens`);
+
+              // Update messages for re-stream
+              messages = compacted as any[];
+              cumulativeInputTokens = postEstimate.totalTokens;
+              needsCompaction = false;
+              streamAccumulatedMessages = [];
+
+              // Re-stream with compacted messages
+              compactionAbort = new AbortController();
+              const onLocalAbort2 = () => compactionAbort?.abort();
+              localAbort.signal.addEventListener('abort', onLocalAbort2, { once: true });
+              needsCompaction = false;
+
+              console.log(`[subagent:${subagentId}] Re-streaming with compacted context`);
+              const compactedStreamOptions = buildStreamOptions();
+              const compactedStreamResult: any = await (agent as any).stream(messages, compactedStreamOptions);
+              const compactedStream = compactedStreamResult?.fullStream || compactedStreamResult;
+
+              if (compactedStream && typeof compactedStream[Symbol.asyncIterator] === 'function') {
+                for await (const chunk of compactedStream) {
+                  if (localAbort.signal.aborted) break;
+                  const ct = chunk?.type;
+                  if (ct === 'text-delta') {
+                    const text = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
+                    if (text) { fullText += text; emitToClient('delta', { text }); }
+                  } else if (ct === 'tool-call') {
+                    const tc = chunk.payload || {};
+                    allToolCalls.push(tc);
+                    emitToClient('tool_call', { tool: tc.toolName, toolCallId: tc.toolCallId, args: tc.args });
+                  } else if (ct === 'tool-result') {
+                    const tr = chunk.payload || {};
+                    emitToClient('tool_result', { tool: tr.toolName, toolCallId: tr.toolCallId, result: tr.result });
+                    const trName = tr.toolName || '';
+                    if (trName === 'return_control' && tr.result) {
+                      const res = typeof tr.result === 'string' ? (() => { try { return JSON.parse(tr.result); } catch { return {}; } })() : tr.result;
+                      if (res?.summary && !returnControlResult) returnControlResult = res.summary;
+                    }
+                  } else if (ct === 'finish') {
+                    const payload = chunk.payload || chunk;
+                    if (payload?.usage) {
+                      streamUsage = { ...payload.usage, providerMetadata: chunk?.providerMetadata ?? payload?.providerMetadata };
+                    }
+                  } else if (ct === 'reasoning-delta' || ct === 'reasoning' || ct === 'thinking-delta') {
+                    const text = chunk.payload?.text || chunk.textDelta || '';
+                    if (text) emitToClient('reasoning', { text });
+                  } else if (typeof chunk === 'string' && chunk) {
+                    fullText += chunk; emitToClient('delta', { text: chunk });
+                  } else if (chunk?.textDelta) {
+                    fullText += chunk.textDelta; emitToClient('delta', { text: chunk.textDelta });
+                  }
+                }
+              }
+              if (!fullText && compactedStreamResult?.text) fullText = compactedStreamResult.text;
+              if (!streamUsage && compactedStreamResult?.usage) streamUsage = compactedStreamResult.usage;
+
+              localAbort.signal.removeEventListener('abort', onLocalAbort2);
+            } catch (compactError: any) {
+              if (compactError?.name === 'AbortError' || localAbort.signal.aborted) {
+                throw compactError;
+              }
+              console.warn(`[subagent:${subagentId}] Halt-and-resume compaction failed:`, compactError);
+              // Continue with whatever we have
+            }
+          }
+
           return { text: fullText, steps: Array.isArray(streamResult?.steps) ? streamResult.steps : [] };
         };
 

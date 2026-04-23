@@ -26,6 +26,13 @@ import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-to
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
 import { get_skill_info } from '../../tools/skill-tools';
+// Workflow-authoring tools so the orchestrator's workflow subagent can resolve them
+import { workflowModifyTool } from '../../tools/workflow';
+import { createWorkflowTool } from '../../tools/workflow-system';
+import { executeStep as executeWorkflowStep, listWorkflows as listWorkflowsTool, inspectWorkflow } from '../workflow-agent/tools';
+import { searchWorkflowDocs } from '../workflow-agent/docs';
+// Google calendar tools used by the reminders subagent
+import { calendar_list_events, calendar_update_event } from '../../tools/google-tools';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
@@ -67,7 +74,9 @@ export const ALL_TOOLS = {
   gmail_archive_message,
   gmail_mark_as_read,
   gmail_mark_as_unread,
+  calendar_list_events,
   calendar_create_event,
+  calendar_update_event,
   calendar_delete_event,
   tasks_list,
   drive_list_files,
@@ -266,6 +275,13 @@ export const ALL_TOOLS = {
   get_skill_info,
   // Subagent routing
   route_to_workflow_agent: routeToWorkflowAgent,
+  // Workflow authoring (used by the orchestrator's workflow subagent)
+  create_workflow: createWorkflowTool,
+  modify_workflow: workflowModifyTool,
+  inspect_workflow: inspectWorkflow,
+  execute_step: executeWorkflowStep,
+  list_workflows: listWorkflowsTool,
+  search_workflow_docs: searchWorkflowDocs,
   // Telnyx (SMS, MMS, voice calls)
   telnyx_send_sms,
   telnyx_send_mms,

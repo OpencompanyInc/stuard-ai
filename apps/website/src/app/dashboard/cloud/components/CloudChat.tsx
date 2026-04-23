@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ChevronRight, Users, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { uploadFileToVm } from '@/lib/cloudApi';
 
 const CLOUD_API_URL = process.env.NEXT_PUBLIC_CLOUD_API_URL || 'https://api.stuard.ai';
@@ -22,11 +24,26 @@ interface CloudChatProps {
   engine: any;
 }
 
+type ToolStatus = 'called' | 'running' | 'completed' | 'error';
+
+type ToolCall = {
+  id: string;
+  tool: string;
+  status: ToolStatus;
+  args?: any;
+  result?: any;
+  error?: string;
+  description?: string;
+  timestamp: number;
+  subagentId?: string;
+  nested?: boolean;
+};
+
 type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   reasoning?: string;
-  toolCalls?: Array<{ tool: string; status: string }>;
+  toolCalls?: ToolCall[];
   attachments?: Array<{ name: string; path: string }>;
 };
 
@@ -37,6 +54,270 @@ function humanizeToolName(tool: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
 }
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
+// Tools treated as delegation (render as a rectangle card with subagent children)
+const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'deploy_subagent']);
+
+// Internal tools that are noisy or meaningless to show in the UI
+const HIDDEN_TOOL_NAMES = new Set([
+  'segment_create', 'segment_update', 'segment_end', 'segment_list', 'segment_list_recent',
+  'segment_search', 'segment_get', 'segment_build_topic_drawers', 'segment_search_drawers_by_embedding',
+  'collection_summary_upsert', 'collection_summary_list', 'collection_summary_get',
+  'memory_store', 'memory_recall', 'memory_update', 'memory_search', 'memory_stats',
+  'conversation_create', 'conversation_get', 'conversation_list', 'conversation_update',
+  'conversation_delete', 'conversation_search', 'conversation_get_spaces',
+  'message_add', 'message_list', 'agent_todo',
+  'knowledge_add_fact', 'knowledge_update_fact', 'knowledge_build_context',
+  'knowledge_get_directives', 'knowledge_get_identity', 'planner_list_items',
+  'subagent_spawn', 'subagent_update', 'subagent_status', 'subagent_list', 'subagent_stop',
+  'subagent_create', 'run_subagent', 'spawn_agent',
+  'get_tool_schema', 'search_tools', 'reply_to_subagent', 'ask_user',
+]);
+
+function resolveToolName(tool: ToolCall): string {
+  return tool.tool === 'execute_tool' && tool.args?.tool_name
+    ? String(tool.args.tool_name)
+    : tool.tool;
+}
+
+function isDelegationToolCall(tool: ToolCall): boolean {
+  return DELEGATION_TOOL_NAMES.has(resolveToolName(tool));
+}
+
+type DelegationTask = { subagent: string; instruction?: string };
+
+function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
+  const args = (tool.args || {}) as Record<string, any>;
+  if (Array.isArray(args.tasks) && args.tasks.length > 0) {
+    return args.tasks.map((t: any) => ({
+      subagent: String(t?.subagent ?? 'subagent'),
+      instruction: typeof t?.instruction === 'string' ? t.instruction : undefined,
+    }));
+  }
+  const kind = args.subagent || args.kind || args.agent || args.agent_kind || 'subagent';
+  const instruction = args.objective || args.task || args.prompt || args.instruction;
+  return [{
+    subagent: String(kind),
+    instruction: typeof instruction === 'string' ? instruction : undefined,
+  }];
+}
+
+const DelegationCard: React.FC<{ tool: ToolCall; childSteps: ToolCall[] }> = ({ tool, childSteps }) => {
+  const tasks = extractDelegationTasks(tool);
+  const isRunning = tool.status === 'called' || tool.status === 'running';
+  const isError = tool.status === 'error';
+  const isComplete = tool.status === 'completed';
+
+  const [expanded, setExpanded] = useState(isRunning || isError);
+  const prevRunningRef = useRef(isRunning);
+  useEffect(() => {
+    if (prevRunningRef.current && !isRunning && !isError) {
+      setExpanded(false);
+    }
+    prevRunningRef.current = isRunning;
+  }, [isRunning, isError]);
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+  const elapsedSec = tool.timestamp ? Math.max(0, Math.floor((now - tool.timestamp) / 1000)) : 0;
+
+  const agentLabel = tasks.length === 1
+    ? `${humanizeToolName(tasks[0].subagent)} agent`
+    : `${tasks.length} agents`;
+
+  const toolChildCount = childSteps.length;
+  const statusText = isError
+    ? 'Failed'
+    : isRunning
+      ? (toolChildCount > 0 ? `Working · ${toolChildCount} action${toolChildCount === 1 ? '' : 's'}` : 'Working…')
+      : `Done · ${toolChildCount} action${toolChildCount === 1 ? '' : 's'}`;
+
+  const borderClass = isError
+    ? 'border-red-200'
+    : isRunning
+      ? 'border-blue-300'
+      : 'border-gray-200';
+
+  return (
+    <div className={`rounded-lg border ${borderClass} bg-white overflow-hidden`}>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-gray-50/70 transition-colors"
+      >
+        <div className={`mt-0.5 shrink-0 flex h-5 w-5 items-center justify-center rounded-md ${
+          isRunning ? 'bg-blue-50' : 'bg-gray-100'
+        }`}>
+          <Users className={`h-3 w-3 ${isRunning ? 'text-blue-600' : 'text-gray-500'}`} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[12px] font-medium text-gray-800 ${isRunning ? 'animate-pulse' : ''}`}>
+              {agentLabel}
+            </span>
+            <span className="text-[10px] tabular-nums text-gray-500">
+              {statusText}
+              {elapsedSec > 0 ? ` · ${formatDuration(elapsedSec)}` : ''}
+            </span>
+          </div>
+          {tasks.length === 1 && tasks[0].instruction ? (
+            <div
+              className="mt-0.5 text-[11px] leading-snug text-gray-500 line-clamp-2"
+              title={tasks[0].instruction}
+            >
+              {tasks[0].instruction}
+            </div>
+          ) : null}
+          {tasks.length > 1 ? (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {tasks.map((t, i) => (
+                <span
+                  key={`${t.subagent}-${i}`}
+                  className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600"
+                  title={t.instruction}
+                >
+                  {humanizeToolName(t.subagent)}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+          {isRunning ? (
+            <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin" />
+          ) : isError ? (
+            <XCircle className="h-3.5 w-3.5 text-red-500" />
+          ) : isComplete ? (
+            <CheckCircle className="h-3.5 w-3.5 text-gray-400" />
+          ) : null}
+          <ChevronRight
+            className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          />
+        </div>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {expanded && childSteps.length > 0 ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-gray-100 px-3 py-2 space-y-1">
+              {childSteps.map((child) => {
+                const childRunning = child.status === 'called' || child.status === 'running';
+                const childError = child.status === 'error';
+                return (
+                  <div key={child.id} className="flex items-center gap-1.5 text-xs text-gray-600">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      childError ? 'bg-red-400' :
+                      childRunning ? 'bg-yellow-400 animate-pulse' :
+                      'bg-green-400'
+                    }`} />
+                    <span className={childRunning ? 'animate-pulse' : ''}>
+                      {child.description || humanizeToolName(child.tool)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// Group tool calls into a display sequence: top-level tools, and for delegation tools,
+// absorb the run of subsequent nested subagent tool calls as their children.
+type ThoughtItem =
+  | { kind: 'tool'; tool: ToolCall }
+  | { kind: 'delegation'; tool: ToolCall; children: ToolCall[] };
+
+function buildThoughtItems(tools: ToolCall[]): ThoughtItem[] {
+  const items: ThoughtItem[] = [];
+  let i = 0;
+  while (i < tools.length) {
+    const t = tools[i];
+    if (!t.nested && isDelegationToolCall(t)) {
+      const children: ToolCall[] = [];
+      let j = i + 1;
+      while (j < tools.length && tools[j].nested) {
+        children.push(tools[j]);
+        j++;
+      }
+      items.push({ kind: 'delegation', tool: t, children });
+      i = j;
+    } else if (!t.nested) {
+      items.push({ kind: 'tool', tool: t });
+      i++;
+    } else {
+      // stray nested tool with no preceding delegation — render inline
+      items.push({ kind: 'tool', tool: t });
+      i++;
+    }
+  }
+  return items;
+}
+
+const ThoughtBlock: React.FC<{
+  reasoning?: string;
+  toolCalls?: ToolCall[];
+  isStreaming?: boolean;
+}> = ({ reasoning, toolCalls, isStreaming }) => {
+  const visibleTools = (toolCalls || []).filter(t => !HIDDEN_TOOL_NAMES.has(resolveToolName(t)));
+  const hasAny = (reasoning && reasoning.trim().length > 0) || visibleTools.length > 0;
+  if (!hasAny) return null;
+  const items = buildThoughtItems(visibleTools);
+
+  return (
+    <div className="mb-1.5 rounded-lg border border-gray-100 bg-gray-50/80 overflow-hidden">
+      <div className={`px-3 py-1.5 text-xs text-gray-400 font-medium ${isStreaming ? 'animate-pulse' : ''}`}>
+        {isStreaming ? 'Thinking...' : 'Thought process'}
+      </div>
+      <div className="px-3 pb-2 space-y-1.5">
+        {reasoning ? (
+          <div className="max-h-24 overflow-y-auto text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
+            {reasoning}
+          </div>
+        ) : null}
+        {items.map((item, idx) => {
+          if (item.kind === 'delegation') {
+            return <DelegationCard key={item.tool.id || `del-${idx}`} tool={item.tool} childSteps={item.children} />;
+          }
+          const t = item.tool;
+          const running = t.status === 'called' || t.status === 'running';
+          const errored = t.status === 'error';
+          return (
+            <div key={t.id || `t-${idx}`} className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                errored ? 'bg-red-400' :
+                running ? 'bg-yellow-400 animate-pulse' :
+                'bg-green-400'
+              }`} />
+              <span className={running ? 'animate-pulse' : ''}>
+                {t.description || humanizeToolName(resolveToolName(t))}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 export function CloudChat({ engine }: CloudChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,7 +333,7 @@ export function CloudChat({ engine }: CloudChatProps) {
   const [streamText, setStreamText] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [isReasoning, setIsReasoning] = useState(false);
-  const [streamTools, setStreamTools] = useState<Array<{ tool: string; status: string }>>([]);
+  const [streamTools, setStreamTools] = useState<ToolCall[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
 
   useEffect(() => {
@@ -122,9 +403,31 @@ export function CloudChat({ engine }: CloudChatProps) {
 
     let accText = '';
     let accReasoning = '';
-    let accTools: Array<{ tool: string; status: string }> = [];
+    let accTools: ToolCall[] = [];
     let gotFinal = false;
     let currentConvId = conversationId;
+
+    // Helper: update or append a tool call by id
+    const upsertTool = (id: string, patch: Partial<ToolCall> & { tool: string }) => {
+      const existingIdx = accTools.findIndex(t => t.id === id);
+      if (existingIdx >= 0) {
+        accTools = accTools.map((t, i) => i === existingIdx ? { ...t, ...patch } : t);
+      } else {
+        accTools = [...accTools, {
+          id,
+          tool: patch.tool,
+          status: patch.status || 'called',
+          args: patch.args,
+          result: patch.result,
+          error: patch.error,
+          description: patch.description,
+          timestamp: patch.timestamp ?? Date.now(),
+          subagentId: patch.subagentId,
+          nested: patch.nested,
+        }];
+      }
+      setStreamTools([...accTools]);
+    };
 
     try {
       const token = getToken();
@@ -207,17 +510,58 @@ export function CloudChat({ engine }: CloudChatProps) {
 
               case 'tool_event': {
                 setStatusMessage('');
-                const tool = event.tool || event.data?.tool;
-                const status = event.status || event.data?.status || 'called';
-                if (tool) {
-                  if (status === 'completed' || status === 'result') {
-                    accTools = accTools.map(t =>
-                      t.tool === tool && t.status === 'called' ? { ...t, status: 'completed' } : t,
-                    );
-                  } else {
-                    accTools = [...accTools, { tool, status: 'called' }];
+                const data = event.data || event;
+                const toolName = data.tool || event.tool;
+                const status = (data.status || event.status || 'called') as ToolStatus;
+                const toolCallId = data.toolCallId || data.id || `tc-${toolName}-${Date.now()}`;
+                if (toolName) {
+                  upsertTool(toolCallId, {
+                    tool: toolName,
+                    status,
+                    args: data.args,
+                    result: data.result,
+                    error: data.error,
+                    description: data.description,
+                  });
+                }
+                break;
+              }
+
+              case 'subagent_event': {
+                setStatusMessage('');
+                const ev = event.event || '';
+                const data = event.data || {};
+                const subagentId = event.subagentId || '';
+                // Stream subagent text/reasoning into the parent thought panel so
+                // the UI keeps moving while a delegated agent is running.
+                if ((ev === 'delta' || ev === 'reasoning' || ev === 'reasoning_start')
+                    && typeof data.text === 'string' && data.text) {
+                  accReasoning += data.text;
+                  setStreamReasoning(accReasoning);
+                } else if (ev === 'tool_call') {
+                  const toolName = data.tool || data.name || 'tool';
+                  const toolCallId = data.toolCallId || data.id || `sub-tc-${Date.now()}`;
+                  upsertTool(toolCallId, {
+                    tool: toolName,
+                    status: 'called',
+                    args: data.args,
+                    description: data.description,
+                    subagentId,
+                    nested: true,
+                  });
+                } else if (ev === 'tool_result') {
+                  const toolCallId = data.toolCallId || data.id || '';
+                  if (toolCallId) {
+                    const existing = accTools.find(t => t.id === toolCallId);
+                    if (existing) {
+                      upsertTool(toolCallId, {
+                        tool: existing.tool,
+                        status: data.error ? 'error' : 'completed',
+                        result: data.result,
+                        error: data.error,
+                      });
+                    }
                   }
-                  setStreamTools([...accTools]);
                 }
                 break;
               }
@@ -353,28 +697,9 @@ export function CloudChat({ engine }: CloudChatProps) {
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className="max-w-[80%]">
-              {/* Reasoning + tools */}
-              {msg.role === 'assistant' && (msg.reasoning || msg.toolCalls?.length) && (
-                <div className="mb-1.5 rounded-lg border border-gray-100 bg-gray-50/80 overflow-hidden">
-                  <button
-                    className="w-full px-3 py-1.5 text-left text-xs text-gray-400 font-medium"
-                  >
-                    Thought process
-                  </button>
-                  <div className="px-3 pb-2 space-y-1">
-                    {msg.reasoning && (
-                      <div className="max-h-24 overflow-y-auto text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
-                        {msg.reasoning}
-                      </div>
-                    )}
-                    {msg.toolCalls?.map((t, ti) => (
-                      <div key={ti} className="flex items-center gap-1.5 text-xs text-gray-500">
-                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'completed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                        {humanizeToolName(t.tool)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {/* Reasoning + tools (chain-of-thought with delegation rectangles) */}
+              {msg.role === 'assistant' && (
+                <ThoughtBlock reasoning={msg.reasoning} toolCalls={msg.toolCalls} />
               )}
               <div className={`px-3.5 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
                 msg.role === 'user'
@@ -401,24 +726,11 @@ export function CloudChat({ engine }: CloudChatProps) {
           <div className="flex justify-start">
             <div className="max-w-[80%]">
               {(isReasoning || streamReasoning || streamTools.length > 0) && (
-                <div className="mb-1.5 rounded-lg border border-gray-100 bg-gray-50/80 overflow-hidden">
-                  <div className="px-3 py-1.5 text-xs text-gray-400 font-medium animate-pulse">
-                    Thinking...
-                  </div>
-                  <div className="px-3 pb-2 space-y-1">
-                    {(isReasoning || streamReasoning) && (
-                      <div className="max-h-24 overflow-y-auto text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
-                        {streamReasoning || '...'}
-                      </div>
-                    )}
-                    {streamTools.map((t, ti) => (
-                      <div key={ti} className="flex items-center gap-1.5 text-xs text-gray-500">
-                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'completed' ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
-                        {humanizeToolName(t.tool)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <ThoughtBlock
+                  reasoning={streamReasoning || (isReasoning ? '...' : undefined)}
+                  toolCalls={streamTools}
+                  isStreaming
+                />
               )}
               {streamText && (
                 <div className="bg-gray-100 rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm whitespace-pre-wrap text-gray-800">

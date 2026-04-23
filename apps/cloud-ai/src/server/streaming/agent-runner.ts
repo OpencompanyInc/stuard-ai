@@ -10,6 +10,7 @@ import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
 import { computeBudget, estimateTokens } from '../../memory/token-budget';
 import {
+  compactHistory,
   emergencyTruncate,
   generateMidTurnSummary,
   getRecentWithinBudget,
@@ -379,18 +380,32 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       let cumulativeInputTokens = 0;
       let currentTurnStartIndex = 0;
       let midTurnCompacted = false;
+      // Halt-and-resume compaction: when onStepFinish detects tokens exceed
+      // the budget threshold we abort the stream, compact, and re-stream.
+      let needsCompaction = false;
+      let compactionAbort: AbortController | null = null;
+      const MAX_COMPACTION_ROUNDS = 3;
+      let compactionRound = 0;
+      // Accumulated messages from the current stream for compaction
+      let streamAccumulatedMessages: any[] = [];
       // Mastra's `activeTools` controls which tools the LLM sees in its schema.
       // The Agent is constructed with the FULL tool universe so execution never
       // fails with "Tool X not found", but we limit the LLM to the lean set.
       const activeToolNames: string[] | undefined = (agent as any).__activeToolNames;
-      const streamOptions: any = {
+      const buildStreamOptions = (): any => ({
         maxSteps: maxToolSteps,
-        abortSignal: abortController.signal,
+        ...(Object.keys(providerOpts).length > 0 ? { providerOptions: { ...providerOpts } } : {}),
+        abortSignal: compactionAbort?.signal ?? abortController.signal,
         ...(activeToolNames ? { activeTools: activeToolNames } : {}),
         prepareStep: async ({ messages, stepNumber }: any) => {
           if (!Array.isArray(messages) || stepNumber <= 1 || midTurnCompacted) {
+            // Snapshot messages for potential compaction on halt
+            streamAccumulatedMessages = [...messages];
             return {};
           }
+
+          // Snapshot messages for potential compaction on halt
+          streamAccumulatedMessages = [...messages];
 
           const estimate = estimateTokens(messages as any[]);
           if (estimate.totalTokens < budget.historyBudget * 0.85) {
@@ -455,12 +470,28 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             trigger: 'step_finish',
             stepNumber: finishedSteps.length,
           });
+
+          // Halt-and-resume compaction: if cumulative prompt tokens exceed the
+          // budget threshold, flag compaction and abort the current stream so
+          // the outer loop can compact and re-stream.
+          if (
+            !needsCompaction &&
+            compactionRound < MAX_COMPACTION_ROUNDS &&
+            cumulativeInputTokens > budget.historyBudget * 0.85
+          ) {
+            needsCompaction = true;
+            console.log(`[compactor] Halt-and-resume triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
+            compactionAbort?.abort();
+          }
         },
-      };
+      });
 
       // Enable thinking/reasoning streams for supported providers.
       const reasoningLevel: 'none' | 'low' | 'medium' | 'high' =
         (['none', 'low', 'medium', 'high'].includes(message.reasoningLevel || '') ? message.reasoningLevel : 'high') as any;
+
+      // Build provider options as a standalone object — merged into buildStreamOptions()
+      const providerOpts: Record<string, any> = {};
 
       // ---------- Google Gemini thinking ----------
       const isGemini3 = chosenModelId?.includes('google/gemini-3');
@@ -472,23 +503,17 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           medium: 8192,
           high: 24576,
         };
-        streamOptions.providerOptions = {
-          ...(streamOptions.providerOptions || {}),
-          google: {
-            thinkingConfig: {
-              thinkingBudget: gemini25Budget[reasoningLevel],
-              includeThoughts: reasoningLevel !== 'none',
-            },
+        providerOpts.google = {
+          thinkingConfig: {
+            thinkingBudget: gemini25Budget[reasoningLevel],
+            includeThoughts: reasoningLevel !== 'none',
           },
         };
       } else if (isGemini3 && reasoningLevel !== 'none') {
-        streamOptions.providerOptions = {
-          ...(streamOptions.providerOptions || {}),
-          google: {
-            thinkingConfig: {
-              thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
-              includeThoughts: true,
-            },
+        providerOpts.google = {
+          thinkingConfig: {
+            thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
+            includeThoughts: true,
           },
         };
       }
@@ -496,11 +521,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // ---------- Anthropic thinking ----------
       if (chosenModelId?.includes('anthropic/')) {
         if (reasoningLevel === 'none') {
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            anthropic: {
-              thinking: { type: 'disabled' },
-            },
+          providerOpts.anthropic = {
+            thinking: { type: 'disabled' },
           };
         } else {
           const anthropicBudget: Record<string, number | undefined> = {
@@ -509,14 +531,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             high: undefined, // no cap
           };
           const budgetTokens = anthropicBudget[reasoningLevel];
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            anthropic: {
-              sendReasoning: true,
-              thinking: budgetTokens
-                ? { type: 'enabled', budgetTokens }
-                : { type: 'enabled' },
-            },
+          providerOpts.anthropic = {
+            sendReasoning: true,
+            thinking: budgetTokens
+              ? { type: 'enabled', budgetTokens }
+              : { type: 'enabled' },
           };
         }
       }
@@ -532,16 +551,13 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           const clampedEffort = effortLevels.indexOf(reasoningLevel) > effortLevels.indexOf(maxEffort)
             ? maxEffort
             : reasoningLevel;
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            openai: {
-              reasoningEffort: clampedEffort,
-              // Responses API: expose reasoning summaries as streaming chunks
-              // GPT-5.4 supports 'detailed' summaries for richer reasoning output
-              reasoningSummary: clampedEffort !== 'none'
-                ? (/^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto')
-                : undefined,
-            },
+          providerOpts.openai = {
+            reasoningEffort: clampedEffort,
+            // Responses API: expose reasoning summaries as streaming chunks
+            // GPT-5.4 supports 'detailed' summaries for richer reasoning output
+            reasoningSummary: clampedEffort !== 'none'
+              ? (/^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto')
+              : undefined,
           };
         }
       }
@@ -553,25 +569,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         if (supportsReasoning && reasoningLevel !== 'none') {
           // xAI Chat API only supports 'low' | 'high' (not 'medium' or 'none')
           const xaiEffort = reasoningLevel === 'low' ? 'low' : 'high';
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            xai: { reasoningEffort: xaiEffort },
-          };
+          providerOpts.xai = { reasoningEffort: xaiEffort };
         }
       }
 
       // ---------- DeepSeek thinking ----------
       if (chosenModelId?.includes('deepseek/')) {
         if (reasoningLevel === 'none') {
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            deepseek: { thinking: { type: 'disabled' } },
-          };
+          providerOpts.deepseek = { thinking: { type: 'disabled' } };
         } else {
-          streamOptions.providerOptions = {
-            ...(streamOptions.providerOptions || {}),
-            deepseek: { thinking: { type: 'enabled' } },
-          };
+          providerOpts.deepseek = { thinking: { type: 'enabled' } };
         }
       }
 
@@ -586,12 +593,21 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             ? [{ role: 'assistant', content: fullText || 'I tried to use a tool.' },
                { role: 'user', content: `[System: Tool call failed] ${toolErrorHistory[toolErrorHistory.length - 1]}. Please use only the tools available to you. Do NOT invent or guess tool names.` }]
             : undefined;
-          const input = buildInput(extraMessages) as any;
+          let input = buildInput(extraMessages) as any;
           currentTurnStartIndex = Array.isArray(input) ? input.length : 1;
           midTurnCompacted = false;
+          needsCompaction = false;
+          streamAccumulatedMessages = [];
+
+          // Create per-stream abort controller that chains to the main one
+          compactionAbort = new AbortController();
+          // If the main abort fires, also abort the compaction controller
+          const onMainAbort = () => compactionAbort?.abort();
+          abortController.signal.addEventListener('abort', onMainAbort, { once: true });
 
           // Get stream result from Mastra
           console.log(`[perf] agent.stream() called at +${Date.now() - _rt0}ms`);
+          const streamOptions = buildStreamOptions();
           const streamResult: any = await agent.stream(input, streamOptions);
           console.log(`[perf] agent.stream() returned at +${Date.now() - _rt0}ms`);
 
@@ -634,6 +650,105 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             }
             if (streamResult?.usage) {
               usage = normalizeUsage(streamResult.usage);
+            }
+          }
+
+          // Clean up the chain listener
+          abortController.signal.removeEventListener('abort', onMainAbort);
+
+          // ── Halt-and-resume compaction check ──
+          // If onStepFinish flagged compaction, compact and re-stream
+          if (needsCompaction && !abortController.signal.aborted && compactionRound < MAX_COMPACTION_ROUNDS) {
+            compactionRound++;
+            console.log(`[compactor] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
+
+            // Show compacting status in chat
+            send(ws, { type: 'progress', event: 'delta', data: { text: '\n\n⏳ *Compacting context…*\n\n' } });
+            send(ws, {
+              type: 'progress',
+              event: 'usage_update',
+              data: {
+                promptTokens: cumulativeInputTokens,
+                completionTokens: 0,
+                totalTokens: cumulativeInputTokens,
+                contextWindow: budget.contextWindow,
+                modelId: chosenModelId || model,
+                compacting: true,
+              },
+            });
+
+            try {
+              // Use the messages snapshot from prepareStep (includes tool results
+              // accumulated during the current turn)
+              const messagesToCompact = streamAccumulatedMessages.length > 0
+                ? streamAccumulatedMessages
+                : (Array.isArray(input) ? [...input] : [{ role: 'user', content: input }]);
+
+              const compacted = await compactHistory(messagesToCompact, chosenModelId || model);
+              const postEstimate = estimateTokens(compacted as any[]);
+              console.log(`[compactor] Compacted: ${cumulativeInputTokens} -> ${postEstimate.totalTokens} tokens`);
+
+              // Reset and rebuild input from compacted messages
+              // Override the buildInput to use the compacted messages directly
+              input = compacted;
+              currentTurnStartIndex = compacted.length;
+              midTurnCompacted = true;
+              cumulativeInputTokens = postEstimate.totalTokens;
+              needsCompaction = false;
+              streamAccumulatedMessages = [];
+
+              send(ws, {
+                type: 'progress',
+                event: 'usage_update',
+                data: {
+                  promptTokens: postEstimate.totalTokens,
+                  completionTokens: 0,
+                  totalTokens: postEstimate.totalTokens,
+                  contextWindow: budget.contextWindow,
+                  modelId: chosenModelId || model,
+                  compacted: true,
+                },
+              });
+
+              // Re-stream with compacted input
+              compactionAbort = new AbortController();
+              const onMainAbort2 = () => compactionAbort?.abort();
+              abortController.signal.addEventListener('abort', onMainAbort2, { once: true });
+              needsCompaction = false;
+
+              console.log(`[perf] agent.stream() (compacted) called at +${Date.now() - _rt0}ms`);
+              const compactedStreamOptions = buildStreamOptions();
+              const compactedStreamResult: any = await agent.stream(input, compactedStreamOptions);
+              console.log(`[perf] agent.stream() (compacted) returned at +${Date.now() - _rt0}ms`);
+
+              const compactedStream = compactedStreamResult?.fullStream || compactedStreamResult;
+              if (compactedStream && typeof compactedStream[Symbol.asyncIterator] === 'function') {
+                for await (const chunk of compactedStream) {
+                  if (chunk?.type === 'finish') {
+                    const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                    if (finishUsage) {
+                      usage = normalizeUsage({
+                        ...finishUsage,
+                        providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                      });
+                    }
+                  }
+                  const delta = handleStreamChunk(ws, chunk, send);
+                  if (delta) fullText += delta;
+                }
+              } else if (compactedStreamResult?.text) {
+                fullText += compactedStreamResult.text;
+                send(ws, { type: 'progress', event: 'delta', data: { text: compactedStreamResult.text } });
+                if (compactedStreamResult?.usage) usage = normalizeUsage(compactedStreamResult.usage);
+              }
+
+              abortController.signal.removeEventListener('abort', onMainAbort2);
+            } catch (compactError: any) {
+              if (compactError?.name === 'AbortError' || abortController.signal.aborted) {
+                throw compactError;
+              }
+              console.warn('[compactor] Halt-and-resume compaction failed:', compactError);
+              // Continue with whatever we have
             }
           }
 
@@ -940,7 +1055,13 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       activeControllers.delete(ws);
       if (requestId) { try { delete (ws as any)[`__abort_${requestId}`]; } catch { } }
     }
-  }, { ...inheritedSecrets, ...(skillsSecret ? { __skills: skillsSecret } : {}), userId, conversationId });
+    // __chatWs is the primary response channel — the WS that streams text
+    // deltas / tool events back to the end-user's UI. For desktop chats this
+    // is the same as the bridge; for VM-agent chats the bridge is the
+    // desktop while __chatWs is the VM WS (which relays back through
+    // Python → vm-agent.ts SSE → the website/desktop VM chat UI).
+    // Delegated subagents use it to emit subagent_event to the right socket.
+  }, { ...inheritedSecrets, ...(skillsSecret ? { __skills: skillsSecret } : {}), userId, conversationId, __chatWs: ws });
 
   return resultText ? { text: resultText } : null;
 }

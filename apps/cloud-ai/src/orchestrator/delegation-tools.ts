@@ -155,10 +155,14 @@ async function runDelegateTask(
   bridgeSecrets: Record<string, any> | undefined,
   parentModelTier: string | undefined,
   parentModelId: string | undefined,
+  chatWs: any,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const isIntegration = !['browser', 'file_ops', 'workflow'].includes(name);
-  const kind = isIntegration ? 'integration' as const : name as 'browser' | 'file_ops' | 'workflow';
+  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders'] as const;
+  const isIntegration = !STATIC_KINDS.includes(name as any);
+  const kind = isIntegration
+    ? 'integration' as const
+    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   writeLog('delegate_start', {
@@ -248,6 +252,7 @@ async function runDelegateTask(
     modelId: parentModelId,
     bridgeWs: bridgeWs as any,
     bridgeSecrets,
+    chatWs,
     onQuestion,
   });
 
@@ -292,6 +297,7 @@ export const delegate = createTool({
     '  browser     — web browsing, form filling, page scraping, screenshots\n' +
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
+    '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +
@@ -325,6 +331,9 @@ export const delegate = createTool({
     const bridgeSecrets = getBridgeSecrets();
     const parentModelTier = bridgeSecrets?.__modelTier as string | undefined;
     const parentModelId = bridgeSecrets?.__modelId as string | undefined;
+    // Primary chat WS (stashed by runAgent for the VM-agent flow where bridge
+    // and chat are different sockets). Falls back to bridgeWs downstream.
+    const chatWs = (bridgeSecrets as any)?.__chatWs;
     const preparedTasks: PreparedDelegateTask[] = [];
 
     // Validate all subagent names upfront
@@ -350,7 +359,7 @@ export const delegate = createTool({
 
     if (preparedTasks.length === 1) {
       // Single task — return flat result (backwards-compatible shape)
-      const result = await runDelegateTask(preparedTasks[0], 0, bridgeWs, bridgeSecrets, parentModelTier, parentModelId);
+      const result = await runDelegateTask(preparedTasks[0], 0, bridgeWs, bridgeSecrets, parentModelTier, parentModelId, chatWs);
       const { index: _index, ...rest } = result;
       return rest;
     }
@@ -364,7 +373,7 @@ export const delegate = createTool({
 
     const results = await Promise.all(
       preparedTasks.map((task, index) =>
-        runDelegateTask(task, index, bridgeWs, bridgeSecrets, parentModelTier, parentModelId),
+        runDelegateTask(task, index, bridgeWs, bridgeSecrets, parentModelTier, parentModelId, chatWs),
       ),
     );
 

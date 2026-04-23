@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { isRedundantStreamingUpdate, mergeStreamingText } from '../utils/streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import 'katex/dist/katex.min.css';
-import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send } from 'lucide-react';
+import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
@@ -1129,6 +1129,240 @@ const CollapsibleToolGroup: React.FC<{
   );
 };
 
+// Tool names that represent delegation to a subagent — rendered as a distinct rectangle card
+// so long-running delegated work is easy to track at a glance.
+const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'deploy_subagent']);
+
+function resolveToolName(tool: ToolCall): string {
+  return tool.tool === 'execute_tool' && tool.args?.tool_name
+    ? String(tool.args.tool_name)
+    : tool.tool;
+}
+
+function isDelegationToolCall(tool: ToolCall): boolean {
+  return DELEGATION_TOOL_NAMES.has(resolveToolName(tool));
+}
+
+type DelegationTask = { subagent: string; instruction?: string };
+
+function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
+  const args = (tool.args || {}) as Record<string, any>;
+  // `delegate` uses args.tasks[] with {subagent, instruction}
+  if (Array.isArray(args.tasks) && args.tasks.length > 0) {
+    return args.tasks.map((t: any) => ({
+      subagent: String(t?.subagent ?? 'subagent'),
+      instruction: typeof t?.instruction === 'string' ? t.instruction : undefined,
+    }));
+  }
+  // `deploy_subagent` / `deploy_headless_agent` — flat args
+  const kind = args.subagent || args.kind || args.agent || args.agent_kind || 'subagent';
+  const instruction = args.objective || args.task || args.prompt || args.instruction;
+  return [{
+    subagent: String(kind),
+    instruction: typeof instruction === 'string' ? instruction : undefined,
+  }];
+}
+
+const DelegationCard: React.FC<{
+  step: AssistantTraceStepData;
+  childSteps: AssistantTraceStepData[];
+  isLast: boolean;
+}> = ({ step, childSteps, isLast }) => {
+  const tool = step.tool!;
+  const status = step.status;
+  const tasks = extractDelegationTasks(tool);
+  const isRunning = status === 'active';
+  const isError = status === 'error';
+  const isComplete = status === 'complete';
+
+  const toolChildCount = childSteps.filter(c => c.kind === 'tool').length;
+
+  // Auto-expand while running so progress is visible, auto-collapse once done.
+  const [expanded, setExpanded] = useState(isRunning || isError);
+  const prevRunningRef = useRef(isRunning);
+  useEffect(() => {
+    if (prevRunningRef.current && !isRunning && !isError) {
+      setExpanded(false);
+    }
+    prevRunningRef.current = isRunning;
+  }, [isRunning, isError]);
+
+  // Live elapsed ticker while running
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+  const elapsedSec = tool.timestamp ? Math.max(0, Math.floor((now - tool.timestamp) / 1000)) : 0;
+
+  const agentLabel = tasks.length === 1
+    ? `${humanizeToolName(tasks[0].subagent)} agent`
+    : `${tasks.length} agents`;
+
+  const statusText = isError
+    ? 'Failed'
+    : isRunning
+      ? (toolChildCount > 0 ? `Working · ${toolChildCount} action${toolChildCount === 1 ? '' : 's'}` : 'Working…')
+      : `Done · ${toolChildCount} action${toolChildCount === 1 ? '' : 's'}`;
+
+  const borderColor = isError
+    ? 'color-mix(in srgb, var(--destructive) 35%, transparent)'
+    : isRunning
+      ? 'color-mix(in srgb, var(--primary) 35%, transparent)'
+      : 'color-mix(in srgb, var(--foreground-muted) 18%, transparent)';
+
+  return (
+    <div className={clsx('w-full', isLast ? 'mb-0' : 'mb-4')}>
+      <div
+        className="rounded-xl border overflow-hidden"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
+          borderColor,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors"
+        >
+          <div
+            className="mt-0.5 shrink-0 flex h-5 w-5 items-center justify-center rounded-md"
+            style={{
+              backgroundColor: isRunning
+                ? 'color-mix(in srgb, var(--primary) 18%, transparent)'
+                : 'color-mix(in srgb, var(--sidebar-item-hover) 70%, transparent)',
+            }}
+          >
+            <Users
+              className="h-3 w-3"
+              style={{
+                color: isRunning
+                  ? 'color-mix(in srgb, var(--primary) 95%, transparent)'
+                  : 'color-mix(in srgb, var(--foreground) 65%, transparent)',
+              }}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className="text-[12px] font-medium"
+                style={{ color: 'color-mix(in srgb, var(--foreground) 82%, transparent)' }}
+              >
+                {isRunning ? (
+                  <Shimmer as="span" duration={2} spread={3}>{agentLabel}</Shimmer>
+                ) : agentLabel}
+              </span>
+              <span
+                className="text-[10px] tabular-nums"
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted) 85%, transparent)' }}
+              >
+                {statusText}
+                {elapsedSec > 0 ? ` · ${formatDuration(elapsedSec)}` : ''}
+              </span>
+            </div>
+            {tasks.length === 1 && tasks[0].instruction ? (
+              <div
+                className="mt-0.5 text-[11px] leading-snug line-clamp-2"
+                style={{ color: 'color-mix(in srgb, var(--foreground) 58%, transparent)' }}
+                title={tasks[0].instruction}
+              >
+                {tasks[0].instruction}
+              </div>
+            ) : null}
+            {tasks.length > 1 ? (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {tasks.map((t, i) => (
+                  <span
+                    key={`${t.subagent}-${i}`}
+                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px]"
+                    style={{
+                      backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 65%, transparent)',
+                      color: 'color-mix(in srgb, var(--foreground) 70%, transparent)',
+                    }}
+                    title={t.instruction}
+                  >
+                    {humanizeToolName(t.subagent)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+            {isRunning ? (
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                style={{ color: 'color-mix(in srgb, var(--primary) 90%, transparent)' }}
+              />
+            ) : isError ? (
+              <XCircle className="h-3.5 w-3.5 text-red-500" />
+            ) : isComplete ? (
+              <CheckCircle
+                className="h-3.5 w-3.5"
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)' }}
+              />
+            ) : null}
+            <ChevronRight
+              className={clsx(
+                'h-3.5 w-3.5 transition-transform duration-200',
+                expanded && 'rotate-90',
+              )}
+              style={{ color: 'color-mix(in srgb, var(--foreground-muted) 55%, transparent)' }}
+            />
+          </div>
+        </button>
+
+        <AnimatePresence initial={false}>
+          {expanded && childSteps.length > 0 ? (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <div
+                className="border-t px-3 pt-2.5 pb-1"
+                style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 12%, transparent)' }}
+              >
+                {childSteps.map((child, idx) => (
+                  <ChainOfThoughtStep
+                    key={child.id}
+                    status={child.status}
+                    isLast={idx === childSteps.length - 1}
+                    label={
+                      child.status === 'active' ? (
+                        <Shimmer as="span" duration={2} spread={3}>{child.label}</Shimmer>
+                      ) : child.label
+                    }
+                  >
+                    {child.kind === 'reasoning' && child.content ? (
+                      <div
+                        className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                        style={{
+                          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                          color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                        }}
+                      >
+                        {child.content}
+                      </div>
+                    ) : null}
+                    {child.kind === 'tool' && child.tool ? (
+                      <ToolTraceContent tool={child.tool} />
+                    ) : null}
+                  </ChainOfThoughtStep>
+                ))}
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1606,16 +1840,37 @@ const AssistantTracePanel: React.FC<{
 
       <ChainOfThoughtContent>
         {(() => {
-          // Build display items: group consecutive same-tool calls, separate nested vs orchestrator
+          // Build display items: group consecutive same-tool calls, separate nested vs orchestrator,
+          // and wrap delegation tool calls with their subagent children into a single rectangle card.
           type DisplayItem =
             | { type: 'step'; step: AssistantTraceStepData; idx: number; nested: boolean }
-            | { type: 'tool-group'; toolName: string; steps: { step: AssistantTraceStepData; idx: number }[]; nested: boolean };
+            | { type: 'tool-group'; toolName: string; steps: { step: AssistantTraceStepData; idx: number }[]; nested: boolean }
+            | { type: 'delegation'; step: AssistantTraceStepData; idx: number; children: AssistantTraceStepData[]; lastChildIdx: number };
 
           const items: DisplayItem[] = [];
           let i = 0;
           while (i < traceSteps.length) {
             const step = traceSteps[i];
             const isNested = Boolean(step.nested);
+
+            // Top-level delegation tool: absorb the subsequent run of nested steps as its children.
+            if (!isNested && step.kind === 'tool' && step.tool && isDelegationToolCall(step.tool)) {
+              const children: AssistantTraceStepData[] = [];
+              let j = i + 1;
+              while (j < traceSteps.length && traceSteps[j].nested) {
+                children.push(traceSteps[j]);
+                j++;
+              }
+              items.push({
+                type: 'delegation',
+                step,
+                idx: i,
+                children,
+                lastChildIdx: j - 1,
+              });
+              i = j;
+              continue;
+            }
 
             // Try to group consecutive tool steps with the same tool name and same nesting level
             if (step.kind === 'tool' && step.tool) {
@@ -1643,15 +1898,18 @@ const AssistantTracePanel: React.FC<{
             }
           }
 
-          // Group consecutive items by nested flag for indentation
+          // Group consecutive items by nested flag for indentation (delegation items render top-level)
+          const itemNested = (item: DisplayItem): boolean =>
+            item.type === 'delegation' ? false : item.nested;
           type NestGroup = { nested: boolean; items: DisplayItem[] };
           const nestGroups: NestGroup[] = [];
           for (const item of items) {
+            const nested = itemNested(item);
             const last = nestGroups[nestGroups.length - 1];
-            if (last && last.nested === item.nested) {
+            if (last && last.nested === nested) {
               last.items.push(item);
             } else {
-              nestGroups.push({ nested: item.nested, items: [item] });
+              nestGroups.push({ nested, items: [item] });
             }
           }
 
@@ -1663,6 +1921,17 @@ const AssistantTracePanel: React.FC<{
                   toolName={item.toolName}
                   steps={item.steps}
                   totalSteps={traceSteps.length}
+                />
+              );
+            }
+            if (item.type === 'delegation') {
+              const lastTraceIdx = item.children.length > 0 ? item.lastChildIdx : item.idx;
+              return (
+                <DelegationCard
+                  key={item.step.id}
+                  step={item.step}
+                  childSteps={item.children}
+                  isLast={lastTraceIdx === traceSteps.length - 1}
                 />
               );
             }
