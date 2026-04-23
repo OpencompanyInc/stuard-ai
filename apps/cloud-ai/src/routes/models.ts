@@ -94,8 +94,17 @@ interface OpenRouterApiModel {
   expiration_date?: string | null;
 }
 
+function isExpiredOpenRouterModel(expirationDate?: string | null): boolean {
+  if (!expirationDate) return false;
+  const expiresAt = Date.parse(expirationDate);
+  if (Number.isNaN(expiresAt)) return false;
+  return expiresAt <= Date.now();
+}
+
 function normalizeOpenRouterModel(raw: OpenRouterApiModel): NormalizedModel | null {
-  if (!raw?.id || raw.expiration_date) return null; // skip deprecated
+  // OpenRouter sets expiration dates on temporary promos/free variants.
+  // Keep models that expire in the future so they remain searchable/selectable.
+  if (!raw?.id || isExpiredOpenRouterModel(raw.expiration_date)) return null;
   const inputMods = Array.isArray(raw.architecture?.input_modalities) ? raw.architecture!.input_modalities : ['text'];
   const outputMods = Array.isArray(raw.architecture?.output_modalities) ? raw.architecture!.output_modalities : ['text'];
   if (!outputMods.includes('text')) return null; // only chat models
@@ -132,19 +141,8 @@ async function fetchOpenRouterModels(): Promise<NormalizedModel[]> {
     const json = await resp.json() as { data: OpenRouterApiModel[] };
     if (!Array.isArray(json?.data)) return [];
 
-    // First pass: collect all paid model base IDs
-    const paidIds = new Set<string>();
-    for (const raw of json.data) {
-      if (!raw.id.endsWith(':free')) paidIds.add(raw.id);
-    }
-
     const models: NormalizedModel[] = [];
     for (const raw of json.data) {
-      // Skip :free variant only if a paid version of the same model exists
-      if (raw.id.endsWith(':free')) {
-        const baseId = raw.id.replace(/:free$/, '');
-        if (paidIds.has(baseId)) continue;
-      }
       const m = normalizeOpenRouterModel(raw);
       if (m) models.push(m);
     }

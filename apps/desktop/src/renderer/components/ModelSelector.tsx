@@ -75,6 +75,22 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
   return out;
 }
 
+function stripVariantSuffix(modelId: string): string {
+  return String(modelId || '').replace(/:free$/i, '');
+}
+
+function dedupeBrowseModels(models: ModelMeta[]): ModelMeta[] {
+  const seen = new Set<string>();
+  const out: ModelMeta[] = [];
+  for (const model of models) {
+    const familyId = stripVariantSuffix(model.id);
+    if (seen.has(familyId)) continue;
+    seen.add(familyId);
+    out.push(model);
+  }
+  return out;
+}
+
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   selectedModelId,
   onSelectModel,
@@ -173,12 +189,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     const today = new Date();
     const seedDay = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
+    const browseModels = dedupeBrowseModels(filteredModels);
+
     const byTier = {
       // Fast is explicitly "non-reasoning" (per UX spec)
-      fast: filteredModels.filter(m => m.category === 'fast' && !m.isReasoning),
-      balanced: filteredModels.filter(m => m.category === 'balanced'),
-      smart: filteredModels.filter(m => m.category === 'smart'),
-      research: filteredModels.filter(m => m.category === 'research'),
+      fast: browseModels.filter(m => m.category === 'fast' && !m.isReasoning),
+      balanced: browseModels.filter(m => m.category === 'balanced'),
+      smart: browseModels.filter(m => m.category === 'smart'),
+      research: browseModels.filter(m => m.category === 'research'),
     } satisfies Record<'fast' | 'balanced' | 'smart' | 'research', ModelMeta[]>;
 
     const build = (tier: 'fast' | 'balanced' | 'smart' | 'research') => {
