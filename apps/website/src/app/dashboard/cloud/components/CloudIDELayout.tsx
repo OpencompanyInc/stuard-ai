@@ -49,7 +49,7 @@ import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
 import { useModelRegistry, type ModelMeta } from '@/hooks/useModelRegistry';
 import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/ui';
-import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../../../shared/chat-ui/streamState';
+import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate, upsertStatusChunk } from '../../../../../../../shared/chat-ui/streamState';
 import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMerge';
 import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';
 import { AskUserPrompt } from '../../../../../../../shared/chat-ui/AskUserPrompt';
@@ -798,6 +798,25 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 const d = event.data || {};
                 if (ev === 'delta' || ev === 'text') pushText(d.text || '');
                 else if (ev === 'reasoning' || ev === 'reasoning_start') pushReasoning(d.text || '');
+                else if (ev === 'compacting') {
+                  const phase = d.phase === 'done' ? 'done' : 'start';
+                  const round = typeof d.round === 'number' ? d.round : undefined;
+                  const id = round != null ? `compacting-${round}` : 'compacting';
+                  accChunks = upsertStatusChunk(accChunks, {
+                    type: 'status',
+                    id,
+                    variant: 'compacting',
+                    label: phase === 'done' ? 'Compacted context' : 'Compacting context',
+                    state: phase === 'done' ? 'complete' : 'active',
+                    meta: {
+                      round,
+                      maxRounds: typeof d.maxRounds === 'number' ? d.maxRounds : undefined,
+                      tokensBefore: typeof d.tokensBefore === 'number' ? d.tokensBefore : undefined,
+                      tokensAfter: typeof d.tokensAfter === 'number' ? d.tokensAfter : undefined,
+                    },
+                  });
+                  setStreamChunks([...accChunks]);
+                }
                 break;
               }
 
@@ -844,6 +863,25 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 const subagentId = event.subagentId || subData.subagentId || '';
                 if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
                   pushReasoning(subData.text, true);
+                } else if (subEvent === 'compacting') {
+                  const phase = subData.phase === 'done' ? 'done' : 'start';
+                  const round = typeof subData.round === 'number' ? subData.round : undefined;
+                  const id = `compacting-${subagentId || 'sub'}-${round ?? 'x'}`;
+                  accChunks = upsertStatusChunk(accChunks, {
+                    type: 'status',
+                    id,
+                    variant: 'compacting',
+                    label: phase === 'done' ? 'Subagent compacted context' : 'Subagent compacting context',
+                    state: phase === 'done' ? 'complete' : 'active',
+                    nested: true,
+                    meta: {
+                      round,
+                      maxRounds: typeof subData.maxRounds === 'number' ? subData.maxRounds : undefined,
+                      tokensBefore: typeof subData.tokensBefore === 'number' ? subData.tokensBefore : undefined,
+                      tokensAfter: typeof subData.tokensAfter === 'number' ? subData.tokensAfter : undefined,
+                    },
+                  });
+                  setStreamChunks([...accChunks]);
                 } else if (subEvent === 'tool_call') {
                   pushTool({
                     id: subData.toolCallId || subData.id || `${subagentId || 'subagent'}-${subData.tool || 'tool'}`,

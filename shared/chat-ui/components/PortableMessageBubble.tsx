@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, ChevronRight, Copy } from 'lucide-react';
+import { Archive, Check, ChevronRight, Copy } from 'lucide-react';
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '../ai-elements/ChainOfThought';
 import { Shimmer } from '../ai-elements/Shimmer';
 import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath } from '../helpers';
@@ -76,12 +76,19 @@ type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
 interface AssistantTraceStepData {
   id: string;
-  kind: 'reasoning' | 'tool';
+  kind: 'reasoning' | 'tool' | 'status';
   label: string;
   status: TraceStatus;
   content?: string;
   tool?: ToolCall;
   nested?: boolean;
+  statusVariant?: 'compacting';
+  statusMeta?: {
+    round?: number;
+    maxRounds?: number;
+    tokensBefore?: number;
+    tokensAfter?: number;
+  };
 }
 
 type RenderBlock =
@@ -359,6 +366,19 @@ function buildTraceSteps(
           status: mapTraceStatus(tc, isStreaming),
           tool: tc,
           nested: isDelegatedToolCall(tc),
+        });
+        return;
+      }
+
+      if (chunk.type === 'status') {
+        steps.push({
+          id: chunk.id || `status-${index}`,
+          kind: 'status',
+          label: chunk.label,
+          status: chunk.state === 'active' ? 'active' : 'complete',
+          nested: chunk.nested,
+          statusVariant: chunk.variant,
+          statusMeta: chunk.meta,
         });
       }
     });
@@ -860,6 +880,45 @@ function getGroupLabel(toolName: string, count: number): string {
   return count === 1 ? entry.singular : entry.plural.replace('{n}', String(count));
 }
 
+function formatTokenCount(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(Math.round(n));
+}
+
+function StatusTraceMeta({
+  meta,
+}: {
+  meta: NonNullable<AssistantTraceStepData['statusMeta']>;
+}) {
+  const { round, maxRounds, tokensBefore, tokensAfter } = meta;
+  const hasRound = typeof round === 'number' && typeof maxRounds === 'number';
+  const hasTokens = typeof tokensBefore === 'number' && tokensBefore > 0;
+  const hasDelta = typeof tokensAfter === 'number' && tokensAfter > 0 && hasTokens;
+  if (!hasRound && !hasTokens) return null;
+
+  return (
+    <div
+      className="rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+        color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+      }}
+    >
+      {hasRound ? (
+        <div>Round {round} of {maxRounds}</div>
+      ) : null}
+      {hasDelta ? (
+        <div>
+          {formatTokenCount(tokensBefore!)} <span className="opacity-60">→</span> {formatTokenCount(tokensAfter!)} tokens
+        </div>
+      ) : hasTokens ? (
+        <div>{formatTokenCount(tokensBefore!)} tokens</div>
+      ) : null}
+    </div>
+  );
+}
+
 function CollapsibleToolGroup({
   toolName,
   steps,
@@ -1068,6 +1127,16 @@ function AssistantTracePanel({
                 );
               }
               const { step, idx } = item;
+              const isStatusStep = step.kind === 'status';
+              const statusLabelNode = isStatusStep ? (
+                <span className="flex items-center gap-1.5">
+                  <Archive
+                    className="h-3 w-3 shrink-0"
+                    style={{ color: 'color-mix(in srgb, var(--foreground-muted) 60%, transparent)' }}
+                  />
+                  <span>{step.label}</span>
+                </span>
+              ) : null;
               return (
                 <ChainOfThoughtStep
                   key={step.id}
@@ -1076,10 +1145,10 @@ function AssistantTracePanel({
                   label={
                     step.status === 'active' ? (
                       <Shimmer as="span" duration={2} spread={3}>
-                        {step.label}
+                        {statusLabelNode || step.label}
                       </Shimmer>
                     ) : (
-                      step.label
+                      statusLabelNode || step.label
                     )
                   }
                 >
@@ -1095,6 +1164,7 @@ function AssistantTracePanel({
                     </div>
                   ) : null}
                   {step.kind === 'tool' && step.tool ? <ToolTraceContent tool={step.tool} /> : null}
+                  {step.kind === 'status' && step.statusMeta ? <StatusTraceMeta meta={step.statusMeta} /> : null}
                 </ChainOfThoughtStep>
               );
             };

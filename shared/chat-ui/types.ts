@@ -23,7 +23,21 @@ export interface ToolCall {
 export type StreamChunk =
   | { type: 'text'; content: string }
   | { type: 'reasoning'; content: string; nested?: boolean }
-  | { type: 'tool'; tool: ToolCall };
+  | { type: 'tool'; tool: ToolCall }
+  | {
+      type: 'status';
+      id: string;
+      variant: 'compacting';
+      label: string;
+      state: 'active' | 'complete';
+      nested?: boolean;
+      meta?: {
+        round?: number;
+        maxRounds?: number;
+        tokensBefore?: number;
+        tokensAfter?: number;
+      };
+    };
 
 export interface Message {
   id: string;

@@ -692,13 +692,13 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
             compactionRound++;
             console.log(`[subagent:${subagentId}] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
 
-            // Show compacting status to client
+            // Show compacting status to client as a shimmering trace step
             emitToClient('compacting', {
+              phase: 'start',
               round: compactionRound,
               maxRounds: MAX_COMPACTION_ROUNDS,
               tokensBefore: cumulativeInputTokens,
             });
-            emitToClient('delta', { text: '\n\n⏳ *Compacting context…*\n\n' });
 
             try {
               const messagesToCompact = streamAccumulatedMessages.length > 0
@@ -708,6 +708,13 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               const compacted = await compactHistory(messagesToCompact, resolvedBudgetModelId);
               const postEstimate = estimateTokens(compacted as any[]);
               console.log(`[subagent:${subagentId}] Compacted: ${cumulativeInputTokens} -> ${postEstimate.totalTokens} tokens`);
+              emitToClient('compacting', {
+                phase: 'done',
+                round: compactionRound,
+                maxRounds: MAX_COMPACTION_ROUNDS,
+                tokensBefore: cumulativeInputTokens,
+                tokensAfter: postEstimate.totalTokens,
+              });
 
               // Update messages for re-stream
               messages = compacted as any[];

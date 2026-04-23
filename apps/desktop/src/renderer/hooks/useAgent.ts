@@ -1637,6 +1637,54 @@ export function useAgent(options?: string | UseAgentOptions) {
                   return { ...t, currentResponse: newResponse, currentStreamChunks: chunks };
                 });
               }
+            } else if (evt.event === 'compacting') {
+              const data = evt.data || {};
+              const phase = data.phase === 'done' ? 'done' : 'start';
+              const round = typeof data.round === 'number' ? data.round : undefined;
+              const maxRounds = typeof data.maxRounds === 'number' ? data.maxRounds : undefined;
+              const tokensBefore = typeof data.tokensBefore === 'number' ? data.tokensBefore : undefined;
+              const tokensAfter = typeof data.tokensAfter === 'number' ? data.tokensAfter : undefined;
+              const id = round != null ? `compacting-${round}` : 'compacting';
+              const label = phase === 'done' ? 'Compacted context' : 'Compacting context';
+
+              updateStreamingTab(t => {
+                const chunks = [...t.currentStreamChunks];
+                const existingIdx = chunks.findIndex(
+                  (ch) => ch.type === 'status' && ch.id === id,
+                );
+                const nextChunk = {
+                  type: 'status' as const,
+                  id,
+                  variant: 'compacting' as const,
+                  label,
+                  state: (phase === 'done' ? 'complete' : 'active') as 'active' | 'complete',
+                  meta: {
+                    round,
+                    maxRounds,
+                    tokensBefore,
+                    tokensAfter,
+                  },
+                };
+                if (existingIdx >= 0) {
+                  const existing = chunks[existingIdx];
+                  if (existing.type === 'status') {
+                    chunks[existingIdx] = {
+                      ...existing,
+                      ...nextChunk,
+                      meta: { ...existing.meta, ...nextChunk.meta },
+                    };
+                  }
+                } else {
+                  chunks.push(nextChunk);
+                }
+                return { ...t, currentStreamChunks: chunks };
+              });
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'responding',
+                statusText: phase === 'done' ? 'Responding…' : 'Compacting context…',
+              }));
+              setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
             } else {
               setState((s) => ({ ...s, status: evt.event }));
             }
@@ -1883,6 +1931,50 @@ export function useAgent(options?: string | UseAgentOptions) {
                 statusText: 'Responding…'
               }));
               setState((s) => ({ ...s, status: 'responding' }));
+            } else if (eventType === 'compacting') {
+              const subagentId = subEvt.subagentId || '';
+              const phase = data.phase === 'done' ? 'done' : 'start';
+              const round = typeof data.round === 'number' ? data.round : undefined;
+              const maxRounds = typeof data.maxRounds === 'number' ? data.maxRounds : undefined;
+              const tokensBefore = typeof data.tokensBefore === 'number' ? data.tokensBefore : undefined;
+              const tokensAfter = typeof data.tokensAfter === 'number' ? data.tokensAfter : undefined;
+              const id = `compacting-${subagentId || 'sub'}-${round ?? 'x'}`;
+              const label = phase === 'done' ? 'Subagent compacted context' : 'Subagent compacting context';
+
+              updateStreamingTab(t => {
+                const chunks = [...t.currentStreamChunks];
+                const existingIdx = chunks.findIndex(
+                  (ch) => ch.type === 'status' && ch.id === id,
+                );
+                const nextChunk = {
+                  type: 'status' as const,
+                  id,
+                  variant: 'compacting' as const,
+                  label,
+                  state: (phase === 'done' ? 'complete' : 'active') as 'active' | 'complete',
+                  nested: true,
+                  meta: { round, maxRounds, tokensBefore, tokensAfter },
+                };
+                if (existingIdx >= 0) {
+                  const existing = chunks[existingIdx];
+                  if (existing.type === 'status') {
+                    chunks[existingIdx] = {
+                      ...existing,
+                      ...nextChunk,
+                      meta: { ...existing.meta, ...nextChunk.meta },
+                    };
+                  }
+                } else {
+                  chunks.push(nextChunk);
+                }
+                return { ...t, currentStreamChunks: chunks };
+              });
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'responding',
+                statusText: phase === 'done' ? 'Responding…' : 'Compacting context…',
+              }));
+              setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
             }
           } else if (msg.type === 'conversation') {
             const cid = msg.conversationId;

@@ -72,6 +72,31 @@ export function appendReasoningChunk(chunks: StreamChunk[], content: string, nes
   return next;
 }
 
+export function upsertStatusChunk(
+  chunks: StreamChunk[],
+  incoming: Extract<StreamChunk, { type: 'status' }>,
+): StreamChunk[] {
+  const next = [...chunks];
+  const index = next.findIndex(
+    (chunk) => chunk.type === 'status' && chunk.id === incoming.id,
+  );
+
+  if (index >= 0) {
+    const existing = next[index];
+    if (existing.type === 'status') {
+      next[index] = {
+        ...existing,
+        ...incoming,
+        meta: { ...existing.meta, ...incoming.meta },
+      };
+    }
+    return next;
+  }
+
+  next.push(incoming);
+  return next;
+}
+
 export function upsertToolCall(toolCalls: ToolCall[], incoming: ToolCall): ToolCall[] {
   const next = [...toolCalls];
   const index = next.findIndex((tool) => toolMatches(tool, incoming));

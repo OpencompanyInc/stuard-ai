@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { isRedundantStreamingUpdate, mergeStreamingText } from '../utils/streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import 'katex/dist/katex.min.css';
-import { ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users } from 'lucide-react';
+import { Archive, ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 
@@ -1026,12 +1026,19 @@ type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
 interface AssistantTraceStepData {
   id: string;
-  kind: 'reasoning' | 'tool';
+  kind: 'reasoning' | 'tool' | 'status';
   label: string;
   status: TraceStatus;
   content?: string;
   tool?: ToolCall;
   nested?: boolean;
+  statusVariant?: 'compacting';
+  statusMeta?: {
+    round?: number;
+    maxRounds?: number;
+    tokensBefore?: number;
+    tokensAfter?: number;
+  };
 }
 
 const TOOL_GROUP_LABELS: Record<string, { singular: string; plural: string }> = {
@@ -1060,6 +1067,41 @@ function getGroupLabel(toolName: string, count: number): string {
   }
   return count === 1 ? entry.singular : entry.plural.replace('{n}', String(count));
 }
+
+function formatTokenCount(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(Math.round(n));
+}
+
+const StatusTraceMeta: React.FC<{
+  meta: NonNullable<AssistantTraceStepData['statusMeta']>;
+}> = ({ meta }) => {
+  const { round, maxRounds, tokensBefore, tokensAfter } = meta;
+  const hasRound = typeof round === 'number' && typeof maxRounds === 'number';
+  const hasTokens = typeof tokensBefore === 'number' && tokensBefore > 0;
+  const hasDelta = typeof tokensAfter === 'number' && tokensAfter > 0 && hasTokens;
+  if (!hasRound && !hasTokens) return null;
+
+  return (
+    <div
+      className="rounded-lg px-3 py-2 text-[11px] leading-relaxed"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+        color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+      }}
+    >
+      {hasRound ? <div>Round {round} of {maxRounds}</div> : null}
+      {hasDelta ? (
+        <div>
+          {formatTokenCount(tokensBefore!)} <span className="opacity-60">→</span> {formatTokenCount(tokensAfter!)} tokens
+        </div>
+      ) : hasTokens ? (
+        <div>{formatTokenCount(tokensBefore!)} tokens</div>
+      ) : null}
+    </div>
+  );
+};
 
 const CollapsibleToolGroup: React.FC<{
   toolName: string;
@@ -1789,6 +1831,19 @@ const AssistantTracePanel: React.FC<{
             tool: tc,
             nested: isDelegatedToolCall(tc),
           });
+          return;
+        }
+
+        if (chunk.type === 'status') {
+          steps.push({
+            id: chunk.id || `status-${index}`,
+            kind: 'status',
+            label: chunk.label,
+            status: chunk.state === 'active' ? 'active' : 'complete',
+            nested: chunk.nested,
+            statusVariant: chunk.variant,
+            statusMeta: chunk.meta,
+          });
         }
       });
 
@@ -1936,6 +1991,15 @@ const AssistantTracePanel: React.FC<{
               );
             }
             const { step, idx } = item;
+            const statusLabelNode = step.kind === 'status' ? (
+              <span className="flex items-center gap-1.5">
+                <Archive
+                  className="h-3 w-3 shrink-0"
+                  style={{ color: 'color-mix(in srgb, var(--foreground-muted) 60%, transparent)' }}
+                />
+                <span>{step.label}</span>
+              </span>
+            ) : null;
             return (
               <ChainOfThoughtStep
                 key={step.id}
@@ -1943,8 +2007,8 @@ const AssistantTracePanel: React.FC<{
                 isLast={idx === traceSteps.length - 1}
                 label={
                   step.status === 'active' ? (
-                    <Shimmer as="span" duration={2} spread={3}>{step.label}</Shimmer>
-                  ) : step.label
+                    <Shimmer as="span" duration={2} spread={3}>{statusLabelNode || step.label}</Shimmer>
+                  ) : (statusLabelNode || step.label)
                 }
               >
                 {step.kind === 'reasoning' && step.content ? (
@@ -1960,6 +2024,9 @@ const AssistantTracePanel: React.FC<{
                 ) : null}
                 {step.kind === 'tool' && step.tool ? (
                   <ToolTraceContent tool={step.tool} />
+                ) : null}
+                {step.kind === 'status' && step.statusMeta ? (
+                  <StatusTraceMeta meta={step.statusMeta} />
                 ) : null}
               </ChainOfThoughtStep>
             );

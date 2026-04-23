@@ -662,8 +662,17 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             compactionRound++;
             console.log(`[compactor] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
 
-            // Show compacting status in chat
-            send(ws, { type: 'progress', event: 'delta', data: { text: '\n\n⏳ *Compacting context…*\n\n' } });
+            // Show compacting as a shimmering trace step in the chain-of-thought panel
+            send(ws, {
+              type: 'progress',
+              event: 'compacting',
+              data: {
+                phase: 'start',
+                round: compactionRound,
+                maxRounds: MAX_COMPACTION_ROUNDS,
+                tokensBefore: cumulativeInputTokens,
+              },
+            });
             send(ws, {
               type: 'progress',
               event: 'usage_update',
@@ -697,6 +706,17 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
               needsCompaction = false;
               streamAccumulatedMessages = [];
 
+              send(ws, {
+                type: 'progress',
+                event: 'compacting',
+                data: {
+                  phase: 'done',
+                  round: compactionRound,
+                  maxRounds: MAX_COMPACTION_ROUNDS,
+                  tokensBefore: cumulativeInputTokens,
+                  tokensAfter: postEstimate.totalTokens,
+                },
+              });
               send(ws, {
                 type: 'progress',
                 event: 'usage_update',
