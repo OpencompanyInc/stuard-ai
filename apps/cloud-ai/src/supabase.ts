@@ -1032,14 +1032,14 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
           .select('plan, current_period_start, current_period_end')
           .eq('user_id', userId)
           .single()
-          .catch(() => ({ data: null }))
+          .then((result) => result, () => ({ data: null }))
       : Promise.resolve({ data: null }),
     supabaseService
       ? supabaseService
           .from('credit_grants')
           .select('source_type, total_credits, remaining_credits, expires_at')
           .eq('user_id', userId)
-          .catch(() => ({ data: null }))
+          .then((result) => result, () => ({ data: null }))
       : Promise.resolve({ data: null }),
   ]);
 
