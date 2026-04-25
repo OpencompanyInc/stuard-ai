@@ -648,28 +648,25 @@ export function openOnboardingWindow() {
     return;
   }
 
-  const WIDTH = 560;
-  const HEIGHT = 720;
+  const { bounds } = screen.getPrimaryDisplay();
 
   onboardingWin = new BrowserWindow({
-    width: WIDTH,
-    height: HEIGHT,
-    minWidth: 480,
-    minHeight: 600,
-    maxWidth: 700,
-    maxHeight: 900,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
     show: false, // Show after ready-to-show for smoother appearance
     frame: false,
     transparent: true,
-    hasShadow: true,
-    resizable: true,
-    movable: true,
-    minimizable: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
     maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: false, // Show in taskbar like a normal window
-    alwaysOnTop: false, // Act like a normal window
-    useContentSize: true,
+    fullscreenable: true,
+    skipTaskbar: false,
+    alwaysOnTop: true, // Cover the taskbar
+    useContentSize: false,
     titleBarStyle: 'hidden',
     webPreferences: {
       preload: getPreloadPath(),
@@ -681,16 +678,13 @@ export function openOnboardingWindow() {
     backgroundColor: "#00000000",
   });
 
+  try { onboardingWin.setAlwaysOnTop(true, 'screen-saver'); } catch {}
+  try { onboardingWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
+
   onboardingWin.setMenu(null);
   if (screenCaptureInvisibleEnabled) {
     try { onboardingWin.setContentProtection(true); } catch {}
   }
-
-  // Center on screen
-  const { workArea } = screen.getPrimaryDisplay();
-  const x = Math.round(workArea.x + (workArea.width - WIDTH) / 2);
-  const y = Math.round(workArea.y + (workArea.height - HEIGHT) / 2);
-  onboardingWin.setPosition(x, y);
 
   // Show when ready for smoother appearance
   onboardingWin.once('ready-to-show', () => {

@@ -205,32 +205,28 @@ function SkipButton({ onClick }: { onClick: () => void }) {
 // CAPABILITY DATA
 // =============================================================================
 
-interface Capability { id: string; icon: LucideIcon; label: string; hook: string; followUp: string; color: string; glow: string }
+interface Capability { id: string; icon: LucideIcon; label: string; line: string; tint: string; ring: string; iconColor: string }
 
 const CAPABILITIES: Capability[] = [
   {
-    id: 'chat', icon: MessageSquare, label: 'Chat',
-    hook: "Ever spent 20 minutes down a Google rabbit hole for something that should've taken 10 seconds?",
-    followUp: "Just ask me. No tabs, no digging — straight answers.",
-    color: 'text-blue-400/80', glow: 'rgba(56,168,255,0.08)',
+    id: 'chat', icon: MessageSquare, label: 'Just ask',
+    line: 'Straight answers, no tabs to dig through.',
+    tint: 'rgba(56,168,255,0.10)', ring: 'rgba(56,168,255,0.22)', iconColor: 'rgba(125,191,255,0.95)',
   },
   {
-    id: 'proactive', icon: Bell, label: 'Proactive Agent',
-    hook: "You know that feeling when you wake up and realize you forgot to send that email? Or missed a deadline because it just... slipped?",
-    followUp: "I keep track of things for you — even when you're asleep.",
-    color: 'text-amber-400/80', glow: 'rgba(245,158,11,0.08)',
+    id: 'proactive', icon: Bell, label: 'Stays ahead of you',
+    line: 'Catches what would otherwise slip.',
+    tint: 'rgba(245,158,11,0.10)', ring: 'rgba(245,158,11,0.22)', iconColor: 'rgba(252,191,80,0.95)',
   },
   {
-    id: 'workflows', icon: Workflow, label: 'Workflows',
-    hook: "You've probably been paying for a bunch of AI tools that each do one thing. What if you could just build exactly what you need — for free?",
-    followUp: "Drag, drop, done. Or just tell me what you want and I'll build it for you.",
-    color: 'text-purple-400/80', glow: 'rgba(168,85,247,0.08)',
+    id: 'workflows', icon: Workflow, label: 'Builds your tools',
+    line: 'Describe what you want. It appears.',
+    tint: 'rgba(168,85,247,0.10)', ring: 'rgba(168,85,247,0.22)', iconColor: 'rgba(199,140,255,0.95)',
   },
   {
-    id: 'integrations', icon: Plug, label: 'Integrations',
-    hook: "Your stuff is scattered across Gmail, Calendar, GitHub, Slack... you're constantly switching tabs just to stay on top of things.",
-    followUp: "I plug into all of them, so everything's in one place.",
-    color: 'text-emerald-400/80', glow: 'rgba(34,197,94,0.08)',
+    id: 'integrations', icon: Plug, label: 'One place for everything',
+    line: 'Gmail, Calendar, GitHub, Slack — together.',
+    tint: 'rgba(34,197,94,0.10)', ring: 'rgba(34,197,94,0.22)', iconColor: 'rgba(110,221,151,0.95)',
   },
 ];
 
@@ -297,266 +293,59 @@ function HelloSplash({ onNext }: { onNext: () => void }) {
 }
 
 // =============================================================================
-// MINI-DEMO COMPONENTS — visual previews that mirror actual features
+// PAGE 1: CAPABILITIES OVERVIEW — single page, all four at a glance
 // =============================================================================
 
-/** Chat demo: a miniature chat exchange with typing */
-function ChatDemo() {
-  const { displayed: answer, done } = useTypewriter('Paris. The capital of France.', 30, 2400);
-  const [showTyping, setShowTyping] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setShowTyping(true), 1800);
-    return () => clearTimeout(t);
-  }, []);
-
+function CapabilitiesOverview({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   return (
-    <div className="w-[280px] rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden backdrop-blur-sm">
-      {/* Title bar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04]">
-        <div className="w-2 h-2 rounded-full bg-blue-400/40" />
-        <span className="text-[10px] text-white/30 tracking-wide">Chat</span>
-      </div>
-      {/* Messages */}
-      <div className="px-4 py-3 flex flex-col gap-2.5 min-h-[100px]">
-        {/* User message */}
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.4, duration: 0.4 }}
-          className="self-end max-w-[80%]"
-        >
-          <div className="rounded-2xl rounded-br-md bg-blue-500/15 border border-blue-400/10 px-3 py-2">
-            <p className="text-[11px] text-white/70">What's the capital of France?</p>
-          </div>
-        </motion.div>
-        {/* Stuard response */}
-        {showTyping && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="self-start max-w-[85%]"
-          >
-            <div className="rounded-2xl rounded-bl-md bg-white/[0.04] border border-white/[0.06] px-3 py-2">
-              {!done ? (
-                <p className="text-[11px] text-white/60">
-                  {answer}<span className="inline-block w-[1.5px] h-[0.85em] bg-white/40 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
-                </p>
-              ) : (
-                <p className="text-[11px] text-white/60">{answer}</p>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Proactive demo: notification cards sliding in */
-function ProactiveDemo() {
-  return (
-    <div className="flex flex-col gap-2 w-[280px]">
-      {[
-        { delay: 1.6, icon: '\u2709\uFE0F', text: "You haven't replied to Sarah \u2014 it's been 3 hours.", time: '2m ago' },
-        { delay: 2.4, icon: '\uD83D\uDCC5', text: 'Team standup in 15 minutes.', time: 'just now' },
-      ].map((n, i) => (
-        <motion.div
-          key={i}
-          initial={{ opacity: 0, x: 40 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: n.delay, duration: 0.5, ease: 'easeOut' }}
-          className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 backdrop-blur-sm"
-        >
-          <div className="flex items-start gap-3">
-            <span className="text-[14px] mt-0.5">{n.icon}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] text-white/65 leading-relaxed">{n.text}</p>
-              <p className="text-[9px] text-white/25 mt-1">{n.time}</p>
-            </div>
-          </div>
-        </motion.div>
-      ))}
-    </div>
-  );
-}
-
-/** Workflow demo: mini node graph with animated connections */
-function WorkflowDemo() {
-  const nodes = [
-    { label: 'New Email', x: 0, color: 'rgba(56,168,255,0.3)' },
-    { label: 'AI Summarize', x: 110, color: 'rgba(168,85,247,0.3)' },
-    { label: 'Send Slack', x: 220, color: 'rgba(34,197,94,0.3)' },
-  ];
-
-  return (
-    <div className="w-[300px] rounded-2xl border border-white/[0.06] bg-white/[0.02] overflow-hidden backdrop-blur-sm">
-      {/* Title bar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04]">
-        <div className="w-2 h-2 rounded-full bg-purple-400/40" />
-        <span className="text-[10px] text-white/30 tracking-wide">Workflow Builder</span>
-      </div>
-      <div className="relative px-5 py-6">
-        {/* Connection lines */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ top: 0, left: 0 }}>
-          {[0, 1].map(i => (
-            <motion.line
-              key={i}
-              x1={nodes[i].x + 65}
-              y1={32}
-              x2={nodes[i + 1].x + 25}
-              y2={32}
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth={1.5}
-              initial={{ pathLength: 0 }}
-              animate={{ pathLength: 1 }}
-              transition={{ delay: 1.8 + i * 0.4, duration: 0.6 }}
-            />
-          ))}
-          {/* Animated pulse traveling along lines */}
-          {[0, 1].map(i => (
-            <motion.circle
-              key={`pulse-${i}`}
-              r={3}
-              fill="rgba(168,85,247,0.5)"
-              initial={{ cx: nodes[i].x + 65, cy: 32, opacity: 0 }}
-              animate={{
-                cx: [nodes[i].x + 65, nodes[i + 1].x + 25],
-                cy: 32,
-                opacity: [0, 1, 1, 0],
-              }}
-              transition={{ delay: 3.0 + i * 0.6, duration: 0.8, ease: 'easeInOut' }}
-            />
-          ))}
-        </svg>
-        {/* Nodes */}
-        <div className="flex items-center justify-between relative z-10">
-          {nodes.map((node, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 1.4 + i * 0.2, duration: 0.4 }}
-              className="flex flex-col items-center gap-1.5"
-            >
-              <div
-                className="w-[50px] h-[36px] rounded-lg border border-white/[0.08] flex items-center justify-center"
-                style={{ background: node.color }}
-              >
-                <span className="text-[8px] text-white/50 font-medium tracking-wide">{(i + 1)}</span>
-              </div>
-              <span className="text-[9px] text-white/40 whitespace-nowrap">{node.label}</span>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Integrations demo: app icons consolidating into one hub */
-function IntegrationsDemo() {
-  const apps = [
-    { label: 'Gmail', color: '#EA4335', letter: 'G' },
-    { label: 'Calendar', color: '#4285F4', letter: 'C' },
-    { label: 'GitHub', color: '#8B5CF6', letter: 'GH' },
-    { label: 'Slack', color: '#E01E5A', letter: 'S' },
-  ];
-
-  return (
-    <div className="flex flex-col items-center gap-4">
-      <div className="flex items-center gap-3">
-        {apps.map((app, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1.4 + i * 0.15, duration: 0.4 }}
-            className="flex flex-col items-center gap-1.5"
-          >
-            <div
-              className="w-10 h-10 rounded-xl border border-white/[0.06] flex items-center justify-center"
-              style={{ background: `${app.color}15` }}
-            >
-              <span className="text-[10px] font-semibold" style={{ color: app.color }}>{app.letter}</span>
-            </div>
-            <span className="text-[9px] text-white/30">{app.label}</span>
-          </motion.div>
-        ))}
-      </div>
-      {/* Connecting arrows */}
-      <motion.div
-        initial={{ opacity: 0, scaleY: 0 }}
-        animate={{ opacity: 1, scaleY: 1 }}
-        transition={{ delay: 2.4, duration: 0.5 }}
-        className="flex flex-col items-center gap-1"
-      >
-        <div className="w-px h-4 bg-gradient-to-b from-white/10 to-white/5" />
-        <div className="w-2 h-2 rotate-45 border-b border-r border-white/15" />
-      </motion.div>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 2.8, duration: 0.5 }}
-        className="rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] px-5 py-2.5"
-      >
-        <span className="text-[11px] text-emerald-300/70 tracking-wide">Everything in one place</span>
-      </motion.div>
-    </div>
-  );
-}
-
-const CAPABILITY_DEMOS: Record<string, React.FC> = {
-  chat: ChatDemo,
-  proactive: ProactiveDemo,
-  workflows: WorkflowDemo,
-  integrations: IntegrationsDemo,
-};
-
-// =============================================================================
-// PAGES 1-4: CAPABILITY SHOWCASE
-// =============================================================================
-
-function CapabilityPage({ capability, index, total, onNext, onBack }: {
-  capability: Capability; index: number; total: number; onNext: () => void; onBack: () => void;
-}) {
-  const Demo = CAPABILITY_DEMOS[capability.id];
-
-  return (
-    <Page stepKey={`cap-${capability.id}`}>
+    <Page stepKey="caps-overview">
       <BackButton onClick={onBack} />
 
-      {/* Hook — the relatable scenario */}
-      <Fade delay={0.3} duration={1.0}>
-        <p className="max-w-[28rem] text-center text-[18px] leading-relaxed text-white/70 font-light italic">
-          {capability.hook}
+      <Fade delay={0.3} duration={0.9}>
+        <h2 className="text-center text-[clamp(1.6rem,3vw,2.2rem)] font-extralight tracking-tight text-white/85">
+          Here's what I do.
+        </h2>
+      </Fade>
+
+      <Fade delay={0.65} duration={0.8}>
+        <p className="mt-3 text-center text-[13.5px] tracking-wide text-white/35 font-light">
+          The rest you'll pick up as you go.
         </p>
       </Fade>
 
-      {/* Interactive demo that mirrors the real feature */}
-      <Fade delay={1.0} duration={0.6}>
-        <div className="mt-10">
-          {Demo && <Demo />}
-        </div>
-      </Fade>
+      <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-[680px]">
+        {CAPABILITIES.map((cap, i) => {
+          const Icon = cap.icon;
+          return (
+            <motion.div
+              key={cap.id}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 1.0 + i * 0.18, duration: 0.7, ease: 'easeOut' }}
+              className="group relative rounded-2xl border border-white/[0.06] bg-white/[0.015] px-5 py-5 backdrop-blur-sm transition-colors duration-500 hover:border-white/[0.12] hover:bg-white/[0.03]"
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex h-9 w-9 items-center justify-center rounded-xl"
+                  style={{ background: cap.tint, border: `1px solid ${cap.ring}` }}
+                >
+                  <Icon size={15} style={{ color: cap.iconColor }} />
+                </div>
+                <span className="text-[14px] font-light tracking-wide text-white/85">{cap.label}</span>
+              </div>
+              <p className="mt-3 text-[12.5px] leading-relaxed font-light text-white/45">
+                {cap.line}
+              </p>
+            </motion.div>
+          );
+        })}
+      </div>
 
-      {/* Follow-up — the punchline */}
-      <Fade delay={2.0} duration={0.9}>
-        <p className="mt-6 max-w-[26rem] text-center text-[15px] leading-relaxed text-white/55 font-light">
-          {capability.followUp}
-        </p>
-      </Fade>
-
-      <Fade delay={2.6}>
-        <div className="mt-8 flex items-center gap-2">
-          {Array.from({ length: total }).map((_, i) => (<div key={i} className={clsx('rounded-full transition-all duration-700', i === index ? 'h-1.5 w-6 bg-white/50' : 'h-1.5 w-1.5 bg-white/10')} />))}
-        </div>
-      </Fade>
-      <ContinueButton onClick={onNext} delay={2.8} />
+      <ContinueButton onClick={onNext} delay={1.95} />
     </Page>
   );
 }
+
 
 // =============================================================================
 // PAGE 5: SIGN IN
@@ -1235,8 +1024,13 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
     try { localStorage.setItem('stuard_user_role', role); } catch {}
   };
 
-  const next = useCallback(() => setPage(p => p + 1), []);
-  const back = useCallback(() => setPage(p => Math.max(0, p - 1)), []);
+  // Page numbers: 0=hello, 1=capabilities, 5=signin, 6=role, 7=features, 8=marketplace, 9=tone, 10=shortcut, 11=done.
+  // Pages 2-4 are skipped (formerly per-capability pages, consolidated into page 1).
+  const next = useCallback(() => setPage(p => (p === 1 ? 5 : p + 1)), []);
+  const back = useCallback(() => setPage(p => {
+    if (p === 5) return 1;
+    return Math.max(0, p - 1);
+  }), []);
 
   // Fade out the entire background then call onComplete
   const dismiss = useCallback(() => {
@@ -1254,7 +1048,6 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
     dismiss();
   }, [dismiss]);
 
-  // 0=hello, 1-4=caps, 5=signin, 6=role, 7=features, 8=marketplace, 9=tone, 10=shortcut, 11=done
   return (
     <motion.div
       className="relative h-full w-full overflow-hidden"
@@ -1267,7 +1060,7 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
       <div className="relative z-10 h-full w-full">
         <AnimatePresence mode="wait">
           {page === 0 && <HelloSplash onNext={next} />}
-          {page >= 1 && page <= 4 && <CapabilityPage capability={CAPABILITIES[page - 1]} index={page - 1} total={CAPABILITIES.length} onNext={next} onBack={back} />}
+          {page === 1 && <CapabilitiesOverview onNext={next} onBack={back} />}
           {page === 5 && <SignInPage signedIn={signedIn} signingIn={signingIn} userEmail={userEmail} onSignIn={handleSignIn} onNext={next} onBack={back} />}
           {page === 6 && <RolePage onNext={next} onBack={back} onSelect={handleRoleSelect} />}
           {page === 7 && <FeaturesPage onNext={next} onBack={back} signedIn={signedIn} />}

@@ -367,6 +367,32 @@ async function handleCommand(command: string, args: any): Promise<any> {
 // Agent Chat & Execute Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Load prior turns for this conversation from the VM's local SQLite so cloud-ai
+ * has the full multi-turn context. Without this, every chat request would arrive
+ * at cloud-ai with only the new user message and the model would have no memory
+ * of prior turns in the same conversation.
+ */
+async function loadLocalConversationHistory(
+  conversationId: string,
+  limit = 50,
+): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  try {
+    const result = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'message_list',
+      args: { conversation_id: conversationId, limit },
+    }, 5_000);
+    const rows: any[] = result?.messages || result?.result?.messages || result?.result || [];
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((m: any) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
+      .map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+  } catch {
+    return [];
+  }
+}
+
 async function handleAgentChat(args: any): Promise<any> {
   const message = String(args.message || '').trim();
   if (!message) return { ok: false, error: 'empty_message' };
@@ -375,12 +401,12 @@ async function handleAgentChat(args: any): Promise<any> {
   const model = args.model || 'balanced';
 
   try {
-    // Build memory context from the synced SQLite DB via Python agent.
-    // Returns a formatted text string matching desktop's format.
-    const memoryContext = await buildVMMemoryContext(
-      args.memoryQuery || message,
-      args.queryEmbedding,
-    );
+    // Load history BEFORE storing the new user message so the prior-turn array
+    // doesn't accidentally include the current message.
+    const [memoryContext, priorHistory] = await Promise.all([
+      buildVMMemoryContext(args.memoryQuery || message, args.queryEmbedding),
+      loadLocalConversationHistory(conversationId, 50),
+    ]);
 
     // Store user message in local DB (mirrors desktop's storeMessageLocally)
     sendToAgent({
@@ -396,11 +422,17 @@ async function handleAgentChat(args: any): Promise<any> {
       ? { vmToken: mintLocalVMToken(VM_SECRET, USER_ID), userId: USER_ID }
       : undefined;
 
+    const messagesForCloud = [
+      ...priorHistory,
+      { role: 'user' as const, content: message },
+    ];
+
     const result = await sendToAgent({
       type: 'chat',
       message,
       conversationId,
       model,
+      messages: messagesForCloud,
       context: {
         isVM: true,
         userId: USER_ID,
@@ -410,8 +442,10 @@ async function handleAgentChat(args: any): Promise<any> {
       ...(vmAuth ? { auth: vmAuth } : {}),
     }, 180_000); // 3 min timeout for chat
 
-    // Store assistant response and process turn (mirrors desktop's post-response flow)
-    const assistantText = result?.text || '';
+    // Store assistant response and process turn (mirrors desktop's post-response flow).
+    // Cloud-ai's final WS frame is { type:'final', result:{ text, ... } }, which the
+    // Python agent forwards verbatim — so the assistant text lives at result.result.text.
+    const assistantText = String(result?.result?.text ?? result?.text ?? '').trim();
     if (assistantText) {
       processVMConversationTurn(conversationId, message, assistantText).catch((e) => {
         console.warn('[vm-agent] post-response memory processing failed:', e?.message);
@@ -455,11 +489,12 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
   writeLine({ type: 'start', conversationId });
 
   try {
-    // Build memory context
-    const memoryContext = await buildVMMemoryContext(
-      args.memoryQuery || message,
-      args.queryEmbedding,
-    );
+    // Load history BEFORE storing the new user message so the prior-turn array
+    // doesn't accidentally include the current message.
+    const [memoryContext, priorHistory] = await Promise.all([
+      buildVMMemoryContext(args.memoryQuery || message, args.queryEmbedding),
+      loadLocalConversationHistory(conversationId, 50),
+    ]);
 
     // Store user message
     sendToAgent({
@@ -475,6 +510,10 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
 
     // Stream chat to Python agent — onEvent fires for every WS message
     const attachments = Array.isArray(args.attachments) ? args.attachments : undefined;
+    const messagesForCloud = [
+      ...priorHistory,
+      { role: 'user' as const, content: message },
+    ];
     const result = await sendToAgentStreaming(
       {
         type: 'chat',
@@ -482,6 +521,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         conversationId,
         model,
         ...(modelId ? { modelId } : {}),
+        messages: messagesForCloud,
         context: { isVM: true, userId: USER_ID, ...(args.context || {}) },
         memoryContext,
         ...(attachments ? { attachments } : {}),
@@ -542,8 +582,10 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       180_000,
     );
 
-    // Process turn in background (store assistant message, create segment, embeddings)
-    const assistantText = result?.text || '';
+    // Process turn in background (store assistant message, create segment, embeddings).
+    // Cloud-ai's final WS frame is { type:'final', result:{ text, ... } }, which the
+    // Python agent forwards verbatim — so the assistant text lives at result.result.text.
+    const assistantText = String(result?.result?.text ?? result?.text ?? '').trim();
     if (assistantText) {
       processVMConversationTurn(conversationId, message, assistantText).catch((e) => {
         console.warn('[vm-agent] post-response memory processing failed:', e?.message);
