@@ -80,6 +80,27 @@ async function resolveFolderPath(
   return { ok: true, space_id: resolvedSpaceId, folder_id: parentId ?? null, created: createdAny };
 }
 
+async function hydrateConversationTitles<T extends { conversation_id: string; title: string | null }>(
+  results: T[],
+): Promise<T[]> {
+  const ids = Array.from(new Set(results.map((r) => r.conversation_id).filter(Boolean)));
+  const titleById = new Map<string, string | null>();
+
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const conversation = await memoryService.getConversation(id);
+      titleById.set(id, conversation?.title || null);
+    } catch {
+      titleById.set(id, null);
+    }
+  }));
+
+  return results.map((result) => ({
+    ...result,
+    title: titleById.get(result.conversation_id) || result.title || null,
+  }));
+}
+
 export const search_past_conversations = createTool({
   id: 'search_past_conversations',
   description:
@@ -174,7 +195,7 @@ export const search_past_conversations = createTool({
           return { ok: true, results: [], debug: { stats } };
         }
 
-        return { ok: true, results };
+        return { ok: true, results: await hydrateConversationTitles(results) };
       }
 
       if (!query) {
@@ -252,7 +273,7 @@ export const search_past_conversations = createTool({
         };
       }
 
-      return { ok: true, results };
+      return { ok: true, results: await hydrateConversationTitles(results) };
     } catch (error) {
       const stats = await memoryService.getMemoryStats().catch(() => null);
       return { ok: false, error: String(error), results: [], debug: { stats } };

@@ -34,6 +34,7 @@ import fs from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { WebSocketServer, WebSocket } from 'ws';
+import Database from 'better-sqlite3';
 import { collectMetrics, initMetrics } from './metrics-collector';
 import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
@@ -1031,6 +1032,220 @@ const DB_FILES_TO_WATCH = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'mem
 const _lastSyncMtimes = new Map<string, number>();
 let _syncInFlight = false;
 
+type SqliteDb = Database.Database;
+type SqliteRow = Record<string, any>;
+
+const PLAINTEXT_PREFIX = 'pt1:';
+
+function sqlIdent(name: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`invalid sqlite identifier: ${name}`);
+  }
+  return `"${name}"`;
+}
+
+function tableExists(db: SqliteDb, table: string): boolean {
+  const row = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table);
+  return Boolean(row);
+}
+
+function getColumns(db: SqliteDb, table: string): string[] {
+  if (!tableExists(db, table)) return [];
+  return (db.prepare(`PRAGMA table_info(${sqlIdent(table)})`).all() as Array<{ name: string }>)
+    .map((col) => col.name)
+    .filter(Boolean);
+}
+
+function commonColumns(src: SqliteDb, dest: SqliteDb, table: string): string[] {
+  const destCols = new Set(getColumns(dest, table));
+  return getColumns(src, table).filter((col) => destCols.has(col));
+}
+
+function parseSqlTime(value: unknown): number {
+  const n = Date.parse(String(value || ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function hasUnreadableEncryptedFields(row: SqliteRow | undefined, columns: string[]): boolean {
+  if (!row) return false;
+  return columns.some((col) => {
+    const value = row[col];
+    return typeof value === 'string' && value.length > 0 && !value.startsWith(PLAINTEXT_PREFIX);
+  });
+}
+
+function insertRow(db: SqliteDb, table: string, columns: string[], row: SqliteRow): void {
+  if (columns.length === 0) return;
+  const colSql = columns.map(sqlIdent).join(', ');
+  const placeholders = columns.map(() => '?').join(', ');
+  db.prepare(`INSERT INTO ${sqlIdent(table)} (${colSql}) VALUES (${placeholders})`)
+    .run(...columns.map((col) => row[col] ?? null));
+}
+
+function copyRowsByColumn(
+  src: SqliteDb,
+  dest: SqliteDb,
+  table: string,
+  column: string,
+  value: string,
+): number {
+  const columns = commonColumns(src, dest, table);
+  if (columns.length === 0 || !columns.includes(column)) return 0;
+
+  const rows = src
+    .prepare(`SELECT * FROM ${sqlIdent(table)} WHERE ${sqlIdent(column)} = ?`)
+    .all(value) as SqliteRow[];
+
+  for (const row of rows) insertRow(dest, table, columns, row);
+  return rows.length;
+}
+
+function mergeEntityTable(
+  src: SqliteDb,
+  dest: SqliteDb,
+  table: string,
+  pk: string,
+  encryptedColumns: string[],
+  updatedColumn = 'updated_at',
+): { inserted: number; updated: number; skipped: number } {
+  const columns = commonColumns(src, dest, table);
+  if (columns.length === 0 || !columns.includes(pk)) return { inserted: 0, updated: 0, skipped: 0 };
+
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const rows = src.prepare(`SELECT * FROM ${sqlIdent(table)}`).all() as SqliteRow[];
+
+  for (const row of rows) {
+    const id = row[pk];
+    if (id == null) continue;
+
+    const local = dest
+      .prepare(`SELECT * FROM ${sqlIdent(table)} WHERE ${sqlIdent(pk)} = ?`)
+      .get(id) as SqliteRow | undefined;
+    const shouldReplace = !local
+      || parseSqlTime(row[updatedColumn]) >= parseSqlTime(local[updatedColumn])
+      || (hasUnreadableEncryptedFields(local, encryptedColumns) && !hasUnreadableEncryptedFields(row, encryptedColumns));
+
+    if (!shouldReplace) {
+      skipped++;
+      continue;
+    }
+
+    dest.prepare(`DELETE FROM ${sqlIdent(table)} WHERE ${sqlIdent(pk)} = ?`).run(id);
+    insertRow(dest, table, columns, row);
+    if (local) updated++;
+    else inserted++;
+  }
+
+  return { inserted, updated, skipped };
+}
+
+function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; copied?: boolean; reason?: string; stats?: any; error?: string } {
+  if (!fs.existsSync(incomingPath)) return { ok: false, error: 'incoming_memory_db_missing' };
+
+  if (!fs.existsSync(localPath) || fs.statSync(localPath).size === 0) {
+    fs.copyFileSync(incomingPath, localPath);
+    return { ok: true, copied: true, reason: 'local_missing' };
+  }
+
+  let src: SqliteDb | null = null;
+  let dest: SqliteDb | null = null;
+
+  try {
+    src = new Database(incomingPath, { readonly: true, fileMustExist: true });
+    dest = new Database(localPath);
+
+    if (!tableExists(src, 'conversations') || !tableExists(dest, 'conversations')) {
+      fs.copyFileSync(incomingPath, localPath);
+      return { ok: true, copied: true, reason: 'missing_conversations_table' };
+    }
+
+    const stats = {
+      conversations: { inserted: 0, replaced: 0, skipped: 0 },
+      messages: 0,
+      segments: 0,
+      spaces: { inserted: 0, updated: 0, skipped: 0 },
+      spaceItems: { inserted: 0, updated: 0, skipped: 0 },
+      collections: { inserted: 0, updated: 0, skipped: 0 },
+      links: 0,
+    };
+
+    dest.pragma('foreign_keys = OFF');
+    const tx = dest.transaction(() => {
+      const conversationColumns = commonColumns(src!, dest!, 'conversations');
+      const incomingConvs = src!.prepare('SELECT * FROM conversations').all() as SqliteRow[];
+
+      for (const conv of incomingConvs) {
+        const id = String(conv.id || '');
+        if (!id) continue;
+
+        const local = dest!
+          .prepare('SELECT * FROM conversations WHERE id = ?')
+          .get(id) as SqliteRow | undefined;
+        const incomingIsReadable = !hasUnreadableEncryptedFields(conv, ['title_enc']);
+        const localIsUnreadable = hasUnreadableEncryptedFields(local, ['title_enc']);
+        const shouldReplace = !local
+          || parseSqlTime(conv.updated_at) >= parseSqlTime(local.updated_at)
+          || (incomingIsReadable && localIsUnreadable)
+          || (Number(conv.message_count || 0) > Number(local.message_count || 0) && localIsUnreadable);
+
+        if (!shouldReplace) {
+          stats.conversations.skipped++;
+          continue;
+        }
+
+        if (local) {
+          dest!.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+          dest!.prepare('DELETE FROM conversation_segments WHERE conversation_id = ?').run(id);
+          if (tableExists(dest!, 'space_conversations')) {
+            dest!.prepare('DELETE FROM space_conversations WHERE conversation_id = ?').run(id);
+          }
+          dest!.prepare('DELETE FROM conversations WHERE id = ?').run(id);
+          stats.conversations.replaced++;
+        } else {
+          stats.conversations.inserted++;
+        }
+
+        insertRow(dest!, 'conversations', conversationColumns, conv);
+        stats.messages += copyRowsByColumn(src!, dest!, 'messages', 'conversation_id', id);
+        stats.segments += copyRowsByColumn(src!, dest!, 'conversation_segments', 'conversation_id', id);
+        stats.links += copyRowsByColumn(src!, dest!, 'space_conversations', 'conversation_id', id);
+      }
+
+      stats.spaces = mergeEntityTable(src!, dest!, 'spaces', 'id', ['name_enc', 'description_enc']);
+      stats.spaceItems = mergeEntityTable(src!, dest!, 'space_items', 'id', ['title_enc', 'content_enc', 'metadata_enc']);
+      stats.collections = mergeEntityTable(src!, dest!, 'collection_summaries', 'topic', [], 'updated_at');
+
+      const linkColumns = commonColumns(src!, dest!, 'space_conversations');
+      if (linkColumns.length > 0) {
+        const links = src!.prepare('SELECT * FROM space_conversations').all() as SqliteRow[];
+        for (const link of links) {
+          const exists = dest!
+            .prepare('SELECT 1 FROM space_conversations WHERE space_id = ? AND conversation_id = ?')
+            .get(link.space_id, link.conversation_id);
+          if (!exists) {
+            insertRow(dest!, 'space_conversations', linkColumns, link);
+            stats.links++;
+          }
+        }
+      }
+    });
+
+    tx();
+    try { dest.pragma('foreign_keys = ON'); } catch { /* best-effort */ }
+    try { dest.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* best-effort */ }
+    return { ok: true, copied: false, reason: 'merged', stats };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'memory_db_merge_failed' };
+  } finally {
+    try { src?.close(); } catch { /* noop */ }
+    try { dest?.close(); } catch { /* noop */ }
+  }
+}
+
 /** Check if any agent data files have been modified since last sync. */
 function hasAgentDataChanged(): boolean {
   try {
@@ -1302,6 +1517,22 @@ async function syncAgentData(args: any): Promise<any> {
       if (fs.existsSync(extractedAgentDir)) {
         const agentFiles = fs.readdirSync(extractedAgentDir);
         for (const f of agentFiles) {
+          if (f === 'memory.db-wal' || f === 'memory.db-shm') {
+            skipped++;
+            continue;
+          }
+          if (f === 'memory.db') {
+            const result = mergeMemoryDb(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
+            if (result.ok) {
+              if (result.copied) copied++; else copied++;
+              console.log('[vm-agent] memory.db merged from agent-data archive:', JSON.stringify(result.stats || { reason: result.reason }));
+            } else {
+              console.warn('[vm-agent] memory.db merge failed; falling back to mtime copy:', result.error);
+              const copiedResult = mergeCopy(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
+              if (copiedResult.copied) copied++; else skipped++;
+            }
+            continue;
+          }
           const result = mergeCopy(`${extractedAgentDir}/${f}`, `${AGENT_DATA_DIR}/${f}`);
           if (result.copied) copied++; else skipped++;
         }
@@ -1312,6 +1543,22 @@ async function syncAgentData(args: any): Promise<any> {
           const src = `${extractDir}/${f}`;
           const st = fs.statSync(src);
           if (!st.isFile()) continue;
+          if (f === 'memory.db-wal' || f === 'memory.db-shm') {
+            skipped++;
+            continue;
+          }
+          if (f === 'memory.db') {
+            const result = mergeMemoryDb(src, `${AGENT_DATA_DIR}/${f}`);
+            if (result.ok) {
+              if (result.copied) copied++; else copied++;
+              console.log('[vm-agent] memory.db merged from legacy archive:', JSON.stringify(result.stats || { reason: result.reason }));
+            } else {
+              console.warn('[vm-agent] memory.db merge failed; falling back to mtime copy:', result.error);
+              const copiedResult = mergeCopy(src, `${AGENT_DATA_DIR}/${f}`);
+              if (copiedResult.copied) copied++; else skipped++;
+            }
+            continue;
+          }
           const result = mergeCopy(src, `${AGENT_DATA_DIR}/${f}`);
           if (result.copied) copied++; else skipped++;
         }

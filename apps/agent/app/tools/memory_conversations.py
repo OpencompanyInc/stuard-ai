@@ -1332,6 +1332,13 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
         dst.row_factory = _sqlite3.Row
         try:
             def _recode(table: str, pk: str, columns: list[str]) -> int:
+                existing_cols = {
+                    r[1]
+                    for r in dst.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                columns = [c for c in columns if c in existing_cols]
+                if pk not in existing_cols or not columns:
+                    return 0
                 rows = dst.execute(f"SELECT {pk}, {', '.join(columns)} FROM {table}").fetchall()
                 count = 0
                 for row in rows:
@@ -1372,7 +1379,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             # Segments, spaces, space_items, vault, notes — recode best-effort
             # so every encrypted column in the schema becomes plaintext.
             try:
-                _recode("conversation_segments", "id", ["summary_enc"])
+                _recode("conversation_segments", "id", ["summary_enc", "topics_enc", "entity_ids_enc"])
             except Exception:
                 pass
             try:
@@ -1380,7 +1387,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
             try:
-                _recode("space_items", "id", ["title_enc", "content_enc"])
+                _recode("space_items", "id", ["title_enc", "content_enc", "metadata_enc"])
             except Exception:
                 pass
 
