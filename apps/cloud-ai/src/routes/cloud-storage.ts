@@ -132,6 +132,12 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
     try {
       const body = await readBody(req);
       const filename = String(body.filename || '').trim();
+      const folder = String(body.folder || '').trim();
+      const contentType = String(body.contentType || 'application/octet-stream').trim();
+      // Set raw=true to skip the Cloudflare proxy rewrite. Use for server-to-
+      // server uploads (e.g. desktop main process) so large files aren't capped
+      // by Cloudflare's request body limit.
+      const raw = body.raw === true;
       if (!filename) {
         json(res, 400, { ok: false, error: 'missing_filename' });
         return true;
@@ -150,11 +156,28 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
         return true;
       }
 
-      const result = await generateUserUploadUrl(user.userId, filename);
+      const result = await generateUserUploadUrl(user.userId, filename, raw, folder, contentType);
       json(res, 200, { ok: true, ...result });
     } catch (e: any) {
       console.error('[cloud-storage] upload-url error:', e?.message);
       json(res, 500, { ok: false, error: 'upload_url_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-storage/upload-complete ───────────────────────────────
+  // Called by clients after a direct-to-GCS signed-URL upload finishes.
+  // Recomputes cold_storage_bytes from GCS so billing/UI stay accurate.
+  if (method === 'POST' && path === '/v1/cloud-storage/upload-complete') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const totalBytes = await getUserStorageBytes(user.userId);
+      await upsertStorageUsage(user.userId, { cold_storage_bytes: totalBytes });
+      json(res, 200, { ok: true, coldStorageBytes: totalBytes });
+    } catch (e: any) {
+      console.error('[cloud-storage] upload-complete error:', e?.message);
+      json(res, 500, { ok: false, error: 'upload_complete_failed', message: e?.message || 'failed' });
     }
     return true;
   }

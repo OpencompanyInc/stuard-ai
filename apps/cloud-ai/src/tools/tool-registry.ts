@@ -112,6 +112,10 @@ export function getToolLocation(id: string): ToolLocation {
   return TOOL_METADATA.get(id)?.location || 'compute';
 }
 
+export function getDefaultLocationForCategory(category: string): ToolLocation {
+  return CATEGORY_LOCATION[category] || 'compute';
+}
+
 /**
  * Returns true if the tool must be routed through the user's desktop bridge.
  * - Device tools always need desktop

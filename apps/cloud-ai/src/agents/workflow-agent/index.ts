@@ -14,7 +14,7 @@ import { writeLog } from '../../utils/logger';
 import os from 'node:os';
 
 // Core tools
-import { search_tools } from '../../tools/meta-tools';
+import { search_tools, search_workflow_nodes } from '../../tools/meta-tools';
 import { retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
 import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
@@ -49,7 +49,11 @@ You design and modify local automations. The user provides current workflow JSON
 KNOWLEDGE DISCOVERY — Pull docs on demand, never guess
 ══════════════════════════════════════════════════════════════════════════
 
-You have TWO complementary discovery tools:
+You have THREE complementary discovery tools:
+
+• search_workflow_nodes — for one-shot workflow node discovery. It returns
+  candidate nodes with category, runtime type/location, and input/output
+  schemas so you can shortlist and wire nodes quickly.
 
 • search_tools / get_tool_schema — for TOOL schemas (what args a node takes,
   what fields it returns). Use these for every tool BEFORE wiring it.
@@ -79,24 +83,26 @@ Available doc sections (call with "list" to re-check):
 RULES:
 1. BEFORE writing workflow structure you're unsure about, call
    search_workflow_docs({ query: "<topic>" }).
-2. For tool args/outputs, call get_tool_schema({ toolName }).
-3. You can fetch a specific section by id:
+2. Before wiring a new node, prefer search_workflow_nodes({ query: "<what it should do>" }).
+3. For tool args/outputs, call get_tool_schema({ toolName }).
+4. You can fetch a specific section by id:
      search_workflow_docs({ query: "custom_ui_markdown" })
-4. After non-trivial edits, call inspect_workflow to verify topology.
+5. After non-trivial edits, call inspect_workflow to verify topology.
 
 ══════════════════════════════════════════════════════════════════════════
 CORE STRATEGY
 ══════════════════════════════════════════════════════════════════════════
 
 1. search_tools FIRST for integrations (calendar, email, browser, files, screenshots, etc.)
-2. NEVER invent tool names — use get_tool_schema to get exact args
-3. Prefer existing tools over custom scripts (utility_tools > python > node)
-4. Use inspect_workflow to understand current topology before modifying
-5. DO NOT pass the full workflow JSON to modify_workflow — it auto-loads from session
-6. For live-updating UIs: use set_variable notifyUi:true OR update_custom_ui
+2. Prefer search_workflow_nodes for candidate node discovery and search_tools for broad catalog lookup.
+3. NEVER invent tool names — use get_tool_schema to get exact args
+4. Prefer existing tools over custom scripts (utility_tools > python > node)
+5. Use inspect_workflow to understand current topology before modifying
+6. DO NOT pass the full workflow JSON to modify_workflow — it auto-loads from session
+7. For live-updating UIs: use set_variable notifyUi:true OR update_custom_ui
    — both now propagate to useVar hooks (search_workflow_docs:
    "custom_ui_live_updates").
-7. For markdown text (AI output, docs, help): use the bundled <Markdown>
+8. For markdown text (AI output, docs, help): use the bundled <Markdown>
    component (search_workflow_docs: "custom_ui_markdown").
 
 WORKFLOW STRUCTURE (quick reference):
@@ -139,17 +145,18 @@ YOUR TOOLS
 ══════════════════════════════════════════════════════════════════════════
 
  1. search_workflow_docs({ query }) — Look up workflow syntax/docs by topic
- 2. search_tools({ query }) — Find tools by keyword
- 3. get_tool_schema({ toolName }) — Get exact args format
- 4. inspect_workflow({ mode }) — Inspect workflow topology (overview, node_flow, trigger_flow, wire)
- 5. modify_workflow({ op, ...params }) — Edit workflow (NO workflow param needed!)
- 6. execute_step({ tool, args }) — Test a tool
- 7. list_workflows({}) — List saved workflows
- 8. stop_workflow({ id }) — Stop running workflow
- 9. web_search({ query }) — Search the web
-10. write_file({ path, content }) — Write files
-11. create_directory({ path }) — Create directories
-12. file_edit({ path, mode, ... }) — Edit files
+ 2. search_workflow_nodes({ query }) — Find candidate workflow nodes with schema metadata
+ 3. search_tools({ query }) — Find tools by keyword
+ 4. get_tool_schema({ toolName }) — Get exact args format
+ 5. inspect_workflow({ mode }) — Inspect workflow topology (overview, node_flow, trigger_flow, wire)
+ 6. modify_workflow({ op, ...params }) — Edit workflow (NO workflow param needed!)
+ 7. execute_step({ tool, args }) — Test a tool
+ 8. list_workflows({}) — List saved workflows
+ 9. stop_workflow({ id }) — Stop running workflow
+10. web_search({ query }) — Search the web
+11. write_file({ path, content }) — Write files
+12. create_directory({ path }) — Create directories
+13. file_edit({ path, mode, ... }) — Edit files
 
 CRITICAL: NEVER pass full workflow JSON to modify_workflow. Just use the op and params.
 NEVER output raw JSON. Use modify_workflow for all changes.
@@ -222,31 +229,33 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
     }
   });
 
-  // 10 CORE TOOLS
+  // Core workflow tools
   const tools = {
     // 1. Search workflow documentation on demand
     search_workflow_docs: createLoggedTool(searchWorkflowDocs, 'search_workflow_docs'),
-    // 2. Search tools (sis search)
+    // 2. Search workflow nodes with schema metadata
+    search_workflow_nodes: createLoggedTool(search_workflow_nodes, 'search_workflow_nodes'),
+    // 3. Search tools (sis search)
     search_tools: createLoggedTool(search_tools, 'search_tools'),
-    // 3. Get tool schema
+    // 4. Get tool schema
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
-    // 4. Inspect workflow topology
+    // 5. Inspect workflow topology
     inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
-    // 5. Modify workflow
+    // 6. Modify workflow
     modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
-    // 6. Execute step (sis execute)
+    // 7. Execute step (sis execute)
     execute_step: createLoggedTool(executeStep, 'execute_step'),
-    // 7. List workflows
+    // 8. List workflows
     list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
-    // 8. Stop workflow
+    // 9. Stop workflow
     stop_workflow: createLoggedTool(stop_automation, 'stop_workflow'),
-    // 9. Web search
+    // 10. Web search
     web_search: createLoggedTool(web_search, 'web_search'),
-    // 10. Create/write files in the workspace or on disk
+    // 11. Create/write files in the workspace or on disk
     write_file: createLoggedTool(write_file, 'write_file'),
-    // 11. Create directories
+    // 12. Create directories
     create_directory: createLoggedTool(create_directory, 'create_directory'),
-    // 12. Edit non-stuard files (string-based find/replace)
+    // 13. Edit non-stuard files (string-based find/replace)
     file_edit: createLoggedTool(file_edit, 'file_edit'),
   };
 

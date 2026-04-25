@@ -8,13 +8,11 @@ import {
 
 import { TopicsView } from './memories/TopicsView';
 import { StickyNotes } from './memories/StickyNotes';
-import { TimelineJourney } from './memories/TimelineJourney';
-import { SecuritySettings } from './memories/SecuritySettings';
 import { MemoryLockGate } from './MemoryLockGate';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
-type MemoriesTab = 'topics' | 'notes' | 'timeline' | 'security';
+type MemoriesTab = 'topics' | 'notes';
 
 interface Fact {
   id: string;
@@ -59,8 +57,8 @@ function TopicsTab({ refreshNonce }: { refreshNonce: number }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden px-2 pb-2 md:px-3 md:pb-3">
-        <TopicsView 
-          searchQuery={searchQuery} 
+        <TopicsView
+          searchQuery={searchQuery}
           onStatsChange={setDrawerStats}
           refreshNonce={refreshNonce}
         />
@@ -144,51 +142,6 @@ function NotesTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TIMELINE TAB
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function TimelineTab() {
-  const [events, setEvents] = useState<Fact[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const loadEvents = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${AGENT_HTTP}/v1/knowledge/events?limit=100`);
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.facts)) {
-        setEvents(data.facts);
-      }
-    } catch (e) {
-      console.error('Failed to load events:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async (factId: string) => {
-    try {
-      await fetch(`${AGENT_HTTP}/v1/knowledge/facts/${factId}`, { method: 'DELETE' });
-      setEvents(prev => prev.filter(f => f.id !== factId));
-    } catch (e) {
-      console.error('Failed to delete event:', e);
-    }
-  };
-
-  useEffect(() => { loadEvents(); }, []);
-
-  if (loading) {
-    return <div className="h-full flex items-center justify-center text-neutral-500">Loading timeline...</div>;
-  }
-
-  return (
-    <div className="h-full overflow-y-auto bg-theme-bg">
-      <TimelineJourney events={events} onDelete={handleDelete} />
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -207,8 +160,6 @@ function MemoriesContent() {
   const tabs: { id: MemoriesTab; label: string }[] = [
     { id: 'topics', label: 'Collections' },
     { id: 'notes', label: 'My Context' },
-    { id: 'timeline', label: 'Timeline' },
-    { id: 'security', label: 'Security' },
   ];
 
   return (
@@ -269,20 +220,6 @@ function MemoriesContent() {
               activeTab === 'notes' ? 'translate-y-0 opacity-100 z-10' : 'pointer-events-none translate-y-3 opacity-0 z-0'
             )}>
               {activeTab === 'notes' && <NotesTab key={`notes-${refreshNonce}`} />}
-            </div>
-
-            <div className={clsx(
-              'absolute inset-0 transition-all duration-300 ease-out',
-              activeTab === 'timeline' ? 'translate-y-0 opacity-100 z-10' : 'pointer-events-none translate-y-3 opacity-0 z-0'
-            )}>
-              {activeTab === 'timeline' && <TimelineTab key={`timeline-${refreshNonce}`} />}
-            </div>
-
-            <div className={clsx(
-              'absolute inset-0 overflow-auto transition-all duration-300 ease-out',
-              activeTab === 'security' ? 'translate-y-0 opacity-100 z-10' : 'pointer-events-none translate-y-3 opacity-0 z-0'
-            )}>
-              {activeTab === 'security' && <SecuritySettings key={`security-${refreshNonce}`} />}
             </div>
           </div>
         </div>

@@ -40,6 +40,23 @@ const _agentPendingRequests = new Map<string, {
 // every intermediate WS message (progress/delta/routing/tool_event).
 const _streamListeners = new Map<string, (msg: any) => void>();
 
+// Message types that are intermediate streaming events for an in-flight chat.
+// They MUST NOT resolve the pending request — only `final` / `error` (or any
+// untyped tool result) should. Without `subagent_event` here, delegating to a
+// sub-agent silently terminated the chat stream the moment the orchestrator
+// emitted the first sub-agent event.
+const INTERMEDIATE_STREAM_TYPES = new Set<string>([
+  'progress', 'delta', 'routing',
+  'tool_event', 'tool_request', 'tool_call',
+  'subagent_event', 'subagent_question', 'subagent_answer', 'subagent_complete',
+  'conversation', 'title', 'queued',
+  'reasoning', 'reasoning_start', 'reasoning_end', 'reasoning_delta',
+  'thinking', 'thinking_start', 'thinking_end', 'thinking_delta',
+  'step_start', 'step_finish',
+  'usage_update', 'billing_update', 'compacting',
+  'handshake',
+]);
+
 /** Register a stream listener for a request ID. Called for every WS message. */
 export function addStreamListener(id: string, listener: (msg: any) => void): void {
   _streamListeners.set(id, listener);
@@ -105,10 +122,10 @@ function _connectAgentWs(connectTimeoutMs = 10_000): Promise<WebSocket> {
         }
 
         if (!pendingKey || !_agentPendingRequests.has(pendingKey)) return;
-        // Only resolve on terminal messages — skip progress/delta/routing
-        // events which arrive before the actual result.
+        // Only resolve on terminal messages — skip every known streaming event
+        // type so they don't prematurely resolve the chat promise.
         const t = String(msg.type || '').toLowerCase();
-        if (t === 'progress' || t === 'delta' || t === 'routing' || t === 'tool_event' || t === 'tool_request') return;
+        if (INTERMEDIATE_STREAM_TYPES.has(t)) return;
         const pending = _agentPendingRequests.get(pendingKey)!;
         clearTimeout(pending.timer);
         _agentPendingRequests.delete(pendingKey);

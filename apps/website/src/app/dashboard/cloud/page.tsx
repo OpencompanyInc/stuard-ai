@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCloudEngineStatus } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { CloudOverview } from './components/CloudOverview';
-import { ProvisionFlow } from './components/ProvisionFlow';
 import { CloudIDELayout } from './components/CloudIDELayout';
 
 export default function CloudDashboardPage() {
@@ -99,9 +98,29 @@ export default function CloudDashboardPage() {
     );
   }
 
-  // Show provision flow if no engine
+  // No engine — deployment is desktop-only
   if (!engine) {
-    return <ProvisionFlow onProvisioned={loadStatus} />;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-center gap-4">
+        <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+          </svg>
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">No Cloud Engine Found</h2>
+          <p className="text-sm text-gray-500 mt-1 max-w-sm">
+            Deploying a Cloud Engine is only available in the Stuard desktop app. Once deployed, you can interact with it here.
+          </p>
+        </div>
+        <a
+          href="/download"
+          className="inline-flex items-center px-4 py-2 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors"
+        >
+          Download Desktop App
+        </a>
+      </div>
+    );
   }
 
   // Show provisioning progress view

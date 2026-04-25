@@ -211,6 +211,43 @@ export async function getUsageBreakdown(
   }));
 }
 
+export async function getModelBreakdown(
+  userId: string,
+  since: Date,
+): Promise<Array<{ model: string; credits: number; costUsd: number; count: number }>> {
+  const client = serviceClient();
+  if (!client) return [];
+  const { data, error } = await client
+    .from('usage_events')
+    .select('model, cost_usd, credit_cost, raw')
+    .eq('user_id', userId)
+    .gte('created_at', since.toISOString());
+  if (error || !data) return [];
+
+  const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+  for (const row of data as any[]) {
+    if (isNonBillableUsageEvent({ model: row.model, raw: row.raw })) continue;
+    const model = String(row.model || 'unknown');
+    if (
+      model.startsWith('voice:') || model.startsWith('messaging:') ||
+      model.startsWith('compute') || model.startsWith('storage') ||
+      model === 'telnyx' || model === 'sms' || model === 'whatsapp'
+    ) continue;
+    const b = buckets[model] || (buckets[model] = { credits: 0, costUsd: 0, count: 0 });
+    b.credits += Number(row.credit_cost) || 0;
+    b.costUsd += Number(row.cost_usd) || 0;
+    b.count += 1;
+  }
+  return Object.entries(buckets)
+    .map(([model, v]) => ({
+      model,
+      credits: Number(v.credits.toFixed(2)),
+      costUsd: Number(v.costUsd.toFixed(6)),
+      count: v.count,
+    }))
+    .sort((a, b) => b.credits - a.credits);
+}
+
 export async function getUsageLogs(
   userId: string,
   limit: number,

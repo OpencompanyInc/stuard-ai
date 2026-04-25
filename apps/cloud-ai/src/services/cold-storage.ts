@@ -103,14 +103,21 @@ function rewriteSignedUrl(signedUrl: string): string {
 /**
  * Generate a signed upload URL for a user file.
  * @param raw If true, returns raw GCS URL without Cloudflare proxy rewrite (use for VM-destined URLs).
+ * @param folderPath Optional subfolder path (e.g. "videos/2026"); each segment is sanitised.
+ * @param contentType Bound to the signed URL — the client MUST PUT with the same Content-Type.
  */
 export async function generateUserUploadUrl(
   userId: string,
   filename: string,
   raw = false,
-): Promise<{ uploadUrl: string; objectName: string }> {
+  folderPath = '',
+  contentType = 'application/octet-stream',
+): Promise<{ uploadUrl: string; objectName: string; contentType: string }> {
   const safe = sanitizeFilename(filename);
-  const objectName = `${userId}/${safe}`;
+  const prefix = folderPath
+    ? folderPath.split('/').map(s => sanitizeFilename(s)).filter(Boolean).join('/')
+    : '';
+  const objectName = prefix ? `${userId}/${prefix}/${safe}` : `${userId}/${safe}`;
 
   const file = getBucket().file(objectName);
   const expires = Date.now() + UPLOAD_URL_TTL_MS;
@@ -118,10 +125,10 @@ export async function generateUserUploadUrl(
     version: 'v4',
     action: 'write',
     expires,
-    contentType: 'application/octet-stream',
+    contentType,
   });
 
-  return { uploadUrl: raw ? uploadUrl : rewriteSignedUrl(uploadUrl), objectName };
+  return { uploadUrl: raw ? uploadUrl : rewriteSignedUrl(uploadUrl), objectName, contentType };
 }
 
 /**

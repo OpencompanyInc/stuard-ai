@@ -205,6 +205,29 @@ export function getUsageSourceCategory(
   return "inference";
 }
 
+export function isNonBillableUsageEvent(input: { model?: string | null; raw?: any }): boolean {
+  const raw = input?.raw && typeof input.raw === "object" ? input.raw : {};
+  const src = String(raw.sourceType ?? raw.source_type ?? "").trim().toLowerCase();
+  const lbl = String(raw.source_label ?? raw.sourceLabel ?? "").trim().toLowerCase();
+  const excluded = raw.billingExcluded ?? raw.billing_excluded ?? raw.nonBillable ?? raw.non_billable;
+  const isTruthy = (v: unknown) => v === true || String(v).trim().toLowerCase() === "true" || String(v).trim() === "1";
+  const isEmbed = (m: string | null | undefined) => {
+    const n = String(m ?? "").toLowerCase();
+    return n.includes("embedding") || n.includes("embed-text") || n.includes("nomic-embed") || n.includes("mxbai-embed");
+  };
+  return isTruthy(excluded) || src === "embedding" || lbl.startsWith("embedding") || isEmbed(input?.model ?? raw.model);
+}
+
+export function categorizeModelForUsage(model: string): string {
+  const m = String(model || "unknown");
+  if (m.startsWith("voice:")) return "voice";
+  if (m.startsWith("messaging:") || ["telnyx", "sms", "reminder_sms", "reminder_whatsapp", "whatsapp"].includes(m)) return "messaging";
+  if (m.startsWith("compute") || m.startsWith("cloud_compute")) return "compute";
+  if (m.startsWith("storage")) return "storage";
+  if (m.startsWith("subagent") || m.startsWith("browser") || m.startsWith("delegation")) return "subagent";
+  return `inference:${m}`;
+}
+
 export function normalizeUsageLogEntry(entry: any): UsageLogEntry {
   const raw = entry?.raw && typeof entry.raw === "object" ? entry.raw : {};
   const model = pickFirstString(entry?.model, raw?.model) || "unknown";

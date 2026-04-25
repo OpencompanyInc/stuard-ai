@@ -1,9 +1,10 @@
 import { waitTool } from '../../tools/wait';
-import { runSequentialTool, runParallelTool } from '../../tools/workflow-system';
+import { runSequentialTool, runParallelTool, createWorkflowTool } from '../../tools/workflow-system';
+import { workflowModifyTool } from '../../tools/workflow';
 import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
-import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_update_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
+import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get_message_brief, gmail_get_message_full, gmail_get_messages_brief, gmail_list_recent_brief, gmail_get_most_recent_full, gmail_modify_message, gmail_delete_message, gmail_archive_message, gmail_mark_as_read, gmail_mark_as_unread, gmail_download_attachment, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, drive_list_files, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
 import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, list_user_spaces, get_space_contents, add_to_space, ensure_space_path, list_space_path, add_to_space_path, get_space_tree, create_space, add_source_to_space, add_note_to_space, add_code_snippet_to_space, link_conversation_to_space, find_or_create_space, update_space_item, delete_space_item, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for, browser_use_execute_script } from '../../tools/device-tools';
@@ -22,15 +23,11 @@ import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
-import { get_tool_schema, execute_tool, search_tools } from '../../tools/meta-tools';
+import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } from '../../tools/meta-tools';
+import { searchWorkflowDocs } from '../workflow-agent/docs';
+import { executeStep, inspectWorkflow, listWorkflows } from '../workflow-agent/tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
-import { get_skill_info } from '../../tools/skill-tools';
-// Workflow-authoring tools so the orchestrator's workflow subagent can resolve them
-import { workflowModifyTool } from '../../tools/workflow';
-import { createWorkflowTool } from '../../tools/workflow-system';
-import { executeStep as executeWorkflowStep, listWorkflows as listWorkflowsTool, inspectWorkflow } from '../workflow-agent/tools';
-import { searchWorkflowDocs } from '../workflow-agent/docs';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
@@ -72,9 +69,7 @@ export const ALL_TOOLS = {
   gmail_archive_message,
   gmail_mark_as_read,
   gmail_mark_as_unread,
-  calendar_list_events,
   calendar_create_event,
-  calendar_update_event,
   calendar_delete_event,
   tasks_list,
   drive_list_files,
@@ -269,17 +264,10 @@ export const ALL_TOOLS = {
   get_tool_schema,
   execute_tool,
   search_tools,
-  // Skills
-  get_skill_info,
+  search_workflow_nodes,
+  search_workflow_docs: searchWorkflowDocs,
   // Subagent routing
   route_to_workflow_agent: routeToWorkflowAgent,
-  // Workflow authoring (used by the orchestrator's workflow subagent)
-  create_workflow: createWorkflowTool,
-  modify_workflow: workflowModifyTool,
-  inspect_workflow: inspectWorkflow,
-  execute_step: executeWorkflowStep,
-  list_workflows: listWorkflowsTool,
-  search_workflow_docs: searchWorkflowDocs,
   // Telnyx (SMS, MMS, voice calls)
   telnyx_send_sms,
   telnyx_send_mms,
@@ -370,9 +358,6 @@ export const TIER_1_PARAMOUNT_TOOLS = [
 
   // Meta-tools for lazy-loading (3) — discover & run any other tool
   'get_tool_schema', 'execute_tool', 'search_tools',
-
-  // Skills — fetch full step details for a user-defined skill
-  'get_skill_info',
 
   // Subagent routing — delegate to workflow architect
   'route_to_workflow_agent',
@@ -606,6 +591,16 @@ export async function getToolsForQuery(
  * throwing "Tool X not found".
  */
 export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
-  return { ...ALL_TOOLS, ...mcpTools };
+  return {
+    ...ALL_TOOLS,
+    create_workflow: createWorkflowTool,
+    modify_workflow: workflowModifyTool,
+    inspect_workflow: inspectWorkflow,
+    execute_step: executeStep,
+    list_workflows: listWorkflows,
+    search_workflow_nodes,
+    search_workflow_docs: searchWorkflowDocs,
+    ...mcpTools,
+  };
 }
 

@@ -235,6 +235,82 @@ export function getCategoryDisplay(category: string): { label: string; hex: stri
   return { label: category, hex: '#9ca3af' };
 }
 
+// ── Pure client-safe helpers ────────────────────────────────────────────────
+
+function normalizeStr(v: unknown): string {
+  return typeof v === 'string' ? v.trim().toLowerCase() : '';
+}
+
+function isTruthyStr(v: unknown): boolean {
+  if (v === true) return true;
+  const n = normalizeStr(v);
+  return n === 'true' || n === '1' || n === 'yes';
+}
+
+function isEmbeddingModelName(model: string | null | undefined): boolean {
+  const n = normalizeStr(model);
+  return n.includes('embedding') || n.includes('embed-text') || n.includes('nomic-embed') || n.includes('mxbai-embed');
+}
+
+export function isNonBillableUsageEvent(input: { model?: string | null; raw?: any }): boolean {
+  const raw = input?.raw && typeof input.raw === 'object' ? input.raw : {};
+  const sourceType = normalizeStr(raw.sourceType ?? raw.source_type);
+  const sourceLabel = normalizeStr(raw.source_label ?? raw.sourceLabel);
+  const excluded = raw.billingExcluded ?? raw.billing_excluded ?? raw.nonBillable ?? raw.non_billable;
+  return (
+    isTruthyStr(excluded) ||
+    sourceType === 'embedding' ||
+    sourceLabel.startsWith('embedding') ||
+    isEmbeddingModelName(input?.model ?? raw.model)
+  );
+}
+
+export function categorizeModelForUsage(model: string): string {
+  const m = String(model || 'unknown');
+  if (m.startsWith('voice:')) return 'voice';
+  if (m.startsWith('messaging:') || ['telnyx', 'sms', 'reminder_sms', 'reminder_whatsapp', 'whatsapp'].includes(m)) return 'messaging';
+  if (m.startsWith('compute') || m.startsWith('cloud_compute')) return 'compute';
+  if (m.startsWith('storage')) return 'storage';
+  if (m.startsWith('subagent') || m.startsWith('browser') || m.startsWith('delegation')) return 'subagent';
+  return `inference:${m}`;
+}
+
+export function isInferenceModel(model: string | null | undefined): boolean {
+  const m = String(model || '');
+  return (
+    !m.startsWith('voice:') && !m.startsWith('messaging:') &&
+    !m.startsWith('compute') && !m.startsWith('storage') &&
+    !m.startsWith('subagent') && !m.startsWith('browser') && !m.startsWith('delegation') &&
+    m !== 'telnyx' && m !== 'sms' && m !== 'whatsapp' && m !== 'unknown' && m !== ''
+  );
+}
+
+export function resolveBillingPeriodStart(since?: string | null): Date {
+  if (since) {
+    const d = new Date(since);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+export function displayModelName(model: string): string {
+  if (!model || model === 'unknown') return 'Unknown';
+  let name = model;
+  if (name.startsWith('openrouter/')) name = name.slice('openrouter/'.length);
+  const slashIdx = name.indexOf('/');
+  if (slashIdx !== -1) name = name.slice(slashIdx + 1);
+  return name
+    .replace(/[-_]/g, ' ')
+    .split(' ')
+    .map((t) => {
+      if (!t) return t;
+      if (/^\d/.test(t)) return t;
+      return t.charAt(0).toUpperCase() + t.slice(1);
+    })
+    .join(' ');
+}
+
 export function formatModel(model: string): string {
   if (!model || model === 'unknown') return 'Unknown';
   if (model.startsWith('voice:')) return '-';

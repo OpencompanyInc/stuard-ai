@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import { useStorage, type StoragePlan, type UploadProgress, type StorageInfo, type CloudFileEntry } from '../hooks/useStorage';
 import { FileExplorer } from './FileExplorer';
-import { MediaLibraryView } from './MediaLibraryView';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -101,7 +100,7 @@ function PlanCard({ plan, current, onSelect, purchasing }: { plan: StoragePlan; 
         "relative flex flex-col p-4 rounded-2xl border-2 transition-all duration-300 text-left group",
         current
           ? "border-primary/40 bg-primary/5 ring-2 ring-primary/20 cursor-default"
-          : "border-theme/10 bg-theme-card hover:border-primary/30 hover:bg-primary/5 hover:shadow-lg",
+          : "border-theme/10 dark:border-transparent bg-theme-card hover:border-primary/30 hover:bg-primary/5 hover:shadow-lg",
         purchasing && "opacity-50 cursor-wait"
       )}
     >
@@ -122,8 +121,17 @@ function PlanCard({ plan, current, onSelect, purchasing }: { plan: StoragePlan; 
       </div>
 
       <div className="flex items-baseline gap-1 mb-3">
-        <span className="text-2xl font-black text-theme-fg">${plan.monthlyUsd.toFixed(2)}</span>
-        <span className="text-xs text-theme-muted">/mo</span>
+        {plan.monthlyCredits > 0 ? (
+          <>
+            <span className="text-2xl font-black text-theme-fg">{plan.monthlyCredits.toLocaleString()}</span>
+            <span className="text-xs text-theme-muted font-bold">credits/mo</span>
+          </>
+        ) : (
+          <>
+            <span className="text-2xl font-black text-theme-fg">Free</span>
+            <span className="text-xs text-theme-muted">forever</span>
+          </>
+        )}
       </div>
 
       <div className="space-y-1.5 text-xs text-theme-muted">
@@ -223,7 +231,7 @@ function DropZone({ onFiles, uploading }: { onFiles: (files: File[]) => void; up
 // Tabs
 // ─────────────────────────────────────────────────────────────────────────────
 
-type StorageTab = 'overview' | 'media' | 'files' | 'sync' | 'plans';
+type StorageTab = 'overview' | 'files' | 'sync' | 'plans';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Files Tab Sub-Component
@@ -275,7 +283,7 @@ function FilesTab({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Filter files..."
-            className="w-full pl-9 pr-3 py-2 bg-theme-hover/50 border border-theme/10 rounded-xl text-xs text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+            className="w-full pl-9 pr-3 py-2 bg-theme-hover/50 border border-theme/10 dark:border-transparent rounded-xl text-xs text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
           />
         </div>
         <button onClick={fetchFiles} className="p-2 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors">
@@ -285,7 +293,7 @@ function FilesTab({
 
       {/* File List */}
       {filtered.length === 0 ? (
-        <div className="p-6 rounded-2xl border border-theme/10 bg-theme-card text-center">
+        <div className="p-6 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card text-center">
           <FolderOpen className="w-10 h-10 text-theme-muted/30 mx-auto mb-3" />
           <p className="text-sm text-theme-muted font-medium">
             {files.length === 0 ? 'No files yet. Upload files above.' : 'No files matching your search.'}
@@ -295,7 +303,7 @@ function FilesTab({
           </p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-theme/10 bg-theme-card overflow-hidden">
+        <div className="rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card overflow-hidden">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-4 py-2 border-b border-theme/10 text-[10px] font-black text-theme-muted uppercase tracking-wider">
             <span>Name</span>
             <span>Size</span>
@@ -373,7 +381,7 @@ export function StorageView() {
     syncToCloud, syncFromCloud, clearUploadQueue, refresh,
   } = useStorage();
 
-  const [tab, setTab] = useState<StorageTab>('overview');
+  const [tab, setTab] = useState<StorageTab>('files');
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
@@ -432,25 +440,6 @@ export function StorageView() {
 
   return (
     <div className="space-y-6">
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-black text-theme-fg tracking-tight flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <HardDrive className="w-5 h-5 text-primary" />
-            </div>
-            Storage
-          </h2>
-          <p className="text-sm text-theme-muted mt-1">Manage your hot disk, cloud storage, and media library</p>
-        </div>
-        <button
-          onClick={refresh}
-          className="p-2.5 rounded-xl hover:bg-theme-hover transition-colors text-theme-muted hover:text-theme-fg"
-        >
-          <RefreshCw className="w-4.5 h-4.5" />
-        </button>
-      </div>
-
       {/* ── Feedback Toast ────────────────────────────────────────────────── */}
       {actionFeedback && (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-green-600/10 border border-green-500/20 text-green-400 rounded-xl text-sm font-medium animate-in slide-in-from-top-2">
@@ -471,7 +460,6 @@ export function StorageView() {
       <div className="flex items-center gap-1 p-1 bg-theme-hover/50 rounded-xl w-fit">
         {[
           { id: 'overview' as StorageTab, label: 'Overview', icon: HardDrive },
-          { id: 'media' as StorageTab, label: 'Media', icon: Image },
           { id: 'files' as StorageTab, label: 'Files', icon: FolderOpen },
           { id: 'sync' as StorageTab, label: 'Sync', icon: ArrowUpDown },
           { id: 'plans' as StorageTab, label: 'Plans', icon: Crown },
@@ -516,7 +504,7 @@ export function StorageView() {
           </div>
 
           {/* Quick Sync Card */}
-          <div className="p-5 rounded-2xl border border-theme/10 bg-theme-card">
+          <div className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card">
             <div className="flex items-center gap-2 mb-4">
               <ArrowUpDown className="w-4 h-4 text-primary" />
               <span className="font-bold text-theme-fg">VM ↔ Cloud Sync</span>
@@ -575,9 +563,6 @@ export function StorageView() {
         </div>
       )}
 
-      {/* ── Media Tab ─────────────────────────────────────────────────────── */}
-      {tab === 'media' && <MediaLibraryView />}
-
       {/* ── Files Tab ─────────────────────────────────────────────────────── */}
       {tab === 'files' && (
         <FileExplorer
@@ -599,7 +584,7 @@ export function StorageView() {
       {tab === 'sync' && (
         <div className="space-y-4">
           {/* Sync Diagram */}
-          <div className="p-6 rounded-2xl border border-theme/10 bg-theme-card">
+          <div className="p-6 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card">
             <div className="flex items-center justify-center gap-4">
               <div className="flex flex-col items-center gap-2 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
@@ -633,7 +618,7 @@ export function StorageView() {
             <button
               onClick={syncToCloud}
               disabled={syncing}
-              className="p-5 rounded-2xl border border-theme/10 bg-theme-card hover:border-primary/30 hover:bg-primary/3 transition-all text-left group disabled:opacity-50"
+              className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card hover:border-primary/30 hover:bg-primary/3 transition-all text-left group disabled:opacity-50"
             >
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -652,7 +637,7 @@ export function StorageView() {
             <button
               onClick={syncFromCloud}
               disabled={syncing}
-              className="p-5 rounded-2xl border border-theme/10 bg-theme-card hover:border-blue-500/30 hover:bg-blue-500/3 transition-all text-left group disabled:opacity-50"
+              className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card hover:border-blue-500/30 hover:bg-blue-500/3 transition-all text-left group disabled:opacity-50"
             >
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
@@ -670,7 +655,7 @@ export function StorageView() {
           </div>
 
           {/* Sync Info */}
-          <div className="p-4 rounded-2xl bg-theme-hover/30 border border-theme/5">
+          <div className="p-4 rounded-2xl bg-theme-hover/30 border border-theme/5 dark:border-transparent">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
               <div>
                 <div className="text-sm font-black text-theme-fg">{timeAgo(syncStatus?.lastSyncAt || null)}</div>
@@ -713,13 +698,13 @@ export function StorageView() {
             ))}
           </div>
 
-          <div className="p-4 rounded-xl bg-theme-hover/30 border border-theme/5 text-xs text-theme-muted leading-relaxed">
+          <div className="p-4 rounded-xl bg-theme-hover/30 border border-theme/5 dark:border-transparent text-xs text-theme-muted leading-relaxed">
             <strong className="text-theme-fg">How storage works:</strong>
             <ul className="mt-2 space-y-1 list-disc list-inside">
               <li><strong>Hot disk</strong> is a fast PD-SSD attached to your VM — your live workspace</li>
               <li><strong>Cloud storage</strong> is GCS-backed persistent storage — survives VM stop/start</li>
               <li>Your workspace auto-syncs between hot disk and cloud storage on VM start/stop</li>
-              <li>Credits are billed monthly for your plan tier</li>
+              <li>Credits are deducted monthly from your balance for your plan tier</li>
               <li>You can upgrade anytime — disk resizes automatically</li>
             </ul>
           </div>

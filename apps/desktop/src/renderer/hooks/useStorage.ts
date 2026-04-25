@@ -190,6 +190,12 @@ export function useStorage() {
   }, [fetchInfo, fetchQuota]);
 
   // ── Upload File ──────────────────────────────────────────────────────────
+  // Routes through the main process via IPC so uploads can use Node's fetch
+  // with a raw Buffer body. Avoids two renderer-side limits that were causing
+  // "Failed to fetch" and "Invalid string length" on large files:
+  //   - Electron net.fetch can't reliably send Blob/File request bodies
+  //   - V8 caps strings at ~512MB, breaking base64 of large files
+  // Falls back to JSON+base64 in the unlikely case the IPC bridge isn't loaded.
   const uploadFile = useCallback(async (file: File, folderPath = '') => {
     const filename = file.name;
     const progress: UploadProgress = {
@@ -203,29 +209,55 @@ export function useStorage() {
     setUploading(true);
 
     try {
-      // Upload directly through cloud-ai proxy (avoids GCS CORS issues)
       setUploadQueue(prev =>
         prev.map(p => p.filename === filename ? { ...p, status: 'uploading' } : p)
       );
 
       const token = await getAuthToken();
-      const headers: Record<string, string> = {
-        'X-Filename': filename,
-        'Content-Type': file.type || 'application/octet-stream',
-      };
-      if (folderPath) headers['X-File-Path'] = folderPath;
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const buf = await file.arrayBuffer();
+      const ipcUpload = (window as any).desktopAPI?.cloudStorageUpload;
 
-      const uploadResp = await fetch(`${CLOUD_AI_HTTP}/v1/cloud-storage/upload`, {
-        method: 'POST',
-        headers,
-        body: file,
-      });
+      let data: any;
 
-      const data = await uploadResp.json();
+      if (typeof ipcUpload === 'function') {
+        data = await ipcUpload({
+          buffer: buf,
+          filename,
+          folderPath: folderPath || '',
+          contentType: file.type || 'application/octet-stream',
+          token: token || undefined,
+        });
+      } else {
+        // Fallback for non-Electron contexts (e.g. browser-only dev): JSON+base64.
+        const bytes = new Uint8Array(buf);
+        const CHUNK = 0x8000;
+        const parts: string[] = [];
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          let bin = '';
+          const slice = bytes.subarray(i, i + CHUNK);
+          for (let j = 0; j < slice.length; j++) bin += String.fromCharCode(slice[j]);
+          parts.push(btoa(bin));
+        }
+        const b64data = parts.join('');
 
-      if (!uploadResp.ok || !data.ok) {
-        const errMsg = data.message || data.error || `Upload failed: ${uploadResp.status}`;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const uploadResp = await fetch(`${CLOUD_AI_HTTP}/v1/cloud-storage/upload`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            filename,
+            data: b64data,
+            folder: folderPath || '',
+            contentType: file.type || 'application/octet-stream',
+          }),
+        });
+        data = await uploadResp.json();
+        if (!uploadResp.ok) data = { ...data, ok: false };
+      }
+
+      if (!data?.ok) {
+        const errMsg = data?.message || data?.error || 'Upload failed';
         setUploadQueue(prev =>
           prev.map(p => p.filename === filename ? { ...p, status: 'error', error: errMsg } : p)
         );
@@ -236,7 +268,6 @@ export function useStorage() {
         prev.map(p => p.filename === filename ? { ...p, status: 'done', percent: 100, loaded: file.size } : p)
       );
 
-      // Refresh storage info after upload
       await fetchInfo();
       await fetchQuota();
       return { ok: true, objectName: data.objectName };

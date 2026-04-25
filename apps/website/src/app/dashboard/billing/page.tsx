@@ -15,16 +15,19 @@ import {
 } from 'lucide-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuthContext } from '@/components/providers/AuthProvider';
-import { billingApiFetch, getBillingAuthToken } from '@/lib/billingApi';
+import { getBillingAuthToken } from '@/lib/billingApi';
 import { supabase } from '@/lib/supabaseClient';
 import {
-  buildCreditsApiPath,
+  categorizeModelForUsage,
+  displayModelName,
   formatModel,
   formatRelativeTime,
   getCategoryDisplay,
   getUsageSourceCategory,
   getUsageSourceLabel,
+  isNonBillableUsageEvent,
   normalizeUsageLogEntry,
+  resolveBillingPeriodStart,
   type UsageLogEntry,
 } from '@/lib/billingUtils';
 import {
@@ -39,7 +42,7 @@ import {
 } from '@/lib/creditPricing';
 import {
   DEFAULT_ADDON_AMOUNT_CENTS,
-  POLAR_ADDON_ID,
+  POLAR_ADDON_IDS,
   POLAR_SUBSCRIPTION_ID,
 } from '@/lib/polarProducts';
 
@@ -85,6 +88,7 @@ const ADDON_PACKS = TOP_UP_AMOUNTS.map((amount, index) => ({
   id: `addon_${amount}`,
   label: `$${amount}`,
   amount: amount * 100,
+  productId: POLAR_ADDON_IDS[amount],
   credits: estimateCredits(amount).toLocaleString(),
   desc: ['Quick top-up', 'Standard pack', 'Popular choice', 'Power pack'][index],
 }));
@@ -107,6 +111,18 @@ const PieTooltip = ({ active, payload }: any) => {
   );
 };
 
+const ModelPieTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.[0]) return null;
+  const { name, value, payload: entry } = payload[0];
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg max-w-[200px]">
+      <p className="text-[12px] font-bold text-gray-900 truncate">{name}</p>
+      <p className="text-[11px] text-gray-500">{Number(value).toFixed(2)} credits · {Number(entry.pct).toFixed(1)}%</p>
+      <p className="text-[11px] text-gray-400">{entry.count} calls · ${Number(entry.costUsd).toFixed(4)}</p>
+    </div>
+  );
+};
+
 export default function BillingPage() {
   const { user, userData, loading } = useAuthContext();
 
@@ -114,6 +130,8 @@ export default function BillingPage() {
   const [creditsLoading, setCreditsLoading] = useState(true);
   const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>([]);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [modelBreakdown, setModelBreakdown] = useState<{ model: string; credits: number; costUsd: number; count: number }[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
   const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsPage, setLogsPage] = useState(0);
@@ -121,6 +139,7 @@ export default function BillingPage() {
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
 
   const [prefs, setPrefs] = useState<BillingPrefs | null>(null);
+  const [prefsLoading, setPrefsLoading] = useState(true);
   const [prefsSaving, setPrefsSaving] = useState(false);
 
   const [amount, setAmount] = useState(30);
@@ -159,10 +178,59 @@ export default function BillingPage() {
     if (!user) { setCreditSummary(null); setCreditsLoading(false); return; }
     try {
       setCreditsLoading(true);
-      const data = await billingApiFetch<any>('/credits');
+      const [{ data: profile }, { data: rawGrants }] = await Promise.all([
+        supabase.from('profiles').select('plan, current_period_start, current_period_end').eq('id', user.id).maybeSingle(),
+        supabase.from('credit_grants').select('source_type, total_credits, remaining_credits, expires_at').eq('user_id', user.id),
+      ]);
       if (!mountedRef.current) return;
-      if (data) setCreditSummary(data);
-      else setError('Could not load credit balance.');
+
+      const now = Date.now();
+      let includedCredits = 0, includedRemaining = 0, addonCredits = 0, addonRemaining = 0;
+      for (const g of rawGrants || []) {
+        if (g.expires_at && Date.parse(g.expires_at) <= now) continue;
+        const tc = Number(g.total_credits) || 0;
+        const tr = Number(g.remaining_credits) || 0;
+        if (String(g.source_type || '').toLowerCase() === 'subscription_cycle') {
+          includedCredits += tc; includedRemaining += tr;
+        } else {
+          addonCredits += tc; addonRemaining += tr;
+        }
+      }
+
+      const periodStart = profile?.current_period_start
+        ? new Date(profile.current_period_start)
+        : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+      const { data: periodEvents } = await supabase
+        .from('usage_events')
+        .select('model, credit_cost, raw')
+        .eq('user_id', user.id)
+        .gte('created_at', periodStart.toISOString());
+
+      let used = 0;
+      for (const e of periodEvents || []) {
+        if (isNonBillableUsageEvent({ model: (e as any).model, raw: (e as any).raw })) continue;
+        used += Number((e as any).credit_cost) || 0;
+      }
+
+      if (!mountedRef.current) return;
+      setCreditSummary({
+        ok: true,
+        plan: String(profile?.plan || 'Free'),
+        limit: Math.ceil(includedCredits + addonCredits),
+        used: Math.ceil(used),
+        remaining: Math.ceil(includedRemaining + addonRemaining),
+        unlimited: false,
+        includedCredits: Math.ceil(includedCredits),
+        includedRemaining: Math.ceil(includedRemaining),
+        addonCredits: Math.ceil(addonCredits),
+        addonRemaining: Math.ceil(addonRemaining),
+        creditsPerUsd: 33,
+        currentPeriodStart: profile?.current_period_start || periodStart.toISOString(),
+        currentPeriodEnd: profile?.current_period_end || null,
+      });
+    } catch (e: any) {
+      if (mountedRef.current) setError('Could not load credit balance.');
     } finally {
       if (mountedRef.current) setCreditsLoading(false);
     }
@@ -172,13 +240,72 @@ export default function BillingPage() {
     if (!user) return;
     setUsageLoading(true);
     try {
-      const data = await billingApiFetch<any>(
-        buildCreditsApiPath('/credits/usage', { since: billingPeriodStart }),
-      );
+      const since = resolveBillingPeriodStart(billingPeriodStart);
+      const { data } = await supabase
+        .from('usage_events')
+        .select('model, cost_usd, credit_cost, raw')
+        .eq('user_id', user.id)
+        .gte('created_at', since.toISOString());
       if (!mountedRef.current) return;
-      setUsageBreakdown(data?.breakdown || []);
+      const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+      for (const row of data || []) {
+        if (isNonBillableUsageEvent({ model: (row as any).model, raw: (row as any).raw })) continue;
+        const category = categorizeModelForUsage(String((row as any).model || 'unknown'));
+        if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
+        buckets[category].credits += Number((row as any).credit_cost) || 0;
+        buckets[category].costUsd += Number((row as any).cost_usd) || 0;
+        buckets[category].count += 1;
+      }
+      setUsageBreakdown(
+        Object.entries(buckets).map(([category, v]) => ({
+          category,
+          credits: Number(v.credits.toFixed(2)),
+          costUsd: Number(v.costUsd.toFixed(6)),
+          count: v.count,
+        })),
+      );
     } finally {
       if (mountedRef.current) setUsageLoading(false);
+    }
+  }, [user, billingPeriodStart]);
+
+  const loadModelBreakdown = useCallback(async () => {
+    if (!user) return;
+    setModelLoading(true);
+    try {
+      const since = resolveBillingPeriodStart(billingPeriodStart);
+      const { data } = await supabase
+        .from('usage_events')
+        .select('model, cost_usd, credit_cost, raw')
+        .eq('user_id', user.id)
+        .gte('created_at', since.toISOString());
+      if (!mountedRef.current) return;
+      const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+      for (const row of data || []) {
+        if (isNonBillableUsageEvent({ model: (row as any).model, raw: (row as any).raw })) continue;
+        const model = String((row as any).model || 'unknown');
+        if (
+          model.startsWith('voice:') || model.startsWith('messaging:') ||
+          model.startsWith('compute') || model.startsWith('storage') ||
+          model === 'telnyx' || model === 'sms' || model === 'whatsapp'
+        ) continue;
+        if (!buckets[model]) buckets[model] = { credits: 0, costUsd: 0, count: 0 };
+        buckets[model].credits += Number((row as any).credit_cost) || 0;
+        buckets[model].costUsd += Number((row as any).cost_usd) || 0;
+        buckets[model].count += 1;
+      }
+      setModelBreakdown(
+        Object.entries(buckets)
+          .map(([model, v]) => ({
+            model,
+            credits: Number(v.credits.toFixed(2)),
+            costUsd: Number(v.costUsd.toFixed(6)),
+            count: v.count,
+          }))
+          .sort((a, b) => b.credits - a.credits),
+      );
+    } finally {
+      if (mountedRef.current) setModelLoading(false);
     }
   }, [user, billingPeriodStart]);
 
@@ -186,17 +313,46 @@ export default function BillingPage() {
     if (!user) return;
     setLogsLoading(true);
     try {
-      const data = await billingApiFetch<any>(
-        buildCreditsApiPath('/credits/logs', {
-          limit: LOGS_PER_PAGE,
-          offset: page * LOGS_PER_PAGE,
-          since: billingPeriodStart,
-        }),
-      );
+      const since = resolveBillingPeriodStart(billingPeriodStart);
+      const fetchLimit = Math.max(LOGS_PER_PAGE * 8, 200);
+      const { data } = await supabase
+        .from('usage_events')
+        .select('id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at')
+        .eq('user_id', user.id)
+        .gte('created_at', since.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(fetchLimit);
       if (!mountedRef.current) return;
-      const logs = Array.isArray(data?.logs) ? data.logs.map(normalizeUsageLogEntry) : [];
+
+      const groups = new Map<string, any>();
+      for (const row of data || []) {
+        const raw = (row as any).raw && typeof (row as any).raw === 'object' ? (row as any).raw : {};
+        if (isNonBillableUsageEvent({ model: (row as any).model, raw })) continue;
+        const key = raw.sourceRef || raw.source_ref || (row as any).id;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            id: key, source_ref: key, model: (row as any).model,
+            conversation_id: (row as any).conversation_id,
+            source_type: raw.sourceType || raw.source_type || null,
+            source_label: raw.source_label || raw.sourceLabel || null,
+            subagent_kind: raw.subagentKind || raw.subagent_kind || null,
+            prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
+            cost_usd: 0, credit_cost: 0, step_count: 0, created_at: (row as any).created_at,
+          });
+        }
+        const g = groups.get(key)!;
+        g.prompt_tokens += Number((row as any).prompt_tokens || 0);
+        g.completion_tokens += Number((row as any).completion_tokens || 0);
+        g.total_tokens += Number((row as any).total_tokens || 0);
+        g.cost_usd += Number((row as any).cost_usd || 0);
+        g.credit_cost += Number((row as any).credit_cost || 0);
+        g.step_count += 1;
+        if ((row as any).created_at > g.created_at) g.created_at = (row as any).created_at;
+      }
+      const allGroups = Array.from(groups.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      const logs = allGroups.slice(page * LOGS_PER_PAGE, (page + 1) * LOGS_PER_PAGE).map(normalizeUsageLogEntry);
       setUsageLogs(logs);
-      setLogsTotal(Number(data?.total) || 0);
+      setLogsTotal(allGroups.length);
       setLogsPage(page);
     } finally {
       if (mountedRef.current) setLogsLoading(false);
@@ -204,43 +360,67 @@ export default function BillingPage() {
   }, [user, billingPeriodStart]);
 
   const loadPrefs = useCallback(async () => {
-    const token = await getBillingAuthToken();
-    if (!token) return;
-    const res = await fetch('/api/billing/prefs', { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!mountedRef.current) return;
-    setPrefs({
-      autoRefillEnabled: Boolean(data.autoRefillEnabled),
-      autoRefillThresholdCredits: Number(data.autoRefillThresholdCredits) || 100,
-      autoRefillAmountCents: Number(data.autoRefillAmountCents) || DEFAULT_ADDON_AMOUNT_CENTS,
-      monthlyBudgetCents: data.monthlyBudgetCents,
-      hardSpendLimitCents: data.hardSpendLimitCents,
-    });
-  }, []);
+    if (!user) { setPrefsLoading(false); return; }
+    setPrefsLoading(true);
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) return;
+      const res = await fetch('/api/billing/prefs', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!mountedRef.current) return;
+      setPrefs({
+        autoRefillEnabled: Boolean(data.autoRefillEnabled),
+        autoRefillThresholdCredits: Number(data.autoRefillThresholdCredits) || 100,
+        autoRefillAmountCents: Number(data.autoRefillAmountCents) || DEFAULT_ADDON_AMOUNT_CENTS,
+        monthlyBudgetCents: data.monthlyBudgetCents,
+        hardSpendLimitCents: data.hardSpendLimitCents,
+      });
+    } catch {
+      // network error or timeout — fall through to "could not load" state
+    } finally {
+      if (mountedRef.current) setPrefsLoading(false);
+    }
+  }, [user]);
 
   const loadSubscription = useCallback(async () => {
-    const token = await getBillingAuthToken();
-    if (!token) return;
-    const res = await fetch('/api/polar/subscription', { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!mountedRef.current) return;
-    setSubscription(data?.subscription || null);
-    if (data?.subscription?.amount) setAmount(Math.round(data.subscription.amount / 100));
-  }, []);
+    if (!user) return;
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) return;
+      const res = await fetch('/api/polar/subscription', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!mountedRef.current) return;
+      setSubscription(data?.subscription || null);
+      if (data?.subscription?.amount) setAmount(Math.round(data.subscription.amount / 100));
+    } catch {
+      // network error or timeout — leave subscription unset
+    }
+  }, [user]);
 
   useEffect(() => {
     loadCredits();
   }, [loadCredits]);
 
   useEffect(() => {
-    if (!creditSummary) return;
-    loadUsage();
-    loadLogs(0);
+    if (loading) return;
     loadPrefs();
     loadSubscription();
-  }, [creditSummary, loadUsage, loadLogs, loadPrefs, loadSubscription]);
+  }, [loading, loadPrefs, loadSubscription]);
+
+  useEffect(() => {
+    if (!creditSummary) return;
+    loadUsage();
+    loadModelBreakdown();
+    loadLogs(0);
+  }, [creditSummary, loadUsage, loadModelBreakdown, loadLogs]);
 
   // Realtime refresh on usage events / credit grant changes
   useEffect(() => {
@@ -250,6 +430,7 @@ export default function BillingPage() {
       refreshTimerRef.current = setTimeout(() => {
         loadCredits();
         loadUsage();
+        loadModelBreakdown();
         loadLogs(logsPage);
       }, 400);
     };
@@ -263,7 +444,7 @@ export default function BillingPage() {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       void supabase.removeChannel(channel);
     };
-  }, [user, logsPage, loadCredits, loadUsage, loadLogs]);
+  }, [user, logsPage, loadCredits, loadUsage, loadModelBreakdown, loadLogs]);
 
   // ---------- Derived ----------
   const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
@@ -280,6 +461,21 @@ export default function BillingPage() {
     });
 
   const totalLogsPages = Math.max(1, Math.ceil(logsTotal / LOGS_PER_PAGE));
+
+  const MODEL_PIE_COLORS = [
+    '#3b82f6', '#da7756', '#10a37f', '#6366f1', '#06b6d4', '#f59e0b',
+    '#8b5cf6', '#10b981', '#0ea5e9', '#d946ef', '#84cc16', '#fb7185',
+  ];
+  const modelTotal = modelBreakdown.reduce((s, b) => s + b.credits, 0);
+  const modelPieData = modelBreakdown.slice(0, 8).map((item, i) => ({
+    name: displayModelName(item.model),
+    value: item.credits,
+    pct: modelTotal > 0 ? Number(((item.credits / modelTotal) * 100).toFixed(1)) : 0,
+    fill: MODEL_PIE_COLORS[i % MODEL_PIE_COLORS.length],
+    count: item.count,
+    costUsd: item.costUsd,
+    rawModel: item.model,
+  }));
 
   const tier = useMemo(() => {
     switch (planTierFromAmount(amount)) {
@@ -309,14 +505,14 @@ export default function BillingPage() {
   const handleAddonPurchase = (pack: typeof ADDON_PACKS[number]) => {
     setError(null);
     if (!user) { setError('Please sign in first.'); return; }
+    if (!pack.productId) { setError('This pack is not available.'); return; }
     setAddonLoading(pack.id);
     const metadata = JSON.stringify({ userId: user.id, type: 'addon', packId: pack.id });
     const qs = new URLSearchParams({
-      products: POLAR_ADDON_ID,
+      products: pack.productId,
       customerEmail: user.email || '',
       customerExternalId: user.id,
       metadata,
-      amount: String(pack.amount),
     });
     window.location.href = `/api/polar/checkout?${qs.toString()}`;
   };
@@ -839,6 +1035,104 @@ export default function BillingPage() {
         </div>
       )}
 
+      {/* ---------- Model analytics (inside Usage tab, below category breakdown) ---------- */}
+      {activeTab === 'usage' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-[15px] font-semibold text-gray-900 mb-1">Model Breakdown</h2>
+          <p className="text-[12px] text-gray-400 mb-4">Credit usage by model this billing period.</p>
+
+          {modelLoading && modelBreakdown.length === 0 ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+            </div>
+          ) : modelBreakdown.length === 0 ? (
+            <div className="text-center py-10">
+              <Zap className="w-5 h-5 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">No model usage yet this period.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-6">
+              {modelPieData.length > 0 && (
+                <div className="flex-shrink-0 w-full sm:w-[240px] h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={modelPieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={95}
+                        paddingAngle={3}
+                        dataKey="value"
+                        nameKey="name"
+                        strokeWidth={0}
+                        label={({ cx, cy, midAngle, innerRadius: ir, outerRadius: or, percent: pct }: any) => {
+                          const RADIAN = Math.PI / 180;
+                          const radius = ir + (or - ir) * 0.5;
+                          const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                          const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                          const displayPct = Math.round((pct ?? 0) * 100);
+                          if (displayPct < 6) return null;
+                          return (
+                            <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
+                              {displayPct}%
+                            </text>
+                          );
+                        }}
+                        labelLine={false}
+                      >
+                        {modelPieData.map((entry, index) => (
+                          <Cell key={`model-cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<ModelPieTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              <div className="flex-1 space-y-1.5 min-w-0">
+                {modelBreakdown.map((item, i) => {
+                  const fill = MODEL_PIE_COLORS[i % MODEL_PIE_COLORS.length];
+                  const pct = modelTotal > 0 ? ((item.credits / modelTotal) * 100).toFixed(1) : '0';
+                  const name = displayModelName(item.model);
+                  return (
+                    <div
+                      key={item.model}
+                      className="flex items-center justify-between px-3 py-2 rounded-lg"
+                      style={{ backgroundColor: `${fill}0d` }}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: fill }} />
+                        <span className="text-[13px] font-semibold text-gray-900 truncate">{name}</span>
+                        <span className="text-[11px] text-gray-400 flex-shrink-0">
+                          {item.count} {item.count === 1 ? 'call' : 'calls'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                          style={{ backgroundColor: `${fill}18`, color: fill }}
+                        >
+                          {pct}%
+                        </span>
+                        <span className="text-[13px] font-bold text-gray-900 w-14 text-right tabular-nums">
+                          {item.credits.toFixed(1)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between px-3 pt-2 mt-1 border-t border-gray-200">
+                  <span className="text-[12px] font-bold text-gray-500">Total</span>
+                  <span className="text-[13px] font-bold text-gray-900 w-14 text-right tabular-nums">{modelTotal.toFixed(1)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ---------- Logs tab ---------- */}
       {activeTab === 'logs' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -933,14 +1227,20 @@ export default function BillingPage() {
         </div>
       )}
 
-      {activeTab === 'settings' && !prefs && (
+      {activeTab === 'settings' && prefsLoading && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
         </div>
       )}
 
+      {activeTab === 'settings' && !prefsLoading && !prefs && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-sm text-gray-500">
+          Could not load settings. Please refresh the page.
+        </div>
+      )}
+
       {/* ---------- Settings tab (auto-refill + limits) ---------- */}
-      {activeTab === 'settings' && prefs && (
+      {activeTab === 'settings' && !prefsLoading && prefs && (
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center gap-2 mb-4">

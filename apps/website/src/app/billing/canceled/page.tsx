@@ -1,5 +1,3 @@
-import Header from '@/components/layout/Header';
-import Footer from '@/components/layout/Footer';
 import CanceledContent from './CanceledContent';
 import type { Metadata } from 'next';
 
@@ -15,13 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default function BillingCanceledPage() {
-  return (
-    <>
-      <Header />
-      <CanceledContent />
-      <Footer />
-    </>
-  );
+  return <CanceledContent />;
 }
 
 

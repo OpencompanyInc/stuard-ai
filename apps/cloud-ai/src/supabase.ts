@@ -502,12 +502,21 @@ export async function getExternalAccessToken(
   return acc?.access_token || null;
 }
 
+// Short-lived cache so concurrent per-request auth checks reuse one Supabase round-trip.
+const _tokenCache = new Map<string, { result: { userId: string; email?: string }; expiresAt: number }>();
+const TOKEN_CACHE_TTL_MS = 60_000;
+
 export async function verifyToken(token: string): Promise<{ userId: string; email?: string } | null> {
   if (!token || !supabaseAnon) return null;
+  const now = Date.now();
+  const cached = _tokenCache.get(token);
+  if (cached && cached.expiresAt > now) return cached.result;
   try {
     const { data, error } = await supabaseAnon.auth.getUser(token);
     if (error || !data?.user) return null;
-    return { userId: data.user.id, email: data.user.email || undefined };
+    const result = { userId: data.user.id, email: data.user.email || undefined };
+    _tokenCache.set(token, { result, expiresAt: now + TOKEN_CACHE_TTL_MS });
+    return result;
   } catch {
     return null;
   }
@@ -1013,70 +1022,75 @@ function isExpiredCreditGrant(expiresAt: string | null | undefined, now = Date.n
 
 export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+  // Fetch profile, credit_grants, and a rough usage estimate concurrently so
+  // we don't pay 3 sequential round-trips before responding to the client.
+  const [profileData, grantsData] = await Promise.all([
+    supabaseService
+      ? supabaseService
+          .from('profiles')
+          .select('plan, current_period_start, current_period_end')
+          .eq('user_id', userId)
+          .single()
+          .catch(() => ({ data: null }))
+      : Promise.resolve({ data: null }),
+    supabaseService
+      ? supabaseService
+          .from('credit_grants')
+          .select('source_type, total_credits, remaining_credits, expires_at')
+          .eq('user_id', userId)
+          .catch(() => ({ data: null }))
+      : Promise.resolve({ data: null }),
+  ]);
+
   let plan = 'free';
   let currentPeriodStart: string | null = null;
   let currentPeriodEnd: string | null = null;
-
-  if (supabaseService) {
-    try {
-      const { data } = await supabaseService
-        .from('profiles')
-        .select('plan, current_period_start, current_period_end')
-        .eq('user_id', userId)
-        .single();
-      if (data) {
-        plan = String((data as any).plan || plan);
-        currentPeriodStart = (data as any).current_period_start || null;
-        currentPeriodEnd = (data as any).current_period_end || null;
-      }
-    } catch {}
+  if (profileData?.data) {
+    plan = String((profileData.data as any).plan || plan);
+    currentPeriodStart = (profileData.data as any).current_period_start || null;
+    currentPeriodEnd = (profileData.data as any).current_period_end || null;
   }
 
   const limit = monthlyCreditLimitForPlan(plan);
   const billingStart = currentPeriodStart && Number.isFinite(Date.parse(currentPeriodStart))
     ? new Date(currentPeriodStart)
     : monthStart;
-  const used = await getMonthlyUsageCredits(
-    userId,
-    billingStart,
-  );
+
+  const used = await getMonthlyUsageCredits(userId, billingStart);
 
   let includedCredits = 0;
   let includedRemaining = 0;
   let addonCredits = 0;
   let addonRemaining = 0;
-  if (supabaseService) {
-    try {
-      const now = Date.now();
-      const { data } = await supabaseService
-        .from('credit_grants')
-        .select('source_type, total_credits, remaining_credits, expires_at')
-        .eq('user_id', userId);
+  {
+    const now = Date.now();
+    for (const row of (grantsData?.data as any[]) || []) {
+      if (isExpiredCreditGrant(row?.expires_at, now)) continue;
 
-      for (const row of data || []) {
-        if (isExpiredCreditGrant(row?.expires_at, now)) continue;
+      const totalCredits = Math.max(0, Number(row?.total_credits) || 0);
+      const remainingCredits = Math.max(0, Number(row?.remaining_credits) || 0);
 
-        const totalCredits = Math.max(0, Number(row?.total_credits) || 0);
-        const remainingCredits = Math.max(0, Number(row?.remaining_credits) || 0);
-
-        if (isIncludedCreditGrant(row?.source_type)) {
-          includedCredits += totalCredits;
-          includedRemaining += remainingCredits;
-        } else {
-          addonCredits += totalCredits;
-          addonRemaining += remainingCredits;
-        }
+      if (isIncludedCreditGrant(row?.source_type)) {
+        includedCredits += totalCredits;
+        includedRemaining += remainingCredits;
+      } else {
+        addonCredits += totalCredits;
+        addonRemaining += remainingCredits;
       }
-    } catch {}
+    }
   }
 
   const unlimited = limit < 0;
   const fallbackIncludedCredits = unlimited ? 0 : Math.max(0, limit);
   const fallbackIncludedRemaining = unlimited ? 0 : Math.max(0, limit - used);
   const effectiveIncludedCredits = includedCredits > 0 ? includedCredits : fallbackIncludedCredits;
-  const effectiveIncludedRemaining = (includedCredits > 0 || includedRemaining > 0)
+  const grantBasedRemaining = (includedCredits > 0 || includedRemaining > 0)
     ? Math.max(0, includedRemaining)
     : fallbackIncludedRemaining;
+  // Cap by usage events so the display reflects real usage even if grant debits didn't fire
+  const usageBasedRemaining = Math.max(0, effectiveIncludedCredits - used);
+  const effectiveIncludedRemaining = Math.min(grantBasedRemaining, usageBasedRemaining);
   const remaining = unlimited ? -1 : Math.max(0, effectiveIncludedRemaining + addonRemaining);
   const totalLimit = unlimited ? -1 : Math.max(0, effectiveIncludedCredits + addonCredits);
 

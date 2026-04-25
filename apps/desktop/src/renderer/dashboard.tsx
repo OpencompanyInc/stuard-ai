@@ -39,6 +39,7 @@ import {
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
+import { isNonBillableUsageEvent } from './components/BillingSettings.utils';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -277,6 +278,7 @@ function DashboardApp() {
     pyRunCode,
     setPyRunCode,
     pyRunResult,
+    integrationLibrary,
     intCategories,
     filteredIntegrations,
     connectedCount,
@@ -323,6 +325,7 @@ function DashboardApp() {
     whatsappConnect,
     whatsappInitiateLink,
     whatsappDisconnect,
+    refreshWhatsAppStatus,
   } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
   // Calendar (Google-backed, Stuard blocks)
   const [calendarView, setCalendarView] = useState<'today' | 'month'>('month');
@@ -473,24 +476,65 @@ function DashboardApp() {
           } catch { }
         }
       }
-      if (session.access_token) {
-        const fetchCredits = async () => {
-          try {
-            const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, {
-              headers: { Authorization: `Bearer ${session.access_token}` }
-            });
-            const j = await resp.json().catch(() => null);
-            if (j && typeof j === 'object' && (j.ok === true || j.plan)) {
-              setCreditsInfo(j);
-              return true;
-            }
-          } catch { }
-          return false;
-        };
-        if (!(await fetchCredits())) {
-          setTimeout(() => { fetchCredits().catch(() => { }); }, 2000);
+      // Compute credits from supabase directly so Overview matches Billing settings
+      // (same query path BillingSettings uses — sums credit_grants.remaining_credits
+      // and counts billable usage_events within the current billing period).
+      try {
+        const [{ data: profileRow }, { data: rawGrants }] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select('plan, current_period_start, current_period_end')
+            .eq('id', userId)
+            .maybeSingle(),
+          supabase
+            .from('credit_grants')
+            .select('source_type, total_credits, remaining_credits, expires_at')
+            .eq('user_id', userId),
+        ]);
+
+        const now = Date.now();
+        let includedCredits = 0;
+        let includedRemaining = 0;
+        let addonCredits = 0;
+        let addonRemaining = 0;
+        for (const g of (rawGrants as any[]) || []) {
+          if (g.expires_at && Date.parse(g.expires_at) <= now) continue;
+          const tc = Math.max(0, Number(g.total_credits) || 0);
+          const tr = Math.max(0, Number(g.remaining_credits) || 0);
+          if (String(g.source_type || '').toLowerCase() === 'subscription_cycle') {
+            includedCredits += tc;
+            includedRemaining += tr;
+          } else {
+            addonCredits += tc;
+            addonRemaining += tr;
+          }
         }
-      }
+
+        const periodStart = (profileRow as any)?.current_period_start
+          ? new Date((profileRow as any).current_period_start)
+          : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+        const { data: periodEvents } = await supabase
+          .from('usage_events')
+          .select('model, credit_cost, raw')
+          .eq('user_id', userId)
+          .gte('created_at', periodStart.toISOString());
+
+        let used = 0;
+        for (const e of (periodEvents as any[]) || []) {
+          if (isNonBillableUsageEvent({ model: (e as any).model, raw: (e as any).raw })) continue;
+          used += Number((e as any).credit_cost) || 0;
+        }
+
+        setCreditsInfo({
+          ok: true,
+          plan: String((profileRow as any)?.plan || 'Free'),
+          limit: Math.ceil(includedCredits + addonCredits),
+          used: Math.ceil(used),
+          remaining: Math.ceil(includedRemaining + addonRemaining),
+          unlimited: false,
+        });
+      } catch { }
     } catch { }
   }, [session]);
 
@@ -1541,6 +1585,7 @@ function DashboardApp() {
                             <>
                               <IntegrationsView
                                 connectedCount={connectedCount}
+                                integrationLibrary={integrationLibrary}
                                 filteredIntegrations={filteredIntegrations}
                                 intQuery={intQuery}
                                 setIntQuery={setIntQuery}
@@ -1588,6 +1633,7 @@ function DashboardApp() {
                                 telnyxVerifyCode={telnyxVerifyCode}
                                 telnyxDisconnect={telnyxDisconnect}
                                 telnyxRemovePhone={telnyxRemovePhone}
+                                refreshTelnyxStatus={refreshTelnyxStatus}
                                 getToken={() => session?.access_token || null}
                                 whatsappPhone={whatsappPhone}
                                 whatsappConnecting={whatsappConnecting}
@@ -1597,6 +1643,7 @@ function DashboardApp() {
                                 whatsappConnect={whatsappConnect}
                                 whatsappInitiateLink={whatsappInitiateLink}
                                 whatsappDisconnect={whatsappDisconnect}
+                                refreshWhatsAppStatus={refreshWhatsAppStatus}
                                 browserUseStatus={browserUseStatus}
                                 browserUseChecking={browserUseChecking}
                                 browserUseSetupProgress={browserUseSetupProgress}

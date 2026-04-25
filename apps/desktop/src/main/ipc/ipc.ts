@@ -1847,4 +1847,95 @@ export function setupIpc() {
   ipcMain.handle('system:getGlobalHotkey', () => {
     return { ok: true, hotkey: getGlobalHotkey() };
   });
+
+  // Cloud storage upload via main process. Uses a signed GCS URL and PUTs the
+  // file directly to storage, bypassing Cloud Run's 32MB request limit and
+  // Electron renderer net.fetch / V8 string-length issues on large files.
+  ipcMain.handle('cloudStorage:upload', async (_e, payload: {
+    buffer: ArrayBuffer;
+    filename: string;
+    folderPath?: string;
+    contentType?: string;
+    token?: string;
+  }) => {
+    try {
+      const cloudAiUrl = String(
+        process.env.CLOUD_AI_HTTP ||
+        process.env.CLOUD_PUBLIC_URL ||
+        process.env.VITE_CLOUD_AI_URL ||
+        'http://127.0.0.1:8082'
+      ).trim().replace(/\/+$/, '');
+
+      const filename = String(payload?.filename || '').trim();
+      if (!filename) return { ok: false, error: 'missing_filename' };
+      if (!payload?.buffer) return { ok: false, error: 'missing_buffer' };
+
+      const body = Buffer.from(payload.buffer);
+      // Always sign + PUT with octet-stream so the signed URL stays valid
+      // regardless of the browser-detected mime. GCS still serves the file
+      // back fine for arbitrary content.
+      const contentType = 'application/octet-stream';
+
+      const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (payload.token) authHeaders['Authorization'] = `Bearer ${payload.token}`;
+
+      // 1. Ask cloud-ai for a signed URL (small request — fits Cloud Run easily).
+      // raw=true returns the direct GCS URL instead of the Cloudflare-proxied one,
+      // bypassing the CF Worker's request-size limit on large files.
+      const urlResp = await fetch(`${cloudAiUrl}/v1/cloud-storage/upload-url`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          filename,
+          folder: payload.folderPath || '',
+          contentType,
+          raw: true,
+        }),
+      });
+      const urlData: any = await urlResp.json().catch(() => ({}));
+      if (!urlResp.ok || !urlData?.ok || !urlData?.uploadUrl) {
+        return {
+          ok: false,
+          status: urlResp.status,
+          error: urlData?.error || 'upload_url_failed',
+          message: urlData?.message || `HTTP ${urlResp.status}`,
+        };
+      }
+
+      // 2. PUT raw buffer directly to GCS — no Cloud Run hop
+      const putResp = await fetch(urlData.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(body.length),
+        },
+        body,
+      });
+      if (!putResp.ok) {
+        const text = await putResp.text().catch(() => '');
+        return {
+          ok: false,
+          status: putResp.status,
+          error: 'gcs_put_failed',
+          message: `GCS HTTP ${putResp.status}${text ? `: ${text.slice(0, 200)}` : ''}`,
+        };
+      }
+
+      // 3. Notify cloud-ai so cold_storage_bytes / billing stay accurate
+      try {
+        await fetch(`${cloudAiUrl}/v1/cloud-storage/upload-complete`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({ objectName: urlData.objectName }),
+        });
+      } catch (e: any) {
+        logger.warn('[cloudStorage:upload] usage refresh failed:', e?.message || e);
+      }
+
+      return { ok: true, objectName: urlData.objectName, bytesWritten: body.length };
+    } catch (e: any) {
+      logger.error('[cloudStorage:upload] failed:', e?.message || e);
+      return { ok: false, error: 'upload_exception', message: String(e?.message || e) };
+    }
+  });
 }

@@ -13,6 +13,7 @@ interface IntegrationProfile {
 
 interface IntegrationsViewProps {
   connectedCount: number;
+  integrationLibrary: any[];
   filteredIntegrations: any[];
   intQuery: string;
   setIntQuery: (v: string) => void;
@@ -60,6 +61,7 @@ interface IntegrationsViewProps {
   telnyxVerifyCode: (code: string, slot?: number) => Promise<{ ok: boolean; phone?: string; error?: string }>;
   telnyxDisconnect: () => Promise<void>;
   telnyxRemovePhone: (slot: number) => Promise<void>;
+  refreshTelnyxStatus: () => Promise<void> | void;
   getToken?: () => string | null;
   whatsappPhone: string | null;
   whatsappConnecting: boolean;
@@ -69,6 +71,7 @@ interface IntegrationsViewProps {
   whatsappConnect: (phone: string) => Promise<{ ok: boolean; error?: string }>;
   whatsappInitiateLink: () => Promise<{ ok: boolean; error?: string }>;
   whatsappDisconnect: () => Promise<void>;
+  refreshWhatsAppStatus: () => Promise<boolean> | Promise<void> | void;
   browserUseStatus?: any;
   browserUseChecking?: boolean;
   browserUseSetupProgress?: string | null;
@@ -123,6 +126,19 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'google-sheets': return <Table className={size} />;
     case 'google-docs': return <FileText className={size} />;
     case 'telnyx': return <Phone className={size} />;
+    default: return <Box className={size} />;
+  }
+}
+
+function getCategoryIcon(category: string, size = "w-4 h-4") {
+  switch (category) {
+    case 'Productivity': return <Calendar className={size} />;
+    case 'Communication': return <MessageSquare className={size} />;
+    case 'Development': return <Terminal className={size} />;
+    case 'Local': return <Globe className={size} />;
+    case 'Automation': return <Webhook className={size} />;
+    case 'Files': return <HardDrive className={size} />;
+    case 'Data': return <Table className={size} />;
     default: return <Box className={size} />;
   }
 }
@@ -194,7 +210,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card flex flex-col transition-all duration-300",
+      "dashboard-card flex h-full min-h-[250px] flex-col transition-all duration-300",
       anyConnected && "border-primary/30"
     )}>
       {/* Header */}
@@ -676,7 +692,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card transition-all duration-300",
+      "dashboard-card h-full transition-all duration-300",
       isConnected && "border-primary/30"
     )}>
       <div className="p-5">
@@ -847,7 +863,7 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card transition-all duration-300",
+      "dashboard-card h-full transition-all duration-300",
       isConnected && "border-[#25D366]/30"
     )}>
       <div className="p-5">
@@ -1070,7 +1086,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card group relative flex flex-col p-5 transition-all duration-300",
+      "dashboard-card group relative flex h-full min-h-[250px] flex-col p-5 transition-all duration-300",
       isConnected && "border-primary/30"
     )}>
       {/* Header */}
@@ -1638,6 +1654,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
 export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
   const {
     connectedCount,
+    integrationLibrary,
     filteredIntegrations,
     intQuery,
     setIntQuery,
@@ -1648,6 +1665,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     handleConnect,
     handleDisconnect,
     handleLearnMore,
+    refreshPythonStatus,
     profiles,
     profilesLoading,
     refreshProfiles,
@@ -1674,6 +1692,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     telnyxVerifyCode,
     telnyxDisconnect,
     telnyxRemovePhone,
+    refreshTelnyxStatus,
     getToken,
     whatsappPhone,
     whatsappConnecting,
@@ -1683,6 +1702,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     whatsappConnect,
     whatsappInitiateLink,
     whatsappDisconnect,
+    refreshWhatsAppStatus,
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
@@ -1716,166 +1736,251 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
   );
 
   const showGoogleCard = googleProducts.length > 0;
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
+
+  const queryScopedIntegrations = useMemo(() => {
+    const query = intQuery.trim().toLowerCase();
+    return integrationLibrary.filter((integration: any) => {
+      if (!query) return true;
+      return integration.name.toLowerCase().includes(query) || integration.description.toLowerCase().includes(query);
+    });
+  }, [integrationLibrary, intQuery]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { All: queryScopedIntegrations.length };
+    for (const category of intCategories) {
+      if (category === 'All') continue;
+      counts[category] = queryScopedIntegrations.filter((integration: any) => integration.category === category).length;
+    }
+    return counts;
+  }, [intCategories, queryScopedIntegrations]);
+
+  const handleRefreshAll = async () => {
+    setIsRefreshingAll(true);
+    try {
+      await Promise.allSettled([
+        Promise.resolve(refreshProfiles()),
+        Promise.resolve(refreshPythonStatus()),
+        Promise.resolve(refreshFfmpegStatus()),
+        Promise.resolve(refreshMediapipeStatus()),
+        Promise.resolve(refreshOllamaStatus()),
+        Promise.resolve(refreshBrowserUseStatus?.()),
+        Promise.resolve(refreshTelnyxStatus()),
+        Promise.resolve(refreshWhatsAppStatus()),
+      ]);
+    } finally {
+      setIsRefreshingAll(false);
+    }
+  };
 
   return (
     <div className="pb-6">
-      {/* Header */}
-      <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <h1 className="text-[30px] font-semibold text-theme-fg tracking-tight font-stuard leading-none">Connected Apps</h1>
           <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
             <Link2 className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-            <span>Manage the tools and services connected to Stuard.</span>
+            <span>Connect your tools and services to expand Stuard&apos;s capabilities.</span>
           </p>
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
-            <input
-              value={intQuery}
-              onChange={(e) => setIntQuery(e.target.value)}
-              placeholder="Search tools…"
-              className="dashboard-refresh-button w-60 pl-9 pr-3 py-2 text-[13px] font-medium placeholder:text-theme-muted/60 focus:border-primary/40 focus:outline-none"
-            />
-          </div>
-          <select
-            value={intCategory}
-            onChange={(e) => setIntCategory(e.target.value)}
-            className="dashboard-refresh-button px-3 py-2 text-[13px] font-medium cursor-pointer focus:outline-none"
-          >
-            {intCategories.map((c) => (
-              <option key={c} value={c} className="bg-theme-card text-theme-fg">{c}</option>
-            ))}
-          </select>
-        </div>
+        <button
+          type="button"
+          onClick={handleRefreshAll}
+          disabled={isRefreshingAll}
+          className="dashboard-refresh-button inline-flex items-center gap-2 self-start px-3.5 py-2 text-[12px] font-semibold disabled:opacity-60"
+        >
+          <RefreshCw className={clsx("h-3.5 w-3.5", isRefreshingAll && "animate-spin")} />
+          Refresh
+        </button>
       </div>
 
-      {/* Stats bar */}
-      <div className="mb-5 flex items-center gap-2">
-        <span className="dashboard-pill px-2.5 py-1 text-[11px] font-semibold text-theme-muted">
-          {filteredIntegrations.length} Available
-        </span>
-        {connectedCount > 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            </span>
-            {connectedCount} Active
-          </span>
-        )}
-      </div>
-
-      {filteredIntegrations.length === 0 ? (
-        <div className="dashboard-card flex flex-col items-center justify-center rounded-[24px] border-dashed px-6 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-theme-hover/40">
-            <Search className="h-6 w-6 text-theme-muted/70" />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_248px] xl:items-start">
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-[18px] font-semibold tracking-tight text-theme-fg">Apps &amp; Tools</h2>
+              <p className="mt-1 text-[12px] font-medium text-theme-muted">
+                Browse and manage integrations for local tools, messaging, files, and automation.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {connectedCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                  {connectedCount} Active
+                </span>
+              )}
+              <span className="dashboard-pill px-2.5 py-1 text-[11px] font-semibold text-theme-muted">
+                {filteredIntegrations.length} Shown
+              </span>
+            </div>
           </div>
-          <h3 className="text-[15px] font-semibold text-theme-fg">No matching apps</h3>
-          <p className="mt-1.5 text-[12px] text-theme-muted max-w-xs">
-            We couldn't find any tools matching “{intQuery}” in {intCategory}.
-          </p>
-          <button
-            onClick={() => { setIntQuery(""); setIntCategory("All"); }}
-            className="dashboard-refresh-button mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium"
-          >
-            Clear Filters
-          </button>
+
+          {filteredIntegrations.length === 0 ? (
+            <div className="dashboard-card flex flex-col items-center justify-center rounded-[24px] border-dashed px-6 py-16 text-center">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-theme-hover/40">
+                <Search className="h-6 w-6 text-theme-muted/70" />
+              </div>
+              <h3 className="text-[15px] font-semibold text-theme-fg">No matching apps</h3>
+              <p className="mt-1.5 max-w-xs text-[12px] text-theme-muted">
+                We couldn&apos;t find any tools matching “{intQuery}” in {intCategory}.
+              </p>
+              <button
+                onClick={() => { setIntQuery(""); setIntCategory("All"); }}
+                className="dashboard-refresh-button mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium"
+              >
+                Clear Filters
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {showGoogleCard && (
+                <GoogleAccountCard
+                  googleProducts={googleProducts}
+                  connectedMap={connectedMap}
+                  handleConnect={handleConnect}
+                  handleDisconnect={handleDisconnect}
+                  handleLearnMore={handleLearnMore}
+                  profiles={profiles}
+                  profilesLoading={profilesLoading}
+                  refreshProfiles={refreshProfiles}
+                  setDefaultProfile={setDefaultProfile}
+                  deleteProfile={deleteProfile}
+                />
+              )}
+
+              {showTelnyxCard && (
+                <TelnyxPhoneCard
+                  isConnected={!!connectedMap.telnyx}
+                  phones={telnyxPhones}
+                  verifying={telnyxVerifying}
+                  requestCode={telnyxRequestCode}
+                  verifyCode={telnyxVerifyCode}
+                  removePhone={telnyxRemovePhone}
+                  disconnect={telnyxDisconnect}
+                  getToken={getToken}
+                />
+              )}
+
+              {showWhatsAppCard && (
+                <WhatsAppCard
+                  isConnected={!!connectedMap.whatsapp}
+                  phone={whatsappPhone}
+                  connecting={whatsappConnecting}
+                  linking={whatsappLinking}
+                  linkCode={whatsappLinkCode}
+                  botNumber={whatsappBotNumber}
+                  connect={whatsappConnect}
+                  initiateLink={whatsappInitiateLink}
+                  disconnect={whatsappDisconnect}
+                />
+              )}
+
+              {nonGoogleIntegrations.map((i: any) => {
+                const isBrowserUseSlug = i.slug === 'browser-use';
+                const isConnected = isBrowserUseSlug
+                  ? !!(browserUseStatus?.running || browserUseStatus?.installed)
+                  : !!connectedMap[i.slug];
+
+                return (
+                  <StandardCard
+                    key={i.slug}
+                    integration={i}
+                    isConnected={isConnected}
+                    connectedMap={connectedMap}
+                    handleConnect={handleConnect}
+                    handleDisconnect={handleDisconnect}
+                    handleLearnMore={handleLearnMore}
+                    profiles={profiles}
+                    profilesLoading={profilesLoading}
+                    setDefaultProfile={setDefaultProfile}
+                    deleteProfile={deleteProfile}
+                    pyStatus={pyStatus}
+                    pyEnvId={pyEnvId}
+                    setPyEnvId={setPyEnvId}
+                    pyInstalling={pyInstalling}
+                    installPython={installPython}
+                    ffStatus={ffStatus}
+                    ffInstalling={ffInstalling}
+                    refreshFfmpegStatus={refreshFfmpegStatus}
+                    mpStatus={mpStatus}
+                    mpInstalling={mpInstalling}
+                    refreshMediapipeStatus={refreshMediapipeStatus}
+                    ollamaStatus={ollamaStatus}
+                    ollamaChecking={ollamaChecking}
+                    refreshOllamaStatus={refreshOllamaStatus}
+                    startOllama={startOllama}
+                    browserUseStatus={browserUseStatus}
+                    browserUseChecking={browserUseChecking}
+                    browserUseSetupProgress={browserUseSetupProgress}
+                    refreshBrowserUseStatus={refreshBrowserUseStatus}
+                    setupBrowserUse={setupBrowserUse}
+                    stopBrowserUse={stopBrowserUse}
+                    uninstallBrowserUse={uninstallBrowserUse}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {showGoogleCard && (
-            <GoogleAccountCard
-              googleProducts={googleProducts}
-              connectedMap={connectedMap}
-              handleConnect={handleConnect}
-              handleDisconnect={handleDisconnect}
-              handleLearnMore={handleLearnMore}
-              profiles={profiles}
-              profilesLoading={profilesLoading}
-              refreshProfiles={refreshProfiles}
-              setDefaultProfile={setDefaultProfile}
-              deleteProfile={deleteProfile}
-            />
-          )}
 
-          {/* Telnyx phone card */}
-          {showTelnyxCard && (
-            <TelnyxPhoneCard
-              isConnected={!!connectedMap.telnyx}
-              phones={telnyxPhones}
-              verifying={telnyxVerifying}
-              requestCode={telnyxRequestCode}
-              verifyCode={telnyxVerifyCode}
-              removePhone={telnyxRemovePhone}
-              disconnect={telnyxDisconnect}
-              getToken={getToken}
-            />
-          )}
-
-          {/* WhatsApp card */}
-          {showWhatsAppCard && (
-            <WhatsAppCard
-              isConnected={!!connectedMap.whatsapp}
-              phone={whatsappPhone}
-              connecting={whatsappConnecting}
-              linking={whatsappLinking}
-              linkCode={whatsappLinkCode}
-              botNumber={whatsappBotNumber}
-              connect={whatsappConnect}
-              initiateLink={whatsappInitiateLink}
-              disconnect={whatsappDisconnect}
-            />
-          )}
-
-          {/* Non-Google integrations */}
-          {nonGoogleIntegrations.map((i: any) => {
-            const isBrowserUseSlug = i.slug === 'browser-use';
-            const isConnected = isBrowserUseSlug
-              ? !!(browserUseStatus?.running || browserUseStatus?.installed)
-              : !!connectedMap[i.slug];
-
-            return (
-              <StandardCard
-                key={i.slug}
-                integration={i}
-                isConnected={isConnected}
-                connectedMap={connectedMap}
-                handleConnect={handleConnect}
-                handleDisconnect={handleDisconnect}
-                handleLearnMore={handleLearnMore}
-                profiles={profiles}
-                profilesLoading={profilesLoading}
-                setDefaultProfile={setDefaultProfile}
-                deleteProfile={deleteProfile}
-                pyStatus={pyStatus}
-                pyEnvId={pyEnvId}
-                setPyEnvId={setPyEnvId}
-                pyInstalling={pyInstalling}
-                installPython={installPython}
-                ffStatus={ffStatus}
-                ffInstalling={ffInstalling}
-                refreshFfmpegStatus={refreshFfmpegStatus}
-                mpStatus={mpStatus}
-                mpInstalling={mpInstalling}
-                refreshMediapipeStatus={refreshMediapipeStatus}
-                ollamaStatus={ollamaStatus}
-                ollamaChecking={ollamaChecking}
-                refreshOllamaStatus={refreshOllamaStatus}
-                startOllama={startOllama}
-                browserUseStatus={browserUseStatus}
-                browserUseChecking={browserUseChecking}
-                browserUseSetupProgress={browserUseSetupProgress}
-                refreshBrowserUseStatus={refreshBrowserUseStatus}
-                setupBrowserUse={setupBrowserUse}
-                stopBrowserUse={stopBrowserUse}
-                uninstallBrowserUse={uninstallBrowserUse}
+        <aside className="space-y-3 xl:sticky xl:top-5">
+          <div className="dashboard-card p-1.5">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 text-theme-muted" />
+              <input
+                value={intQuery}
+                onChange={(e) => setIntQuery(e.target.value)}
+                placeholder="Search"
+                className="h-7 w-full rounded-[12px] border border-transparent bg-theme-hover/45 pl-7 pr-2.5 text-[11px] font-medium text-theme-fg placeholder:text-theme-muted/60 focus:border-primary/30 focus:outline-none"
               />
-            );
-          })}
-        </div>
-      )}
+            </div>
+          </div>
+
+          <div className="dashboard-card p-3">
+            <div className="space-y-1">
+              {intCategories.map((category) => {
+                const isActive = intCategory === category;
+                const count = categoryCounts[category] ?? 0;
+
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => setIntCategory(category)}
+                    className={clsx(
+                      "flex w-full items-center justify-between rounded-[16px] px-2.5 py-2 text-left transition-all",
+                      isActive
+                        ? "bg-theme-hover/70 text-theme-fg shadow-sm"
+                        : "text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg"
+                    )}
+                  >
+                    <span className="flex items-center gap-2 text-[12px] font-medium">
+                      <span className={clsx(
+                        "flex h-6.5 w-6.5 items-center justify-center rounded-full",
+                        isActive ? "bg-primary/15 text-primary" : "bg-theme-hover/45 text-theme-muted"
+                      )}>
+                        {getCategoryIcon(category, "h-3 w-3")}
+                      </span>
+                      {category}
+                    </span>
+                    <span className={clsx(
+                      "inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                      isActive ? "bg-primary/15 text-primary" : "bg-theme-hover/60 text-theme-muted"
+                    )}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 };

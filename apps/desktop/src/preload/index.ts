@@ -560,6 +560,17 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Auth session sync (required for SMS inbox realtime subscription in main process)
   syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
 
+  // Cloud Storage — upload arbitrary file via main process. Use this for any file
+  // upload from the renderer; it bypasses the renderer's binary-body and base64
+  // string-length limits that fail on large files.
+  cloudStorageUpload: (payload: {
+    buffer: ArrayBuffer;
+    filename: string;
+    folderPath?: string;
+    contentType?: string;
+    token?: string;
+  }) => ipcRenderer.invoke('cloudStorage:upload', payload),
+
   // Cloud Engine — upload agent data (knowledge.db, memory.db, file_index.db, etc.) to GCS
   uploadAgentData: (_cloudAiUrl: string, _token: string) => ipcRenderer.invoke('cloud:uploadAgentData'),
   // Debounced fast-path: call after any local mutation that should propagate

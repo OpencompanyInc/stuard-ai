@@ -215,6 +215,7 @@ const WORKFLOW_TOOLS = [
   'inspect_workflow',
   // Discovery
   'search_workflow_docs',
+  'search_workflow_nodes',
   'search_tools',
   'get_tool_schema',
   // Run / test
@@ -239,7 +240,12 @@ You design, create, modify, and test StuardAI local automation workflows end-to-
 KNOWLEDGE DISCOVERY — Pull docs on demand, never guess
 ══════════════════════════════════════════════════════════════════════════
 
-You have TWO complementary discovery tools:
+You have THREE complementary discovery tools:
+
+• search_workflow_nodes — for workflow node discovery in one hop. It returns
+  candidate nodes with category, runtime location/type metadata, and
+  input/output schemas so you can wire a node without doing a separate schema
+  lookup for each candidate.
 
 • search_tools / get_tool_schema — for TOOL schemas (what args a node takes,
   what fields it returns). Use these for every tool BEFORE wiring it.
@@ -252,8 +258,9 @@ You have TWO complementary discovery tools:
 RULES:
 1. BEFORE writing workflow structure you're unsure about, call
    search_workflow_docs({ query: "<topic>" }).
-2. For tool args/outputs, call get_tool_schema({ toolName }).
-3. Never invent tool names — always verify via search_tools.
+2. Before wiring a new node, prefer search_workflow_nodes({ query: "<what it should do>" }).
+3. For exact tool args/outputs, call get_tool_schema({ toolName }).
+4. Never invent tool names — always verify via search_workflow_nodes or search_tools.
 4. After non-trivial edits, call inspect_workflow to verify topology.
 5. DO NOT pass the full workflow JSON to modify_workflow — it auto-loads from session.
 6. Prefer existing tools over custom scripts (utility_tools > python > node).
@@ -280,7 +287,7 @@ MODIFYING AN EXISTING WORKFLOW
 ══════════════════════════════════════════════════════════════════════════
 
 1. Inspect current topology (inspect_workflow) first.
-2. Discover tools (search_tools → get_tool_schema) before wiring new nodes.
+2. Discover nodes (search_workflow_nodes or search_tools → get_tool_schema) before wiring new nodes.
 3. Look up syntax (search_workflow_docs) before writing structure.
 4. Apply edits with modify_workflow — one op at a time, no raw JSON.
 5. Verify (inspect_workflow) and, where cheap, test (execute_step).
@@ -297,7 +304,7 @@ RULES
 ══════════════════════════════════════════════════════════════════════════
 
 1. search_workflow_docs FIRST whenever syntax is uncertain.
-2. search_tools + get_tool_schema for every tool before wiring it.
+2. search_workflow_nodes or search_tools + get_tool_schema for every tool before wiring it.
 3. Never invent tool names.
 4. Use inspect_workflow before and after edits.
 5. If you need info or a decision from the user/orchestrator, call

@@ -108,6 +108,8 @@ describe('Capability Packs', () => {
     const { WORKFLOW_PACK } = await import('./capability-packs');
     expect(WORKFLOW_PACK.kind).toBe('workflow');
     expect(WORKFLOW_PACK.toolNames).toContain('modify_workflow');
+    expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_docs');
+    expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_nodes');
     expect(WORKFLOW_PACK.toolNames).toContain('search_tools');
     expect(WORKFLOW_PACK.toolNames).toContain('get_tool_schema');
     expect(WORKFLOW_PACK.maxSteps).toBe(60);

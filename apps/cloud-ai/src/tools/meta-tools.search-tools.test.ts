@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { search_tools } from './meta-tools';
+import { search_tools, search_workflow_nodes } from './meta-tools';
 
 const {
   getSupabaseServiceMock,
@@ -140,5 +140,29 @@ describe('search_tools Supabase-backed discovery', () => {
     expect(result.tools).toEqual([
       { name: 'browser_use_navigate', description: 'Go to a URL', category: 'GUI' },
     ]);
+  });
+
+  it('returns schema-enriched workflow node search results in one call', async () => {
+    const rpcMock = vi.fn(async () => ({
+      data: [
+        { name: 'browser_use_navigate', description: 'Go to a URL', category: 'GUI' },
+      ],
+      error: null,
+    }));
+
+    getSupabaseServiceMock.mockReturnValue({
+      from: vi.fn(),
+      rpc: rpcMock,
+    });
+    resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
+    embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
+
+    const result = await (search_workflow_nodes as any).execute({ query: 'open a website', limit: 1 });
+
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0].name).toBe('browser_use_navigate');
+    expect(result.nodes[0].category).toBe('GUI');
+    expect(result.nodes[0].location).toBe('device');
+    expect(result.nodes[0].inputSchema).toBeTruthy();
   });
 });

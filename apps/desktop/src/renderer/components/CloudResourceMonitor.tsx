@@ -138,7 +138,7 @@ export const CloudResourceMonitor: React.FC<CloudResourceMonitorProps> = ({
 
 function MiniStat({ icon: Icon, label, value, color }: { icon: any; label: string; value: string; color: string }) {
   return (
-    <div className="rounded-lg border border-theme/10 bg-theme-card/30 px-2 py-1.5 text-center">
+    <div className="rounded-lg border border-theme/10 dark:border-transparent bg-theme-card/30 px-2 py-1.5 text-center">
       <Icon className={clsx('w-3 h-3 mx-auto mb-0.5', color)} />
       <div className="text-[10px] font-bold text-theme-fg">{value}</div>
       <div className="text-[8px] text-theme-muted">{label}</div>
@@ -150,7 +150,7 @@ function StatCard({ icon: Icon, label, value, pct, color, iconColor, hideBar }: 
   icon: any; label: string; value: string; pct: number; color: string; iconColor: string; hideBar?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-theme/10 bg-theme-card/30 p-2.5 space-y-1.5">
+    <div className="rounded-xl border border-theme/10 dark:border-transparent bg-theme-card/30 p-2.5 space-y-1.5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Icon className={clsx('w-3.5 h-3.5', iconColor)} />
@@ -181,7 +181,7 @@ function WorkspaceMetricCard({ icon: Icon, label, value, detail, pct, color, ico
           <div className="mt-2 text-xl font-semibold text-theme-fg">{value}</div>
           <div className="mt-1 text-xs text-theme-muted">{detail}</div>
         </div>
-        <div className="rounded-xl border border-theme/10 bg-theme-card/40 p-2.5">
+        <div className="rounded-xl border border-theme/10 dark:border-transparent bg-theme-card/40 p-2.5">
           <Icon className={clsx('h-4 w-4', iconColor)} />
         </div>
       </div>

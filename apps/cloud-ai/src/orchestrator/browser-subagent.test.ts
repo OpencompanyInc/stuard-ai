@@ -170,6 +170,24 @@ describe('Browser Pack Tool Resolution', () => {
     }
     expect(missing).toEqual([]);
   });
+
+  it('workflow pack tools all resolve', async () => {
+    const { WORKFLOW_PACK } = await import('./capability-packs');
+    const { getExecutionTools } = await import('../agents/stuard/tools');
+
+    const executionTools = getExecutionTools();
+    const missing: string[] = [];
+    for (const toolName of WORKFLOW_PACK.toolNames) {
+      if (!executionTools[toolName]) {
+        missing.push(toolName);
+      }
+    }
+
+    if (missing.length > 0) {
+      console.error('MISSING WORKFLOW TOOLS:', missing);
+    }
+    expect(missing).toEqual([]);
+  });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

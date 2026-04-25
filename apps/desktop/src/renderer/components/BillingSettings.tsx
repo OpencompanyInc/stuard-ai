@@ -28,9 +28,10 @@ import {
   Tooltip,
 } from "recharts";
 import {
-  buildCreditsApiPath,
+  categorizeModelForUsage,
   getUsageSourceCategory,
   getUsageSourceLabel,
+  isNonBillableUsageEvent,
   normalizeUsageLogEntry,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
@@ -60,7 +61,6 @@ interface CreditSummary {
   includedRemaining?: number;
   addonCredits?: number;
   addonRemaining?: number;
-  creditsPerUsd?: number;
   currentPeriodStart?: string | null;
   currentPeriodEnd?: string | null;
 }
@@ -72,45 +72,15 @@ interface UsageBreakdownItem {
   count: number;
 }
 
-const CLOUD_AI_HTTP =
-  (window as any).__CLOUD_AI_HTTP__ ||
-  (import.meta as any).env?.VITE_CLOUD_AI_URL ||
-  "http://127.0.0.1:8082";
-
 const CATEGORY_CONFIG: Record<
   string,
   { label: string; color: string; hex: string; icon: React.ElementType }
 > = {
-  subagent: {
-    label: "Delegated Agents",
-    color: "bg-purple-500",
-    hex: "#8b5cf6",
-    icon: Globe,
-  },
-  compute: {
-    label: "Cloud Compute",
-    color: "bg-amber-500",
-    hex: "#f59e0b",
-    icon: Cpu,
-  },
-  storage: {
-    label: "Storage",
-    color: "bg-teal-500",
-    hex: "#14b8a6",
-    icon: HardDrive,
-  },
-  messaging: {
-    label: "Messaging",
-    color: "bg-rose-500",
-    hex: "#f43f5e",
-    icon: MessageSquare,
-  },
-  voice: {
-    label: "Voice Calls",
-    color: "bg-orange-500",
-    hex: "#f97316",
-    icon: Phone,
-  },
+  subagent: { label: "Delegated Agents", color: "bg-purple-500", hex: "#8b5cf6", icon: Globe },
+  compute: { label: "Cloud Compute", color: "bg-amber-500", hex: "#f59e0b", icon: Cpu },
+  storage: { label: "Storage", color: "bg-teal-500", hex: "#14b8a6", icon: HardDrive },
+  messaging: { label: "Messaging", color: "bg-rose-500", hex: "#f43f5e", icon: MessageSquare },
+  voice: { label: "Voice Calls", color: "bg-orange-500", hex: "#f97316", icon: Phone },
 };
 
 const MODEL_COLORS: Array<{ color: string; hex: string }> = [
@@ -143,7 +113,6 @@ function getCategoryConfig(category: string): { label: string; color: string; he
   if (CATEGORY_CONFIG[category]) return CATEGORY_CONFIG[category];
   if (category.startsWith("inference:")) {
     const model = category.slice("inference:".length);
-    // Strip provider prefix: "openrouter/gemma-4-26b" → "gemma-4-26b"
     const label = model.includes("/") ? model.split("/").slice(1).join("/") : model;
     const { color, hex } = getModelColor(category);
     return { label, color, hex, icon: Bot };
@@ -151,39 +120,21 @@ function getCategoryConfig(category: string): { label: string; color: string; he
   return { label: category, color: "bg-gray-400", hex: "#9ca3af", icon: Zap };
 }
 
-const SectionHeader = ({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) => (
+const SectionHeader = ({ title, description }: { title: string; description: string }) => (
   <div className="mb-6">
-    <h3 className="text-xl font-stuard text-theme-fg tracking-tight">
-      {title}
-    </h3>
+    <h3 className="text-xl font-stuard text-theme-fg tracking-tight">{title}</h3>
     <p className="text-sm text-theme-muted font-medium">{description}</p>
   </div>
 );
 
-const formatCurrency = (amount: number, currency: string) => {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(amount / 100);
-};
+const formatCurrency = (amount: number, currency: string) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amount / 100);
 
 const formatModel = (model: string): string => {
   if (!model || model === "unknown") return "Unknown";
-  // Voice calls and messaging don't have a model
   if (model.startsWith("voice:")) return "-";
   if (model.startsWith("messaging:") || model === "telnyx" || model === "sms") return "-";
-  // Shorten common model names
-  return model
-    .replace("anthropic/", "")
-    .replace("openai/", "")
-    .replace("google/", "")
-    .replace("deepseek/", "");
+  return model.replace("anthropic/", "").replace("openai/", "").replace("google/", "").replace("deepseek/", "");
 };
 
 const formatRelativeTime = (dateStr: string): string => {
@@ -195,7 +146,6 @@ const formatRelativeTime = (dateStr: string): string => {
   const diffMin = Math.floor(diffMs / 60000);
   const diffHr = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHr / 24);
-
   if (diffMin < 1) return "Just now";
   if (diffMin < 60) return `${diffMin}m ago`;
   if (diffHr < 24) return `${diffHr}h ago`;
@@ -203,38 +153,6 @@ const formatRelativeTime = (dateStr: string): string => {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
-async function cloudApiFetch<T = any>(
-  path: string,
-  signal?: AbortSignal
-): Promise<T | null> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) return null;
-
-  // Create a timeout that auto-aborts after 15s
-  const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(), 15_000);
-  // Forward parent abort to our controller so a single signal covers both
-  if (signal) signal.addEventListener("abort", () => timeout.abort(), { once: true });
-
-  try {
-    const res = await fetch(`${CLOUD_AI_HTTP}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: timeout.signal,
-    });
-    const json = await res.json();
-    return json?.ok ? json : null;
-  } catch (e: any) {
-    if (signal?.aborted) return null; // intentional abort, don't throw
-    if (e?.name === "AbortError")
-      throw new Error("Request timed out. Please check your connection and try again.");
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/* ---------- Pie chart custom tooltip ---------- */
 const PieTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.[0]) return null;
   const { name, value, payload: entry } = payload[0];
@@ -251,39 +169,30 @@ const PieTooltip = ({ active, payload }: any) => {
 export const BillingSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoRefill, setAutoRefill] = useState(false);
-  const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(
-    null
-  );
-  const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>(
-    []
-  );
+  const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
+  const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>([]);
   const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsPage, setLogsPage] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [usageLoaded, setUsageLoaded] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [logsLoaded, setLogsLoaded] = useState(false);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsLoaded, setProductsLoaded] = useState(false);
 
   const LOGS_PER_PAGE = 20;
   const mountedRef = useRef(true);
-  const activeLogsRequestRef = useRef(0);
-  const backgroundLoadAbortRef = useRef<AbortController | null>(null);
   const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convTitleCacheRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    mountedRef.current = true; // Reset on remount (React Strict Mode)
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      backgroundLoadAbortRef.current?.abort();
       if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
     };
   }, []);
@@ -292,334 +201,289 @@ export const BillingSettings: React.FC = () => {
     ? creditSummary.currentPeriodStart
     : null;
 
-  const loadUsageBreakdown = useCallback(async (signal?: AbortSignal) => {
+  // ── Core credit loader — queries Supabase directly, no local server needed ──
+  const loadCredits = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const [{ data: profile }, { data: rawGrants }] = await Promise.all([
+      supabase.from("profiles").select("plan, current_period_start, current_period_end").eq("id", user.id).maybeSingle(),
+      supabase.from("credit_grants").select("source_type, total_credits, remaining_credits, expires_at").eq("user_id", user.id),
+    ]);
+
+    const now = Date.now();
+    let includedCredits = 0, includedRemaining = 0, addonCredits = 0, addonRemaining = 0;
+    for (const g of (rawGrants as any[]) || []) {
+      if (g.expires_at && Date.parse(g.expires_at) <= now) continue;
+      const tc = Math.max(0, Number(g.total_credits) || 0);
+      const tr = Math.max(0, Number(g.remaining_credits) || 0);
+      if (String(g.source_type || "").toLowerCase() === "subscription_cycle") {
+        includedCredits += tc; includedRemaining += tr;
+      } else {
+        addonCredits += tc; addonRemaining += tr;
+      }
+    }
+
+    const periodStart = (profile as any)?.current_period_start
+      ? new Date((profile as any).current_period_start)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const { data: periodEvents } = await supabase
+      .from("usage_events")
+      .select("model, credit_cost, raw")
+      .eq("user_id", user.id)
+      .gte("created_at", periodStart.toISOString());
+
+    let used = 0;
+    for (const e of (periodEvents as any[]) || []) {
+      if (isNonBillableUsageEvent({ model: e.model, raw: e.raw })) continue;
+      used += Number(e.credit_cost) || 0;
+    }
+
+    return {
+      user,
+      summary: {
+        plan: String((profile as any)?.plan || "Free"),
+        limit: Math.ceil(includedCredits + addonCredits),
+        used: Math.ceil(used),
+        remaining: Math.ceil(includedRemaining + addonRemaining),
+        unlimited: false,
+        includedCredits: Math.ceil(includedCredits),
+        includedRemaining: Math.ceil(includedRemaining),
+        addonCredits: Math.ceil(addonCredits),
+        addonRemaining: Math.ceil(addonRemaining),
+        currentPeriodStart: (profile as any)?.current_period_start || periodStart.toISOString(),
+        currentPeriodEnd: (profile as any)?.current_period_end || null,
+      } as CreditSummary,
+    };
+  }, []);
+
+  const loadUsageBreakdown = useCallback(async (uid: string, since: string | null) => {
     setUsageLoading(true);
     try {
-      const usageData = await cloudApiFetch<any>(
-        buildCreditsApiPath("/v1/credits/usage", {
-          since: billingPeriodStart,
-        }),
-        signal
-      );
-      if (!mountedRef.current || signal?.aborted) return;
-      setUsageBreakdown(usageData?.breakdown || []);
-    } finally {
-      if (!mountedRef.current || signal?.aborted) return;
-      setUsageLoading(false);
-      setUsageLoaded(true);
-    }
-  }, [billingPeriodStart]);
+      const start = since && !Number.isNaN(Date.parse(since))
+        ? new Date(since)
+        : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-  const loadLogs = useCallback(
-    async (page: number, signal?: AbortSignal) => {
-      const requestId = activeLogsRequestRef.current + 1;
-      activeLogsRequestRef.current = requestId;
-      setLogsLoading(true);
-      try {
-        const result = await cloudApiFetch<any>(
-          buildCreditsApiPath("/v1/credits/logs", {
-            limit: LOGS_PER_PAGE,
-            offset: page * LOGS_PER_PAGE,
-            since: billingPeriodStart,
-          }),
-          signal
-        );
-        if (
-          !mountedRef.current ||
-          signal?.aborted ||
-          requestId !== activeLogsRequestRef.current ||
-          !result
-        ) {
-          return;
-        }
+      const { data } = await supabase
+        .from("usage_events")
+        .select("model, cost_usd, credit_cost, raw")
+        .eq("user_id", uid)
+        .gte("created_at", start.toISOString());
 
-        const normalizedLogs: UsageLogEntry[] = Array.isArray(result.logs)
-          ? result.logs.map(normalizeUsageLogEntry)
-          : [];
-
-        const applyCache = (logs: UsageLogEntry[]): UsageLogEntry[] =>
-          logs.map((log) => {
-            const cachedTitle = log.conversationId
-              ? convTitleCacheRef.current[log.conversationId]
-              : null;
-            return log.conversationId && cachedTitle && !log.chatName
-              ? { ...log, chatName: cachedTitle }
-              : log;
-          });
-
-        // Render logs immediately with any cached titles; don't block on
-        // conversation title lookups, which were the source of the hang.
-        setUsageLogs(applyCache(normalizedLogs));
-        setLogsTotal(result.total || 0);
-        setLogsPage(page);
-        setLogsLoading(false);
-        setLogsLoaded(true);
-
-        const missingIds = Array.from(
-          new Set(
-            normalizedLogs
-              .map((l) => l.conversationId)
-              .filter(
-                (id): id is string => !!id && !convTitleCacheRef.current[id],
-              ),
-          ),
-        );
-        if (missingIds.length === 0) return;
-
-        // Resolve titles in the background. Supabase is authoritative for
-        // billing-visible conversations and is a single roundtrip, so prefer
-        // it over N parallel agent calls that can stall for seconds if the
-        // local agent is unreachable.
-        void (async () => {
-          try {
-            const { data, error } = await supabase
-              .from("conversations")
-              .select("id, title")
-              .in("id", missingIds);
-            if (
-              error ||
-              !Array.isArray(data) ||
-              !mountedRef.current ||
-              signal?.aborted ||
-              requestId !== activeLogsRequestRef.current
-            ) {
-              return;
-            }
-            let changed = false;
-            for (const row of data as Array<{ id?: string; title?: string | null }>) {
-              const id = typeof row.id === "string" ? row.id : "";
-              const title = typeof row.title === "string" ? row.title.trim() : "";
-              if (id && title && !convTitleCacheRef.current[id]) {
-                convTitleCacheRef.current[id] = title;
-                changed = true;
-              }
-            }
-            if (changed) setUsageLogs((prev) => applyCache(prev));
-          } catch {}
-        })();
-      } finally {
-        if (!mountedRef.current || signal?.aborted) return;
-        setLogsLoading(false);
-        setLogsLoaded(true);
+      if (!mountedRef.current) return;
+      const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+      for (const row of (data as any[]) || []) {
+        if (isNonBillableUsageEvent({ model: row.model, raw: row.raw })) continue;
+        const category = categorizeModelForUsage(String(row.model || "unknown"));
+        if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
+        buckets[category].credits += Number(row.credit_cost) || 0;
+        buckets[category].costUsd += Number(row.cost_usd) || 0;
+        buckets[category].count += 1;
       }
-    },
-    [billingPeriodStart]
-  );
+      setUsageBreakdown(
+        Object.entries(buckets).map(([category, v]) => ({
+          category,
+          credits: Number(v.credits.toFixed(2)),
+          costUsd: Number(v.costUsd.toFixed(6)),
+          count: v.count,
+        }))
+      );
+    } finally {
+      if (mountedRef.current) setUsageLoading(false);
+    }
+  }, []);
+
+  const loadLogs = useCallback(async (uid: string, since: string | null, page: number) => {
+    setLogsLoading(true);
+    try {
+      const start = since && !Number.isNaN(Date.parse(since))
+        ? new Date(since)
+        : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+      const fetchLimit = Math.max(LOGS_PER_PAGE * 8, 200);
+      const { data } = await supabase
+        .from("usage_events")
+        .select("id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at")
+        .eq("user_id", uid)
+        .gte("created_at", start.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(fetchLimit);
+
+      if (!mountedRef.current) return;
+
+      const groups = new Map<string, any>();
+      for (const row of (data as any[]) || []) {
+        const raw = row.raw && typeof row.raw === "object" ? row.raw : {};
+        if (isNonBillableUsageEvent({ model: row.model, raw })) continue;
+        const key = raw.sourceRef || raw.source_ref || row.id;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            id: key, source_ref: key, model: row.model,
+            conversation_id: row.conversation_id,
+            source_type: raw.sourceType || raw.source_type || null,
+            source_label: raw.source_label || raw.sourceLabel || null,
+            subagent_kind: raw.subagentKind || raw.subagent_kind || null,
+            prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
+            cost_usd: 0, credit_cost: 0, step_count: 0, created_at: row.created_at,
+          });
+        }
+        const g = groups.get(key)!;
+        g.prompt_tokens += Number(row.prompt_tokens || 0);
+        g.completion_tokens += Number(row.completion_tokens || 0);
+        g.total_tokens += Number(row.total_tokens || 0);
+        g.cost_usd += Number(row.cost_usd || 0);
+        g.credit_cost += Number(row.credit_cost || 0);
+        g.step_count += 1;
+        if (row.created_at > g.created_at) g.created_at = row.created_at;
+      }
+
+      const allGroups = Array.from(groups.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      const pageSlice = allGroups.slice(page * LOGS_PER_PAGE, (page + 1) * LOGS_PER_PAGE);
+
+      // Apply cached conversation titles then resolve missing ones in background
+      const applyCache = (rows: any[]) => rows.map((g) => {
+        const cached = g.conversation_id ? convTitleCacheRef.current[g.conversation_id] : null;
+        return cached ? { ...g, chat_name: cached } : g;
+      });
+
+      const normalizedLogs = applyCache(pageSlice).map(normalizeUsageLogEntry);
+      setUsageLogs(normalizedLogs);
+      setLogsTotal(allGroups.length);
+      setLogsPage(page);
+
+      const missingIds = Array.from(new Set(
+        pageSlice.map((g) => g.conversation_id).filter((id): id is string => !!id && !convTitleCacheRef.current[id])
+      ));
+      if (missingIds.length > 0) {
+        void supabase.from("conversations").select("id, title").in("id", missingIds).then(({ data: convData }) => {
+          if (!Array.isArray(convData) || !mountedRef.current) return;
+          let changed = false;
+          for (const row of convData as Array<{ id?: string; title?: string | null }>) {
+            const id = typeof row.id === "string" ? row.id : "";
+            const title = typeof row.title === "string" ? row.title.trim() : "";
+            if (id && title && !convTitleCacheRef.current[id]) {
+              convTitleCacheRef.current[id] = title;
+              changed = true;
+            }
+          }
+          if (changed) {
+            setUsageLogs((prev) => prev.map((log) => {
+              const cached = log.conversationId ? convTitleCacheRef.current[log.conversationId] : null;
+              return cached && !log.chatName ? { ...log, chatName: cached } : log;
+            }));
+          }
+        });
+      }
+    } finally {
+      if (mountedRef.current) setLogsLoading(false);
+    }
+  }, []);
 
   const loadProducts = useCallback(async () => {
     setProductsLoading(true);
     try {
-      const productsResult = await window.desktopAPI?.billingListProducts?.();
+      const result = await window.desktopAPI?.billingListProducts?.();
       if (!mountedRef.current) return;
-      if (productsResult?.ok && productsResult.products) {
-        setProducts(productsResult.products);
-      }
+      if (result?.ok && result.products) setProducts(result.products);
     } finally {
-      if (!mountedRef.current) return;
-      setProductsLoading(false);
-      setProductsLoaded(true);
+      if (mountedRef.current) { setProductsLoading(false); setProductsLoaded(true); }
     }
   }, []);
 
   const loadData = useCallback(async () => {
-    backgroundLoadAbortRef.current?.abort();
-    const backgroundAbort = new AbortController();
-    backgroundLoadAbortRef.current = backgroundAbort;
+    setLoading(true);
+    setError(null);
+    setCreditSummary(null);
+    setUsageBreakdown([]);
+    setUsageLogs([]);
+    convTitleCacheRef.current = {};
+    setLogsTotal(0);
+    setLogsPage(0);
+    setProducts([]);
+    setProductsLoaded(false);
 
-    // Hard failsafe: guarantee loading ends within 20s no matter what
-    const failsafe = setTimeout(() => {
-      if (mountedRef.current) {
-        setLoading(false);
-        setError("Loading timed out. Please try again.");
-      }
-    }, 20_000);
+    window.desktopAPI?.getPrefs?.().then((r: any) => {
+      if (r?.ok && r.prefs?.autoRefillCredits !== undefined) setAutoRefill(!!r.prefs.autoRefillCredits);
+    }).catch(() => {});
 
     try {
-      setLoading(true);
-      setError(null);
-      setCreditSummary(null);
-      setUsageBreakdown([]);
-      setUsageLogs([]);
-      convTitleCacheRef.current = {};
-      setLogsTotal(0);
-      setLogsPage(0);
-      setProducts([]);
-      setUsageLoaded(false);
-      setLogsLoaded(false);
-      setProductsLoaded(false);
-      setUsageLoading(false);
-      setLogsLoading(false);
-      setProductsLoading(false);
-
-      // Load persisted auto-refill preference (non-blocking)
-      window.desktopAPI?.getPrefs?.().then((prefsResult: any) => {
-        if (prefsResult?.ok && prefsResult.prefs?.autoRefillCredits !== undefined) {
-          setAutoRefill(!!prefsResult.prefs.autoRefillCredits);
-        }
-      }).catch(() => {});
-
-      // Get user session with a 5s timeout so it can't hang forever
-      let session: any = null;
-      try {
-        const sessionResult = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Session check timed out")), 5_000)
-          ),
-        ]);
-        session = sessionResult?.data?.session;
-      } catch {
-        // Session timed out or failed — show sign-in message
-      }
-
-      if (!session?.user?.email) {
+      const result = await loadCredits();
+      if (!mountedRef.current) return;
+      if (!result) {
         setError("Sign in to view billing information.");
         return;
       }
-
-      setUserEmail(session.user.email);
-      setUserId(session.user.id);
-
-      // Only load credit summary — the fastest query. Everything else loads lazily.
-      const creditsData = await cloudApiFetch<any>(
-        "/v1/credits",
-        backgroundAbort.signal
-      );
-      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
-      if (creditsData) {
-        setCreditSummary(creditsData);
-      } else {
-        setError("Could not load billing data. The server may be temporarily unavailable.");
-      }
+      const { user, summary } = result;
+      setUserId(user.id);
+      setUserEmail(user.email || null);
+      setCreditSummary(summary);
+      // Load breakdown, logs, and products in parallel
+      void Promise.all([
+        loadUsageBreakdown(user.id, summary.currentPeriodStart || null),
+        loadLogs(user.id, summary.currentPeriodStart || null, 0),
+        loadProducts(),
+      ]);
     } catch (e: any) {
-      if (!mountedRef.current || backgroundAbort.signal.aborted) return;
+      if (!mountedRef.current) return;
       setError(e?.message || "Failed to load billing information");
     } finally {
-      clearTimeout(failsafe);
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }, []);
-
-  // Once the credit summary is ready, fetch breakdown, logs, and products
-  // in parallel — chaining them was making the logs section hang long after
-  // the pie chart had already rendered.
-  useEffect(() => {
-    if (!creditSummary) return;
-    const abort = backgroundLoadAbortRef.current;
-    if (!usageLoaded && !usageLoading) {
-      loadUsageBreakdown(abort?.signal).catch(() => {});
-    }
-    if (!logsLoaded && !logsLoading) {
-      loadLogs(0, abort?.signal).catch(() => {});
-    }
-    if (!productsLoaded && !productsLoading) {
-      loadProducts().catch(() => {});
-    }
-  }, [
-    creditSummary,
-    usageLoaded,
-    usageLoading,
-    logsLoaded,
-    logsLoading,
-    productsLoaded,
-    productsLoading,
-    loadUsageBreakdown,
-    loadLogs,
-    loadProducts,
-  ]);
+  }, [loadCredits, loadUsageBreakdown, loadLogs, loadProducts]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const refreshLiveBilling = useCallback(async () => {
-    const creditsData = await cloudApiFetch<any>("/v1/credits");
-    if (!mountedRef.current || !creditsData) return;
-    setCreditSummary(creditsData);
-    if (usageLoaded) {
-      await loadUsageBreakdown();
-    }
-    if (logsLoaded) {
-      await loadLogs(logsPage);
-    }
-  }, [logsLoaded, logsPage, usageLoaded, loadLogs, loadUsageBreakdown]);
-
+  // Realtime refresh on usage/credit changes
   useEffect(() => {
     if (!userId) return;
-
     const scheduleRefresh = () => {
       if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
-      liveRefreshTimerRef.current = setTimeout(() => {
-        refreshLiveBilling().catch(() => {});
+      liveRefreshTimerRef.current = setTimeout(async () => {
+        const result = await loadCredits().catch(() => null);
+        if (!mountedRef.current || !result) return;
+        setCreditSummary(result.summary);
+        const since = result.summary.currentPeriodStart || null;
+        void loadUsageBreakdown(result.user.id, since);
+        void loadLogs(result.user.id, since, logsPage);
       }, 400);
     };
 
     const channel = supabase
       .channel(`billing-live:${userId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'usage_events',
-        filter: `user_id=eq.${userId}`,
-      }, scheduleRefresh)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'credit_grants',
-        filter: `user_id=eq.${userId}`,
-      }, scheduleRefresh)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'credit_grants',
-        filter: `user_id=eq.${userId}`,
-      }, scheduleRefresh)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "usage_events", filter: `user_id=eq.${userId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "credit_grants", filter: `user_id=eq.${userId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "credit_grants", filter: `user_id=eq.${userId}` }, scheduleRefresh)
       .subscribe();
 
     return () => {
       if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
       void supabase.removeChannel(channel);
     };
-  }, [refreshLiveBilling, userId]);
+  }, [userId, logsPage, loadCredits, loadUsageBreakdown, loadLogs]);
 
   const creditPacks = products.filter((p) => !p.isRecurring);
   const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
 
   const currentPlan = (() => {
-    const raw = String(creditSummary?.plan || "free")
-      .trim()
-      .toLowerCase();
+    const raw = String(creditSummary?.plan || "free").trim().toLowerCase();
     if (raw === "free_trial" || raw === "trial") return "Free";
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
 
   const usagePercent =
-    creditSummary &&
-    !creditSummary.unlimited &&
-    creditSummary.limit &&
-    creditSummary.limit > 0
-      ? Math.min(
-          100,
-          Math.round(
-            ((creditSummary.used || 0) / creditSummary.limit) * 100
-          )
-        )
+    creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
+      ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
       : 0;
 
-  // Pie chart data
   const pieData = usageBreakdown
     .filter((item) => item.credits > 0)
     .map((item) => {
       const config = getCategoryConfig(item.category);
-      const pct = usageTotal > 0
-        ? Number(((item.credits / usageTotal) * 100).toFixed(1))
-        : 0;
-      return {
-        name: config.label,
-        value: item.credits,
-        pct,
-        fill: config.hex,
-      };
+      const pct = usageTotal > 0 ? Number(((item.credits / usageTotal) * 100).toFixed(1)) : 0;
+      return { name: config.label, value: item.credits, pct, fill: config.hex };
     });
 
   const totalLogsPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
@@ -642,9 +506,7 @@ export const BillingSettings: React.FC = () => {
         email: userEmail,
         userId: userId || undefined,
       });
-      if (!result?.ok) {
-        setError(result?.error || "Failed to open purchase page");
-      }
+      if (!result?.ok) setError(result?.error || "Failed to open purchase page");
     } catch (e: any) {
       setError(e?.message || "Failed to open purchase page");
     } finally {
@@ -655,15 +517,9 @@ export const BillingSettings: React.FC = () => {
   const handleOpenWebsiteBilling = async () => {
     setActionLoading("website");
     try {
-      await (window as any).desktopAPI?.openExternal?.(
-        "https://stuard.ai/dashboard/billing"
-      );
+      await (window as any).desktopAPI?.openExternal?.("https://stuard.ai/dashboard/billing");
     } catch {
-      window.open(
-        "https://stuard.ai/dashboard/billing",
-        "_blank",
-        "noopener,noreferrer"
-      );
+      window.open("https://stuard.ai/dashboard/billing", "_blank", "noopener,noreferrer");
     } finally {
       setActionLoading(null);
     }
@@ -672,10 +528,7 @@ export const BillingSettings: React.FC = () => {
   if (loading) {
     return (
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-8">
-        <SectionHeader
-          title="Billing & Credits"
-          description="Manage your plan, credit balance, and add-ons."
-        />
+        <SectionHeader title="Billing & Credits" description="Manage your plan, credit balance, and add-ons." />
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
         </div>
@@ -687,10 +540,7 @@ export const BillingSettings: React.FC = () => {
     <div className="space-y-6">
       {/* ── Main Card: Balance + Limits ── */}
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-        <SectionHeader
-          title="Billing & Credits"
-          description="Manage your plan, credit balance, and add-ons."
-        />
+        <SectionHeader title="Billing & Credits" description="Manage your plan, credit balance, and add-ons." />
 
         {error && (
           <div className="flex items-center justify-between gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
@@ -708,13 +558,10 @@ export const BillingSettings: React.FC = () => {
           </div>
         )}
 
-        {/* Empty state when credits couldn't be loaded */}
         {!creditSummary && !loading && !error && (
           <div className="text-center py-8 mb-6">
             <CreditCard className="w-6 h-6 text-theme-muted mx-auto mb-2" />
-            <p className="text-sm text-theme-muted font-medium mb-3">
-              Billing data unavailable.
-            </p>
+            <p className="text-sm text-theme-muted font-medium mb-3">Billing data unavailable.</p>
             <button
               onClick={loadData}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 transition-colors"
@@ -725,87 +572,55 @@ export const BillingSettings: React.FC = () => {
           </div>
         )}
 
-        {/* Plan & Balance Overview */}
         {creditSummary && (
           <div className="mb-6">
             <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
               Current Balance
             </label>
-
             <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-              {/* Plan badge + remaining */}
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-primary" />
-                  <span className="text-[13px] font-bold text-theme-fg">
-                    {currentPlan} Plan
-                  </span>
+                  <span className="text-[13px] font-bold text-theme-fg">{currentPlan} Plan</span>
                 </div>
                 <div className="text-right">
                   <span className="text-lg font-black text-theme-fg">
-                    {creditSummary.unlimited
-                      ? "Unlimited"
-                      : Number(
-                          creditSummary.remaining || 0
-                        ).toLocaleString()}
+                    {creditSummary.unlimited ? "Unlimited" : Number(creditSummary.remaining || 0).toLocaleString()}
                   </span>
                   {!creditSummary.unlimited && (
-                    <span className="text-[11px] text-theme-muted ml-1">
-                      credits remaining
-                    </span>
+                    <span className="text-[11px] text-theme-muted ml-1">credits remaining</span>
                   )}
                 </div>
               </div>
 
-              {/* Usage progress bar */}
-              {!creditSummary.unlimited &&
-                creditSummary.limit &&
-                creditSummary.limit > 0 && (
-                  <div className="mb-3">
-                    <div className="w-full bg-theme-bg rounded-full h-2.5">
-                      <div
-                        className={`h-2.5 rounded-full transition-all ${
-                          usagePercent >= 90
-                            ? "bg-red-500"
-                            : usagePercent >= 70
-                            ? "bg-amber-500"
-                            : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${usagePercent}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-[10px] text-theme-muted mt-1">
-                      <span>
-                        {Number(creditSummary.used || 0).toLocaleString()}{" "}
-                        used
-                      </span>
-                      <span>
-                        {Number(creditSummary.limit).toLocaleString()} total
-                      </span>
-                    </div>
+              {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
+                <div className="mb-3">
+                  <div className="w-full bg-theme-bg rounded-full h-2.5">
+                    <div
+                      className={`h-2.5 rounded-full transition-all ${
+                        usagePercent >= 90 ? "bg-red-500" : usagePercent >= 70 ? "bg-amber-500" : "bg-emerald-500"
+                      }`}
+                      style={{ width: `${usagePercent}%` }}
+                    />
                   </div>
-                )}
+                  <div className="flex justify-between text-[10px] text-theme-muted mt-1">
+                    <span>{Number(creditSummary.used || 0).toLocaleString()} used</span>
+                    <span>{Number(creditSummary.limit).toLocaleString()} total</span>
+                  </div>
+                </div>
+              )}
 
-              {/* Pool breakdown */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="p-2 bg-theme-bg rounded-theme-button">
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">
-                    Subscription
-                  </p>
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">Subscription</p>
                   <p className="text-sm font-bold text-theme-fg">
-                    {Number(
-                      creditSummary.includedRemaining || 0
-                    ).toLocaleString()}
+                    {Number(creditSummary.includedRemaining || 0).toLocaleString()}
                   </p>
                 </div>
                 <div className="p-2 bg-theme-bg rounded-theme-button">
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">
-                    Add-ons
-                  </p>
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">Add-ons</p>
                   <p className="text-sm font-bold text-theme-fg">
-                    {Number(
-                      creditSummary.addonRemaining || 0
-                    ).toLocaleString()}
+                    {Number(creditSummary.addonRemaining || 0).toLocaleString()}
                   </p>
                 </div>
               </div>
@@ -813,7 +628,6 @@ export const BillingSettings: React.FC = () => {
           </div>
         )}
 
-        {/* ── Limits & Quota ── */}
         {creditSummary && !creditSummary.unlimited && (
           <div className="mb-6">
             <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
@@ -821,39 +635,29 @@ export const BillingSettings: React.FC = () => {
             </label>
             <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
               <div className="grid grid-cols-3 gap-3">
-                {/* Total limit */}
                 <div className="text-center p-3 bg-theme-bg rounded-theme-button">
                   <Shield className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">
-                    Period Limit
-                  </p>
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">Period Limit</p>
                   <p className="text-sm font-black text-theme-fg">
                     {Number(creditSummary.limit || 0).toLocaleString()}
                   </p>
                 </div>
-                {/* Used */}
                 <div className="text-center p-3 bg-theme-bg rounded-theme-button">
                   <TrendingUp className="w-4 h-4 text-amber-500 mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">
-                    Used
-                  </p>
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">Used</p>
                   <p className="text-sm font-black text-theme-fg">
                     {Number(creditSummary.used || 0).toLocaleString()}
                   </p>
                 </div>
-                {/* Remaining */}
                 <div className="text-center p-3 bg-theme-bg rounded-theme-button">
                   <Coins className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">
-                    Remaining
-                  </p>
+                  <p className="text-[10px] text-theme-muted font-bold uppercase">Remaining</p>
                   <p className="text-sm font-black text-theme-fg">
                     {Number(creditSummary.remaining || 0).toLocaleString()}
                   </p>
                 </div>
               </div>
 
-              {/* Warning banners */}
               {usagePercent >= 90 && (
                 <div className="mt-3 p-2 bg-red-500/10 border border-red-500/20 rounded-theme-button flex items-center gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
@@ -877,8 +681,8 @@ export const BillingSettings: React.FC = () => {
         )}
       </div>
 
-      {/* ── Usage Breakdown Card with Pie Chart ── */}
-      {(usageLoading || usageLoaded || usageBreakdown.length > 0) && (
+      {/* ── Usage Breakdown Card ── */}
+      {(usageLoading || usageBreakdown.length > 0) && (
         <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
             Usage Breakdown
@@ -891,26 +695,20 @@ export const BillingSettings: React.FC = () => {
           ) : usageBreakdown.length === 0 ? (
             <div className="text-center py-8">
               <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-              <p className="text-xs text-theme-muted font-medium">
-                No usage breakdown available yet.
-              </p>
+              <p className="text-xs text-theme-muted font-medium">No usage breakdown available yet.</p>
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row gap-4">
-              {/* Pie Chart */}
               {pieData.length > 0 && (
                 <div className="flex-shrink-0 w-full sm:w-[200px] h-[200px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={80}
+                        cx="50%" cy="50%"
+                        innerRadius={50} outerRadius={80}
                         paddingAngle={3}
-                        dataKey="value"
-                        nameKey="name"
+                        dataKey="value" nameKey="name"
                         strokeWidth={0}
                         label={({ cx, cy, midAngle, innerRadius: ir, outerRadius: or, percent: pct }: any) => {
                           const RADIAN = Math.PI / 180;
@@ -937,14 +735,10 @@ export const BillingSettings: React.FC = () => {
                 </div>
               )}
 
-              {/* Model list */}
               <div className="flex-1 space-y-1.5">
                 {usageBreakdown.map((item) => {
                   const config = getCategoryConfig(item.category);
-                  const pct =
-                    usageTotal > 0
-                      ? ((item.credits / usageTotal) * 100).toFixed(1)
-                      : "0";
+                  const pct = usageTotal > 0 ? ((item.credits / usageTotal) * 100).toFixed(1) : "0";
                   return (
                     <div
                       key={item.category}
@@ -952,13 +746,8 @@ export const BillingSettings: React.FC = () => {
                       style={{ backgroundColor: config.hex + "0d" }}
                     >
                       <div className="flex items-center gap-2.5">
-                        <div
-                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: config.hex }}
-                        />
-                        <span className="text-[12px] font-semibold text-theme-fg">
-                          {config.label}
-                        </span>
+                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: config.hex }} />
+                        <span className="text-[12px] font-semibold text-theme-fg">{config.label}</span>
                         <span className="text-[10px] text-theme-muted">
                           {item.count} {item.count === 1 ? "call" : "calls"}
                         </span>
@@ -977,11 +766,8 @@ export const BillingSettings: React.FC = () => {
                     </div>
                   );
                 })}
-                {/* Total row */}
                 <div className="flex items-center justify-between px-3 pt-2 mt-1 border-t border-theme">
-                  <span className="text-[11px] font-bold text-theme-muted">
-                    Total
-                  </span>
+                  <span className="text-[11px] font-bold text-theme-muted">Total</span>
                   <span className="text-[12px] font-black text-theme-fg w-14 text-right tabular-nums">
                     {usageTotal.toFixed(1)}
                   </span>
@@ -998,20 +784,17 @@ export const BillingSettings: React.FC = () => {
           Credit Usage Logs
         </label>
 
-        {(!logsLoaded || logsLoading) && usageLogs.length === 0 ? (
+        {logsLoading && usageLogs.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
           </div>
         ) : usageLogs.length === 0 ? (
           <div className="text-center py-8">
             <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-            <p className="text-xs text-theme-muted font-medium">
-              No usage events this period.
-            </p>
+            <p className="text-xs text-theme-muted font-medium">No usage events this period.</p>
           </div>
         ) : (
           <>
-            {/* Table */}
             <div className="overflow-x-auto -mx-2">
               <table className="w-full text-[11px]">
                 <thead>
@@ -1026,29 +809,15 @@ export const BillingSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {usageLogs.map((log) => {
-                    const sourceLabel = getUsageSourceLabel(
-                      log.sourceType,
-                      log.subagentKind,
-                      log.sourceLabel
-                    );
-                    const sourceCategory = getUsageSourceCategory(
-                      log.sourceType,
-                      log.subagentKind
-                    );
+                    const sourceLabel = getUsageSourceLabel(log.sourceType, log.subagentKind, log.sourceLabel);
+                    const sourceCategory = getUsageSourceCategory(log.sourceType, log.subagentKind);
                     const catConfig = getCategoryConfig(sourceCategory);
-
                     return (
-                      <tr
-                        key={log.id}
-                        className="border-b border-theme/50 hover:bg-theme-hover/50 transition-colors"
-                      >
+                      <tr key={log.id} className="border-b border-theme/50 hover:bg-theme-hover/50 transition-colors">
                         <td className="px-2 py-2">
                           <span
                             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
-                            style={{
-                              backgroundColor: catConfig.hex + "18",
-                              color: catConfig.hex,
-                            }}
+                            style={{ backgroundColor: catConfig.hex + "18", color: catConfig.hex }}
                           >
                             {sourceLabel}
                           </span>
@@ -1057,20 +826,14 @@ export const BillingSettings: React.FC = () => {
                           {formatModel(log.model)}
                         </td>
                         <td className="px-2 py-2 text-theme-muted max-w-[150px] truncate">
-                          {log.chatName || (
-                            <span className="italic opacity-50">
-                              Untitled
-                            </span>
-                          )}
+                          {log.chatName || <span className="italic opacity-50">Untitled</span>}
                         </td>
                         <td className="px-2 py-2 text-right font-bold text-theme-fg tabular-nums">
                           {log.credits.toFixed(2)}
                         </td>
                         <td className="px-2 py-2 text-right text-theme-muted tabular-nums">
                           <div className="flex items-center justify-end gap-1.5">
-                            {log.totalTokens > 0
-                              ? log.totalTokens.toLocaleString()
-                              : "-"}
+                            {log.totalTokens > 0 ? log.totalTokens.toLocaleString() : "-"}
                             {log.stepCount > 1 && (
                               <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-theme-hover text-theme-muted tabular-nums">
                                 {log.stepCount}×
@@ -1088,15 +851,12 @@ export const BillingSettings: React.FC = () => {
               </table>
             </div>
 
-            {/* Pagination */}
             {totalLogsPages > 1 && (
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-theme">
-                <span className="text-[10px] text-theme-muted font-medium">
-                  {logsTotal} events total
-                </span>
+                <span className="text-[10px] text-theme-muted font-medium">{logsTotal} events total</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => loadLogs(logsPage - 1)}
+                    onClick={() => userId && loadLogs(userId, billingPeriodStart, logsPage - 1)}
                     disabled={logsPage === 0 || logsLoading}
                     className="p-1 rounded-md hover:bg-theme-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
@@ -1106,10 +866,8 @@ export const BillingSettings: React.FC = () => {
                     {logsPage + 1} / {totalLogsPages}
                   </span>
                   <button
-                    onClick={() => loadLogs(logsPage + 1)}
-                    disabled={
-                      logsPage >= totalLogsPages - 1 || logsLoading
-                    }
+                    onClick={() => userId && loadLogs(userId, billingPeriodStart, logsPage + 1)}
+                    disabled={logsPage >= totalLogsPages - 1 || logsLoading}
                     className="p-1 rounded-md hover:bg-theme-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     <ChevronRight className="w-4 h-4 text-theme-muted" />
@@ -1123,7 +881,6 @@ export const BillingSettings: React.FC = () => {
 
       {/* ── Auto-Refill + Add-Ons Card ── */}
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-        {/* Auto-Refill Credits */}
         <div className="mb-6">
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
             Auto-Refill
@@ -1139,20 +896,16 @@ export const BillingSettings: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 text-primary" />
-                  <span className="text-[13px] font-bold text-theme-fg">
-                    Auto-refill credits
-                  </span>
+                  <span className="text-[13px] font-bold text-theme-fg">Auto-refill credits</span>
                 </div>
                 <p className="text-[11px] text-theme-muted mt-1 font-medium">
-                  Automatically purchase a credit pack when your balance runs
-                  low, so you never run out mid-conversation.
+                  Automatically purchase a credit pack when your balance runs low, so you never run out mid-conversation.
                 </p>
               </div>
             </label>
           </div>
         </div>
 
-        {/* Purchase Add-On Credits */}
         <div className="mb-6">
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
             Purchase Add-On Credits
@@ -1178,24 +931,19 @@ export const BillingSettings: React.FC = () => {
                         {product.name}
                       </span>
                     </div>
-                    <p className="text-xs text-theme-muted mb-2">
-                      {product.description}
-                    </p>
+                    <p className="text-xs text-theme-muted mb-2">{product.description}</p>
                     {product.benefits.length > 0 && (
                       <ul className="text-xs text-theme-muted space-y-0.5 mb-2">
                         {product.benefits.slice(0, 3).map((benefit, i) => (
                           <li key={i} className="flex items-center gap-1">
-                            <span className="text-emerald-500">+</span>{" "}
-                            {benefit}
+                            <span className="text-emerald-500">+</span> {benefit}
                           </li>
                         ))}
                       </ul>
                     )}
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-primary">
-                        {price
-                          ? formatCurrency(price.amount, price.currency)
-                          : "\u2014"}
+                        {price ? formatCurrency(price.amount, price.currency) : "—"}
                       </span>
                       {actionLoading === product.id ? (
                         <Loader2 className="w-4 h-4 animate-spin text-primary" />
@@ -1210,14 +958,11 @@ export const BillingSettings: React.FC = () => {
           ) : (
             <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
               <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-              <p className="text-xs text-theme-muted font-medium">
-                No credit packs available right now.
-              </p>
+              <p className="text-xs text-theme-muted font-medium">No credit packs available right now.</p>
             </div>
           )}
         </div>
 
-        {/* Manage Billing on Website */}
         <div className="pt-4 border-t border-theme">
           <button
             onClick={handleOpenWebsiteBilling}
@@ -1232,8 +977,7 @@ export const BillingSettings: React.FC = () => {
             Manage billing & usage history on stuard.ai
           </button>
           <p className="text-[11px] text-theme-muted mt-2 ml-1 font-medium">
-            Change your plan, view transaction history, and manage payment
-            methods on the website.
+            Change your plan, view transaction history, and manage payment methods on the website.
           </p>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   getAuthedUser,
   getCreditSummary,
+  getModelBreakdown,
   getUsageBreakdown,
   getUsageLogs,
   resolvePeriodStart,
@@ -92,6 +93,15 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       if (path[1] === 'logs') {
         const logs = await getUsageLogs(user.id, limit, offset, resolvePeriodStart(since));
         return NextResponse.json({ ok: true, ...logs });
+      }
+      if (path[1] === 'models') {
+        const breakdown = await getModelBreakdown(user.id, resolvePeriodStart(since));
+        const totalCredits = breakdown.reduce((s, b) => s + b.credits, 0);
+        return NextResponse.json({
+          ok: true,
+          breakdown,
+          totalCredits: Number(totalCredits.toFixed(2)),
+        });
       }
     } catch (e: any) {
       // If our direct reads throw unexpectedly, fall back to cloud-ai.

@@ -935,7 +935,7 @@ function BillingTab() {
 // MAIN COMPONENT (MemoriesView-style layout)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type SettingsTab = 'general' | 'billing' | 'security' | 'updates';
+type SettingsTab = 'general' | 'billing' | 'updates';
 
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -943,7 +943,6 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'billing', label: 'Billing' },
-    { id: 'security', label: 'Security' },
     { id: 'updates', label: 'Updates' },
   ];
 
@@ -951,8 +950,6 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
     switch (activeTab) {
       case 'billing':
         return <BillingTab />;
-      case 'security':
-        return <SecurityPrivacySection />;
       case 'updates':
         return <UpdateManager />;
       case 'general':

@@ -507,6 +507,15 @@
   background: color-mix(in srgb, var(--dashboard-panel-solid) 94%, transparent);
 }
 
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-card,
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-card-muted,
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-button-secondary,
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-refresh-button,
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-pill,
+[data-theme='dark'] .cloud-engine-dashboard .dashboard-sidebar-section {
+  border-color: transparent;
+}
+
 [data-theme='dark'] .dashboard-card-muted,
 [data-theme='dark'] .dashboard-button-secondary,
 [data-theme='dark'] .dashboard-refresh-button,

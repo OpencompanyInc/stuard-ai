@@ -68,6 +68,76 @@ const PLANS = [
   },
 ];
 
+type ConfigSliderProps = {
+  icon: any;
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  minLabel: string;
+  maxLabel: string;
+  valueLabel: string;
+  onChange: (value: number) => void;
+};
+
+function ConfigSlider({
+  icon: Icon,
+  label,
+  hint,
+  value,
+  min,
+  max,
+  step,
+  minLabel,
+  maxLabel,
+  valueLabel,
+  onChange,
+}: ConfigSliderProps) {
+  const percent = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+  const sliderBackground = `linear-gradient(90deg, var(--primary) 0%, var(--primary) ${percent}%, rgba(255, 255, 255, 0.12) ${percent}%, rgba(255, 255, 255, 0.12) 100%)`;
+
+  return (
+    <div className="rounded-[20px] border border-theme/10 dark:border-transparent bg-zinc-500/10 px-4 py-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-bold text-theme-fg">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-theme-hover/55 text-primary">
+              <Icon className="h-3 w-3" />
+            </span>
+            {label}
+          </div>
+          <p className="mt-1 text-[11px] leading-5 text-theme-muted">{hint}</p>
+        </div>
+        <div className="rounded-full bg-theme-hover/60 px-2.5 py-1 text-[11px] font-black text-primary">
+          {valueLabel}
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="rounded-full bg-black/10 px-1 py-2">
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            style={{ background: sliderBackground }}
+            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-transparent transition-[background] duration-150 focus:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:-mt-[4px] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-theme-card [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_2px_10px_rgba(0,0,0,0.35)] [&::-moz-range-track]:h-2 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-transparent [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-theme-card [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:shadow-[0_2px_10px_rgba(0,0,0,0.35)]"
+          />
+        </div>
+
+        <div className="mt-2 flex items-center justify-between text-[10px] font-medium text-theme-muted">
+          <span>{minLabel}</span>
+          <span>{maxLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CloudEngineDashboard() {
   const {
     engine, loading, error, metrics, billing, syncStatus, isSyncing, deployments,
@@ -91,6 +161,24 @@ export function CloudEngineDashboard() {
     const diskCredits = estimateStorageCredits(customMode ? customDisk : plan.disk);
     const cpuCredits = customMode ? estimateCustomComputeCredits(customCpu, customRam) : plan.credits;
     const totalCredits = cpuCredits + diskCredits;
+    const selectedStorageGb = customMode ? customDisk : plan.disk;
+    const architectureHighlights = [
+      {
+        icon: Zap,
+        title: 'Persistent Execution',
+        description: 'Workloads run autonomously 24/7, entirely independent of your local machine.',
+      },
+      {
+        icon: Shield,
+        title: 'Isolated Sandboxes',
+        description: 'Dedicated instances secured with encrypted storage and private networking.',
+      },
+      {
+        icon: Sparkles,
+        title: 'Rapid Provisioning',
+        description: 'Spin up a fully configured environment in under 60 seconds.',
+      },
+    ] as const;
 
     const handleProvision = async () => {
       setProvisioning(true);
@@ -103,17 +191,17 @@ export function CloudEngineDashboard() {
     };
 
     return (
-      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       <div className="animate-in fade-in duration-500">
         {/* Hero */}
-        <div className="mb-10">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Cloud className="w-6 h-6 text-primary" />
+        <div className="mb-7">
+          <div className="mb-1.5 flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10">
+              <Cloud className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Engine</h1>
-              <p className="text-theme-muted text-sm">Your personal AI computer in the cloud — always on, always ready.</p>
+              <h1 className="text-2xl font-black tracking-tight text-theme-fg">Cloud Engine</h1>
+              <p className="text-xs text-theme-muted sm:text-sm">Your personal AI computer in the cloud — always on, always ready.</p>
             </div>
           </div>
         </div>
@@ -128,149 +216,171 @@ export function CloudEngineDashboard() {
           </div>
         )}
 
-        {/* What you get */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          {[
-            { icon: Zap, title: 'Always Running', desc: 'Your agent works even when your computer is off' },
-            { icon: Shield, title: 'Secure & Private', desc: 'Your own isolated environment with encrypted storage' },
-            { icon: Sparkles, title: 'Instant Setup', desc: 'Ready in under 60 seconds, no technical knowledge needed' },
-          ].map((f, i) => (
-            <div key={i} className="p-4 rounded-2xl bg-theme-card/20 border border-theme/5">
-              <f.icon className="w-5 h-5 text-primary mb-2" />
-              <div className="text-sm font-bold text-theme-fg">{f.title}</div>
-              <div className="text-xs text-theme-muted mt-1">{f.desc}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Plan Selection */}
-        {!customMode && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-black text-theme-fg">Choose a plan</h2>
+        <div className="grid gap-5 xl:grid-cols-12 xl:items-start">
+          <div className="space-y-5 xl:col-span-7">
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-black text-theme-fg">{customMode ? 'Custom Configuration' : 'Select Compute Tier'}</h2>
+                <p className="mt-1 text-xs text-theme-muted">
+                  {customMode
+                    ? 'Tune CPU, memory, and storage, then deploy from the panel on the right.'
+                    : 'Compare the presets side by side, then deploy from the summary panel on the right.'}
+                </p>
+              </div>
               <button
-                onClick={() => setCustomMode(true)}
-                className="text-xs text-primary font-bold hover:underline flex items-center gap-1"
+                onClick={() => setCustomMode(prev => !prev)}
+                className={clsx(
+                  'inline-flex items-center gap-2 self-start rounded-full border px-3.5 py-1.5 text-[11px] font-semibold transition shadow-sm',
+                  customMode
+                    ? 'border-theme/10 dark:border-transparent bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
+                    : 'border-theme/10 dark:border-transparent bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
+                )}
               >
-                <Cpu className="w-3 h-3" /> Build custom
+                <Cpu className="h-3 w-3 text-primary" />
+                {customMode ? 'Back To Tiers' : 'Custom Configuration'}
               </button>
             </div>
-            <div className="grid grid-cols-4 gap-3">
-              {PLANS.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => setSelectedPlan(p.id)}
-                  className={clsx(
-                    'relative p-4 rounded-2xl border-2 text-left transition-all duration-200',
-                    selectedPlan === p.id
-                      ? 'border-primary bg-primary/5 shadow-lg shadow-primary/10'
-                      : 'border-theme/10 bg-theme-card/30 hover:border-theme/20'
-                  )}
-                >
-                  {p.popular && (
-                    <span className="absolute -top-2.5 right-3 bg-primary text-primary-fg text-[9px] font-black px-2.5 py-0.5 rounded-full shadow-lg shadow-primary/30">
-                      Best Value
-                    </span>
-                  )}
-                  <div className="text-xl mb-1">{p.emoji}</div>
-                  <div className="text-sm font-black text-theme-fg">{p.label}</div>
-                  <div className="text-[10px] text-theme-muted mt-0.5">{p.tagline}</div>
-                  <div className="mt-3 flex items-baseline gap-1">
-                    <span className="text-lg font-black text-primary">{p.credits}</span>
-                    <span className="text-[10px] text-theme-muted font-bold">credits/{p.creditsPer}</span>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {p.features.map((f, i) => (
-                      <div key={i} className="text-[10px] text-theme-muted flex items-center gap-1">
-                        <span className="text-green-500">✓</span> {f}
+
+            {!customMode && (
+              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+                {PLANS.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedPlan(p.id)}
+                    className={clsx(
+                      'relative flex min-h-[182px] flex-col rounded-[24px] border-2 p-4 text-left transition-all duration-200',
+                      selectedPlan === p.id
+                        ? 'border-primary bg-zinc-500/10'
+                        : 'border-theme/10 dark:border-transparent bg-zinc-500/10 hover:border-theme/20 dark:hover:border-transparent hover:bg-zinc-500/14'
+                    )}
+                  >
+                    {p.popular && (
+                      <span className="absolute -top-2 right-2.5 rounded-full bg-primary px-2 py-0.5 text-[8px] font-black text-primary-fg shadow-lg shadow-primary/30">
+                        Best Value
+                      </span>
+                    )}
+                    <div className="mb-2.5 text-lg">{p.emoji}</div>
+                    <div className="text-xl font-black text-theme-fg">{p.label}</div>
+                    <div className="mt-1.5 max-w-[22rem] text-xs leading-5 text-theme-muted">{p.tagline}</div>
+
+                    <div className="mt-4 flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-primary">{p.credits}</span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-theme-muted">credits/{p.creditsPer}</span>
+                    </div>
+
+                    <div className="mt-4 space-y-1.5 text-xs text-theme-muted">
+                      {p.features.map((feature, index) => (
+                        <div key={index} className="flex items-start gap-2">
+                          <span className="mt-1 h-1 w-1 rounded-full bg-primary/80" />
+                          <span>{feature}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {customMode && (
+              <div className="rounded-[24px] border border-theme/10 dark:border-transparent bg-theme-card/30 p-5 space-y-4">
+                <ConfigSlider
+                  icon={Cpu}
+                  label="CPU Cores"
+                  hint="Scale compute for heavier agents and concurrent runs."
+                  value={customCpu}
+                  min={1}
+                  max={16}
+                  step={1}
+                  minLabel="1 core"
+                  maxLabel="16 cores"
+                  valueLabel={`${customCpu} cores`}
+                  onChange={setCustomCpu}
+                />
+
+                <ConfigSlider
+                  icon={Server}
+                  label="Memory (RAM)"
+                  hint="Increase memory for larger contexts and multi-step workflows."
+                  value={customRam}
+                  min={1}
+                  max={64}
+                  step={1}
+                  minLabel="1 GB"
+                  maxLabel="64 GB"
+                  valueLabel={`${customRam} GB`}
+                  onChange={setCustomRam}
+                />
+
+                <ConfigSlider
+                  icon={HardDrive}
+                  label="Storage"
+                  hint="Reserve persistent space for your workspace, files, and backups."
+                  value={customDisk}
+                  min={10}
+                  max={500}
+                  step={10}
+                  minLabel="10 GB"
+                  maxLabel="500 GB"
+                  valueLabel={`${customDisk} GB`}
+                  onChange={setCustomDisk}
+                />
+              </div>
+            )}
+          </div>
+
+          <aside className="space-y-3.5 xl:col-span-5 xl:sticky xl:top-5">
+            <div>
+              <h3 className="text-sm font-black text-theme-fg">Core Architecture</h3>
+              <div className="mt-2.5 space-y-2.5">
+                {architectureHighlights.map(item => (
+                  <div key={item.title} className="relative overflow-hidden rounded-[20px] border border-theme/10 dark:border-transparent bg-zinc-500/10 p-3.5">
+                    <div className="pointer-events-none absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-primary/18 via-primary/6 to-transparent" />
+                    <div className="relative">
+                      <div className="flex items-center gap-1.5">
+                        <item.icon className="h-3.5 w-3.5 text-primary" />
+                        <div className="text-base font-semibold text-theme-fg">{item.title}</div>
                       </div>
-                    ))}
+                      <p className="mt-1.5 text-xs leading-5 text-theme-muted">{item.description}</p>
+                    </div>
                   </div>
-                </button>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        )}
 
-        {/* Custom Builder */}
-        {customMode && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-black text-theme-fg">Custom Configuration</h2>
+            <div className="rounded-[24px] border border-theme/10 dark:border-transparent bg-zinc-500/10 p-4 shadow-xl shadow-black/10">
+              <h3 className="text-sm font-black text-theme-fg">Resource Allocation</h3>
+              <div className="mt-3 space-y-2.5">
+                <div className="rounded-xl bg-theme-hover/35 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-4 text-xs">
+                    <span className="text-theme-muted">Credit Usage</span>
+                    <span className="text-right font-black text-theme-fg">{cpuCredits} credits/hr</span>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-theme-hover/35 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-4 text-xs">
+                    <span className="text-theme-muted">Storage</span>
+                    <span className="text-right font-black text-theme-fg">{selectedStorageGb} GB</span>
+                  </div>
+                </div>
+                <div className="border-t border-theme/10 pt-3 text-center text-[10px] leading-5 text-theme-muted">
+                  {totalCredits * 24} credits/day or {(totalCredits * 24 * 30 / 1000).toFixed(1)}k credits/month
+                </div>
+              </div>
+
               <button
-                onClick={() => setCustomMode(false)}
-                className="text-xs text-primary font-bold hover:underline"
+                onClick={handleProvision}
+                disabled={provisioning}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-black text-primary-fg transition hover:opacity-90 disabled:opacity-50 shadow-xl shadow-primary/20"
               >
-                ← Back to plans
+                {provisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {provisioning ? 'Setting up your cloud engine...' : 'Deploy Cloud Engine'}
               </button>
+              <p className="mt-3 text-center text-[10px] text-theme-muted">
+                You can stop or delete your engine at any time. Credits are only used while running.
+              </p>
             </div>
-            <div className="p-6 rounded-2xl bg-theme-card/30 border border-theme/10 space-y-5">
-              {/* CPU */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-theme-fg flex items-center gap-2">
-                    <Cpu className="w-3.5 h-3.5 text-theme-muted" /> CPU Cores
-                  </label>
-                  <span className="text-sm font-black text-primary">{customCpu} cores</span>
-                </div>
-                <input type="range" min={1} max={16} step={1} value={customCpu} onChange={e => setCustomCpu(Number(e.target.value))} className="w-full accent-primary" />
-                <div className="flex justify-between text-[9px] text-theme-muted mt-1"><span>1 core</span><span>16 cores</span></div>
-              </div>
-              {/* RAM */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-theme-fg flex items-center gap-2">
-                    <Server className="w-3.5 h-3.5 text-theme-muted" /> Memory (RAM)
-                  </label>
-                  <span className="text-sm font-black text-primary">{customRam} GB</span>
-                </div>
-                <input type="range" min={1} max={64} step={1} value={customRam} onChange={e => setCustomRam(Number(e.target.value))} className="w-full accent-primary" />
-                <div className="flex justify-between text-[9px] text-theme-muted mt-1"><span>1 GB</span><span>64 GB</span></div>
-              </div>
-              {/* Disk */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-theme-fg flex items-center gap-2">
-                    <HardDrive className="w-3.5 h-3.5 text-theme-muted" /> Storage
-                  </label>
-                  <span className="text-sm font-black text-primary">{customDisk} GB</span>
-                </div>
-                <input type="range" min={10} max={500} step={10} value={customDisk} onChange={e => setCustomDisk(Number(e.target.value))} className="w-full accent-primary" />
-                <div className="flex justify-between text-[9px] text-theme-muted mt-1"><span>10 GB</span><span>500 GB</span></div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Cost Summary */}
-        <div className="p-5 rounded-2xl bg-theme-card/30 border border-theme/10 mb-6">
-          <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider mb-3">Credit Usage</h3>
-          <div className="flex justify-between text-sm">
-            <span className="text-theme-muted">Compute</span>
-            <span className="font-bold text-theme-fg">{cpuCredits} credits/hr</span>
-          </div>
-          <div className="flex justify-between text-sm mt-1">
-            <span className="text-theme-muted">Storage ({customMode ? customDisk : plan.disk} GB)</span>
-            <span className="font-bold text-theme-fg">{diskCredits} credits/hr</span>
-          </div>
-          <div className="border-t border-theme/10 mt-3 pt-3 flex justify-between text-sm">
-            <span className="font-black text-theme-fg">Total</span>
-            <span className="font-black text-primary">{totalCredits} credits/hr</span>
-          </div>
-          <div className="text-[10px] text-theme-muted mt-2 text-right">
-            ~{totalCredits * 24} credits/day • ~{(totalCredits * 24 * 30 / 1000).toFixed(1)}k credits/month
-          </div>
+          </aside>
         </div>
-
-        <button
-          onClick={handleProvision}
-          disabled={provisioning}
-          className="w-full py-4 rounded-2xl bg-primary text-primary-fg text-sm font-black hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-xl shadow-primary/20"
-        >
-          {provisioning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-          {provisioning ? 'Setting up your cloud engine...' : 'Create My Cloud Engine'}
-        </button>
-        <p className="text-center text-[10px] text-theme-muted mt-3">You can stop or delete your engine at any time. Credits are only used while running.</p>
       </div>
       </div>
     );
@@ -398,7 +508,7 @@ export function CloudEngineDashboard() {
   if (engine.status === 'starting' || engine.status === 'stopping') {
     const isStarting = engine.status === 'starting';
     return (
-      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       <div className="animate-in fade-in duration-500">
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -455,7 +565,7 @@ export function CloudEngineDashboard() {
               The machine is running but the AI agent is still installing packages and starting up.
               This can take a few minutes on smaller plans.
             </p>
-            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-theme/10 space-y-2">
+            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-theme-muted">Status</span>
                 <span className="font-bold text-amber-500">Agent starting...</span>
@@ -626,7 +736,7 @@ export function CloudEngineDashboard() {
 
   if (engine.status === 'running') {
     return (
-      <div className="h-full">
+      <div className="cloud-engine-dashboard h-full">
       <CloudRuntimeWorkspace
         engine={engine}
         pauseLoading={actionLoading === 'stop'}
@@ -708,7 +818,7 @@ export function CloudEngineDashboard() {
   const statusLabel = engine.status === 'stopped' ? 'Paused' : engine.status;
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+    <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
     <div className="animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -748,7 +858,7 @@ export function CloudEngineDashboard() {
       )}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6 space-y-4">
+        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent p-6 space-y-4">
           <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider">Your Machine</h3>
           <div className="space-y-3">
             <InfoRow icon={Server} label="Name" value={engine.instance_name} />
@@ -760,7 +870,7 @@ export function CloudEngineDashboard() {
             <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />
           </div>
         </div>
-        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 p-6">
+        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent p-6">
           <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
           <div className="flex flex-col gap-4">
             <StatusPill label="AI Agent" connected={false} detail="Engine paused" />
@@ -837,7 +947,7 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
                 'rounded-xl p-3 border transition-all',
                 tier === p.id
                   ? 'border-primary bg-primary/5'
-                  : 'border-theme/10 bg-theme-card/20'
+                  : 'border-theme/10 dark:border-transparent bg-theme-card/20'
               )}
             >
               <div className="text-sm font-black text-theme-fg">{p.emoji} {p.label}</div>
@@ -881,7 +991,7 @@ function MetricBar({ label, value, unit, color }: { label: string; value: number
 
 function StatusPill({ label, connected, detail }: { label: string; connected: boolean; detail: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-theme/10 bg-theme-card/20 p-4 flex-1">
+    <div className="flex items-center gap-3 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card/20 p-4 flex-1">
       <div className={clsx('w-2.5 h-2.5 rounded-full', connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-400')} />
       <div>
         <div className="text-xs font-bold text-theme-fg">{label}</div>
@@ -897,7 +1007,7 @@ function SyncStatusPill({ syncStatus, isSyncing, onSync }: { syncStatus: any; is
     synced: { dot: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]', text: 'text-green-500', bg: 'border-green-500/20' },
     out_of_sync: { dot: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]', text: 'text-amber-500', bg: 'border-amber-500/20' },
     syncing: { dot: 'bg-blue-400 animate-pulse shadow-[0_0_8px_rgba(96,165,250,0.5)]', text: 'text-blue-400', bg: 'border-blue-400/20' },
-    unknown: { dot: 'bg-gray-400', text: 'text-gray-400', bg: 'border-theme/10' },
+    unknown: { dot: 'bg-gray-400', text: 'text-gray-400', bg: 'border-theme/10 dark:border-transparent' },
   };
   const colors = colorMap[state] || colorMap.unknown;
   const labelMap: Record<string, string> = {
@@ -1123,7 +1233,7 @@ function DeploysTab({
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
                 placeholder="My Workflow"
-                className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
               />
             </div>
             <div>
@@ -1135,7 +1245,7 @@ function DeploysTab({
                     onClick={() => setNewKind(k)}
                     className={clsx(
                       'flex-1 px-3 py-2 text-xs font-bold rounded-lg border transition-all',
-                      newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 bg-theme-hover text-theme-muted hover:text-theme-fg'
+                      newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 dark:border-transparent bg-theme-hover text-theme-muted hover:text-theme-fg'
                     )}
                   >
                     {kindEmoji[k]} {k.charAt(0).toUpperCase() + k.slice(1)}
@@ -1152,7 +1262,7 @@ function DeploysTab({
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
               placeholder="Brief description of this deployment"
-              className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+              className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
             />
           </div>
 
@@ -1165,7 +1275,7 @@ function DeploysTab({
               onChange={e => setNewPayload(e.target.value)}
               placeholder={newKind === 'workflow' ? '{\n  "name": "My Workflow",\n  "version": "1",\n  "steps": [...]\n}' : newKind === 'script' ? '#!/usr/bin/env python3\nprint("Hello from the cloud!")' : '{\n  "files": {},\n  "packageJson": {},\n  "startCommand": "npm start"\n}'}
               rows={8}
-              className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
+              className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
             />
           </div>
 
@@ -1177,7 +1287,7 @@ function DeploysTab({
                 onChange={e => setNewEnvVars(e.target.value)}
                 placeholder="KEY=value&#10;ANOTHER_KEY=value"
                 rows={3}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
+                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
               />
             </div>
             <div className="space-y-3">
@@ -1188,7 +1298,7 @@ function DeploysTab({
                   value={newSchedule}
                   onChange={e => setNewSchedule(e.target.value)}
                   placeholder="0 */6 * * *"
-                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
                 />
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1234,7 +1344,7 @@ function DeploysTab({
 
             return (
               <div key={dep.id}>
-                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all">
+                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 dark:hover:border-transparent transition-all">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-base">{kindEmoji[dep.kind] || '📄'}</span>
@@ -1303,7 +1413,7 @@ function DeploysTab({
 
                 {/* Logs panel */}
                 {logsId === dep.id && (
-                  <div className="mt-2 rounded-xl border border-theme/10 bg-[#0d1117] overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                  <div className="mt-2 rounded-xl border border-theme/10 dark:border-transparent bg-[#0d1117] overflow-hidden animate-in slide-in-from-top-1 duration-150">
                     <div className="flex items-center justify-between px-4 py-2 border-b border-theme/10">
                       <span className="text-[10px] font-black text-theme-muted uppercase tracking-wider">Deploy Logs — {dep.name}</span>
                       <div className="flex items-center gap-2">

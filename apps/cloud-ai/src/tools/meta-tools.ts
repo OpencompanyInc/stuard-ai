@@ -24,10 +24,11 @@ import { aiInferenceTool } from './ai-inference';
 import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
+import { searchWorkflowDocs } from '../agents/workflow-agent/docs';
 import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories, getTool } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory } from './tool-registry';
 import { execLocalTool, hasClientBridge } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
 
@@ -126,6 +127,7 @@ registerTool(runSequentialTool, 'Core');
 registerTool(runParallelTool, 'Core');
 registerTool(executeAgenticTask, 'Core');
 registerTool(routeToWorkflowAgent, 'Core', 'orchestration');
+registerTool(searchWorkflowDocs, 'Workflow');
 
 // Virtual tools for workflow authoring (not executable directly by agent, but valid in workflows)
 const customUiTool = createTool({
@@ -635,6 +637,84 @@ export const search_tools = createTool({
         return keywordFallback();
     },
 });
+
+export const search_workflow_nodes = createTool({
+    id: 'search_workflow_nodes',
+    description: 'Search workflow node/tool types by semantic query or filters and return category, runtime type, and input/output schemas in one call.',
+    inputSchema: z.object({
+        query: z.string().optional().describe('Free-text query for semantic node search.'),
+        category: z.string().optional().describe('Filter nodes to a specific category.'),
+        kind: z.string().optional().describe('Filter nodes to a specific kind (local, cloud, orchestration).'),
+        limit: z.number().int().positive().max(20).default(8).optional().describe('Maximum number of nodes to return.'),
+        includeSchema: z.boolean().default(true).optional().describe('Whether to include input/output schema details.'),
+    }),
+    outputSchema: z.object({
+        nodes: z.array(z.object({
+            name: z.string(),
+            description: z.string(),
+            category: z.string(),
+            kind: z.string().optional(),
+            location: z.string().optional(),
+            inputSchema: z.any().optional(),
+            outputSchema: z.any().optional(),
+        })),
+    }),
+    execute: async (inputData) => {
+        const { query, category, kind, limit, includeSchema = true } = inputData as {
+            query?: string;
+            category?: string;
+            kind?: string;
+            limit?: number;
+            includeSchema?: boolean;
+        };
+
+        const result = await (search_tools as any).execute({ query, category, kind, limit });
+        const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
+        const registry = getToolRegistry();
+
+        const nodes = await Promise.all(tools.map(async (entry: any) => {
+            const name = String(entry?.name || '');
+            const registryTool = registry.get(name);
+            const metadata = getToolMetadata(name);
+            const resolvedCategory = String((metadata?.category && metadata.category !== 'Other') ? metadata.category : (entry?.category || metadata?.category || ''));
+            const resolvedLocation = (metadata?.category && metadata.category !== 'Other')
+                ? metadata.location
+                : getDefaultLocationForCategory(resolvedCategory);
+
+            let inputSchema: any = undefined;
+            let outputSchema: any = undefined;
+
+            if (includeSchema) {
+                if (registryTool) {
+                    inputSchema = registryTool.inputSchema ? zodToJsonSchema(registryTool.inputSchema) : {};
+                    outputSchema = registryTool.outputSchema ? zodToJsonSchema(registryTool.outputSchema) : undefined;
+                } else if (hasClientBridge()) {
+                    try {
+                        const info = await execLocalTool('get_tool_info', { name }) as any;
+                        if (info && !info.error) {
+                            inputSchema = info.args || info.inputSchema || {};
+                            outputSchema = info.outputSchema;
+                        }
+                    } catch {}
+                }
+            }
+
+            return {
+                name,
+                description: String(entry?.description || ''),
+                category: resolvedCategory,
+                kind: metadata?.kind,
+                location: resolvedLocation,
+                inputSchema,
+                outputSchema,
+            };
+        }));
+
+        return { nodes };
+    },
+});
+
+registerTool(search_workflow_nodes, 'Workflow');
 
 export const get_tool_schema = createTool({
     id: 'get_tool_schema',

@@ -1081,6 +1081,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     profiles,
     profilesLoading,
     // derived
+    integrationLibrary,
     intCategories,
     filteredIntegrations,
     connectedCount,

@@ -17,35 +17,18 @@ interface StickyNotesProps {
 }
 
 function formatContextDate(value: string) {
-  return new Intl.DateTimeFormat('en-GB', {
-    weekday: 'short',
+  return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
-    month: 'long',
+    month: 'short',
+    year: 'numeric',
   }).format(new Date(value));
 }
 
-function splitNoteText(text: string) {
-  const cleaned = text.trim().replace(/\s+/g, ' ');
-  if (!cleaned) return { title: 'Untitled', body: '' };
-
-  const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
-  const shortSentence = firstSentence.length <= 40 ? firstSentence : '';
-
-  if (shortSentence) {
-    const title = shortSentence.replace(/[.!?]+$/, '');
-    const remaining = cleaned.slice(shortSentence.length).trim();
-    return {
-      title,
-      body: remaining || cleaned,
-    };
-  }
-
-  const words = cleaned.split(' ');
-  const title = words.slice(0, 3).join(' ');
-  return {
-    title: title.replace(/[.!?,:;]+$/, ''),
-    body: cleaned,
-  };
+function formatAttributeKey(key?: string) {
+  if (!key) return 'Profile';
+  return key
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
@@ -64,25 +47,16 @@ export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
   const instructionNotes = notes.filter(n => n.category === 'instruction');
 
   return (
-    <div className="memory-context-surface memory-context-scrollbar h-full overflow-y-auto rounded-[26px] px-5 pb-10 pt-5 md:px-6">
-      <div className="space-y-12">
+    <div className="memory-context-scrollbar h-full overflow-y-auto px-5 pb-10 pt-2 md:px-8">
+      <div className="mx-auto max-w-3xl space-y-10">
         {profileNotes.length > 0 && (
-          <section className="space-y-5">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-[1.35rem] font-semibold text-theme-fg">Profile</h2>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {profileNotes.map((note, index) => (
-                <ProfileCard key={note.id} note={note} index={index} />
-              ))}
-            </div>
-          </section>
+          <ProfileSection notes={profileNotes} />
         )}
 
         <ContextSection
           title="About You"
-          addLabel="Add Note"
+          description="Preferences, work, goals, and personal context."
+          addLabel="Add note"
           type="bio"
           notes={bioNotes}
           isAdding={isAdding === 'bio'}
@@ -95,12 +69,13 @@ export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
           onTextChange={setNewText}
           onSubmit={handleAddSubmit}
           onDelete={onDelete}
-          emptyText="Add notes about preferences, work, goals, and personal context."
+          emptyText="No notes yet."
         />
 
         <ContextSection
           title="System Instructions"
-          addLabel="Add Instruction"
+          description="Standing instructions that guide responses and behavior."
+          addLabel="Add instruction"
           type="instruction"
           notes={instructionNotes}
           isAdding={isAdding === 'instruction'}
@@ -113,15 +88,65 @@ export function StickyNotes({ notes, onAdd, onDelete }: StickyNotesProps) {
           onTextChange={setNewText}
           onSubmit={handleAddSubmit}
           onDelete={onDelete}
-          emptyText="Add standing instructions that should guide responses and behavior."
+          emptyText="No instructions yet."
         />
       </div>
     </div>
   );
 }
 
+function ProfileSection({ notes }: { notes: Fact[] }) {
+  return (
+    <section className="space-y-3">
+      <SectionHeader title="Profile" description="Core identity facts Stuard knows about you." />
+
+      <div className="overflow-hidden rounded-2xl border border-theme bg-theme-card shadow-sm">
+        {notes.map((note, index) => (
+          <div
+            key={note.id}
+            className={
+              'flex items-baseline gap-4 px-5 py-3.5 ' +
+              (index !== 0 ? 'border-t border-theme' : '')
+            }
+          >
+            <div className="w-32 flex-none text-[12px] font-medium uppercase tracking-wide text-theme-muted">
+              {formatAttributeKey(note.attribute_key)}
+            </div>
+            <div className="min-w-0 flex-1 text-[14px] leading-6 text-theme-fg">
+              {note.text}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SectionHeader({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-end justify-between gap-4 pb-1">
+      <div className="min-w-0">
+        <h2 className="text-[1.05rem] font-semibold tracking-tight text-theme-fg">{title}</h2>
+        {description && (
+          <p className="mt-0.5 text-[13px] text-theme-muted">{description}</p>
+        )}
+      </div>
+      {action}
+    </div>
+  );
+}
+
 function ContextSection({
   title,
+  description,
   addLabel,
   type,
   notes,
@@ -135,6 +160,7 @@ function ContextSection({
   emptyText,
 }: {
   title: string;
+  description: string;
   addLabel: string;
   type: 'bio' | 'instruction';
   notes: Fact[];
@@ -148,42 +174,54 @@ function ContextSection({
   emptyText: string;
 }) {
   return (
-    <section className="space-y-5">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-[1.35rem] font-semibold text-theme-fg">{title}</h2>
+    <section className="space-y-3">
+      <SectionHeader
+        title={title}
+        description={description}
+        action={
+          !isAdding ? (
+            <button
+              onClick={onStartAdd}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-theme bg-theme-card px-3.5 text-[13px] font-medium text-theme-fg shadow-sm transition-colors hover:bg-theme-hover"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              <span>{addLabel}</span>
+            </button>
+          ) : null
+        }
+      />
 
-        <button
-          onClick={onStartAdd}
-          className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-fg shadow-sm transition-all hover:opacity-90"
-        >
-          <PlusIcon />
-          <span>{addLabel}</span>
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-3 xl:grid-cols-4">
+      <div className="space-y-2">
         {isAdding && (
-          <ComposerCard
+          <Composer
             value={newText}
-            placeholder={type === 'bio' ? 'Type your note...' : 'Type instruction...'}
+            placeholder={
+              type === 'bio'
+                ? 'e.g. I prefer concise answers without filler text.'
+                : 'e.g. Always cite file paths when referencing code.'
+            }
             onCancel={onCancel}
             onChange={onTextChange}
             onSubmit={onSubmit}
           />
         )}
 
-        {notes.map((note, index) => (
-          <ContextCard
-            key={note.id}
-            note={note}
-            index={index}
-            onDelete={() => onDelete(note.id, type)}
-          />
-        ))}
-
-        {!isAdding && notes.length === 0 && (
-          <div className="rounded-[24px] bg-theme-card px-5 py-6 text-sm text-theme-muted shadow-sm">
+        {notes.length === 0 && !isAdding && (
+          <div className="rounded-2xl border border-dashed border-theme px-5 py-6 text-center text-[13px] text-theme-muted">
             {emptyText}
+          </div>
+        )}
+
+        {notes.length > 0 && (
+          <div className="overflow-hidden rounded-2xl border border-theme bg-theme-card shadow-sm">
+            {notes.map((note, index) => (
+              <NoteRow
+                key={note.id}
+                note={note}
+                isFirst={index === 0}
+                onDelete={() => onDelete(note.id, type)}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -191,29 +229,40 @@ function ContextSection({
   );
 }
 
-function ProfileCard({ note, index }: { note: Fact; index: number }) {
-  const rotation = [-0.8, 0.6, -0.35][index % 3];
-
+function NoteRow({
+  note,
+  isFirst,
+  onDelete,
+}: {
+  note: Fact;
+  isFirst: boolean;
+  onDelete: () => void;
+}) {
   return (
     <div
-      className="memory-context-card group relative overflow-hidden rounded-[24px] px-5 py-5 shadow-sm transition-all hover:scale-[1.01] hover:shadow-md"
-      style={{ transform: `rotate(${rotation}deg)` }}
+      className={
+        'group flex items-start gap-4 px-5 py-4 transition-colors hover:bg-theme-hover/40 ' +
+        (isFirst ? '' : 'border-t border-theme')
+      }
     >
-      <div className="absolute inset-x-0 top-0 h-px bg-primary/50" />
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
-          {note.attribute_key || 'Profile'}
-        </div>
-        <div className="text-[11px] font-medium text-theme-muted">
+      <div className="min-w-0 flex-1">
+        <p className="whitespace-pre-wrap text-[14px] leading-6 text-theme-fg">{note.text}</p>
+        <div className="mt-1.5 text-[11px] text-theme-muted">
           {formatContextDate(note.created_at)}
         </div>
       </div>
-      <p className="text-[15px] leading-8 text-theme-fg">{note.text}</p>
+      <button
+        onClick={onDelete}
+        className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-lg text-theme-muted opacity-0 transition-all hover:bg-theme-hover hover:text-red-400 group-hover:opacity-100"
+        aria-label="Delete"
+      >
+        <TrashIcon className="h-4 w-4" />
+      </button>
     </div>
   );
 }
 
-function ComposerCard({
+function Composer({
   value,
   placeholder,
   onChange,
@@ -227,65 +276,44 @@ function ComposerCard({
   onSubmit: () => Promise<void>;
 }) {
   return (
-    <div className="memory-context-card rounded-[24px] px-5 py-5 shadow-sm">
+    <div className="rounded-2xl border border-theme bg-theme-card px-4 py-3 shadow-sm">
       <textarea
         autoFocus
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="memory-context-scrollbar min-h-[170px] w-full resize-none bg-transparent text-[15px] leading-7 text-theme-fg outline-none placeholder:text-theme-muted"
+        className="memory-context-scrollbar min-h-[88px] w-full resize-none bg-transparent text-[14px] leading-6 text-theme-fg outline-none placeholder:text-theme-muted"
         onKeyDown={e => {
-          if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             void onSubmit();
           }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          }
         }}
       />
-
-      <div className="mt-4 flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-theme-hover text-theme-muted transition-colors hover:bg-theme-bg hover:text-theme-fg"
-        >
-          <Cross2Icon className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => void onSubmit()}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/12 text-primary transition-colors hover:bg-primary/18"
-        >
-          <CheckIcon className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ContextCard({ note, index, onDelete }: { note: Fact; index: number; onDelete: () => void }) {
-  const { title, body } = splitNoteText(note.text);
-  const rotation = [0.9, -0.7, 0.45, -0.35][index % 4];
-
-  return (
-    <div
-      className="memory-context-card group relative min-h-[260px] rounded-[24px] px-5 py-5 shadow-sm transition-all hover:scale-[1.015] hover:shadow-md"
-      style={{ transform: `rotate(${rotation}deg)` }}
-    >
-      <div className="absolute inset-x-0 top-0 h-1 rounded-t-[24px] bg-primary/80" />
-      <button
-        onClick={onDelete}
-        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-xl bg-theme-hover text-theme-muted opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
-      >
-        <TrashIcon className="h-4 w-4" />
-      </button>
-
-      <div className="flex h-full flex-col">
-        <h3 className="pr-10 pt-3 text-[1.05rem] font-semibold leading-7 text-theme-fg">
-          {title}
-        </h3>
-        <p className="memory-context-scrollbar mt-4 flex-1 overflow-y-auto pr-1 text-[15px] leading-8 text-theme-fg">
-          {body}
-        </p>
-        <div className="mt-5 text-[12px] font-medium text-theme-muted">
-          {formatContextDate(note.created_at)}
+      <div className="mt-2 flex items-center justify-between">
+        <div className="text-[11px] text-theme-muted">
+          ⌘/Ctrl + Enter to save · Esc to cancel
+        </div>
+        <div className="flex gap-1.5">
+          <button
+            onClick={onCancel}
+            className="inline-flex h-8 items-center gap-1 rounded-lg px-3 text-[13px] font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+          >
+            <Cross2Icon className="h-3.5 w-3.5" />
+            Cancel
+          </button>
+          <button
+            onClick={() => void onSubmit()}
+            disabled={!value.trim()}
+            className="inline-flex h-8 items-center gap-1 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            <CheckIcon className="h-3.5 w-3.5" />
+            Save
+          </button>
         </div>
       </div>
     </div>

@@ -102,67 +102,57 @@ function extensionLabel(name: string): string {
   return ext || 'FILE';
 }
 
-/** Build a virtual folder tree from a flat list of file paths. */
-function buildFileTree(files: CloudFileEntry[]): FileNode[] {
-  const root: Map<string, FileNode> = new Map();
+/**
+ * Build a folder-only tree from a flat list of object names.
+ * Children are sorted alphabetically. File entries are not included.
+ */
+interface FolderTreeNode {
+  name: string;
+  fullPath: string;
+  children: FolderTreeNode[];
+}
+
+function buildFolderTree(files: CloudFileEntry[]): FolderTreeNode[] {
+  const root: FolderTreeNode = { name: '', fullPath: '', children: [] };
+
+  const ensurePath = (segments: string[]): FolderTreeNode => {
+    let node = root;
+    for (let i = 0; i < segments.length; i++) {
+      const part = segments[i];
+      let next = node.children.find(c => c.name === part);
+      if (!next) {
+        next = {
+          name: part,
+          fullPath: segments.slice(0, i + 1).join('/'),
+          children: [],
+        };
+        node.children.push(next);
+      }
+      node = next;
+    }
+    return node;
+  };
 
   for (const f of files) {
     const parts = f.name.split('/').filter(Boolean);
+    if (parts.length === 0) continue;
 
-    // Skip folder placeholders (0-byte objects ending in /)
-    const isPlaceholder = f.name.endsWith('/') && f.size === 0;
-
-    let current = root;
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-      const pathSoFar = parts.slice(0, i + 1).join('/');
-
-      if (isLast && !isPlaceholder) {
-        // It's a file
-        current.set(part, {
-          name: part,
-          fullPath: pathSoFar,
-          isFolder: false,
-          size: f.size,
-          updated: f.updated,
-          contentType: f.contentType,
-        });
-      } else {
-        // It's a folder (intermediate or placeholder)
-        if (!current.has(part)) {
-          const node: FileNode = {
-            name: part,
-            fullPath: pathSoFar,
-            isFolder: true,
-            size: 0,
-            updated: '',
-            contentType: 'folder',
-            children: [],
-          };
-          current.set(part, node);
-        }
-        const existing = current.get(part)!;
-        if (!existing.children) existing.children = [];
-
-        // Build a child map
-        if (isLast) continue;
-
-        // Create a childMap for the next level
-        const childMap = new Map<string, FileNode>();
-        for (const c of existing.children) childMap.set(c.name, c);
-        current = childMap;
-
-        // Sync back
-        existing.children = Array.from(childMap.values());
-      }
-    }
-
-    // Sync root level
-    // We need to rebuild from the temp maps properly
+    const isFolderPlaceholder = f.name.endsWith('/') && f.size === 0;
+    // Folders are: every parent path of a file, plus folder placeholders themselves.
+    const folderDepth = isFolderPlaceholder ? parts.length : parts.length - 1;
+    if (folderDepth > 0) ensurePath(parts.slice(0, folderDepth));
   }
 
-  return Array.from(root.values());
+  // Recursive sort
+  const sortRec = (nodes: FolderTreeNode[]) => {
+    nodes.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    for (const n of nodes) sortRec(n.children);
+  };
+  sortRec(root.children);
+
+  return root.children;
 }
 
 /** Simpler approach: derive folders from the flat list for a given path. */
@@ -673,6 +663,155 @@ function ListItem({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Folder Tree Sidebar
+// ─────────────────────────────────────────────────────────────────────────────
+
+function FolderTreeRow({
+  node, depth, currentPath, expanded, onToggle, onNavigate,
+}: {
+  node: FolderTreeNode;
+  depth: number;
+  currentPath: string;
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
+  onNavigate: (path: string) => void;
+}) {
+  const isOpen = expanded.has(node.fullPath);
+  const isActive = currentPath === node.fullPath;
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <>
+      <div
+        onClick={() => onNavigate(node.fullPath)}
+        className={clsx(
+          "group flex items-center gap-1 pr-2 py-1 rounded-md cursor-pointer text-xs transition-colors",
+          isActive
+            ? "bg-primary/10 text-primary font-bold"
+            : "text-theme-fg hover:bg-theme-hover/50"
+        )}
+        style={{ paddingLeft: `${depth * 12 + 4}px` }}
+      >
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasChildren) onToggle(node.fullPath);
+          }}
+          className={clsx(
+            "shrink-0 w-3.5 h-3.5 flex items-center justify-center rounded hover:bg-theme-hover transition-colors",
+            !hasChildren && "invisible"
+          )}
+        >
+          {hasChildren && (
+            isOpen
+              ? <ChevronDown className="w-3 h-3 text-theme-muted" />
+              : <ChevronRight className="w-3 h-3 text-theme-muted" />
+          )}
+        </button>
+        {isOpen && hasChildren ? (
+          <FolderOpen className={clsx("w-3.5 h-3.5 shrink-0", isActive ? "text-primary" : "text-blue-400/80")} />
+        ) : (
+          <Folder className={clsx("w-3.5 h-3.5 shrink-0", isActive ? "text-primary" : "text-blue-400/80")} />
+        )}
+        <span className="truncate">{node.name}</span>
+      </div>
+      {isOpen && hasChildren && node.children.map(child => (
+        <FolderTreeRow
+          key={child.fullPath}
+          node={child}
+          depth={depth + 1}
+          currentPath={currentPath}
+          expanded={expanded}
+          onToggle={onToggle}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </>
+  );
+}
+
+function FolderTreeSidebar({
+  files, currentPath, onNavigate, totalSize, totalFiles,
+}: {
+  files: CloudFileEntry[];
+  currentPath: string;
+  onNavigate: (path: string) => void;
+  totalSize: number;
+  totalFiles: number;
+}) {
+  const tree = useMemo(() => buildFolderTree(files), [files]);
+
+  // Auto-expand the chain of ancestors of the current path
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (!currentPath) return;
+    setExpanded(prev => {
+      const next = new Set(prev);
+      const parts = currentPath.split('/').filter(Boolean);
+      for (let i = 1; i <= parts.length; i++) {
+        next.add(parts.slice(0, i).join('/'));
+      }
+      return next;
+    });
+  }, [currentPath]);
+
+  const toggle = useCallback((path: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full min-h-0 rounded-2xl border border-theme/10 bg-theme-card overflow-hidden">
+      <div className="px-3 py-2 border-b border-theme/8 flex items-center gap-2">
+        <Cloud className="w-3.5 h-3.5 text-primary" />
+        <span className="text-[10px] font-black uppercase tracking-wider text-theme-muted">Folders</span>
+      </div>
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 space-y-0.5">
+        <div
+          onClick={() => onNavigate('')}
+          className={clsx(
+            "flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer text-xs transition-colors",
+            !currentPath
+              ? "bg-primary/10 text-primary font-bold"
+              : "text-theme-fg hover:bg-theme-hover/50"
+          )}
+        >
+          <Home className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">My Files</span>
+        </div>
+        {tree.length === 0 ? (
+          <div className="px-2 py-3 text-[10px] text-theme-muted/50 italic">
+            No folders yet
+          </div>
+        ) : (
+          tree.map(node => (
+            <FolderTreeRow
+              key={node.fullPath}
+              node={node}
+              depth={0}
+              currentPath={currentPath}
+              expanded={expanded}
+              onToggle={toggle}
+              onNavigate={onNavigate}
+            />
+          ))
+        )}
+      </div>
+      <div className="px-3 py-2 border-t border-theme/8 text-[10px] text-theme-muted">
+        <div className="flex justify-between">
+          <span>{totalFiles} file{totalFiles === 1 ? '' : 's'}</span>
+          <span className="font-bold text-theme-fg">{formatBytes(totalSize)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main File Explorer
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1103,29 +1242,42 @@ export function FileExplorer({
         />
       )}
 
-      {/* ── Drop Zone ─────────────────────────────────────────────────────── */}
-      <CompactDropZone onFiles={handleUpload} active={uploading} currentPath={currentPath} />
+      {/* ── Tree Sidebar + Main Pane ──────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-3 items-stretch">
+        {/* Folder tree sidebar */}
+        <div className="hidden md:block min-h-[480px]">
+          <FolderTreeSidebar
+            files={files}
+            currentPath={currentPath}
+            onNavigate={navigateTo}
+            totalSize={files.reduce((s, f) => s + f.size, 0)}
+            totalFiles={files.filter(f => !(f.size === 0 && f.name.endsWith('/'))).length}
+          />
+        </div>
 
-      {/* ── File Area ─────────────────────────────────────────────────────── */}
-      <div
-        ref={containerRef}
-        data-bg-area="true"
-        onContextMenu={handleBgContextMenu}
-        onDragOver={(e) => { e.preventDefault(); setAreaDragging(true); }}
-        onDragLeave={() => setAreaDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setAreaDragging(false);
-          const droppedFiles = Array.from(e.dataTransfer.files);
-          if (droppedFiles.length > 0) handleUpload(droppedFiles);
-        }}
-        className={clsx(
-          "rounded-2xl border transition-all min-h-[300px]",
-          areaDragging
-            ? "border-primary/30 bg-primary/3"
-            : "border-theme/10 bg-theme-card"
-        )}
-      >
+        {/* Main pane: drop zone + file area */}
+        <div className="space-y-3 min-w-0">
+          <CompactDropZone onFiles={handleUpload} active={uploading} currentPath={currentPath} />
+
+          <div
+            ref={containerRef}
+            data-bg-area="true"
+            onContextMenu={handleBgContextMenu}
+            onDragOver={(e) => { e.preventDefault(); setAreaDragging(true); }}
+            onDragLeave={() => setAreaDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setAreaDragging(false);
+              const droppedFiles = Array.from(e.dataTransfer.files);
+              if (droppedFiles.length > 0) handleUpload(droppedFiles);
+            }}
+            className={clsx(
+              "rounded-2xl border transition-all min-h-[300px]",
+              areaDragging
+                ? "border-primary/30 bg-primary/3"
+                : "border-theme/10 bg-theme-card"
+            )}
+          >
         {/* List header (only in list view) */}
         {viewMode === 'list' && allItems.length > 0 && (
           <div className="flex items-center gap-3 px-3 py-2 border-b border-theme/8 text-[10px] font-black text-theme-muted uppercase tracking-wider">
@@ -1229,6 +1381,8 @@ export function FileExplorer({
             <span>{formatBytes(totalSize)}</span>
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {/* ── Context Menus ─────────────────────────────────────────────────── */}
