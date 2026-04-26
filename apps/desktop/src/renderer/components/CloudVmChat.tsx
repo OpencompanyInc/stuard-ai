@@ -316,12 +316,17 @@ export function CloudVmChat({
 
   // Load a conversation from history — try VM relay, then cloud-ai, then Supabase
   const loadConversation = useCallback(async (convId: string) => {
+    // Abort any in-flight chat so the streaming UI doesn't try to write to the
+    // newly-loaded conversation.
+    abortRef.current?.abort();
+
     setLoadingConvId(convId);
     let rawMsgs: any[] = [];
+    let loadError: string | null = null;
 
     try {
       // 1. VM relay (Python agent DB) — double-wrapped: relay{result} → VM{result} → handler{messages}
-      const res = await vmRelay('/memory/messages_list', { conversation_id: convId, limit: 100 }, 'POST', { timeoutMs: 5_000 });
+      const res = await vmRelay('/memory/messages_list', { conversation_id: convId, limit: 100 }, 'POST', { timeoutMs: 8_000 });
       rawMsgs = res?.result?.result?.messages || res?.result?.messages || res?.messages || [];
 
       // 2. Cloud-ai memory API
@@ -349,25 +354,45 @@ export function CloudVmChat({
           if (!error && Array.isArray(data)) rawMsgs = data;
         } catch { /* silent */ }
       }
+    } catch (err: any) {
+      loadError = err?.message || 'Failed to load conversation';
+    }
 
-      if (rawMsgs.length > 0) {
-        const loaded: ChatMessage[] = rawMsgs.map((m: any, i: number) => ({
-          id: `${convId}-${i}`,
-          role: m.role === 'assistant' ? 'assistant' as const : 'user' as const,
-          text: String(m.content || m.text || ''),
-          timestamp: m.created_at ? new Date(m.created_at).getTime() : Date.now() - (rawMsgs.length - i) * 1000,
-        }));
-        setStreamText('');
-        setStreamReasoning('');
-        setStreamTools([]);
-        setStreamChunks([]);
-        setAskUserPrompts([]);
-        setMessages(loaded);
-        conversationIdRef.current = convId;
-        const conv = conversations.find(c => c.id === convId);
-        if (conv) conversationTitleRef.current = conv.title;
-      }
-    } catch { /* silent */ }
+    // Always swap conversation context (even when empty) so the user sees that
+    // the click took effect — otherwise re-clicking the same / a different
+    // conversation that returns no messages looks like the panel is broken.
+    setStreamText('');
+    setStreamReasoning('');
+    setStreamTools([]);
+    setStreamChunks([]);
+    setAskUserPrompts([]);
+    setLoading(false);
+    conversationIdRef.current = convId;
+    const conv = conversations.find(c => c.id === convId);
+    conversationTitleRef.current = conv?.title || '';
+
+    if (rawMsgs.length > 0) {
+      const loaded: ChatMessage[] = rawMsgs.map((m: any, i: number) => ({
+        id: `${convId}-${i}`,
+        role: m.role === 'assistant' ? 'assistant' as const : 'user' as const,
+        text: String(m.content || m.text || ''),
+        timestamp: m.created_at ? new Date(m.created_at).getTime() : Date.now() - (rawMsgs.length - i) * 1000,
+      }));
+      setMessages(loaded);
+    } else {
+      // Show an empty thread with a hint so the user understands nothing
+      // was lost — the conversation just hasn't synced yet.
+      setMessages([
+        {
+          id: `${convId}-empty`,
+          role: 'assistant',
+          text: loadError
+            ? `Couldn't load this conversation: ${loadError}`
+            : 'No messages stored locally for this chat yet. Start typing to continue it — the history will sync from the desktop in the background.',
+          timestamp: Date.now(),
+        },
+      ]);
+    }
 
     setLoadingConvId(null);
     setShowHistory(false);
@@ -734,11 +759,14 @@ export function CloudVmChat({
     } finally {
       const activeConversationId = conversationIdRef.current;
       if (activeConversationId) {
-        const fallbackTitle = (conversationTitleRef.current || text.slice(0, 80) || 'Untitled').trim();
-        conversationTitleRef.current = fallbackTitle;
+        // Only set the title from the AI-generated title we received during the
+        // stream (`type:'title'` event) — never from the user's text. Otherwise
+        // every chat in history would be labelled with the first user message
+        // until the next refetch, which the user has flagged as a regression.
+        const aiTitle = conversationTitleRef.current.trim();
         upsertConversationEntry({
           id: activeConversationId,
-          title: fallbackTitle,
+          ...(aiTitle ? { title: aiTitle } : {}),
           updated_at: new Date().toISOString(),
           incrementMessageCountBy: 2,
         });

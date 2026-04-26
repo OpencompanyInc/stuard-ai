@@ -497,6 +497,24 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       loadLocalConversationHistory(conversationId, 50),
     ]);
 
+    // Pre-seed the in-memory store with an empty title so the AI title arriving
+    // mid-stream (via the `t === 'title'` event below) can land on an existing
+    // entry. Without this, updateConversation is a no-op and the AI title is
+    // lost — the post-stream fallback would then permanently set the title to
+    // the first user message.
+    const memStorePre = getVMMemoryStore();
+    if (!memStorePre.getConversation(conversationId)) {
+      memStorePre.addConversation({
+        id: conversationId,
+        title: '',
+        summary: message.slice(0, 200),
+        model: model || 'balanced',
+        source: 'agent',
+        message_count: 0,
+        topics: extractSimpleTopics(message),
+      });
+    }
+
     // Store user message
     sendToAgent({
       type: 'tool_exec',
@@ -576,7 +594,20 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         } else if (t === 'title') {
           writeLine({ type: 'title', title: event.title, conversationId: event.conversationId });
           if (event.title) {
-            getVMMemoryStore().updateConversation(conversationId, { title: String(event.title) });
+            const aiTitle = String(event.title).trim();
+            if (aiTitle) {
+              // 1. Update VM in-memory store (will hit the pre-seeded entry above).
+              getVMMemoryStore().updateConversation(conversationId, { title: aiTitle });
+              // 2. Persist to local SQLite via the Python agent so list/refresh
+              //    queries see the AI title even after restart.
+              sendToAgent({
+                type: 'tool_exec',
+                tool: 'conversation_update',
+                args: { conversation_id: conversationId, title: aiTitle },
+              }, 5_000).catch(() => {});
+              // 3. Mirror to desktop so its history list updates immediately.
+              emitChatSyncToDesktop('title_update', conversationId, { title: aiTitle });
+            }
           }
         }
       },
@@ -593,7 +624,11 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       });
     }
 
-    // Track conversation in VM memory store for history
+    // Track conversation in VM memory store for history.
+    // IMPORTANT: never overwrite the title here — the AI title arrives via the
+    // mid-stream `t === 'title'` handler above. Setting message.slice() as the
+    // title would clobber it (visible bug: chats listed as the user's first
+    // message instead of the AI-generated title).
     const memStore2 = getVMMemoryStore();
     const existing = memStore2.getConversation(conversationId);
     if (existing) {
@@ -602,9 +637,12 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         summary: message.slice(0, 200),
       });
     } else {
+      // Pre-seed should have created this entry already; this branch only fires
+      // if memstore was wiped mid-stream. Leave title empty so the SQLite/AI
+      // title wins on the next list query.
       memStore2.addConversation({
         id: conversationId,
-        title: message.slice(0, 80),
+        title: '',
         summary: message.slice(0, 200),
         model: model || 'balanced',
         source: 'agent',
