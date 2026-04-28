@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { execLocalTool, safeToolWrite } from './bridge';
+import { execLocalTool, safeToolWrite, hasClientBridge } from './bridge';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -409,17 +409,25 @@ const WorkflowSpecSchema = z.object({
 
 /**
  * Create a new workflow from scratch with full spec.
+ *
+ * This is the single-step bootstrap: it seeds the session workflow (so
+ * subsequent modify_workflow calls find it) AND persists the workflow to
+ * disk via the desktop bridge in one shot. No separate import step needed.
  */
 export const createWorkflowTool = createTool({
   id: 'create_workflow',
-  description: `Create a new workflow from scratch. Provide the full workflow JSON spec.
+  description: `Create a new workflow from scratch and persist it to disk in one step.
+
+The created workflow becomes the active session workflow (so subsequent
+modify_workflow calls operate on it) AND is saved to the user's Automations
+tab — no separate import call required.
 
 REQUIRED FIELDS:
 - id: unique ID (e.g., "flow_abc123")
 - name: display name
 - triggers: array of triggers
-- nodes: array of nodes
-- wires: array connecting triggers to nodes
+- nodes: array of nodes (may be empty if you'll build it via modify_workflow)
+- wires: array connecting triggers to nodes (may be empty)
 
 EXAMPLE:
 {
@@ -439,7 +447,10 @@ EXAMPLE:
   }),
   outputSchema: z.object({
     ok: z.boolean(),
+    id: z.string().optional(),
     spec: WorkflowSpecSchema.optional(),
+    persisted: z.boolean().optional(),
+    persistError: z.string().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, { writer }) => {
@@ -470,17 +481,52 @@ EXAMPLE:
 
     wfLog('create_workflow', { id: spec.id, nodes: spec.nodes.length });
 
-    // Store in in-memory map for quick access
     workflowMap.set(spec.id, spec);
+
+    // Make this the active session workflow so subsequent modify_workflow
+    // calls find it. In delegated subagents, per-tool ALS state may not
+    // propagate across tool calls, so setSessionWorkflow's module-level
+    // fallback is what makes follow-up edits work.
+    try {
+      const { setSessionWorkflow } = await import('./workflow');
+      setSessionWorkflow(spec);
+    } catch (e: any) {
+      wfLog('create_workflow_set_session_failed', { id: spec.id, error: e?.message });
+    }
+
+    // Persist to disk so the workflow shows up in Automations immediately.
+    // Calling execLocalTool directly (not the cloud-ai wrapper) bypasses the
+    // import_workflow Zod schema, which would otherwise strip our `id`.
+    let persisted = false;
+    let persistError: string | undefined;
+    if (hasClientBridge()) {
+      try {
+        const importRes = await execLocalTool(
+          'import_workflow',
+          { definition: spec },
+          writer as any,
+          15000,
+          { silent: true, noFallback: true },
+        );
+        persisted = !!importRes?.ok;
+        if (!persisted) persistError = importRes?.error || 'import_workflow returned not-ok';
+      } catch (e: any) {
+        persistError = e?.message || 'import_workflow threw';
+        wfLog('create_workflow_persist_failed', { id: spec.id, error: persistError });
+      }
+    } else {
+      persistError = 'no_desktop_bridge';
+    }
 
     await safeToolWrite(writer as any, {
       type: 'tool_event',
       tool: 'create_workflow',
       status: 'completed',
       workflowId: spec.id,
+      persisted,
     });
 
-    return { ok: true, spec };
+    return { ok: true, id: spec.id, spec, persisted, persistError };
   },
 });
 

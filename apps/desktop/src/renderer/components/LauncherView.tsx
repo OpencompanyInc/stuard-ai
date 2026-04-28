@@ -9,6 +9,7 @@ import React, {
 import TextareaAutosize from "react-textarea-autosize";
 import {
   LayoutGrid,
+  MicOff,
   Mic,
   Plus,
   Video,
@@ -33,7 +34,10 @@ import {
   MessageSquare,
   ListTodo,
   CheckCircle,
+  CornerDownLeft,
 } from "lucide-react";
+import { VoiceOrb, type VoiceState } from "./voice/VoiceOrb";
+import type { TranscriptLine, VoiceModeState } from "../hooks/useVoiceMode";
 import type {
   UsePlannerDataResult,
   NextUpItem,
@@ -114,6 +118,16 @@ interface LauncherViewProps {
   activeSidebarTab?: "spaces" | "terminal" | "tasks" | "browser" | "todo";
   onCloseInternalSidebar?: () => void;
   onSwitchSidebarTab?: (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => void;
+
+  // Voice Mode
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
+  voiceState?: VoiceModeState;
+  voiceAudioLevel?: number;
+  voiceMuted?: boolean;
+  onVoiceMuteToggle?: () => void;
+  voiceTranscripts?: TranscriptLine[];
+  voiceActiveTool?: string | null;
 }
 
 // Helper to get icon for next up item
@@ -270,6 +284,16 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   activeSidebarTab = "spaces",
   onCloseInternalSidebar,
   onSwitchSidebarTab,
+
+  // Voice
+  voiceActive = false,
+  onToggleVoice,
+  voiceState = "idle",
+  voiceAudioLevel = 0,
+  voiceMuted = false,
+  onVoiceMuteToggle,
+  voiceTranscripts = [],
+  voiceActiveTool,
 }) => {
   const { modelById } = useModelRegistry();
   const CLOUD_AI_HTTP =
@@ -805,9 +829,27 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     [onToggleSidebar, setQuery],
   );
 
-  const displayStatus = nextUp
-    ? `${nextUp.title} ${nextUp.timeLabel}`
-    : statusText || "Ready";
+  // Voice status overrides default status when voice is active
+  const latestVoiceLine = voiceTranscripts[voiceTranscripts.length - 1];
+  const voiceStatusText = voiceActive
+    ? (voiceActiveTool
+        ? `Using ${voiceActiveTool.replace(/_/g, " ")}…`
+        : voiceState === "connecting"
+          ? "Connecting…"
+          : voiceState === "thinking"
+            ? "Thinking…"
+            : voiceState === "speaking"
+              ? "Speaking"
+              : voiceState === "listening"
+                ? "Listening"
+                : "Voice")
+    : null;
+
+  const displayStatus = voiceStatusText
+    ? voiceStatusText
+    : nextUp
+      ? `${nextUp.title} ${nextUp.timeLabel}`
+      : statusText || "Ready";
 
   const hasQuery = String(query || "").trim().length >= 2;
   const showResults =
@@ -884,6 +926,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     }
   };
 
+  const isCompact = overlayMode === "compact";
+
   return (
     <div className="flex h-full min-w-0 overflow-hidden">
       {/* Internal Sidebar - outside main container for proper corner rendering */}
@@ -897,10 +941,13 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
       <div
         className={clsx(
-          "flex-1 min-w-0 min-h-0 flex flex-col p-3 transition-all duration-300 border border-theme",
+          "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme/60",
+          isCompact ? "p-1.5" : "p-3",
           sidebarOpen
-            ? "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden"
-            : "rounded-[28px] overflow-hidden",
+            ? (isCompact
+                ? "rounded-r-2xl rounded-l-none border-l-0 overflow-hidden"
+                : "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden")
+            : (isCompact ? "rounded-2xl overflow-hidden" : "rounded-[28px] overflow-hidden"),
           translucentMode
             ? "bg-theme-bg backdrop-blur-2xl"
             : "bg-theme-bg",
@@ -909,16 +956,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           background: translucentMode
             ? "color-mix(in srgb, var(--background) 76%, transparent)"
             : undefined,
-          boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
+          boxShadow: isCompact
+            ? "0 8px 24px rgba(15, 23, 42, 0.10)"
+            : "0 18px 40px rgba(15, 23, 42, 0.08)",
         }}
       >
         <div
           className={clsx(
-            "flex-1 min-h-0 flex flex-col overflow-hidden p-2 border border-theme",
-            "rounded-[24px]",
+            "flex-1 min-h-0 flex flex-col overflow-hidden",
+            isCompact
+              ? "rounded-xl p-1"
+              : "p-2 rounded-[24px] border border-theme",
             translucentMode
               ? "bg-theme-bg backdrop-blur-xl"
-              : "bg-theme-card shadow-sm",
+              : (isCompact ? "" : "bg-theme-card shadow-sm"),
           )}
           style={{
             background: translucentMode
@@ -928,7 +979,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         >
           {/* Top Header */}
           <div
-            className="flex items-center justify-between px-2 py-2 border-b border-theme backdrop-blur-sm w-full min-w-0 shrink-0"
+            className={clsx(
+              "flex items-center justify-between w-full min-w-0 shrink-0",
+              isCompact
+                ? "px-2 py-1"
+                : "px-2 py-2 border-b border-theme backdrop-blur-sm",
+            )}
           >
             <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
               <ChatTabs
@@ -957,7 +1013,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             />
           </div>
 
-          {/* Main Content Area */}
+          {/* Main Content Area — hidden in compact mode (no vertical room) */}
+          {!isCompact && (
           <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto scrollbar-minimal">
             {viewMode === "tasks" ? (
               <div className="w-full flex-1 min-h-0 overflow-y-auto scrollbar-minimal pt-3">
@@ -1193,16 +1250,22 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Bottom Input Area - Integrated into the single card */}
-          <div className="shrink-0 w-full max-w-3xl mx-auto mt-auto px-4 pb-4">
+          <div
+            className={clsx(
+              "shrink-0 w-full mt-auto",
+              isCompact ? "px-1.5 pb-1" : "max-w-3xl mx-auto px-4 pb-4",
+            )}
+          >
             {/* Compact-mode quick shortcuts row — apps first, then bookmarks */}
             {overlayMode === "compact" &&
               !showResults &&
               (discoveredApps.length > 0 || bookmarks.length > 0) && (
-                <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-hidden">
-                  {/* Discovered apps — always shown first */}
-                  {discoveredApps.slice(0, 4).map((da: any) => {
+                <div className="flex items-center gap-1 mb-1 overflow-x-auto scrollbar-hidden">
+                  {/* Discovered apps — icon-only dock */}
+                  {discoveredApps.slice(0, 6).map((da: any) => {
                     const iconUrl =
                       da?.iconDataUrl || fileIconDataUrls[String(da.id || "")];
                     return (
@@ -1211,7 +1274,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                         onClick={() =>
                           handleLaunchApp(da.launchTarget || da.id)
                         }
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-blue-500/8 hover:bg-blue-500/15 border border-blue-500/15 hover:border-blue-500/30 transition-all shrink-0 group"
+                        className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0"
                         title={da.name}
                       >
                         {iconUrl ? (
@@ -1219,22 +1282,19 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                             src={iconUrl}
                             alt=""
                             loading="lazy"
-                            className="w-3.5 h-3.5 object-contain"
+                            className="w-4 h-4 object-contain"
                           />
                         ) : (
-                          <AppWindow className="w-3.5 h-3.5 text-blue-500" />
+                          <AppWindow className="w-3.5 h-3.5 text-theme-muted" />
                         )}
-                        <span className="text-[11px] font-semibold text-blue-500/80 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors truncate max-w-[80px]">
-                          {da.name}
-                        </span>
                       </button>
                     );
                   })}
-                  {/* Bookmarks fill remaining slots */}
+                  {/* Bookmarks fill remaining slots — icon-only */}
                   {bookmarks
                     .slice(
                       0,
-                      Math.max(0, 5 - Math.min(discoveredApps.length, 4)),
+                      Math.max(0, 7 - Math.min(discoveredApps.length, 6)),
                     )
                     .map((bm) => {
                       const cfg = getTypeConfig(bm.type);
@@ -1243,31 +1303,33 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                         <button
                           key={bm.id}
                           onClick={() => executeBookmark(bm)}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-theme-hover/30 hover:bg-theme-hover/70 border border-theme/10 hover:border-theme/30 transition-all shrink-0 group"
-                          title={bm.target}
+                          className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0"
+                          title={bm.name}
                         >
                           <Icon className={clsx("w-3.5 h-3.5", cfg.color)} />
-                          <span className="text-[11px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors truncate max-w-[80px]">
-                            {bm.name}
-                          </span>
                         </button>
                       );
                     })}
                   <button
                     onClick={() => setShowBookmarkEditor(true)}
-                    className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-theme-hover/20 hover:bg-theme-hover/50 border border-dashed border-theme/15 hover:border-primary/40 transition-all shrink-0"
+                    className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0 text-theme-muted/60 hover:text-theme-muted"
                     title="Edit shortcuts"
                   >
-                    <Plus className="w-3 h-3 text-theme-muted" />
+                    <Plus className="w-3 h-3" />
                   </button>
                 </div>
               )}
             <div
               className={clsx(
-                "rounded-[28px] p-1 flex flex-col gap-1 shrink-0",
-                translucentMode
-                  ? "bg-theme-bg backdrop-blur-xl"
-                  : "bg-theme-card",
+                "flex flex-col shrink-0",
+                isCompact
+                  ? "gap-0.5"
+                  : clsx(
+                      "rounded-[28px] p-1 gap-1",
+                      translucentMode
+                        ? "bg-theme-bg backdrop-blur-xl"
+                        : "bg-theme-card",
+                    ),
               )}
             >
               <button
@@ -1277,7 +1339,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   window.desktopAPI?.openDashboard?.({ tab: "planner" })
                 }
                 className={clsx(
-                  "flex items-center justify-between gap-3 px-3 py-1 text-left",
+                  "flex items-center justify-between gap-3 text-left",
+                  isCompact ? "px-2 py-0.5" : "px-3 py-1",
                   nextUp &&
                     "cursor-pointer hover:opacity-80 transition-opacity",
                 )}
@@ -1287,27 +1350,34 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   {nextUp ? (
                     <div
                       className={clsx(
-                        "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
+                        "rounded-full flex items-center justify-center shrink-0",
+                        isCompact ? "w-3.5 h-3.5" : "w-5 h-5",
                         getNextUpBgColor(nextUp),
                       )}
                     >
                       <NextUpIcon type={nextUp.icon} />
                     </div>
                   ) : connectionStatus === "connecting" ? (
-                    <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <div className="w-3 h-3 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
                   ) : (
-                    <CheckCircle
+                    <span
                       className={clsx(
-                        "w-3.5 h-3.5 shrink-0",
+                        "rounded-full shrink-0",
+                        isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
                         connectionStatus === "error"
-                          ? "text-red-500"
-                          : "text-theme-muted",
+                          ? "bg-red-500"
+                          : voiceActive
+                            ? "bg-emerald-500 animate-pulse"
+                            : "bg-emerald-500/70",
                       )}
                     />
                   )}
                   <span
                     className={clsx(
-                      "text-[11px] font-bold uppercase tracking-widest truncate",
+                      "truncate",
+                      isCompact
+                        ? "text-[10px] font-medium tracking-wide"
+                        : "text-[11px] font-bold uppercase tracking-widest",
                       nextUp
                         ? getNextUpTextColor(nextUp)
                         : connectionStatus === "connected"
@@ -1322,57 +1392,160 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     {displayStatus}
                   </span>
                 </div>
-                <span className="text-[11px] font-bold uppercase tracking-widest text-theme-muted truncate max-w-[180px]">
+                <span
+                  className={clsx(
+                    "text-theme-muted truncate",
+                    isCompact
+                      ? "text-[10px] font-medium tracking-wide max-w-[140px]"
+                      : "text-[11px] font-bold uppercase tracking-widest max-w-[180px]",
+                  )}
+                >
                   {selectedModelLabel}
                 </span>
               </button>
 
-              <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all border border-theme/5">
-                <div className="flex-1 relative rounded-xl transition-all flex items-center">
-                  <TextareaAutosize
-                    className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-2 overflow-y-auto scrollbar-minimal px-3"
-                    placeholder="Just ask Stuard"
-                    value={query}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                      setQuery(e.target.value)
-                    }
-                    onPaste={onPaste}
-                    onKeyDown={(
-                      e: React.KeyboardEvent<HTMLTextAreaElement>,
-                    ) => {
-                      if ((e.nativeEvent as any)?.isComposing) return;
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        onSend();
-                      }
-                    }}
-                    minRows={1}
-                    maxRows={3}
-                    autoFocus
-                  />
-                </div>
-
-                <ModelSelector
-                  selectedModelId={selectedModelId}
-                  onSelectModel={(id) => onChatModeChange?.(id as any)}
-                  reasoningLevel={reasoningLevel}
-                  onReasoningLevelChange={onReasoningLevelChange}
-                  side="top"
-                  align="end"
-                />
-
-                <button
-                  onClick={onMicClick}
+              {voiceActive ? (
+                /* Voice mode — minimal inline strip on the same surface */
+                <div
                   className={clsx(
-                    "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
-                    isRecording
-                      ? "bg-red-500 text-white animate-pulse"
-                      : "bg-primary text-primary-fg hover:opacity-90",
+                    "flex items-center gap-2 transition-all",
+                    isCompact
+                      ? "bg-theme-hover/40 rounded-xl px-2 py-1 border border-theme/10"
+                      : "bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 border border-theme/5",
                   )}
                 >
-                  <Mic className="w-5 h-5" />
-                </button>
-              </div>
+                  <div
+                    className="flex-shrink-0 flex items-center justify-center"
+                    style={{ width: isCompact ? 32 : 40, height: isCompact ? 32 : 40 }}
+                  >
+                    <VoiceOrb
+                      state={(voiceState === "connecting" ? "thinking" : voiceState) as VoiceState}
+                      audioLevel={voiceAudioLevel}
+                      size={isCompact ? 32 : 40}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0 px-1">
+                    {latestVoiceLine?.text ? (
+                      <p
+                        className={clsx(
+                          "leading-snug truncate",
+                          isCompact ? "text-[12px]" : "text-[13px]",
+                          latestVoiceLine.role === "user"
+                            ? "text-theme-fg"
+                            : "text-theme-muted italic",
+                          !latestVoiceLine.isFinal && "opacity-70",
+                        )}
+                      >
+                        {latestVoiceLine.text}
+                      </p>
+                    ) : (
+                      <p
+                        className={clsx(
+                          "text-theme-muted tracking-wide",
+                          isCompact ? "text-[11px]" : "text-[13px] font-medium",
+                        )}
+                      >
+                        {voiceState === "connecting"
+                          ? "Connecting…"
+                          : voiceState === "listening"
+                            ? "Listening"
+                            : voiceState === "thinking"
+                              ? "Thinking…"
+                              : voiceState === "speaking"
+                                ? "Speaking"
+                                : "Voice"}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={onVoiceMuteToggle}
+                    title={voiceMuted ? "Unmute" : "Mute"}
+                    className={clsx(
+                      "rounded-lg flex items-center justify-center transition-all flex-shrink-0",
+                      isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
+                      voiceMuted
+                        ? "bg-red-500/15 text-red-500"
+                        : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60",
+                    )}
+                  >
+                    {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={onToggleVoice}
+                    title="Exit voice mode"
+                    className={clsx(
+                      "rounded-lg flex items-center justify-center text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all flex-shrink-0",
+                      isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
+                    )}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className={clsx(
+                    "flex items-center transition-all",
+                    isCompact
+                      ? "gap-1 bg-theme-hover/40 rounded-xl px-2 py-1 border border-theme/10 focus-within:border-primary/30 focus-within:bg-theme-hover/60"
+                      : "gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 border border-theme/5",
+                  )}
+                >
+                  <div className="flex-1 relative flex items-center min-w-0">
+                    <TextareaAutosize
+                      className={clsx(
+                        "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/80 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
+                        isCompact
+                          ? "text-[14px] font-normal leading-5 py-1.5 px-1"
+                          : "text-[15px] font-semibold leading-5 py-2 px-3",
+                      )}
+                      placeholder="Just ask Stuard"
+                      value={query}
+                      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                        setQuery(e.target.value)
+                      }
+                      onPaste={onPaste}
+                      onKeyDown={(
+                        e: React.KeyboardEvent<HTMLTextAreaElement>,
+                      ) => {
+                        if ((e.nativeEvent as any)?.isComposing) return;
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          onSend();
+                        }
+                      }}
+                      minRows={1}
+                      maxRows={isCompact ? 2 : 3}
+                      autoFocus
+                    />
+                  </div>
+
+                  <ModelSelector
+                    selectedModelId={selectedModelId}
+                    onSelectModel={(id) => onChatModeChange?.(id as any)}
+                    reasoningLevel={reasoningLevel}
+                    onReasoningLevelChange={onReasoningLevelChange}
+                    side="top"
+                    align="end"
+                  />
+
+                  {!isCompact && (
+                    <button
+                      type="button"
+                      onClick={onSend}
+                      title="Send"
+                      aria-label="Send message"
+                      className={clsx(
+                        "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
+                        query.trim()
+                          ? "bg-primary text-primary-fg hover:opacity-90"
+                          : "bg-theme-hover/60 text-theme-muted",
+                      )}
+                    >
+                      <CornerDownLeft className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

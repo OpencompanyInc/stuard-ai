@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "path";
 import { Readable } from "node:stream";
 import { initEnv } from "./env";
-import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow, openVoiceTestWindow } from "./windows/index";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
 import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
@@ -265,7 +265,6 @@ try {
     logger.info("Creating window...");
     createWindow();
     openNotificationWindow();
-    openVoiceTestWindow(); // TODO: remove — dev testing only
     logger.info("Window created");
   } catch (e) {
     logger.error("Failed to create window:", e);

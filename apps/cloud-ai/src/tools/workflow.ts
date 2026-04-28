@@ -376,6 +376,30 @@ function getPath(obj: any, path: string): any {
   return current;
 }
 
+// Trigger root-level fields. Anything else passed via args/triggerArgs or
+// a bare path (e.g. path: "inputParams") gets routed under trigger.args by
+// default, so we explicitly hoist these to the trigger root to avoid them
+// showing up as custom args properties in the inspector.
+const TRIGGER_ROOT_FIELDS = new Set(['id', 'type', 'label', 'position', 'inputParams']);
+
+function hoistTriggerRootFields(
+  trigger: any,
+  bag: Record<string, any> | undefined | null,
+): Record<string, any> | null {
+  if (!bag || typeof bag !== 'object') return null;
+  const remaining: Record<string, any> = {};
+  let hoisted = false;
+  for (const [k, v] of Object.entries(bag)) {
+    if (TRIGGER_ROOT_FIELDS.has(k)) {
+      trigger[k] = v;
+      hoisted = true;
+    } else {
+      remaining[k] = v;
+    }
+  }
+  return hoisted ? remaining : null;
+}
+
 // Simple dot-path setter: "triggers[0].args.sequence" = value
 function setPath(obj: any, path: string, value: any): void {
   const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.');
@@ -706,9 +730,14 @@ STUARD FILE TARGETING:
               id: genId('trig'),
               type: triggerType,
               label: label || `${triggerType} Trigger`,
-              args: triggerArgs || args || {},
+              args: {},
               position: nextPosition(wf, 'trigger'),
             };
+            // Hoist trigger root fields (e.g. inputParams) out of the args
+            // bag so they don't end up as custom args properties.
+            const argsBag: Record<string, any> = { ...(triggerArgs || args || {}) };
+            const remaining = hoistTriggerRootFields(newTrigger, argsBag);
+            newTrigger.args = remaining ?? argsBag;
             wf.triggers.push(newTrigger);
             addTouchedId(touchedIds, newTrigger.id);
             message = `Added trigger "${newTrigger.label}" (${newTrigger.id})`;
@@ -795,10 +824,13 @@ STUARD FILE TARGETING:
           const trigger = wf.triggers[trigIdx];
           let changed = false;
 
-          // Support path/value for triggers too
+          // Support path/value for triggers too. Trigger root fields
+          // (label, type, id, position, inputParams) stay at the root;
+          // anything else gets nested under args.
           if (path !== undefined && value !== undefined) {
-            const normalizedPath = path.startsWith('args.') ? path : 
-                                   (path === 'label' || path === 'type' || path === 'id') ? path : `args.${path}`;
+            const head = path.split('.')[0]?.split('[')[0] || '';
+            const normalizedPath = path.startsWith('args.') ? path :
+                                   TRIGGER_ROOT_FIELDS.has(head) ? path : `args.${path}`;
             setPath(trigger, normalizedPath, value);
             changed = true;
             message = `Updated trigger "${trigger.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
@@ -806,7 +838,12 @@ STUARD FILE TARGETING:
 
           const nextArgs = triggerArgs || args;
           if (nextArgs) {
-            trigger.args = { ...trigger.args, ...nextArgs };
+            // Hoist any root-level trigger fields (e.g. inputParams) that
+            // were passed in via args/triggerArgs so they don't pollute
+            // trigger.args as custom properties.
+            const argsBag: Record<string, any> = { ...nextArgs };
+            const remaining = hoistTriggerRootFields(trigger, argsBag);
+            trigger.args = { ...trigger.args, ...(remaining ?? argsBag) };
             changed = true;
           }
           if (label) {
@@ -907,9 +944,21 @@ STUARD FILE TARGETING:
           if (!path) return { ok: false, error: 'path is required for set_path' };
           if (value === undefined) return { ok: false, error: 'value is required for set_path' };
 
-          setPath(wf, path, value);
+          // Agents sometimes hand us a JSON-stringified array/object instead
+          // of the real value (e.g. value: '[{...}]'). Auto-parse so the
+          // session workflow holds the structured form, which the renderer
+          // and persistence layers expect.
+          let coercedValue = value;
+          if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed && (trimmed[0] === '[' || trimmed[0] === '{')) {
+              try { coercedValue = JSON.parse(trimmed); } catch { /* leave as string */ }
+            }
+          }
+
+          setPath(wf, path, coercedValue);
           addTouchedIdsFromPath(touchedIds, path, beforeWorkflow, wf);
-          message = `Set ${path} = ${JSON.stringify(value)}`;
+          message = `Set ${path} = ${JSON.stringify(coercedValue)}`;
           break;
         }
 

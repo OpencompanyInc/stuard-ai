@@ -11,7 +11,8 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
+import { VoiceOrb } from './voice/VoiceOrb';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
@@ -74,6 +75,16 @@ interface InputAreaProps {
   // Speech
   isRecording?: boolean;
   onMicClick?: () => void;
+
+  // Voice Mode (real-time conversation)
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
+  voiceState?: 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking';
+  voiceAudioLevel?: number;
+  voiceMuted?: boolean;
+  onVoiceMuteToggle?: () => void;
+  voiceTranscripts?: Array<{ id: number; role: 'user' | 'assistant'; text: string; isFinal: boolean; timestamp: number }>;
+  voiceActiveTool?: string | null;
 
   // Context Paths (for @ mentions)
   contextPaths?: ContextItem[];
@@ -392,6 +403,14 @@ const InputArea = forwardRef(function InputArea(
     connectionStatus,
     queueDepth, queuedMessages,
     isRecording, onMicClick,
+    voiceActive = false,
+    onToggleVoice,
+    voiceState = 'idle',
+    voiceAudioLevel = 0,
+    voiceMuted = false,
+    onVoiceMuteToggle,
+    voiceTranscripts = [],
+    voiceActiveTool,
     contextPaths, setContextPaths,
     translucentMode = false,
     accessToken,
@@ -1769,7 +1788,7 @@ const InputArea = forwardRef(function InputArea(
             onRemoveContext={removeContext}
           />
 
-          {/* Bottom Row: Input & Mic */}
+          {/* Bottom Row: Input or Voice Strip */}
           <div className="flex items-center gap-2.5 w-full no-drag">
             {!signedIn ? (
               <button
@@ -1779,6 +1798,67 @@ const InputArea = forwardRef(function InputArea(
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
               </button>
+            ) : voiceActive ? (
+              /* Voice mode strip — same surface as the input pill */
+              <div className="flex-1 min-h-[42px] bg-white rounded-[21px] border border-gray-200 flex items-center pl-1 pr-1.5 gap-2 transition-all">
+                <div
+                  className="flex-shrink-0 flex items-center justify-center"
+                  style={{ width: 36, height: 36 }}
+                >
+                  <VoiceOrb
+                    state={(voiceState === 'connecting' ? 'thinking' : voiceState) as any}
+                    audioLevel={voiceAudioLevel}
+                    size={36}
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  {(() => {
+                    const last = voiceTranscripts[voiceTranscripts.length - 1];
+                    if (last?.text) {
+                      return (
+                        <p className={clsx(
+                          "text-[13px] leading-snug truncate",
+                          last.role === 'user' ? "text-theme-fg font-medium" : "text-theme-muted italic",
+                          !last.isFinal && "opacity-70",
+                        )}>
+                          {last.text}
+                        </p>
+                      );
+                    }
+                    const status = voiceActiveTool
+                      ? `Using ${voiceActiveTool.replace(/_/g, ' ')}…`
+                      : voiceState === 'connecting' ? 'Connecting…'
+                      : voiceState === 'listening' ? 'Listening'
+                      : voiceState === 'thinking' ? 'Thinking…'
+                      : voiceState === 'speaking' ? 'Speaking'
+                      : 'Voice';
+                    return (
+                      <p className="text-[12px] text-theme-muted tracking-wide">{status}</p>
+                    );
+                  })()}
+                </div>
+                <button
+                  type="button"
+                  onClick={onVoiceMuteToggle}
+                  title={voiceMuted ? 'Unmute' : 'Mute'}
+                  className={clsx(
+                    "no-drag h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all",
+                    voiceMuted
+                      ? "bg-red-500/15 text-red-500"
+                      : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60",
+                  )}
+                >
+                  {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={onToggleVoice}
+                  title="Exit voice mode (or release hotkey)"
+                  className="no-drag h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             ) : (
               <div className="flex-1 relative min-h-[42px] bg-white rounded-[21px] border border-gray-200 flex items-center px-1.5 py-0.5 transition-all focus-within:ring-2 focus-within:ring-primary/20">
                 {/* Plus / Attach Button */}
@@ -1835,20 +1915,6 @@ const InputArea = forwardRef(function InputArea(
               </div>
             )}
 
-            {/* Mic Button */}
-            {onMicClick && (
-              <button
-                type="button"
-                className={clsx(
-                  "no-drag h-[42px] w-[42px] rounded-[14px] flex-shrink-0 inline-flex items-center justify-center transition-all active:scale-95",
-                  isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
-                )}
-                onClick={onMicClick}
-                title={isRecording ? "Stop recording" : "Start recording"}
-              >
-                <Mic className="w-5 h-5" />
-              </button>
-            )}
           </div>
         </div>
 

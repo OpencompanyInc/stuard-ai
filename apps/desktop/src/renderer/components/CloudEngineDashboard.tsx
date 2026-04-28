@@ -13,6 +13,7 @@ import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
 import { CloudVmPermissions } from './CloudVmPermissions';
+import { CloudVmIntegrations } from './CloudVmIntegrations';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
 import { ProactiveView } from './ProactiveView';
 
@@ -141,7 +142,7 @@ function ConfigSlider({
 export function CloudEngineDashboard() {
   const {
     engine, loading, error, metrics, billing, syncStatus, isSyncing, deployments,
-    provision, start, stop, destroy, syncData, listFiles, readFile,
+    provision, start, stop, destroy, syncData, listFiles, readFile, readFileFull, getServeUrl, getPreviewUrl,
     uploadFileToVm, createDirectory, deleteFile,
     refresh,
     createDeployment, stopDeployment, restartDeployment, deleteDeployment,
@@ -745,6 +746,9 @@ export function CloudEngineDashboard() {
         onRefresh={refresh}
         onDelete={handleDelete}
         onSync={syncData}
+        fileFetcher={readFileFull}
+        serveUrlBuilder={getServeUrl}
+        previewUrlBuilder={getPreviewUrl}
         explorer={
           <CloudFileBrowser
             engine={engine}
@@ -754,11 +758,14 @@ export function CloudEngineDashboard() {
             createDirectory={createDirectory}
             deleteFile={deleteFile}
             onPickFile={(entry) => {
+              // Click-in-nav opens the file in the right-side viewer pane.
+              // Attach-to-chat lives as an action button inside the pane.
               try {
-                (window as any).__cloudVmChatAttach?.({
+                (window as any).__cloudVmFileViewerOpen?.({
                   path: entry.path,
                   name: entry.name,
-                  size: entry.size,
+                  source: 'vm',
+                  meta: { size: entry.size },
                 });
               } catch { /* noop */ }
             }}
@@ -800,6 +807,9 @@ export function CloudEngineDashboard() {
                 refreshDeployments={fetchDeployments}
               />
             </div>
+          ),
+          integrations: (
+            <CloudVmIntegrations engine={engine} className="h-full" />
           ),
           permissions: (
             <div className="custom-scrollbar h-full overflow-y-auto p-6">

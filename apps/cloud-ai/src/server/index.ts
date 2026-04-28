@@ -1,8 +1,10 @@
 import { createHttpServer } from './http/app';
-import { createChatWebSocketServer } from './socket/server';
+import { createChatWebSocketServer, createManagedWebSocketServer } from './socket/server';
 import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-bootstrap';
 import { handleSpeechConnection } from '../routes/speech';
 import { handleTerminalConnection } from '../routes/terminal-relay';
+import { handleCloudPreviewWsUpgrade } from '../routes/cloud-preview';
+import { handleVoiceConnection } from '../routes/voice-bridge';
 import { PORT } from '../utils/config';
 import { startVMHealthMonitor } from '../services/vm-health';
 import { initVoiceProviders } from '../voice';
@@ -14,13 +16,21 @@ export function startCloudAiServer() {
 
   const server = createHttpServer();
   const { wss, cleanup } = createChatWebSocketServer();
+  const { wss: voiceWss, cleanup: cleanupVoice } = createManagedWebSocketServer(handleVoiceConnection);
 
-  server.on('close', cleanup);
+  server.on('close', () => {
+    cleanup();
+    cleanupVoice();
+  });
   server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
     if (url === '/ws/telnyx-bridge' || url.startsWith('/ws/telnyx-bridge?')) {
       telnyxBridgeWss.handleUpgrade(req, socket, head, (ws) => {
         telnyxBridgeWss.emit('connection', ws, req);
+      });
+    } else if (url === '/voice' || url.startsWith('/voice?')) {
+      voiceWss.handleUpgrade(req, socket, head, (ws) => {
+        voiceWss.emit('connection', ws, req);
       });
     } else if (url === '/ws' || url.startsWith('/ws?')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -33,6 +43,19 @@ export function startCloudAiServer() {
     } else if (url === '/terminal' || url.startsWith('/terminal?')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         handleTerminalConnection(ws, req);
+      });
+    } else if (url.startsWith('/v1/cloud-engine/preview/')) {
+      // HMR & other dev-server WebSockets relayed end-to-end to the VM.
+      let parsedUrl: URL;
+      try { parsedUrl = new URL(url, 'http://localhost'); }
+      catch { socket.destroy(); return; }
+      void handleCloudPreviewWsUpgrade(req, socket, head, parsedUrl).then((handled) => {
+        if (!handled) {
+          try { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); } catch {}
+          socket.destroy();
+        }
+      }).catch(() => {
+        try { socket.destroy(); } catch {}
       });
     } else {
       socket.destroy();

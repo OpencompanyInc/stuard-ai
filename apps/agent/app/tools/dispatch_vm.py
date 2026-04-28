@@ -530,7 +530,124 @@ async def _vm_terminal_send_raw(args: Dict[str, Any]) -> Dict[str, Any]:
 # We proxy tool calls to it via HTTP, mirroring the desktop handler pattern.
 
 _BROWSER_USE_URL = os.environ.get("BROWSER_USE_URL", "http://127.0.0.1:18082")
-_BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "")
+_BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "") or os.environ.get("STUARD_BROWSER_AUTH_TOKEN", "")
+_BROWSER_SERVER_PATH = os.environ.get("STUARD_BROWSER_SERVER_PATH", "/opt/stuard/python-agent")
+_BROWSER_SERVER_SCRIPT = os.environ.get("STUARD_BROWSER_SERVER_SCRIPT", "browser_use_server.py")
+_BROWSER_SERVER_VENV_PYTHON = os.environ.get("STUARD_BROWSER_SERVER_PYTHON", "/opt/stuard/python-agent/venv/bin/python")
+_BROWSER_SERVICE_NAME = os.environ.get("STUARD_BROWSER_SERVICE", "stuard-browser-use")
+
+# Lock so only one in-flight start attempt runs at a time
+_browser_start_lock = asyncio.Lock()
+_browser_start_logged_once = False
+
+
+async def _is_browser_server_running(timeout: float = 2.0) -> bool:
+    """Quick HEAD-style probe of the browser server's /status endpoint."""
+    import urllib.request
+
+    headers = {}
+    if _BROWSER_USE_TOKEN:
+        headers["x-stuard-browser-token"] = _BROWSER_USE_TOKEN
+    req = urllib.request.Request(f"{_BROWSER_USE_URL}/status", headers=headers, method="GET")
+
+    loop = asyncio.get_event_loop()
+
+    def _probe() -> bool:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status < 500
+        except Exception:
+            return False
+
+    try:
+        return await loop.run_in_executor(None, _probe)
+    except Exception:
+        return False
+
+
+async def _start_browser_server() -> bool:
+    """Try to start the browser server. Prefer systemd, fall back to subprocess.
+
+    Returns True if the server is reachable after starting, False otherwise.
+    """
+    import subprocess
+    import shutil
+
+    loop = asyncio.get_event_loop()
+
+    def _try_systemctl() -> bool:
+        if not shutil.which("systemctl"):
+            return False
+        # Prefer sudo since the Python agent runs as the unprivileged 'stuard' user.
+        # Provisioning installs /etc/sudoers.d/stuard-browser to allow exactly this.
+        sudo = shutil.which("sudo")
+        candidates = []
+        if sudo:
+            candidates.append([sudo, "-n", "systemctl", "start", _BROWSER_SERVICE_NAME])
+        candidates.append(["systemctl", "start", _BROWSER_SERVICE_NAME])
+        for cmd in candidates:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _try_subprocess() -> bool:
+        # Last-resort: spawn browser_use_server.py directly. Only used when
+        # systemd is unavailable or the unit failed to start.
+        script = os.path.join(_BROWSER_SERVER_PATH, _BROWSER_SERVER_SCRIPT)
+        if not os.path.isfile(script):
+            return False
+        python_bin = _BROWSER_SERVER_VENV_PYTHON if os.path.isfile(_BROWSER_SERVER_VENV_PYTHON) else "python3"
+        env = os.environ.copy()
+        env.setdefault("STUARD_BROWSER_HOST", "127.0.0.1")
+        env.setdefault("STUARD_BROWSER_PORT", "18082")
+        try:
+            subprocess.Popen(
+                [python_bin, script],
+                cwd=_BROWSER_SERVER_PATH,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except Exception:
+            return False
+
+    started = await loop.run_in_executor(None, _try_systemctl)
+    if not started:
+        started = await loop.run_in_executor(None, _try_subprocess)
+    if not started:
+        return False
+
+    # Wait up to 20s for the server to start serving /status
+    deadline = asyncio.get_event_loop().time() + 20.0
+    while asyncio.get_event_loop().time() < deadline:
+        if await _is_browser_server_running(timeout=1.5):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def _ensure_browser_server() -> bool:
+    """Make sure the browser server is reachable. Start it if not."""
+    global _browser_start_logged_once
+    if await _is_browser_server_running():
+        return True
+    async with _browser_start_lock:
+        # Re-check inside the lock — another caller may have started it.
+        if await _is_browser_server_running():
+            return True
+        if not _browser_start_logged_once:
+            print("[dispatch_vm] browser server not running, attempting to start...", flush=True)
+            _browser_start_logged_once = True
+        return await _start_browser_server()
 
 
 async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float = 60.0, method: str = "POST") -> Dict[str, Any]:
@@ -562,7 +679,7 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
                     err_body = {}
                 return {"ok": False, "error": err_body.get("error", f"http_{e.code}")}
             except urllib.error.URLError as e:
-                return {"ok": False, "error": f"browser_use_server unreachable: {e.reason}. Is browser_use_server.py running?"}
+                return {"ok": False, "error": f"browser_unreachable: {e.reason}", "_unreachable": True}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
@@ -572,14 +689,91 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
 
 
 async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> Dict[str, Any]:
-    """Generic handler — strips the browser_use_ prefix and routes to /<action>."""
+    """Generic handler — strips the browser_use_ prefix and routes to /<action>.
+
+    Auto-starts browser_use_server.py on first call, and retries once if the
+    server happens to crash or is mid-restart between calls.
+    """
     action = tool_name.replace("browser_use_", "", 1) if tool_name else ""
     if not action:
         return {"ok": False, "error": "missing browser_use action"}
     timeout = float(args.pop("timeout", 60000)) / 1000.0 if "timeout" in args else 60.0
     # /status is a GET endpoint; everything else is POST
     method = "GET" if action == "status" else "POST"
-    return await _browser_use_call(f"/{action}", args, timeout=max(timeout, 5.0), method=method)
+    effective_timeout = max(timeout, 5.0)
+
+    # Make sure the server is up before the first call.
+    if not await _ensure_browser_server():
+        return {
+            "ok": False,
+            "error": (
+                "browser_server_unavailable: could not reach or start the headless "
+                "browser server on this VM. Ensure stuard-browser-use systemd unit is "
+                "installed and chromium is present."
+            ),
+        }
+
+    result = await _browser_use_call(f"/{action}", args, timeout=effective_timeout, method=method)
+    # If the server died mid-flight, try one re-start + retry before giving up.
+    if result.get("_unreachable"):
+        result.pop("_unreachable", None)
+        if await _ensure_browser_server():
+            retry = await _browser_use_call(f"/{action}", args, timeout=effective_timeout, method=method)
+            retry.pop("_unreachable", None)
+            return retry
+        return {
+            "ok": False,
+            "error": "browser_server_unavailable_after_restart: " + str(result.get("error", "")),
+        }
+    return result
+
+
+async def _vm_status(args: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG001
+    """Report what's running on the VM. Used by the desktop integrations panel."""
+    _ = args
+    import shutil
+    import subprocess
+
+    loop = asyncio.get_event_loop()
+
+    def _service_active(name: str) -> str:
+        if not shutil.which("systemctl"):
+            return "unknown"
+        try:
+            r = subprocess.run(
+                ["systemctl", "is-active", name],
+                capture_output=True, text=True, timeout=5,
+            )
+            return r.stdout.strip() or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _collect():
+        services = {
+            "stuard-agent": _service_active("stuard-agent"),
+            "stuard-python-agent": _service_active("stuard-python-agent"),
+            "stuard-browser-use": _service_active("stuard-browser-use"),
+            "stuard-xvfb": _service_active("stuard-xvfb"),
+        }
+        chrome = ""
+        for bin_name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
+            p = shutil.which(bin_name)
+            if p:
+                chrome = p
+                break
+        return {"services": services, "chrome": chrome}
+
+    sys_state = await loop.run_in_executor(None, _collect)
+    browser_reachable = await _is_browser_server_running(timeout=1.5)
+
+    return {
+        "ok": True,
+        "services": sys_state["services"],
+        "browserReachable": browser_reachable,
+        "chrome": sys_state["chrome"],
+        "vmAgentMode": os.environ.get("STUARD_AGENT_MODE", "unknown"),
+        "userId": os.environ.get("STUARD_USER_ID", ""),
+    }
 
 
 # ── Desktop-only tools (stubbed) ────────────────────────────────────────────
@@ -799,6 +993,10 @@ for _bu_tool in _BROWSER_USE_TOOLS:
     async def _make_handler(args, _tn=_tool_name_capture):
         return await _vm_browser_use_generic(args, tool_name=_tn)
     _HANDLERS[_bu_tool] = _make_handler
+
+# VM-only diagnostic tool — reports running systemd services and browser reachability.
+_HANDLERS["vm_status"] = _vm_status
+_TOOL_METADATA["vm_status"] = ("system", "Report VM service status (browser, agent, deploys)")
 
 _HANDLERS.update({
     # File Index & Search

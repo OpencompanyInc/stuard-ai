@@ -554,6 +554,15 @@ BUEOF
       systemctl enable stuard-browser-use
       systemctl start stuard-browser-use
       echo "[stuard-bg] Browser server started on :18082 (headless CDP, chrome=$CHROME_BIN)"
+
+      # Allow the unprivileged 'stuard' user (under which python-agent runs)
+      # to start/stop the browser-use service. The Python dispatcher relies on
+      # this when it detects the browser server is down mid-session.
+      mkdir -p /etc/sudoers.d
+      cat > /etc/sudoers.d/stuard-browser <<'SUDOEOF'
+stuard ALL=(root) NOPASSWD: /bin/systemctl start stuard-browser-use, /bin/systemctl stop stuard-browser-use, /bin/systemctl restart stuard-browser-use, /bin/systemctl is-active stuard-browser-use, /usr/bin/systemctl start stuard-browser-use, /usr/bin/systemctl stop stuard-browser-use, /usr/bin/systemctl restart stuard-browser-use, /usr/bin/systemctl is-active stuard-browser-use
+SUDOEOF
+      chmod 440 /etc/sudoers.d/stuard-browser
     fi
   else
     echo "[stuard-bg] Warning: Python agent not available"

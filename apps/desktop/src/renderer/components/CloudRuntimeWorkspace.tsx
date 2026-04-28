@@ -4,6 +4,7 @@ import {
   Activity,
   CreditCard,
   FolderOpen,
+  Link2,
   MessageCircle,
   PowerOff,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
+import { FileViewerProvider, FileViewerPane, useFileViewer, type FileFetcher, type ServeUrlBuilder, type PreviewUrlBuilder } from './file-viewer';
 
 export type CloudRuntimeView =
   | 'chat'
@@ -26,6 +28,7 @@ export type CloudRuntimeView =
   | 'billing'
   | 'proactive'
   | 'deploys'
+  | 'integrations'
   | 'permissions';
 
 export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
@@ -41,6 +44,12 @@ interface CloudRuntimeWorkspaceProps {
   explorer: React.ReactNode;
   terminal: React.ReactNode;
   views: Record<CloudRuntimeView, React.ReactNode>;
+  /** Used by the file viewer pane to load file content from the VM. */
+  fileFetcher?: FileFetcher | null;
+  /** Used by the HTML preview renderer — returns an iframe-loadable URL. */
+  serveUrlBuilder?: ServeUrlBuilder | null;
+  /** Mints a localhost-port preview session in the VM (Next.js, Vite, etc.). */
+  previewUrlBuilder?: PreviewUrlBuilder | null;
 }
 
 const VIEW_ITEMS: Array<{
@@ -53,6 +62,7 @@ const VIEW_ITEMS: Array<{
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
   { id: 'monitoring', icon: Activity, label: 'Monitoring' },
+  { id: 'integrations', icon: Link2, label: 'Integrations' },
   { id: 'deploys', icon: Rocket, label: 'Deploys' },
   { id: 'proactive', icon: Sparkles, label: 'Proactive' },
   { id: 'billing', icon: CreditCard, label: 'Billing' },
@@ -64,7 +74,23 @@ const MIN_TERMINAL_H = 140;
 const MAX_TERMINAL_H = 500;
 const DEFAULT_TERMINAL_H = 220;
 
-export function CloudRuntimeWorkspace({
+const MIN_VIEWER_W = 280;
+const MAX_VIEWER_W = 900;
+const DEFAULT_VIEWER_W = 420;
+
+export function CloudRuntimeWorkspace(props: CloudRuntimeWorkspaceProps) {
+  return (
+    <FileViewerProvider
+      fetcher={props.fileFetcher ?? null}
+      serveUrlBuilder={props.serveUrlBuilder ?? null}
+      previewUrlBuilder={props.previewUrlBuilder ?? null}
+    >
+      <CloudRuntimeWorkspaceInner {...props} />
+    </FileViewerProvider>
+  );
+}
+
+function CloudRuntimeWorkspaceInner({
   engine,
   pauseLoading = false,
   syncState = 'unknown',
@@ -80,6 +106,26 @@ export function CloudRuntimeWorkspace({
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
+  const [viewerWidth, setViewerWidth] = useState(DEFAULT_VIEWER_W);
+
+  const fileViewer = useFileViewer();
+  const viewerVisible = fileViewer.isOpen && fileViewer.tabs.length > 0;
+
+  const handleViewerResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = viewerWidth;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      setViewerWidth(Math.max(MIN_VIEWER_W, Math.min(MAX_VIEWER_W, startW + delta)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [viewerWidth]);
 
   const activeLabel = useMemo(
     () => VIEW_ITEMS.find(item => item.id === activeView)?.label ?? 'Chat',
@@ -240,7 +286,7 @@ export function CloudRuntimeWorkspace({
           {views[activeView]}
         </div>
 
-        {/* Terminal dock */}
+        {/* Terminal dock (anchored under chat/main area) */}
         {terminalOpen && (
           <div className="shrink-0 flex flex-col border-t border-theme" style={{ height: terminalHeight }}>
             {/* Resize handle */}
@@ -278,6 +324,23 @@ export function CloudRuntimeWorkspace({
           </div>
         )}
       </section>
+
+      {/* Right-side File Viewer pane */}
+      {viewerVisible && (
+        <>
+          <div
+            className="w-[3px] cursor-ew-resize hover:bg-primary/30 transition-colors shrink-0"
+            onMouseDown={handleViewerResize}
+            title="Drag to resize viewer"
+          />
+          <aside
+            className="shrink-0 border-l border-theme bg-theme-card/10 overflow-hidden"
+            style={{ width: viewerWidth }}
+          >
+            <FileViewerPane bare />
+          </aside>
+        </>
+      )}
     </div>
   );
 }

@@ -505,6 +505,11 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('ask_user:show', handler);
     return () => { try { ipcRenderer.off('ask_user:show', handler); } catch { } };
   },
+  onVoiceSetActive: (cb: (active: boolean) => void) => {
+    const handler = (_e: any, active: boolean) => cb(Boolean(active));
+    ipcRenderer.on('voice:setActive', handler);
+    return () => { try { ipcRenderer.off('voice:setActive', handler); } catch { } };
+  },
   respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
   proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),
   proactiveUpdateConfig: (updates: any) => ipcRenderer.invoke('proactive:updateConfig', updates),

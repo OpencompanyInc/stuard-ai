@@ -1376,6 +1376,60 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                 "id",
                 ["content_enc", "tool_calls_enc", "tool_results_enc", "attachments_enc", "metadata_enc"],
             )
+
+            # Synthesize titles for conversations that ended up with NULL or
+            # missing title_enc after the recode (e.g. row was created before
+            # auto-title fired, or title_enc couldn't be decrypted). Falls back
+            # to the first user message so the VM never displays "Untitled" for
+            # rows that have actual content.
+            try:
+                missing_title_rows = dst.execute(
+                    """
+                    SELECT id FROM conversations
+                    WHERE title_enc IS NULL
+                       OR title_enc = ''
+                       OR (substr(title_enc, 1, 4) = ?
+                           AND length(title_enc) <= 4)
+                    """,
+                    (PLAINTEXT_PREFIX,),
+                ).fetchall()
+                synthesized = 0
+                for row in missing_title_rows:
+                    conv_id = row["id"]
+                    msg_row = dst.execute(
+                        """
+                        SELECT content_enc FROM messages
+                        WHERE conversation_id = ? AND role = 'user'
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                        """,
+                        (conv_id,),
+                    ).fetchone()
+                    if not msg_row or not msg_row["content_enc"]:
+                        continue
+                    raw = msg_row["content_enc"]
+                    if isinstance(raw, str) and raw.startswith(PLAINTEXT_PREFIX):
+                        text = raw[len(PLAINTEXT_PREFIX):]
+                    else:
+                        try:
+                            text = crypto.decrypt_string(raw)
+                        except Exception:
+                            continue
+                    text = (text or "").strip().replace("\n", " ")
+                    if not text:
+                        continue
+                    title = text[:60] + ("…" if len(text) > 60 else "")
+                    dst.execute(
+                        "UPDATE conversations SET title_enc = ? WHERE id = ?",
+                        (PLAINTEXT_PREFIX + title, conv_id),
+                    )
+                    synthesized += 1
+                if synthesized:
+                    logger.info(
+                        f"memory_export_plaintext synthesized {synthesized} titles from first user message"
+                    )
+            except Exception:
+                logger.exception("title synthesis failed (non-fatal)")
             # Segments, spaces, space_items, vault, notes — recode best-effort
             # so every encrypted column in the schema becomes plaintext.
             try:

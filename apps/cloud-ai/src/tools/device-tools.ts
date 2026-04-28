@@ -6,6 +6,7 @@ import { buildProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 
 export { computer_use_agent } from './computer-use-agent';
+export { browserUseAnalyzeScreenshotTool as browser_use_analyze_screenshot } from './analyze-media';
 
 // Cloud-side LLM extraction for memory texts using Gemini 2.5 Flash
 export const memory_extract_texts = createTool({

@@ -7,7 +7,7 @@ import { wsAlive } from './state';
 
 const WS_MAX_PAYLOAD = Number(process.env.CLOUD_WS_MAX_PAYLOAD || 868435456);
 
-export function createChatWebSocketServer() {
+function createWebSocketServer(onConnection: (ws: WebSocket, ...args: any[]) => void) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
   const pingTimer = setInterval(() => {
     try {
@@ -30,7 +30,29 @@ export function createChatWebSocketServer() {
     } catch { }
   }, PING_INTERVAL_MS);
 
-  wss.on('connection', handleSocketConnection);
+  wss.on('connection', (ws: WebSocket, ...args: any[]) => {
+    try {
+      wsAlive.set(ws, true);
+    } catch { }
+
+    try {
+      ws.on('pong', () => {
+        try {
+          wsAlive.set(ws, true);
+        } catch { }
+      });
+    } catch { }
+
+    try {
+      ws.on('close', () => {
+        try {
+          wsAlive.delete(ws);
+        } catch { }
+      });
+    } catch { }
+
+    onConnection(ws, ...args);
+  });
 
   return {
     wss,
@@ -40,4 +62,12 @@ export function createChatWebSocketServer() {
       } catch { }
     },
   };
+}
+
+export function createChatWebSocketServer() {
+  return createWebSocketServer(handleSocketConnection);
+}
+
+export function createManagedWebSocketServer(onConnection: (ws: WebSocket, ...args: any[]) => void) {
+  return createWebSocketServer(onConnection);
 }

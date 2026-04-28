@@ -5,6 +5,7 @@ import fs from "fs";
 import { isDev } from "../env";
 import logger from "../utils/logger";
 import { getGlobalHotkey } from "../settings";
+import { initOverlayHotkey } from "./overlay-hotkey";
 
 let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
@@ -1625,19 +1626,26 @@ export function registerGlobalShortcuts() {
 
   let registered = false;
 
+  // The globalShortcut press handler is intentionally a no-op: tap vs. hold
+  // is decided by the uiohook-based hold detector below. We still call
+  // globalShortcut.register so the accelerator is consumed (not delivered to
+  // the focused app). On Windows, low-level keyboard hooks (uiohook) still
+  // observe both keydown and keyup even when the key is consumed.
+  let activeAccel: string | null = null;
+
   // Try to register the stored hotkey first
   try {
     if (globalShortcut.isRegistered(storedHotkey)) {
       logger.warn(`Stored hotkey ${storedHotkey} is already registered by another application.`);
     } else {
       const success = globalShortcut.register(storedHotkey, () => {
-        logger.info("Hotkey pressed:", storedHotkey);
-        handleOverlayHotkey();
+        // No-op — uiohook hold-detector handles tap (release < 280ms) and hold.
       });
 
       if (success) {
         logger.info(`Stored hotkey ${storedHotkey} registered successfully.`);
         registered = true;
+        activeAccel = storedHotkey;
       } else {
         logger.warn(`Failed to register stored hotkey ${storedHotkey}`);
       }
@@ -1661,18 +1669,51 @@ export function registerGlobalShortcuts() {
         }
 
         const success = globalShortcut.register(a, () => {
-          logger.info("Hotkey pressed:", a);
-          handleOverlayHotkey();
+          // No-op — uiohook hold-detector handles tap and hold.
         });
 
         if (success) {
           logger.info(`Fallback shortcut ${a} registered successfully.`);
           registered = true;
+          activeAccel = a;
           break; // Stop after first successful registration
         }
       } catch (e) {
         logger.warn(`Exception registering ${a}:`, e);
       }
+    }
+  }
+
+  // Initialize hold-to-voice on the active accelerator (tap = summon, hold = voice).
+  if (activeAccel) {
+    try {
+      initOverlayHotkey({
+        accelerator: activeAccel,
+        onTap: () => {
+          logger.info("Hotkey TAP:", activeAccel);
+          handleOverlayHotkey();
+        },
+        onHoldStart: () => {
+          logger.info("Hotkey HOLD START:", activeAccel);
+          // Make sure the window is visible so the user can see voice mode
+          try {
+            if (win && !win.isDestroyed()) {
+              if (!win.isVisible()) showWindow();
+              try { win.webContents.send("voice:setActive", true); } catch (e) { logger.warn("voice:setActive(true) send failed", e); }
+            }
+          } catch (e) { logger.warn("HOLD START handler failed", e); }
+        },
+        onHoldEnd: () => {
+          logger.info("Hotkey HOLD END:", activeAccel);
+          try {
+            if (win && !win.isDestroyed()) {
+              try { win.webContents.send("voice:setActive", false); } catch (e) { logger.warn("voice:setActive(false) send failed", e); }
+            }
+          } catch (e) { logger.warn("HOLD END handler failed", e); }
+        },
+      });
+    } catch (e) {
+      logger.warn("Failed to initialize overlay hold-to-voice:", e);
     }
   }
 

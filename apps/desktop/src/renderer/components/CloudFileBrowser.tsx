@@ -189,6 +189,8 @@ export const CloudFileBrowser: React.FC<CloudFileBrowserProps> = ({
   const toggleDir = async (entry: CloudFileEntry) => {
     if (entry.type !== 'directory') {
       setSelectedPath(entry.path);
+      // Single-click on a file in the explorer opens it in the viewer pane.
+      if (onPickFile) onPickFile(entry);
       return;
     }
 

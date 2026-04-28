@@ -28,6 +28,7 @@ import {
 } from './utils/attachments';
 
 import { useSpeechToText } from './hooks/useSpeechToText';
+import { useVoiceMode } from './hooks/useVoiceMode';
 import { usePlannerData } from './hooks/usePlannerData';
 import { LauncherView } from './components/LauncherView';
 import { ChatView } from './components/ChatView';
@@ -263,6 +264,82 @@ export default function App() {
 
   // Speech Hook
   const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
+
+  // Voice Mode Hook (real-time conversation)
+  const voice = useVoiceMode({});
+  const [voiceActive, setVoiceActive] = useState(false);
+  const lastVoiceErrorRef = useRef<string | null>(null);
+  // Track whether the global hold-to-voice hotkey is currently pressed.
+  // While held, we must NOT auto-deactivate voiceActive even if the
+  // voice hook's internal state goes idle (e.g. WebSocket drops).
+  const holdActiveRef = useRef(false);
+  const stopVoiceSession = useCallback(() => {
+    try {
+      voice.stop();
+    } finally {
+      setVoiceActive(false);
+    }
+  }, [voice]);
+  const startVoiceSession = useCallback(async () => {
+    if (!signedIn) {
+      try { await startBrowserSignIn(); } catch { }
+      return;
+    }
+    setVoiceActive(true);
+    try {
+      await voice.start();
+    } catch {
+      // Only auto-deactivate on start failure if the hold key isn't pressed
+      if (!holdActiveRef.current) {
+        setVoiceActive(false);
+      }
+    }
+  }, [signedIn, voice]);
+  const handleToggleVoice = useCallback(async () => {
+    if (voiceActive) {
+      stopVoiceSession();
+      return;
+    }
+    await startVoiceSession();
+  }, [voiceActive, startVoiceSession, stopVoiceSession]);
+  // Auto-deactivate if voice session ends externally — but ONLY when the
+  // hold-to-voice key is NOT pressed.  During a hold the UI must stay
+  // visible; the hold-release IPC will clean up.
+  useEffect(() => {
+    if (voiceActive && voice.state === 'idle' && !holdActiveRef.current) {
+      setVoiceActive(false);
+    }
+  }, [voiceActive, voice.state]);
+  useEffect(() => {
+    if (!voice.error || lastVoiceErrorRef.current === voice.error) return;
+    lastVoiceErrorRef.current = voice.error;
+    try {
+      (window as any).desktopAPI?.notify?.('Voice mode error', voice.error);
+    } catch { }
+  }, [voice.error]);
+  useEffect(() => {
+    if (!voice.error) {
+      lastVoiceErrorRef.current = null;
+    }
+  }, [voice.error]);
+
+  // Hold-to-voice: main process sends voice:setActive when the global hotkey
+  // is held past the hold threshold; release sends false.
+  useEffect(() => {
+    const cleanup = (window as any).desktopAPI?.onVoiceSetActive?.(async (active: boolean) => {
+      holdActiveRef.current = active;
+      if (active) {
+        if (!voiceActive) {
+          await startVoiceSession();
+        }
+      } else {
+        if (voiceActive) {
+          stopVoiceSession();
+        }
+      }
+    });
+    return () => { cleanup?.(); };
+  }, [voiceActive, startVoiceSession, stopVoiceSession]);
 
   // Planner Hook
   const plannerData = usePlannerData(accessToken);
@@ -1582,6 +1659,14 @@ export default function App() {
                     isRecording={isRecording}
                     accessToken={accessToken}
                     overlayMode={overlayMode}
+                    voiceActive={voiceActive}
+                    onToggleVoice={handleToggleVoice}
+                    voiceState={voice.state}
+                    voiceAudioLevel={voice.audioLevel}
+                    voiceMuted={voice.muted}
+                    onVoiceMuteToggle={voice.toggleMute}
+                    voiceTranscripts={voice.transcripts}
+                    voiceActiveTool={voice.activeTool}
                     conversations={convList}
                     loadingConversations={loadingConvs}
                     onSelectConversation={handleSelectConversation}
@@ -1647,6 +1732,14 @@ export default function App() {
                 queuedMessages={queuedMessages}
                 isRecording={isRecording}
                 onMicClick={handleMicClick}
+                voiceActive={voiceActive}
+                onToggleVoice={handleToggleVoice}
+                voiceState={voice.state}
+                voiceAudioLevel={voice.audioLevel}
+                voiceMuted={voice.muted}
+                onVoiceMuteToggle={voice.toggleMute}
+                voiceTranscripts={voice.transcripts}
+                voiceActiveTool={voice.activeTool}
                 contextPaths={contextPaths}
                 setContextPaths={setContextPaths}
                 translucentMode={translucentMode}

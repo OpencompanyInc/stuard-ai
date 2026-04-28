@@ -1213,5 +1213,67 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     return true;
   }
 
+  // ── GET /v1/cloud-engine/integrations ─────────────────────────────────
+  // Snapshot of connected integrations + running VM services for the
+  // desktop "Integrations" panel. Combines OAuth accounts (from DB) with a
+  // live `vm_status` tool_exec on the VM, plus active deploys.
+  if (method === 'GET' && path === '/v1/cloud-engine/integrations') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const engine = await getCloudEngine(user.userId);
+      const accounts = await listExternalAccounts(user.userId);
+      const integrations = accounts.map((a: any) => ({
+        provider: a.provider,
+        profileLabel: a.profile_label,
+        accountEmail: a.account_email || null,
+        isDefault: !!a.is_default,
+        connectedAt: a.created_at || null,
+        scopes: Array.isArray(a.scopes) ? a.scopes : [],
+        hasRefreshToken: !!a.refresh_token,
+        expiresAt: a.expires_at || null,
+      }));
+
+      let vmStatus: any = null;
+      let deploys: any[] = [];
+      if (engine && engine.status === 'running') {
+        // vm_status — services + browser reachability
+        try {
+          const result = await sendVMCommand(user.userId, 'tool_exec', { tool: 'vm_status', args: {} }, 8_000);
+          if (result.ok && result.result) vmStatus = result.result?.result || result.result;
+        } catch { /* non-fatal */ }
+
+        // Active deploys — read directly from the VM's deploy executor
+        try {
+          const result = await sendVMCommand(user.userId, 'deploy_list', {}, 8_000);
+          if (result.ok && Array.isArray(result.result?.deploys)) {
+            deploys = result.result.deploys.map((d: any) => ({
+              id: d.deployId || d.id,
+              name: d.name || d.deployId || 'deploy',
+              kind: d.kind || 'unknown',
+              status: d.status || 'unknown',
+              pid: d.pid ?? null,
+              startedAt: d.startedAt || null,
+              autoRestart: !!d.autoRestart,
+            }));
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      json(res, 200, {
+        ok: true,
+        engineRunning: !!(engine && engine.status === 'running'),
+        engineStatus: engine?.status || null,
+        integrations,
+        vm: vmStatus,
+        deploys,
+      });
+    } catch (e: any) {
+      console.error('[cloud-engine] integrations error:', e?.message);
+      json(res, 500, { ok: false, error: 'integrations_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
   return false;
 }

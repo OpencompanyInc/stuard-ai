@@ -1225,10 +1225,17 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
           .get(id) as SqliteRow | undefined;
         const incomingIsReadable = !hasUnreadableEncryptedFields(conv, ['title_enc']);
         const localIsUnreadable = hasUnreadableEncryptedFields(local, ['title_enc']);
+        // A NULL/empty title_enc renders as "Untitled" on the VM. If the
+        // incoming row has a real plaintext title, prefer it even when
+        // updated_at hasn't advanced — otherwise the user sees "Untitled" for
+        // every freshly synced conversation.
+        const incomingHasTitle = typeof conv.title_enc === 'string' && conv.title_enc.length > 0;
+        const localHasTitle = typeof local?.title_enc === 'string' && (local.title_enc as string).length > 0;
         const shouldReplace = !local
           || parseSqlTime(conv.updated_at) >= parseSqlTime(local.updated_at)
           || (incomingIsReadable && localIsUnreadable)
-          || (Number(conv.message_count || 0) > Number(local.message_count || 0) && localIsUnreadable);
+          || (Number(conv.message_count || 0) > Number(local.message_count || 0) && localIsUnreadable)
+          || (incomingHasTitle && !localHasTitle);
 
         if (!shouldReplace) {
           stats.conversations.skipped++;
@@ -1898,6 +1905,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Localhost preview proxy: /proxy/<port>/<path...> ────────────────
+  // Streams the request straight to 127.0.0.1:<port>/<path> and pipes the
+  // response back. Used by cloud-ai's /v1/cloud-engine/preview/* to surface
+  // dev servers (Next.js, Vite, etc.) running inside the VM.
+  if (url.startsWith('/proxy/')) {
+    const m = url.match(/^\/proxy\/(\d+)(\/[^?]*)?(\?.*)?$/);
+    if (!m) { json(res, 400, { ok: false, error: 'bad_proxy_url' }); return; }
+    const port = Number(m[1]);
+    const upstreamPath = (m[2] || '/') + (m[3] || '');
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      json(res, 400, { ok: false, error: 'bad_port' });
+      return;
+    }
+    proxyToLocalhostHttp(req, res, port, upstreamPath);
+    return;
+  }
+
   // GET /metrics
   if (method === 'GET' && url === '/metrics') {
     try {
@@ -2175,6 +2199,125 @@ const server = http.createServer(async (req, res) => {
 
 const proxyWss = new WebSocketServer({ noServer: true });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Localhost preview proxy
+//
+// Forwards an inbound HTTP/WS request to 127.0.0.1:<port>/<path>. The cloud-ai
+// preview route already authenticated the user; we trust the bearer token here
+// and just pipe bytes. Headers (including Content-Length, Transfer-Encoding,
+// streamed chunks) pass through untouched so SSE/long polls work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function proxyToLocalhostHttp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  port: number,
+  upstreamPath: string,
+): void {
+  const headers: http.OutgoingHttpHeaders = { ...req.headers };
+  // Hop-by-hop headers must not be forwarded — and Host must be rewritten
+  // to localhost so the upstream doesn't reject vhost-routed requests.
+  delete headers['host'];
+  delete headers['connection'];
+  delete headers['keep-alive'];
+  delete headers['proxy-authenticate'];
+  delete headers['proxy-authorization'];
+  delete headers['te'];
+  delete headers['trailer'];
+  delete headers['upgrade'];
+  // Strip our own bearer token so the dev server doesn't see it.
+  delete headers['authorization'];
+  headers['host'] = `127.0.0.1:${port}`;
+
+  const upstream = http.request({
+    host: '127.0.0.1',
+    port,
+    method: req.method,
+    path: upstreamPath,
+    headers,
+  });
+
+  const cleanup = () => {
+    try { upstream.destroy(); } catch {}
+  };
+
+  upstream.on('response', (upRes) => {
+    const outHeaders = { ...upRes.headers };
+    delete outHeaders['connection'];
+    delete outHeaders['keep-alive'];
+    delete outHeaders['transfer-encoding'];
+    res.writeHead(upRes.statusCode || 502, upRes.statusMessage, outHeaders);
+    upRes.pipe(res);
+    upRes.on('error', cleanup);
+  });
+
+  upstream.on('error', (err: any) => {
+    if (!res.headersSent) {
+      json(res, 502, { ok: false, error: 'upstream_unavailable', detail: String(err?.message || err) });
+    } else {
+      try { res.end(); } catch {}
+    }
+  });
+
+  res.on('close', cleanup);
+  req.pipe(upstream);
+}
+
+function proxyToLocalhostWebSocket(
+  req: http.IncomingMessage,
+  socket: import('stream').Duplex,
+  head: Buffer,
+  port: number,
+  upstreamPath: string,
+): void {
+  // Re-build the WS upgrade request and send it to the local dev server.
+  // We use a raw socket so we can transparently relay handshake + frames
+  // without needing a `ws` client to interpret them.
+  const headerLines: string[] = [];
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    if (name.toLowerCase() === 'host') continue;
+    if (name.toLowerCase() === 'authorization') continue;
+    if (Array.isArray(value)) {
+      for (const v of value) headerLines.push(`${name}: ${v}`);
+    } else {
+      headerLines.push(`${name}: ${value}`);
+    }
+  }
+  headerLines.unshift(`Host: 127.0.0.1:${port}`);
+
+  const handshake =
+    `GET ${upstreamPath} HTTP/1.1\r\n` +
+    headerLines.join('\r\n') +
+    `\r\n\r\n`;
+
+  const net = require('net') as typeof import('net');
+  const upstream = net.connect(port, '127.0.0.1');
+
+  const closeBoth = () => {
+    try { upstream.destroy(); } catch {}
+    try { socket.destroy(); } catch {}
+  };
+
+  upstream.on('connect', () => {
+    upstream.write(handshake);
+    if (head && head.length) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+  });
+
+  upstream.on('error', () => {
+    try {
+      socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+    } catch {}
+    closeBoth();
+  });
+
+  socket.on('error', closeBoth);
+  socket.on('close', closeBoth);
+  upstream.on('close', closeBoth);
+}
+
 proxyWss.on('connection', (clientWs) => {
   const upstreamWs = new WebSocket(LOCAL_AGENT_WS_URL);
   const pendingFrames: Array<{ data: Buffer; isBinary: boolean }> = [];
@@ -2270,20 +2413,36 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  if (parsed.pathname !== '/ws') {
-    socket.destroy();
-    return;
-  }
-
+  // Auth gate for all upgrades.
   if (!verifyBearerToken(authHeaderFromRequest(req))) {
     try { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); } catch {}
     socket.destroy();
     return;
   }
 
-  proxyWss.handleUpgrade(req, socket, head, (ws) => {
-    proxyWss.emit('connection', ws, req);
-  });
+  // Localhost preview proxy upgrade — forwards WS frames to 127.0.0.1:<port>.
+  // HMR (Next/Vite/CRA) relies on this.
+  const proxyMatch = parsed.pathname.match(/^\/proxy\/(\d+)(\/.*)?$/);
+  if (proxyMatch) {
+    const port = Number(proxyMatch[1]);
+    const upstreamPath = (proxyMatch[2] || '/') + (parsed.search || '');
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      try { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch {}
+      socket.destroy();
+      return;
+    }
+    proxyToLocalhostWebSocket(req, socket, head, port, upstreamPath);
+    return;
+  }
+
+  if (parsed.pathname === '/ws') {
+    proxyWss.handleUpgrade(req, socket, head, (ws) => {
+      proxyWss.emit('connection', ws, req);
+    });
+    return;
+  }
+
+  socket.destroy();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

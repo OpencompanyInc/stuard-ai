@@ -86,6 +86,7 @@ describe('Capability Packs', () => {
     expect(BROWSER_PACK.kind).toBe('browser');
     expect(BROWSER_PACK.toolNames).toContain('browser_use_navigate');
     expect(BROWSER_PACK.toolNames).toContain('browser_use_screenshot');
+    expect(BROWSER_PACK.toolNames).toContain('browser_use_analyze_screenshot');
     expect(BROWSER_PACK.toolNames).toContain('browser_use_click');
     expect(BROWSER_PACK.toolNames).toContain('browser_use_content');
     expect(BROWSER_PACK.maxSteps).toBe(40);

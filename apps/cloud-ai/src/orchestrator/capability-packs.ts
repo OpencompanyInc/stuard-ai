@@ -6,6 +6,10 @@
  */
 
 import type { CapabilityPack, SubagentKind } from './types';
+import {
+  WORKFLOW_SYSTEM_PROMPT,
+  WORKFLOW_DELEGATE_ADDENDUM,
+} from '../agents/workflow-agent/system-prompt';
 
 // ─── Browser ─────────────────────────────────────────────────────────────────
 
@@ -17,6 +21,7 @@ const BROWSER_TOOLS = [
   'browser_use_type',
   'browser_use_press_key',
   'browser_use_screenshot',
+  'browser_use_analyze_screenshot',
   'browser_use_content',
   'browser_use_scroll',
   'browser_use_tabs',
@@ -40,7 +45,7 @@ You control the user's real headed browser via CDP. The browser is already runni
 1. **Navigate**: Use browser_use_navigate to go to URLs.
 2. **Observe**: Use browser_use_get_interactive_elements to discover clickable/typeable elements — each returns an elementId (e.g. "e1", "e5").
 3. **Act**: Use browser_use_click, browser_use_type, browser_use_select_option with the elementId from step 2.
-4. **Verify**: Use browser_use_screenshot or browser_use_content after actions to confirm they worked.
+4. **Verify**: Prefer browser_use_content, browser_use_get_interactive_elements, and tool return data to confirm actions. Use browser_use_analyze_screenshot when you need visual interpretation. Use browser_use_screenshot only when you are stuck, when the user asks for an image, or when you need visual feedback to share back.
 5. **Repeat** until the task is complete, then call return_control with a summary.
 
 ## Tool Reference
@@ -52,8 +57,9 @@ You control the user's real headed browser via CDP. The browser is already runni
 | browser_use_click | Click an element by elementId, selector, or visible text |
 | browser_use_type | Type text into an input field by elementId or selector |
 | browser_use_press_key | Press keyboard keys (Enter, Tab, Escape, etc.) |
-| browser_use_screenshot | Take a screenshot to see what the page looks like |
 | browser_use_content | Get page text content (good for reading articles, checking state) |
+| browser_use_analyze_screenshot | Capture the current page and analyze it visually with a fast model |
+| browser_use_screenshot | Take a screenshot file only when you need an image artifact for the user or when you are stuck |
 | browser_use_scroll | Scroll down/up to reveal more content |
 | browser_use_hover | Hover over an element to reveal tooltips/menus |
 | browser_use_select_option | Select from dropdown menus |
@@ -70,18 +76,19 @@ You control the user's real headed browser via CDP. The browser is already runni
 ## Important Patterns
 
 - **Targeting elements**: Always prefer elementId from browser_use_get_interactive_elements. Pass it as the \`elementId\` parameter (e.g. \`elementId: "e5"\`). Fall back to \`selector\` or \`text\` only when needed.
-- **After navigation**: Always call browser_use_get_interactive_elements or browser_use_screenshot to observe the new page before acting.
+- **After navigation**: Usually call browser_use_get_interactive_elements or browser_use_content to observe the new page before acting. Use browser_use_analyze_screenshot only if DOM/text tools are insufficient.
 - **Forms**: Use browser_use_get_interactive_elements to find all fields, then browser_use_type for each, or browser_use_fill_form for bulk.
 - **Dropdowns**: browser_use_get_dropdown_options first, then browser_use_select_option.
 - **Authentication**: If the user is already logged in (cookies persist), just navigate. If login is needed, ask_orchestrator for credentials.
-- **Errors**: If a click or action fails, take a screenshot and try a different selector approach. Don't repeat the same failing action.
+- **Errors**: If a click or action fails, inspect with browser_use_get_interactive_elements, browser_use_content, or browser_use_analyze_screenshot. Use browser_use_screenshot only when you are stuck or need an image artifact.
 
 ## Rules
 
 1. Always proceed step-by-step — one action, then verify.
-2. If you need user credentials, decisions, or information not on the page, call ask_orchestrator once. It blocks and returns the answer.
-3. When done, call return_control with a clear summary.
-4. Never guess URLs or passwords.`;
+2. Verify with the lightest tool that answers the question. Do not take routine screenshots after every step.
+3. If you need user credentials, decisions, or information not on the page, call ask_orchestrator once. It blocks and returns the answer.
+4. When done, call return_control with a clear summary.
+5. Never guess URLs or passwords.`;
 
 export const BROWSER_PACK: CapabilityPack = {
   kind: 'browser',
@@ -206,116 +213,40 @@ export const FILE_OPS_PACK: CapabilityPack = {
 
 // ─── Workflow ────────────────────────────────────────────────────────────────
 
+// Mirror the studio Workflow Architect's exact toolkit, plus a single
+// `create_workflow` (which now seeds the session AND persists to disk in one
+// step — there is no separate `import_workflow`). Adding more tools than
+// this dilutes the agent's discovery focus and is what was producing noop
+// nodes / dangling wires when delegated.
 const WORKFLOW_TOOLS = [
-  // Bootstrap / persist
-  'create_workflow',      // spin up a brand-new workflow spec + id in session
-  'import_workflow',      // save a workflow to disk so it shows up in Automations
-  // Edit an existing session workflow
-  'modify_workflow',
-  'inspect_workflow',
-  // Discovery
+  // Bootstrap (delegate-only — studio always has a session workflow loaded).
+  // Single step: seeds session + persists to Automations.
+  'create_workflow',
+  // ── identical to the studio agent's toolkit from here on ──
   'search_workflow_docs',
   'search_workflow_nodes',
   'search_tools',
   'get_tool_schema',
-  // Run / test
+  'inspect_workflow',
+  'modify_workflow',
   'execute_step',
   'list_workflows',
-  'search_local_workflows',
-  'run_workflow',
-  'invoke_workflow',
-  'run_automation',
   'stop_automation',
-  // Support
+  'web_search',
   'write_file',
   'create_directory',
   'file_edit',
-  'web_search',
 ] as const;
-
-const WORKFLOW_SYSTEM_PROMPT = `You are the Workflow Architect Subagent for StuardAI.
-You design, create, modify, and test StuardAI local automation workflows end-to-end.
-
-══════════════════════════════════════════════════════════════════════════
-KNOWLEDGE DISCOVERY — Pull docs on demand, never guess
-══════════════════════════════════════════════════════════════════════════
-
-You have THREE complementary discovery tools:
-
-• search_workflow_nodes — for workflow node discovery in one hop. It returns
-  candidate nodes with category, runtime location/type metadata, and
-  input/output schemas so you can wire a node without doing a separate schema
-  lookup for each candidate.
-
-• search_tools / get_tool_schema — for TOOL schemas (what args a node takes,
-  what fields it returns). Use these for every tool BEFORE wiring it.
-
-• search_workflow_docs — for CONNECTING AND COMPOSING (wires, guards, loops,
-  templates, variables, callNode, custom_ui, markdown, live updates,
-  debugging, pitfalls, etc.). Use this whenever you're unsure how to
-  structure flow, branching, data passing, or UI behavior.
-
-RULES:
-1. BEFORE writing workflow structure you're unsure about, call
-   search_workflow_docs({ query: "<topic>" }).
-2. Before wiring a new node, prefer search_workflow_nodes({ query: "<what it should do>" }).
-3. For exact tool args/outputs, call get_tool_schema({ toolName }).
-4. Never invent tool names — always verify via search_workflow_nodes or search_tools.
-4. After non-trivial edits, call inspect_workflow to verify topology.
-5. DO NOT pass the full workflow JSON to modify_workflow — it auto-loads from session.
-6. Prefer existing tools over custom scripts (utility_tools > python > node).
-
-══════════════════════════════════════════════════════════════════════════
-CREATING A NEW WORKFLOW (from scratch)
-══════════════════════════════════════════════════════════════════════════
-
-modify_workflow ONLY edits the workflow already in session. When asked to
-**create** a new workflow, follow this bootstrap sequence:
-
-1. Generate an id — \`flow_<slug_or_8_hex>\` (e.g. "flow_morning_brief").
-2. Call create_workflow({ spec: { id, name, triggers: [...], nodes: [], wires: [] } })
-   with a minimal spec — at minimum one trigger. This seeds the session
-   workflow so subsequent modify_workflow calls work.
-3. Build it out iteratively with modify_workflow (add_node, add_wire, etc.).
-4. Call inspect_workflow to confirm topology.
-5. Call import_workflow({ definition }) to persist it to disk so it appears
-   in the user's Automations tab. Without this step the workflow lives only
-   in session memory and is lost on reload.
-
-══════════════════════════════════════════════════════════════════════════
-MODIFYING AN EXISTING WORKFLOW
-══════════════════════════════════════════════════════════════════════════
-
-1. Inspect current topology (inspect_workflow) first.
-2. Discover nodes (search_workflow_nodes or search_tools → get_tool_schema) before wiring new nodes.
-3. Look up syntax (search_workflow_docs) before writing structure.
-4. Apply edits with modify_workflow — one op at a time, no raw JSON.
-5. Verify (inspect_workflow) and, where cheap, test (execute_step).
-
-WORKFLOW STRUCTURE (quick reference):
-  WORKFLOW = { id, name, triggers[], nodes[], wires[], variables?[] }
-  Trigger → Wire → Node → Wire → Node → ...
-  Guards on wires for conditional branching
-  Loops on wires for repeated execution
-  callNode: true wires for UI → worker on-demand routing
-
-══════════════════════════════════════════════════════════════════════════
-RULES
-══════════════════════════════════════════════════════════════════════════
-
-1. search_workflow_docs FIRST whenever syntax is uncertain.
-2. search_workflow_nodes or search_tools + get_tool_schema for every tool before wiring it.
-3. Never invent tool names.
-4. Use inspect_workflow before and after edits.
-5. If you need info or a decision from the user/orchestrator, call
-   ask_orchestrator once. It blocks and returns the answer.
-6. When done, call return_control with a summary of what was created or modified.`;
 
 export const WORKFLOW_PACK: CapabilityPack = {
   kind: 'workflow',
   label: 'Workflow',
   toolNames: [...WORKFLOW_TOOLS],
-  systemPrompt: WORKFLOW_SYSTEM_PROMPT,
+  // Reuse the studio agent's prompt verbatim (single source of truth in
+  // ../agents/workflow-agent/system-prompt.ts) and append a delegate-only
+  // addendum that covers the create_workflow bootstrap and orchestrator
+  // handshake (ask_orchestrator / return_control).
+  systemPrompt: WORKFLOW_SYSTEM_PROMPT + WORKFLOW_DELEGATE_ADDENDUM,
   maxSteps: 60,
 };
 

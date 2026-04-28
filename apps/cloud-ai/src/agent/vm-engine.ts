@@ -1568,9 +1568,11 @@ async function executeStep(
 
     ctx[step.id] = result;
 
-    // Handle return_value
+    // Handle return_value — terminates the branch and sets the return payload
     if (toolName === 'return_value' || result?.action === 'return') {
       (ctx as any).__return = (result && typeof result === 'object' && 'value' in result) ? result.value : result;
+      (ctx as any).__terminated = true;
+      return { ok: true, ctx, edges: [] };
     }
 
     // Handle termination

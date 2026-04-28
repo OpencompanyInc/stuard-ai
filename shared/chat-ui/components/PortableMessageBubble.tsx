@@ -68,6 +68,7 @@ const TOOL_GROUP_LABELS: Record<string, { singular: string; plural: string }> = 
   run_command: { singular: 'Ran command', plural: 'Ran {n} commands' },
   capture_screen: { singular: 'Captured screen', plural: 'Captured {n} screenshots' },
   browser_use_screenshot: { singular: 'Took screenshot', plural: 'Took {n} screenshots' },
+  browser_use_analyze_screenshot: { singular: 'Analyzed browser screenshot', plural: 'Analyzed {n} browser screenshots' },
   browser_use_navigate: { singular: 'Navigated', plural: 'Navigated {n} pages' },
   browser_use_click: { singular: 'Clicked element', plural: 'Clicked {n} elements' },
 };

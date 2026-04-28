@@ -28,6 +28,7 @@ import { handleCloudEngineRoutes } from './cloud-engine';
 import { handleCloudStorageRoutes } from './cloud-storage';
 import { handleStorageRoutes } from './storage';
 import { handleCloudFilesRoutes } from './cloud-files';
+import { handleCloudPreviewRoutes, handleCloudPreviewFallback } from './cloud-preview';
 import { handleCloudMonitoringRoutes } from './cloud-monitoring';
 import { handleCloudSnapshotsRoutes } from './cloud-snapshots';
 import { handleCloudDeploysRoutes } from './cloud-deploys';
@@ -38,6 +39,7 @@ import { handleDesktopToolRelayRoutes } from './desktop-tool-relay';
 import { handleProactiveRoutes } from './proactive';
 import { handleServerlessChatRoutes } from './serverless-chat';
 import { handleBillingRoutes } from './billing';
+import { handleAccountRoutes } from './account';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handleWebhooks(req, res, parsedUrl)) return true;
@@ -45,6 +47,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleModelsRoutes(req, res, parsedUrl)) return true;
   if (await handleCredits(req, res, parsedUrl)) return true;
   if (await handleBillingRoutes(req, res, parsedUrl)) return true;
+  if (await handleAccountRoutes(req, res, parsedUrl)) return true;
   if (await handleBetaRoutes(req, res, parsedUrl)) return true;
   if (await handleOpsRoutes(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
@@ -70,6 +73,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudFilesRoutes(req, res, parsedUrl)) return true;
+  if (await handleCloudPreviewRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudMonitoringRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudSnapshotsRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudDeploysRoutes(req, res, parsedUrl)) return true;
@@ -79,5 +83,9 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleDesktopToolRelayRoutes(req, res, parsedUrl)) return true;
   if (await handleProactiveRoutes(req, res, parsedUrl)) return true;
   if (await handleServerlessChatRoutes(req, res, parsedUrl)) return true;
+  // Last-resort: route /<absolute-path> requests from preview iframes (via
+  // Referer or per-port cookie) to the active dev server. Must stay last so
+  // it never shadows a real cloud-ai route.
+  if (await handleCloudPreviewFallback(req, res, parsedUrl)) return true;
   return false;
 }

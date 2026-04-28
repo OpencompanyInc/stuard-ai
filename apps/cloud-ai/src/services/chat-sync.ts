@@ -2,23 +2,24 @@
  * Chat Sync Service
  *
  * Relays chat events (new messages, title updates) between VM and desktop.
- * Delivers immediately when the target is online, or queues to Supabase
- * for later delivery when the target reconnects.
+ * Delivers immediately when the target is online, or queues to GCS for
+ * later delivery when the target reconnects.
+ *
+ * Storage: chat-sync-queue/<userId>/<target>/<sortKey>.json
+ *   - sortKey = `${ts}-${nonce}` so list order = creation order
+ *   - target = 'desktop' | 'vm' lets us list only events for one direction
+ *   - Bucket lifecycle policy enforces the 7-day TTL
  *
  * Security:
  *  - All operations require a verified userId (from JWT or HMAC auth)
  *  - Source (vm/desktop) is derived from auth method, never client-controlled
- *  - Supabase RLS restricts queue access to the owning user
+ *  - Object names are namespaced under {userId}/ so listing can't cross users
  *  - Payload content is truncated to prevent queue flooding
- *  - Queue entries auto-expire after 7 days
- *
- * Queue drain happens when:
- *  - Desktop: first authenticated chat message triggers deliverQueuedChatEvents
- *  - VM: receives queued events via sendVMCommand on next interaction
  */
 
 import { WebSocket } from 'ws';
-import { getSupabaseService } from '../supabase';
+import { Storage } from '@google-cloud/storage';
+import { CLOUD_ENGINE_BUCKET, GCP_KEY_FILE } from '../utils/config';
 import { writeLog } from '../utils/logger';
 import { getDesktopWs } from './vm-bridge';
 
@@ -30,8 +31,10 @@ import { getDesktopWs } from './vm-bridge';
 const MAX_CONTENT_LENGTH = 50_000;
 /** Max title length (chars). */
 const MAX_TITLE_LENGTH = 200;
-/** Max queued events per user to prevent unbounded growth. */
+/** Max queued events per user/target to prevent unbounded growth. */
 const MAX_PENDING_EVENTS = 200;
+/** GCS prefix for queued events. */
+const QUEUE_PREFIX = 'chat-sync-queue';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -53,13 +56,38 @@ export interface ChatSyncEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GCS client (lazy)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _storage: Storage | null = null;
+function getBucket() {
+  if (!_storage) {
+    _storage = GCP_KEY_FILE
+      ? new Storage({ keyFilename: GCP_KEY_FILE })
+      : new Storage();
+  }
+  return _storage.bucket(CLOUD_ENGINE_BUCKET);
+}
+
+function queuePrefix(userId: string, target: 'desktop' | 'vm'): string {
+  return `${QUEUE_PREFIX}/${userId}/${target}/`;
+}
+
+function buildObjectName(userId: string, target: 'desktop' | 'vm'): string {
+  // ts is zero-padded to 13 chars so lexicographic sort = chronological sort
+  // until year 2286. nonce breaks ties when two events land in the same ms.
+  const ts = String(Date.now()).padStart(13, '0');
+  const nonce = Math.random().toString(36).slice(2, 10);
+  return `${queuePrefix(userId, target)}${ts}-${nonce}.json`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sanitization — strip unknown fields, enforce size limits
 // ─────────────────────────────────────────────────────────────────────────────
 
 function sanitizeEvent(event: ChatSyncEvent): ChatSyncEvent {
   const data = { ...event.data };
 
-  // Truncate content to prevent oversized payloads
   if (typeof data.content === 'string' && data.content.length > MAX_CONTENT_LENGTH) {
     data.content = data.content.slice(0, MAX_CONTENT_LENGTH) + '…[truncated]';
   }
@@ -67,7 +95,6 @@ function sanitizeEvent(event: ChatSyncEvent): ChatSyncEvent {
     data.title = data.title.slice(0, MAX_TITLE_LENGTH);
   }
 
-  // Strip metadata to only known-safe fields (prevent sensitive data leaking)
   if (data.metadata) {
     data.metadata = {
       tier: data.metadata.tier,
@@ -75,7 +102,6 @@ function sanitizeEvent(event: ChatSyncEvent): ChatSyncEvent {
     };
   }
 
-  // Only allow known roles
   if (data.role && data.role !== 'user' && data.role !== 'assistant') {
     data.role = 'assistant';
   }
@@ -91,7 +117,7 @@ function sanitizeEvent(event: ChatSyncEvent): ChatSyncEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Queue Operations (Supabase)
+// Queue Operations (GCS)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function queueChatSyncEvent(
@@ -99,32 +125,36 @@ async function queueChatSyncEvent(
   target: 'desktop' | 'vm',
   event: ChatSyncEvent,
 ): Promise<boolean> {
-  const supabase = getSupabaseService();
-  if (!supabase) return false;
-
   try {
-    // Check queue depth to prevent abuse
-    const { count, error: countErr } = await supabase
-      .from('chat_sync_queue')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('status', 'pending');
-    if (!countErr && (count ?? 0) >= MAX_PENDING_EVENTS) {
-      writeLog('chat_sync_queue_full', { userId, target, count });
+    const bucket = getBucket();
+
+    // Cap queue depth — list one extra past the limit, drop event if over.
+    // Cheaper than counting all objects; we just need to know "is it full?"
+    const [files] = await bucket.getFiles({
+      prefix: queuePrefix(userId, target),
+      maxResults: MAX_PENDING_EVENTS + 1,
+    });
+    if (files.length >= MAX_PENDING_EVENTS) {
+      writeLog('chat_sync_queue_full', { userId, target, count: files.length });
       return false;
     }
 
-    const { error } = await supabase.from('chat_sync_queue').insert({
-      user_id: userId,
-      conversation_id: event.conversationId,
-      event_type: event.action,
-      source: event.source,
-      target,
-      payload: event,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    const objectName = buildObjectName(userId, target);
+    await bucket.file(objectName).save(JSON.stringify(event), {
+      contentType: 'application/json',
+      resumable: false,
+      metadata: {
+        metadata: {
+          userId,
+          target,
+          action: event.action,
+          conversationId: event.conversationId,
+        },
+      },
     });
-    return !error;
-  } catch {
+    return true;
+  } catch (e: any) {
+    writeLog('chat_sync_queue_error', { userId, target, error: e?.message });
     return false;
   }
 }
@@ -133,40 +163,42 @@ async function getPendingChatEvents(
   userId: string,
   target: 'desktop' | 'vm',
   limit = 100,
-): Promise<Array<{ id: string; payload: ChatSyncEvent; created_at: string }>> {
-  const supabase = getSupabaseService();
-  if (!supabase) return [];
-
+): Promise<Array<{ name: string; payload: ChatSyncEvent }>> {
   try {
-    const { data, error } = await supabase
-      .from('chat_sync_queue')
-      .select('id, payload, created_at')
-      .eq('user_id', userId)
-      .eq('target', target)
-      .eq('status', 'pending')
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: true })
-      .limit(limit);
+    const bucket = getBucket();
+    const [files] = await bucket.getFiles({
+      prefix: queuePrefix(userId, target),
+      maxResults: limit,
+    });
 
-    if (error || !data) return [];
-    return data as any;
-  } catch {
+    // Lexicographic sort = chronological because object names start with a
+    // zero-padded ms timestamp.
+    files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+    const out: Array<{ name: string; payload: ChatSyncEvent }> = [];
+    for (const file of files) {
+      try {
+        const [buf] = await file.download();
+        const payload = JSON.parse(buf.toString('utf8')) as ChatSyncEvent;
+        out.push({ name: file.name, payload });
+      } catch {
+        // Corrupt object — delete so it doesn't block subsequent drains.
+        await file.delete({ ignoreNotFound: true }).catch(() => {});
+      }
+    }
+    return out;
+  } catch (e: any) {
+    writeLog('chat_sync_list_error', { userId, target, error: e?.message });
     return [];
   }
 }
 
-async function markChatEventDelivered(queueId: string): Promise<boolean> {
-  const supabase = getSupabaseService();
-  if (!supabase) return false;
-
+async function deleteQueuedEvent(objectName: string): Promise<void> {
   try {
-    const { error } = await supabase
-      .from('chat_sync_queue')
-      .update({ status: 'delivered' })
-      .eq('id', queueId);
-    return !error;
+    await getBucket().file(objectName).delete({ ignoreNotFound: true });
   } catch {
-    return false;
+    // Best-effort — a stale object will be retried on next drain and the
+    // duplicate-detection on the desktop/VM side handles repeats.
   }
 }
 
@@ -183,7 +215,6 @@ async function markChatEventDelivered(queueId: string): Promise<boolean> {
  * @param event   - Chat sync event (sanitized before relay)
  */
 export async function relayChatEvent(userId: string, event: ChatSyncEvent): Promise<void> {
-  // Sanitize before any relay or storage
   const safe = sanitizeEvent(event);
 
   if (safe.source === 'vm') {
@@ -196,7 +227,6 @@ export async function relayChatEvent(userId: string, event: ChatSyncEvent): Prom
         return;
       } catch { /* fall through to queue */ }
     }
-    // Desktop offline → queue for later
     const queued = await queueChatSyncEvent(userId, 'desktop', safe);
     if (queued) {
       writeLog('chat_sync_queued', { userId, action: safe.action, target: 'desktop' });
@@ -206,13 +236,25 @@ export async function relayChatEvent(userId: string, event: ChatSyncEvent): Prom
     try {
       const { getCloudEngine } = await import('../supabase');
       const engine = await getCloudEngine(userId);
-      if (!engine || engine.status !== 'running') return; // No VM running, nothing to sync
+      if (!engine || engine.status !== 'running') {
+        // No VM running — queue so the next-running VM can pick it up.
+        const queued = await queueChatSyncEvent(userId, 'vm', safe);
+        if (queued) {
+          writeLog('chat_sync_queued', { userId, action: safe.action, target: 'vm' });
+        }
+        return;
+      }
       const { sendVMCommand } = await import('./vm-command');
       await sendVMCommand(userId, 'chat_sync', safe, 15_000);
       writeLog('chat_sync_delivered', { userId, action: safe.action, target: 'vm' });
     } catch (e: any) {
-      // VM delivery failure is non-critical — VM will fetch from Supabase on next load
-      console.warn('[chat-sync] VM delivery failed:', e?.message);
+      // VM delivery failed — queue for retry on next VM interaction.
+      const queued = await queueChatSyncEvent(userId, 'vm', safe).catch(() => false);
+      if (queued) {
+        writeLog('chat_sync_queued_after_failure', { userId, action: safe.action, target: 'vm', error: e?.message });
+      } else {
+        console.warn('[chat-sync] VM delivery + queue both failed:', e?.message);
+      }
     }
   }
 }
@@ -237,7 +279,7 @@ export async function deliverQueuedChatEvents(userId: string, ws: WebSocket): Pr
 
     try {
       ws.send(JSON.stringify(item.payload));
-      await markChatEventDelivered(item.id);
+      await deleteQueuedEvent(item.name);
       delivered++;
     } catch {
       break;
@@ -248,5 +290,45 @@ export async function deliverQueuedChatEvents(userId: string, ws: WebSocket): Pr
     writeLog('queued_chat_events_delivered', { userId, count: delivered });
   }
 
+  return delivered;
+}
+
+/**
+ * Deliver queued desktop→VM events to a freshly-running VM.
+ * Called by cloud-engine after the VM transitions to `running`.
+ *
+ * Returns the number of events successfully relayed.
+ */
+export async function deliverQueuedVMChatEvents(userId: string): Promise<number> {
+  const pending = await getPendingChatEvents(userId, 'vm');
+  if (pending.length === 0) return 0;
+
+  let delivered = 0;
+  let sendVMCommand: typeof import('./vm-command').sendVMCommand;
+  try {
+    ({ sendVMCommand } = await import('./vm-command'));
+  } catch {
+    return 0;
+  }
+
+  for (const item of pending) {
+    try {
+      const result = await sendVMCommand(userId, 'chat_sync', item.payload, 15_000);
+      if (result?.ok !== false) {
+        await deleteQueuedEvent(item.name);
+        delivered++;
+      } else {
+        // VM rejected — leave in queue, stop draining (likely transient).
+        break;
+      }
+    } catch {
+      // Transport failure — leave for next attempt.
+      break;
+    }
+  }
+
+  if (delivered > 0) {
+    writeLog('queued_vm_chat_events_delivered', { userId, count: delivered });
+  }
   return delivered;
 }

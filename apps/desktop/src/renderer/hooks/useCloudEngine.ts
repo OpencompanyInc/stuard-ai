@@ -318,9 +318,30 @@ export function useCloudEngine() {
         body: JSON.stringify(body),
       });
       if (data.ok) {
-        // After the VM is up, trigger a second sync pass so the VM pulls
-        // the latest bundle + oauth / browser profile. Best-effort.
-        cloudFetch('/v1/cloud-engine/sync-agent-data', { method: 'POST' }).catch(() => {});
+        // After the VM is up, push the agent bundle into the VM. This MUST
+        // succeed for prior chat history + titles to appear on the VM. Retry
+        // a couple of times because the VM may not have finished its boot
+        // handshake the instant /provision returns.
+        let pushOk = false;
+        for (let attempt = 0; attempt < 3 && !pushOk; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
+          try {
+            const pushResult = await cloudFetch('/v1/cloud-engine/push-agent-data', {
+              method: 'POST',
+              timeoutMs: 10 * 60_000,
+            });
+            pushOk = !!pushResult?.ok;
+            if (!pushOk) {
+              console.warn(`[cloud-engine] push-agent-data attempt ${attempt + 1} failed:`, pushResult?.error || pushResult?.message);
+            }
+          } catch (e: any) {
+            console.warn(`[cloud-engine] push-agent-data attempt ${attempt + 1} threw:`, e?.message);
+          }
+        }
+        if (!pushOk) {
+          console.error('[cloud-engine] push-agent-data exhausted retries — VM may show empty chat history until next manual sync');
+        }
+        // OAuth + browser profile are independent; keep them best-effort.
         cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
         cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
         await fetchEngine();
@@ -491,6 +512,60 @@ export function useCloudEngine() {
   const readFile = useCallback(async (path: string): Promise<string | null> => {
     const data = await cloudFetch(`/v1/cloud-engine/files/read?path=${encodeURIComponent(path)}`);
     return data.ok ? data.content : null;
+  }, []);
+
+  /** Like readFile but returns the full payload including base64 encoding for
+   *  binary files, so callers can render images / video / audio / PDFs. */
+  const readFileFull = useCallback(async (
+    path: string,
+  ): Promise<{ content: string; encoding: 'utf-8' | 'base64'; size: number } | null> => {
+    const data = await cloudFetch(`/v1/cloud-engine/files/read?path=${encodeURIComponent(path)}`);
+    if (!data.ok) return null;
+    return {
+      content: data.content,
+      encoding: data.encoding === 'base64' ? 'base64' : 'utf-8',
+      size: typeof data.size === 'number' ? data.size : 0,
+    };
+  }, []);
+
+  // Cached view-session for the HTML/preview iframe path. Re-mints when the
+  // existing sid is within 30s of expiry so a long-open preview still works.
+  const viewSessionRef = useRef<{ sid: string; expiresAt: number } | null>(null);
+
+  const getServeUrl = useCallback(async (path: string): Promise<string | null> => {
+    const now = Date.now();
+    const cur = viewSessionRef.current;
+    let sess = cur && cur.expiresAt - now > 30_000 ? cur : null;
+    if (!sess) {
+      const data = await cloudFetch('/v1/cloud-engine/files/view-session', { method: 'POST' });
+      if (!data?.ok || !data.sid) return null;
+      sess = { sid: data.sid as string, expiresAt: Number(data.expiresAt) || (now + 5 * 60_000) };
+      viewSessionRef.current = sess;
+    }
+    // The iframe URL keeps the path mostly intact so relative resolution works
+    // naturally — encode each segment but keep the slashes literal.
+    const segments = path.split('/').map(encodeURIComponent).join('/');
+    return `${CLOUD_AI_HTTP}/v1/cloud-engine/files/serve/${sess.sid}/${segments}`;
+  }, []);
+
+  /** Mints a short-lived preview session for a localhost dev server in the
+   *  VM (Next.js, Vite, etc.) and returns the URL the iframe should load. */
+  const getPreviewUrl = useCallback(async (
+    port: number,
+  ): Promise<{ url: string; sid: string; port: number; expiresAt: number } | null> => {
+    if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
+    const data = await cloudFetch('/v1/cloud-engine/preview/start', {
+      method: 'POST',
+      body: JSON.stringify({ port }),
+    });
+    if (!data?.ok || !data.sid) return null;
+    const path: string = data.url || `/v1/cloud-engine/preview/${data.sid}/${port}/`;
+    return {
+      url: `${CLOUD_AI_HTTP}${path}`,
+      sid: String(data.sid),
+      port: Number(data.port) || port,
+      expiresAt: Number(data.expiresAt) || (Date.now() + 5 * 60_000),
+    };
   }, []);
 
   const writeFile = useCallback(async (path: string, content: string): Promise<{ ok: boolean; error?: string }> => {
@@ -667,6 +742,9 @@ export function useCloudEngine() {
     syncData,
     listFiles,
     readFile,
+    readFileFull,
+    getServeUrl,
+    getPreviewUrl,
     writeFile,
     deleteFile,
     renameFile,

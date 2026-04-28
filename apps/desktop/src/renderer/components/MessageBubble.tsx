@@ -16,6 +16,7 @@ import { AudioPlayer } from './AudioPlayer';
 import { AttachmentPreviewStrip } from './AttachmentPreview';
 import { LinkPreview } from './LinkPreview';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
+import { useFileViewerOptional } from './file-viewer';
 import { Shimmer } from './ai-elements/Shimmer';
 import {
   ChainOfThought,
@@ -958,6 +959,11 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   const fileName = filePath.split(/[/\\]/).pop() || filePath;
   const kindLabel = isImage ? 'image' : isAudio ? 'audio' : ext ? ext.toUpperCase() : 'file';
 
+  // When mounted inside a FileViewerProvider (VM/cloud chat), the open action
+  // routes to the viewer pane. Outside the provider (regular desktop chat),
+  // it falls back to opening the file in the OS app.
+  const fileViewer = useFileViewerOptional();
+
   const copyPath = (e: React.MouseEvent) => {
     e.stopPropagation();
     navigator.clipboard.writeText(filePath);
@@ -967,6 +973,10 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
 
   const openFile = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (fileViewer) {
+      fileViewer.openFile({ path: filePath, source: 'vm', name: fileName });
+      return;
+    }
     try { (window as any).desktopAPI?.openPath?.(filePath); } catch {}
   };
 
@@ -1055,6 +1065,7 @@ const TOOL_GROUP_LABELS: Record<string, { singular: string; plural: string }> = 
   run_command: { singular: 'Ran command', plural: 'Ran {n} commands' },
   capture_screen: { singular: 'Captured screen', plural: 'Captured {n} screenshots' },
   browser_use_screenshot: { singular: 'Took screenshot', plural: 'Took {n} screenshots' },
+  browser_use_analyze_screenshot: { singular: 'Analyzed browser screenshot', plural: 'Analyzed {n} browser screenshots' },
   browser_use_navigate: { singular: 'Navigated', plural: 'Navigated {n} pages' },
   browser_use_click: { singular: 'Clicked element', plural: 'Clicked {n} elements' },
 };

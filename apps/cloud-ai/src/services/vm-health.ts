@@ -17,6 +17,9 @@ import {
 import { pingVMAgent, fetchVMMetrics } from './vm-command';
 import { getComputeProvider } from './compute';
 import { writeLog } from '../utils/logger';
+import { deliverQueuedVMChatEvents } from './chat-sync';
+import { generateAgentDataDownloadUrl } from './cold-storage';
+import { sendVMCommand } from './vm-command';
 
 /** Desktop-friendly metrics format (field names match what the desktop UI expects). */
 export interface DesktopMetrics {
@@ -39,6 +42,12 @@ interface HealthEntry {
 
 // In-memory health state per user
 const healthMap = new Map<string, HealthEntry>();
+
+// Tracks users we've already pulled agent-data into the VM for in this process
+// lifetime. Stops us from re-pulling on every health-recovery (e.g. a transient
+// network blip) which would clobber VM-side mutations made between blips.
+// Cleared when the engine becomes inactive so a fresh VM gets a fresh pull.
+const agentDataBootstrapped = new Set<string>();
 
 // Metrics buffer — flushed to DB every FLUSH_INTERVAL_MS
 const metricsBuffer: Array<{ user_id: string } & VMMetrics> = [];
@@ -105,6 +114,48 @@ async function runHealthCheck(): Promise<void> {
 
       if (pingResult.ok) {
         const agentData = pingResult.result || {};
+        const prevStatus = healthMap.get(engine.user_id)?.healthStatus;
+        // Transitioning from non-healthy → healthy means the VM just came
+        // online (or recovered). Drain any queued desktop→VM chat-sync events
+        // so prior conversations and titles land on the VM without waiting
+        // for a fresh user action.
+        if (prevStatus !== 'healthy') {
+          deliverQueuedVMChatEvents(engine.user_id).catch((e: any) => {
+            writeLog('chat_sync_drain_failed', { userId: engine.user_id, error: e?.message });
+          });
+
+          // Bootstrap: tell the VM to pull the latest desktop-exported agent
+          // data from GCS once per VM lifetime. The desktop may have uploaded
+          // the bundle while the VM was offline, so we can't rely on the
+          // desktop noticing the transition.
+          if (!agentDataBootstrapped.has(engine.user_id)) {
+            agentDataBootstrapped.add(engine.user_id);
+            void (async () => {
+              try {
+                const urlResult = await generateAgentDataDownloadUrl(engine.user_id);
+                if (!urlResult) {
+                  writeLog('agent_data_bootstrap_skip', { userId: engine.user_id, reason: 'no_bundle' });
+                  return;
+                }
+                const cmdResult = await sendVMCommand(
+                  engine.user_id,
+                  'sync_agent_data',
+                  { direction: 'download', downloadUrl: urlResult.downloadUrl },
+                  10 * 60_000,
+                );
+                writeLog('agent_data_bootstrap', {
+                  userId: engine.user_id,
+                  ok: !!cmdResult?.ok,
+                  error: cmdResult?.error,
+                });
+              } catch (e: any) {
+                // Failed bootstrap — allow a retry on next non-healthy → healthy transition.
+                agentDataBootstrapped.delete(engine.user_id);
+                writeLog('agent_data_bootstrap_failed', { userId: engine.user_id, error: e?.message });
+              }
+            })();
+          }
+        }
 
         // Fetch actual metrics from VM agent
         let vmMetrics: DesktopMetrics | null = null;
@@ -174,6 +225,7 @@ async function runHealthCheck(): Promise<void> {
     for (const [userId] of healthMap) {
       if (!activeUserIds.has(userId)) {
         healthMap.delete(userId);
+        agentDataBootstrapped.delete(userId);
       }
     }
   } catch (e) {

@@ -240,6 +240,14 @@ avoids race conditions around held keys.`,
     content: `Triggers can define inputParams to collect user input BEFORE the workflow runs.
 This opens a form dialog; values land in ctx.trigger.data.
 
+WHEN TO USE inputParams vs variables[]:
+• inputParams  — values that CHANGE each run (a search query, a file to process,
+                 a date range). The user is prompted every time they run the workflow.
+• variables[]  — values that stay the SAME across runs (API key, default folder,
+                 a setting). Saved with the .stuard file, never prompted at runtime.
+• If in doubt: does the user need to pick it fresh each run? → inputParam.
+               Is it a configuration/setting the workflow remembers? → variable.
+
 SCHEMA:
   inputParams: [
     {
@@ -247,30 +255,34 @@ SCHEMA:
       type: "string"|"number"|"boolean"|"select"|"multiselect"|"file"|"folder"|"date"|"json"|"array",
       required?: boolean,
       defaultValue?: any,
-      description?: string,
-      options?: [{ label, value }]   // for select/multiselect
+      description?: string,       // shown as label/hint in the form
+      options?: [{ label, value }] // for select/multiselect only
     }
   ]
 
 EXAMPLE:
   { id: "trig_0", type: "manual", inputParams: [
-    { name: "url", type: "string", required: true, description: "Page URL" },
+    { name: "query", type: "string", required: true, description: "What to search for" },
     { name: "mode", type: "select", defaultValue: "fast",
-      options: [{ label: "Fast", value: "fast" }, { label: "Careful", value: "careful" }] },
-    { name: "folder", type: "folder", description: "Output folder" }
+      options: [{ label: "Fast", value: "fast" }, { label: "Thorough", value: "careful" }] },
+    { name: "outputFolder", type: "folder", description: "Where to save results" }
   ]}
 
-ACCESS:
-  {{trigger.data.url}}
+ACCESS IN NODES:
+  {{trigger.data.query}}
   {{trigger.data.mode}}
-  {{trigger.data.folder}}
+  {{trigger.data.outputFolder}}
 
 TO ADD inputParams:
   modify_workflow({ op: "set_path", path: "triggers[0].inputParams", value: [ ... ] })
 
-TIP: Prefer inputParams for required configuration. Use workflow variables
-(variables[]) for values the WORKFLOW always has (API keys, paths) — those are
-saved with the .stuard file and not asked every run.`,
+TO ADD A SINGLE PARAM (append without overwriting others):
+  modify_workflow({ op: "set_path", path: "triggers[0].inputParams[N]", value: { name, type, ... } })
+  where N = current length of inputParams array.
+
+RESPONSE STYLE: After adding inputParams, tell the user what the form will ask —
+not the JSON schema. E.g. "I added a text field so you can type a message each
+time you run it. Want me to use that message in the next step?"`,
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1246,7 +1258,11 @@ CRITICAL: The wire from custom_ui → call_function MUST be callNode: true. If
 auto-traversed, {{caller.X}} resolves to empty strings because no caller data
 was passed.
 
-TIP: outputSchema + return_value lets you type-check the return payload.
+return_value TERMINATES the branch immediately — no nodes after it will run.
+Do NOT add further wires from a return_value node. The result lands in
+ctx.<callNodeId>.value for the caller to read.
+
+TIP: Use outputSchema to type-check the return payload (see output_schema doc).
 
 TIP: Use function triggers to DE-DUPLICATE logic. Anywhere you'd copy-paste 3
 nodes, extract them behind a function trigger and call it instead.`,
@@ -2059,40 +2075,50 @@ model.`,
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'output_schema',
-    title: 'Output Schema — Reusable-Function Return Type',
+    title: 'Output Schema & return_value — Typed Return from Sub-Flows',
     keywords: [
       'output', 'outputSchema', 'return', 'return_value', 'function', 'webhook',
-      'call_function', 'result',
+      'call_function', 'result', 'terminate', 'end workflow',
     ],
-    content: `When a workflow is reused (via call_function or webhook), outputSchema types
-its return value. return_value emits the actual result.
+    content: `return_value IMMEDIATELY terminates the workflow branch and returns its payload
+to the caller. No nodes after return_value will run.
 
-SCHEMA:
-  outputSchema: [
-    { name: string, type: "string"|"number"|"boolean"|"json"|"array",
-      description?: string }
-  ]
+WHEN TO USE return_value:
+• Workflow is called via call_function from another workflow or custom_ui.
+• You need a typed result that callers can read from ctx.call.value.
+• You want to terminate cleanly at a specific point (e.g. one branch succeeds,
+  other branch returns an error value).
 
-EXAMPLE:
-  outputSchema: [
-    { name: "success", type: "boolean", description: "Whether op succeeded" },
-    { name: "data",    type: "json",    description: "Processed result" },
-    { name: "error",   type: "string",  description: "Error if failed" }
-  ]
+WHEN NOT TO USE return_value:
+• Main workflow that just runs top-to-bottom — simply let it finish naturally.
+• Triggering a side-effect chain with no caller — use end instead if you need
+  an explicit stop.
 
-RETURN:
+RETURN VALUE NODE:
   { id: "ret", tool: "return_value", args: {
-      value: { success: true, data: "{{process.json}}", error: "" }
+      value: "{{step.text}}"         // scalar
+      // OR
+      value: { ok: true, data: "{{process.json}}" }  // object
   }}
 
-Terminates the workflow and returns the value to the caller.
+  → Sets the return payload AND stops that branch immediately.
+  → Caller reads it as ctx.<callNodeId>.value
+
+OUTPUT SCHEMA (optional typing for callers):
+  outputSchema: [
+    { name: "success", type: "boolean", description: "Whether op succeeded" },
+    { name: "data",    type: "json",    description: "Processed result" }
+  ]
+
+  TO ADD:
+    modify_workflow({ op: "set_path", path: "outputSchema", value: [ ... ] })
+
+TIP: For error paths, add a separate return_value at the end of each guard
+branch — one for success, one for failure — each returning a different payload.
 
 TIP: When you have outputSchema, test by calling the workflow with
-call_function from another workflow — you'll see the typed return value in
-ctx.call.value.
-
-TO ADD:
-  modify_workflow({ op: "set_path", path: "outputSchema", value: [ ... ] })`,
+call_function from another workflow — you'll see the typed return in
+ctx.call.value.`,
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

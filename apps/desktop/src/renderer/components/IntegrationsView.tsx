@@ -154,6 +154,27 @@ function productLabel(slug: string): string {
   }
 }
 
+/** Brand accent classes per Google product (Tailwind-safe inline colors). */
+function googleProductAccent(slug: string): { text: string; bg: string; ring: string; dot: string } {
+  switch (slug) {
+    case 'google-drive':    return { text: 'text-[#1a73e8]', bg: 'bg-[#1a73e8]/10', ring: 'ring-[#1a73e8]/30', dot: 'bg-[#1a73e8]' };
+    case 'google-calendar': return { text: 'text-[#1a73e8]', bg: 'bg-[#1a73e8]/10', ring: 'ring-[#1a73e8]/30', dot: 'bg-[#1a73e8]' };
+    case 'gmail':           return { text: 'text-[#ea4335]', bg: 'bg-[#ea4335]/10', ring: 'ring-[#ea4335]/30', dot: 'bg-[#ea4335]' };
+    case 'google-sheets':   return { text: 'text-[#0f9d58]', bg: 'bg-[#0f9d58]/10', ring: 'ring-[#0f9d58]/30', dot: 'bg-[#0f9d58]' };
+    case 'google-docs':     return { text: 'text-[#4285f4]', bg: 'bg-[#4285f4]/10', ring: 'ring-[#4285f4]/30', dot: 'bg-[#4285f4]' };
+    default:                return { text: 'text-primary',    bg: 'bg-primary/10',    ring: 'ring-primary/30',    dot: 'bg-primary' };
+  }
+}
+
+const GoogleLogo: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+  </svg>
+);
+
 // ─── Google Account Card ─────────────────────────────────────────────────────
 
 interface GoogleAccountCardProps {
@@ -181,15 +202,18 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
   setDefaultProfile,
   deleteProfile,
 }) => {
-  const [showProfiles, setShowProfiles] = useState(false);
+  const [showAccounts, setShowAccounts] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
 
   const googleProfiles = profiles.filter(p => p.provider === 'google');
   const anyConnected = GOOGLE_SLUGS.some(s => !!connectedMap[s]);
   const connectedProducts = GOOGLE_SLUGS.filter(s => !!connectedMap[s]);
   const defaultProfile = googleProfiles.find(p => p.is_default);
+  const totalProducts = googleProducts.length || GOOGLE_SLUGS.length;
+  const accountIdentity = defaultProfile?.account_email || defaultProfile?.profile_label || null;
 
   const handleConnectProduct = async (slug: string) => {
     setConnectingSlug(slug);
@@ -198,6 +222,16 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
     } finally {
       setConnectingSlug(null);
     }
+  };
+
+  const handleSignInAll = async () => {
+    const firstAvailable = googleProducts[0]?.slug || 'gmail';
+    await handleConnectProduct(firstAvailable);
+  };
+
+  const handleConfirmSignOut = async () => {
+    setConfirmingSignOut(false);
+    await handleDisconnect(connectedProducts[0] || 'gmail');
   };
 
   const confirmAddProfile = async () => {
@@ -210,82 +244,93 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card flex h-full min-h-[250px] flex-col transition-all duration-300",
+      "dashboard-card group/google relative flex h-full min-h-[250px] flex-col overflow-hidden transition-all duration-300",
       anyConnected && "border-primary/30"
     )}>
+      {/* Brand top-stripe (subtle) */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-[#4285F4] via-[#EA4335] to-[#0F9D58] opacity-70" aria-hidden="true" />
+
       {/* Header */}
-      <div className="p-5 pb-3">
-        <div className="flex items-start justify-between gap-2">
+      <div className="px-5 pt-5 pb-4">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className={clsx(
-              "w-10 h-10 rounded-lg border flex items-center justify-center transition-all flex-shrink-0",
-              anyConnected ? "bg-primary/5 border-primary/20" : "bg-theme-hover border-theme"
+              "w-11 h-11 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 shadow-sm",
+              anyConnected ? "bg-white border-theme" : "bg-white border-theme"
             )}>
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
+              <GoogleLogo className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">Google</h3>
-              {defaultProfile?.account_email ? (
-                <span className="block truncate text-[11px] text-theme-muted font-medium">{defaultProfile.account_email}</span>
-              ) : defaultProfile?.profile_label ? (
-                <span className="block truncate text-[11px] text-theme-muted font-medium">{defaultProfile.profile_label}</span>
-              ) : (
-                <span className="text-[11px] text-theme-muted font-medium">Drive · Gmail · Calendar · Docs · Sheets</span>
-              )}
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-[15px] text-theme-fg tracking-tight leading-none">Google</h3>
+                {anyConnected && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
+                    <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                    {connectedProducts.length}/{totalProducts}
+                  </span>
+                )}
+              </div>
+              <span className="block truncate mt-1 text-[11px] text-theme-muted font-medium">
+                {accountIdentity || 'Drive · Gmail · Calendar · Docs · Sheets'}
+              </span>
             </div>
           </div>
-          {anyConnected && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/20 flex-shrink-0">
-              <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-              {connectedProducts.length}
-            </span>
+          {anyConnected && googleProfiles.length > 1 && (
+            <button
+              onClick={() => setShowAccounts(v => !v)}
+              className={clsx(
+                "flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-all flex-shrink-0",
+                showAccounts ? "bg-theme-hover text-theme-fg" : "text-theme-muted hover:bg-theme-hover hover:text-theme-fg"
+              )}
+              title="Switch account"
+            >
+              <Users className="w-3 h-3" />
+              {googleProfiles.length}
+              {showAccounts ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
           )}
         </div>
       </div>
 
       {/* Products Grid */}
-      <div className="px-5 pb-2">
-        <div className="grid grid-cols-5 gap-1.5">
+      <div className="px-5">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {googleProducts.map((product: any) => {
             const isActive = !!connectedMap[product.slug];
             const isConnecting = connectingSlug === product.slug;
+            const accent = googleProductAccent(product.slug);
             return (
               <button
                 key={product.slug}
                 onClick={() => isActive ? undefined : handleConnectProduct(product.slug)}
-                disabled={isConnecting}
-                title={productLabel(product.slug)}
+                disabled={isConnecting || isActive}
+                title={isActive ? `${productLabel(product.slug)} · Connected` : `Connect ${productLabel(product.slug)}`}
                 className={clsx(
-                  "relative flex flex-col items-center gap-1 py-2 rounded-md border transition-all duration-200 group/product",
+                  "relative flex flex-col items-center justify-center gap-1.5 py-3 px-1 rounded-lg border transition-all duration-200 group/product",
                   isActive
-                    ? "bg-primary/5 border-primary/25 cursor-default"
-                    : "bg-theme-bg/50 border-theme/60 hover:border-primary/30 hover:bg-primary/5 cursor-pointer active:scale-95",
+                    ? clsx("border-transparent ring-1", accent.bg, accent.ring, "cursor-default")
+                    : "bg-theme-bg/60 border-theme/60 hover:border-primary/40 hover:bg-primary/5 hover:-translate-y-0.5 cursor-pointer active:translate-y-0 active:scale-95",
                   isConnecting && "opacity-60"
                 )}
               >
                 <div className={clsx(
                   "flex items-center justify-center transition-all",
-                  isActive ? "text-primary" : "text-theme-muted group-hover/product:text-primary"
+                  isActive ? accent.text : "text-theme-muted group-hover/product:text-primary"
                 )}>
                   {isConnecting ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    getIntegrationIcon(product.slug, "w-3.5 h-3.5")
+                    getIntegrationIcon(product.slug, "w-4 h-4")
                   )}
                 </div>
                 <span className={clsx(
-                  "text-[9px] font-semibold leading-none tracking-tight text-center",
-                  isActive ? "text-primary" : "text-theme-muted"
+                  "text-[10px] font-semibold leading-none tracking-tight text-center",
+                  isActive ? accent.text : "text-theme-fg/80 group-hover/product:text-theme-fg"
                 )}>
                   {productLabel(product.slug)}
                 </span>
                 {isActive && (
-                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span className={clsx("absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full", accent.dot)} />
                 )}
               </button>
             );
@@ -293,120 +338,154 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
         </div>
       </div>
 
-      {/* Profiles & Actions */}
-      <div className="px-5 pb-4 pt-3 mt-auto border-t border-theme border-dashed">
-        <div className="flex items-center gap-2">
-          {anyConnected ? (
-            <>
-              {googleProfiles.length > 0 && (
-                <button
-                  onClick={() => setShowProfiles(!showProfiles)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
-                >
-                  {googleProfiles.length} profile{googleProfiles.length !== 1 ? 's' : ''}
-                  {showProfiles ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-              )}
-              <div className="ml-auto flex items-center gap-1">
-                <button
-                  onClick={() => setAddingProfile(true)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-primary hover:bg-primary/5 transition-all"
-                >
-                  <Plus className="w-3 h-3" />
-                  Add
-                </button>
-                <button
-                  onClick={() => handleDisconnect(connectedProducts[0] || 'gmail')}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-red-400 hover:bg-red-400/5 transition-all"
-                >
-                  Disconnect
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="text-[10px] text-theme-muted font-medium">Click any product to connect — one login covers them all.</p>
-          )}
-        </div>
-
-        {/* Profile list */}
-        {showProfiles && googleProfiles.length > 0 && (
-          <div className="mt-3 space-y-1.5">
-            {googleProfiles.map(p => {
-              const displayLabel = p.profile_label || 'Default Account';
-              const displayEmail = p.account_email || '';
-              return (
-                <div
-                  key={p.profile_label || 'default'}
-                  className={clsx(
-                    "flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-[11px] transition-all",
-                    p.is_default ? "bg-primary/5 border-primary/20" : "bg-theme-bg border-theme/50 hover:border-theme"
-                  )}
-                >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {p.is_default && <Star className="w-3 h-3 text-amber-400 flex-shrink-0" fill="currentColor" />}
-                    <span className={clsx("font-semibold truncate tracking-tight", p.is_default ? "text-primary" : "text-theme-fg")}>{displayLabel}</span>
-                    {displayEmail && <span className="text-theme-muted truncate">({displayEmail})</span>}
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {!p.is_default && p.profile_label && (
-                      <button
-                        onClick={() => setDefaultProfile('google', p.profile_label)}
-                        className="p-1 rounded text-theme-muted hover:text-amber-400 hover:bg-amber-400/10 transition-all"
-                        title="Set as default"
-                      >
-                        <Star className="w-3 h-3" />
-                      </button>
-                    )}
-                    {p.profile_label && (
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Remove profile "${displayLabel}"?`)) {
-                            deleteProfile('google', p.profile_label);
-                          }
-                        }}
-                        className="p-1 rounded text-theme-muted hover:text-red-400 hover:bg-red-400/10 transition-all"
-                        title="Remove profile"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
+      {/* Account list (collapsed by default) */}
+      {showAccounts && googleProfiles.length > 0 && (
+        <div className="px-5 pt-3 space-y-1.5">
+          {googleProfiles.map(p => {
+            const displayLabel = p.profile_label || 'Default Account';
+            const displayEmail = p.account_email || '';
+            return (
+              <div
+                key={p.profile_label || 'default'}
+                className={clsx(
+                  "flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-[11px] transition-all",
+                  p.is_default ? "bg-primary/5 border-primary/20" : "bg-theme-bg border-theme/60 hover:border-theme"
+                )}
+              >
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  {p.is_default && <Star className="w-3 h-3 text-amber-400 flex-shrink-0" fill="currentColor" />}
+                  <div className="min-w-0">
+                    <div className={clsx("font-semibold truncate tracking-tight leading-none", p.is_default ? "text-primary" : "text-theme-fg")}>{displayLabel}</div>
+                    {displayEmail && <div className="text-theme-muted truncate text-[10px] mt-0.5">{displayEmail}</div>}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {!p.is_default && p.profile_label && (
+                    <button
+                      onClick={() => setDefaultProfile('google', p.profile_label)}
+                      className="p-1 rounded text-theme-muted hover:text-amber-400 hover:bg-amber-400/10 transition-all"
+                      title="Set as default"
+                    >
+                      <Star className="w-3 h-3" />
+                    </button>
+                  )}
+                  {p.profile_label && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Remove profile "${displayLabel}"?`)) {
+                          deleteProfile('google', p.profile_label);
+                        }
+                      }}
+                      className="p-1 rounded text-theme-muted hover:text-red-400 hover:bg-red-400/10 transition-all"
+                      title="Remove profile"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-        {/* Add profile form */}
-        {addingProfile && (
-          <div className="mt-3 p-3 bg-theme-bg rounded-lg border border-dashed border-theme">
-            <div className="text-[10px] font-semibold text-theme-muted mb-2 tracking-tight">New account label</div>
-            <div className="flex gap-2">
-              <input
-                autoFocus
-                value={newProfileName}
-                onChange={e => setNewProfileName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') confirmAddProfile();
-                  if (e.key === 'Escape') { setAddingProfile(false); setNewProfileName(""); }
-                }}
-                placeholder='e.g. "Work", "Personal"'
-                className="flex-1 px-2.5 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-theme-muted/70 transition-all"
-              />
+      {/* Footer / Actions */}
+      <div className="px-5 pb-4 pt-4 mt-auto">
+        {anyConnected ? (
+          confirmingSignOut ? (
+            <div className="flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/5 px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+              <span className="text-[11px] font-medium text-theme-fg flex-1 leading-tight">Sign out disconnects all Google products. Continue?</span>
               <button
-                onClick={confirmAddProfile}
-                disabled={!newProfileName.trim()}
-                className="px-3 py-1.5 rounded-md bg-primary text-primary-fg text-[11px] font-semibold hover:opacity-90 disabled:opacity-50 transition-all shadow-sm active:scale-95"
+                onClick={() => setConfirmingSignOut(false)}
+                className="px-2 py-1 rounded-md text-[10px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
               >
-                Connect
+                Cancel
               </button>
               <button
-                onClick={() => { setAddingProfile(false); setNewProfileName(""); }}
-                className="p-1.5 rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                onClick={handleConfirmSignOut}
+                className="px-2.5 py-1 rounded-md bg-red-500 text-white text-[10px] font-bold hover:bg-red-600 transition-all active:scale-95 shadow-sm"
               >
-                <X className="w-4 h-4" />
+                Sign out
               </button>
             </div>
+          ) : addingProfile ? (
+            <div className="rounded-lg border border-dashed border-primary/30 bg-primary/5 p-2.5">
+              <div className="text-[10px] font-semibold text-theme-muted mb-2 tracking-tight">Label for the new account</div>
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  value={newProfileName}
+                  onChange={e => setNewProfileName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') confirmAddProfile();
+                    if (e.key === 'Escape') { setAddingProfile(false); setNewProfileName(""); }
+                  }}
+                  placeholder='e.g. "Work", "Personal"'
+                  className="flex-1 px-2.5 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-theme-muted/70 transition-all"
+                />
+                <button
+                  onClick={confirmAddProfile}
+                  disabled={!newProfileName.trim()}
+                  className="px-3 py-1.5 rounded-md bg-primary text-primary-fg text-[11px] font-semibold hover:opacity-90 disabled:opacity-50 transition-all shadow-sm active:scale-95"
+                >
+                  Continue
+                </button>
+                <button
+                  onClick={() => { setAddingProfile(false); setNewProfileName(""); }}
+                  className="p-1.5 rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                  title="Cancel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setAddingProfile(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-theme/60 text-[11px] font-semibold text-theme-muted hover:text-primary hover:border-primary/30 hover:bg-primary/5 transition-all"
+                title="Add another Google account"
+              >
+                <Plus className="w-3 h-3" />
+                Add account
+              </button>
+              {googleProfiles.length > 0 && googleProfiles.length <= 1 && (
+                <button
+                  onClick={() => setShowAccounts(v => !v)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                >
+                  {showAccounts ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  Manage
+                </button>
+              )}
+              <div className="flex-1" />
+              <button
+                onClick={() => setConfirmingSignOut(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold text-theme-muted hover:text-red-400 hover:bg-red-400/5 transition-all"
+                title="Sign out of Google"
+              >
+                Sign out
+              </button>
+            </div>
+          )
+        ) : (
+          <div className="space-y-2.5">
+            <button
+              onClick={handleSignInAll}
+              disabled={!!connectingSlug}
+              className="w-full h-9 flex items-center justify-center gap-2 rounded-md bg-white border border-theme text-[12px] font-semibold text-[#3c4043] hover:bg-[#f8f9fa] hover:border-[#d2e3fc] transition-all shadow-sm active:scale-[0.98] disabled:opacity-60"
+            >
+              {connectingSlug ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[#5f6368]" />
+              ) : (
+                <GoogleLogo className="w-4 h-4" />
+              )}
+              {connectingSlug ? 'Opening Google…' : 'Sign in with Google'}
+            </button>
+            <p className="text-[10px] text-theme-muted text-center font-medium leading-snug">
+              One sign-in covers Drive, Gmail, Calendar, Docs &amp; Sheets. Or click any product above to connect just that one.
+            </p>
           </div>
         )}
       </div>

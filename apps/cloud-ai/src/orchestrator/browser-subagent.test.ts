@@ -148,9 +148,23 @@ describe('Browser Pack Tool Resolution', () => {
   it('browser pack prompt documents the observe/verify browser workflow', async () => {
     const { BROWSER_PACK } = await import('./capability-packs');
 
-    expect(BROWSER_PACK.systemPrompt).toContain('Use browser_use_screenshot or browser_use_content after actions to confirm they worked.');
-    expect(BROWSER_PACK.systemPrompt).toContain('Always call browser_use_get_interactive_elements or browser_use_screenshot to observe the new page before acting.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Use browser_use_analyze_screenshot when you need visual interpretation.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Use browser_use_screenshot only when you are stuck, when the user asks for an image, or when you need visual feedback to share back.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Usually call browser_use_get_interactive_elements or browser_use_content to observe the new page before acting.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Do not take routine screenshots after every step.');
     expect(BROWSER_PACK.systemPrompt).toContain('Always prefer elementId from browser_use_get_interactive_elements.');
+  });
+
+  it('browser screenshot analysis tool is exposed without a detailed mode', async () => {
+    const { getExecutionTools } = await import('../agents/stuard/tools');
+
+    const executionTools = getExecutionTools();
+    const tool = executionTools.browser_use_analyze_screenshot as any;
+
+    expect(tool).toBeDefined();
+    expect(() => tool.inputSchema.parse({ task: 'Check the layout' })).not.toThrow();
+    const parsed = tool.inputSchema.parse({ mode: 'detailed' });
+    expect(parsed).not.toHaveProperty('mode');
   });
 
   it('file_ops pack tools all resolve', async () => {
@@ -422,6 +436,7 @@ describe('Desktop Registry vs Cloud Tools Consistency', () => {
       'browser_use_type',
       'browser_use_press_key',
       'browser_use_screenshot',
+      'browser_use_analyze_screenshot',
       'browser_use_content',
       'browser_use_scroll',
       'browser_use_tabs',

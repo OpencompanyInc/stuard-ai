@@ -1,6 +1,28 @@
 import type { DesignerModel, StuardSpec } from "../types";
 
 /**
+ * Best-effort coercion for trigger.inputParams. The Workflow Architect agent
+ * sometimes calls set_path with a JSON-stringified array (e.g.
+ * value: '[{"name":"x","type":"string"}]') instead of a real array — accept
+ * both so the InputParamsEditor renders either way.
+ */
+function coerceInputParams(raw: any): any {
+  if (raw == null) return undefined;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Convert a spec to DesignerModel format.
  * Handles both:
  * - StuardSpec format (steps array with next edges)
@@ -26,13 +48,17 @@ export function specToDesignerModel(spec: any): DesignerModel {
       const nodes = Array.isArray(spec?.nodes) ? spec.nodes : [];
       const wires = Array.isArray(spec?.wires) ? spec.wires : [];
 
-      // Normalize triggers to have positions (sanitize IDs to remove dots)
+      // Normalize triggers to have positions (sanitize IDs to remove dots).
+      // inputParams is a top-level trigger field (workflow-as-function) — it
+      // MUST be preserved here, otherwise modify_workflow set_path edits get
+      // silently stripped before reaching the InputParamsEditor.
       const trigNodes = triggers.map((t: any, i: number) => ({
         id: String(t?.id || `trig_${i}`).replace(/\./g, '_'),
         type: String(t?.type || ''),
         label: t?.label || String(t?.type || 'trigger'),
         args: t?.args || {},
         position: t?.position || { x: 20, y: 20 + i * 60 },
+        inputParams: coerceInputParams(t?.inputParams),
       }));
 
       // Normalize nodes to have positions and required fields
@@ -124,6 +150,7 @@ export function specToDesignerModel(spec: any): DesignerModel {
       label: t?.label || String(t?.type || 'trigger'),
       args: t?.args || {},
       position: t?.position || { x: 20, y: 20 + i * 60 },
+      inputParams: coerceInputParams(t?.inputParams),
     }));
 
     console.log('[conversions] Converted StuardSpec to DesignerModel:', { triggers: trigNodes.length, nodes: nodes.length, wires: wiresFull.length });
