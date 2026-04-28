@@ -22,6 +22,7 @@ import {
 } from '../supabase';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
 import { getVoiceBridgeWs } from './voice-bridge-manager';
+import { getDesktopWs } from '../services/vm-bridge';
 
 const VOICE_RUNTIME_MEMORY_QUERY =
   'important things about me, who I am, my preferences, ongoing projects, current priorities, and context that helps Stuard feel familiar on a live call';
@@ -546,8 +547,17 @@ function trimSummary(text: string, maxChars = MAX_VOICE_MEMORY_SUMMARY_CHARS): s
   return cleaned.length > maxChars ? `${cleaned.slice(0, maxChars - 1)}...` : cleaned;
 }
 
-async function withVoiceBridge<T>(voiceSessionId: string | undefined, fn: () => Promise<T>): Promise<T> {
-  const bridgeWs = getVoiceBridgeWs(voiceSessionId);
+async function withVoiceBridge<T>(
+  voiceSessionId: string | undefined,
+  fn: () => Promise<T>,
+  userId?: string,
+): Promise<T> {
+  // Prefer the bridge registered against this voice session (the desktop WS
+  // that opened a per-session relay). Fall back to the user's main desktop
+  // chat WS so tools still run when no session-specific bridge exists yet —
+  // common when voice sessions start before the per-session bridge is
+  // requested or when reusing the desktop's existing chat WS.
+  const bridgeWs = getVoiceBridgeWs(voiceSessionId) || (userId ? getDesktopWs(userId) : undefined);
   if (!bridgeWs) return fn();
   return withClientBridge(bridgeWs, fn) as Promise<T>;
 }
@@ -580,8 +590,13 @@ function formatVmMemorySummary(payload: any): string {
   return trimSummary(lines.join('\n'));
 }
 
-async function searchMemoryOnDesktop(voiceSessionId: string | undefined, query: string, limit: number): Promise<any> {
-  const bridgeWs = getVoiceBridgeWs(voiceSessionId);
+async function searchMemoryOnDesktop(
+  voiceSessionId: string | undefined,
+  query: string,
+  limit: number,
+  userId?: string,
+): Promise<any> {
+  const bridgeWs = getVoiceBridgeWs(voiceSessionId) || (userId ? getDesktopWs(userId) : undefined);
   if (!bridgeWs) return null;
 
   return withClientBridge(bridgeWs, async () =>
@@ -675,7 +690,7 @@ export async function searchVoiceMemory(
   const safeLimit = coerceLimit(limit, 3, 5);
 
   if (target === 'desktop') {
-    const desktopResult = await searchMemoryOnDesktop(voiceSessionId, query, safeLimit);
+    const desktopResult = await searchMemoryOnDesktop(voiceSessionId, query, safeLimit, userId);
     if (desktopResult?.ok !== false && Array.isArray(desktopResult?.results)) {
       return { ...desktopResult, source: 'desktop' };
     }
@@ -829,9 +844,10 @@ async function dispatchVoiceTool(
   ctx: { userId: string; channel: VoiceRuntimeChannel; voiceSessionId?: string },
 ): Promise<any> {
   const { userId, channel, voiceSessionId } = ctx;
+  const bridge = <T>(fn: () => Promise<T>) => withVoiceBridge(voiceSessionId, fn, userId);
   switch (toolName) {
     case 'search_tools': {
-      const result = await withVoiceBridge(voiceSessionId, async () =>
+      const result = await bridge(async () =>
         (metaSearchTools as any).execute?.({
           query: args.query,
           category: args.category,
@@ -864,7 +880,7 @@ async function dispatchVoiceTool(
         };
       }
 
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (metaGetToolSchema as any).execute?.({ tool_name: requestedTool }, {} as any),
       );
     }
@@ -883,7 +899,7 @@ async function dispatchVoiceTool(
         return dispatchVoiceTool(requestedTool, (args.args && typeof args.args === 'object') ? args.args : {}, ctx);
       }
 
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (metaExecuteTool as any).execute?.({
           tool_name: requestedTool,
           args: args.args || {},
@@ -892,7 +908,7 @@ async function dispatchVoiceTool(
     }
 
     case 'delegate': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (delegate as any).execute?.({
           tasks: Array.isArray(args.tasks) ? args.tasks : [],
         }, {} as any),
@@ -900,7 +916,7 @@ async function dispatchVoiceTool(
     }
 
     case 'reply_to_subagent': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (replyToSubagent as any).execute?.({
           questionId: String(args.questionId || ''),
           answer: String(args.answer || ''),
@@ -942,7 +958,7 @@ async function dispatchVoiceTool(
     }
 
     case 'analyze_media': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (analyzeMediaTool as any).execute?.({
           task: args.task,
           sources: Array.isArray(args.sources) ? args.sources : [],
@@ -952,7 +968,7 @@ async function dispatchVoiceTool(
     }
 
     case 'search_past_conversations': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (search_past_conversations as any).execute?.({
           query: String(args.query || ''),
           limit: coerceLimit(args.limit, 5, 20),
@@ -962,7 +978,7 @@ async function dispatchVoiceTool(
     }
 
     case 'get_conversation_context': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (get_conversation_context as any).execute?.({
           conversation_id: String(args.conversation_id || ''),
           limit: coerceLimit(args.limit, 20, 100),
@@ -971,7 +987,7 @@ async function dispatchVoiceTool(
     }
 
     case 'agent_todo': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (agent_todo as any).execute?.({
           action: String(args.action || ''),
           sessionId: voiceSessionId || userId,
@@ -981,7 +997,7 @@ async function dispatchVoiceTool(
     }
 
     case 'search_local_workflows': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (search_local_workflows as any).execute?.({
           query: typeof args.query === 'string' ? args.query : undefined,
           limit: coerceLimit(args.limit, 10, 50),
@@ -990,7 +1006,7 @@ async function dispatchVoiceTool(
     }
 
     case 'run_workflow': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (run_workflow as any).execute?.({
           id: typeof args.id === 'string' ? args.id : undefined,
           name: typeof args.name === 'string' ? args.name : undefined,
@@ -1001,7 +1017,7 @@ async function dispatchVoiceTool(
     }
 
     case 'deploy_headless_agent': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (deployHeadlessAgent as any).execute?.({
           tasks: Array.isArray(args.tasks) ? args.tasks : [],
           execution_mode: args.execution_mode || 'wait',
@@ -1011,7 +1027,7 @@ async function dispatchVoiceTool(
     }
 
     case 'get_headless_agent_status': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (getHeadlessAgentStatus as any).execute?.({
           taskId: String(args.taskId || ''),
         }, {} as any),
@@ -1019,7 +1035,7 @@ async function dispatchVoiceTool(
     }
 
     case 'list_headless_agent_tasks': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (listHeadlessAgentTasks as any).execute?.({
           status: args.status,
           limit: coerceLimit(args.limit, 25, 100),
@@ -1028,7 +1044,7 @@ async function dispatchVoiceTool(
     }
 
     case 'stop_headless_agent': {
-      return withVoiceBridge(voiceSessionId, async () =>
+      return bridge(async () =>
         (stopHeadlessAgent as any).execute?.({
           task_id: String(args.task_id || ''),
         }, {} as any),

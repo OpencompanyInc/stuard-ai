@@ -80,10 +80,17 @@ function verifyPolarSignature(secret: string, rawBody: string, headers: Record<s
       return { ok: false, reason: 'timestamp_out_of_tolerance' };
     }
 
-    // Polar/standardwebhooks: secret format is "whsec_<base64>". The base64
-    // decodes to the raw HMAC key.
-    const keyB64 = secret.startsWith('whsec_') ? secret.slice(6) : secret;
-    const key = Buffer.from(keyB64, 'base64');
+    // HMAC key derivation:
+    //  - "whsec_<base64>"  → standardwebhooks default. Strip prefix, base64-decode.
+    //  - "polar_whs_..."   → Polar's @polar-sh/sdk does btoa(secret) before
+    //                        passing to standardwebhooks, which then
+    //                        base64-decodes back to the raw UTF-8 bytes of
+    //                        the entire secret string. So the key is simply
+    //                        the secret bytes as-is, prefix included.
+    //  - other             → treat as raw UTF-8 bytes (safe default).
+    const key = secret.startsWith('whsec_')
+      ? Buffer.from(secret.slice(6), 'base64')
+      : Buffer.from(secret, 'utf8');
 
     const signedContent = `${msgId}.${msgTimestamp}.${rawBody}`;
     const expectedSig = createHmac('sha256', key).update(signedContent).digest('base64');

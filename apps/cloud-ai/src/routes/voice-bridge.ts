@@ -26,6 +26,7 @@ import {
   getConfiguredProviders,
   getDefaultProviderId,
   supportsVoiceToolCalling,
+  findToolCapableVoiceProvider,
   buildVoiceContext,
   type VoiceSession,
   type VoiceSessionConfig,
@@ -121,7 +122,21 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
       }
 
       const config = msg as VoiceBridgeConfig;
-      const providerId = config.provider || getDefaultProviderId();
+      const wantTools = !config.disableTools;
+
+      // Pick a provider. When the caller didn't pin one, prefer a tool-capable
+      // provider so the voice agent runs as the orchestrator (delegate, search
+      // tools, run workflows, etc.) instead of degrading to a chat-only voice
+      // when ElevenLabs happens to be the first configured provider.
+      let providerId: string;
+      if (config.provider) {
+        providerId = config.provider;
+      } else if (wantTools) {
+        const toolCapable = findToolCapableVoiceProvider();
+        providerId = toolCapable?.id || getDefaultProviderId();
+      } else {
+        providerId = getDefaultProviderId();
+      }
       const provider = getVoiceProvider(providerId);
 
       if (!provider) {
@@ -135,12 +150,15 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
       }
 
       // Decide whether tools are usable on this provider/session.
-      const wantTools = !config.disableTools;
       const enableVoiceTools = wantTools && supportsVoiceToolCalling(provider);
+      if (wantTools && !enableVoiceTools) {
+        console.warn(`[voice-bridge] Tools disabled — provider '${providerId}' does not support function calling. Configure GOOGLE_API_KEY (gemini-live), OPENAI_API_KEY (openai-realtime), or XAI_API_KEY (grok-realtime) to enable orchestrator tools in voice mode.`);
+      }
 
       // Build orchestrator-style context (prompt + tools) using the desktop
       // client's main chat WS as the bridge for knowledge/runtime lookups.
-      // Falls back gracefully when the desktop isn't available.
+      // Falls back gracefully (Supabase mirror) when the desktop isn't
+      // available or hasn't authenticated yet.
       const desktopWs = userId ? getDesktopWs(userId) : undefined;
       let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
       if (userId) {
@@ -249,12 +267,17 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
           provider: providerId,
           sessionId: session.id,
           tools: effectiveTools.map(t => t.name),
+          toolsEnabled: enableVoiceTools,
+          contextLoaded: !!voiceContext,
+          bridgeAvailable: !!desktopWs,
         });
         writeLog('voice_session_started', {
           userId,
           provider: providerId,
           sessionId: session.id,
           toolCount: effectiveTools.length,
+          toolsEnabled: enableVoiceTools,
+          bridgeAvailable: !!desktopWs,
         });
       } catch (err: any) {
         console.error('[voice-bridge] Session creation failed:', err?.message);

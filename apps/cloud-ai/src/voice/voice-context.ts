@@ -3,8 +3,11 @@
  *
  * Builds user-aware system prompts and tool definitions for AI voice calls.
  * Call-time memory (knowledge facts + recent conversation context) is loaded
- * exclusively through the desktop/VM bridge — we intentionally do NOT fall
- * back to Supabase so voice replies reflect the authoritative device state.
+ * through the desktop/VM bridge when available, then falls back to Supabase's
+ * cloud-synced knowledge so voice still has *some* context when the desktop
+ * bridge is offline or hasn't authenticated yet (the original strict no-
+ * fallback policy left voice sessions context-blind whenever the bridge was
+ * a beat behind, which is the default condition for hold-to-talk triggers).
  * The live model then gets a voice-safe orchestrator-style tool surface for
  * on-demand actions during the call.
  */
@@ -190,11 +193,9 @@ export interface VoiceContext {
 }
 
 /**
- * Load knowledge facts through the desktop bridge (or VM relay when available).
- * Knowledge graph is authoritative on the user's device (desktop SQLite) — we
- * NEVER fall back to Supabase here because cloud-synced knowledge is a lossy
- * mirror and the user explicitly wants call-time context to come from the
- * device that owns the conversation state.
+ * Load knowledge facts. Prefers the desktop/VM bridge (authoritative SQLite),
+ * falls back to the Supabase cloud-synced mirror so voice has at least some
+ * identity/directive/bio context even when the bridge isn't connected yet.
  */
 async function loadKnowledgeFacts(userId: string, bridgeWs?: WebSocket): Promise<{
   identity: Fact[];
@@ -204,27 +205,84 @@ async function loadKnowledgeFacts(userId: string, bridgeWs?: WebSocket): Promise
   const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
 
   const desktopWs = bridgeWs || getDesktopWs(userId);
-  if (!desktopWs) {
-    console.log('[voice-context] No desktop/VM bridge for knowledge facts — proceeding without identity/directive/bio context', {
+  let viaBridge = empty;
+
+  if (desktopWs) {
+    try {
+      viaBridge = await withClientBridge(desktopWs, async () => {
+        const [identity, directives, bio] = await Promise.all([
+          getIdentityLens().catch(() => [] as Fact[]),
+          getDirectiveLens().catch(() => [] as Fact[]),
+          getBioLens(10).catch(() => [] as Fact[]),
+        ]);
+        return { identity, directives, bio };
+      }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
+    } catch (e: any) {
+      console.warn('[voice-context] Desktop bridge knowledge lookup failed, will try cloud fallback:', e?.message);
+    }
+  } else {
+    console.log('[voice-context] No desktop/VM bridge for knowledge facts — using Supabase mirror', {
       userId: userId.slice(0, 8),
     });
-    return empty;
   }
 
+  const haveAny = viaBridge.identity.length || viaBridge.directives.length || viaBridge.bio.length;
+  if (haveAny) return viaBridge;
+
+  // Cloud fallback: read the Supabase mirror so voice always has *some*
+  // identity/directive/bio to ground responses. The mirror can be lossy but
+  // it's still better than zero context.
   try {
-    const result = await withClientBridge(desktopWs, async () => {
-      const [identity, directives, bio] = await Promise.all([
-        getIdentityLens().catch(() => [] as Fact[]),
-        getDirectiveLens().catch(() => [] as Fact[]),
-        getBioLens(10).catch(() => [] as Fact[]),
-      ]);
-      return { identity, directives, bio };
-    }) as { identity: Fact[]; directives: Fact[]; bio: Fact[] };
-    return result;
+    const cloud = await loadKnowledgeFactsFromSupabase(userId);
+    return {
+      identity: viaBridge.identity.length ? viaBridge.identity : cloud.identity,
+      directives: viaBridge.directives.length ? viaBridge.directives : cloud.directives,
+      bio: viaBridge.bio.length ? viaBridge.bio : cloud.bio,
+    };
   } catch (e: any) {
-    console.warn('[voice-context] Desktop bridge knowledge lookup failed:', e?.message);
-    return empty;
+    console.warn('[voice-context] Supabase knowledge fallback failed:', e?.message);
+    return viaBridge;
   }
+}
+
+async function loadKnowledgeFactsFromSupabase(userId: string): Promise<{
+  identity: Fact[];
+  directives: Fact[];
+  bio: Fact[];
+}> {
+  const empty = { identity: [] as Fact[], directives: [] as Fact[], bio: [] as Fact[] };
+  const supabase = getSupabaseService();
+  if (!supabase) return empty;
+
+  const [identityRes, directiveRes, bioRes] = await Promise.all([
+    supabase
+      .from('knowledge_facts')
+      .select('id, category, subtype, attribute_key, text, created_at, validity, source')
+      .eq('owner', userId)
+      .eq('category', 'identity')
+      .eq('validity', true)
+      .limit(20),
+    supabase
+      .from('knowledge_facts')
+      .select('id, category, subtype, attribute_key, text, created_at, validity, source')
+      .eq('owner', userId)
+      .eq('category', 'directive')
+      .eq('validity', true)
+      .limit(20),
+    supabase
+      .from('knowledge_facts')
+      .select('id, category, subtype, attribute_key, text, created_at, validity, source')
+      .eq('owner', userId)
+      .eq('category', 'bio')
+      .eq('validity', true)
+      .limit(10),
+  ]);
+
+  return {
+    identity: (identityRes.data || []) as Fact[],
+    directives: (directiveRes.data || []) as Fact[],
+    bio: (bioRes.data || []) as Fact[],
+  };
 }
 
 async function loadRecentContextFromDesktop(userId: string, bridgeWs?: WebSocket): Promise<string> {
@@ -337,18 +395,61 @@ async function loadUserName(userId: string): Promise<string | undefined> {
 }
 
 /**
- * Load recent conversation context from the device's local SQLite via the
- * desktop/VM bridge. We do NOT fall back to Supabase — cloud-synced
- * conversations are a lossy mirror and call-time recent context should
- * always come from the device that owns the authoritative store.
+ * Load recent conversation context. Prefers the device's local SQLite via the
+ * desktop/VM bridge; falls back to the Supabase mirror so voice still has
+ * recent-history grounding when the bridge is offline.
  */
 async function loadRecentContext(userId: string, bridgeWs?: WebSocket): Promise<string> {
   try {
-    return await loadRecentContextFromDesktop(userId, bridgeWs);
+    const fromDesktop = await loadRecentContextFromDesktop(userId, bridgeWs);
+    if (fromDesktop && fromDesktop.trim()) return fromDesktop;
   } catch (e: any) {
-    console.warn('[voice-context] Failed to load recent context:', e?.message);
+    console.warn('[voice-context] Desktop recent-context lookup failed, will try cloud fallback:', e?.message);
+  }
+
+  try {
+    return await loadRecentContextFromSupabase(userId);
+  } catch (e: any) {
+    console.warn('[voice-context] Supabase recent-context fallback failed:', e?.message);
     return '';
   }
+}
+
+async function loadRecentContextFromSupabase(userId: string): Promise<string> {
+  const supabase = getSupabaseService();
+  if (!supabase) return '';
+
+  const { data: convs } = await supabase
+    .from('conversations')
+    .select('id, title, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(3);
+
+  if (!convs || convs.length === 0) return '';
+
+  const summaries = await Promise.all(convs.map(async (conv) => {
+    const title = conv.title || 'Untitled conversation';
+    const date = new Date(conv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    try {
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('role, content')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(2);
+      if (!msgs || msgs.length === 0) return `[${date}] ${title}`;
+      const preview = msgs.reverse().map((m: any) => {
+        const text = String(m.content || '').slice(0, 80);
+        return `${m.role === 'user' ? 'User' : 'You'}: ${text}${String(m.content).length > 80 ? '...' : ''}`;
+      }).join(' | ');
+      return `[${date}] ${title}: ${preview}`;
+    } catch {
+      return `[${date}] ${title}`;
+    }
+  }));
+
+  return summaries.filter(Boolean).join('\n');
 }
 
 /** Get the voice tools list (for external use) */
