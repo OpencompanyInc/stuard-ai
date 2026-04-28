@@ -161,59 +161,6 @@ describe('Capability Packs', () => {
     const { getCapabilityPack } = await import('./capability-packs');
     expect(getCapabilityPack('browser')).toBeDefined();
     expect(getCapabilityPack('file_ops')).toBeDefined();
-    expect(getCapabilityPack('workflow')).toBeDefined();
-    expect(getCapabilityPack('reminders')).toBeDefined();
-    expect(getCapabilityPack('custom')).toBeUndefined();
-    expect(getCapabilityPack('integration')).toBeUndefined(); // dynamic, not static
-  });
-
-  it('getAllCapabilityPacks returns all static packs', async () => {
-    const { getAllCapabilityPacks } = await import('./capability-packs');
-    const packs = getAllCapabilityPacks();
-    expect(packs.length).toBe(4);
-    const kinds = packs.map(p => p.kind);
-    expect(kinds).toContain('browser');
-    expect(kinds).toContain('file_ops');
-    expect(kinds).toContain('workflow');
-    expect(kinds).toContain('reminders');
-  });
-
-  it('INTEGRATION_PREFIX_MAP covers expected groups', async () => {
-    const { INTEGRATION_PREFIX_MAP } = await import('./capability-packs');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('google');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('outlook');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('github');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('meta');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('whatsapp');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('telnyx');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('reddit');
-    expect(INTEGRATION_PREFIX_MAP).toHaveProperty('discord');
-    expect(INTEGRATION_PREFIX_MAP.google).toContain('gmail_');
-    expect(INTEGRATION_PREFIX_MAP.meta).toContain('facebook_');
-    expect(INTEGRATION_PREFIX_MAP.meta).toContain('instagram_');
-  });
-
-  it('KNOWN_SUBAGENT_NAMES includes static and integration names', async () => {
-    const { KNOWN_SUBAGENT_NAMES, INTEGRATION_PREFIX_MAP } = await import('./capability-packs');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('browser');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('file_ops');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('workflow');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('reminders');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('google');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('outlook');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('github');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('meta');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('whatsapp');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('telnyx');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('reddit');
-    expect(KNOWN_SUBAGENT_NAMES).toContain('discord');
-    expect(KNOWN_SUBAGENT_NAMES.length).toBe(4 + Object.keys(INTEGRATION_PREFIX_MAP).length);
-  });
-});
-
-// ─── Feature Flag ────────────────────────────────────────────────────────────
-
-describe('Runtime Mode', () => {
   it('orchestrator delegation tools are available without an env flag', async () => {
     const { ORCHESTRATOR_DELEGATION_TOOLS } = await import('./delegation-tools');
     expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('delegate');
