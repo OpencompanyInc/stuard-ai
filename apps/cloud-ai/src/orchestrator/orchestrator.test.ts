@@ -161,6 +161,8 @@ describe('Capability Packs', () => {
     const { getCapabilityPack } = await import('./capability-packs');
     expect(getCapabilityPack('browser')).toBeDefined();
     expect(getCapabilityPack('file_ops')).toBeDefined();
+  });
+
   it('orchestrator delegation tools are available without an env flag', async () => {
     const { ORCHESTRATOR_DELEGATION_TOOLS } = await import('./delegation-tools');
     expect(ORCHESTRATOR_DELEGATION_TOOLS).toHaveProperty('delegate');
