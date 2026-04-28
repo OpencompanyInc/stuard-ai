@@ -64,6 +64,32 @@ export function getVoiceBridgeWs(sessionId: string | undefined): WebSocket | und
 }
 
 /**
+ * Wait up to `timeoutMs` for a desktop bridge WS to register for this
+ * voice session. Resolves with the WS as soon as it lands (or null on
+ * timeout). Used by the browser /voice handler when the desktop renderer
+ * has already kicked off `openVoiceBridge(sessionId)` via IPC and the
+ * per-session bridge is in flight.
+ */
+export function awaitVoiceBridge(
+  sessionId: string,
+  timeoutMs = 8_000,
+): Promise<WebSocket | null> {
+  const existing = getVoiceBridgeWs(sessionId);
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise<WebSocket | null>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingBridges.delete(sessionId);
+      resolve(null);
+    }, timeoutMs);
+    pendingBridges.set(sessionId, {
+      resolve: (ws) => resolve(ws),
+      timer,
+    });
+  });
+}
+
+/**
  * Tear down the bridge for a voice session (call this when the call ends).
  */
 export function cleanupVoiceBridge(sessionId: string): void {
@@ -90,7 +116,7 @@ export function cleanupVoiceBridge(sessionId: string): void {
 export async function requestDesktopBridge(
   userId: string,
   sessionId: string,
-  channel: 'telnyx' | 'discord',
+  channel: 'telnyx' | 'discord' | 'browser',
 ): Promise<WebSocket | null> {
   const existing = getVoiceBridgeWs(sessionId);
   if (existing) return existing;

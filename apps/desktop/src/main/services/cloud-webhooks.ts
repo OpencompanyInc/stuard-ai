@@ -707,7 +707,7 @@ function getCloudAiWsUrl(): string {
     return `${wsProto}${host}/ws`;
 }
 
-function openVoiceBridge(sessionId: string): void {
+export function openVoiceBridge(sessionId: string): void {
     if (activeVoiceBridges.has(sessionId)) return;
 
     const token = getMainAccessToken();

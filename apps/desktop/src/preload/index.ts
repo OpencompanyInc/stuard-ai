@@ -581,6 +581,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Debounced fast-path: call after any local mutation that should propagate
   // to the VM promptly. Coalesces rapid calls into a single ~15s upload.
   requestAgentDataPush: () => { try { ipcRenderer.send('cloud:requestAgentDataPush'); } catch { /* noop */ } },
+  // Voice — open a per-session bridge WS so the cloud voice handler can relay
+  // tool calls (search_memory, delegate, etc.) back to the desktop runtime.
+  openVoiceBridge: (sessionId: string) =>
+    ipcRenderer.invoke('voice:openBridge', sessionId) as Promise<{ ok: boolean; error?: string }>,
   // Fires whenever the desktop has just applied a fresh agent-data archive
   // (typically pulled from the VM). Listeners should reload conversation
   // history, memories, knowledge, etc.
