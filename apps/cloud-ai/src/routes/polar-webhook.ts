@@ -63,7 +63,7 @@ const POLAR_SUBSCRIPTION_ID =
 
 const WEBHOOK_TOLERANCE_SECONDS = 300;
 
-function verifyPolarSignature(secret: string, rawBody: string, headers: Record<string, string>): { ok: boolean; reason?: string } {
+function verifyPolarSignature(secret: string, rawBody: string, headers: Record<string, string>): { ok: boolean; reason?: string; expectedPreview?: string } {
   try {
     const msgId        = headers['webhook-id'] || '';
     const msgTimestamp = headers['webhook-timestamp'] || '';
@@ -80,24 +80,29 @@ function verifyPolarSignature(secret: string, rawBody: string, headers: Record<s
       return { ok: false, reason: 'timestamp_out_of_tolerance' };
     }
 
-    // HMAC key derivation:
-    //  - "whsec_<base64>"  → standardwebhooks default. Strip prefix, base64-decode.
-    //  - "polar_whs_..."   → Polar's @polar-sh/sdk does btoa(secret) before
-    //                        passing to standardwebhooks, which then
-    //                        base64-decodes back to the raw UTF-8 bytes of
-    //                        the entire secret string. So the key is simply
-    //                        the secret bytes as-is, prefix included.
-    //  - other             → treat as raw UTF-8 bytes (safe default).
-    const key = secret.startsWith('whsec_')
-      ? Buffer.from(secret.slice(6), 'base64')
-      : Buffer.from(secret, 'utf8');
+    // Try several candidate HMAC key derivations — Polar / standardwebhooks
+    // is fiddly enough that we'd rather match-or-explain than silently fail.
+    const candidates: Array<{ label: string; key: Buffer }> = [];
+    // Polar SDK behavior: HMAC key is raw UTF-8 bytes of the full secret string.
+    candidates.push({ label: 'raw_utf8', key: Buffer.from(secret, 'utf8') });
+    // Standardwebhooks "whsec_<base64>" format.
+    if (secret.startsWith('whsec_')) {
+      try { candidates.push({ label: 'whsec_b64', key: Buffer.from(secret.slice(6), 'base64') }); } catch {}
+    }
+    // "polar_whs_<base64>" — same shape but with Polar's prefix; some integrations
+    // expect this branch.
+    if (secret.startsWith('polar_whs_')) {
+      try { candidates.push({ label: 'polar_b64', key: Buffer.from(secret.slice('polar_whs_'.length), 'base64') }); } catch {}
+    }
+    // Last resort: treat the whole thing as base64 directly.
+    try { candidates.push({ label: 'b64_whole', key: Buffer.from(secret, 'base64') }); } catch {}
 
     const signedContent = `${msgId}.${msgTimestamp}.${rawBody}`;
-    const expectedSig = createHmac('sha256', key).update(signedContent).digest('base64');
+    const expectedByLabel: Record<string, string> = {};
+    for (const c of candidates) {
+      expectedByLabel[c.label] = createHmac('sha256', c.key).update(signedContent).digest('base64');
+    }
 
-    // The header may carry multiple signatures separated by spaces, each in
-    // the format "v1,<base64>". Split on whitespace ONLY — the comma is part
-    // of the signature entry, not a separator between entries.
     const provided = msgSig.split(/\s+/).filter(Boolean);
     for (const entry of provided) {
       const idx = entry.indexOf(',');
@@ -105,13 +110,20 @@ function verifyPolarSignature(secret: string, rawBody: string, headers: Record<s
       const version = entry.slice(0, idx);
       const sig = entry.slice(idx + 1);
       if (version !== 'v1') continue;
-      try {
-        const a = Buffer.from(sig, 'base64');
-        const b = Buffer.from(expectedSig, 'base64');
-        if (a.length === b.length && timingSafeEqual(a, b)) return { ok: true };
-      } catch {}
+      const sigBuf = (() => { try { return Buffer.from(sig, 'base64'); } catch { return null; } })();
+      if (!sigBuf) continue;
+      for (const c of candidates) {
+        const exp = expectedByLabel[c.label];
+        try {
+          const expBuf = Buffer.from(exp, 'base64');
+          if (sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf)) {
+            return { ok: true, reason: c.label };
+          }
+        } catch {}
+      }
     }
-    return { ok: false, reason: 'signature_mismatch' };
+    const preview = candidates.map((c) => `${c.label}=${expectedByLabel[c.label].slice(0, 10)}`).join(' ');
+    return { ok: false, reason: 'signature_mismatch', expectedPreview: preview };
   } catch (e: any) {
     return { ok: false, reason: `exception:${e?.message || 'unknown'}` };
   }
@@ -409,7 +421,9 @@ async function handlePolarEvent(eventType: string, payload: any) {
 export async function handlePolarWebhook(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (req.method !== 'POST' || parsedUrl.pathname !== '/api/webhook') return false;
 
-  const secret = process.env.POLAR_WEBHOOK_SECRET || '';
+  // Trim — Secret Manager values frequently have a trailing newline that
+  // silently breaks HMAC verification.
+  const secret = (process.env.POLAR_WEBHOOK_SECRET || '').trim();
   if (!secret) {
     res.writeHead(500).end(JSON.stringify({ ok: false, error: 'missing_polar_webhook_secret' }));
     return true;
@@ -431,14 +445,24 @@ export async function handlePolarWebhook(req: IncomingMessage, res: ServerRespon
 
   const verify = verifyPolarSignature(secret, raw, headers);
   if (!verify.ok) {
-    writeLog('polar_webhook_bad_signature', {
-      ip: req.socket?.remoteAddress,
+    // TEMP debug: emit to stderr so it lands in Cloud Run logs alongside the
+    // request, and include enough material to diagnose without exposing the
+    // secret or full body. Remove once verification is working.
+    const dbg = {
       reason: verify.reason,
-      hasId: !!headers['webhook-id'],
-      hasTs: !!headers['webhook-timestamp'],
-      hasSig: !!headers['webhook-signature'],
+      ip: req.socket?.remoteAddress,
+      secretLen: secret.length,
+      secretPrefix: secret.slice(0, 10),
       bodyLen: raw.length,
-    });
+      bodyHead: raw.slice(0, 80),
+      bodyTail: raw.slice(-40),
+      headerId: headers['webhook-id'],
+      headerTs: headers['webhook-timestamp'],
+      headerSigPrefix: (headers['webhook-signature'] || '').slice(0, 16),
+      computedSigPrefix: verify.expectedPreview,
+    };
+    try { console.error('[polar_webhook_bad_signature]', JSON.stringify(dbg)); } catch {}
+    writeLog('polar_webhook_bad_signature', dbg);
     res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'invalid_signature', reason: verify.reason }));
     return true;
   }
