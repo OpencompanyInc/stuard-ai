@@ -63,39 +63,50 @@ const POLAR_SUBSCRIPTION_ID =
 
 const WEBHOOK_TOLERANCE_SECONDS = 300;
 
-function verifyPolarSignature(secret: string, rawBody: string, headers: Record<string, string>): boolean {
+function verifyPolarSignature(secret: string, rawBody: string, headers: Record<string, string>): { ok: boolean; reason?: string } {
   try {
     const msgId        = headers['webhook-id'] || '';
     const msgTimestamp = headers['webhook-timestamp'] || '';
     const msgSig       = headers['webhook-signature'] || '';
 
-    if (!msgId || !msgTimestamp || !msgSig) return false;
+    if (!msgId || !msgTimestamp || !msgSig) {
+      return { ok: false, reason: 'missing_headers' };
+    }
 
     const ts = parseInt(msgTimestamp, 10);
-    if (!Number.isFinite(ts)) return false;
+    if (!Number.isFinite(ts)) return { ok: false, reason: 'bad_timestamp' };
     const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - ts) > WEBHOOK_TOLERANCE_SECONDS) return false;
+    if (Math.abs(now - ts) > WEBHOOK_TOLERANCE_SECONDS) {
+      return { ok: false, reason: 'timestamp_out_of_tolerance' };
+    }
 
-    // Decode key: secret may start with "whsec_"
+    // Polar/standardwebhooks: secret format is "whsec_<base64>". The base64
+    // decodes to the raw HMAC key.
     const keyB64 = secret.startsWith('whsec_') ? secret.slice(6) : secret;
     const key = Buffer.from(keyB64, 'base64');
 
     const signedContent = `${msgId}.${msgTimestamp}.${rawBody}`;
     const expectedSig = createHmac('sha256', key).update(signedContent).digest('base64');
-    const expectedBuf = Buffer.from(`v1,${expectedSig}`);
 
-    // Signature header may contain multiple space or comma-separated sigs
-    const provided = msgSig.split(/[\s,]+/).filter(Boolean);
-    return provided.some((sig) => {
+    // The header may carry multiple signatures separated by spaces, each in
+    // the format "v1,<base64>". Split on whitespace ONLY — the comma is part
+    // of the signature entry, not a separator between entries.
+    const provided = msgSig.split(/\s+/).filter(Boolean);
+    for (const entry of provided) {
+      const idx = entry.indexOf(',');
+      if (idx < 0) continue;
+      const version = entry.slice(0, idx);
+      const sig = entry.slice(idx + 1);
+      if (version !== 'v1') continue;
       try {
-        const buf = Buffer.from(sig);
-        return buf.length === expectedBuf.length && timingSafeEqual(buf, expectedBuf);
-      } catch {
-        return false;
-      }
-    });
-  } catch {
-    return false;
+        const a = Buffer.from(sig, 'base64');
+        const b = Buffer.from(expectedSig, 'base64');
+        if (a.length === b.length && timingSafeEqual(a, b)) return { ok: true };
+      } catch {}
+    }
+    return { ok: false, reason: 'signature_mismatch' };
+  } catch (e: any) {
+    return { ok: false, reason: `exception:${e?.message || 'unknown'}` };
   }
 }
 
@@ -411,9 +422,17 @@ export async function handlePolarWebhook(req: IncomingMessage, res: ServerRespon
     else if (Array.isArray(v)) headers[k] = v[0];
   }
 
-  if (!verifyPolarSignature(secret, raw, headers)) {
-    writeLog('polar_webhook_bad_signature', { ip: req.socket?.remoteAddress });
-    res.writeHead(403).end(JSON.stringify({ ok: false, error: 'invalid_signature' }));
+  const verify = verifyPolarSignature(secret, raw, headers);
+  if (!verify.ok) {
+    writeLog('polar_webhook_bad_signature', {
+      ip: req.socket?.remoteAddress,
+      reason: verify.reason,
+      hasId: !!headers['webhook-id'],
+      hasTs: !!headers['webhook-timestamp'],
+      hasSig: !!headers['webhook-signature'],
+      bodyLen: raw.length,
+    });
+    res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'invalid_signature', reason: verify.reason }));
     return true;
   }
 
