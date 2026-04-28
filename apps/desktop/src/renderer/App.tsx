@@ -1667,6 +1667,8 @@ export default function App() {
                     onVoiceMuteToggle={voice.toggleMute}
                     voiceTranscripts={voice.transcripts}
                     voiceActiveTool={voice.activeTool}
+                    voiceActiveTools={voice.activeTools}
+                    voiceLastTool={voice.lastTool}
                     conversations={convList}
                     loadingConversations={loadingConvs}
                     onSelectConversation={handleSelectConversation}
@@ -1740,6 +1742,8 @@ export default function App() {
                 onVoiceMuteToggle={voice.toggleMute}
                 voiceTranscripts={voice.transcripts}
                 voiceActiveTool={voice.activeTool}
+                voiceActiveTools={voice.activeTools}
+                voiceLastTool={voice.lastTool}
                 contextPaths={contextPaths}
                 setContextPaths={setContextPaths}
                 translucentMode={translucentMode}

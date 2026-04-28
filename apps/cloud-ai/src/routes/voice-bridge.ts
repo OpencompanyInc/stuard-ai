@@ -11,6 +11,10 @@
  *   4. Client sends binary PCM16 24kHz audio chunks
  *   5. Server sends binary PCM16 24kHz audio back + JSON transcript messages
  *   6. Either side can close the connection
+ *
+ * The browser session reuses the orchestrator-style voice context (system
+ * prompt + tool surface) and forwards tool call activity back to the UI so
+ * the user sees what's happening in real time.
  */
 
 import { WebSocket } from 'ws';
@@ -21,9 +25,17 @@ import {
   getVoiceProvider,
   getConfiguredProviders,
   getDefaultProviderId,
+  supportsVoiceToolCalling,
+  buildVoiceContext,
   type VoiceSession,
   type VoiceSessionConfig,
 } from '../voice';
+import {
+  executeVoiceToolCall,
+  truncateVoiceToolResult,
+} from '../voice/voice-runtime-tools';
+import { registerVoiceBridge, cleanupVoiceBridge } from '../voice/voice-bridge-manager';
+import { getDesktopWs } from '../services/vm-bridge';
 
 interface VoiceBridgeConfig {
   provider?: string;
@@ -31,6 +43,8 @@ interface VoiceBridgeConfig {
   model?: string;
   systemPrompt?: string;
   initialMessage?: string;
+  /** When true, skip tool injection (e.g. for diagnostic/preview sessions). */
+  disableTools?: boolean;
 }
 
 export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
@@ -38,6 +52,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
   let authenticated = false;
   let userId: string | null = null;
   let isClosed = false;
+  let voiceSessionId: string | null = null;
 
   const authTimeout = setTimeout(() => {
     if (!authenticated) {
@@ -100,6 +115,10 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         session.close('reconfigured');
         session = null;
       }
+      if (voiceSessionId) {
+        cleanupVoiceBridge(voiceSessionId);
+        voiceSessionId = null;
+      }
 
       const config = msg as VoiceBridgeConfig;
       const providerId = config.provider || getDefaultProviderId();
@@ -115,17 +134,47 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         return;
       }
 
+      // Decide whether tools are usable on this provider/session.
+      const wantTools = !config.disableTools;
+      const enableVoiceTools = wantTools && supportsVoiceToolCalling(provider);
+
+      // Build orchestrator-style context (prompt + tools) using the desktop
+      // client's main chat WS as the bridge for knowledge/runtime lookups.
+      // Falls back gracefully when the desktop isn't available.
+      const desktopWs = userId ? getDesktopWs(userId) : undefined;
+      let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
+      if (userId) {
+        try {
+          voiceContext = await buildVoiceContext({
+            userId,
+            direction: 'outbound',
+            customPrompt: config.systemPrompt,
+            bridgeWs: desktopWs,
+            enableTools: enableVoiceTools,
+          });
+        } catch (err: any) {
+          console.warn('[voice-bridge] buildVoiceContext failed, using fallback prompt:', err?.message);
+        }
+      }
+
+      const effectiveSystemPrompt =
+        voiceContext?.systemPrompt ||
+        config.systemPrompt ||
+        'You are Stuard, a helpful AI assistant. Always respond in English. Keep responses concise and conversational.';
+      const effectiveTools = voiceContext?.tools || [];
+
       try {
         const sessionConfig: VoiceSessionConfig = {
           providerId,
           voiceId: config.voice,
           model: config.model,
-          systemPrompt: config.systemPrompt || 'You are Stuard, a helpful AI assistant. Always respond in English. Keep responses concise and conversational.',
+          systemPrompt: effectiveSystemPrompt,
           language: 'en',
           initialMessage: config.initialMessage,
           // Browser sends/receives PCM16 at 24kHz
           inputAudioFormat: 'pcm_24000',
           outputAudioFormat: 'pcm_24000',
+          tools: effectiveTools,
           onTranscript: (role, text, isFinal) => {
             if (!isClosed) {
               send(ws, { type: 'transcript', role, text, isFinal });
@@ -141,9 +190,51 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
               send(ws, { type: 'interruption' });
             }
           },
+          onFunctionCall: (callId, name, argsJson) => {
+            // Surface tool activity to the UI immediately so the user sees
+            // what Stuard is doing instead of staring at silent thinking.
+            if (!isClosed) {
+              send(ws, {
+                type: 'tool_call',
+                callId,
+                name,
+                args: safeParseArgs(argsJson),
+              });
+            }
+            handleFunctionCall(callId, name, argsJson, userId || '', voiceSessionId || '', session, ws, () => isClosed)
+              .catch(err => {
+                console.error('[voice-bridge] Function call error:', err?.message);
+                try {
+                  session?.sendFunctionResult?.(callId, JSON.stringify({
+                    ok: false,
+                    error: err?.message || 'Tool execution failed',
+                    hint: 'Tell the user you hit an issue, apologise briefly, and either retry or move on.',
+                  }));
+                  if (!isClosed) {
+                    send(ws, {
+                      type: 'tool_result',
+                      callId,
+                      name,
+                      ok: false,
+                      error: err?.message || 'Tool execution failed',
+                    });
+                  }
+                } catch (sendErr: any) {
+                  console.error('[voice-bridge] Failed to deliver function error result:', sendErr?.message);
+                }
+              });
+          },
         };
 
         session = await provider.createSession(sessionConfig);
+
+        // Register the desktop WS as a voice bridge keyed by the new
+        // session id so per-tool relays (search_memory, delegate, etc.)
+        // can use the same client connection.
+        voiceSessionId = session.id;
+        if (desktopWs && voiceSessionId) {
+          try { registerVoiceBridge(voiceSessionId, desktopWs); } catch {}
+        }
 
         // Bridge audio from provider back to browser as binary PCM16
         session.onAudio((audioBase64: string) => {
@@ -153,8 +244,18 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
           }
         });
 
-        send(ws, { type: 'ready', provider: providerId, sessionId: session.id });
-        writeLog('voice_session_started', { userId, provider: providerId, sessionId: session.id });
+        send(ws, {
+          type: 'ready',
+          provider: providerId,
+          sessionId: session.id,
+          tools: effectiveTools.map(t => t.name),
+        });
+        writeLog('voice_session_started', {
+          userId,
+          provider: providerId,
+          sessionId: session.id,
+          toolCount: effectiveTools.length,
+        });
       } catch (err: any) {
         console.error('[voice-bridge] Session creation failed:', err?.message);
         send(ws, { type: 'error', message: `session_failed: ${err?.message || 'unknown'}` });
@@ -199,8 +300,65 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
       try { session.close(reason); } catch {}
       session = null;
     }
+    if (voiceSessionId) {
+      cleanupVoiceBridge(voiceSessionId);
+      voiceSessionId = null;
+    }
     writeLog('voice_bridge_disconnected', { userId: userId || 'unauth', reason });
   }
+}
+
+// ── Function Call Execution ────────────────────────────────────────────────
+// Mirrors the telnyx bridge: run the tool, push the result back into the
+// realtime session, and forward a tool_result event to the UI.
+async function handleFunctionCall(
+  callId: string,
+  name: string,
+  argsJson: string,
+  userId: string,
+  voiceSessionId: string,
+  session: VoiceSession | null,
+  clientWs: WebSocket,
+  isClosed: () => boolean,
+): Promise<void> {
+  let result: any;
+  try {
+    result = await executeVoiceToolCall({
+      name,
+      argsJson,
+      userId,
+      channel: 'telnyx', // browser voice reuses the same tool surface; the
+                        // channel only gates SMS, which is fine to allow here.
+      voiceSessionId,
+    });
+  } catch (err: any) {
+    result = {
+      ok: false,
+      error: err?.message || 'Tool crashed',
+    };
+  }
+
+  if (!session || !session.isActive?.()) return;
+
+  try {
+    session.sendFunctionResult?.(callId, truncateVoiceToolResult(result));
+  } catch (sendErr: any) {
+    console.error('[voice-bridge] Failed to send function result to session:', sendErr?.message);
+  }
+
+  if (!isClosed()) {
+    send(clientWs, {
+      type: 'tool_result',
+      callId,
+      name,
+      ok: result?.ok !== false,
+      error: result?.error,
+    });
+  }
+}
+
+function safeParseArgs(argsJson: string): Record<string, any> {
+  try { return JSON.parse(argsJson || '{}'); } catch { return {}; }
 }
 
 function send(ws: WebSocket, data: any) {

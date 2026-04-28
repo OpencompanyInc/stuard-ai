@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { describeTool } from '../components/voice/voiceLabels';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,18 @@ export interface TranscriptLine {
   text: string;
   isFinal: boolean;
   timestamp: number;
+}
+
+export interface VoiceToolEvent {
+  callId: string;
+  name: string;
+  args?: Record<string, any>;
+  /** Friendly label for status surfaces. */
+  label: string;
+  /** When the call started (for elapsed-time display). */
+  startedAt: number;
+  /** Optional sub-label for delegation: e.g. "browser agent". */
+  detail?: string;
 }
 
 export interface VoiceModeOptions {
@@ -45,6 +58,10 @@ export interface VoiceModeReturn {
   transcripts: TranscriptLine[];
   /** Current tool being called (if any) */
   activeTool: string | null;
+  /** All currently in-flight tool calls (multiple may run in parallel via delegate). */
+  activeTools: VoiceToolEvent[];
+  /** Most recently completed tool, briefly held for "Just did X" UI. */
+  lastTool: VoiceToolEvent | null;
   /** Start a voice session */
   start: () => Promise<void>;
   /** End the voice session */
@@ -170,7 +187,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
   const [audioLevel, setAudioLevel] = useState(0);
   const [transcripts, setTranscripts] = useState<TranscriptLine[]>([]);
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [activeTools, setActiveTools] = useState<VoiceToolEvent[]>([]);
+  const [lastTool, setLastTool] = useState<VoiceToolEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const lastToolTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs for mutable session state
   const wsRef = useRef<WebSocket | null>(null);
@@ -228,6 +248,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     setState('idle');
     setAudioLevel(0);
     setActiveTool(null);
+    setActiveTools([]);
+    setLastTool(null);
+    if (lastToolTimeoutRef.current) {
+      clearTimeout(lastToolTimeoutRef.current);
+      lastToolTimeoutRef.current = null;
+    }
     smoothedInputLevel.current = 0;
     smoothedOutputLevel.current = 0;
   }, [stopMic, stopLevelMeter]);
@@ -400,12 +426,48 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
         }
 
         if (msg.type === 'tool_call') {
-          setActiveTool(msg.name || msg.tool || null);
-          setState('thinking');
+          const name = String(msg.name || msg.tool || '');
+          if (name) {
+            const callId = String(msg.callId || `${name}-${Date.now()}`);
+            const args = (msg.args && typeof msg.args === 'object') ? msg.args : undefined;
+            const { label, detail } = describeTool(name, args);
+            const event: VoiceToolEvent = {
+              callId,
+              name,
+              args,
+              label,
+              detail,
+              startedAt: Date.now(),
+            };
+            setActiveTool(name);
+            setActiveTools(prev => {
+              const next = prev.filter(t => t.callId !== callId);
+              next.push(event);
+              return next;
+            });
+            setState('thinking');
+          }
         }
 
         if (msg.type === 'tool_result') {
-          setActiveTool(null);
+          const callId = String(msg.callId || '');
+          let resolved: VoiceToolEvent | undefined;
+          setActiveTools(prev => {
+            const match = prev.find(t => t.callId === callId);
+            if (match) resolved = match;
+            return prev.filter(t => t.callId !== callId);
+          });
+          if (resolved) {
+            setLastTool(resolved);
+            if (lastToolTimeoutRef.current) clearTimeout(lastToolTimeoutRef.current);
+            lastToolTimeoutRef.current = setTimeout(() => setLastTool(null), 2400);
+          }
+          // Only clear the active label if no other tools are running.
+          setActiveTools(curr => {
+            if (curr.length === 0) setActiveTool(null);
+            else setActiveTool(curr[curr.length - 1].name);
+            return curr;
+          });
         }
 
         if (msg.type === 'session_ended') {
@@ -472,6 +534,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     audioLevel,
     transcripts,
     activeTool,
+    activeTools,
+    lastTool,
     start,
     stop,
     toggleMute,

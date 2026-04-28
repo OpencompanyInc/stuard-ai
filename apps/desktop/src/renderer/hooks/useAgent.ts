@@ -2007,6 +2007,15 @@ export function useAgent(options?: string | UseAgentOptions) {
               } catch { }
               // Notify parent about title update so it can update conversation list
               try { onTitleUpdateRef.current?.(cidStr, newTitle); } catch { }
+              // Persist title to local agent DB so the dashboard history shows it
+              try {
+                const agentHttp = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
+                fetch(`${agentHttp}/v1/memory/conversations/${encodeURIComponent(cidStr)}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ title: newTitle }),
+                }).catch(() => {});
+              } catch { }
             }
           } else if (msg.type === 'error') {
             console.error('[agent] Error:', msg.message, 'code:', msg.code);

@@ -1,10 +1,19 @@
 import type { VoiceToolDefinition } from './types';
 import { search_tools as metaSearchTools, get_tool_schema as metaGetToolSchema, execute_tool as metaExecuteTool } from '../tools/meta-tools';
 import { web_search } from '../tools/perplexity-tools';
+import { scrape_url } from '../tools/tavily-tools';
+import { analyzeMediaTool } from '../tools/analyze-media';
+import { waitTool } from '../tools/wait';
+import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
+import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
+import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
+import { stopHeadlessAgent } from '../tools/stop-headless-agent';
+import { get_skill_info } from '../tools/skill-tools';
+import { agent_todo, search_local_workflows, run_workflow } from '../tools/device-tools';
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
 import { withClientBridge } from '../tools/bridge';
 import { sendVMCommand } from '../services/vm-command';
-import { search_past_conversations } from '../tools/device/memory';
+import { search_past_conversations, get_conversation_context } from '../tools/device/memory';
 import {
   getConversationMessages,
   getExternalAccount,
@@ -30,10 +39,23 @@ const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
   reply_to_subagent: 90_000,
   execute_tool: 45_000,
   web_search: 30_000,
+  scrape_url: 30_000,
   search_memory: 20_000,
+  search_past_conversations: 20_000,
+  get_conversation_context: 20_000,
   search_tools: 15_000,
   get_tool_schema: 15_000,
   send_sms: 15_000,
+  analyze_media: 60_000,
+  agent_todo: 10_000,
+  search_local_workflows: 15_000,
+  run_workflow: 90_000,
+  deploy_headless_agent: 90_000,
+  get_headless_agent_status: 15_000,
+  list_headless_agent_tasks: 15_000,
+  stop_headless_agent: 15_000,
+  get_skill_info: 10_000,
+  wait: 60_000,
 };
 const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 30_000;
 
@@ -79,8 +101,6 @@ const VOICE_BLOCKED_TOOL_IDS = new Set([
   'chat_ui',
   'custom_ui',
   'update_custom_ui',
-  'search_past_conversations',
-  'get_conversation_context',
 ]);
 
 function makeFunctionTool(
@@ -170,7 +190,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
   makeFunctionTool(
     'delegate',
-    'Delegate a larger task to a specialized subagent, similar to the orchestrator. Use this when the work is multi-step or better suited to a focused specialist.',
+    'Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, discord. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.',
     {
       type: 'object',
       properties: {
@@ -182,7 +202,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
             properties: {
               subagent: {
                 type: 'string',
-                description: 'Subagent name such as browser, file_ops, workflow, google, github, telnyx, or discord.',
+                description: 'Subagent name: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, or discord.',
               },
               instruction: {
                 type: 'string',
@@ -190,13 +210,17 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
               },
               context: {
                 type: 'string',
-                description: 'Optional extra context for the subagent.',
+                description: 'Optional extra context for the subagent (history, IDs, preferences).',
+              },
+              skill: {
+                type: 'string',
+                description: 'Optional user-defined skill name to inject into the delegated subagent context.',
               },
             },
             required: ['subagent', 'instruction'],
           },
           minItems: 1,
-          maxItems: 6,
+          maxItems: 10,
         },
       },
       required: ['tasks'],
@@ -250,6 +274,218 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
         },
       },
       required: ['message'],
+    },
+  ),
+  makeFunctionTool(
+    'scrape_url',
+    'Extract page content from one or more URLs (returns truncated text). Good for quickly reading an article, doc page, or product listing.',
+    {
+      type: 'object',
+      properties: {
+        urls: {
+          description: 'A single URL string or an array of URL strings to scrape.',
+        },
+        extractDepth: {
+          type: 'string',
+          enum: ['basic', 'advanced'],
+          description: 'basic is faster; advanced is higher quality. Default basic.',
+        },
+      },
+      required: ['urls'],
+    },
+  ),
+  makeFunctionTool(
+    'analyze_media',
+    'Analyze media (image, video, audio, PDF) or YouTube URLs, or capture and analyze the user\'s screen. Returns a summary.',
+    {
+      type: 'object',
+      properties: {
+        task: {
+          type: 'string',
+          description: 'Optional prompt — what to look for (e.g. "summarize this video", "what is on the screen?").',
+        },
+        sources: {
+          type: 'array',
+          description: 'Media sources. Each entry can be a URL, local path, base64 data, or { captureScreen: true } to grab the user\'s current screen.',
+          items: {
+            type: 'object',
+            properties: {
+              url: { type: 'string' },
+              path: { type: 'string' },
+              data: { type: 'string' },
+              mimeType: { type: 'string' },
+              captureScreen: { type: 'boolean' },
+            },
+          },
+          minItems: 1,
+        },
+        mode: {
+          type: 'string',
+          enum: ['fast', 'detailed'],
+          description: 'fast = quick model, detailed = higher quality. Default fast.',
+        },
+      },
+      required: ['sources'],
+    },
+  ),
+  makeFunctionTool(
+    'search_past_conversations',
+    'Search the user\'s past conversations (semantic or recent) for context on something they mentioned discussing before.',
+    {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'What to search for. Optional when using filter mode "recent".',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (1-20). Default 5.',
+        },
+        filter: {
+          type: 'object',
+          properties: {
+            mode: {
+              type: 'string',
+              enum: ['auto', 'semantic', 'recent'],
+              description: 'auto: semantic when query exists else recent.',
+            },
+            since: { type: 'string', description: 'ISO datetime (inclusive).' },
+            before: { type: 'string', description: 'ISO datetime (inclusive).' },
+          },
+        },
+      },
+    },
+  ),
+  makeFunctionTool(
+    'get_conversation_context',
+    'Retrieve the full message history from a specific past conversation. Use after search_past_conversations.',
+    {
+      type: 'object',
+      properties: {
+        conversation_id: { type: 'string', description: 'The conversation ID.' },
+        limit: { type: 'number', description: 'Max messages (1-100). Default 20.' },
+      },
+      required: ['conversation_id'],
+    },
+  ),
+  makeFunctionTool(
+    'agent_todo',
+    'Track multi-step tasks during the call. Actions: list, create, bulk_create, start, complete, fail, delete, clear, progress, get_current, get_next, block.',
+    {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'The action to perform.' },
+        data: { description: 'Action-specific data (object).' },
+      },
+      required: ['action'],
+    },
+  ),
+  makeFunctionTool(
+    'search_local_workflows',
+    'List or search the user\'s saved Stuard workflows. Use this before run_workflow to find a matching automation and check what arguments it needs.',
+    {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Optional name/description filter.' },
+        limit: { type: 'number', description: 'Max results (1-50). Default 10.' },
+      },
+    },
+  ),
+  makeFunctionTool(
+    'run_workflow',
+    'Run a local Stuard workflow synchronously by id or name. Match args keys to the workflow\'s inputSchema names.',
+    {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Workflow ID.' },
+        name: { type: 'string', description: 'Workflow name (case-insensitive partial match).' },
+        args: { type: 'object', description: 'Input arguments matching the workflow\'s inputSchema.' },
+        timeoutMs: { type: 'number', description: 'Max execution time in ms (1000-600000). Default 120000.' },
+      },
+    },
+  ),
+  makeFunctionTool(
+    'deploy_headless_agent',
+    'Deploy autonomous headless sub-agents in parallel for longer-running background work. Pass tasks array. execution_mode: "wait" blocks until all finish, "background" returns taskIds immediately.',
+    {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: 'Array of sub-agent tasks. Each task has objective and optional fields (mode, tools_allowed, custom_system_prompt).',
+          items: { type: 'object' },
+          minItems: 1,
+        },
+        execution_mode: {
+          type: 'string',
+          enum: ['wait', 'background'],
+          description: 'wait = block until done; background = return taskIds.',
+        },
+        model: {
+          type: 'string',
+          enum: ['fast', 'balanced', 'smart'],
+          description: 'Model tier. Default fast.',
+        },
+      },
+      required: ['tasks'],
+    },
+  ),
+  makeFunctionTool(
+    'get_headless_agent_status',
+    'Get the status, logs, and result of a previously deployed headless sub-agent.',
+    {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task ID returned by deploy_headless_agent.' },
+      },
+      required: ['taskId'],
+    },
+  ),
+  makeFunctionTool(
+    'list_headless_agent_tasks',
+    'List recent headless sub-agent tasks (optionally filtered by status).',
+    {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['running', 'completed', 'failed'] },
+        limit: { type: 'number', description: 'Max results (1-100). Default 25.' },
+      },
+    },
+  ),
+  makeFunctionTool(
+    'stop_headless_agent',
+    'Stop a running headless sub-agent task.',
+    {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID returned by deploy_headless_agent.' },
+      },
+      required: ['task_id'],
+    },
+  ),
+  makeFunctionTool(
+    'get_skill_info',
+    'Get full details of a user-defined skill (a guidance playbook) by name or ID.',
+    {
+      type: 'object',
+      properties: {
+        skill_id: { type: 'string', description: 'Exact skill ID.' },
+        skill_name: { type: 'string', description: 'Skill name (partial match).' },
+        request_text: { type: 'string', description: 'Optional user request text to help match the best skill.' },
+      },
+    },
+  ),
+  makeFunctionTool(
+    'wait',
+    'Wait for a number of milliseconds. Useful for spacing out actions when polling status.',
+    {
+      type: 'object',
+      properties: {
+        milliseconds: { type: 'number', description: 'Time to wait in ms.' },
+        message: { type: 'string', description: 'Optional status message.' },
+      },
+      required: ['milliseconds'],
     },
   ),
 ];
@@ -541,6 +777,19 @@ const KNOWN_VOICE_TOOLS = new Set([
   'reply_to_subagent',
   'web_search',
   'send_sms',
+  'scrape_url',
+  'analyze_media',
+  'search_past_conversations',
+  'get_conversation_context',
+  'agent_todo',
+  'search_local_workflows',
+  'run_workflow',
+  'deploy_headless_agent',
+  'get_headless_agent_status',
+  'list_headless_agent_tasks',
+  'stop_headless_agent',
+  'get_skill_info',
+  'wait',
 ]);
 
 export async function executeVoiceToolCall(input: {
@@ -683,6 +932,123 @@ async function dispatchVoiceTool(
         };
       }
       return executeSendSms(userId, String(args.message || ''));
+    }
+
+    case 'scrape_url': {
+      return (scrape_url as any).execute?.({
+        urls: args.urls,
+        extractDepth: args.extractDepth || 'basic',
+      }, {} as any);
+    }
+
+    case 'analyze_media': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (analyzeMediaTool as any).execute?.({
+          task: args.task,
+          sources: Array.isArray(args.sources) ? args.sources : [],
+          mode: args.mode || 'fast',
+        }, {} as any),
+      );
+    }
+
+    case 'search_past_conversations': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (search_past_conversations as any).execute?.({
+          query: String(args.query || ''),
+          limit: coerceLimit(args.limit, 5, 20),
+          filter: args.filter && typeof args.filter === 'object' ? args.filter : undefined,
+        }, {} as any),
+      );
+    }
+
+    case 'get_conversation_context': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (get_conversation_context as any).execute?.({
+          conversation_id: String(args.conversation_id || ''),
+          limit: coerceLimit(args.limit, 20, 100),
+        }, {} as any),
+      );
+    }
+
+    case 'agent_todo': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (agent_todo as any).execute?.({
+          action: String(args.action || ''),
+          sessionId: voiceSessionId || userId,
+          data: args.data,
+        }, {} as any),
+      );
+    }
+
+    case 'search_local_workflows': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (search_local_workflows as any).execute?.({
+          query: typeof args.query === 'string' ? args.query : undefined,
+          limit: coerceLimit(args.limit, 10, 50),
+        }, {} as any),
+      );
+    }
+
+    case 'run_workflow': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (run_workflow as any).execute?.({
+          id: typeof args.id === 'string' ? args.id : undefined,
+          name: typeof args.name === 'string' ? args.name : undefined,
+          args: args.args && typeof args.args === 'object' ? args.args : undefined,
+          timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : 120_000,
+        }, {} as any),
+      );
+    }
+
+    case 'deploy_headless_agent': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (deployHeadlessAgent as any).execute?.({
+          tasks: Array.isArray(args.tasks) ? args.tasks : [],
+          execution_mode: args.execution_mode || 'wait',
+          model: args.model || 'fast',
+        }, {} as any),
+      );
+    }
+
+    case 'get_headless_agent_status': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (getHeadlessAgentStatus as any).execute?.({
+          taskId: String(args.taskId || ''),
+        }, {} as any),
+      );
+    }
+
+    case 'list_headless_agent_tasks': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (listHeadlessAgentTasks as any).execute?.({
+          status: args.status,
+          limit: coerceLimit(args.limit, 25, 100),
+        }, {} as any),
+      );
+    }
+
+    case 'stop_headless_agent': {
+      return withVoiceBridge(voiceSessionId, async () =>
+        (stopHeadlessAgent as any).execute?.({
+          task_id: String(args.task_id || ''),
+        }, {} as any),
+      );
+    }
+
+    case 'get_skill_info': {
+      return (get_skill_info as any).execute?.({
+        skill_id: typeof args.skill_id === 'string' ? args.skill_id : undefined,
+        skill_name: typeof args.skill_name === 'string' ? args.skill_name : undefined,
+        request_text: typeof args.request_text === 'string' ? args.request_text : undefined,
+      }, {} as any);
+    }
+
+    case 'wait': {
+      const ms = Math.max(0, Math.min(60_000, Number(args.milliseconds) || 0));
+      return (waitTool as any).execute?.({
+        milliseconds: ms,
+        message: typeof args.message === 'string' ? args.message : undefined,
+      }, {} as any);
     }
 
     default:

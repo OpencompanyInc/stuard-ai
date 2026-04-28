@@ -36,8 +36,10 @@ import {
   CheckCircle,
   CornerDownLeft,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { VoiceOrb, type VoiceState } from "./voice/VoiceOrb";
-import type { TranscriptLine, VoiceModeState } from "../hooks/useVoiceMode";
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
+import { describeTool, friendlyVoiceState } from "./voice/voiceLabels";
 import type {
   UsePlannerDataResult,
   NextUpItem,
@@ -128,6 +130,8 @@ interface LauncherViewProps {
   onVoiceMuteToggle?: () => void;
   voiceTranscripts?: TranscriptLine[];
   voiceActiveTool?: string | null;
+  voiceActiveTools?: VoiceToolEvent[];
+  voiceLastTool?: VoiceToolEvent | null;
 }
 
 // Helper to get icon for next up item
@@ -294,6 +298,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onVoiceMuteToggle,
   voiceTranscripts = [],
   voiceActiveTool,
+  voiceActiveTools = [],
+  voiceLastTool = null,
 }) => {
   const { modelById } = useModelRegistry();
   const CLOUD_AI_HTTP =
@@ -831,6 +837,13 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
   // Voice status overrides default status when voice is active
   const latestVoiceLine = voiceTranscripts[voiceTranscripts.length - 1];
+  const topVoiceTool = voiceActiveTools[voiceActiveTools.length - 1];
+  const voiceFriendlyStatus = topVoiceTool
+    ? topVoiceTool.label
+    : voiceActiveTool
+      ? describeTool(voiceActiveTool).label
+      : friendlyVoiceState(voiceState as any);
+  const voiceFriendlyDetail = topVoiceTool?.detail;
   const voiceStatusText = voiceActive
     ? (voiceActiveTool
         ? `Using ${voiceActiveTool.replace(/_/g, " ")}…`
@@ -1405,82 +1418,165 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               </button>
 
               {voiceActive ? (
-                /* Voice mode — minimal inline strip on the same surface */
-                <div
-                  className={clsx(
-                    "flex items-center gap-2 transition-all",
-                    isCompact
-                      ? "bg-theme-hover/40 rounded-xl px-2 py-1 border border-theme/10"
-                      : "bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 border border-theme/5",
-                  )}
-                >
-                  <div
-                    className="flex-shrink-0 flex items-center justify-center"
-                    style={{ width: isCompact ? 32 : 40, height: isCompact ? 32 : 40 }}
-                  >
-                    <VoiceOrb
-                      state={(voiceState === "connecting" ? "thinking" : voiceState) as VoiceState}
-                      audioLevel={voiceAudioLevel}
-                      size={isCompact ? 32 : 40}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0 px-1">
-                    {latestVoiceLine?.text ? (
-                      <p
-                        className={clsx(
-                          "leading-snug truncate",
-                          isCompact ? "text-[12px]" : "text-[13px]",
-                          latestVoiceLine.role === "user"
-                            ? "text-theme-fg"
-                            : "text-theme-muted italic",
-                          !latestVoiceLine.isFinal && "opacity-70",
-                        )}
-                      >
-                        {latestVoiceLine.text}
-                      </p>
-                    ) : (
-                      <p
-                        className={clsx(
-                          "text-theme-muted tracking-wide",
-                          isCompact ? "text-[11px]" : "text-[13px] font-medium",
-                        )}
-                      >
-                        {voiceState === "connecting"
-                          ? "Connecting…"
-                          : voiceState === "listening"
-                            ? "Listening"
-                            : voiceState === "thinking"
-                              ? "Thinking…"
-                              : voiceState === "speaking"
-                                ? "Speaking"
-                                : "Voice"}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={onVoiceMuteToggle}
-                    title={voiceMuted ? "Unmute" : "Mute"}
+                <motion.div layout className="flex flex-col gap-1.5 relative">
+                  {/* Audio-reactive halo behind the strip */}
+                  <motion.div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 -z-10 rounded-[30px]"
+                    animate={{
+                      boxShadow: voiceState === "listening"
+                        ? `0 0 ${24 + voiceAudioLevel * 32}px rgba(56,189,248,0.22), 0 0 ${48 + voiceAudioLevel * 28}px rgba(56,189,248,0.18)`
+                        : voiceState === "speaking"
+                          ? `0 0 ${28 + voiceAudioLevel * 32}px rgba(167,139,250,0.24), 0 0 ${56 + voiceAudioLevel * 28}px rgba(167,139,250,0.18)`
+                          : voiceState === "thinking"
+                            ? "0 0 28px rgba(251,191,36,0.22), 0 0 56px rgba(251,191,36,0.18)"
+                            : "0 0 24px rgba(99,102,241,0.18), 0 0 48px rgba(99,102,241,0.14)",
+                    }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                  />
+                  <motion.div
+                    layout
                     className={clsx(
-                      "rounded-lg flex items-center justify-center transition-all flex-shrink-0",
-                      isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
-                      voiceMuted
-                        ? "bg-red-500/15 text-red-500"
-                        : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60",
+                      "flex items-center gap-2 transition-colors duration-300 backdrop-blur-xl",
+                      isCompact
+                        ? "bg-theme-hover/50 rounded-xl px-2 py-1 border border-theme/15"
+                        : "bg-theme-hover/55 rounded-[24px] p-1.5 pr-2 border border-theme/10",
                     )}
                   >
-                    {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    onClick={onToggleVoice}
-                    title="Exit voice mode"
-                    className={clsx(
-                      "rounded-lg flex items-center justify-center text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all flex-shrink-0",
-                      isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
+                    <motion.div
+                      layout
+                      initial={{ scale: 0.85 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", stiffness: 380, damping: 28 }}
+                      className="flex-shrink-0 flex items-center justify-center"
+                      style={{ width: isCompact ? 32 : 40, height: isCompact ? 32 : 40 }}
+                    >
+                      <VoiceOrb
+                        state={(voiceState === "connecting" ? "thinking" : voiceState) as VoiceState}
+                        audioLevel={voiceAudioLevel}
+                        size={isCompact ? 32 : 40}
+                      />
+                    </motion.div>
+                    <div className="flex-1 min-w-0 px-1 flex flex-col justify-center">
+                      <AnimatePresence mode="wait">
+                        {latestVoiceLine?.text ? (
+                          <motion.p
+                            key={`t-${latestVoiceLine.id}`}
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -3 }}
+                            transition={{ duration: 0.18 }}
+                            className={clsx(
+                              "leading-snug truncate",
+                              isCompact ? "text-[12px]" : "text-[13px]",
+                              latestVoiceLine.role === "user"
+                                ? "text-theme-fg font-medium"
+                                : "text-theme-fg/70 italic",
+                              !latestVoiceLine.isFinal && "opacity-70",
+                            )}
+                          >
+                            {latestVoiceLine.text}
+                          </motion.p>
+                        ) : (
+                          <motion.div
+                            key={`s-${voiceFriendlyStatus}-${voiceFriendlyDetail || ""}`}
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -3 }}
+                            transition={{ duration: 0.22 }}
+                            className="flex items-center gap-1.5 min-w-0"
+                          >
+                            {(topVoiceTool || voiceActiveTool) && (
+                              <Loader2 size={11} className="animate-spin text-theme-muted flex-shrink-0" />
+                            )}
+                            <span
+                              className={clsx(
+                                "text-theme-fg/85 font-medium tracking-wide truncate",
+                                isCompact ? "text-[11.5px]" : "text-[13px]",
+                              )}
+                            >
+                              {voiceFriendlyStatus}
+                            </span>
+                            {voiceFriendlyDetail && (
+                              <span
+                                className={clsx(
+                                  "text-theme-muted truncate",
+                                  isCompact ? "text-[10.5px]" : "text-[12px]",
+                                )}
+                              >
+                                {voiceFriendlyDetail}
+                              </span>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <button
+                      onClick={onVoiceMuteToggle}
+                      title={voiceMuted ? "Unmute" : "Mute"}
+                      className={clsx(
+                        "rounded-lg flex items-center justify-center transition-all flex-shrink-0",
+                        isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
+                        voiceMuted
+                          ? "bg-red-500/15 text-red-500"
+                          : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60",
+                      )}
+                    >
+                      {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={onToggleVoice}
+                      title="Exit voice mode"
+                      className={clsx(
+                        "rounded-lg flex items-center justify-center text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all flex-shrink-0",
+                        isCompact ? "h-7 w-7" : "h-9 w-9 rounded-[16px]",
+                      )}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </motion.div>
+
+                  <AnimatePresence>
+                    {voiceActiveTools.length > 0 && (
+                      <motion.div
+                        key="lv-tool-rail"
+                        initial={{ opacity: 0, y: -4, height: 0 }}
+                        animate={{ opacity: 1, y: 0, height: "auto" }}
+                        exit={{ opacity: 0, y: -4, height: 0 }}
+                        transition={{ duration: 0.25, ease: "easeOut" }}
+                        className="overflow-hidden"
+                      >
+                        <div className="flex flex-wrap gap-1.5 px-1">
+                          {voiceActiveTools.map((t) => (
+                            <motion.div
+                              key={t.callId}
+                              layout
+                              initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.9, y: -4 }}
+                              transition={{ duration: 0.2 }}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-theme/15 bg-theme-hover/60 backdrop-blur-md px-2.5 py-1 shadow-sm"
+                            >
+                              {t.name === "delegate" ? (
+                                <Sparkles size={10} className="text-violet-500/80" />
+                              ) : (
+                                <Loader2 size={10} className="animate-spin text-theme-muted" />
+                              )}
+                              <span className="text-[11px] text-theme-fg/85 font-medium tracking-wide">
+                                {t.label}
+                              </span>
+                              {t.detail && (
+                                <span className="text-[10.5px] text-theme-muted truncate max-w-[160px]">
+                                  {t.detail}
+                                </span>
+                              )}
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
                     )}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                  </AnimatePresence>
+                </motion.div>
               ) : (
                 <div
                   className={clsx(

@@ -40,8 +40,10 @@ import { handleProactiveRoutes } from './proactive';
 import { handleServerlessChatRoutes } from './serverless-chat';
 import { handleBillingRoutes } from './billing';
 import { handleAccountRoutes } from './account';
+import { handlePolarWebhook } from './polar-webhook';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
+  if (await handlePolarWebhook(req, res, parsedUrl)) return true;
   if (await handleWebhooks(req, res, parsedUrl)) return true;
   if (handleHealth(req, res, parsedUrl)) return true;
   if (await handleModelsRoutes(req, res, parsedUrl)) return true;

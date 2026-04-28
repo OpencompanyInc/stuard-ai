@@ -546,7 +546,7 @@ function DashboardApp() {
       // in parallel so the History view shows BOTH origins. VM conversations
       // carry origin='cloud_vm' while desktop-originated ones are origin='desktop'.
       const token = session?.access_token || null;
-      const [localJson, cloudJson] = await Promise.all([
+      const [localJson, cloudJson, supaData] = await Promise.all([
         agentFetchJson(
           resolveAgentEndpoints(),
           `/v1/memory/conversations?limit=${requestedLimit}&source=stuard`,
@@ -557,6 +557,16 @@ function DashboardApp() {
               headers: { Authorization: `Bearer ${token}` },
             })
               .then(r => r.json())
+              .catch(() => null)
+          : Promise.resolve(null),
+        token
+          ? supabase
+              .from('conversations')
+              .select('id, title, created_at, updated_at, message_count, source')
+              .neq('source', 'workflow')
+              .order('updated_at', { ascending: false })
+              .limit(requestedLimit)
+              .then(r => r.data ?? null)
               .catch(() => null)
           : Promise.resolve(null),
       ]);
@@ -602,8 +612,11 @@ function DashboardApp() {
       if (cloudJson?.ok && Array.isArray(cloudJson.conversations)) {
         ingest(cloudJson.conversations, 'cloud_vm');
       }
+      if (Array.isArray(supaData)) {
+        ingest(supaData, 'desktop');
+      }
 
-      if (byId.size > 0 || localJson?.ok || cloudJson?.ok) {
+      if (byId.size > 0 || localJson?.ok || cloudJson?.ok || supaData) {
         const convs = Array.from(byId.values())
           .sort((a: any, b: any) =>
             new Date(b.updated_at || b.created_at || 0).getTime() -

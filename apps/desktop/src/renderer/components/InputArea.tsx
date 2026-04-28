@@ -12,7 +12,8 @@ import {
   PlusIcon
 } from "@radix-ui/react-icons";
 import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
-import { VoiceOrb } from './voice/VoiceOrb';
+import { VoiceMorphPill } from './voice/VoiceMorphPill';
+import type { VoiceToolEvent } from '../hooks/useVoiceMode';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
@@ -85,6 +86,8 @@ interface InputAreaProps {
   onVoiceMuteToggle?: () => void;
   voiceTranscripts?: Array<{ id: number; role: 'user' | 'assistant'; text: string; isFinal: boolean; timestamp: number }>;
   voiceActiveTool?: string | null;
+  voiceActiveTools?: VoiceToolEvent[];
+  voiceLastTool?: VoiceToolEvent | null;
 
   // Context Paths (for @ mentions)
   contextPaths?: ContextItem[];
@@ -411,6 +414,8 @@ const InputArea = forwardRef(function InputArea(
     onVoiceMuteToggle,
     voiceTranscripts = [],
     voiceActiveTool,
+    voiceActiveTools = [],
+    voiceLastTool = null,
     contextPaths, setContextPaths,
     translucentMode = false,
     accessToken,
@@ -1798,70 +1803,19 @@ const InputArea = forwardRef(function InputArea(
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
               </button>
-            ) : voiceActive ? (
-              /* Voice mode strip — same surface as the input pill */
-              <div className="flex-1 min-h-[42px] bg-white rounded-[21px] border border-gray-200 flex items-center pl-1 pr-1.5 gap-2 transition-all">
-                <div
-                  className="flex-shrink-0 flex items-center justify-center"
-                  style={{ width: 36, height: 36 }}
-                >
-                  <VoiceOrb
-                    state={(voiceState === 'connecting' ? 'thinking' : voiceState) as any}
-                    audioLevel={voiceAudioLevel}
-                    size={36}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  {(() => {
-                    const last = voiceTranscripts[voiceTranscripts.length - 1];
-                    if (last?.text) {
-                      return (
-                        <p className={clsx(
-                          "text-[13px] leading-snug truncate",
-                          last.role === 'user' ? "text-theme-fg font-medium" : "text-theme-muted italic",
-                          !last.isFinal && "opacity-70",
-                        )}>
-                          {last.text}
-                        </p>
-                      );
-                    }
-                    const status = voiceActiveTool
-                      ? `Using ${voiceActiveTool.replace(/_/g, ' ')}…`
-                      : voiceState === 'connecting' ? 'Connecting…'
-                      : voiceState === 'listening' ? 'Listening'
-                      : voiceState === 'thinking' ? 'Thinking…'
-                      : voiceState === 'speaking' ? 'Speaking'
-                      : 'Voice';
-                    return (
-                      <p className="text-[12px] text-theme-muted tracking-wide">{status}</p>
-                    );
-                  })()}
-                </div>
-                <button
-                  type="button"
-                  onClick={onVoiceMuteToggle}
-                  title={voiceMuted ? 'Unmute' : 'Mute'}
-                  className={clsx(
-                    "no-drag h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all",
-                    voiceMuted
-                      ? "bg-red-500/15 text-red-500"
-                      : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60",
-                  )}
-                >
-                  {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={onToggleVoice}
-                  title="Exit voice mode (or release hotkey)"
-                  className="no-drag h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
             ) : (
-              <div className="flex-1 relative min-h-[42px] bg-white rounded-[21px] border border-gray-200 flex items-center px-1.5 py-0.5 transition-all focus-within:ring-2 focus-within:ring-primary/20">
-                {/* Plus / Attach Button */}
+              <VoiceMorphPill
+                voiceActive={voiceActive}
+                voiceState={voiceState}
+                voiceAudioLevel={voiceAudioLevel}
+                voiceMuted={voiceMuted}
+                voiceTranscripts={voiceTranscripts}
+                voiceActiveTools={voiceActiveTools}
+                voiceLastTool={voiceLastTool}
+                voiceActiveToolName={voiceActiveTool}
+                onVoiceMuteToggle={onVoiceMuteToggle}
+                onToggleVoice={onToggleVoice}
+              >
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
@@ -1892,7 +1846,6 @@ const InputArea = forwardRef(function InputArea(
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
 
-                {/* Input Field */}
                 <div className={clsx(
                   "flex-1 relative mx-1 transition-all flex items-center min-h-[36px]"
                 )}>
@@ -1912,7 +1865,7 @@ const InputArea = forwardRef(function InputArea(
                     maxRows={5}
                   />
                 </div>
-              </div>
+              </VoiceMorphPill>
             )}
 
           </div>

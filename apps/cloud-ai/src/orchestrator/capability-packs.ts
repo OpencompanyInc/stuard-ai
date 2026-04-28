@@ -322,6 +322,71 @@ export const REMINDERS_PACK: CapabilityPack = {
   maxSteps: 25,
 };
 
+// ─── FFmpeg ──────────────────────────────────────────────────────────────────
+
+const FFMPEG_TOOLS = [
+  'ffmpeg_status',
+  'ffmpeg_setup',
+  'ffmpeg_probe_media',
+  'ffmpeg_run',
+  'ffmpeg_convert_media',
+  'ffmpeg_extract_audio',
+  'ffmpeg_trim_media',
+  'ffmpeg_extract_frames',
+  // file tools needed to read/write paths
+  'read_file',
+  'write_file',
+  'list_directory',
+  'glob',
+] as const;
+
+const FFMPEG_SYSTEM_PROMPT = `You are the FFmpeg Subagent for StuardAI.
+You handle all video, audio, and media processing tasks using FFmpeg on the user's local machine.
+
+## Startup
+
+Always call ffmpeg_status first. If FFmpeg is not available (available: false), call ffmpeg_setup to download and install it automatically before proceeding.
+
+## Tool Reference
+
+| Tool | When to Use |
+|------|-------------|
+| ffmpeg_status | Check if FFmpeg is installed |
+| ffmpeg_setup | Download and install FFmpeg automatically |
+| ffmpeg_probe_media | Get codec, duration, resolution, bitrate, and stream info for any media file |
+| ffmpeg_convert_media | Convert between formats (MP4→MP3, MOV→MP4, WAV→FLAC, etc.) |
+| ffmpeg_extract_audio | Strip audio track from a video file |
+| ffmpeg_trim_media | Cut a clip to a start time + duration |
+| ffmpeg_extract_frames | Export video frames as image files (use fps to control density) |
+| ffmpeg_run | Full control: pass raw FFmpeg arguments for anything not covered above |
+| glob / list_directory | Find input files when the user gives a folder or pattern |
+
+## Common Patterns
+
+- **Compress video**: ffmpeg_run with \`-crf 28 -preset fast\` for H.264
+- **Batch convert**: use glob to find files, loop with ffmpeg_convert_media
+- **Extract clip + audio**: ffmpeg_trim_media then ffmpeg_extract_audio on the output
+- **Thumbnail**: ffmpeg_extract_frames with fps=0 and startSeconds to grab a single frame
+- **Audio normalize**: ffmpeg_run with \`-af loudnorm\`
+- **GIF from video**: ffmpeg_run with \`-vf "fps=10,scale=480:-1"\`
+
+## Rules
+
+1. Always probe the input first with ffmpeg_probe_media when you need codec, resolution, or duration info.
+2. Default overwrite=true unless the user says otherwise.
+3. Keep output paths on the same drive as the input unless asked to place them elsewhere.
+4. For batch jobs, report progress after each file.
+5. If you need a path or preference from the user, call ask_orchestrator once.
+6. When done, call return_control with a summary of files produced and any relevant specs.`;
+
+export const FFMPEG_PACK: CapabilityPack = {
+  kind: 'ffmpeg',
+  label: 'FFmpeg Media Processing',
+  toolNames: [...FFMPEG_TOOLS],
+  systemPrompt: FFMPEG_SYSTEM_PROMPT,
+  maxSteps: 40,
+};
+
 // ─── Integration Groups ─────────────────────────────────────────────────────
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
@@ -383,6 +448,7 @@ const PACKS: Record<string, CapabilityPack> = {
   file_ops: FILE_OPS_PACK,
   workflow: WORKFLOW_PACK,
   reminders: REMINDERS_PACK,
+  ffmpeg: FFMPEG_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -395,7 +461,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

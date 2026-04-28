@@ -60,6 +60,16 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
     }
   },
 
+  // FFmpeg (media processing — requires ffmpeg installed or auto-setup)
+  { k: 'local.tool', t: 'ffmpeg_status', label: 'FFmpeg: Status', args: {} },
+  { k: 'local.tool', t: 'ffmpeg_setup', label: 'FFmpeg: Install', args: {} },
+  { k: 'local.tool', t: 'ffmpeg_probe_media', label: 'FFmpeg: Probe File', args: { inputPath: 'C:/file.mp4' } },
+  { k: 'local.tool', t: 'ffmpeg_convert_media', label: 'FFmpeg: Convert', args: { inputPath: 'C:/file.mp4', outputPath: 'C:/file.mp3', overwrite: true } },
+  { k: 'local.tool', t: 'ffmpeg_extract_audio', label: 'FFmpeg: Extract Audio', args: { inputPath: 'C:/video.mp4', outputPath: 'C:/audio.mp3', overwrite: true } },
+  { k: 'local.tool', t: 'ffmpeg_trim_media', label: 'FFmpeg: Trim', args: { inputPath: 'C:/file.mp4', outputPath: 'C:/trimmed.mp4', startSeconds: 0, durationSeconds: 30, overwrite: true } },
+  { k: 'local.tool', t: 'ffmpeg_extract_frames', label: 'FFmpeg: Extract Frames', args: { inputPath: 'C:/video.mp4', outputPattern: 'C:/frames/frame_%04d.png', fps: 1, overwrite: true } },
+  { k: 'local.tool', t: 'ffmpeg_run', label: 'FFmpeg: Custom Command', args: { args: ['-hide_banner', '-y', '-i', 'C:/input.mp4', 'C:/output.mp4'] } },
+
   // Screen capture & media
   { k: 'local.tool', t: 'take_screenshot', label: 'Screenshot', args: {} },
   { k: 'local.tool', t: 'capture_media', label: 'Capture Photo', args: { kind: 'photo' } },
@@ -245,10 +255,47 @@ export const STREAM_ITEMS: PaletteItem[] = [
 ];
 
 export const INTEGRATION_ITEMS: PaletteItem[] = [
-  { k: 'cloud.tool', t: 'drive_list_files', label: 'Google Drive', args: {} },
+  // Google Drive
+  { k: 'cloud.tool', t: 'drive_list_files', label: 'Drive: List Files', args: { pageSize: 20 } },
+  { k: 'cloud.tool', t: 'drive_search_files', label: 'Drive: Search Files', args: { query: '', pageSize: 20, fileType: 'any' } },
+  { k: 'cloud.tool', t: 'drive_get_file', label: 'Drive: Get File Metadata', args: { fileId: '' } },
+  { k: 'cloud.tool', t: 'drive_create_file', label: 'Drive: Create File', args: { name: 'file.txt', content: '', mimeType: 'text/plain' } },
+  { k: 'cloud.tool', t: 'drive_create_folder', label: 'Drive: Create Folder', args: { name: 'New Folder' } },
+  { k: 'cloud.tool', t: 'drive_upload_file', label: 'Drive: Upload Local File', args: { path: 'C:/file.txt' } },
+  { k: 'cloud.tool', t: 'drive_download_file', label: 'Drive: Download to Local', args: { fileId: '', path: 'C:/download.bin' } },
+  { k: 'cloud.tool', t: 'drive_export_file', label: 'Drive: Export Google File', args: { fileId: '', path: 'C:/export.pdf', exportMimeType: 'application/pdf' } },
+  { k: 'cloud.tool', t: 'drive_update_file', label: 'Drive: Update File Content', args: { fileId: '', path: 'C:/file.txt' } },
+  { k: 'cloud.tool', t: 'drive_move_file', label: 'Drive: Move File', args: { fileId: '', newParentId: '' } },
+  { k: 'cloud.tool', t: 'drive_copy_file', label: 'Drive: Copy File', args: { fileId: '' } },
+  { k: 'cloud.tool', t: 'drive_rename_file', label: 'Drive: Rename File', args: { fileId: '', name: 'New Name' } },
+  { k: 'cloud.tool', t: 'drive_trash_file', label: 'Drive: Trash File', args: { fileId: '' } },
+  { k: 'cloud.tool', t: 'drive_delete_file', label: 'Drive: Delete File (Permanent)', args: { fileId: '' } },
+  { k: 'cloud.tool', t: 'drive_share_file', label: 'Drive: Share File', args: { fileId: '', role: 'reader', type: 'user', emailAddress: '' } },
+  { k: 'cloud.tool', t: 'drive_list_permissions', label: 'Drive: List Permissions', args: { fileId: '' } },
+  { k: 'cloud.tool', t: 'drive_remove_permission', label: 'Drive: Remove Permission', args: { fileId: '', permissionId: '' } },
+  { k: 'cloud.tool', t: 'drive_get_storage_quota', label: 'Drive: Storage Quota', args: {} },
+
+  // Google Calendar
   { k: 'cloud.tool', t: 'calendar_list_events', label: 'Google Calendar', args: {} },
+
+  // Gmail
   { k: 'cloud.tool', t: 'gmail_send_message', label: 'Gmail Send', args: { to: [], subject: '', body: '' } },
-  { k: 'cloud.tool', t: 'sheets_read_range', label: 'Google Sheets', args: { spreadsheetId: '', range: 'Sheet1!A1:B10' } },
+
+  // Google Sheets
+  { k: 'cloud.tool', t: 'sheets_read_range', label: 'Sheets: Read Range', args: { spreadsheetId: '', range: 'Sheet1!A1:B10' } },
+  { k: 'cloud.tool', t: 'sheets_get_spreadsheet', label: 'Sheets: Get Info', args: { spreadsheetId: '' } },
+  { k: 'cloud.tool', t: 'sheets_create_spreadsheet', label: 'Sheets: Create Spreadsheet', args: { title: 'Untitled' } },
+  { k: 'cloud.tool', t: 'sheets_write_range', label: 'Sheets: Write Range', args: { spreadsheetId: '', range: 'Sheet1!A1', values: [[]] } },
+  { k: 'cloud.tool', t: 'sheets_append_rows', label: 'Sheets: Append Rows', args: { spreadsheetId: '', range: 'Sheet1!A:Z', values: [[]] } },
+  { k: 'cloud.tool', t: 'sheets_clear_range', label: 'Sheets: Clear Range', args: { spreadsheetId: '', range: 'Sheet1!A2:Z' } },
+  { k: 'cloud.tool', t: 'sheets_add_sheet', label: 'Sheets: Add Sheet/Tab', args: { spreadsheetId: '', title: 'Sheet2' } },
+  { k: 'cloud.tool', t: 'sheets_batch_update_values', label: 'Sheets: Batch Write', args: { spreadsheetId: '', data: [{ range: 'Sheet1!A1', values: [[]] }] } },
+  { k: 'cloud.tool', t: 'sheets_format_cells', label: 'Sheets: Format Cells', args: { spreadsheetId: '', sheetId: 0, requests: [] } },
+  { k: 'cloud.tool', t: 'sheets_delete_rows_columns', label: 'Sheets: Delete Rows/Cols', args: { spreadsheetId: '', sheetId: 0, dimension: 'ROWS', startIndex: 0, endIndex: 1 } },
+  { k: 'cloud.tool', t: 'sheets_sort_range', label: 'Sheets: Sort Range', args: { spreadsheetId: '', sheetId: 0, range: { startRowIndex: 0, endRowIndex: 100, startColumnIndex: 0, endColumnIndex: 5 }, sortSpecs: [{ dimensionIndex: 0, sortOrder: 'ASCENDING' }] } },
+  { k: 'cloud.tool', t: 'sheets_auto_resize', label: 'Sheets: Auto-Resize Columns', args: { spreadsheetId: '', sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } },
+
+  // Google Docs
   { k: 'cloud.tool', t: 'docs_get_document', label: 'Google Docs', args: { documentId: '' } },
   { k: 'cloud.tool', t: 'docs_create_document', label: 'Create Google Doc', args: { title: 'Untitled' } },
   { k: 'cloud.tool', t: 'docs_write_text', label: 'Write to Google Doc', args: { documentId: '', text: '' } },
