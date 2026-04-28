@@ -347,7 +347,8 @@ async function handlePolarEvent(eventType: string, payload: any) {
   switch (eventType) {
     case 'order.paid': {
       // Skip subscription-cycle orders — handled by subscription.* events
-      if (extractSubscriptionId(payload)) return;
+      const isSub = !!getStringCandidate(payload?.subscriptionId, payload?.subscription_id, payload?.subscription?.id);
+      if (isSub) return;
       await applyAddonGrant(userId, payload);
       break;
     }
