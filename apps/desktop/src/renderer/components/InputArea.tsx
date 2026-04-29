@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight } from 'lucide-react';
 import { VoiceMorphPill } from './voice/VoiceMorphPill';
 import type { VoiceToolEvent } from '../hooks/useVoiceMode';
 import { clsx } from 'clsx';
@@ -35,6 +35,7 @@ interface InputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
+  onSteer?: () => void;
   attachments: Array<{ type: 'image' | 'file'; name: string }>;
   onRemoveAttachment: (index: number) => void;
   onAttachFiles: () => void;
@@ -398,7 +399,7 @@ const FolderPermissionsButton: React.FC = () => {
 
 const InputArea = forwardRef(function InputArea(
   {
-    query, setQuery, onSend,
+    query, setQuery, onSend, onSteer,
     attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
     onPaste, onDrop,
     signedIn, onSignIn,
@@ -839,6 +840,10 @@ const InputArea = forwardRef(function InputArea(
     // Web Search Shortcut (Ctrl+Enter)
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
+      if (miniOutputStreaming && onSteer && query.trim()) {
+        onSteer();
+        return;
+      }
       // We need to access the current default engine here, but states in callbacks can be stale
       // Using a ref or just reading from localStorage is safer for this quick patch, 
       // but simpler is to trust the closure if this callback is recreated when state changes.
@@ -874,7 +879,7 @@ const InputArea = forwardRef(function InputArea(
       e.preventDefault();
       onSend();
     }
-  }, [onSend, query, setQuery]);
+  }, [onSend, onSteer, query, setQuery, miniOutputStreaming]);
 
   // File Navigation State for @ mentions
   const [showFileNav, setShowFileNav] = useState(false);
@@ -1857,7 +1862,7 @@ const InputArea = forwardRef(function InputArea(
                     onKeyDown={handleKeyDown}
                     onPaste={onPaste}
                     onHeightChange={handleHeightChange}
-                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
+                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
                     className={clsx(
                       "w-full bg-transparent outline-none text-[14px] leading-tight py-2 resize-none scrollbar-hidden font-semibold px-1",
                       "text-theme-fg placeholder:text-theme-muted"
@@ -1866,6 +1871,16 @@ const InputArea = forwardRef(function InputArea(
                     maxRows={5}
                   />
                 </div>
+                {miniOutputStreaming && onSteer && query.trim() && (
+                  <button
+                    type="button"
+                    className="w-8 h-8 rounded-full flex items-center justify-center bg-theme-hover/50 text-theme-fg/70 hover:text-theme-fg hover:bg-theme-hover transition-all active:scale-95 border border-theme/10"
+                    title="Steer current step"
+                    onClick={onSteer}
+                  >
+                    <CornerDownRight className="w-4 h-4" />
+                  </button>
+                )}
               </VoiceMorphPill>
             )}
 
@@ -1981,7 +1996,7 @@ const InputArea = forwardRef(function InputArea(
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={onPaste}
-                placeholder={showFileNav ? "Type to filter context..." : miniOutputStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
+                placeholder={showFileNav ? "Type to filter context..." : miniOutputStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
                 className={clsx(
                   "no-drag w-full outline-none text-[13px] leading-normal placeholder:truncate rounded-3xl px-5 py-2 resize-none scrollbar-hidden transition-colors overflow-hidden font-medium",
                   showFileNav

@@ -48,6 +48,10 @@ const DEFAULT_USER_HOME_DIR = (() => {
 })();
 
 function buildOrchestratorPrompt(enabledIntegrations: string[] = [], skills: SkillSummary[] = []): string {
+  const now = new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  });
   const integrationLine = enabledIntegrations.length > 0
     ? `\nConnected integrations: ${enabledIntegrations.join(', ')}`
     : '';
@@ -57,6 +61,7 @@ function buildOrchestratorPrompt(enabledIntegrations: string[] = [], skills: Ski
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
+**Date/Time**: ${now}
 **System**: Windows | Home: ${DEFAULT_USER_HOME_DIR}${integrationLine}
 
 ## How You Work

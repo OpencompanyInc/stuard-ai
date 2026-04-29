@@ -20,7 +20,10 @@ import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-too
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
-import { drainInterjections } from '../socket/state';
+import {
+  appendInterjectionToMessages,
+  drainInterjectionPayload,
+} from '../chat/interjections';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -403,23 +406,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           let injectedSteer = false;
 
           if (Array.isArray(stepMessages)) {
-            const interjections = drainInterjections(ws, requestId);
-            if (interjections.length > 0) {
-              const steerText = interjections
-                .map((item, index) => `Interjection ${index + 1}: ${item.text}`)
-                .join('\n');
-              stepMessages = [
-                ...stepMessages,
-                {
-                  role: 'user',
-                  content: `[User interjection while you were working]\n${steerText}\n\nUse this guidance in the next step before continuing.`,
-                },
-              ];
+            const interjection = drainInterjectionPayload(ws, requestId);
+            if (interjection) {
+              stepMessages = appendInterjectionToMessages(stepMessages, interjection.content);
+              history.push({ role: 'user', content: interjection.content });
               injectedSteer = true;
               send(ws, {
                 type: 'progress',
                 event: 'interjection_applied',
-                data: { count: interjections.length },
+                data: { count: interjection.count },
               });
             }
           }

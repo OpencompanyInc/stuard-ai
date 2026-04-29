@@ -2208,6 +2208,18 @@ export function useAgent(options?: string | UseAgentOptions) {
             }
           } else if (msg.type === 'error') {
             console.error('[agent] Error:', msg.message, 'code:', msg.code);
+
+            // Steer/interjection is auxiliary. If the server is older and doesn't
+            // recognize the message type, don't blow up the in-progress chat —
+            // log it and keep the stream alive. Steering will be a no-op until
+            // the cloud-ai server is updated.
+            const errMsg = String(msg.message || '');
+            if (/unknown type:\s*(interjection|steer)/i.test(errMsg)
+              || (msg.code && /interjection|steer/i.test(String(msg.code)))) {
+              console.warn('[agent] Server rejected steer/interjection; chat continues. Update cloud-ai to enable mid-stream steering.');
+              return;
+            }
+
             const errorTabId = getTargetTabId();
 
             // Check for auth errors that require re-authentication

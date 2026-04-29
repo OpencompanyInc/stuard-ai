@@ -67,6 +67,9 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
 
         cws_lock = asyncio.Lock()
         async with websockets.connect(ws_url, max_size=None) as cws:
+            control_key = request_id or "__default__"
+            control_queue: asyncio.Queue = asyncio.Queue()
+            session.cloud_control_queues[control_key] = control_queue
             payload: Dict[str, Any] = {
                 "type": "chat",
                 "text": text,
@@ -117,122 +120,147 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
             if isinstance(hidden_state_summary, dict):
                 payload["hiddenStateSummary"] = hidden_state_summary
 
-            await cws.send(json.dumps(payload))
+            async def _forward_cloud_controls() -> None:
+                while True:
+                    control_msg = await control_queue.get()
+                    if not isinstance(control_msg, dict):
+                        continue
+                    payload_to_cloud = {k: v for k, v in control_msg.items() if v is not None}
+                    if not payload_to_cloud.get("requestId") and request_id:
+                        payload_to_cloud["requestId"] = request_id
+                    async with cws_lock:
+                        await cws.send(json.dumps(payload_to_cloud))
 
-            conversation_seen = False
-            final_seen = False
-            while True:
-                try:
-                    if final_seen:
-                        # Once the model has finished, only stay open briefly to
-                        # capture an optional `title` event. The previous 20s
-                        # wait caused the website's SSE stream to appear hung
-                        # for up to 20 seconds after every response.
-                        cloud_msg = await asyncio.wait_for(cws.recv(), timeout=2.0)
-                    else:
-                        cloud_msg = await cws.recv()
-                except asyncio.CancelledError:
-                    # Forward stop to cloud AI before exiting
+            control_forwarder = asyncio.create_task(_forward_cloud_controls())
+            try:
+                await cws.send(json.dumps(payload))
+
+                conversation_seen = False
+                final_seen = False
+                while True:
                     try:
-                        await cws.send(json.dumps({"type": "stop"}))
-                    except Exception:
-                        pass
-                    raise
-                except asyncio.TimeoutError:
-                    break
-                except Exception:
-                    break
-
-                try:
-                    cdata = json.loads(cloud_msg)
-                except Exception:
-                    continue
-
-                ctype = str(cdata.get("type") or "").lower()
-                rid = cdata.get("requestId") if isinstance(cdata.get("requestId"), str) else request_id
-
-                if ctype == "routing":
-                    logger.info("cloud_routing model=%s", cdata.get("model"))
-                    await session.progress("routing", {"model": cdata.get("model")}, request_id=rid)
-
-                elif ctype == "delta":
-                    await session.progress("delta", {"text": cdata.get("delta")}, request_id=rid)
-
-                elif ctype == "progress":
-                    ev = str((cdata.get("event") or "")).strip()
-                    data = cdata.get("data") or {}
-                    await session.progress(ev or "progress", data if isinstance(data, dict) else {"value": data}, request_id=rid)
-
-                elif ctype == "conversation":
-                    cid2 = cdata.get("conversationId")
-                    if cid2:
-                        conversation_seen = True
-                        await session.send_json({"type": "conversation", "conversationId": cid2}, request_id=rid)
-
-                elif ctype == "title":
-                    cid2 = cdata.get("conversationId")
-                    title = cdata.get("title")
-                    if cid2 and title:
-                        await session.send_json({"type": "title", "conversationId": cid2, "title": title}, request_id=rid)
                         if final_seen:
-                            break
-
-                elif ctype == "tool_request":
-                    from .tools import handle_cloud_tool_request
-                    # Spawn as concurrent task so multiple tool_requests run in parallel
-                    # (cloud-ai fires them via Promise.all but this loop is sequential).
-                    # cws_lock serializes cws.send() calls across parallel tasks to prevent
-                    # ConcurrencyError from websockets>=12.0 when tools run in parallel.
-                    tool_task = asyncio.create_task(
-                        handle_cloud_tool_request(cdata, session, cws, request_id=rid, cws_lock=cws_lock)
-                    )
-                    session.active_tool_tasks.add(tool_task)
-                    def _cleanup_tool(_t: asyncio.Task) -> None:
+                            # Once the model has finished, only stay open briefly to
+                            # capture an optional `title` event. The previous 20s
+                            # wait caused the website's SSE stream to appear hung
+                            # for up to 20 seconds after every response.
+                            cloud_msg = await asyncio.wait_for(cws.recv(), timeout=2.0)
+                        else:
+                            cloud_msg = await cws.recv()
+                    except asyncio.CancelledError:
+                        # Forward stop to cloud AI before exiting
                         try:
-                            session.active_tool_tasks.discard(_t)
+                            async with cws_lock:
+                                await cws.send(json.dumps({"type": "stop", "requestId": request_id}))
                         except Exception:
                             pass
-                    try:
-                        tool_task.add_done_callback(_cleanup_tool)
+                        raise
+                    except asyncio.TimeoutError:
+                        break
                     except Exception:
-                        pass
+                        break
 
-                elif ctype == "final":
-                    logger.info("cloud_final model=%s", cdata.get("model"))
-                    result = cdata.get("result") or {}
-                    model = cdata.get("model")
-                    out: Dict[str, Any] = {
-                        "type": "final",
-                        "origin": "agent",
-                        "result": result,
-                    }
-                    cid2 = cdata.get("conversationId")
-                    if cid2:
-                        out["conversationId"] = cid2
-                    if model:
-                        out["model"] = model
-                    await session.send_json(out, request_id=rid)
-                    if conversation_seen:
-                        final_seen = True
+                    try:
+                        cdata = json.loads(cloud_msg)
+                    except Exception:
                         continue
-                    break
 
-                elif ctype == "tool_event":
-                    evt = dict(cdata)
-                    evt.pop("type", None)
-                    await session.progress("tool_event", evt, request_id=rid)
+                    ctype = str(cdata.get("type") or "").lower()
+                    rid = cdata.get("requestId") if isinstance(cdata.get("requestId"), str) else request_id
 
-                elif ctype in ("subagent_event", "subagent_question", "subagent_answer", "subagent_complete"):
-                    # Relay subagent protocol messages to the desktop client.
-                    # The desktop UI uses these for richer task lifecycle updates.
-                    payload = dict(cdata)
-                    payload["type"] = ctype
-                    await session.send_json(payload, request_id=rid)
+                    if ctype == "routing":
+                        logger.info("cloud_routing model=%s", cdata.get("model"))
+                        await session.progress("routing", {"model": cdata.get("model")}, request_id=rid)
 
-                elif ctype == "error":
-                    logger.warning("cloud_error message=%s", cdata.get("message"))
-                    await session.send_json({"type": "error", "message": cdata.get("message") or "cloud error"}, request_id=rid)
-                    break
+                    elif ctype == "delta":
+                        await session.progress("delta", {"text": cdata.get("delta")}, request_id=rid)
+
+                    elif ctype == "progress":
+                        ev = str((cdata.get("event") or "")).strip()
+                        data = cdata.get("data") or {}
+                        await session.progress(ev or "progress", data if isinstance(data, dict) else {"value": data}, request_id=rid)
+
+                    elif ctype == "conversation":
+                        cid2 = cdata.get("conversationId")
+                        if cid2:
+                            conversation_seen = True
+                            await session.send_json({"type": "conversation", "conversationId": cid2}, request_id=rid)
+
+                    elif ctype == "title":
+                        cid2 = cdata.get("conversationId")
+                        title = cdata.get("title")
+                        if cid2 and title:
+                            await session.send_json({"type": "title", "conversationId": cid2, "title": title}, request_id=rid)
+                            if final_seen:
+                                break
+
+                    elif ctype == "tool_request":
+                        from .tools import handle_cloud_tool_request
+                        # Spawn as concurrent task so multiple tool_requests run in parallel
+                        # (cloud-ai fires them via Promise.all but this loop is sequential).
+                        # cws_lock serializes cws.send() calls across parallel tasks to prevent
+                        # ConcurrencyError from websockets>=12.0 when tools run in parallel.
+                        tool_task = asyncio.create_task(
+                            handle_cloud_tool_request(cdata, session, cws, request_id=rid, cws_lock=cws_lock)
+                        )
+                        session.active_tool_tasks.add(tool_task)
+                        def _cleanup_tool(_t: asyncio.Task) -> None:
+                            try:
+                                session.active_tool_tasks.discard(_t)
+                            except Exception:
+                                pass
+                        try:
+                            tool_task.add_done_callback(_cleanup_tool)
+                        except Exception:
+                            pass
+
+                    elif ctype == "final":
+                        logger.info("cloud_final model=%s", cdata.get("model"))
+                        result = cdata.get("result") or {}
+                        model = cdata.get("model")
+                        out: Dict[str, Any] = {
+                            "type": "final",
+                            "origin": "agent",
+                            "result": result,
+                        }
+                        cid2 = cdata.get("conversationId")
+                        if cid2:
+                            out["conversationId"] = cid2
+                        if model:
+                            out["model"] = model
+                        await session.send_json(out, request_id=rid)
+                        if conversation_seen:
+                            final_seen = True
+                            continue
+                        break
+
+                    elif ctype == "tool_event":
+                        evt = dict(cdata)
+                        evt.pop("type", None)
+                        await session.progress("tool_event", evt, request_id=rid)
+
+                    elif ctype in ("subagent_event", "subagent_question", "subagent_answer", "subagent_complete"):
+                        # Relay subagent protocol messages to the desktop client.
+                        # The desktop UI uses these for richer task lifecycle updates.
+                        payload = dict(cdata)
+                        payload["type"] = ctype
+                        await session.send_json(payload, request_id=rid)
+
+                    elif ctype == "error":
+                        logger.warning("cloud_error message=%s", cdata.get("message"))
+                        await session.send_json({"type": "error", "message": cdata.get("message") or "cloud error"}, request_id=rid)
+                        break
+            finally:
+                try:
+                    control_forwarder.cancel()
+                    await control_forwarder
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+                current_queue = session.cloud_control_queues.get(control_key)
+                if current_queue is control_queue:
+                    session.cloud_control_queues.pop(control_key, None)
 
     except asyncio.CancelledError:
         # Task was cancelled (user pressed stop button)

@@ -569,6 +569,9 @@ export interface MessageMetadata {
   mode?: string;
   tier?: string;
   modelId?: string;
+  kind?: string;
+  interjection?: boolean;
+  appliedTo?: 'step' | 'next_turn';
   usage?: any;
   contextPaths?: Array<{ path: string; name: string; isDirectory: boolean }>;
   attachments?: Array<{

@@ -116,7 +116,14 @@ export const PROACTIVE_SYSTEM_PROMPT = SYSTEM_INSTRUCTIONS;
  * Build the full system instructions, optionally incorporating enabled integrations and skills.
  */
 export function buildSystemInstructions(enabledIntegrations: string[] = [], skills: SkillSummary[] = []): string {
-  let prompt = SYSTEM_INSTRUCTIONS;
+  const now = new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  });
+  let prompt = SYSTEM_INSTRUCTIONS.replace(
+    /\*\*System\*\*:/,
+    `**Date/Time**: ${now}\n**System**:`
+  );
 
   if (enabledIntegrations.length > 0) {
     prompt += `\n\n── ENABLED INTEGRATIONS ──\n${enabledIntegrations.join(', ')}\nThese integrations are connected. You can use their tools directly via execute_tool.`;

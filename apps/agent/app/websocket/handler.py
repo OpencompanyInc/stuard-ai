@@ -116,6 +116,43 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 except Exception:
                     pass
 
+            elif kind == "interjection" or kind == "steer":
+                try:
+                    steer_request_id = str(msg.get("requestId") or "").strip()
+                    text = str(msg.get("text") or "").strip()
+                    control_key = steer_request_id or "__default__"
+                    queue = session.cloud_control_queues.get(control_key)
+                    if queue is None and len(session.cloud_control_queues) == 1:
+                        control_key, queue = next(iter(session.cloud_control_queues.items()))
+                    if queue is not None and text:
+                        await queue.put({
+                            "type": "interjection",
+                            "requestId": steer_request_id or None,
+                            "text": text,
+                            "timestamp": msg.get("timestamp"),
+                        })
+                        await session.send_json({
+                            "type": "interjection_ack",
+                            "accepted": True,
+                            "depth": queue.qsize(),
+                            "message": "queued for next step",
+                        }, request_id=steer_request_id or None)
+                    else:
+                        await session.send_json({
+                            "type": "interjection_ack",
+                            "accepted": False,
+                            "depth": 0,
+                            "message": "no active cloud run",
+                        }, request_id=steer_request_id or None)
+                except Exception:
+                    logger.exception("interjection_forward_failed")
+                    await session.send_json({
+                        "type": "interjection_ack",
+                        "accepted": False,
+                        "depth": 0,
+                        "message": "failed to queue interjection",
+                    })
+
             elif kind == "response":
                 try:
                     req_id = str(msg.get("id") or "").strip()

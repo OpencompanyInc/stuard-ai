@@ -901,16 +901,6 @@ export default function App() {
     const text = (typeof overrideText === 'string' ? overrideText : query).trim();
     if (!text && attachments.length === 0 && contextPaths.length === 0) return;
 
-    if (canSteerCurrentTurn && text && attachments.length === 0 && contextPaths.length === 0) {
-      const queued = steerMessage?.(text);
-      if (queued) {
-        setQuery("");
-        clearTranscript();
-        baseQueryRef.current = "";
-        return;
-      }
-    }
-
     const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
     const isAuto = selected === 'auto';
     const meta = !isAuto ? modelById.get(selected) : undefined;
@@ -977,12 +967,25 @@ export default function App() {
       .then((res: any) => (res?.skills || []).filter((s: any) => s.isActive !== false))
       .catch(() => [])
       .then((skills: any[]) => doSend(skills));
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, steerMessage, canSteerCurrentTurn, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
     handleSendRef.current(overrideText);
   }, []);
+
+  const handleSteer = useCallback(() => {
+    if (!signedIn) { handleSignIn(); return; }
+    const text = query.trim();
+    if (!text || attachments.length > 0 || contextPaths.length > 0 || !canSteerCurrentTurn) return;
+
+    const queued = steerMessage?.(text);
+    if (queued) {
+      setQuery("");
+      clearTranscript();
+      baseQueryRef.current = "";
+    }
+  }, [signedIn, query, attachments.length, contextPaths.length, canSteerCurrentTurn, steerMessage, handleSignIn, clearTranscript]);
 
   // Handle GenUI responses (syntax-based GenUI like ```genui:choices)
   const handleGenUIResponse = useCallback((component: string, result: any) => {
@@ -1656,6 +1659,7 @@ export default function App() {
                     query={query}
                     setQuery={setQuery}
                     onSend={handleSend}
+                    onSteer={handleSteer}
                     onStop={stopGeneration}
                     isStreaming={isStreaming}
                     internalSidebarOpen={internalSidebarOpen}
@@ -1722,6 +1726,7 @@ export default function App() {
                 query={query}
                 setQuery={setQuery}
                 onSend={handleSend}
+                onSteer={handleSteer}
                 attachments={attachments}
                 onRemoveAttachment={handleRemoveAttachment}
                 onAttachFiles={handleAttachFiles}

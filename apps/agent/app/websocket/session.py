@@ -12,6 +12,7 @@ class WebSocketSession:
         self.pending_client_tool_results: Dict[str, asyncio.Future] = {}
         self.active_chat_tasks: set[asyncio.Task] = set()
         self.active_tool_tasks: set[asyncio.Task] = set()
+        self.cloud_control_queues: Dict[str, asyncio.Queue] = {}
         self.folder_session_ids: set[str] = set()
 
         try:

@@ -2,8 +2,8 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { AnimatePresence } from 'framer-motion';
-import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -104,6 +104,7 @@ interface ChatInputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
+  onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
   isRecording?: boolean;
@@ -137,6 +138,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   query,
   setQuery,
   onSend,
+  onSteer,
   onStop,
   isStreaming = false,
   isRecording,
@@ -166,6 +168,25 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
+
+  // Mode that determines what pressing Enter / clicking the primary send button does
+  // while the agent is streaming: 'queue' fires after the current turn, 'steer'
+  // interjects mid-step. Reset back to 'queue' whenever streaming stops.
+  const [interjectMode, setInterjectMode] = useState<'queue' | 'steer'>('queue');
+  useEffect(() => {
+    if (!isStreaming) setInterjectMode('queue');
+  }, [isStreaming]);
+  const canSteer = Boolean(isStreaming && onSteer);
+  // Only surface the steer/queue toggle when the user is actually composing a
+  // message — empty input means there's nothing to send either way.
+  const showInterjectToggle = canSteer && query.trim().length > 0;
+  const sendInActiveMode = useCallback(() => {
+    if (canSteer && interjectMode === 'steer' && query.trim()) {
+      onSteer?.();
+    } else {
+      onSend();
+    }
+  }, [canSteer, interjectMode, onSend, onSteer, query]);
 
   // ── Realtime Voice Conversation Test State ──
   const [rtOpen, setRtOpen] = useState(false);
@@ -563,6 +584,56 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         </div>
       </div>
 
+      {/* Interject Mode Toggle — only visible while streaming with steer support AND user has typed something */}
+      <AnimatePresence initial={false}>
+        {showInterjectToggle && (
+          <motion.div
+            key="interject-mode"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="flex items-center justify-between gap-2 px-3 pt-1 pb-0.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-theme-muted">
+                On send
+              </span>
+              <div className="flex items-center gap-0.5 bg-theme-hover/60 rounded-full p-0.5 border border-theme/10">
+                <button
+                  type="button"
+                  onClick={() => setInterjectMode('steer')}
+                  className={clsx(
+                    "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
+                    interjectMode === 'steer'
+                      ? "bg-primary text-primary-fg"
+                      : "text-theme-muted hover:text-theme-fg"
+                  )}
+                  title="Steer the current step — interjects now, before the next tool runs"
+                >
+                  <CornerDownRight className="w-3 h-3" strokeWidth={2.5} />
+                  Steer step
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInterjectMode('queue')}
+                  className={clsx(
+                    "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
+                    interjectMode === 'queue'
+                      ? "bg-primary text-primary-fg"
+                      : "text-theme-muted hover:text-theme-fg"
+                  )}
+                  title="Queue the message — sends after the current turn finishes"
+                >
+                  <ListTodo className="w-3 h-3" strokeWidth={2.5} />
+                  Queue turn
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Input Row */}
       <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
         <DropdownMenu.Root>
@@ -612,7 +683,11 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
               showFileNav && "text-primary placeholder:text-primary/40"
             )}
-            placeholder={showFileNav ? "Type to filter context..." : isStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
+            placeholder={showFileNav
+              ? "Type to filter context..."
+              : isStreaming
+                ? "Ask next or steer current step"
+                : "Just ask Stuard"}
             value={query}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
             onPaste={onPaste}
@@ -644,7 +719,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                onSend();
+                // Cmd/Ctrl+Enter: quick override → opposite of the active mode
+                if (canSteer && (e.metaKey || e.ctrlKey) && query.trim()) {
+                  if (interjectMode === 'steer') onSend();
+                  else onSteer?.();
+                } else {
+                  sendInActiveMode();
+                }
               }
             }}
             minRows={1}
@@ -676,11 +757,21 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </button>
         ) : query.trim() ? (
           <button
-            onClick={onSend}
+            onClick={sendInActiveMode}
             className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
-            title={isStreaming ? "Steer the next step" : "Send message"}
+            title={
+              canSteer
+                ? interjectMode === 'steer'
+                  ? "Steer current step (Cmd/Ctrl+Enter to queue instead)"
+                  : "Queue after this turn (Cmd/Ctrl+Enter to steer instead)"
+                : "Send message"
+            }
           >
-            <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
+            {canSteer && interjectMode === 'steer' ? (
+              <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
+            ) : (
+              <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
+            )}
           </button>
         ) : (
           <button

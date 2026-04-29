@@ -35,6 +35,7 @@ interface ChatViewProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
+  onSteer?: () => void;
   isRecording?: boolean;
   onMicClick?: () => void;
 
@@ -101,6 +102,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   query,
   setQuery,
   onSend,
+  onSteer,
   isRecording,
   onMicClick,
   conversations,
@@ -355,6 +357,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           query={query}
           setQuery={setQuery}
           onSend={onSend}
+          onSteer={onSteer}
           isRecording={isRecording}
           onMicClick={onMicClick}
           attachments={attachments}

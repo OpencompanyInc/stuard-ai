@@ -11,6 +11,7 @@ import * as memoryService from '../../memory/conversations';
 import { withClientBridge, getBridgeWs } from '../../tools/bridge';
 import {
   addAssistantMessage,
+  addUserMessage,
   finishRun,
   setConversationTitle,
 } from '../../supabase';
@@ -21,9 +22,14 @@ import {
   removePendingApprovalByToolId,
   setTerminalResult,
 } from '../../services/run-state';
-import { conversations, deleteAbortController, drainInterjections, setAbortController } from '../socket/state';
+import { conversations, deleteAbortController, setAbortController } from '../socket/state';
 import { isSISMetaTool, send } from '../socket/helpers';
 import { getHardTimeoutMs } from './provider-options';
+import {
+  appendInterjectionToMessages,
+  drainInterjectionPayload,
+  type InterjectionPayload,
+} from './interjections';
 import type { PreparedChatRequest, StreamChunkRecord } from './types';
 
 interface RuntimeState {
@@ -111,6 +117,22 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     if (!authUser || !conversationId) return;
     try {
       await addAssistantMessage(authUser.userId, conversationId, text, buildMetadata(finishReason));
+    } catch { }
+  };
+
+  const persistUserInterjection = async (
+    interjection: InterjectionPayload,
+    appliedTo: 'step' | 'next_turn',
+  ) => {
+    history.push({ role: 'user', content: interjection.content });
+    if (!authUser || !conversationId) return;
+
+    try {
+      await addUserMessage(authUser.userId, conversationId, interjection.content, {
+        kind: 'steer',
+        interjection: true,
+        appliedTo,
+      });
     } catch { }
   };
 
@@ -280,6 +302,11 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           history.push({ role: 'assistant', content: finalText });
         }
 
+        const carriedInterjection = drainInterjectionPayload(ws, requestId);
+        if (carriedInterjection) {
+          await persistUserInterjection(carriedInterjection, 'next_turn');
+        }
+
         scheduleHistoryCompaction(ws, history);
         if (authUser && conversationId) {
           try {
@@ -325,32 +352,25 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       const preparedStep = typeof basePrepareStep === 'function'
         ? await basePrepareStep(options)
         : undefined;
-      const interjections = drainInterjections(ws, requestId);
-      if (interjections.length === 0) return preparedStep;
+      const interjection = drainInterjectionPayload(ws, requestId);
+      if (!interjection) return preparedStep;
 
-      const steerText = interjections
-        .map((item, index) => `Interjection ${index + 1}: ${item.text}`)
-        .join('\n');
-      const steerMessage = {
-        role: 'user',
-        content: `[User interjection while you were working]\n${steerText}\n\nUse this guidance in the next step before continuing.`,
-      };
       const baseMessages = Array.isArray(preparedStep?.messages)
         ? preparedStep.messages
         : Array.isArray(options?.messages)
           ? options.messages
           : inputMessages;
 
-      history.push({ role: 'user', content: steerMessage.content });
+      await persistUserInterjection(interjection, 'step');
       send(ws, {
         type: 'progress',
         event: 'interjection_applied',
-        data: { count: interjections.length },
+        data: { count: interjection.count },
       }, requestId);
 
       return {
         ...(preparedStep || {}),
-        messages: [...baseMessages, steerMessage],
+        messages: appendInterjectionToMessages(baseMessages, interjection.content),
       };
     };
 
@@ -498,6 +518,15 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
         try {
           if (hardTimeout) clearTimeout(hardTimeout);
         } catch { }
+
+        if (finalText) {
+          history.push({ role: 'assistant', content: finalText });
+        }
+        const carriedInterjection = drainInterjectionPayload(ws, requestId);
+        if (carriedInterjection) {
+          await persistUserInterjection(carriedInterjection, 'next_turn');
+        }
+
         send(ws, {
           type: 'final',
           origin: 'cloud-ai',
