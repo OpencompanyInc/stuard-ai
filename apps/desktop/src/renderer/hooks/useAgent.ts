@@ -147,7 +147,16 @@ export interface PendingMemory {
 export type StreamChunk =
 | { type: 'text'; content: string }
 | { type: 'reasoning'; content: string; nested?: boolean }
-| { type: 'tool'; tool: ToolCall };
+| { type: 'tool'; tool: ToolCall }
+| {
+  type: 'status';
+  id?: string;
+  variant?: 'compacting';
+  label: string;
+  state: 'active' | 'complete';
+  nested?: boolean;
+  meta?: Record<string, any>;
+};
 
 // Hidden state for AI context - tracks IDs and tool results that should be remembered
 // This is NOT rendered in the UI but sent to the AI for context continuity
@@ -345,6 +354,17 @@ interface SendMessageOptions {
   silent?: boolean;
 }
 
+type QueuedMessage = {
+  id: string;
+  text: string;
+  timestamp: number;
+  attachments?: ChatAttachment[];
+  contextPaths?: ContextPath[];
+  kind?: 'message' | 'steer';
+  tabId?: string;
+  requestId?: string;
+};
+
 interface ConversationTab {
   id: string; // Unique client-side ID for the tab
   serverId: string | null; // The actual conversation ID from server (null if new/unsaved)
@@ -520,8 +540,8 @@ export function useAgent(options?: string | UseAgentOptions) {
   const [queueDepth, setQueueDepth] = useState<number>(0);
   const queueDepthRef = useRef<number>(0);
   const waitingQueuedStartRef = useRef<boolean>(false);
-  const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
-  const queuedMessagesRef = useRef<Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const queuedMessagesRef = useRef<QueuedMessage[]>([]);
   const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
@@ -831,7 +851,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       pendingResponseTabsRef.current.push(targetTabId);
 
       // If there were queued items visible for this tab, mark that the next start should promote from queue
-      waitingQueuedStartRef.current = queuedMessagesRef.current.length > 0;
+      waitingQueuedStartRef.current = queuedMessagesRef.current.some((item) => item.kind !== 'steer' && item.tabId === targetTabId);
       // Mark this tab as running
       runningTabsRef.current.add(targetTabId);
 
@@ -852,10 +872,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     } catch { }
   }, []);
 
-  const syncQueuedMessages = useCallback((
-    updater: Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>
-      | ((prev: Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>) => Array<{ id: string; text: string; timestamp: number; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>),
-  ) => {
+  const syncQueuedMessages = useCallback((updater: QueuedMessage[] | ((prev: QueuedMessage[]) => QueuedMessage[])) => {
     const prev = queuedMessagesRef.current;
     const next = typeof updater === 'function' ? updater(prev) : updater;
     queuedMessagesRef.current = next;
@@ -869,6 +886,87 @@ export function useAgent(options?: string | UseAgentOptions) {
     outboundQueueRef.current = outboundQueueRef.current.filter((item) => item.id !== id);
     pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== id);
     syncQueuedMessages((prev) => prev.filter((msg) => msg.id !== id));
+  }, [syncQueuedMessages]);
+
+  const getRequestIdForTab = useCallback((tabId: string): string | undefined => {
+    for (const [rid, mappedTabId] of requestIdToTabRef.current.entries()) {
+      if (mappedTabId === tabId) return rid;
+    }
+    return activeRequestIdRef.current || undefined;
+  }, []);
+
+  const queueSteeringMessage = useCallback((text: string): boolean => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+
+    const targetTabId = activeTabIdRef.current;
+    if (!runningTabsRef.current.has(targetTabId)) return false;
+
+    const requestId = getRequestIdForTab(targetTabId);
+    if (!requestId) return false;
+
+    const item: QueuedMessage = {
+      id: `steer-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: trimmed,
+      timestamp: Date.now(),
+      kind: 'steer',
+      tabId: targetTabId,
+      requestId,
+    };
+
+    syncQueuedMessages((prev) => [...prev, item]);
+    setTabs(prev => prev.map(t =>
+      t.id === targetTabId
+        ? { ...t, aiState: { ...t.aiState, statusText: 'Steer queued for next step' } }
+        : t
+    ));
+    setState((s) => ({ ...s, status: 'queued' }));
+    return true;
+  }, [getRequestIdForTab, syncQueuedMessages]);
+
+  const flushQueuedSteeringMessages = useCallback((targetTabId: string, requestId?: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = queuedMessagesRef.current.filter((item) =>
+      item.kind === 'steer'
+      && item.tabId === targetTabId
+      && (!requestId || item.requestId === requestId)
+    );
+    if (queued.length === 0) return;
+
+    const sent: QueuedMessage[] = [];
+    for (const item of queued) {
+      const rid = item.requestId || requestId;
+      if (!rid) continue;
+      try {
+        ws.send(JSON.stringify({
+          type: 'interjection',
+          requestId: rid,
+          text: item.text,
+          timestamp: item.timestamp,
+        }));
+        sent.push(item);
+      } catch { }
+    }
+
+    if (sent.length === 0) return;
+    const sentIds = new Set(sent.map((item) => item.id));
+    syncQueuedMessages((prev) => prev.filter((item) => !sentIds.has(item.id)));
+    setTabs(prev => prev.map(t => {
+      if (t.id !== targetTabId) return t;
+      const steeringMessages: Message[] = sent.map((item) => ({
+        id: item.id,
+        role: 'user',
+        text: item.text,
+        timestamp: item.timestamp,
+      }));
+      return {
+        ...t,
+        messages: [...t.messages, ...steeringMessages],
+        aiState: { ...t.aiState, statusText: 'Steer sent to next step' },
+      };
+    }));
   }, [syncQueuedMessages]);
 
   const agentHealthyRef = useRef<boolean>(false);
@@ -1144,7 +1242,8 @@ export function useAgent(options?: string | UseAgentOptions) {
               turnCheckpointIdRef.current = null;
               // Promote appropriate user message into chat when processing actually starts
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
-                const first = queuedMessagesRef.current[0];
+                const firstIndex = queuedMessagesRef.current.findIndex((item) => item.kind !== 'steer' && item.tabId === getTargetTabId());
+                const first = firstIndex >= 0 ? queuedMessagesRef.current[firstIndex] : undefined;
                 if (first) {
                   updateStreamingTab(t => ({
                     ...t,
@@ -1161,7 +1260,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 const promotedId = first.id;
                 pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== promotedId);
                 syncQueuedMessages((prev) => {
-                  const nextList = prev.slice(1);
+                  const nextList = prev.filter((item) => item.id !== promotedId);
                   return nextList;
                 });
                 waitingQueuedStartRef.current = false;
@@ -1710,6 +1809,12 @@ export function useAgent(options?: string | UseAgentOptions) {
                 statusText: 'Steer applied',
               }));
               setState((s) => ({ ...s, status: 'steered' }));
+            } else if (evt.event === 'step_finished') {
+              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId);
+              setStreamingAI((prev) => ({
+                ...prev,
+                statusText: queuedMessagesRef.current.some((item) => item.kind === 'steer') ? 'Applying steer…' : prev.statusText,
+              }));
             } else {
               setState((s) => ({ ...s, status: evt.event }));
             }
@@ -1740,6 +1845,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                 timestamp: ts,
                 attachments: p?.attachments,
                 contextPaths: p?.contextPaths,
+                kind: 'message',
+                tabId: p?.tabId,
               }];
               return nextList;
             });
@@ -2341,6 +2448,8 @@ export function useAgent(options?: string | UseAgentOptions) {
             timestamp: pendingItem.timestamp,
             attachments: pendingItem.attachments,
             contextPaths: pendingItem.contextPaths,
+            kind: 'message',
+            tabId: pendingItem.tabId,
           }];
         });
         setAI((prev) => ({ ...prev, statusText: `Queued (${Math.max(1, queueDepthRef.current)})` }));
@@ -2352,58 +2461,6 @@ export function useAgent(options?: string | UseAgentOptions) {
     },
     [messages, activeTabId, tryDequeueAndSend, connect, syncQueuedMessages]
   );
-
-  const steerMessage = useCallback(async (text: string): Promise<boolean> => {
-    const trimmed = String(text || '').trim();
-    if (!trimmed) return false;
-
-    const targetTabId = activeTabIdRef.current;
-    if (!runningTabsRef.current.has(targetTabId)) {
-      return false;
-    }
-
-    let requestId: string | undefined;
-    for (const [rid, tabId] of requestIdToTabRef.current.entries()) {
-      if (tabId === targetTabId) {
-        requestId = rid;
-        break;
-      }
-    }
-    requestId = requestId || activeRequestIdRef.current || undefined;
-
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !requestId) {
-      return false;
-    }
-
-    const msg: Message = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      role: 'user',
-      text: trimmed,
-      timestamp: Date.now(),
-    };
-
-    setTabs(prev => prev.map(t =>
-      t.id === targetTabId ? { ...t, messages: [...t.messages, msg] } : t
-    ));
-
-    try {
-      ws.send(JSON.stringify({
-        type: 'interjection',
-        requestId,
-        text: trimmed,
-        timestamp: msg.timestamp,
-      }));
-      setTabs(prev => prev.map(t =>
-        t.id === targetTabId
-          ? { ...t, aiState: { ...t.aiState, statusText: 'Steer sent' } }
-          : t
-      ));
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
 
   const newChat = useCallback(() => {
     addTab();
@@ -2780,7 +2837,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentToolCalls,
     currentStreamChunks,
     sendMessage,
-    steerMessage,
+    steerMessage: queueSteeringMessage,
     stopGeneration,
     connect,
     disconnect,

@@ -1,6 +1,6 @@
 import type React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Circle, ListTodo, MoreHorizontal, Paperclip, X } from "lucide-react";
+import { Circle, CornerDownRight, ListTodo, MoreHorizontal, Paperclip, X } from "lucide-react";
 
 interface QueuedMessage {
   id: string;
@@ -8,6 +8,7 @@ interface QueuedMessage {
   timestamp: number;
   attachments?: unknown[];
   contextPaths?: unknown[];
+  kind?: "message" | "steer";
 }
 
 interface QueuePanelProps {
@@ -48,6 +49,7 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
           <ol className="py-1">
             {visibleMessages.map((msg, index) => {
               const isFirst = index === 0;
+              const isSteer = msg.kind === "steer";
               const attachmentCount = (Array.isArray(msg.attachments) ? msg.attachments.length : 0)
                 + (Array.isArray(msg.contextPaths) ? msg.contextPaths.length : 0);
 
@@ -61,8 +63,14 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                   className="group flex items-start gap-2.5 px-3 py-2 hover:bg-theme-hover/50 transition-colors"
                 >
                   <div className="relative mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-                    <Circle className={isFirst ? "w-4 h-4 text-primary" : "w-4 h-4 text-theme-muted/70"} />
-                    <span className="absolute text-[9px] font-black text-theme-fg/80">{index + 1}</span>
+                    {isSteer ? (
+                      <CornerDownRight className={isFirst ? "w-4 h-4 text-primary" : "w-4 h-4 text-theme-muted/70"} />
+                    ) : (
+                      <>
+                        <Circle className={isFirst ? "w-4 h-4 text-primary" : "w-4 h-4 text-theme-muted/70"} />
+                        <span className="absolute text-[9px] font-black text-theme-fg/80">{index + 1}</span>
+                      </>
+                    )}
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -77,11 +85,9 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                         </span>
                       )}
                     </div>
-                    {isFirst && (
-                      <div className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-primary">
-                        Up next
-                      </div>
-                    )}
+                    <div className={isFirst ? "mt-0.5 text-[10px] font-black uppercase tracking-widest text-primary" : "mt-0.5 text-[10px] font-bold uppercase tracking-widest text-theme-muted/70"}>
+                      {isSteer ? "Applies next step" : isFirst ? "Up next" : "Queued"}
+                    </div>
                   </div>
 
                   {onCancelMessage && (

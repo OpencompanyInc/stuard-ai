@@ -887,6 +887,12 @@ export default function App() {
     }
   }, [deleteConversation, signedIn, conversationId]);
 
+  const canSteerCurrentTurn =
+    ai?.phase === 'routing' ||
+    ai?.phase === 'tool' ||
+    ai?.phase === 'responding' ||
+    Boolean(currentResponse || currentReasoning || currentToolCalls?.length);
+
   // Use ref to avoid recreating handleSend on every render
   const handleSendRef = useRef<(overrideText?: string) => void>(() => { });
 
@@ -894,6 +900,16 @@ export default function App() {
     if (!signedIn) { handleSignIn(); return; }
     const text = (typeof overrideText === 'string' ? overrideText : query).trim();
     if (!text && attachments.length === 0 && contextPaths.length === 0) return;
+
+    if (canSteerCurrentTurn && text && attachments.length === 0 && contextPaths.length === 0) {
+      const queued = steerMessage?.(text);
+      if (queued) {
+        setQuery("");
+        clearTranscript();
+        baseQueryRef.current = "";
+        return;
+      }
+    }
 
     const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
     const isAuto = selected === 'auto';
@@ -961,28 +977,12 @@ export default function App() {
       .then((res: any) => (res?.skills || []).filter((s: any) => s.isActive !== false))
       .catch(() => [])
       .then((skills: any[]) => doSend(skills));
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, steerMessage, canSteerCurrentTurn, handleSignIn, clearTranscript]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
     handleSendRef.current(overrideText);
   }, []);
-
-  const handleSteer = useCallback(() => {
-    if (!signedIn) { handleSignIn(); return; }
-    const text = query.trim();
-    if (!text) return;
-    const sent = steerMessage?.(text);
-    Promise.resolve(sent).then((ok) => {
-      if (ok) {
-        setQuery("");
-        clearTranscript();
-        baseQueryRef.current = "";
-      } else {
-        handleSend(text);
-      }
-    });
-  }, [signedIn, query, steerMessage, handleSignIn, handleSend, clearTranscript]);
 
   // Handle GenUI responses (syntax-based GenUI like ```genui:choices)
   const handleGenUIResponse = useCallback((component: string, result: any) => {
@@ -1656,7 +1656,6 @@ export default function App() {
                     query={query}
                     setQuery={setQuery}
                     onSend={handleSend}
-                    onSteer={handleSteer}
                     onStop={stopGeneration}
                     isStreaming={isStreaming}
                     internalSidebarOpen={internalSidebarOpen}

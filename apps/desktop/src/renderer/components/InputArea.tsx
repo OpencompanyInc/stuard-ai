@@ -1857,7 +1857,7 @@ const InputArea = forwardRef(function InputArea(
                     onKeyDown={handleKeyDown}
                     onPaste={onPaste}
                     onHeightChange={handleHeightChange}
-                    placeholder={showFileNav ? "Type to filter..." : "Just ask Stuard"}
+                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
                     className={clsx(
                       "w-full bg-transparent outline-none text-[14px] leading-tight py-2 resize-none scrollbar-hidden font-semibold px-1",
                       "text-theme-fg placeholder:text-theme-muted"
@@ -1981,7 +1981,7 @@ const InputArea = forwardRef(function InputArea(
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={onPaste}
-                placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}
+                placeholder={showFileNav ? "Type to filter context..." : miniOutputStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
                 className={clsx(
                   "no-drag w-full outline-none text-[13px] leading-normal placeholder:truncate rounded-3xl px-5 py-2 resize-none scrollbar-hidden transition-colors overflow-hidden font-medium",
                   showFileNav

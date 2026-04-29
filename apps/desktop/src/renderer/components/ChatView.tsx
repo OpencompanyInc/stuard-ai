@@ -50,7 +50,6 @@ interface ChatViewProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
-  onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
   isRecording?: boolean;
@@ -163,7 +162,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   query,
   setQuery,
   onSend,
-  onSteer,
   onStop,
   isStreaming,
   isRecording,
@@ -634,7 +632,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               query={query}
               setQuery={setQuery}
               onSend={onSend}
-              onSteer={onSteer}
               onStop={onStop}
               isStreaming={isStreaming}
               isRecording={isRecording}
@@ -843,7 +840,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               query={query}
               setQuery={setQuery}
               onSend={onSend}
-              onSteer={onSteer}
               onStop={onStop}
               isStreaming={isStreaming}
               isRecording={isRecording}

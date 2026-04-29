@@ -103,7 +103,6 @@ interface ChatInputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
-  onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
   isRecording?: boolean;
@@ -137,7 +136,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   query,
   setQuery,
   onSend,
-  onSteer,
   onStop,
   isStreaming = false,
   isRecording,
@@ -606,7 +604,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
               showFileNav && "text-primary placeholder:text-primary/40"
             )}
-            placeholder={showFileNav ? "Type to filter context..." : "Just ask Stuard"}
+            placeholder={showFileNav ? "Type to filter context..." : isStreaming ? "Add guidance for the next step..." : "Just ask Stuard"}
             value={query}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
             onPaste={onPaste}
@@ -661,15 +659,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         <FolderPermissionsPopover sessionId={activeTabId} />
 
         {isStreaming ? (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <button
-              onClick={onSteer}
+              onClick={onSend}
               disabled={!query.trim()}
-              className="h-10 px-3 rounded-[18px] flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 disabled:opacity-40 disabled:hover:scale-100"
-              title="Send as steering note for the next step"
+              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 disabled:opacity-35 disabled:hover:scale-100"
+              title="Queue for next step"
             >
               <CornerDownRight className="w-4 h-4" />
-              <span className="text-[12px] font-black uppercase tracking-wider">Steer</span>
             </button>
             <button
               onClick={onStop}

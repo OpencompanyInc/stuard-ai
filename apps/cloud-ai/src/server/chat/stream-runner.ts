@@ -210,6 +210,14 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           trigger: 'step_finish',
           stepNumber: stepCount,
         });
+        if (Array.isArray(rawCalls) && rawCalls.length > 0 && stepCount < maxSteps) {
+          send(ws, {
+            type: 'progress',
+            event: 'step_finished',
+            data: { step: stepCount },
+          }, requestId);
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
       },
       onFinish: async ({ text, steps, finishReason, usage, totalUsage }: any) => {
         if (runtime.didSendFinal) {
