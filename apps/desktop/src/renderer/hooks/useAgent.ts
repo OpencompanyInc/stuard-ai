@@ -319,6 +319,9 @@ interface Message {
   checkpointId?: string; // Checkpoint ID for reverting file changes
   reverted?: boolean; // Whether file changes have been reverted
   aborted?: boolean; // Whether the message was stopped/aborted
+  // 'steer' marks user messages that were interjected mid-turn so the UI can
+  // visually annotate them and split the surrounding chain-of-thought.
+  kind?: 'message' | 'steer';
 }
 
 interface ProgressEvent {
@@ -542,6 +545,11 @@ export function useAgent(options?: string | UseAgentOptions) {
   const waitingQueuedStartRef = useRef<boolean>(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const queuedMessagesRef = useRef<QueuedMessage[]>([]);
+  // Tracks tabs whose current turn already has a partial assistant message committed
+  // ahead of a steer interjection. When set, the 'final' handler must commit only the
+  // post-steer chunks (t.currentResponse) instead of the server's full-turn finalText
+  // to avoid duplicating the pre-steer content.
+  const turnHadPartialCommitRef = useRef<Map<string, boolean>>(new Map());
   const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
   const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
@@ -955,15 +963,46 @@ export function useAgent(options?: string | UseAgentOptions) {
     syncQueuedMessages((prev) => prev.filter((item) => !sentIds.has(item.id)));
     setTabs(prev => prev.map(t => {
       if (t.id !== targetTabId) return t;
+
+      // Commit any in-flight assistant work (the step that was just interrupted)
+      // as its own assistant message ahead of the steer, so the chat order reads:
+      //   [user] → [interrupted CoT] → [steer] → [next CoT]
+      // rather than the steer landing before the CoT it was responding to.
+      const hasInFlightWork =
+        t.currentToolCalls.length > 0
+        || t.currentStreamChunks.length > 0
+        || Boolean(t.currentResponse)
+        || Boolean(t.currentReasoning);
+
+      const partialAssistant: Message[] = hasInFlightWork ? [{
+        id: `partial-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        role: 'assistant' as const,
+        text: t.currentResponse || '',
+        reasoning: t.currentReasoning || undefined,
+        toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+        streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+        timestamp: Date.now(),
+      }] : [];
+
       const steeringMessages: Message[] = sent.map((item) => ({
         id: item.id,
-        role: 'user',
+        role: 'user' as const,
         text: item.text,
         timestamp: item.timestamp,
+        kind: 'steer' as const,
       }));
+
+      if (hasInFlightWork) {
+        turnHadPartialCommitRef.current.set(t.id, true);
+      }
+
       return {
         ...t,
-        messages: [...t.messages, ...steeringMessages],
+        messages: [...t.messages, ...partialAssistant, ...steeringMessages],
+        currentResponse: hasInFlightWork ? '' : t.currentResponse,
+        currentReasoning: hasInFlightWork ? '' : t.currentReasoning,
+        currentToolCalls: hasInFlightWork ? [] : t.currentToolCalls,
+        currentStreamChunks: hasInFlightWork ? [] : t.currentStreamChunks,
         aiState: { ...t.aiState, statusText: 'Steer sent to next step' },
       };
     }));
@@ -1240,6 +1279,8 @@ export function useAgent(options?: string | UseAgentOptions) {
               // Reset file tracking for new turn (checkpoint created lazily by backend on first file modification)
               modifiedFilesRef.current = new Set();
               turnCheckpointIdRef.current = null;
+              // New turn — clear any partial-commit flag from a previous turn on this tab.
+              turnHadPartialCommitRef.current.delete(getTargetTabId());
               // Promote appropriate user message into chat when processing actually starts
               if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
                 const firstIndex = queuedMessagesRef.current.findIndex((item) => item.kind !== 'steer' && item.tabId === getTargetTabId());
@@ -1888,9 +1929,17 @@ export function useAgent(options?: string | UseAgentOptions) {
             const completedTabId = getTargetTabId();
             const currentStreamingTab = tabsRef.current.find(t => t.id === completedTabId);
             const keepTerminalStatus = !isAborted && !!currentStreamingTab && getRunningTerminalIds(currentStreamingTab.currentToolCalls).length > 0;
+            // If we already committed a partial assistant message ahead of a steer
+            // on this turn, the server's finalText still includes the pre-steer
+            // content. Use only the local post-steer accumulation (t.currentResponse)
+            // to avoid duplicating it.
+            const hadPartial = turnHadPartialCommitRef.current.get(completedTabId) === true;
             updateStreamingTab(t => {
-              // For aborted, prefer the current streamed response over server text
-              const displayText = isAborted && t.currentResponse ? t.currentResponse : finalText;
+              // For aborted or post-partial turns, prefer the locally accumulated
+              // response over the server's full-turn text.
+              const displayText = (isAborted || hadPartial) && t.currentResponse
+                ? t.currentResponse
+                : finalText;
               const hasAccumulatedWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentReasoning;
 
               // Commit a message if we have text OR if there was accumulated work (tool calls, reasoning, etc.)
@@ -1933,6 +1982,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
             if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
             runningTabsRef.current.delete(completedTabId);
+            turnHadPartialCommitRef.current.delete(completedTabId);
             tryDequeueAndSend();
             setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {

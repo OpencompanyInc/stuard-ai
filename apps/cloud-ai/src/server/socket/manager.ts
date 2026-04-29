@@ -10,6 +10,7 @@ import { PING_INTERVAL_MS } from '../../utils/config';
 import { registerConnection, getDesktopWs, type ClientType } from '../../services/vm-bridge';
 import { sendVMTerminalCommand } from '../../services/vm-command';
 import { verifyVMToken } from '../../services/vm-tokens';
+import { enqueueInterjection } from './state';
 
 // State maps
 const wsAlive = new WeakMap<WebSocket, boolean>();
@@ -140,6 +141,20 @@ export class SocketManager {
     // so the tool can relay tool_request messages back to the client
     if (kind === 'exec_tool_bridged') {
       this.handleBridgedToolExec(ws, msg);
+      return;
+    }
+
+    if (kind === 'interjection' || kind === 'steer') {
+      const steerRequestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
+      const text = typeof msg?.text === 'string' ? msg.text : '';
+      const depth = enqueueInterjection(ws, steerRequestId, text);
+      this.send(ws, {
+        type: 'interjection_ack',
+        accepted: depth > 0,
+        depth,
+        message: depth > 0 ? 'queued for next step' : 'empty interjection',
+        requestId: steerRequestId,
+      });
       return;
     }
 

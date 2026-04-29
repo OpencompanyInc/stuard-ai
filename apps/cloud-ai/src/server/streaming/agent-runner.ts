@@ -20,6 +20,7 @@ import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-too
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
+import { drainInterjections } from '../socket/state';
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
@@ -398,32 +399,57 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         abortSignal: compactionAbort?.signal ?? abortController.signal,
         ...(activeToolNames ? { activeTools: activeToolNames } : {}),
         prepareStep: async ({ messages, stepNumber }: any) => {
-          if (!Array.isArray(messages) || stepNumber <= 1 || midTurnCompacted) {
+          let stepMessages = Array.isArray(messages) ? [...messages] : messages;
+          let injectedSteer = false;
+
+          if (Array.isArray(stepMessages)) {
+            const interjections = drainInterjections(ws, requestId);
+            if (interjections.length > 0) {
+              const steerText = interjections
+                .map((item, index) => `Interjection ${index + 1}: ${item.text}`)
+                .join('\n');
+              stepMessages = [
+                ...stepMessages,
+                {
+                  role: 'user',
+                  content: `[User interjection while you were working]\n${steerText}\n\nUse this guidance in the next step before continuing.`,
+                },
+              ];
+              injectedSteer = true;
+              send(ws, {
+                type: 'progress',
+                event: 'interjection_applied',
+                data: { count: interjections.length },
+              });
+            }
+          }
+
+          if (!Array.isArray(stepMessages) || stepNumber <= 1 || midTurnCompacted) {
             // Snapshot messages for potential compaction on halt
-            streamAccumulatedMessages = [...messages];
-            return {};
+            streamAccumulatedMessages = Array.isArray(stepMessages) ? [...stepMessages] : [];
+            return injectedSteer ? { messages: stepMessages } : {};
           }
 
           // Snapshot messages for potential compaction on halt
-          streamAccumulatedMessages = [...messages];
+          streamAccumulatedMessages = [...stepMessages];
 
-          const estimate = estimateTokens(messages as any[]);
+          const estimate = estimateTokens(stepMessages as any[]);
           if (estimate.totalTokens < budget.historyBudget * 0.85) {
-            return {};
+            return injectedSteer ? { messages: stepMessages } : {};
           }
 
-          const safeCurrentTurnStart = Math.max(1, Math.min(currentTurnStartIndex, messages.length));
-          const preTurnMessages = messages.slice(0, safeCurrentTurnStart) as any[];
+          const safeCurrentTurnStart = Math.max(1, Math.min(currentTurnStartIndex, stepMessages.length));
+          const preTurnMessages = stepMessages.slice(0, safeCurrentTurnStart) as any[];
           if (preTurnMessages.length < 4) {
-            return {};
+            return injectedSteer ? { messages: stepMessages } : {};
           }
 
           try {
             console.log(`[compactor] Mid-turn compaction at step ${stepNumber}: ${estimate.totalTokens} tokens`);
             const summary = await generateMidTurnSummary(preTurnMessages);
-            messages.splice(0, safeCurrentTurnStart, { role: 'system', content: summary });
+            stepMessages.splice(0, safeCurrentTurnStart, { role: 'system', content: summary });
             midTurnCompacted = true;
-            const postCompactEstimate = estimateTokens(messages as any[]);
+            const postCompactEstimate = estimateTokens(stepMessages as any[]);
             console.log(`[compactor] Mid-turn compacted: ${postCompactEstimate.totalTokens} tokens remaining`);
             // Notify UI of reduced context after compaction
             send(ws, {
@@ -440,10 +466,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             });
           } catch (err) {
             console.warn('[compactor] Mid-turn summarization failed, falling back to pruning:', err);
-            pruneToolOutputs(messages as any[], budget);
+            pruneToolOutputs(stepMessages as any[], budget);
           }
 
-          return {};
+          return { messages: stepMessages };
         },
         onStepFinish: async (stepData: any) => {
           const stepUsage = stepData?.usage;
@@ -470,6 +496,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             trigger: 'step_finish',
             stepNumber: finishedSteps.length,
           });
+          const rawCalls = stepData?.toolCalls || stepData?.tool_calls || [];
+          if (Array.isArray(rawCalls) && rawCalls.length > 0 && finishedSteps.length < maxToolSteps) {
+            send(ws, {
+              type: 'progress',
+              event: 'step_finished',
+              data: { step: finishedSteps.length },
+            });
+            await new Promise((resolve) => setTimeout(resolve, 350));
+          }
 
           // Halt-and-resume compaction: if cumulative prompt tokens exceed the
           // budget threshold, flag compaction and abort the current stream so

@@ -2,7 +2,8 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, CornerDownRight } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
+import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -415,9 +416,16 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </div>
         </div>
       )}
-      {(queueDepth > 0 || queuedMessages.length > 0) && (
-        <QueuePanel messages={queuedMessages as any} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
-      )}
+      <AnimatePresence initial={false}>
+        {(queueDepth > 0 || queuedMessages.length > 0) && (
+          <QueuePanel
+            key="queue-panel"
+            messages={queuedMessages as any}
+            queueDepth={queueDepth}
+            onCancelMessage={onCancelQueuedMessage}
+          />
+        )}
+      </AnimatePresence>
 
       {attachments.length > 0 && (
         <div className="px-2 pt-2 pb-1 flex flex-wrap gap-2">
@@ -658,24 +666,22 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
         <FolderPermissionsPopover sessionId={activeTabId} />
 
-        {isStreaming ? (
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={onSend}
-              disabled={!query.trim()}
-              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 disabled:opacity-35 disabled:hover:scale-100"
-              title="Queue for next step"
-            >
-              <CornerDownRight className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onStop}
-              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-red-500 text-white hover:bg-red-600"
-              title="Stop generation"
-            >
-              <Square className="w-4 h-4 fill-current" />
-            </button>
-          </div>
+        {isStreaming && !query.trim() ? (
+          <button
+            onClick={onStop}
+            className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-red-500 text-white hover:bg-red-600 flex-shrink-0"
+            title="Stop generation"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </button>
+        ) : query.trim() ? (
+          <button
+            onClick={onSend}
+            className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
+            title={isStreaming ? "Steer the next step" : "Send message"}
+          >
+            <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
+          </button>
         ) : (
           <button
             onClick={onMicClick}
@@ -683,6 +689,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
               isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
             )}
+            title={isRecording ? "Stop recording" : "Voice input"}
           >
             <Mic className="w-5 h-5" />
           </button>

@@ -1,9 +1,10 @@
 
 import React, { useRef, useLayoutEffect, useState, useEffect, useCallback, useMemo, memo } from 'react';
 import SimpleBar from 'simplebar-react';
+import { motion } from 'framer-motion';
 import MessageBubble from './MessageBubble';
 import 'simplebar-react/dist/simplebar.min.css';
-import { ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronUp, CornerDownRight, Loader2 } from 'lucide-react';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 import { Shimmer } from './ai-elements/Shimmer';
 import {
@@ -38,6 +39,7 @@ interface Message {
   modifiedFiles?: string[];
   checkpointId?: string;
   reverted?: boolean;
+  kind?: 'message' | 'steer';
 }
 
 interface MessageListProps {
@@ -203,6 +205,18 @@ const MessageList: React.FC<MessageListProps> = ({
     setShouldAutoScroll(true);
   }, [firstMessageId]);
 
+  // Track which steering messages have already been rendered so only newly arriving
+  // ones fly up — historical steers (e.g. when loading a saved conversation) appear instantly.
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  const lastFirstIdRef = useRef<string | undefined>(undefined);
+  if (lastFirstIdRef.current !== firstMessageId) {
+    seenIdsRef.current = new Set(messages.map(m => m.id));
+    lastFirstIdRef.current = firstMessageId;
+  }
+  useEffect(() => {
+    visibleMessages.forEach(m => seenIdsRef.current.add(m.id));
+  });
+
   // Load more messages handler
   const handleLoadMore = useCallback(() => {
     if (isLoadingMoreRef.current || hiddenCount === 0) return;
@@ -293,28 +307,53 @@ const MessageList: React.FC<MessageListProps> = ({
           <div ref={topAnchorRef} className="h-px" />
 
           {/* Only render visible messages */}
-          {visibleMessages.map((m) => (
-            <MemoizedMessageBubble
-              key={m.id}
-              role={m.role}
-              text={m.text}
-              reasoning={m.reasoning}
-              reasoningDuration={m.reasoningDuration}
-              toolCalls={m.toolCalls}
-              streamChunks={m.streamChunks}
-              contextPaths={m.contextPaths}
-              attachments={m.attachments}
-              onSubmitToolOutput={onSubmitToolOutput}
-              onGenUIResponse={onGenUIResponse}
-              messageId={m.id}
-              onEditMessage={onEditMessage}
-              modifiedFiles={m.modifiedFiles}
-              checkpointId={m.checkpointId}
-              reverted={m.reverted}
-              onRevertFiles={onRevertFiles}
-              onRedoFiles={onRedoFiles}
-            />
-          ))}
+          {visibleMessages.map((m) => {
+            const isSteer = m.kind === 'steer'
+              || (typeof m.id === 'string' && m.id.startsWith('steer-'));
+            const bubble = (
+              <MemoizedMessageBubble
+                role={m.role}
+                text={m.text}
+                reasoning={m.reasoning}
+                reasoningDuration={m.reasoningDuration}
+                toolCalls={m.toolCalls}
+                streamChunks={m.streamChunks}
+                contextPaths={m.contextPaths}
+                attachments={m.attachments}
+                onSubmitToolOutput={onSubmitToolOutput}
+                onGenUIResponse={onGenUIResponse}
+                messageId={m.id}
+                onEditMessage={onEditMessage}
+                modifiedFiles={m.modifiedFiles}
+                checkpointId={m.checkpointId}
+                reverted={m.reverted}
+                onRevertFiles={onRevertFiles}
+                onRedoFiles={onRedoFiles}
+              />
+            );
+            if (!isSteer) {
+              return <React.Fragment key={m.id}>{bubble}</React.Fragment>;
+            }
+            const isNewSteer = !seenIdsRef.current.has(m.id);
+            return (
+              <motion.div
+                key={m.id}
+                initial={isNewSteer ? { opacity: 0, y: 36, scale: 0.96 } : false}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={isNewSteer
+                  ? { type: 'spring', stiffness: 380, damping: 28, mass: 0.9 }
+                  : { duration: 0 }}
+              >
+                <div className="flex justify-end mb-1 pr-1">
+                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black uppercase tracking-widest text-primary/70">
+                    <CornerDownRight className="w-3 h-3" />
+                    Steered
+                  </span>
+                </div>
+                {bubble}
+              </motion.div>
+            );
+          })}
           {/* Streaming response with interleaved content (also triggers on reasoning for chain-of-thought) */}
           {(currentResponse || currentReasoning || (currentStreamChunks && currentStreamChunks.length > 0)) && (
             <MessageBubble
