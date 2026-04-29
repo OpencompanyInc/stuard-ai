@@ -72,6 +72,7 @@ interface InputAreaProps {
   // Queue
   queueDepth: number;
   queuedMessages: any[];
+  onCancelQueuedMessage?: (id: string) => void;
 
   // Speech
   isRecording?: boolean;
@@ -404,7 +405,7 @@ const InputArea = forwardRef(function InputArea(
     conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
     expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency,
     connectionStatus,
-    queueDepth, queuedMessages,
+    queueDepth, queuedMessages, onCancelQueuedMessage,
     isRecording, onMicClick,
     voiceActive = false,
     onToggleVoice,
@@ -1927,7 +1928,7 @@ const InputArea = forwardRef(function InputArea(
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
           onDrop={onDrop}
         >
-          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} />
+          <QueuePanel messages={queuedMessages} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
 
           {/* Attachment Menu */}
           <DropdownMenu.Root>

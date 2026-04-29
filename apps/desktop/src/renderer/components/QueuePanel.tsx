@@ -1,11 +1,13 @@
 import type React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Clock, MoreHorizontal, X } from "lucide-react";
+import { Circle, ListTodo, MoreHorizontal, Paperclip, X } from "lucide-react";
 
 interface QueuedMessage {
   id: string;
   text: string;
   timestamp: number;
+  attachments?: unknown[];
+  contextPaths?: unknown[];
 }
 
 interface QueuePanelProps {
@@ -15,69 +17,91 @@ interface QueuePanelProps {
 }
 
 export default function QueuePanel({ messages, queueDepth, onCancelMessage }: QueuePanelProps) {
+  const visibleMessages = messages.slice(0, 5);
+  const overflowCount = Math.max(0, Math.max(queueDepth, messages.length) - visibleMessages.length);
+
+  if (queueDepth <= 0 && messages.length === 0) return null;
+
   return (
-    <div className="absolute bottom-full left-2 right-2 mb-2 z-[60] flex flex-col gap-1.5 pointer-events-none">
+    <div className="absolute bottom-full left-2 right-2 mb-2 z-[60] pointer-events-none">
       <AnimatePresence mode="popLayout">
-        {messages.slice(0, 3).map((msg, index) => {
-          const isFirst = index === 0;
-          return (
-            <motion.div
-              key={msg.id}
-              layout
-              initial={{ opacity: 0, y: 10, scale: 0.95 }}
-              animate={{ 
-                opacity: isFirst ? 1 : 0.6, 
-                y: 0, 
-                scale: 1,
-              }}
-              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-              className={`rounded-xl border backdrop-blur-md overflow-hidden flex items-center px-3 py-2.5 gap-3 shadow-lg pointer-events-auto group ${
-                isFirst 
-                  ? 'bg-theme-card/95 border-primary/30 ring-1 ring-primary/10' 
-                  : 'bg-theme-card/60 border-theme/10 scale-[0.98] origin-bottom'
-              }`}
-            >
-              <div className="relative flex items-center justify-center shrink-0">
-                <Clock className={`w-4 h-4 ${isFirst ? 'text-primary' : 'text-theme-muted'}`} />
-                {isFirst && (
-                  <motion.div 
-                    animate={{ rotate: 360 }} 
-                    transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                    className="absolute inset-0 rounded-full border border-primary border-t-transparent opacity-50"
-                  />
-                )}
-              </div>
-              
-              <div className="flex-1 min-w-0 flex flex-col">
-                <span className={`text-sm font-medium truncate ${isFirst ? 'text-theme-fg' : 'text-theme-muted'}`}>
-                  {msg.text || 'Empty message'}
-                </span>
-              </div>
-              
-              {isFirst && (
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] uppercase tracking-widest font-bold text-primary flex items-center gap-1">
-                    Up Next
-                  </span>
-                </div>
-              )}
-              
-              {onCancelMessage && (
-                <button
-                  onClick={() => onCancelMessage(msg.id)}
-                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500/20 text-theme-muted hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                  title="Remove from queue"
+        <motion.div
+          key="queue-list"
+          layout
+          initial={{ opacity: 0, y: 10, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.16 } }}
+          className="rounded-xl border border-primary/20 bg-theme-card/95 backdrop-blur-md shadow-xl pointer-events-auto overflow-hidden"
+        >
+          <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-theme/10">
+            <div className="flex items-center gap-2 min-w-0">
+              <ListTodo className="w-4 h-4 text-primary shrink-0" />
+              <span className="text-[11px] font-black uppercase tracking-widest text-theme-muted">
+                Message queue
+              </span>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-widest text-primary shrink-0">
+              {Math.max(queueDepth, messages.length)} pending
+            </span>
+          </div>
+
+          <ol className="py-1">
+            {visibleMessages.map((msg, index) => {
+              const isFirst = index === 0;
+              const attachmentCount = (Array.isArray(msg.attachments) ? msg.attachments.length : 0)
+                + (Array.isArray(msg.contextPaths) ? msg.contextPaths.length : 0);
+
+              return (
+                <motion.li
+                  key={msg.id}
+                  layout
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8, transition: { duration: 0.14 } }}
+                  className="group flex items-start gap-2.5 px-3 py-2 hover:bg-theme-hover/50 transition-colors"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </motion.div>
-          );
-        })}
+                  <div className="relative mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+                    <Circle className={isFirst ? "w-4 h-4 text-primary" : "w-4 h-4 text-theme-muted/70"} />
+                    <span className="absolute text-[9px] font-black text-theme-fg/80">{index + 1}</span>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className={isFirst ? "text-[13px] font-semibold text-theme-fg truncate" : "text-[13px] font-medium text-theme-muted truncate"}>
+                        {msg.text || "Empty message"}
+                      </p>
+                      {attachmentCount > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-theme-muted shrink-0">
+                          <Paperclip className="w-3 h-3" />
+                          {attachmentCount}
+                        </span>
+                      )}
+                    </div>
+                    {isFirst && (
+                      <div className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-primary">
+                        Up next
+                      </div>
+                    )}
+                  </div>
+
+                  {onCancelMessage && (
+                    <button
+                      onClick={() => onCancelMessage(msg.id)}
+                      className="mt-0.5 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500/15 text-theme-muted hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Remove from queue"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </motion.li>
+              );
+            })}
+          </ol>
+        </motion.div>
       </AnimatePresence>
       
       <AnimatePresence>
-        {messages.length > 3 && (
+        {overflowCount > 0 && (
           <motion.div 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -86,7 +110,7 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
           >
             <span className="text-[10px] text-theme-muted font-bold tracking-wider uppercase bg-theme-card/80 px-3 py-1 rounded-full border border-theme/10 backdrop-blur-md shadow-sm flex items-center gap-1 pointer-events-auto">
               <MoreHorizontal className="w-3 h-3" />
-              {messages.length - 3} more
+              {overflowCount} more
             </span>
           </motion.div>
         )}

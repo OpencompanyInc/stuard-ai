@@ -2,7 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff } from 'lucide-react';
+import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, CornerDownRight } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
@@ -103,6 +103,7 @@ interface ChatInputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
+  onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
   isRecording?: boolean;
@@ -136,6 +137,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   query,
   setQuery,
   onSend,
+  onSteer,
   onStop,
   isStreaming = false,
   isRecording,
@@ -415,7 +417,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </div>
         </div>
       )}
-      {queueDepth > 0 && (
+      {(queueDepth > 0 || queuedMessages.length > 0) && (
         <QueuePanel messages={queuedMessages as any} queueDepth={queueDepth} onCancelMessage={onCancelQueuedMessage} />
       )}
 
@@ -659,13 +661,24 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         <FolderPermissionsPopover sessionId={activeTabId} />
 
         {isStreaming ? (
-          <button
-            onClick={onStop}
-            className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 bg-red-500 text-white hover:bg-red-600"
-            title="Stop generation"
-          >
-            <Square className="w-4 h-4 fill-current" />
-          </button>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={onSteer}
+              disabled={!query.trim()}
+              className="h-10 px-3 rounded-[18px] flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 disabled:opacity-40 disabled:hover:scale-100"
+              title="Send as steering note for the next step"
+            >
+              <CornerDownRight className="w-4 h-4" />
+              <span className="text-[12px] font-black uppercase tracking-wider">Steer</span>
+            </button>
+            <button
+              onClick={onStop}
+              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-red-500 text-white hover:bg-red-600"
+              title="Stop generation"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          </div>
         ) : (
           <button
             onClick={onMicClick}

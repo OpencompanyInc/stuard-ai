@@ -205,8 +205,8 @@ export default function App() {
   // Agent Hook
   const {
     messages, state, ai, currentResponse, currentReasoning, currentToolCalls, currentStreamChunks,
-    sendMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
-    subscribeProgress, queueDepth, queuedMessages, respondToApproval, lastError, execLocalTool, submitToolOutput,
+    sendMessage, steerMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
+    subscribeProgress, queueDepth, queuedMessages, cancelQueuedMessage, respondToApproval, lastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
@@ -968,6 +968,22 @@ export default function App() {
     handleSendRef.current(overrideText);
   }, []);
 
+  const handleSteer = useCallback(() => {
+    if (!signedIn) { handleSignIn(); return; }
+    const text = query.trim();
+    if (!text) return;
+    const sent = steerMessage?.(text);
+    Promise.resolve(sent).then((ok) => {
+      if (ok) {
+        setQuery("");
+        clearTranscript();
+        baseQueryRef.current = "";
+      } else {
+        handleSend(text);
+      }
+    });
+  }, [signedIn, query, steerMessage, handleSignIn, handleSend, clearTranscript]);
+
   // Handle GenUI responses (syntax-based GenUI like ```genui:choices)
   const handleGenUIResponse = useCallback((component: string, result: any) => {
     // Format the selection as a follow-up message
@@ -1636,9 +1652,11 @@ export default function App() {
                     onDrop={handleDrop}
                     queueDepth={queueDepth}
                     queuedMessages={queuedMessages}
+                    onCancelQueuedMessage={cancelQueuedMessage}
                     query={query}
                     setQuery={setQuery}
                     onSend={handleSend}
+                    onSteer={handleSteer}
                     onStop={stopGeneration}
                     isStreaming={isStreaming}
                     internalSidebarOpen={internalSidebarOpen}
@@ -1732,6 +1750,7 @@ export default function App() {
                 connectionStatus={connectionStatus}
                 queueDepth={queueDepth}
                 queuedMessages={queuedMessages}
+                onCancelQueuedMessage={cancelQueuedMessage}
                 isRecording={isRecording}
                 onMicClick={handleMicClick}
                 voiceActive={voiceActive}

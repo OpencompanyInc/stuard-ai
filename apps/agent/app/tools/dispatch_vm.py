@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import json
 import asyncio
-from typing import Any, Dict, Callable, Awaitable
+from typing import Any, Dict, Callable, Awaitable, Optional, Set
 
 # ── VM-compatible modules (no GUI, no display, no hardware capture) ──────────
 from . import (
@@ -541,6 +541,33 @@ _browser_start_lock = asyncio.Lock()
 _browser_start_logged_once = False
 
 
+def _resolve_browser_server_entrypoint() -> Optional[str]:
+    """Find a browser server entrypoint in source or bytecode bundles."""
+    explicit = os.path.join(_BROWSER_SERVER_PATH, _BROWSER_SERVER_SCRIPT)
+    candidates = [explicit]
+    root, ext = os.path.splitext(explicit)
+    if ext == ".py":
+        candidates.append(root + ".pyc")
+    candidates.extend(
+        os.path.join(_BROWSER_SERVER_PATH, name)
+        for name in (
+            "browser_server_main.py",
+            "browser_use_server.py",
+            "browser_server_main.pyc",
+            "browser_use_server.pyc",
+        )
+    )
+
+    seen: Set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 async def _is_browser_server_running(timeout: float = 2.0) -> bool:
     """Quick HEAD-style probe of the browser server's /status endpoint."""
     import urllib.request
@@ -598,10 +625,10 @@ async def _start_browser_server() -> bool:
         return False
 
     def _try_subprocess() -> bool:
-        # Last-resort: spawn browser_use_server.py directly. Only used when
-        # systemd is unavailable or the unit failed to start.
-        script = os.path.join(_BROWSER_SERVER_PATH, _BROWSER_SERVER_SCRIPT)
-        if not os.path.isfile(script):
+        # Last-resort: spawn the browser server directly. This also recovers
+        # bytecode-only VM bundles where the systemd unit was never installed.
+        script = _resolve_browser_server_entrypoint()
+        if not script:
             return False
         python_bin = _BROWSER_SERVER_VENV_PYTHON if os.path.isfile(_BROWSER_SERVER_VENV_PYTHON) else "python3"
         env = os.environ.copy()
@@ -697,6 +724,8 @@ async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> 
     action = tool_name.replace("browser_use_", "", 1) if tool_name else ""
     if not action:
         return {"ok": False, "error": "missing browser_use action"}
+    if action == "execute_script":
+        action = "execute-script"
     timeout = float(args.pop("timeout", 60000)) / 1000.0 if "timeout" in args else 60.0
     # /status is a GET endpoint; everything else is POST
     method = "GET" if action == "status" else "POST"

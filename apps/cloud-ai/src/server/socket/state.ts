@@ -7,6 +7,7 @@ export const anonThreads = new WeakMap<WebSocket, string>();
 export const wsAlive = new WeakMap<WebSocket, boolean>();
 
 const wsAbortControllers = new WeakMap<WebSocket, Map<string, AbortController>>();
+const wsInterjections = new WeakMap<WebSocket, Map<string, Array<{ text: string; timestamp: number }>>>();
 
 function getAbortKey(requestId: string | undefined) {
   return requestId || '__default__';
@@ -65,6 +66,36 @@ export function abortAllRequests(ws: WebSocket) {
   return count;
 }
 
+export function enqueueInterjection(ws: WebSocket, requestId: string | undefined, text: string) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return 0;
+
+  const key = getAbortKey(requestId);
+  let byRequest = wsInterjections.get(ws);
+  if (!byRequest) {
+    byRequest = new Map();
+    wsInterjections.set(ws, byRequest);
+  }
+
+  const queue = byRequest.get(key) || [];
+  queue.push({ text: trimmed, timestamp: Date.now() });
+  byRequest.set(key, queue);
+  return queue.length;
+}
+
+export function drainInterjections(ws: WebSocket, requestId: string | undefined) {
+  const byRequest = wsInterjections.get(ws);
+  if (!byRequest) return [];
+
+  const key = getAbortKey(requestId);
+  const queue = byRequest.get(key) || [];
+  byRequest.delete(key);
+  if (byRequest.size === 0) {
+    wsInterjections.delete(ws);
+  }
+  return queue;
+}
+
 export function cleanupSocketState(ws: WebSocket) {
   abortAllRequests(ws);
   conversations.delete(ws);
@@ -72,4 +103,5 @@ export function cleanupSocketState(ws: WebSocket) {
   anonResources.delete(ws);
   anonThreads.delete(ws);
   wsAlive.delete(ws);
+  wsInterjections.delete(ws);
 }

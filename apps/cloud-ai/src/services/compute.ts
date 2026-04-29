@@ -500,8 +500,18 @@ PYEOF
     fi
     echo "[stuard-bg] Python agent setup complete"
 
-    # Start browser server (CDP-based, no Playwright) in headless mode
-    if [ -f "$PYAGENT_PATH/browser_use_server.py" ]; then
+    # Start browser server (CDP-based, no Playwright) in headless mode.
+    # VM bundles usually strip source to .pyc, so accept either source or bytecode
+    # entrypoints. Prefer browser_server_main.py when source is available.
+    if [ -f "$PYAGENT_PATH/browser_server_main.py" ] || [ -f "$PYAGENT_PATH/browser_use_server.py" ] || [ -f "$PYAGENT_PATH/browser_server_main.pyc" ] || [ -f "$PYAGENT_PATH/browser_use_server.pyc" ]; then
+      BROWSER_ENTRY=""
+      for candidate in "$PYAGENT_PATH/browser_server_main.py" "$PYAGENT_PATH/browser_use_server.py" "$PYAGENT_PATH/browser_server_main.pyc" "$PYAGENT_PATH/browser_use_server.pyc"; do
+        if [ -f "$candidate" ]; then
+          BROWSER_ENTRY="$candidate"
+          break
+        fi
+      done
+
       # Browser server uses pure CDP with system chromium — no Playwright needed.
       # Only requires aiohttp + cryptography (already in requirements).
       # Ensure the default browser profile directory exists.
@@ -537,7 +547,7 @@ Environment=STUARD_BROWSER_MODE=headless
 Environment=STUARD_BROWSER_HOST=127.0.0.1
 Environment=STUARD_BROWSER_PORT=18082
 Environment=STUARD_BROWSER_PROFILE_DIR=/home/stuard/browser-profiles
-ExecStart=/opt/stuard/python-agent/venv/bin/python browser_use_server.py
+ExecStart=/opt/stuard/python-agent/venv/bin/python $BROWSER_ENTRY
 WorkingDirectory=/opt/stuard/python-agent
 User=stuard
 Group=stuard
@@ -553,7 +563,7 @@ BUEOF
       systemctl daemon-reload
       systemctl enable stuard-browser-use
       systemctl start stuard-browser-use
-      echo "[stuard-bg] Browser server started on :18082 (headless CDP, chrome=$CHROME_BIN)"
+      echo "[stuard-bg] Browser server started on :18082 (headless CDP, entry=$BROWSER_ENTRY, chrome=$CHROME_BIN)"
 
       # Allow the unprivileged 'stuard' user (under which python-agent runs)
       # to start/stop the browser-use service. The Python dispatcher relies on

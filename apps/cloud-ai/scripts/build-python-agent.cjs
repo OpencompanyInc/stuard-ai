@@ -176,7 +176,14 @@ if (!keepSource) {
       { stdio: 'inherit' }
     );
     
-    // Remove .py source files (keep .pyc), but keep vm_main.py and __init__.py
+    const SOURCE_ENTRYPOINTS_TO_KEEP = new Set([
+      '__init__.py',
+      'vm_main.py',
+      'browser_server_main.py',
+      'browser_use_server.py',
+    ]);
+
+    // Remove .py source files (keep .pyc), but keep runtime entrypoints.
     function removePySources(dir) {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const fullPath = path.join(dir, entry.name);
@@ -184,8 +191,8 @@ if (!keepSource) {
           if (entry.name !== '__pycache__') removePySources(fullPath);
         } else if (entry.name.endsWith('.py')) {
           const pycPath = fullPath.replace(/\.py$/, '.pyc');
-          // Keep __init__.py (needed for package imports) and vm_main.py
-          if (entry.name === '__init__.py' || entry.name === 'vm_main.py') continue;
+          // Keep package markers and entrypoints that systemd/dev launch directly.
+          if (SOURCE_ENTRYPOINTS_TO_KEEP.has(entry.name)) continue;
           // Only remove if .pyc exists
           if (fs.existsSync(pycPath)) {
             fs.unlinkSync(fullPath);

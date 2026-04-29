@@ -21,7 +21,7 @@ import {
   removePendingApprovalByToolId,
   setTerminalResult,
 } from '../../services/run-state';
-import { conversations, deleteAbortController, setAbortController } from '../socket/state';
+import { conversations, deleteAbortController, drainInterjections, setAbortController } from '../socket/state';
 import { isSISMetaTool, send } from '../socket/helpers';
 import { getHardTimeoutMs } from './provider-options';
 import type { PreparedChatRequest, StreamChunkRecord } from './types';
@@ -310,6 +310,40 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           assistantMetadata: buildMetadata(),
         });
       },
+    };
+
+    const basePrepareStep = streamOptions.prepareStep || streamOptions.experimental_prepareStep;
+    streamOptions.prepareStep = async (options: any) => {
+      const preparedStep = typeof basePrepareStep === 'function'
+        ? await basePrepareStep(options)
+        : undefined;
+      const interjections = drainInterjections(ws, requestId);
+      if (interjections.length === 0) return preparedStep;
+
+      const steerText = interjections
+        .map((item, index) => `Interjection ${index + 1}: ${item.text}`)
+        .join('\n');
+      const steerMessage = {
+        role: 'user',
+        content: `[User interjection while you were working]\n${steerText}\n\nUse this guidance in the next step before continuing.`,
+      };
+      const baseMessages = Array.isArray(preparedStep?.messages)
+        ? preparedStep.messages
+        : Array.isArray(options?.messages)
+          ? options.messages
+          : inputMessages;
+
+      history.push({ role: 'user', content: steerMessage.content });
+      send(ws, {
+        type: 'progress',
+        event: 'interjection_applied',
+        data: { count: interjections.length },
+      }, requestId);
+
+      return {
+        ...(preparedStep || {}),
+        messages: [...baseMessages, steerMessage],
+      };
     };
 
     if (agentType !== 'workflow') {

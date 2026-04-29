@@ -1,7 +1,9 @@
 import WebSocket from 'ws';
 import { app, net, BrowserWindow } from 'electron';
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
 import {
@@ -18,11 +20,94 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 let isStarted = false;
 let cloudWebhooksAuthUnsub: (() => void) | null = null;
 
-// ── Agent Data Sync (VM → Desktop) ─────────────────────────────────────────
+// ── Agent Data Sync (VM ⇄ Desktop) ─────────────────────────────────────────
 // When the VM uploads new agent data to GCS, cloud-ai notifies us via WS.
-// We download the archive and extract it so the local Python agent picks up changes.
+// We download the archive and extract it so the local Python agent picks up
+// changes. Pushes from desktop go through the reverse path.
+//
+// All heavy I/O (tar create/extract, copying multi-MB DB files) MUST be
+// async — the Electron main process is shared with the renderer's IPC, so
+// any sync call here freezes the whole UI for the duration of the op.
 
-let _agentDataSyncInFlight = false;
+type SyncJob = () => Promise<void>;
+let _syncQueue: Promise<void> = Promise.resolve();
+let _syncRunning = false;
+let _lastPushSucceededAt = 0;
+const MIN_PUSH_INTERVAL_MS = 30_000;
+
+/**
+ * Serialize all sync work (push + pull) on a single queue. Prevents races
+ * where a download clobbers a fresh local write that hasn't uploaded yet,
+ * and ensures the main process never has two tar processes running at once.
+ */
+function enqueueSync(label: string, job: SyncJob): Promise<void> {
+    const next = _syncQueue.then(async () => {
+        _syncRunning = true;
+        broadcastSyncStatus({ phase: 'start', label });
+        try {
+            await job();
+            broadcastSyncStatus({ phase: 'done', label });
+        } catch (e: any) {
+            logger.error(`[cloud-webhooks] Sync job '${label}' failed: ${e?.message}`);
+            broadcastSyncStatus({ phase: 'error', label, error: String(e?.message || 'failed') });
+        } finally {
+            _syncRunning = false;
+        }
+    });
+    _syncQueue = next.catch(() => undefined);
+    return next;
+}
+
+function broadcastSyncStatus(payload: { phase: 'start' | 'done' | 'error'; label: string; error?: string }): void {
+    try {
+        for (const win of BrowserWindow.getAllWindows()) {
+            try { win.webContents.send('agent:sync-status', payload); } catch { /* noop */ }
+        }
+    } catch { /* noop */ }
+}
+
+/**
+ * Run a child process to completion. Replaces `execFileSync` so the main
+ * thread can keep servicing IPC while tar runs.
+ */
+function runChild(cmd: string, args: string[], opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+        let timer: NodeJS.Timeout | null = null;
+        let aborted = false;
+        if (opts.timeoutMs && opts.timeoutMs > 0) {
+            timer = setTimeout(() => {
+                aborted = true;
+                try { child.kill('SIGKILL'); } catch { /* noop */ }
+            }, opts.timeoutMs);
+        }
+        const onAbort = () => {
+            aborted = true;
+            try { child.kill('SIGKILL'); } catch { /* noop */ }
+        };
+        if (opts.signal) {
+            if (opts.signal.aborted) onAbort();
+            else opts.signal.addEventListener('abort', onAbort, { once: true });
+        }
+        child.stderr?.on('data', (d) => { stderr += d.toString(); });
+        child.on('error', (e) => {
+            if (timer) clearTimeout(timer);
+            reject(e);
+        });
+        child.on('close', (code) => {
+            if (timer) clearTimeout(timer);
+            if (opts.signal) opts.signal.removeEventListener?.('abort', onAbort);
+            if (aborted) return reject(new Error(`${cmd} aborted`));
+            if (code === 0) return resolve();
+            reject(new Error(`${cmd} exited ${code}: ${stderr.trim().slice(0, 500)}`));
+        });
+    });
+}
+
+async function pathExists(p: string): Promise<boolean> {
+    try { await fsp.access(p); return true; } catch { return false; }
+}
 
 function getDesktopAgentDataDir(): string {
     if (process.env.AGENT_DATA_DIR) return process.env.AGENT_DATA_DIR;
@@ -53,7 +138,7 @@ async function persistIncomingChatSync(msg: any): Promise<void> {
 
     const execTool = async (tool: string, args: any): Promise<void> => {
         try {
-            await fetch(`${agentHttp}/tools/exec`, {
+            await fetch(`${agentHttp}/v1/tools/exec`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tool, args }),
@@ -89,57 +174,39 @@ async function persistIncomingChatSync(msg: any): Promise<void> {
 /**
  * Download updated agent databases from GCS via cloud-ai signed URL.
  * Extracts knowledge.db, memory.db, etc. to the desktop agent data directory.
+ * All filesystem and tar work is async — no main-thread blocking.
  */
 async function handleAgentDataUpdated(): Promise<void> {
-    if (_agentDataSyncInFlight) {
-        logger.info('[cloud-webhooks] Agent data sync already in flight, skipping');
+    const token = await getAuthToken();
+    if (!token) {
+        logger.warn('[cloud-webhooks] No auth token for agent data download');
         return;
     }
-    _agentDataSyncInFlight = true;
+
+    const apiBase = getCloudAiHttpBase();
+
+    const downloadUrlResp = await fetch(`${apiBase}/v1/storage/agent-data-url`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+        signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!downloadUrlResp.ok) {
+        logger.warn(`[cloud-webhooks] Could not get agent data URL: ${downloadUrlResp.status}`);
+        return;
+    }
+
+    const { downloadUrl } = await downloadUrlResp.json() as any;
+    if (!downloadUrl) {
+        logger.info('[cloud-webhooks] No agent data available in cloud storage');
+        return;
+    }
+
+    const tmpDir = app.getPath('temp');
+    const tmpFile = path.join(tmpDir, `agent-data-sync-${Date.now()}.tar.gz`);
+    const tmpExtract = path.join(tmpDir, `agent-data-extract-${Date.now()}`);
 
     try {
-        const token = await getAuthToken();
-        if (!token) {
-            logger.warn('[cloud-webhooks] No auth token for agent data download');
-            return;
-        }
-
-        const apiBase = getCloudAiHttpBase();
-
-        // 1. Get signed download URL from cloud-ai
-        const urlResp = await fetch(`${apiBase}/v1/cloud-engine/sync-agent-data`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-            },
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        // sync-agent-data tells the VM to download — we need the raw URLs instead
-        // Use the agent-data-urls via a desktop-specific download path
-        const downloadUrlResp = await fetch(`${apiBase}/v1/storage/agent-data-url`, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!downloadUrlResp.ok) {
-            // Fallback: try requesting the agent data download URL from the VM sync endpoint
-            logger.warn('[cloud-webhooks] Could not get agent data URL, trying alternative');
-            return;
-        }
-
-        const { downloadUrl } = await downloadUrlResp.json() as any;
-        if (!downloadUrl) {
-            logger.info('[cloud-webhooks] No agent data available in cloud storage');
-            return;
-        }
-
-        // 2. Stream download to temp file
-        const tmpDir = app.getPath('temp');
-        const tmpFile = path.join(tmpDir, `agent-data-sync-${Date.now()}.tar.gz`);
-
         const dlResp = await fetch(downloadUrl, { signal: AbortSignal.timeout(10 * 60_000) });
         if (!dlResp.ok || !dlResp.body) {
             logger.error(`[cloud-webhooks] Agent data download failed: ${dlResp.status}`);
@@ -150,73 +217,70 @@ async function handleAgentDataUpdated(): Promise<void> {
         const { pipeline } = await import('stream/promises');
         await pipeline(Readable.fromWeb(dlResp.body as any), fs.createWriteStream(tmpFile));
 
-        const stats = fs.statSync(tmpFile);
+        const stats = await fsp.stat(tmpFile);
         logger.info(`[cloud-webhooks] Downloaded agent data: ${stats.size} bytes`);
 
-        // 3. Extract to desktop agent data directory
         const agentDir = getDesktopAgentDataDir();
-        fs.mkdirSync(agentDir, { recursive: true });
+        await fsp.mkdir(agentDir, { recursive: true });
+        await fsp.mkdir(tmpExtract, { recursive: true });
 
-        const tmpExtract = path.join(tmpDir, `agent-data-extract-${Date.now()}`);
-        fs.mkdirSync(tmpExtract, { recursive: true });
-
-        const { execFileSync } = await import('child_process');
-        // Use tar on unix, or built-in extraction on Windows
-        if (process.platform === 'win32') {
-            execFileSync('tar', ['-xzf', tmpFile, '-C', tmpExtract], { timeout: 300_000 });
-        } else {
-            execFileSync('tar', ['-xzf', tmpFile, '-C', tmpExtract], { timeout: 300_000 });
-        }
+        await runChild('tar', ['-xzf', tmpFile, '-C', tmpExtract], { timeoutMs: 300_000 });
 
         // Handle new format (agent/ prefix) vs legacy (flat files)
         const extractedAgentDir = path.join(tmpExtract, 'agent');
-        const sourceDir = fs.existsSync(extractedAgentDir) ? extractedAgentDir : tmpExtract;
+        const sourceDir = (await pathExists(extractedAgentDir)) ? extractedAgentDir : tmpExtract;
 
         // Merge-safe copy: only overwrite local file if incoming is newer.
-        // Prevents a race where a stale GCS snapshot clobbers newer local
-        // writes made since the last upload.
-        const mergeCopy = (src: string, dest: string): boolean => {
+        // Prevents a stale GCS snapshot from clobbering newer local writes
+        // made since the last upload.
+        const mergeCopy = async (src: string, dest: string): Promise<boolean> => {
             try {
-                const srcStat = fs.statSync(src);
+                const srcStat = await fsp.stat(src);
                 if (!srcStat.isFile()) return false;
-                if (fs.existsSync(dest)) {
-                    const destStat = fs.statSync(dest);
+                if (await pathExists(dest)) {
+                    const destStat = await fsp.stat(dest);
                     if (destStat.size > 0 && destStat.mtimeMs >= srcStat.mtimeMs) {
-                        return false; // keep the local (newer / equal) copy
+                        return false;
                     }
                 }
-                fs.copyFileSync(src, dest);
-                try { fs.utimesSync(dest, srcStat.atime, srcStat.mtime); } catch { /* best-effort */ }
+                await fsp.copyFile(src, dest);
+                try { await fsp.utimes(dest, srcStat.atime, srcStat.mtime); } catch { /* best-effort */ }
                 return true;
             } catch {
                 return false;
             }
         };
 
-        // Copy only DB files (don't overwrite other agent data)
-        const dbFiles = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'knowledge.db-shm', 'memory.db-wal', 'memory.db-shm'];
+        const dbFiles = new Set([
+            'knowledge.db', 'memory.db', 'file_index.db',
+            'knowledge.db-wal', 'knowledge.db-shm',
+            'memory.db-wal', 'memory.db-shm',
+            'file_index.db-wal', 'file_index.db-shm',
+        ]);
         let copied = 0;
         let skipped = 0;
-        for (const f of fs.readdirSync(sourceDir)) {
-            const srcPath = path.join(sourceDir, f);
-            if (fs.statSync(srcPath).isFile() && (dbFiles.includes(f) || f.endsWith('.db'))) {
-                if (mergeCopy(srcPath, path.join(agentDir, f))) copied++; else skipped++;
-            }
+        const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
+        for (const ent of entries) {
+            if (!ent.isFile()) continue;
+            if (!(dbFiles.has(ent.name) || ent.name.endsWith('.db'))) continue;
+            const ok = await mergeCopy(path.join(sourceDir, ent.name), path.join(agentDir, ent.name));
+            if (ok) copied++; else skipped++;
         }
 
         // Install device keys from the archive when present (file-backed
         // fallback only — we never touch the OS keyring from here).
         const extractedKeysDir = path.join(tmpExtract, '.stuard_keys');
-        if (fs.existsSync(extractedKeysDir)) {
+        if (await pathExists(extractedKeysDir)) {
             try {
                 const keysDest = path.join(process.env.HOME || process.env.USERPROFILE || '', '.stuard', 'keys');
-                fs.mkdirSync(keysDest, { recursive: true });
-                for (const f of fs.readdirSync(extractedKeysDir)) {
-                    const src = path.join(extractedKeysDir, f);
-                    const dst = path.join(keysDest, f);
-                    if (!fs.statSync(src).isFile()) continue;
-                    if (!fs.existsSync(dst)) {
-                        fs.copyFileSync(src, dst);
+                await fsp.mkdir(keysDest, { recursive: true });
+                const keyEntries = await fsp.readdir(extractedKeysDir, { withFileTypes: true });
+                for (const ent of keyEntries) {
+                    if (!ent.isFile()) continue;
+                    const src = path.join(extractedKeysDir, ent.name);
+                    const dst = path.join(keysDest, ent.name);
+                    if (!(await pathExists(dst))) {
+                        await fsp.copyFile(src, dst);
                     }
                 }
                 logger.info('[cloud-webhooks] Device keys installed from archive');
@@ -225,78 +289,69 @@ async function handleAgentDataUpdated(): Promise<void> {
             }
         }
 
-        // Cleanup temp files
-        try { fs.rmSync(tmpExtract, { recursive: true, force: true }); } catch { }
-        try { fs.unlinkSync(tmpFile); } catch { }
-
         logger.info(`[cloud-webhooks] Agent data sync complete: ${copied} files updated, ${skipped} skipped (local newer) in ${agentDir}`);
 
-        // 4. Notify renderer that agent data was updated
         try {
             for (const win of BrowserWindow.getAllWindows()) {
                 try { win.webContents.send('agent:data-synced', { source: 'vm', files: copied }); } catch { }
             }
         } catch { }
-
-    } catch (e: any) {
-        logger.error(`[cloud-webhooks] Agent data sync failed: ${e?.message}`);
     } finally {
-        _agentDataSyncInFlight = false;
+        await fsp.rm(tmpExtract, { recursive: true, force: true }).catch(() => undefined);
+        await fsp.unlink(tmpFile).catch(() => undefined);
     }
 }
 
 /**
  * Upload desktop's agent databases to GCS and notify VM to pull them.
  * Called after local knowledge/memory changes to keep VM in sync.
+ * All filesystem and tar work is async — no main-thread blocking.
  */
 export async function pushDesktopAgentDataToVM(): Promise<boolean> {
+    const token = await getAuthToken();
+    if (!token) return false;
+
+    const apiBase = getCloudAiHttpBase();
+    const agentDir = getDesktopAgentDataDir();
+
+    if (!(await pathExists(agentDir))) {
+        logger.warn('[cloud-webhooks] Agent data dir does not exist');
+        return false;
+    }
+
+    const tmpDir = app.getPath('temp');
+    const stageDir = path.join(tmpDir, `agent-data-stage-${Date.now()}`);
+    const stageAgentDir = path.join(stageDir, 'agent');
+    const tmpFile = path.join(tmpDir, `agent-data-upload-${Date.now()}.tar.gz`);
+
     try {
-        const token = await getAuthToken();
-        if (!token) return false;
+        await fsp.mkdir(stageAgentDir, { recursive: true });
 
-        const apiBase = getCloudAiHttpBase();
-        const agentDir = getDesktopAgentDataDir();
-
-        if (!fs.existsSync(agentDir)) {
-            logger.warn('[cloud-webhooks] Agent data dir does not exist');
-            return false;
-        }
-
-        // 1. Create tar.gz of agent data.
-        //    Stage into a temp dir so we can optionally include device keys
-        //    (from ~/.stuard/keys) — the VM needs these to decrypt rows
-        //    written on the desktop. We never copy from the OS keyring; only
-        //    the file-backed fallback is propagated.
-        const tmpDir = app.getPath('temp');
-        const stageDir = path.join(tmpDir, `agent-data-stage-${Date.now()}`);
-        fs.mkdirSync(stageDir, { recursive: true });
-        const stageAgentDir = path.join(stageDir, 'agent');
-        fs.mkdirSync(stageAgentDir, { recursive: true });
-
-        // Mirror agent files into the stage (preserving mtime).
-        // memory.db is special: the VM runs in plaintext mode and cannot
-        // decrypt desktop-encrypted rows, so we substitute a decrypted
-        // plaintext copy produced by the local Python agent.
+        // Mirror agent files into the stage (preserving mtime). memory.db is
+        // special: the VM runs in plaintext mode and cannot decrypt
+        // desktop-encrypted rows, so we substitute a decrypted plaintext
+        // copy produced by the local Python agent.
         const MEMORY_DB_FILES = new Set(['memory.db', 'memory.db-wal', 'memory.db-shm']);
-        for (const f of fs.readdirSync(agentDir)) {
-            if (MEMORY_DB_FILES.has(f)) continue; // handled below
-            const src = path.join(agentDir, f);
+        const entries = await fsp.readdir(agentDir, { withFileTypes: true });
+        await Promise.all(entries.map(async (ent) => {
+            if (!ent.isFile()) return;
+            if (MEMORY_DB_FILES.has(ent.name)) return;
+            const src = path.join(agentDir, ent.name);
+            const dest = path.join(stageAgentDir, ent.name);
             try {
-                const st = fs.statSync(src);
-                if (st.isFile()) {
-                    fs.copyFileSync(src, path.join(stageAgentDir, f));
-                    try { fs.utimesSync(path.join(stageAgentDir, f), st.atime, st.mtime); } catch { /* best-effort */ }
-                }
+                const st = await fsp.stat(src);
+                await fsp.copyFile(src, dest);
+                try { await fsp.utimes(dest, st.atime, st.mtime); } catch { /* best-effort */ }
             } catch { /* skip unreadable */ }
-        }
+        }));
 
         // Ask the local Python agent to export memory.db with all encrypted
         // columns decrypted and tagged as plaintext. The VM reads these rows
         // directly without needing the desktop's device key.
+        const exportPath = path.join(stageAgentDir, 'memory.db');
         try {
-            const exportPath = path.join(stageAgentDir, 'memory.db');
             const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
-            const resp = await fetch(`${agentHttp}/tools/exec`, {
+            const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -305,53 +360,45 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
                 }),
                 signal: AbortSignal.timeout(120_000),
             });
-            const result: any = await resp.json().catch(() => ({ ok: false }));
-            if (!result?.ok) {
-                logger.warn(`[cloud-webhooks] memory_export_plaintext failed: ${result?.error || 'unknown'}`);
-                // Fall back to copying the encrypted memory.db — VM still
-                // can't read it, but at least we don't ship a broken archive.
+            if (!resp.ok) {
+                logger.warn(`[cloud-webhooks] memory_export_plaintext HTTP ${resp.status}`);
                 const src = path.join(agentDir, 'memory.db');
-                if (fs.existsSync(src)) {
-                    fs.copyFileSync(src, exportPath);
-                }
+                if (await pathExists(src)) await fsp.copyFile(src, exportPath);
             } else {
-                logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
+                const result: any = await resp.json().catch(() => ({ ok: false }));
+                if (!result?.ok) {
+                    logger.warn(`[cloud-webhooks] memory_export_plaintext failed: ${result?.error || 'unknown'}`);
+                    const src = path.join(agentDir, 'memory.db');
+                    if (await pathExists(src)) await fsp.copyFile(src, exportPath);
+                } else {
+                    logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
+                }
             }
             // Force a fresh mtime so the VM's merge-copy treats it as newer
             // than any legacy encrypted memory.db already on disk.
             try {
                 const now = new Date();
-                fs.utimesSync(exportPath, now, now);
+                await fsp.utimes(exportPath, now, now);
             } catch { /* best-effort */ }
         } catch (e: any) {
             logger.warn(`[cloud-webhooks] memory.db plaintext export errored: ${e?.message}`);
         }
 
-        const tmpFile = path.join(tmpDir, `agent-data-upload-${Date.now()}.tar.gz`);
-        const { execFileSync } = await import('child_process');
-        execFileSync('tar', ['-czf', tmpFile, '-C', stageDir, '.'], { timeout: 300_000 });
-        const stats = fs.statSync(tmpFile);
-        try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+        await runChild('tar', ['-czf', tmpFile, '-C', stageDir, '.'], { timeoutMs: 300_000 });
+
+        const stats = await fsp.stat(tmpFile);
         logger.info(`[cloud-webhooks] Agent data archive: ${stats.size} bytes`);
 
-        // 2. Get signed upload URL from cloud-ai
         const urlResp = await fetch(`${apiBase}/v1/storage/agent-data-url`, {
             method: 'GET',
             headers: { 'Authorization': `Bearer ${token}` },
             signal: AbortSignal.timeout(15_000),
         });
 
-        if (!urlResp.ok) {
-            try { fs.unlinkSync(tmpFile); } catch { }
-            return false;
-        }
+        if (!urlResp.ok) return false;
         const { uploadUrl } = await urlResp.json() as any;
-        if (!uploadUrl) {
-            try { fs.unlinkSync(tmpFile); } catch { }
-            return false;
-        }
+        if (!uploadUrl) return false;
 
-        // 3. Stream upload to GCS
         const uploadResp = await fetch(uploadUrl, {
             method: 'PUT',
             headers: {
@@ -363,14 +410,11 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
             signal: AbortSignal.timeout(10 * 60_000),
         } as any);
 
-        try { fs.unlinkSync(tmpFile); } catch { }
-
         if (!uploadResp.ok) {
             logger.error(`[cloud-webhooks] Agent data upload failed: ${uploadResp.status}`);
             return false;
         }
 
-        // 4. Notify cloud-ai to tell VM to download
         await fetch(`${apiBase}/v1/cloud-engine/push-agent-data`, {
             method: 'POST',
             headers: {
@@ -378,13 +422,19 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
                 'Authorization': `Bearer ${token}`,
             },
             signal: AbortSignal.timeout(15_000),
+        }).catch((e: any) => {
+            logger.warn(`[cloud-webhooks] push-agent-data notify failed: ${e?.message}`);
         });
 
+        _lastPushSucceededAt = Date.now();
         logger.info('[cloud-webhooks] Desktop agent data pushed to VM');
         return true;
     } catch (e: any) {
         logger.error(`[cloud-webhooks] Push agent data to VM failed: ${e?.message}`);
         return false;
+    } finally {
+        await fsp.rm(stageDir, { recursive: true, force: true }).catch(() => undefined);
+        await fsp.unlink(tmpFile).catch(() => undefined);
     }
 }
 

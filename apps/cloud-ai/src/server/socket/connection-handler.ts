@@ -6,7 +6,7 @@ import { writeLog } from '../../utils/logger';
 import { handleChatMessage } from '../chat/handle-chat-message';
 import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
-import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, wsAlive } from './state';
+import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, enqueueInterjection, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
 
 export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
@@ -87,6 +87,19 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
 
   if (kind === 'exec_tool_bridged') {
     void handleBridgedToolExecution(ws, msg);
+    return;
+  }
+
+  if (kind === 'interjection' || kind === 'steer') {
+    const requestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
+    const text = typeof msg?.text === 'string' ? msg.text : '';
+    const depth = enqueueInterjection(ws, requestId, text);
+    send(ws, {
+      type: 'interjection_ack',
+      accepted: depth > 0,
+      depth,
+      message: depth > 0 ? 'queued for next step' : 'empty interjection',
+    }, requestId);
     return;
   }
 
