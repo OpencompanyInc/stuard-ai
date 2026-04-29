@@ -1256,13 +1256,13 @@ export function useAgent(options?: string | UseAgentOptions) {
                       contextPaths: first.contextPaths,
                     }],
                   }));
+                  const promotedId = first.id;
+                  pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== promotedId);
+                  syncQueuedMessages((prev) => {
+                    const nextList = prev.filter((item) => item.id !== promotedId);
+                    return nextList;
+                  });
                 }
-                const promotedId = first.id;
-                pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== promotedId);
-                syncQueuedMessages((prev) => {
-                  const nextList = prev.filter((item) => item.id !== promotedId);
-                  return nextList;
-                });
                 waitingQueuedStartRef.current = false;
               } else {
                 const p = pendingSendRef.current.shift();
@@ -1845,7 +1845,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                 timestamp: ts,
                 attachments: p?.attachments,
                 contextPaths: p?.contextPaths,
-                kind: 'message',
+                kind: 'message' as const,
                 tabId: p?.tabId,
               }];
               return nextList;
@@ -2448,7 +2448,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             timestamp: pendingItem.timestamp,
             attachments: pendingItem.attachments,
             contextPaths: pendingItem.contextPaths,
-            kind: 'message',
+            kind: 'message' as const,
             tabId: pendingItem.tabId,
           }];
         });
