@@ -35,12 +35,6 @@ import {
   executeVoiceToolCall,
   truncateVoiceToolResult,
 } from '../voice/voice-runtime-tools';
-import {
-  registerVoiceBridge,
-  cleanupVoiceBridge,
-  awaitVoiceBridge,
-  getVoiceBridgeWs,
-} from '../voice/voice-bridge-manager';
 import { getDesktopWs } from '../services/vm-bridge';
 
 interface VoiceBridgeConfig {
@@ -51,14 +45,6 @@ interface VoiceBridgeConfig {
   initialMessage?: string;
   /** When true, skip tool injection (e.g. for diagnostic/preview sessions). */
   disableTools?: boolean;
-  /**
-   * Client-supplied voice session id. The desktop renderer generates this
-   * up-front and asks main to open a per-session bridge WS to /ws with
-   * `?voice_session=<id>`. We use it here to wait for that bridge before
-   * building voice context (so identity/directive/bio facts can be loaded
-   * from the desktop runtime, not the stale Supabase mirror).
-   */
-  sessionId?: string;
 }
 
 export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
@@ -129,10 +115,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         session.close('reconfigured');
         session = null;
       }
-      if (voiceSessionId) {
-        cleanupVoiceBridge(voiceSessionId);
-        voiceSessionId = null;
-      }
+      voiceSessionId = null;
 
       const config = msg as VoiceBridgeConfig;
       const wantTools = !config.disableTools;
@@ -168,40 +151,18 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         console.warn(`[voice-bridge] Tools disabled — provider '${providerId}' does not support function calling. Configure GOOGLE_API_KEY (gemini-live), OPENAI_API_KEY (openai-realtime), or XAI_API_KEY (grok-realtime) to enable orchestrator tools in voice mode.`);
       }
 
-      // ── Resolve the desktop bridge WS for this session ──────────────────
-      // Preferred path: the renderer generated a sessionId up-front and the
-      // desktop main process is opening a per-session bridge WS in parallel.
-      // We wait briefly for it to register so knowledge/runtime lookups land
-      // on THIS cloud-ai instance instead of relying on the stale Supabase
-      // mirror.
-      //
-      // Fallbacks (in order):
-      //   1. The user's main chat WS, if it happens to be on this instance.
-      //   2. Supabase signaling (`requestDesktopBridge`) — only useful when
-      //      the desktop hasn't already initiated a bridge; this is the
-      //      same path telnyx uses.
-      //   3. No bridge — buildVoiceContext drops to its Supabase mirror.
-      let bridgeWs: WebSocket | undefined;
-      if (config.sessionId) {
-        const existing = getVoiceBridgeWs(config.sessionId);
-        if (existing) {
-          bridgeWs = existing;
-        } else {
-          const awaited = await awaitVoiceBridge(config.sessionId, 6_000).catch(() => null);
-          bridgeWs = awaited || undefined;
-        }
-        if (bridgeWs) {
-          console.log('[voice-bridge] Using per-session desktop bridge', { sessionId: config.sessionId });
-        } else {
-          console.warn('[voice-bridge] Per-session desktop bridge did not register in time', { sessionId: config.sessionId });
-        }
-      }
-      if (!bridgeWs && userId) {
-        const main = getDesktopWs(userId);
-        if (main) {
-          bridgeWs = main;
-          console.log('[voice-bridge] Falling back to main chat WS as bridge');
-        }
+      // ── Resolve the desktop bridge WS ────────────────────────────────────
+      // The desktop app keeps a persistent /ws?client=desktop connection open
+      // (cloud-webhooks main WS). That same WS is the tool/context bridge
+      // for both text chat and voice — no per-session bridge needed. If the
+      // desktop is offline we still proceed, but voice will fall back to the
+      // Supabase mirror for context and tools that need local state will
+      // fail with `bridge_closed`.
+      const bridgeWs: WebSocket | undefined = userId ? getDesktopWs(userId) : undefined;
+      if (bridgeWs) {
+        console.log('[voice-bridge] Using persistent desktop WS as bridge', { userId });
+      } else {
+        console.warn('[voice-bridge] No persistent desktop WS — voice will run with cloud-only context', { userId });
       }
 
       let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
@@ -289,21 +250,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         };
 
         session = await provider.createSession(sessionConfig);
-
-        // Prefer the client-supplied sessionId for bridge keying so the
-        // per-session bridge that the desktop opened earlier (registered
-        // in voice-bridge-manager via the auth handler) lines up with the
-        // tool dispatcher. Fall back to the provider's session id when
-        // the client didn't pre-generate one.
-        voiceSessionId = config.sessionId || session.id;
-
-        // If we already had a bridge WS at context-build time AND the
-        // client did not provide its own sessionId, fall back to manually
-        // registering it under the provider's session id so tools can
-        // reach the desktop runtime.
-        if (!config.sessionId && bridgeWs && voiceSessionId) {
-          try { registerVoiceBridge(voiceSessionId, bridgeWs); } catch {}
-        }
+        voiceSessionId = session.id;
 
         // Bridge audio from provider back to browser as binary PCM16
         session.onAudio((audioBase64: string) => {
@@ -374,10 +321,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
       try { session.close(reason); } catch {}
       session = null;
     }
-    if (voiceSessionId) {
-      cleanupVoiceBridge(voiceSessionId);
-      voiceSessionId = null;
-    }
+    voiceSessionId = null;
     writeLog('voice_bridge_disconnected', { userId: userId || 'unauth', reason });
   }
 }

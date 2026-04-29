@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
@@ -349,7 +349,19 @@ try {
     logger.error("Failed to start SMS inbox:", e);
   }
 
-  // Start voice bridge listener (opens per-call WS bridges on demand)
+  // Open the persistent main WS to cloud-ai (`/ws?client=desktop`). This is
+  // the connection the cloud uses as the per-user tool/context bridge for
+  // both text chat and voice mode. Without it, voice has no way to load
+  // knowledge facts or run local tools.
+  try {
+    startCloudWebhooks();
+    logger.info("Cloud webhooks main WS started");
+  } catch (e) {
+    logger.error("Failed to start cloud webhooks:", e);
+  }
+
+  // Start voice bridge listener (opens per-call WS bridges on demand for
+  // telnyx/discord — browser voice now reuses the main WS above).
   try {
     startVoiceBridgeService();
     logger.info("Voice bridge service started");

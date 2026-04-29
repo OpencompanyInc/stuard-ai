@@ -16,6 +16,7 @@ import type { RouterContext } from '../tools/types';
 let ws: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let isStarted = false;
+let cloudWebhooksAuthUnsub: (() => void) | null = null;
 
 // ── Agent Data Sync (VM → Desktop) ─────────────────────────────────────────
 // When the VM uploads new agent data to GCS, cloud-ai notifies us via WS.
@@ -507,11 +508,31 @@ export function startCloudWebhooks() {
     isStarted = true;
     connect();
     startDesktopAgentDataSync();
+
+    // Re-auth (or reconnect) the main WS whenever the user's Supabase session
+    // changes — typically after sign-in. Without this the WS that opened
+    // pre-auth would stay anonymous forever and `getDesktopWs(userId)` on the
+    // cloud would never resolve, breaking voice tool calls and context.
+    if (!cloudWebhooksAuthUnsub) {
+        cloudWebhooksAuthUnsub = onMainAuthSessionChange(async () => {
+            const token = await getAuthToken();
+            if (!token) return;
+            if (ws?.readyState === WebSocket.OPEN) {
+                try { ws.send(JSON.stringify({ type: 'auth', accessToken: token })); } catch { }
+            } else {
+                connect();
+            }
+        });
+    }
 }
 
 export function stopCloudWebhooks() {
     isStarted = false;
     stopDesktopAgentDataSync();
+    if (cloudWebhooksAuthUnsub) {
+        try { cloudWebhooksAuthUnsub(); } catch { }
+        cloudWebhooksAuthUnsub = null;
+    }
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (ws) {
         try { ws.removeAllListeners(); } catch { }

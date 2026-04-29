@@ -348,23 +348,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
       return;
     }
 
-    // Generate a voice session id up-front so we can open a per-session
-    // bridge WS in the desktop main process *before* /voice connects. The
-    // bridge is what lets the cloud voice handler relay tool calls
-    // (search_memory, delegate, etc.) back to the local runtime.
-    const voiceSessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `vsid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-    try {
-      const electronAPI: any = (window as any).electronAPI;
-      if (electronAPI?.openVoiceBridge) {
-        // Fire-and-forget — the cloud /voice handler will await the bridge
-        // briefly before building the voice context.
-        electronAPI.openVoiceBridge(voiceSessionId).catch(() => {});
-      }
-    } catch { /* ignore — voice still works without the bridge, just degraded */ }
-
+    // The desktop's persistent /ws?client=desktop connection is the cloud's
+    // tool/context bridge for both text and voice — no per-session handshake
+    // needed here.
     const url = options.wsUrl || getVoiceWsUrl();
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -392,12 +378,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
         const msg = JSON.parse(ev.data);
 
         if (msg.type === 'authenticated') {
-          // Send session config — pass the pre-generated sessionId so the
-          // cloud handler can match the per-session bridge WS the desktop
-          // main process is opening in parallel.
           ws.send(JSON.stringify({
             type: 'config',
-            sessionId: voiceSessionId,
             provider: options.provider || undefined,
             agentId: options.agentId || undefined,
             systemPrompt: options.systemPrompt || undefined,

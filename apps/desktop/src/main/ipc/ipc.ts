@@ -27,7 +27,7 @@ import {
   updateMediaLibraryPrefs,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
-import { pushDesktopAgentDataToVM, requestAgentDataPush, openVoiceBridge } from "../services/cloud-webhooks";
+import { pushDesktopAgentDataToVM, requestAgentDataPush } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
 import {
   browserMirrorClickAt,
@@ -917,22 +917,6 @@ export function setupIpc() {
   ipcMain.handle('cloud:requestAgentDataPush', async () => {
     try { requestAgentDataPush(); return { ok: true }; } catch (e: any) {
       return { ok: false, error: String(e?.message || 'push_failed') };
-    }
-  });
-
-  // Voice bridge — renderer asks main to open a per-voice-session bridge WS
-  // to cloud-ai. Bypasses the Supabase Realtime signaling path used for
-  // external channels (telnyx/discord) since the desktop initiates voice
-  // locally and already has an auth session.
-  ipcMain.handle('voice:openBridge', async (_e, sessionId: string) => {
-    try {
-      if (!sessionId || typeof sessionId !== 'string') {
-        return { ok: false, error: 'missing_session_id' };
-      }
-      openVoiceBridge(sessionId);
-      return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || 'open_bridge_failed') };
     }
   });
 

@@ -7,6 +7,6 @@ export * from "./unified-tasks";
 export * from "./offline-calendar";
 export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
 export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
-export { startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
+export { startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
 export { proactiveService } from "./proactive-service";
 export { triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "./proactive-scheduler";
