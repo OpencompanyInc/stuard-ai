@@ -922,6 +922,23 @@ export function useAgent(options?: string | UseAgentOptions) {
       requestId,
     };
 
+    // Send the interjection to the server immediately. The server's prepareStep
+    // runs synchronously after each step_finished, so deferring this send to the
+    // step_finished event would lose the round-trip race and the next step would
+    // drain an empty queue. Sending now lets the server stash the interjection
+    // and pick it up on the next step boundary.
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({
+          type: 'interjection',
+          requestId,
+          text: trimmed,
+          timestamp: item.timestamp,
+        }));
+      } catch { }
+    }
+
     syncQueuedMessages((prev) => [...prev, item]);
     setTabs(prev => prev.map(t =>
       t.id === targetTabId
@@ -933,9 +950,10 @@ export function useAgent(options?: string | UseAgentOptions) {
   }, [getRequestIdForTab, syncQueuedMessages]);
 
   const flushQueuedSteeringMessages = useCallback((targetTabId: string, requestId?: string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
+    // The interjection is sent to the server eagerly in queueSteeringMessage so it
+    // races ahead of the next step's prepareStep. This routine handles only the
+    // local chat-history commit at the step_finished boundary: move queued steers
+    // for this turn into the chat alongside the interrupted CoT.
     const queued = queuedMessagesRef.current.filter((item) =>
       item.kind === 'steer'
       && item.tabId === targetTabId
@@ -943,22 +961,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     );
     if (queued.length === 0) return;
 
-    const sent: QueuedMessage[] = [];
-    for (const item of queued) {
-      const rid = item.requestId || requestId;
-      if (!rid) continue;
-      try {
-        ws.send(JSON.stringify({
-          type: 'interjection',
-          requestId: rid,
-          text: item.text,
-          timestamp: item.timestamp,
-        }));
-        sent.push(item);
-      } catch { }
-    }
-
-    if (sent.length === 0) return;
+    const sent: QueuedMessage[] = queued;
     const sentIds = new Set(sent.map((item) => item.id));
     syncQueuedMessages((prev) => prev.filter((item) => !sentIds.has(item.id)));
     setTabs(prev => prev.map(t => {
