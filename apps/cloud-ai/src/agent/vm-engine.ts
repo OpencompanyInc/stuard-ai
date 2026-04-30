@@ -125,22 +125,106 @@ const VM_NATIVE_TOOLS = new Set([
 
 /** Tools that run on Cloud AI (LLM inference, web search, integrations) */
 const CLOUD_TOOLS = new Set([
-  'chat_completion', 'smart_chat', 'summarize_text', 'extract_data', 'classify_text',
+  // AI inference & agents
+  'ai_inference', 'chat_completion', 'smart_chat', 'summarize_text', 'extract_data', 'classify_text',
+  'agent_node', 'agent_decision', 'agent_extract',
+  'analyze_media', 'analyze_image', 'analyze_current_screen', 'cloud_ai_vision',
+
+  // Web tools
   'web_search', 'scrape_url', 'web_search_scrape',
+
+  // TTS & media
+  'text_to_speech', 'list_tts_voices', 'get_tts_models',
+  'generate_image',
+
+  // Embeddings
+  'generate_embeddings', 'semantic_search',
+  'embed_text', 'vector_similarity', 'embed_and_store',
+
+  // Google integrations
+  'google_get_userinfo', 'google_list_profiles',
+  'gmail_send', 'gmail_send_message', 'gmail_list_messages', 'gmail_search_messages',
+  'gmail_get_message_brief', 'gmail_get_message_full', 'gmail_get_messages_brief',
+  'gmail_list_recent_brief', 'gmail_get_most_recent_full',
+  'gmail_download_attachment', 'gmail_retrieve_messages_with_attachments',
+  'gmail_modify_message', 'gmail_delete_message', 'gmail_archive_message',
+  'gmail_mark_as_read', 'gmail_mark_as_unread',
+  'calendar_list_events', 'calendar_create_event', 'calendar_delete_event',
+  'tasks_list',
+  'drive_list_files',
+  'sheets_read_range',
+  'docs_get_document', 'docs_create_document', 'docs_write_text',
+  // Legacy aliases
   'send_email', 'read_email',
   'google_calendar_list', 'google_calendar_create', 'google_calendar_update', 'google_calendar_delete',
-  'github_create_issue', 'github_list_issues', 'github_create_pr',
+
+  // Outlook integrations
+  'outlook_get_me', 'outlook_send_mail', 'outlook_list_messages', 'outlook_search_messages',
+
+  // GitHub integrations
+  'github_get_me', 'github_list_repos', 'github_get_repo',
+  'github_list_issues', 'github_create_issue', 'github_update_issue',
+  'github_list_issue_comments', 'github_create_issue_comment',
+  'github_list_pulls', 'github_get_pull', 'github_create_pull', 'github_update_pull',
+  'github_merge_pull', 'github_list_pull_commits', 'github_list_pull_files',
+  'github_list_pull_reviews', 'github_create_pull_review', 'github_request_reviewers',
+  'github_list_branches', 'github_get_branch', 'github_create_branch', 'github_delete_branch',
+  'github_list_commits', 'github_get_commit', 'github_compare_commits',
+  'github_get_file_content', 'github_search_code', 'github_search_repos',
+  'github_list_releases', 'github_create_release',
+  'github_list_labels', 'github_list_workflow_runs', 'github_get_workflow_run',
+  'github_rerun_workflow', 'github_dispatch_workflow',
+  'github_list_gists', 'github_create_gist',
+  // Legacy alias
+  'github_create_pr',
+
+  // YouTube
   'youtube_search', 'youtube_transcript',
-  'text_to_speech',
-  'generate_embeddings', 'semantic_search',
+  'youtube_get_video', 'youtube_get_channel', 'youtube_get_playlist',
+
+  // Discord integrations
+  'discord_send', 'discord_read',
+  'discord_list_guilds', 'discord_list_channels', 'discord_list_dms',
+  'discord_read_messages', 'discord_send_dm', 'discord_add_reaction',
+
+  // Reddit integrations
   'reddit_search', 'reddit_post',
+  'reddit_view_subreddit', 'reddit_view_comments', 'reddit_create_post', 'reddit_comment',
+
+  // Facebook / Instagram / Threads (Meta)
+  'facebook_get_me', 'facebook_list_pages', 'facebook_list_page_posts', 'facebook_create_page_post',
+  'instagram_get_me', 'instagram_list_media', 'instagram_publish_media',
+  'threads_get_me', 'threads_list_posts', 'threads_publish_post',
+
+  // X / Twitter
   'x_search_tweets', 'x_get_user_timeline', 'x_get_tweet',
   'x_post_tweet', 'x_delete_tweet',
   'x_send_dm', 'x_list_dms',
   'x_get_user', 'x_list_followers', 'x_list_following',
-  'discord_send', 'discord_read',
-  'agent_node', 'agent_decision', 'agent_extract',
-  'analyze_media',
+
+  // WhatsApp
+  'whatsapp_status', 'whatsapp_send_message', 'whatsapp_send_media',
+  'whatsapp_send_reaction', 'whatsapp_mark_read', 'whatsapp_upload_media',
+
+  // Telnyx (SMS / Voice)
+  'telnyx_send_sms', 'telnyx_send_mms', 'telnyx_send_voice_note',
+  'telnyx_call_control', 'telnyx_phone_status', 'telnyx_voice_call',
+  'telnyx_list_voice_providers', 'telnyx_list_active_calls', 'telnyx_hangup_call',
+
+  // ElevenLabs
+  'elevenlabs_list_agents', 'elevenlabs_get_signed_conversation_url',
+  'elevenlabs_get_webrtc_token', 'elevenlabs_list_conversations', 'elevenlabs_get_conversation',
+
+  // Cloud Storage
+  'cloud_storage_upload', 'cloud_storage_get_url', 'cloud_storage_list',
+  'cloud_storage_delete', 'cloud_storage_set_visibility',
+
+  // Marketplace
+  'search_marketplace', 'get_marketplace_workflow', 'import_from_marketplace',
+  'list_popular_workflows', 'list_marketplace_categories',
+
+  // OCR (cloud-side)
+  'find_text', 'find_text_on_screen', 'find_and_click_text', 'google_cloud_ocr',
 ]);
 
 /** Orchestration tools handled inline by the engine */
