@@ -16,8 +16,10 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getCloudEngine } from '../supabase';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
+import { sendVMCommand } from '../services/vm-command';
 import {
   createDeployment,
+  DeploymentValidationError,
   listDeployments,
   getDeployment,
   stopDeployment,
@@ -174,6 +176,15 @@ export async function handleCloudDeploysRoutes(req: IncomingMessage, res: Server
 
       json(res, 201, { ok: true, deployment });
     } catch (e: any) {
+      if (e instanceof DeploymentValidationError) {
+        json(res, 400, {
+          ok: false,
+          error: 'deployment_validation_failed',
+          message: e.message,
+          issues: e.issues,
+        });
+        return true;
+      }
       console.error('[cloud-deploys] create error:', e?.message);
       json(res, 500, { ok: false, error: 'deploy_failed', message: e?.message || 'Deployment failed' });
     }
@@ -184,7 +195,33 @@ export async function handleCloudDeploysRoutes(req: IncomingMessage, res: Server
   if (method === 'GET' && path === '/v1/cloud-engine/deploys') {
     try {
       const deployments = await listDeployments(user.userId);
-      json(res, 200, { ok: true, deployments });
+      let vmDeploys: any[] = [];
+      try {
+        const vmResult = await sendVMCommand(user.userId, 'deploy_list', {}, 8_000);
+        if (vmResult.ok && Array.isArray(vmResult.result?.deploys)) {
+          vmDeploys = vmResult.result.deploys;
+        }
+      } catch { /* VM runtime details are best-effort */ }
+
+      const vmById = new Map(vmDeploys.map((deploy: any) => [String(deploy.id || deploy.deployId || ''), deploy]));
+      const merged = deployments.map((deployment: any) => {
+        const runtime = vmById.get(String(deployment.id));
+        if (!runtime) return deployment;
+        return {
+          ...deployment,
+          status: runtime.status || deployment.status,
+          pid: runtime.pid ?? deployment.pid ?? null,
+          trigger_bindings: runtime.trigger_bindings || deployment.trigger_bindings || [],
+          schedule: runtime.schedule ?? deployment.schedule ?? null,
+          timezone: runtime.timezone ?? null,
+          run_count: runtime.run_count ?? 0,
+          last_run_at: runtime.last_run_at ?? null,
+          last_completed_at: runtime.last_completed_at ?? null,
+          last_trigger_source: runtime.last_trigger_source ?? null,
+        };
+      });
+
+      json(res, 200, { ok: true, deployments: merged });
     } catch (e: any) {
       json(res, 500, { ok: false, error: 'list_failed', message: e?.message });
     }

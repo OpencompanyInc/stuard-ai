@@ -7,6 +7,7 @@ import { handleGoogleRoutes } from './integrations/google';
 import { handleOutlookRoutes } from './integrations/outlook';
 import { handleDiscordRoutes } from './integrations/discord';
 import { handleRedditRoutes } from './integrations/reddit';
+import { handleXRoutes } from './integrations/x';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
@@ -57,6 +58,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
   if (await handleDiscordRoutes(req, res, parsedUrl)) return true;
   if (await handleRedditRoutes(req, res, parsedUrl)) return true;
+  if (await handleXRoutes(req, res, parsedUrl)) return true;
   if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
   if (await handleMetaRoutes(req, res, parsedUrl)) return true;
   if (await handleWhatsAppRoutes(req, res, parsedUrl)) return true;

@@ -54,6 +54,36 @@ interface RunningDeploy {
   status: 'starting' | 'running' | 'stopped' | 'failed';
   sourceWorkflowId?: string | null;
   triggerBindings?: WorkflowTriggerBinding[];
+  timers?: NodeJS.Timeout[];
+  schedule?: string | null;
+  timezone?: string;
+  runCount?: number;
+  lastRunAt?: string | null;
+  lastCompletedAt?: string | null;
+  lastTriggerSource?: string | null;
+}
+
+interface RunningDeployListEntry {
+  id: string;
+  kind: string;
+  name: string;
+  pid: number | null;
+  status: string;
+  autoRestart?: boolean;
+  source_workflow_id?: string | null;
+  trigger_bindings?: WorkflowTriggerBinding[];
+  schedule?: string | null;
+  timezone?: string | null;
+  run_count?: number;
+  last_run_at?: string | null;
+  last_completed_at?: string | null;
+  last_trigger_source?: string | null;
+}
+
+interface ScheduleRuntime {
+  cron: string;
+  triggerId?: string;
+  args?: Record<string, any>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +138,110 @@ function isDnsError(error: any): boolean {
   return DNS_ERROR_CODES.has(code) || /EAI_AGAIN|ENOTFOUND/i.test(message);
 }
 
+function sanitizeTimezone(value: any): string {
+  const tz = String(value || '').trim() || 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function getRuntimeTimezone(envVars?: Record<string, string>): string {
+  return sanitizeTimezone(
+    envVars?.STUARD_USER_TIMEZONE
+    || envVars?.TZ
+    || process.env.STUARD_USER_TIMEZONE
+    || process.env.TZ
+    || 'UTC',
+  );
+}
+
+function parseCronField(field: string, min: number, max: number): Set<number> | null {
+  const values = new Set<number>();
+  const addRange = (start: number, end: number, step = 1) => {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || !Number.isInteger(step) || step <= 0) return false;
+    if (start < min || end > max || start > end) return false;
+    for (let n = start; n <= end; n += step) values.add(n);
+    return true;
+  };
+
+  for (const rawPart of field.split(',')) {
+    const part = rawPart.trim();
+    if (!part) return null;
+    const [rangePart, stepPart] = part.split('/');
+    const step = stepPart == null ? 1 : Number(stepPart);
+    if (stepPart != null && (!Number.isInteger(step) || step <= 0)) return null;
+
+    if (rangePart === '*') {
+      if (!addRange(min, max, step)) return null;
+      continue;
+    }
+
+    const range = rangePart.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      if (!addRange(Number(range[1]), Number(range[2]), step)) return null;
+      continue;
+    }
+
+    const exact = Number(rangePart);
+    if (!Number.isInteger(exact) || exact < min || exact > max) return null;
+    if (step !== 1) return null;
+    values.add(exact);
+  }
+
+  return values;
+}
+
+function parseCronExpression(expr: string): Array<Set<number>> | null {
+  const parts = String(expr || '').trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const ranges: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+  const parsed = parts.map((part, index) => parseCronField(part, ranges[index][0], ranges[index][1]));
+  if (parsed.some((field) => !field)) return null;
+  return parsed as Array<Set<number>>;
+}
+
+function zonedDateParts(date: Date, timezone: string): { key: string; minute: number; hour: number; day: number; month: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '';
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
+  const year = Number(get('year'));
+  const month = Number(get('month'));
+  const day = Number(get('day'));
+  const hour = Number(get('hour'));
+  const minute = Number(get('minute'));
+  return {
+    key: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+    minute,
+    hour,
+    day,
+    month,
+    weekday: Math.max(0, weekday),
+  };
+}
+
+function cronMatches(parsed: Array<Set<number>>, date: Date, timezone: string): string | null {
+  const parts = zonedDateParts(date, timezone);
+  const weekdayMatches = parsed[4].has(parts.weekday) || (parts.weekday === 0 && parsed[4].has(7));
+  const ok = parsed[0].has(parts.minute)
+    && parsed[1].has(parts.hour)
+    && parsed[2].has(parts.day)
+    && parsed[3].has(parts.month)
+    && weekdayMatches;
+  return ok ? parts.key : null;
+}
+
 async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAttempts = 6): Promise<T> {
   let lastError: any;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -136,6 +270,7 @@ async function withDownloadRetry<T>(label: string, fn: () => Promise<T>, maxAtte
 export class DeployExecutor extends EventEmitter {
   private running = new Map<string, RunningDeploy>();
   private engine = new VMWorkflowEngine();
+  private workflowRunQueues = new Map<string, Promise<void>>();
 
   constructor() {
     super();
@@ -219,6 +354,8 @@ export class DeployExecutor extends EventEmitter {
 
     deploy.autoRestart = false; // prevent restart
     deploy.status = 'stopped';
+    for (const timer of deploy.timers || []) clearInterval(timer);
+    deploy.timers = [];
 
     if (deploy.process && !deploy.process.killed) {
       deploy.process.kill('SIGTERM');
@@ -231,6 +368,7 @@ export class DeployExecutor extends EventEmitter {
     }
 
     this.running.delete(deployId);
+    this.workflowRunQueues.delete(deployId);
     return true;
   }
 
@@ -241,9 +379,6 @@ export class DeployExecutor extends EventEmitter {
     const deploy = this.running.get(deployId);
     if (!deploy || deploy.kind !== 'workflow') {
       return { triggered: false, error: 'deploy_not_found' };
-    }
-    if (this.engine.isRunning(deployId)) {
-      return { triggered: false, error: 'deploy_busy' };
     }
 
     const workflowPath = path.join(deploy.dir, 'workflow.json');
@@ -267,26 +402,16 @@ export class DeployExecutor extends EventEmitter {
     const userId = process.env.STUARD_USER_ID || '';
     const vmTokenSecret = process.env.VM_TOKEN_SECRET || '';
 
-    this.appendLog(deploy.dir, `[trigger] Received ${source}${triggerId ? ` for ${triggerId}` : ''}`);
-
-    void this.engine.run(deployId, workflowPayload, deploy.dir, {
+    this.enqueueWorkflowRun(deploy, workflowPayload, {
       cloudAiUrl,
       agentWsUrl,
       userId,
       vmTokenSecret,
+      timezone: deploy.timezone || getRuntimeTimezone(),
+    }, {
       triggerId,
       triggerPayload,
-    }).then((result) => {
-      this.appendLog(
-        deploy.dir,
-        `[trigger] Completed${triggerId ? ` (${triggerId})` : ''}: ok=${result.ok}${result.error ? ` error=${result.error}` : ''}`
-      );
-      if (!result.ok) {
-        this.emit('status', deployId, 'running');
-      }
-    }).catch((e: any) => {
-      this.appendLog(deploy.dir, `[trigger] Failed${triggerId ? ` (${triggerId})` : ''}: ${String(e?.message || e)}`);
-      this.emit('status', deployId, 'running');
+      source,
     });
 
     return { triggered: true };
@@ -325,12 +450,27 @@ export class DeployExecutor extends EventEmitter {
   /**
    * List all managed deployments on this VM.
    */
-  list(): Array<{ id: string; kind: string; name: string; pid: number | null; status: string }> {
-    const result: Array<{ id: string; kind: string; name: string; pid: number | null; status: string }> = [];
+  list(): RunningDeployListEntry[] {
+    const result: RunningDeployListEntry[] = [];
 
     // From running map
     for (const [id, deploy] of this.running) {
-      result.push({ id, kind: deploy.kind, name: deploy.name, pid: deploy.pid, status: deploy.status });
+      result.push({
+        id,
+        kind: deploy.kind,
+        name: deploy.name,
+        pid: deploy.pid,
+        status: deploy.status,
+        autoRestart: deploy.autoRestart,
+        source_workflow_id: deploy.sourceWorkflowId || null,
+        trigger_bindings: deploy.triggerBindings || [],
+        schedule: deploy.schedule || null,
+        timezone: deploy.timezone || null,
+        run_count: deploy.runCount || 0,
+        last_run_at: deploy.lastRunAt || null,
+        last_completed_at: deploy.lastCompletedAt || null,
+        last_trigger_source: deploy.lastTriggerSource || null,
+      });
     }
 
     // Also scan directory for stopped deploys not in running map
@@ -342,7 +482,22 @@ export class DeployExecutor extends EventEmitter {
           if (fs.existsSync(bundlePath)) {
             try {
               const bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
-              result.push({ id: d.name, kind: bundle.kind || 'unknown', name: bundle.name || d.name, pid: null, status: 'stopped' });
+              result.push({
+                id: d.name,
+                kind: bundle.kind || 'unknown',
+                name: bundle.name || d.name,
+                pid: null,
+                status: 'stopped',
+                autoRestart: bundle?.autoRestart !== false,
+                source_workflow_id: bundle.sourceWorkflowId || null,
+                trigger_bindings: this.normalizeTriggerBindings(bundle.triggerBindings),
+                schedule: typeof bundle.schedule === 'string' ? bundle.schedule : null,
+                timezone: sanitizeTimezone(bundle?.envVars?.STUARD_USER_TIMEZONE || bundle?.envVars?.TZ || process.env.STUARD_USER_TIMEZONE || process.env.TZ || 'UTC'),
+                run_count: 0,
+                last_run_at: null,
+                last_completed_at: null,
+                last_trigger_source: null,
+              });
             } catch {
               result.push({ id: d.name, kind: 'unknown', name: d.name, pid: null, status: 'stopped' });
             }
@@ -410,6 +565,8 @@ export class DeployExecutor extends EventEmitter {
           envVars: bundle?.envVars && typeof bundle.envVars === 'object' ? bundle.envVars : {},
           autoRestart,
           schedule: typeof bundle?.schedule === 'string' ? bundle.schedule : null,
+          sourceWorkflowId: String(bundle?.sourceWorkflowId || '').trim() || null,
+          triggerBindings: this.normalizeTriggerBindings(bundle?.triggerBindings),
         }, deployDir, bundle);
 
         restored.push(dirent.name);
@@ -429,6 +586,162 @@ export class DeployExecutor extends EventEmitter {
   // Workflow Engine Execution (replaces shell stub for workflows)
   // ─────────────────────────────────────────────────────────────────────────
 
+  private enqueueWorkflowRun(
+    deploy: RunningDeploy,
+    payload: any,
+    runOpts: {
+      cloudAiUrl: string;
+      agentWsUrl?: string;
+      userId: string;
+      vmTokenSecret: string;
+      timezone?: string;
+    },
+    meta: {
+      triggerId?: string;
+      triggerPayload?: any;
+      source?: string;
+      reportFinalStatus?: boolean;
+      onCrash?: (error: any) => void;
+    } = {},
+  ): void {
+    const deployId = deploy.id;
+    const source = meta.source || 'manual';
+    const queuedBehind = this.workflowRunQueues.has(deployId) || this.engine.isRunning(deployId);
+    this.appendLog(deploy.dir, `[run] ${queuedBehind ? 'Queued' : 'Received'} ${source}${meta.triggerId ? ` for ${meta.triggerId}` : ''}`);
+
+    const previous = this.workflowRunQueues.get(deployId) || Promise.resolve();
+    const queued = previous.catch(() => {}).then(async () => {
+      if (!this.running.has(deployId)) return;
+
+      const runNumber = (deploy.runCount || 0) + 1;
+      deploy.runCount = runNumber;
+      deploy.lastRunAt = new Date().toISOString();
+      deploy.lastTriggerSource = source;
+      if (deploy.status !== 'failed') deploy.status = 'running';
+
+      this.appendLog(deploy.dir, `[run:${runNumber}] Starting (${source})${runOpts.timezone ? ` timezone=${runOpts.timezone}` : ''}`);
+
+      try {
+        const result = await this.engine.run(deployId, payload, deploy.dir, {
+          ...runOpts,
+          triggerId: meta.triggerId,
+          triggerPayload: meta.triggerPayload,
+        });
+
+        deploy.lastCompletedAt = new Date().toISOString();
+        this.appendLog(
+          deploy.dir,
+          `[run:${runNumber}] Completed ok=${result.ok}${result.error ? ` error=${result.error}` : ''}`,
+        );
+
+        if (meta.reportFinalStatus) {
+          const finalStatus = result.ok ? 'completed' : 'failed';
+          deploy.status = result.ok ? 'stopped' : 'failed';
+          this.emit('status', deployId, deploy.status);
+          this.reportDeployStatus(deployId, finalStatus, runOpts.cloudAiUrl, runOpts.userId, runOpts.vmTokenSecret, result.error)
+            .catch((e) => this.appendLog(deploy.dir, `[engine] Status callback failed: ${e?.message}`));
+        } else {
+          this.emit('status', deployId, 'running');
+        }
+      } catch (e: any) {
+        deploy.lastCompletedAt = new Date().toISOString();
+        this.appendLog(deploy.dir, `[run:${runNumber}] Failed: ${String(e?.message || e)}`);
+        if (meta.reportFinalStatus) {
+          deploy.status = 'failed';
+          this.emit('status', deployId, 'failed');
+          this.reportDeployStatus(deployId, 'failed', runOpts.cloudAiUrl, runOpts.userId, runOpts.vmTokenSecret, e?.message).catch(() => {});
+          meta.onCrash?.(e);
+        } else {
+          this.emit('status', deployId, 'running');
+        }
+      }
+    });
+
+    const tracked = queued.finally(() => {
+      if (this.workflowRunQueues.get(deployId) === tracked) {
+        this.workflowRunQueues.delete(deployId);
+      }
+    });
+    this.workflowRunQueues.set(deployId, tracked);
+  }
+
+  private resolveScheduleRuntime(config: DeployConfig, payload: any, bindings: WorkflowTriggerBinding[]): ScheduleRuntime | null {
+    const triggerBindings = bindings.filter((binding) => binding.type === 'schedule.cron');
+    const triggers = Array.isArray(payload?.triggers) ? payload.triggers : [];
+    const scheduleTrigger = triggers.find((trigger: any) => String(trigger?.type || '') === 'schedule.cron');
+    const binding = triggerBindings[0];
+    const cron = String(
+      config.schedule
+      || binding?.args?.cron
+      || scheduleTrigger?.args?.cron
+      || '',
+    ).trim();
+    if (!cron) return null;
+    return {
+      cron,
+      triggerId: String(binding?.triggerId || scheduleTrigger?.id || '').trim() || undefined,
+      args: {
+        ...(scheduleTrigger?.args && typeof scheduleTrigger.args === 'object' ? scheduleTrigger.args : {}),
+        ...(binding?.args && typeof binding.args === 'object' ? binding.args : {}),
+        cron,
+      },
+    };
+  }
+
+  private armCronSchedule(
+    deploy: RunningDeploy,
+    payload: any,
+    runtime: ScheduleRuntime,
+    runOpts: {
+      cloudAiUrl: string;
+      agentWsUrl?: string;
+      userId: string;
+      vmTokenSecret: string;
+      timezone?: string;
+    },
+  ): void {
+    const parsed = parseCronExpression(runtime.cron);
+    if (!parsed) {
+      deploy.status = 'failed';
+      this.appendLog(deploy.dir, `[cron] Invalid schedule "${runtime.cron}"`);
+      this.emit('status', deploy.id, 'failed');
+      return;
+    }
+
+    let lastFireKey = '';
+    const timezone = sanitizeTimezone(runOpts.timezone || deploy.timezone || 'UTC');
+    const tick = () => {
+      if (!this.running.has(deploy.id) || deploy.status === 'stopped') return;
+      const key = cronMatches(parsed, new Date(), timezone);
+      if (!key || key === lastFireKey) return;
+      lastFireKey = key;
+      const firedAt = new Date().toISOString();
+      const triggerPayload = {
+        trigger: {
+          id: runtime.triggerId,
+          type: 'schedule.cron',
+          cron: runtime.cron,
+          timezone,
+          firedAt,
+        },
+        args: runtime.args || {},
+        input: { cron: runtime.cron, timezone, firedAt },
+      };
+      this.appendLog(deploy.dir, `[cron] Fired ${runtime.cron} at ${key} (${timezone})`);
+      this.enqueueWorkflowRun(deploy, payload, { ...runOpts, timezone }, {
+        triggerId: runtime.triggerId,
+        triggerPayload,
+        source: 'cron',
+      });
+    };
+
+    const timer = setInterval(tick, 30_000);
+    deploy.timers = deploy.timers || [];
+    deploy.timers.push(timer);
+    setTimeout(tick, 1_000);
+    this.appendLog(deploy.dir, `[cron] Armed ${runtime.cron} (${timezone})${runtime.triggerId ? ` trigger=${runtime.triggerId}` : ''}`);
+  }
+
   private async startWorkflowEngine(
     config: DeployConfig,
     deployDir: string,
@@ -437,7 +750,9 @@ export class DeployExecutor extends EventEmitter {
   ): Promise<{ pid: number | null; dir: string }> {
     await this.prepareWorkflowRuntime(deployDir, payload, config.envVars);
     const triggerBindings = this.normalizeTriggerBindings(config.triggerBindings);
-    const usesTriggerRuntime = this.hasTriggerRuntimeBindings(triggerBindings);
+    const scheduleRuntime = this.resolveScheduleRuntime(config, payload, triggerBindings);
+    const runtimeTimezone = getRuntimeTimezone(config.envVars);
+    const usesTriggerRuntime = this.hasTriggerRuntimeBindings(triggerBindings) || !!scheduleRuntime;
 
     // Track as running deploy (pid = null since engine is in-process)
     const deploy: RunningDeploy = {
@@ -454,6 +769,13 @@ export class DeployExecutor extends EventEmitter {
       status: 'running',
       sourceWorkflowId: config.sourceWorkflowId || null,
       triggerBindings,
+      timers: [],
+      schedule: scheduleRuntime?.cron || config.schedule || null,
+      timezone: runtimeTimezone,
+      runCount: 0,
+      lastRunAt: null,
+      lastCompletedAt: null,
+      lastTriggerSource: null,
     };
     this.running.set(config.deployId, deploy);
 
@@ -476,10 +798,24 @@ export class DeployExecutor extends EventEmitter {
       this.appendLog(deployDir, `[engine] WARNING: Missing STUARD_USER_ID or VM_TOKEN_SECRET — cloud/desktop tools will fail auth`);
     }
 
+    const runOpts = {
+      cloudAiUrl,
+      agentWsUrl,
+      userId,
+      vmTokenSecret,
+      timezone: runtimeTimezone,
+    };
+
     if (usesTriggerRuntime) {
+      if (scheduleRuntime) {
+        this.armCronSchedule(deploy, payload, scheduleRuntime, runOpts);
+      }
       this.appendLog(
         deployDir,
-        `[engine] Armed trigger runtime for "${config.name}" (${triggerBindings.map((b) => `${b.type}:${b.triggerId}`).join(', ')})`
+        `[engine] Armed trigger runtime for "${config.name}" (${[
+          ...triggerBindings.map((b) => `${b.type}:${b.triggerId}`),
+          scheduleRuntime ? `schedule.cron:${scheduleRuntime.triggerId || 'schedule'}` : '',
+        ].filter(Boolean).join(', ') || 'none'}) timezone=${runtimeTimezone}`
       );
       return { pid: null, dir: deployDir };
     }
@@ -488,53 +824,25 @@ export class DeployExecutor extends EventEmitter {
     this.appendLog(deployDir, `[engine] Cloud AI: ${cloudAiUrl}`);
 
     // Run the workflow engine (async — fire and forget, logs stream to file)
-    const runWorkflow = async () => {
-      try {
-        const result = await this.engine.run(
-          config.deployId,
-          payload,
-          deployDir,
-          {
-            cloudAiUrl,
-            agentWsUrl,
-            userId,
-            vmTokenSecret,
-          },
-        );
-
-        const finalStatus = result.ok ? 'completed' : 'failed';
-        this.appendLog(deployDir, `[engine] Workflow finished: ok=${result.ok}${result.error ? ' error=' + result.error : ''}`);
-        deploy.status = result.ok ? 'stopped' : 'failed';
-        this.emit('status', config.deployId, deploy.status);
-
-        // Report completion back to cloud-ai so it can update the DB
-        this.reportDeployStatus(config.deployId, finalStatus, cloudAiUrl, userId, vmTokenSecret, result.error).catch((e) => {
-          this.appendLog(deployDir, `[engine] Status callback failed: ${e?.message}`);
-        });
-      } catch (e: any) {
-        this.appendLog(deployDir, `[engine] Workflow crashed: ${e.message}`);
-        deploy.status = 'failed';
-        this.emit('status', config.deployId, 'failed');
-
-        // Report failure back to cloud-ai
-        this.reportDeployStatus(config.deployId, 'failed', cloudAiUrl, userId, vmTokenSecret, e?.message).catch(() => {});
-
-        // Auto-restart if configured
+    const runOnce = () => this.enqueueWorkflowRun(deploy, payload, runOpts, {
+      source: 'deploy_start',
+      reportFinalStatus: true,
+      onCrash: () => {
         if (deploy.autoRestart && deploy.restartCount < deploy.maxRestarts) {
           deploy.restartCount++;
           this.appendLog(deployDir, `[engine] Auto-restarting (attempt ${deploy.restartCount}/${deploy.maxRestarts})...`);
           setTimeout(() => {
             if (this.running.has(config.deployId) && deploy.status !== 'stopped') {
               deploy.status = 'running';
-              runWorkflow();
+              runOnce();
             }
           }, RESTART_DELAY_MS);
         }
-      }
-    };
+      },
+    });
 
     // Start async (don't await — caller gets back immediately with deploy info)
-    runWorkflow();
+    runOnce();
 
     return { pid: null, dir: deployDir };
   }
@@ -552,6 +860,7 @@ export class DeployExecutor extends EventEmitter {
         ...config,
         sourceWorkflowId: String(bundle?.sourceWorkflowId || config.sourceWorkflowId || '').trim() || undefined,
         triggerBindings: this.normalizeTriggerBindings(bundle?.triggerBindings || config.triggerBindings),
+        schedule: typeof bundle?.schedule === 'string' ? bundle.schedule : config.schedule,
       }, deployDir, payload, logFile);
     }
 
@@ -956,6 +1265,7 @@ ${startCmd}
   private hasTriggerRuntimeBindings(bindings: WorkflowTriggerBinding[]): boolean {
     return bindings.some((binding) => {
       if (binding.type === 'gmail.new_email' || binding.type === 'drive.new_file') return true;
+      if (binding.type === 'schedule.cron') return true;
       if (binding.type === 'webhook.local') return false;
       if (binding.type === 'webhook.cloud') return true;
       if (binding.type === 'webhook') {

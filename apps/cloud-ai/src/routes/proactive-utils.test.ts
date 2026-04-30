@@ -157,6 +157,21 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('docs_get_document');
     expect(result).not.toHaveProperty('unrelated_tool');
   });
+
+  it('expands X tool family when one X tool is allowed', () => {
+    const tools = {
+      proactive_task_list: 1,
+      search_tools: 2,
+      x_post_tweet: 3,
+      x_search_tweets: 4,
+      unrelated_tool: 5,
+    };
+
+    const result = filterProactiveTools(tools, ['x_post_tweet']);
+    expect(result).toHaveProperty('x_post_tweet');
+    expect(result).toHaveProperty('x_search_tweets');
+    expect(result).not.toHaveProperty('unrelated_tool');
+  });
 });
 
 describe('expandProactiveAllowedToolNames', () => {
@@ -169,6 +184,11 @@ describe('expandProactiveAllowedToolNames', () => {
     expect(result).toContain('gmail_');
     expect(result).toContain('calendar_');
     expect(result).toContain('tasks_');
+  });
+
+  it('expands X provider prefixes', () => {
+    const result = expandProactiveAllowedToolNames(['x_post_tweet']);
+    expect(result).toContain('x_');
   });
 
   it('drops legacy headed browser_* tools while keeping browser_use_*', () => {

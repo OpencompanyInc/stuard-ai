@@ -305,7 +305,7 @@ function resolveChosenModelId(msg: any, routedTier: ModelChoice) {
 }
 
 async function loadIntegrations(userId: string) {
-  const providers = ['github', 'google', 'outlook', 'telnyx', 'whatsapp'];
+  const providers = ['github', 'google', 'outlook', 'telnyx', 'whatsapp', 'x'];
   let enabledIntegrations: string[] = [];
   let mcpTools: Record<string, any> = {};
 

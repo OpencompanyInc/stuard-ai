@@ -442,6 +442,11 @@ export function getAgentDataObjectName(userId: string): string {
   return `users/${userId}/agent-data.tar.gz`;
 }
 
+/** Get the rolling agent-data delta GCS path for a user. */
+export function getAgentDataDeltaObjectName(userId: string): string {
+  return `users/${userId}/agent-data.delta.tar.gz`;
+}
+
 /**
  * Upload raw agent data (tar.gz bytes) directly to GCS.
  * Used by desktop to push knowledge.db + memory.db before VM provisioning.
@@ -475,6 +480,19 @@ export async function generateAgentDataUploadUrl(userId: string): Promise<{ uplo
   return { uploadUrl, objectName };
 }
 
+/** Generate a signed upload URL for an incremental agent-data bundle. */
+export async function generateAgentDataDeltaUploadUrl(userId: string): Promise<{ uploadUrl: string; objectName: string }> {
+  const objectName = getAgentDataDeltaObjectName(userId);
+  const file = getBucket().file(objectName);
+  const [uploadUrl] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'write',
+    expires: Date.now() + UPLOAD_URL_TTL_MS,
+    contentType: 'application/gzip',
+  });
+  return { uploadUrl, objectName };
+}
+
 /**
  * Generate a signed download URL for agent data.
  * Used by VMs to download user data without needing direct GCS access.
@@ -491,6 +509,20 @@ export async function generateAgentDataDownloadUrl(userId: string): Promise<{ do
   });
   // VM-destined URLs use raw GCS URLs (no Cloudflare proxy rewrite)
   // VMs can access storage.googleapis.com directly and the proxy breaks signatures
+  return { downloadUrl, objectName };
+}
+
+/** Generate a signed download URL for the latest incremental agent-data bundle. */
+export async function generateAgentDataDeltaDownloadUrl(userId: string): Promise<{ downloadUrl: string; objectName: string } | null> {
+  const objectName = getAgentDataDeltaObjectName(userId);
+  const file = getBucket().file(objectName);
+  const [exists] = await file.exists();
+  if (!exists) return null;
+  const [downloadUrl] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: Date.now() + DOWNLOAD_URL_TTL_MS,
+  });
   return { downloadUrl, objectName };
 }
 

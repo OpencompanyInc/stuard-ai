@@ -83,6 +83,7 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | telnyx      | SMS, voice calls |
 | reddit      | Subreddits, posts, comments |
 | discord     | Discord bot operations |
+| x           | X/Twitter tweets, timelines, users, DMs |
 
 Each subagent has its own focused tool set and can ask you questions via ask_orchestrator if it needs information or a decision. When that happens, the delegate tool returns with the question — use reply_to_subagent to answer.
 

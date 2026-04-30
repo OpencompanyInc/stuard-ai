@@ -149,10 +149,19 @@ function getIsoDateCandidate(...candidates: any[]): string | null {
 
 function extractUserId(obj: any): string | null {
   return getStringCandidate(
+    // Direct metadata (checkout-attached)
     obj?.metadata?.userId,
     obj?.metadata?.user_id,
     obj?.checkout?.metadata?.userId,
     obj?.checkout?.metadata?.user_id,
+    // Customer external ID — set via externalCustomerId at checkout creation
+    obj?.customer?.externalId,
+    obj?.customer?.external_id,
+    obj?.customerExternalId,
+    obj?.customer_external_id,
+    obj?.externalCustomerId,
+    obj?.external_customer_id,
+    // Customer metadata fallbacks
     obj?.customer_metadata?.userId,
     obj?.customer_metadata?.user_id,
     obj?.customer?.metadata?.userId,

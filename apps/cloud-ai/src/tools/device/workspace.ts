@@ -19,10 +19,11 @@ export const workspace_read_file = makeLocalTool(
 
 export const workspace_write_file = makeLocalTool(
   'workspace_write_file',
-  'Write/create a file in the current workflow\'s workspace directory. Creates parent directories automatically. Use paths relative to the workspace root.',
+  'Write/create a file in the current workflow\'s workspace directory. Creates parent directories automatically. Use paths relative to the workspace root. IMPORTANT: include a short description explaining what you are writing and why; the workflow chat shows it in the approval bar.',
   z.object({
     path: z.string().describe('Relative file path within workspace (e.g. "data/config.json")'),
     content: z.string().describe('File content to write'),
+    description: z.string().optional().describe('Short user-facing explanation shown in the workflow chat approval bar'),
     flowId: z.string().optional().describe('Auto-injected by engine'),
   }),
   z.object({

@@ -5,11 +5,11 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import clsx from "clsx";
-import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check } from "lucide-react";
+import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check, Shield } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { ReasoningBlock } from "../../../components/ReasoningBlock";
-import type { Message, StreamItem, ToolEvent } from "../../hooks/useWorkflowChat";
+import type { Message, StreamItem, ToolEvent, WorkflowApprovalRequest } from "../../hooks/useWorkflowChat";
 import { prepareMarkdownForDisplay } from "../../../utils/text";
 
 // --- Helpers ---
@@ -210,6 +210,62 @@ function formatToolName(name: string): string {
   if (name === 'create_workflow') return 'Create Workflow';
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
+
+const PermissionBar = ({
+  approval,
+  count,
+  onRespond,
+}: {
+  approval: WorkflowApprovalRequest;
+  count: number;
+  onRespond: (id: string, allow: boolean) => void;
+}) => {
+  const args = approval.args || {};
+  const path = String(args.path || args.filePath || args.folder || '').trim();
+  return (
+    <div className="mb-2 rounded-xl border border-amber-400/30 bg-amber-500/10 shadow-sm overflow-hidden">
+      <div className="flex items-start gap-3 px-3 py-2.5">
+        <div className="mt-0.5 rounded-lg border border-amber-400/30 bg-amber-400/15 p-1.5 text-amber-300">
+          <Shield className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200">Permission Required</div>
+            {count > 1 && (
+              <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-200">
+                {count} pending
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 text-[12px] leading-5 wf-fg">
+            {approval.description || `${formatToolName(approval.tool)} needs approval.`}
+          </div>
+          {path && (
+            <div className="mt-1 truncate rounded-md border wf-border-subtle wf-bg-sunken px-2 py-1 font-mono text-[10px] wf-fg-muted" title={path}>
+              {path}
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onRespond(approval.id, false)}
+            className="rounded-lg px-2.5 py-1.5 text-[11px] font-medium wf-fg-muted wf-hover-bg wf-hover-fg transition-colors"
+          >
+            Deny
+          </button>
+          <button
+            type="button"
+            onClick={() => onRespond(approval.id, true)}
+            className="rounded-lg bg-amber-300 px-2.5 py-1.5 text-[11px] font-semibold text-black hover:bg-amber-200 transition-colors"
+          >
+            Allow
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const ModifyWorkflowView = ({
   args,
@@ -437,6 +493,8 @@ export function ChatHistory({
   setShowReasoning,
   busy,
   onUndo,
+  pendingApprovals = [],
+  onRespondToApproval,
   // Session management
   pastSessions = [],
   showSessionHistory = false,
@@ -452,6 +510,8 @@ export function ChatHistory({
   setShowReasoning: (v: boolean) => void;
   busy: boolean;
   onUndo?: (snapshot: any) => void;
+  pendingApprovals?: WorkflowApprovalRequest[];
+  onRespondToApproval?: (id: string, allow: boolean) => void;
   // Session management
   pastSessions?: ChatSession[];
   showSessionHistory?: boolean;
@@ -654,6 +714,14 @@ export function ChatHistory({
                   isOpen={!!(reasoningText && busy)}
                   onToggle={() => setShowReasoning(!showReasoning)}
                   isComplete={!busy}
+                />
+              )}
+
+              {pendingApprovals.length > 0 && onRespondToApproval && (
+                <PermissionBar
+                  approval={pendingApprovals[0]}
+                  count={pendingApprovals.length}
+                  onRespond={onRespondToApproval}
                 />
               )}
 

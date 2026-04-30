@@ -6,6 +6,7 @@ import {
   Download, Upload, Sparkles, Zap, Shield,
   CreditCard, Plus, X, Rocket, Play, Square,
   ScrollText, AlertCircle, CheckCircle2, Circle,
+  Workflow, FileText, CalendarDays, Timer, ListChecks, Radio, History, Bug,
 } from 'lucide-react';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
@@ -1070,10 +1071,49 @@ interface DeployEntry {
   auto_restart: boolean;
   schedule: string | null;
   pid: number | null;
+  logs_tail?: string | null;
+  source_workflow_id?: string | null;
+  trigger_bindings?: Array<{ triggerId: string; type: string; mode?: string | null; args?: Record<string, any> }>;
+  timezone?: string | null;
+  run_count?: number;
+  last_run_at?: string | null;
+  last_completed_at?: string | null;
+  last_trigger_source?: string | null;
   error_message: string | null;
   started_at: string | null;
   stopped_at: string | null;
   created_at: string;
+}
+
+function formatRelativeTime(value?: string | null): string {
+  if (!value) return 'Never';
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return 'Unknown';
+  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function parseDeployLogSummary(text: string) {
+  const lines = text.split('\n').filter(Boolean);
+  return {
+    lines: lines.length,
+    errors: lines.filter(line => /error|failed|crashed/i.test(line)).length,
+    runs: lines.filter(line => /\[run:\d+\] Starting/i.test(line)).length,
+    triggers: lines.filter(line => /\[trigger\]|\[cron\] Fired/i.test(line)).length,
+    lastLine: lines[lines.length - 1] || '',
+  };
+}
+
+function getDeployKindIcon(kind: string) {
+  if (kind === 'workflow') return Workflow;
+  if (kind === 'script') return FileText;
+  return Rocket;
 }
 
 function DeploysTab({
@@ -1130,6 +1170,9 @@ function DeploysTab({
           if (eq > 0) envVars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
         }
       }
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      if (!envVars.TZ) envVars.TZ = timezone;
+      if (!envVars.STUARD_USER_TIMEZONE) envVars.STUARD_USER_TIMEZONE = timezone;
 
       await createDeployment({
         name: newName.trim(),
@@ -1197,7 +1240,12 @@ function DeploysTab({
     completed: { color: 'text-green-500', bg: 'bg-green-500/10', icon: CheckCircle2, label: 'Completed' },
   };
 
-  const kindEmoji: Record<string, string> = { workflow: '🔄', script: '📜', project: '📦' };
+  const deployStats = {
+    live: deployments.filter(dep => dep.status === 'running').length,
+    workflows: deployments.filter(dep => dep.kind === 'workflow').length,
+    scheduled: deployments.filter(dep => !!dep.schedule || (dep.trigger_bindings || []).some(binding => binding.type === 'schedule.cron')).length,
+    attention: deployments.filter(dep => dep.status === 'failed' || !!dep.error_message).length,
+  };
 
   return (
     <div className="space-y-4">
@@ -1219,6 +1267,25 @@ function DeploysTab({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        {[
+          { label: 'Live', value: deployStats.live, icon: Radio, tone: 'text-green-400', bg: 'bg-green-500/10' },
+          { label: 'Workflows', value: deployStats.workflows, icon: Workflow, tone: 'text-blue-400', bg: 'bg-blue-500/10' },
+          { label: 'Scheduled', value: deployStats.scheduled, icon: CalendarDays, tone: 'text-amber-400', bg: 'bg-amber-500/10' },
+          { label: 'Attention', value: deployStats.attention, icon: Bug, tone: 'text-red-400', bg: 'bg-red-500/10' },
+        ].map(item => (
+          <div key={item.label} className="dashboard-card p-3 flex items-center gap-3">
+            <span className={clsx('h-9 w-9 rounded-lg flex items-center justify-center', item.bg, item.tone)}>
+              <item.icon className="w-4 h-4" />
+            </span>
+            <div>
+              <div className="text-lg font-black text-theme-fg leading-none">{item.value}</div>
+              <div className="text-[10px] font-bold text-theme-muted uppercase tracking-wider mt-1">{item.label}</div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {!engineRunning && (
@@ -1254,11 +1321,12 @@ function DeploysTab({
                     key={k}
                     onClick={() => setNewKind(k)}
                     className={clsx(
-                      'flex-1 px-3 py-2 text-xs font-bold rounded-lg border transition-all',
+                      'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border transition-all',
                       newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 dark:border-transparent bg-theme-hover text-theme-muted hover:text-theme-fg'
                     )}
                   >
-                    {kindEmoji[k]} {k.charAt(0).toUpperCase() + k.slice(1)}
+                    {React.createElement(getDeployKindIcon(k), { className: 'w-3 h-3' })}
+                    {k.charAt(0).toUpperCase() + k.slice(1)}
                   </button>
                 ))}
               </div>
@@ -1350,14 +1418,17 @@ function DeploysTab({
           {deployments.map(dep => {
             const sc = statusConfig[dep.status] || statusConfig.stopped;
             const StatusIcon = sc.icon;
-            const isActive = dep.status === 'running' || dep.status === 'deploying' || dep.status === 'pending' || dep.status === 'uploading';
+            const KindIcon = getDeployKindIcon(dep.kind);
+            const triggerBindings = dep.trigger_bindings || [];
 
             return (
               <div key={dep.id}>
                 <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 dark:hover:border-transparent transition-all">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-base">{kindEmoji[dep.kind] || '📄'}</span>
+                      <span className="h-6 w-6 rounded-lg bg-theme-hover text-theme-muted flex items-center justify-center shrink-0">
+                        <KindIcon className="w-3.5 h-3.5" />
+                      </span>
                       <span className="text-sm font-bold text-theme-fg truncate">{dep.name}</span>
                       <span className={clsx('flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black shrink-0', sc.bg, sc.color)}>
                         <StatusIcon className={clsx('w-2.5 h-2.5', dep.status === 'deploying' && 'animate-spin')} />
@@ -1367,15 +1438,46 @@ function DeploysTab({
                         {dep.kind}
                       </span>
                     </div>
-                    <div className="flex gap-4 mt-1 text-[10px] text-theme-muted pl-7">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-[10px] text-theme-muted pl-8">
                       {dep.description && <span className="truncate max-w-[200px]">{dep.description}</span>}
-                      <span>Created {new Date(dep.created_at).toLocaleString()}</span>
+                      <span className="flex items-center gap-1"><History className="w-3 h-3" /> Created {formatRelativeTime(dep.created_at)}</span>
                       {dep.pid && <span>PID {dep.pid}</span>}
-                      {dep.schedule && <span>⏰ {dep.schedule}</span>}
-                      {dep.auto_restart && <span>🔁 auto-restart</span>}
+                      {dep.schedule && <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" /> {dep.schedule}</span>}
+                      {dep.timezone && <span className="flex items-center gap-1"><Timer className="w-3 h-3" /> {dep.timezone}</span>}
+                      {dep.auto_restart && <span className="flex items-center gap-1"><RefreshCw className="w-3 h-3" /> auto-restart</span>}
                     </div>
+                    {(triggerBindings.length > 0 || dep.last_run_at || dep.started_at) && (
+                      <div className="mt-3 ml-8 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px]">
+                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
+                          <div className="text-theme-muted font-bold uppercase tracking-wider">Runs</div>
+                          <div className="text-theme-fg font-black mt-0.5">{dep.run_count ?? 0}</div>
+                        </div>
+                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
+                          <div className="text-theme-muted font-bold uppercase tracking-wider">Last Run</div>
+                          <div className="text-theme-fg font-black mt-0.5">{formatRelativeTime(dep.last_run_at || dep.started_at)}</div>
+                        </div>
+                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
+                          <div className="text-theme-muted font-bold uppercase tracking-wider">Completed</div>
+                          <div className="text-theme-fg font-black mt-0.5">{formatRelativeTime(dep.last_completed_at || dep.stopped_at)}</div>
+                        </div>
+                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
+                          <div className="text-theme-muted font-bold uppercase tracking-wider">Source</div>
+                          <div className="text-theme-fg font-black mt-0.5 truncate">{dep.last_trigger_source || triggerBindings[0]?.type || 'manual'}</div>
+                        </div>
+                      </div>
+                    )}
+                    {triggerBindings.length > 0 && (
+                      <div className="mt-2 ml-8 flex flex-wrap gap-1.5">
+                        {triggerBindings.slice(0, 4).map(binding => (
+                          <span key={`${binding.type}:${binding.triggerId}`} className="inline-flex items-center gap-1 rounded-full bg-theme-hover px-2 py-0.5 text-[9px] font-bold text-theme-muted">
+                            <ListChecks className="w-2.5 h-2.5" />
+                            {binding.type}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {dep.error_message && (
-                      <div className="flex items-center gap-1.5 mt-1.5 pl-7 text-[10px] text-red-400">
+                      <div className="flex items-center gap-1.5 mt-1.5 pl-8 text-[10px] text-red-400">
                         <AlertCircle className="w-3 h-3 shrink-0" />
                         <span className="truncate">{dep.error_message}</span>
                       </div>
@@ -1435,7 +1537,25 @@ function DeploysTab({
                         </button>
                       </div>
                     </div>
-                    <pre className="p-4 text-[11px] font-mono text-green-400/90 overflow-auto max-h-[300px] whitespace-pre-wrap leading-relaxed">
+                    {!logsLoading && (
+                      <div className="grid grid-cols-4 gap-2 px-4 py-3 border-b border-theme/10 bg-white/[0.02]">
+                        {[
+                          { label: 'Lines', value: parseDeployLogSummary(logs).lines, icon: ScrollText },
+                          { label: 'Runs', value: parseDeployLogSummary(logs).runs, icon: Workflow },
+                          { label: 'Triggers', value: parseDeployLogSummary(logs).triggers, icon: Radio },
+                          { label: 'Errors', value: parseDeployLogSummary(logs).errors, icon: AlertCircle },
+                        ].map(item => (
+                          <div key={item.label} className="rounded-lg bg-white/[0.04] px-2.5 py-2">
+                            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-theme-muted">
+                              <item.icon className="w-2.5 h-2.5" />
+                              {item.label}
+                            </div>
+                            <div className="text-xs font-black text-theme-fg mt-1">{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <pre className="p-4 text-[11px] font-mono text-green-400/90 overflow-auto max-h-[340px] whitespace-pre-wrap leading-relaxed">
                       {logsLoading ? 'Loading logs...' : (logs || 'No logs available yet.')}
                     </pre>
                   </div>

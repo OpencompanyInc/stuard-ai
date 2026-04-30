@@ -16,6 +16,7 @@ import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_call_control, telnyx_phone_status, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_get_media_url, whatsapp_download_media, whatsapp_status, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_voice_call, whatsapp_make_call, whatsapp_send_template } from '../../tools/whatsapp-tools';
+import * as xTools from '../../tools/x-tools';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { http_request } from '../../tools/http-tools';
@@ -293,6 +294,8 @@ export const ALL_TOOLS = {
   whatsapp_voice_call,
   whatsapp_make_call,
   whatsapp_send_template,
+  // X/Twitter
+  ...xTools,
 } as const;
 
 const _INTERNAL_SPACE_TOOLS = {
@@ -504,6 +507,11 @@ export function getTools(
       if (name.startsWith('whatsapp_')) tools[name] = tool;
     }
   }
+  if (enabledIntegrations.includes('x')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('x_')) tools[name] = tool;
+    }
+  }
 
   if (process.env.SIS_DEBUG === '1') {
     console.log(`[tools] Lean mode: ${Object.keys(tools).length} tools (Tier1 + SIS + integrations)`);
@@ -560,6 +568,7 @@ export async function getToolsForQuery(
     github: ['github_'],
     telnyx: ['telnyx_'],
     whatsapp: ['whatsapp_'],
+    x: ['x_'],
     notion: ['notion_'],
     linear: ['linear_'],
   };

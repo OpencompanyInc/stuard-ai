@@ -14,7 +14,10 @@
  */
 
 import { createTool } from '@mastra/core/tools';
+import { embedMany } from 'ai';
 import { z } from 'zod';
+import { getSupabaseService } from '../../supabase';
+import { resolveEmbedder } from '../../utils/embeddings';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DOCUMENTATION CHUNKS
@@ -2315,10 +2318,10 @@ function scoreChunk(chunk: DocChunk, queryTokens: string[]): number {
 }
 
 /**
- * Search documentation chunks by query.
- * Returns top-K most relevant sections.
+ * Lexical fallback: keyword-overlap search over DOC_CHUNKS.
+ * Used when Supabase / embedder is unavailable.
  */
-export function searchDocs(query: string, topK: number = 3): DocChunk[] {
+export function searchDocsLexical(query: string, topK: number = 3): DocChunk[] {
   const queryTokens = query
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
@@ -2326,7 +2329,6 @@ export function searchDocs(query: string, topK: number = 3): DocChunk[] {
     .filter(t => t.length > 1);
 
   if (queryTokens.length === 0) {
-    // No useful query — return architecture overview
     return DOC_CHUNKS.filter(c => c.id === 'architecture');
   }
 
@@ -2336,6 +2338,61 @@ export function searchDocs(query: string, topK: number = 3): DocChunk[] {
     .sort((a, b) => b.score - a.score);
 
   return scored.slice(0, topK).map(s => s.chunk);
+}
+
+/**
+ * Semantic search via Supabase pgvector.
+ * Embeds the query, calls the search_workflow_docs RPC, and resolves
+ * IDs back to local DOC_CHUNKS so callers always get full content
+ * (even if the row in Supabase is stale).
+ *
+ * Returns null if the backend isn't configured / fails — caller should
+ * fall back to searchDocsLexical().
+ */
+export async function searchDocsSemantic(
+  query: string,
+  topK: number = 3,
+): Promise<DocChunk[] | null> {
+  const supabase = getSupabaseService();
+  if (!supabase) return null;
+
+  try {
+    const { embedder } = await resolveEmbedder();
+    const { embeddings } = await embedMany({
+      model: embedder as any,
+      values: [query],
+    });
+    const queryEmbedding = embeddings[0];
+    if (!queryEmbedding) return null;
+
+    const { data, error } = await supabase.rpc('search_workflow_docs', {
+      query_embedding: queryEmbedding,
+      match_threshold: 0.25,
+      match_count: topK,
+    });
+    if (error || !data) return null;
+
+    const byId = new Map(DOC_CHUNKS.map(c => [c.id, c]));
+    const hits: DocChunk[] = [];
+    for (const row of data as Array<{ id: string }>) {
+      const chunk = byId.get(row.id);
+      if (chunk) hits.push(chunk);
+    }
+    return hits;
+  } catch (e) {
+    console.warn('[search_workflow_docs] semantic search failed', e);
+    return null;
+  }
+}
+
+/**
+ * Search documentation chunks by query.
+ * Tries semantic search via Supabase first, falls back to lexical scoring.
+ */
+export async function searchDocs(query: string, topK: number = 3): Promise<DocChunk[]> {
+  const semantic = await searchDocsSemantic(query, topK);
+  if (semantic && semantic.length > 0) return semantic;
+  return searchDocsLexical(query, topK);
 }
 
 /**
@@ -2414,8 +2471,8 @@ export const searchWorkflowDocs = createTool({
       };
     }
 
-    // Search mode
-    const results = searchDocs(query, topK);
+    // Search mode (semantic via Supabase, lexical fallback)
+    const results = await searchDocs(query, topK);
     if (results.length === 0) {
       return {
         ok: true,
@@ -2434,3 +2491,88 @@ export const searchWorkflowDocs = createTool({
     };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EMBEDDINGS SYNC
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build the text we embed per chunk. Including title + keywords gives the
+ * embedding model strong topical anchors so short queries (e.g. "guards",
+ * "live update custom ui") still match the right section.
+ */
+function chunkEmbeddingText(chunk: DocChunk): string {
+  const kw = chunk.keywords.length ? `\nKeywords: ${chunk.keywords.join(', ')}` : '';
+  return `${chunk.title}${kw}\n\n${chunk.content}`;
+}
+
+/**
+ * Mirrors ensureToolEmbeddings(): upserts any DOC_CHUNKS whose content
+ * has changed (or is missing) into public.workflow_docs with a fresh
+ * embedding. Safe to call repeatedly — incremental by content equality.
+ */
+export async function ensureWorkflowDocsEmbeddings(opts?: { force?: boolean }): Promise<{
+  synced: number;
+  skipped: number;
+  errors: Array<{ id: string; error: string }>;
+}> {
+  const force = opts?.force === true;
+  const result = { synced: 0, skipped: 0, errors: [] as Array<{ id: string; error: string }> };
+
+  const supabase = getSupabaseService();
+  if (!supabase) return result;
+
+  let toUpdate: DocChunk[];
+  if (force) {
+    toUpdate = DOC_CHUNKS.slice();
+  } else {
+    const { data: existing, error } = await supabase
+      .from('workflow_docs')
+      .select('id, title, content');
+    if (error) {
+      // Table might not exist yet — fail gracefully like ensureToolEmbeddings.
+      return result;
+    }
+    const existingMap = new Map(
+      (existing as Array<{ id: string; title: string; content: string }>).map(r => [
+        r.id,
+        { title: r.title, content: r.content },
+      ]),
+    );
+    toUpdate = DOC_CHUNKS.filter(c => {
+      const prev = existingMap.get(c.id);
+      return !prev || prev.title !== c.title || prev.content !== c.content;
+    });
+    result.skipped = DOC_CHUNKS.length - toUpdate.length;
+  }
+
+  if (toUpdate.length === 0) return result;
+
+  try {
+    const { embedder } = await resolveEmbedder();
+    const texts = toUpdate.map(chunkEmbeddingText);
+    const { embeddings } = await embedMany({ model: embedder as any, values: texts });
+
+    const rows = toUpdate.map((c, i) => ({
+      id: c.id,
+      title: c.title,
+      content: c.content,
+      keywords: c.keywords,
+      embedding: embeddings[i],
+      updated_at: new Date().toISOString(),
+    }));
+
+    const { error: upsertError } = await supabase
+      .from('workflow_docs')
+      .upsert(rows, { onConflict: 'id' });
+    if (upsertError) {
+      result.errors.push({ id: '*', error: upsertError.message });
+    } else {
+      result.synced = rows.length;
+    }
+  } catch (e: any) {
+    result.errors.push({ id: '*', error: e?.message || String(e) });
+  }
+
+  return result;
+}

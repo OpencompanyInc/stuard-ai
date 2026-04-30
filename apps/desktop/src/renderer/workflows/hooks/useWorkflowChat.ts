@@ -33,6 +33,13 @@ interface WorkspaceInfoForChat {
   files: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number }>;
 }
 
+export interface WorkflowApprovalRequest {
+  id: string;
+  tool: string;
+  args?: Record<string, any>;
+  description?: string;
+}
+
 interface UseWorkflowChatProps {
   model: any;
   onApplyModel: (model: any) => void;
@@ -85,8 +92,66 @@ export function useWorkflowChat({
   const [reasoningText, setReasoningText] = useState('');
   const [busy, setBusy] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<WorkflowApprovalRequest[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const abortedRef = useRef(false);
+  const approvalResolversRef = useRef<Map<string, { resolve: (allow: boolean) => void; timer: number }>>(new Map());
+
+  const WORKFLOW_APPROVAL_TOOLS = useMemo(() => new Set([
+    'workspace_write_file',
+    'workspace_delete_file',
+    'workspace_create_folder',
+  ]), []);
+
+  const describeApprovalRequest = useCallback((tool: string, args: any): string => {
+    const path = String(args?.path || args?.filePath || args?.folder || '').trim();
+    if (typeof args?.description === 'string' && args.description.trim()) return args.description.trim();
+    if (tool === 'workspace_write_file') return path ? `Write ${path} in this workflow workspace.` : 'Write a file in this workflow workspace.';
+    if (tool === 'workspace_delete_file') return path ? `Delete ${path} from this workflow workspace.` : 'Delete a file from this workflow workspace.';
+    if (tool === 'workspace_create_folder') return path ? `Create ${path} in this workflow workspace.` : 'Create a folder in this workflow workspace.';
+    return 'This action needs your approval before it can continue.';
+  }, []);
+
+  const queueApproval = useCallback((approval: WorkflowApprovalRequest) => {
+    setPendingApprovals(prev => prev.some(p => p.id === approval.id) ? prev : [...prev, approval]);
+  }, []);
+
+  const requestLocalToolApproval = useCallback((approval: WorkflowApprovalRequest): Promise<boolean> => {
+    queueApproval(approval);
+    return new Promise<boolean>((resolve) => {
+      const timer = window.setTimeout(() => {
+        approvalResolversRef.current.delete(approval.id);
+        setPendingApprovals(prev => prev.filter(p => p.id !== approval.id));
+        resolve(false);
+      }, 60_000);
+      approvalResolversRef.current.set(approval.id, { resolve, timer });
+    });
+  }, [queueApproval]);
+
+  const respondToApproval = useCallback((id: string, allow: boolean) => {
+    const pending = approvalResolversRef.current.get(id);
+    if (pending) {
+      window.clearTimeout(pending.timer);
+      approvalResolversRef.current.delete(id);
+      pending.resolve(allow);
+    } else {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'approval_response', id, allow })); } catch { }
+      }
+    }
+    setPendingApprovals(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const pending of approvalResolversRef.current.values()) {
+        window.clearTimeout(pending.timer);
+        pending.resolve(false);
+      }
+      approvalResolversRef.current.clear();
+    };
+  }, []);
 
   // Session management - workflow-scoped
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -372,6 +437,9 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
               payloadContext.workflow = designerModel;
               if (designerModel.id) payloadContext.workflowId = designerModel.id;
             }
+            if (!payloadContext.workflowId && workflowId) {
+              payloadContext.workflowId = workflowId;
+            }
             if (workspaceInfo?.workspacePath) {
               payloadContext.workspacePath = workspaceInfo.workspacePath.replace(/\\/g, '/');
               payloadContext.workspaceSubdirs = workspaceInfo.subdirs || [];
@@ -425,6 +493,48 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                       error: 'unknown_tool',
                       message: `Tool "${String(tool)}" is not available in this chat context.`
                     };
+                    const normalizedTool = String(tool || '').toLowerCase();
+                    const normalizedArgs = (args && typeof args === 'object') ? { ...args } : {};
+                    if (normalizedTool.startsWith('workspace_') && !normalizedArgs.flowId) {
+                      const activeWorkflowId = String(workflowId || model?.id || '').trim();
+                      if (activeWorkflowId) normalizedArgs.flowId = activeWorkflowId;
+                    }
+
+                    if (WORKFLOW_APPROVAL_TOOLS.has(normalizedTool)) {
+                      const description = describeApprovalRequest(normalizedTool, normalizedArgs);
+                      const existingIdx = currentItems.findIndex(item => item.type === 'tool' && item.event.id === id);
+                      const approvalEvent = {
+                        ts: new Date().toISOString(),
+                        tool: normalizedTool,
+                        status: 'approval_required',
+                        args: normalizedArgs,
+                        id,
+                      };
+                      if (existingIdx >= 0) {
+                        const existingItem = currentItems[existingIdx] as { type: 'tool'; event: ToolEvent };
+                        currentItems[existingIdx] = {
+                          type: 'tool',
+                          event: { ...existingItem.event, ...approvalEvent },
+                        };
+                      } else {
+                        currentItems.push({ type: 'tool', event: approvalEvent });
+                      }
+                      setStreamItems([...currentItems]);
+
+                      const allowed = await requestLocalToolApproval({
+                        id,
+                        tool: normalizedTool,
+                        args: normalizedArgs,
+                        description,
+                      });
+                      if (!allowed) {
+                        result = { ok: false, error: 'permission_denied', denied: true };
+                        if (ws.readyState === WebSocket.OPEN) {
+                          ws.send(JSON.stringify({ type: 'tool_result', id, result }));
+                        }
+                        return;
+                      }
+                    }
 
                     // Handle simple client-side tools directly
                     if (tool === 'get_local_time') {
@@ -440,7 +550,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                     } else {
                       // Delegate to main process via desktopAPI
                       if ((window as any).desktopAPI?.execTool) {
-                        const execResult = await (window as any).desktopAPI.execTool(tool, args);
+                        const execResult = await (window as any).desktopAPI.execTool(tool, normalizedArgs);
                         result = execResult ?? {
                           ok: false,
                           error: 'tool_execution_failed',
@@ -528,6 +638,19 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 const rawStatus = typeof d.status === 'string' ? d.status : undefined;
                 const normalizedStatus = rawStatus ? String(rawStatus).toLowerCase() : undefined;
                 const id: string | undefined = (typeof d.toolCallId === 'string' && d.toolCallId) ? d.toolCallId : (typeof d.id === 'string' && d.id) ? d.id : undefined;
+                if (normalizedStatus === 'approval_required' && id) {
+                  queueApproval({
+                    id,
+                    tool,
+                    args: (d.args && typeof d.args === 'object') ? d.args : undefined,
+                    description: typeof d.description === 'string' ? d.description : describeApprovalRequest(tool, d.args || {}),
+                  });
+                } else if (
+                  id
+                  && (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed')
+                ) {
+                  setPendingApprovals(prev => prev.filter(p => p.id !== id));
+                }
 
                 // Handle create_workflow - full spec
                 if (tool === 'create_workflow' && normalizedStatus === 'completed') {
@@ -749,11 +872,17 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
       }]);
     } finally {
       wsRef.current = null;
+      for (const pending of approvalResolversRef.current.values()) {
+        window.clearTimeout(pending.timer);
+        pending.resolve(false);
+      }
+      approvalResolversRef.current.clear();
       setStreamItems([]);
       setReasoningText('');
+      setPendingApprovals([]);
       setBusy(false);
     }
-  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel, selectedModelId, selectedReasoningLevel, workspaceInfo]);
+  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel, selectedModelId, selectedReasoningLevel, workspaceInfo, workflowId, WORKFLOW_APPROVAL_TOOLS, describeApprovalRequest, queueApproval, requestLocalToolApproval]);
 
   const latestAssistantContext = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -789,6 +918,8 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
     setReasoningText,
     busy,
     setBusy,
+    pendingApprovals,
+    respondToApproval,
     sendMessage,
     stopGeneration,
     showReasoning,
@@ -803,5 +934,5 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
     deleteSession,
     latestUsage: latestAssistantContext.usage,
     latestModelId: latestAssistantContext.modelId,
-  }), [messages, streamItems, reasoningText, busy, sendMessage, stopGeneration, showReasoning, currentSessionId, pastSessions, showSessionHistory, newSession, loadSession, deleteSession, latestAssistantContext]);
+  }), [messages, streamItems, reasoningText, busy, pendingApprovals, respondToApproval, sendMessage, stopGeneration, showReasoning, currentSessionId, pastSessions, showSessionHistory, newSession, loadSession, deleteSession, latestAssistantContext]);
 }

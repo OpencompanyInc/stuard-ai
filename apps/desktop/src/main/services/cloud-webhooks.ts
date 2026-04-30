@@ -176,7 +176,7 @@ async function persistIncomingChatSync(msg: any): Promise<void> {
  * Extracts knowledge.db, memory.db, etc. to the desktop agent data directory.
  * All filesystem and tar work is async — no main-thread blocking.
  */
-async function handleAgentDataUpdated(): Promise<void> {
+async function handleAgentDataUpdated(msg?: any): Promise<void> {
     const token = await getAuthToken();
     if (!token) {
         logger.warn('[cloud-webhooks] No auth token for agent data download');
@@ -196,7 +196,11 @@ async function handleAgentDataUpdated(): Promise<void> {
         return;
     }
 
-    const { downloadUrl } = await downloadUrlResp.json() as any;
+    const urlData = await downloadUrlResp.json() as any;
+    const mode = String(msg?.mode || 'full').toLowerCase() === 'delta' ? 'delta' : 'full';
+    const downloadUrl = mode === 'delta'
+        ? (urlData.deltaDownloadUrl || urlData.downloadUrl)
+        : urlData.downloadUrl;
     if (!downloadUrl) {
         logger.info('[cloud-webhooks] No agent data available in cloud storage');
         return;
@@ -218,7 +222,7 @@ async function handleAgentDataUpdated(): Promise<void> {
         await pipeline(Readable.fromWeb(dlResp.body as any), fs.createWriteStream(tmpFile));
 
         const stats = await fsp.stat(tmpFile);
-        logger.info(`[cloud-webhooks] Downloaded agent data: ${stats.size} bytes`);
+        logger.info(`[cloud-webhooks] Downloaded ${mode} agent data: ${stats.size} bytes`);
 
         const agentDir = getDesktopAgentDataDir();
         await fsp.mkdir(agentDir, { recursive: true });
@@ -263,8 +267,17 @@ async function handleAgentDataUpdated(): Promise<void> {
         for (const ent of entries) {
             if (!ent.isFile()) continue;
             if (!(dbFiles.has(ent.name) || ent.name.endsWith('.db'))) continue;
-            const ok = await mergeCopy(path.join(sourceDir, ent.name), path.join(agentDir, ent.name));
-            if (ok) copied++; else skipped++;
+            const dest = path.join(agentDir, ent.name);
+            const ok = await mergeCopy(path.join(sourceDir, ent.name), dest);
+            if (ok) {
+                copied++;
+                try {
+                    const destStat = await fsp.stat(dest);
+                    _desktopMtimes.set(ent.name, destStat.mtimeMs);
+                } catch { /* best-effort */ }
+            } else {
+                skipped++;
+            }
         }
 
         // Install device keys from the archive when present (file-backed
@@ -307,7 +320,41 @@ async function handleAgentDataUpdated(): Promise<void> {
  * Called after local knowledge/memory changes to keep VM in sync.
  * All filesystem and tar work is async — no main-thread blocking.
  */
-export async function pushDesktopAgentDataToVM(): Promise<boolean> {
+type AgentDataSyncMode = 'full' | 'delta';
+
+function getChangedDesktopAgentDataFiles(agentDir: string): Set<string> {
+    const filesToWatch = [
+        'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
+        'memory.db', 'memory.db-wal', 'memory.db-shm',
+        'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+    ];
+    const changed = new Set<string>();
+    for (const name of filesToWatch) {
+        const filePath = path.join(agentDir, name);
+        if (!fs.existsSync(filePath)) continue;
+        try {
+            const mtime = fs.statSync(filePath).mtimeMs;
+            const prev = _desktopMtimes.get(name);
+            if (prev === undefined || mtime > prev) changed.add(name);
+        } catch {
+            changed.add(name);
+        }
+    }
+
+    for (const group of [
+        ['knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm'],
+        ['file_index.db', 'file_index.db-wal', 'file_index.db-shm'],
+    ]) {
+        if (!group.some((name) => changed.has(name))) continue;
+        for (const name of group) {
+            if (fs.existsSync(path.join(agentDir, name))) changed.add(name);
+        }
+    }
+
+    return changed;
+}
+
+async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full'): Promise<boolean> {
     const token = await getAuthToken();
     if (!token) return false;
 
@@ -317,6 +364,12 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
     if (!(await pathExists(agentDir))) {
         logger.warn('[cloud-webhooks] Agent data dir does not exist');
         return false;
+    }
+
+    const changedNames = mode === 'delta' ? getChangedDesktopAgentDataFiles(agentDir) : new Set<string>();
+    if (mode === 'delta' && changedNames.size === 0) {
+        logger.info('[cloud-webhooks] Delta agent-data push skipped: no changed files');
+        return true;
     }
 
     const tmpDir = app.getPath('temp');
@@ -335,6 +388,7 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
         const entries = await fsp.readdir(agentDir, { withFileTypes: true });
         await Promise.all(entries.map(async (ent) => {
             if (!ent.isFile()) return;
+            if (mode === 'delta' && !changedNames.has(ent.name)) return;
             if (MEMORY_DB_FILES.has(ent.name)) return;
             const src = path.join(agentDir, ent.name);
             const dest = path.join(stageAgentDir, ent.name);
@@ -349,45 +403,48 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
         // columns decrypted and tagged as plaintext. The VM reads these rows
         // directly without needing the desktop's device key.
         const exportPath = path.join(stageAgentDir, 'memory.db');
-        try {
-            const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
-            const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tool: 'memory_export_plaintext',
-                    args: { output_path: exportPath },
-                }),
-                signal: AbortSignal.timeout(120_000),
-            });
-            if (!resp.ok) {
-                logger.warn(`[cloud-webhooks] memory_export_plaintext HTTP ${resp.status}`);
-                const src = path.join(agentDir, 'memory.db');
-                if (await pathExists(src)) await fsp.copyFile(src, exportPath);
-            } else {
-                const result: any = await resp.json().catch(() => ({ ok: false }));
-                if (!result?.ok) {
-                    logger.warn(`[cloud-webhooks] memory_export_plaintext failed: ${result?.error || 'unknown'}`);
+        const shouldExportMemory = mode === 'full' || [...MEMORY_DB_FILES].some((name) => changedNames.has(name));
+        if (shouldExportMemory) {
+            try {
+                const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+                const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool: 'memory_export_plaintext',
+                        args: { output_path: exportPath },
+                    }),
+                    signal: AbortSignal.timeout(120_000),
+                });
+                if (!resp.ok) {
+                    logger.warn(`[cloud-webhooks] memory_export_plaintext HTTP ${resp.status}`);
                     const src = path.join(agentDir, 'memory.db');
                     if (await pathExists(src)) await fsp.copyFile(src, exportPath);
                 } else {
-                    logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
+                    const result: any = await resp.json().catch(() => ({ ok: false }));
+                    if (!result?.ok) {
+                        logger.warn(`[cloud-webhooks] memory_export_plaintext failed: ${result?.error || 'unknown'}`);
+                        const src = path.join(agentDir, 'memory.db');
+                        if (await pathExists(src)) await fsp.copyFile(src, exportPath);
+                    } else {
+                        logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
+                    }
                 }
+                // Force a fresh mtime so the VM's merge-copy treats it as newer
+                // than any legacy encrypted memory.db already on disk.
+                try {
+                    const now = new Date();
+                    await fsp.utimes(exportPath, now, now);
+                } catch { /* best-effort */ }
+            } catch (e: any) {
+                logger.warn(`[cloud-webhooks] memory.db plaintext export errored: ${e?.message}`);
             }
-            // Force a fresh mtime so the VM's merge-copy treats it as newer
-            // than any legacy encrypted memory.db already on disk.
-            try {
-                const now = new Date();
-                await fsp.utimes(exportPath, now, now);
-            } catch { /* best-effort */ }
-        } catch (e: any) {
-            logger.warn(`[cloud-webhooks] memory.db plaintext export errored: ${e?.message}`);
         }
 
         await runChild('tar', ['-czf', tmpFile, '-C', stageDir, '.'], { timeoutMs: 300_000 });
 
         const stats = await fsp.stat(tmpFile);
-        logger.info(`[cloud-webhooks] Agent data archive: ${stats.size} bytes`);
+        logger.info(`[cloud-webhooks] Agent data ${mode} archive: ${stats.size} bytes`);
 
         const urlResp = await fetch(`${apiBase}/v1/storage/agent-data-url`, {
             method: 'GET',
@@ -396,7 +453,8 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
         });
 
         if (!urlResp.ok) return false;
-        const { uploadUrl } = await urlResp.json() as any;
+        const urlData = await urlResp.json() as any;
+        const uploadUrl = mode === 'delta' ? (urlData.deltaUploadUrl || urlData.uploadUrl) : urlData.uploadUrl;
         if (!uploadUrl) return false;
 
         const uploadResp = await fetch(uploadUrl, {
@@ -421,13 +479,14 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`,
             },
+            body: JSON.stringify({ mode }),
             signal: AbortSignal.timeout(15_000),
         }).catch((e: any) => {
             logger.warn(`[cloud-webhooks] push-agent-data notify failed: ${e?.message}`);
         });
 
         _lastPushSucceededAt = Date.now();
-        logger.info('[cloud-webhooks] Desktop agent data pushed to VM');
+        logger.info(`[cloud-webhooks] Desktop agent data ${mode} pushed to VM`);
         return true;
     } catch (e: any) {
         logger.error(`[cloud-webhooks] Push agent data to VM failed: ${e?.message}`);
@@ -438,11 +497,20 @@ export async function pushDesktopAgentDataToVM(): Promise<boolean> {
     }
 }
 
+export async function pushDesktopAgentDataToVM(): Promise<boolean> {
+    let ok = false;
+    await enqueueSync('desktop-agent-data-push', async () => {
+        ok = await performDesktopAgentDataPushToVM();
+        if (ok) snapshotDesktopMtimes();
+    });
+    return ok;
+}
+
 // ── Desktop Periodic Agent Data Sync (Desktop → GCS → VM) ──────────────────
 // A tight mtime watcher pushes any local change within ~15s while a longer
 // interval catches missed updates / WAL checkpoint drift. Pushes coalesce
-// through the _agentDataSyncInFlight / hasDesktopAgentDataChanged guards so
-// rapid successive writes don't fan out into duplicate uploads.
+// through the sync queue and hasDesktopAgentDataChanged guard so rapid
+// successive writes don't fan out into duplicate uploads.
 const DESKTOP_SYNC_INTERVAL_MS = 60_000; // slow-path safety net
 const DESKTOP_FAST_SYNC_DEBOUNCE_MS = 15_000; // fast-path debounce after a change
 const _desktopMtimes = new Map<string, number>();
@@ -452,7 +520,11 @@ let _desktopFastSyncTimer: NodeJS.Timeout | null = null;
 function hasDesktopAgentDataChanged(): boolean {
     const agentDir = getDesktopAgentDataDir();
     if (!fs.existsSync(agentDir)) return false;
-    const filesToWatch = ['knowledge.db', 'memory.db', 'file_index.db', 'knowledge.db-wal', 'memory.db-wal', 'file_index.db-wal'];
+    const filesToWatch = [
+        'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
+        'memory.db', 'memory.db-wal', 'memory.db-shm',
+        'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+    ];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
         if (!fs.existsSync(filePath)) continue;
@@ -468,7 +540,11 @@ function hasDesktopAgentDataChanged(): boolean {
 function snapshotDesktopMtimes(): void {
     const agentDir = getDesktopAgentDataDir();
     if (!fs.existsSync(agentDir)) return;
-    const filesToWatch = ['knowledge.db', 'memory.db', 'file_index.db', 'knowledge.db-wal', 'memory.db-wal', 'file_index.db-wal'];
+    const filesToWatch = [
+        'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
+        'memory.db', 'memory.db-wal', 'memory.db-shm',
+        'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+    ];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
         if (fs.existsSync(filePath)) {
@@ -478,9 +554,13 @@ function snapshotDesktopMtimes(): void {
 }
 
 async function periodicDesktopAgentDataSync(): Promise<void> {
-    if (_agentDataSyncInFlight) return;
+    if (_syncRunning) return;
+    await enqueueSync('periodic-desktop-agent-data-push', syncDesktopAgentDataIfChanged);
+}
+
+async function syncDesktopAgentDataIfChanged(): Promise<void> {
     if (!hasDesktopAgentDataChanged()) return;
-    const ok = await pushDesktopAgentDataToVM();
+    const ok = await performDesktopAgentDataPushToVM('delta');
     if (ok) snapshotDesktopMtimes();
 }
 
@@ -516,9 +596,8 @@ export function requestAgentDataPush(): void {
     _desktopFastSyncTimer = setTimeout(async () => {
         _desktopFastSyncTimer = null;
         try {
-            if (!hasDesktopAgentDataChanged()) return;
-            const ok = await pushDesktopAgentDataToVM();
-            if (ok) snapshotDesktopMtimes();
+            if (_syncRunning) return;
+            await enqueueSync('fast-desktop-agent-data-push', syncDesktopAgentDataIfChanged);
         } catch (e: any) {
             logger.warn(`[cloud-webhooks] Fast-path desktop sync failed: ${e?.message}`);
         }
@@ -698,8 +777,8 @@ async function connect() {
                     } catch { }
                 } else if (msg.type === 'agent_data_updated') {
                     // VM uploaded new agent databases to GCS — download to desktop
-                    logger.info(`[cloud-webhooks] Agent data updated from ${msg.source || 'vm'}`);
-                    handleAgentDataUpdated().catch((e: any) => {
+                    logger.info(`[cloud-webhooks] Agent data updated from ${msg.source || 'vm'} (${msg.mode || 'full'})`);
+                    enqueueSync('vm-agent-data-pull', () => handleAgentDataUpdated(msg)).catch((e: any) => {
                         logger.error(`[cloud-webhooks] Agent data sync failed: ${e?.message}`);
                     });
                 } else if (msg.type === 'run_state_sync') {

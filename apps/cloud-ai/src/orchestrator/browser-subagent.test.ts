@@ -148,11 +148,14 @@ describe('Browser Pack Tool Resolution', () => {
   it('browser pack prompt documents the observe/verify browser workflow', async () => {
     const { BROWSER_PACK } = await import('./capability-packs');
 
-    expect(BROWSER_PACK.systemPrompt).toContain('Use browser_use_analyze_screenshot when you need visual interpretation.');
-    expect(BROWSER_PACK.systemPrompt).toContain('Use browser_use_screenshot only when you are stuck, when the user asks for an image, or when you need visual feedback to share back.');
-    expect(BROWSER_PACK.systemPrompt).toContain('Usually call browser_use_get_interactive_elements or browser_use_content to observe the new page before acting.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Do not use screenshot tools for normal page reading.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Take a screenshot file only when the user explicitly asks for an image artifact');
+    expect(BROWSER_PACK.systemPrompt).toContain('Usually call browser_use_content first.');
     expect(BROWSER_PACK.systemPrompt).toContain('Do not take routine screenshots after every step.');
     expect(BROWSER_PACK.systemPrompt).toContain('Always prefer elementId from browser_use_get_interactive_elements.');
+    expect(BROWSER_PACK.systemPrompt).toContain('It may be a visible desktop browser or a headless browser running on the user');
+    expect(BROWSER_PACK.systemPrompt).toContain('Do not call browser_use_screenshot, browser_use_analyze_screenshot, capture_screen, or any file-reading tool for these requests.');
+    expect(BROWSER_PACK.systemPrompt).toContain('Avoid screenshot-scroll-screenshot loops.');
   });
 
   it('browser screenshot analysis tool is exposed without a detailed mode', async () => {

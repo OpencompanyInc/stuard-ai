@@ -59,6 +59,7 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   whatsapp: ['whatsapp_'],
   discord: ['discord_'],
   reddit: ['reddit_'],
+  x: ['x_'],
   notion: ['notion_'],  // MCP
   linear: ['linear_'],  // MCP
   stripe: ['stripe_'],  // MCP

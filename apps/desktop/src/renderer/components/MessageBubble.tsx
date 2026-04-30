@@ -1036,12 +1036,13 @@ type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
 interface AssistantTraceStepData {
   id: string;
-  kind: 'reasoning' | 'tool' | 'status';
+  kind: 'reasoning' | 'tool' | 'status' | 'text';
   label: string;
   status: TraceStatus;
   content?: string;
   tool?: ToolCall;
   nested?: boolean;
+  subagentId?: string;
   statusVariant?: 'compacting';
   statusMeta?: {
     round?: number;
@@ -1816,6 +1817,9 @@ const AssistantTracePanel: React.FC<{
       const lastReasoningIndex = streamChunks.reduce((lastIndex, chunk, index) => (
         chunk.type === 'reasoning' ? index : lastIndex
       ), -1);
+      const lastNestedTextIndex = streamChunks.reduce((lastIndex, chunk, index) => (
+        chunk.type === 'text' && chunk.nested ? index : lastIndex
+      ), -1);
 
       streamChunks.forEach((chunk, index) => {
         if (chunk.type === 'reasoning') {
@@ -1826,6 +1830,22 @@ const AssistantTracePanel: React.FC<{
             status: isStreaming && index === lastReasoningIndex ? 'active' : 'complete',
             content: chunk.content,
             nested: chunk.nested,
+            subagentId: chunk.subagentId,
+          });
+          return;
+        }
+
+        // Nested text = a delegated subagent's narration to the orchestrator.
+        // Render it inside the chain-of-thought rather than the main bubble.
+        if (chunk.type === 'text' && chunk.nested) {
+          steps.push({
+            id: `nested-text-${index}`,
+            kind: 'text',
+            label: 'Subagent reply',
+            status: isStreaming && index === lastNestedTextIndex ? 'active' : 'complete',
+            content: chunk.content,
+            nested: true,
+            subagentId: chunk.subagentId,
           });
           return;
         }
@@ -1850,8 +1870,9 @@ const AssistantTracePanel: React.FC<{
             id: chunk.id || `status-${index}`,
             kind: 'status',
             label: chunk.label,
-            status: chunk.state === 'active' ? 'active' : 'complete',
+            status: chunk.state === 'error' ? 'error' : chunk.state === 'active' ? 'active' : 'complete',
             nested: chunk.nested,
+            subagentId: chunk.subagentId,
             statusVariant: chunk.variant,
             statusMeta: chunk.meta,
           });
@@ -2591,6 +2612,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
             {/* Render interleaved stream chunks */}
             {streamChunks.map((chunk, idx) => {
               if (chunk.type === 'reasoning') return null;
+              // Subagent narration belongs in the chain-of-thought, not the
+              // user-facing bubble — those are rendered as 'text' steps inside
+              // AssistantTracePanel / DelegationCard with markdown.
+              if (chunk.type === 'text' && chunk.nested) return null;
               if (chunk.type === 'tool') {
                 const tc = chunk.tool;
                 const isGenUI = GENUI_TOOL_NAMES.has(tc.tool);

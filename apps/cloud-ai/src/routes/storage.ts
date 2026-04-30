@@ -194,16 +194,26 @@ export async function handleStorageRoutes(req: IncomingMessage, res: ServerRespo
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      const { generateAgentDataUploadUrl, generateAgentDataDownloadUrl } = await import('../services/cold-storage');
-      const [uploadResult, downloadResult] = await Promise.all([
+      const {
+        generateAgentDataUploadUrl,
+        generateAgentDataDownloadUrl,
+        generateAgentDataDeltaUploadUrl,
+        generateAgentDataDeltaDownloadUrl,
+      } = await import('../services/cold-storage');
+      const [uploadResult, downloadResult, deltaUploadResult, deltaDownloadResult] = await Promise.all([
         generateAgentDataUploadUrl(user.userId),
         generateAgentDataDownloadUrl(user.userId),
+        generateAgentDataDeltaUploadUrl(user.userId),
+        generateAgentDataDeltaDownloadUrl(user.userId),
       ]);
       json(res, 200, {
         ok: true,
         uploadUrl: uploadResult.uploadUrl,
         downloadUrl: downloadResult?.downloadUrl || null,
+        deltaUploadUrl: deltaUploadResult.uploadUrl,
+        deltaDownloadUrl: deltaDownloadResult?.downloadUrl || null,
         objectName: uploadResult.objectName,
+        deltaObjectName: deltaUploadResult.objectName,
       });
     } catch (e: any) {
       console.error('[storage] agent-data-url error:', e?.message);

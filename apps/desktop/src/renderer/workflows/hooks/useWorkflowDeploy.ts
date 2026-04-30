@@ -43,6 +43,14 @@ async function cloudFetch(path: string, opts?: RequestInit) {
   return resp.json();
 }
 
+function detectClientTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
 function getCloudTriggerBindings(model: DesignerModel | null) {
   if (!model) return [];
   return (model.triggers || []).flatMap((trigger) => {
@@ -51,6 +59,14 @@ function getCloudTriggerBindings(model: DesignerModel | null) {
     if (!type || !triggerId) return [];
 
     if (type === 'gmail.new_email' || type === 'drive.new_file') {
+      return [{
+        triggerId,
+        type,
+        args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
+      }];
+    }
+
+    if (type === 'schedule.cron') {
       return [{
         triggerId,
         type,
@@ -215,6 +231,7 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
     try {
       // Save workflow first
       await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
+      const timezone = detectClientTimezone();
 
       // Create cloud deployment via API
       // NOTE: No user tokens are passed to the VM. The VM authenticates with cloud-ai
@@ -227,7 +244,7 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
           kind: 'workflow',
           description: model.description || `Deployed from workflow editor`,
           payload: model,
-          envVars: {},
+          envVars: { TZ: timezone, STUARD_USER_TIMEZONE: timezone },
           autoRestart: true,
           schedule: model.triggers?.find((t) => t.type === 'schedule.cron')?.args?.cron || undefined,
           workflowId: selectedId,
@@ -237,14 +254,14 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
 
       if (res.ok && res.deployment?.status === 'failed') {
         setCloudDeployState('error');
-        setCloudDeployError(res.deployment?.error_message || res.error || res.message || 'Deploy failed');
+        setCloudDeployError(res.deployment?.error_message || res.message || res.error || 'Deploy failed');
         setCloudDeployId(res.deployment?.id || null);
       } else if (res.ok && res.deployment) {
         setCloudDeployState('success');
         setCloudDeployId(res.deployment.id);
       } else {
         setCloudDeployState('error');
-        setCloudDeployError(res.error || res.message || 'Deploy failed');
+        setCloudDeployError(res.message || res.error || 'Deploy failed');
       }
     } catch (e: any) {
       setCloudDeployState('error');

@@ -106,6 +106,37 @@ WORKFLOW STRUCTURE (quick reference):
   Guards on wires for conditional branching
   Loops on wires for repeated execution
   callNode: true wires for UI → worker on-demand routing
+  waitForAll: true on a NODE = wait for every incoming wire to complete before running
+
+PARALLEL BRANCHES & CONVERGENCE — waitForAll:
+  When a node has multiple INCOMING wires (a fan-in / convergence point), the
+  engine runs it as soon as the FIRST incoming wire completes. If you want it
+  to wait until ALL incoming branches finish first, set waitForAll: true on
+  the convergence node.
+
+  Use it when:
+  • Combining results from parallel branches into one summary node.
+  • A node depends on data from two upstream steps (e.g. "summarize" needs
+    both "fetch_emails" and "fetch_calendar").
+  • You want a join after a fan-out.
+
+  Example — fan out to two fetches in parallel, then join:
+    nodes: [
+      { id: "start", ... },
+      { id: "fetch_emails",   tool: "gmail_list_messages",   args: {...} },
+      { id: "fetch_calendar", tool: "calendar_list_events",  args: {...} },
+      { id: "summarize", tool: "ai_inference", waitForAll: true,
+        args: { prompt: "Summarize: {{fetch_emails.items}} and {{fetch_calendar.items}}" } }
+    ],
+    wires: [
+      { from: "start", to: "fetch_emails" },
+      { from: "start", to: "fetch_calendar" },   // parallel — both run together
+      { from: "fetch_emails",   to: "summarize" },
+      { from: "fetch_calendar", to: "summarize" } // summarize waits for both
+    ]
+
+  Without waitForAll, "summarize" would fire twice (once per incoming wire).
+  For full details: search_workflow_docs({ query: "wires_convergence" }).
 
 For detailed syntax on any of the above, use search_workflow_docs.
 

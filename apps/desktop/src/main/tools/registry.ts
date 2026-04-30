@@ -231,6 +231,18 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'threads_list_posts': { kind: 'cloud' },
   'threads_publish_post': { kind: 'cloud' },
 
+  // X / Twitter
+  'x_search_tweets': { kind: 'cloud' },
+  'x_get_user_timeline': { kind: 'cloud' },
+  'x_get_tweet': { kind: 'cloud' },
+  'x_post_tweet': { kind: 'cloud' },
+  'x_delete_tweet': { kind: 'cloud' },
+  'x_send_dm': { kind: 'cloud' },
+  'x_list_dms': { kind: 'cloud' },
+  'x_get_user': { kind: 'cloud' },
+  'x_list_followers': { kind: 'cloud' },
+  'x_list_following': { kind: 'cloud' },
+
   // WhatsApp
   'whatsapp_status': { kind: 'cloud' },
   'whatsapp_send_message': { kind: 'cloud' },

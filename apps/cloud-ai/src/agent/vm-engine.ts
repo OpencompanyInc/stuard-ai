@@ -31,6 +31,7 @@ export interface RouterContext {
   agentWsUrl: string;
   cloudAiUrl: string;
   logFn: (msg: string) => void;
+  timezone?: string;
   /** Owner's userId — resolved server-side, never from user input on the VM */
   userId: string;
   /** Per-VM HMAC secret (from VM_TOKEN_SECRET env) — used to mint short-lived auth tokens */
@@ -84,7 +85,7 @@ export interface StuardSpec {
   name?: string;
   version?: string;
   autostart?: boolean;
-  triggers?: Array<{ type: string; args?: any; id?: string; start?: string }>;
+  triggers?: Array<{ type: string; args?: any; id?: string; start?: string; startNodes?: string[]; inputParams?: any[] }>;
   steps?: StuardStep[];
   start?: string;
   globals?: { ai?: any; [key: string]: any };
@@ -99,7 +100,7 @@ type ToolKind = 'local' | 'cloud' | 'vm-native' | 'orchestration' | 'desktop-rel
 /** Tools that the VM can execute natively (filesystem, variables, shell, http, utilities) */
 const VM_NATIVE_TOOLS = new Set([
   // Filesystem
-  'write_file', 'read_file', 'delete_file', 'list_files', 'create_directory',
+  'write_file', 'read_file', 'file_read', 'delete_file', 'list_files', 'create_directory',
   'file_edit', 'list_directory', 'move_file', 'copy_file', 'glob', 'grep',
   // Shell / scripts
   'run_command', 'run_node_script',
@@ -133,6 +134,10 @@ const CLOUD_TOOLS = new Set([
   'text_to_speech',
   'generate_embeddings', 'semantic_search',
   'reddit_search', 'reddit_post',
+  'x_search_tweets', 'x_get_user_timeline', 'x_get_tweet',
+  'x_post_tweet', 'x_delete_tweet',
+  'x_send_dm', 'x_list_dms',
+  'x_get_user', 'x_list_followers', 'x_list_following',
   'discord_send', 'discord_read',
   'agent_node', 'agent_decision', 'agent_extract',
   'analyze_media',
@@ -865,7 +870,8 @@ async function execVmNativeTool(tool: string, args: any, ctx: RouterContext, dep
       return { ok: true, path: filePath };
     }
 
-    case 'read_file': {
+    case 'read_file':
+    case 'file_read': {
       const filePath = resolveSafePath(args?.path, deployDir);
       if (!fs.existsSync(filePath)) return { ok: false, error: 'file_not_found' };
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -1151,7 +1157,7 @@ async function execVmNativeTool(tool: string, args: any, ctx: RouterContext, dep
 
     // ── Utility tools ──
     case 'get_datetime': {
-      const tz = args?.timezone || process.env.TZ || 'UTC';
+      const tz = args?.timezone || ctx.timezone || process.env.STUARD_USER_TIMEZONE || process.env.TZ || 'UTC';
       const fmt = args?.format || 'iso';
       const now = new Date();
       let formatted: string;
@@ -1739,6 +1745,59 @@ async function execRunParallel(
 // Loop Execution (ported from desktop)
 // ─────────────────────────────────────────────────────────────────────────────
 
+async function executeLoopChain(
+  spec: StuardSpec,
+  startStep: StuardStep,
+  ctx: any,
+  engineCtx: EngineContext,
+  map: Map<string, StuardStep>,
+  loopStartStepId: string,
+  deployDir?: string
+): Promise<{ ok: boolean; error?: string; breakEdge?: StuardEdge }> {
+  let current: StuardStep | undefined = startStep;
+  const visitedInIteration = new Set<string>();
+
+  while (current) {
+    if (visitedInIteration.has(current.id)) {
+      engineCtx.logFn(`[${current.id}] Loop iteration complete (cycle returned to start)`);
+      return { ok: true };
+    }
+    visitedInIteration.add(current.id);
+
+    const out = await executeStep(spec, current, ctx, engineCtx, deployDir);
+    if (!out.ok) return { ok: false, error: out.error };
+    if ((ctx as any).__terminated) return { ok: true };
+
+    const flowEdges = (out.edges || []).filter(e => !e.stream);
+    if (flowEdges.length === 0) return { ok: true };
+
+    const breakEdge = flowEdges.find(e => e.loopBreak);
+    if (breakEdge) {
+      engineCtx.logFn(`[${current.id}] Loop break -> ${breakEdge.to}`);
+      return { ok: true, breakEdge };
+    }
+
+    const loopBackEdge = flowEdges.find(e => e.loop?.type || e.to === loopStartStepId);
+    if (loopBackEdge) {
+      engineCtx.logFn(`[${current.id}] Loop body complete`);
+      return { ok: true };
+    }
+
+    const regularEdges = flowEdges.filter(e => !e.loopBreak && !e.loop);
+    if (regularEdges.length !== 1) {
+      if (regularEdges.length > 1) {
+        engineCtx.logFn(`[${current.id}] Loop body emitted ${regularEdges.length} branches; loop controller will continue after this iteration`);
+      }
+      return { ok: true };
+    }
+
+    current = map.get(regularEdges[0].to);
+    if (!current) return { ok: true };
+  }
+
+  return { ok: true };
+}
+
 async function executeLoop(
   spec: StuardSpec,
   loopBodyStep: StuardStep,
@@ -1751,79 +1810,104 @@ async function executeLoop(
 ): Promise<{ breakEdge?: StuardEdge }> {
   const maxIter = loopCfg.maxIterations || 100;
   const delayMs = loopCfg.delayMs || 0;
+  const itemVar = loopCfg.itemVar || 'item';
+  const indexVar = loopCfg.indexVar || 'index';
+  const results: any[] = [];
+  let iterations = 0;
+  let breakEdge: StuardEdge | undefined;
+  let defaultBreakEdge: StuardEdge | undefined;
 
-  let items: any[] = [];
-  if (loopCfg.type === 'forEach') {
-    const raw = getAtPath(ctx, loopCfg.items || '');
-    items = Array.isArray(raw) ? raw : [];
-    engineCtx.logFn(`[${loopBodyStep.id}] forEach: ${items.length} items`);
-  } else if (loopCfg.type === 'repeat') {
-    items = new Array(Math.min(loopCfg.count || 1, maxIter)).fill(null);
-    engineCtx.logFn(`[${loopBodyStep.id}] repeat: ${items.length} times`);
+  const sourceStep = map.get(prevStepId);
+  if (sourceStep && Array.isArray(sourceStep.next)) {
+    defaultBreakEdge = sourceStep.next.find(e => e.loopBreak);
   }
 
-  let breakEdge: StuardEdge | undefined;
+  const resolveItems = (): any[] => {
+    if (!loopCfg.items) return [];
+    const resolved = interpolateForTool({ items: loopCfg.items }, ctx, 'loop').items;
+    if (Array.isArray(resolved)) return resolved;
+    if (typeof resolved === 'string') {
+      try {
+        const parsed = JSON.parse(resolved);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return resolved ? [resolved] : [];
+      }
+    }
+    return resolved == null ? [] : [resolved];
+  };
 
-  for (let i = 0; i < (loopCfg.type === 'while' ? maxIter : items.length); i++) {
-    // While loop condition check
-    if (loopCfg.type === 'while') {
-      const condText = loopCfg.conditionText || 'false';
-      const result = evaluateSafe(condText, ctx);
-      if (!result) {
+  const setLoopContext = (i: number, item: any, length: number) => {
+    ctx.loop = ctx.loop || {};
+    ctx.loop[itemVar] = item;
+    ctx.loop[indexVar] = i;
+    ctx.loop.item = item;
+    ctx.loop.index = i;
+    ctx.loop.length = length;
+    ctx[itemVar] = item;
+    ctx[indexVar] = i;
+    ctx.$loop = { index: i, item, length };
+  };
+
+  const runIteration = async (i: number, item: any, length: number) => {
+    setLoopContext(i, item, length);
+    const chainOut = await executeLoopChain(spec, loopBodyStep, ctx, engineCtx, map, loopBodyStep.id, deployDir);
+    if (chainOut.breakEdge && !breakEdge) breakEdge = chainOut.breakEdge;
+    if (chainOut.ok) {
+      results.push(ctx[loopBodyStep.id]);
+      iterations++;
+    } else {
+      engineCtx.logFn(`[${loopBodyStep.id}] loop iteration ${i + 1} failed: ${chainOut.error}`);
+    }
+    return chainOut.ok;
+  };
+
+  engineCtx.logFn(`[${loopBodyStep.id}] Starting ${loopCfg.type} loop (max ${maxIter})`);
+
+  if (loopCfg.type === 'forEach') {
+    const items = resolveItems();
+    engineCtx.logFn(`[${loopBodyStep.id}] forEach: ${items.length} items`);
+    const limit = Math.min(items.length, maxIter);
+    for (let i = 0; i < limit; i++) {
+      const ok = await runIteration(i, items[i], items.length);
+      if (!ok || breakEdge || (ctx as any).__terminated) break;
+      if (delayMs > 0 && i < limit - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+  } else if (loopCfg.type === 'repeat') {
+    const count = Math.min(loopCfg.count || 1, maxIter);
+    engineCtx.logFn(`[${loopBodyStep.id}] repeat: ${count} times`);
+    for (let i = 0; i < count; i++) {
+      const ok = await runIteration(i, null, count);
+      if (!ok || breakEdge || (ctx as any).__terminated) break;
+      if (delayMs > 0 && i < count - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+  } else if (loopCfg.type === 'while') {
+    for (let i = 0; i < maxIter; i++) {
+      const expr = String(loopCfg.conditionText || 'false').trim().replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
+      let shouldRun = false;
+      try {
+        shouldRun = evalIfGuard(expr, ctx);
+      } catch {
+        const resolved = interpolateForTool({ cond: loopCfg.conditionText || '' }, ctx, 'loop').cond;
+        shouldRun = !!resolved && resolved !== 'false' && resolved !== '0';
+      }
+      if (!shouldRun) {
         engineCtx.logFn(`[${loopBodyStep.id}] while: condition false at iteration ${i}`);
         break;
       }
+      const ok = await runIteration(i, null, maxIter);
+      if (!ok || breakEdge || (ctx as any).__terminated) break;
+      if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
     }
-
-    // Set iteration variables
-    const itemVar = loopCfg.itemVar || 'item';
-    const indexVar = loopCfg.indexVar || 'index';
-    if (loopCfg.type === 'forEach') {
-      ctx[itemVar] = items[i];
-    }
-    ctx[indexVar] = i;
-    ctx.$loop = { index: i, item: items[i], length: items.length };
-
-    // Execute loop body
-    const stepResult = await executeStep(spec, loopBodyStep, ctx, engineCtx, deployDir);
-    ctx = stepResult.ctx;
-
-    if (!stepResult.ok || (ctx as any).__terminated) break;
-
-    // Check for break edge
-    const loopBreakEdge = stepResult.edges.find(e => e.loopBreak);
-    if (loopBreakEdge) {
-      breakEdge = loopBreakEdge;
-      break;
-    }
-
-    // Follow non-break edges within the loop body chain
-    let innerStep = loopBodyStep;
-    let innerEdges = stepResult.edges.filter(e => !e.loopBreak && !e.loop);
-    while (innerEdges.length === 1) {
-      const nextStep = map.get(innerEdges[0].to);
-      if (!nextStep) break;
-      const innerResult = await executeStep(spec, nextStep, ctx, engineCtx, deployDir);
-      ctx = innerResult.ctx;
-      if (!innerResult.ok || (ctx as any).__terminated) break;
-      const innerBreak = innerResult.edges.find(e => e.loopBreak);
-      if (innerBreak) { breakEdge = innerBreak; break; }
-      innerEdges = innerResult.edges.filter(e => !e.loopBreak && !e.loop);
-      innerStep = nextStep;
-    }
-
-    if (breakEdge || (ctx as any).__terminated) break;
-    if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
   }
 
-  // Find the break/exit edge target
-  if (!breakEdge) {
-    // Look for a break edge on the loop body step itself
-    const bodyEdges = loopBodyStep.next || [];
-    breakEdge = bodyEdges.find(e => e.loopBreak);
-  }
+  ctx[`${loopBodyStep.id}_loop_results`] = results;
+  if (results.length > 0) ctx[loopBodyStep.id] = results[results.length - 1];
+  delete ctx.loop;
+  delete ctx.$loop;
+  engineCtx.logFn(`[${loopBodyStep.id}] Loop completed: ${iterations} iteration(s)`);
 
-  return { breakEdge };
+  return { breakEdge: breakEdge || defaultBreakEdge };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1888,6 +1972,10 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
         };
       }
       if ((w as any)?.loopBreak) edge.loopBreak = true;
+      const loopFanoutMode = (w as any)?.loopFanoutMode;
+      if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
+        edge.loopFanoutMode = loopFanoutMode;
+      }
       if ((w as any)?.stream && typeof (w as any).stream === 'object') {
         const s = (w as any).stream;
         edge.stream = { sourceField: s.sourceField || 'streamId', mode: s.mode || 'reactive' };
@@ -1941,8 +2029,17 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
 
   const triggers = triggersIn.map((t: any) => {
     const tid = String(t?.id || '');
-    const tw = wires.find((w: any) => String(w?.from || '') === tid);
-    return { id: tid, type: String(t?.type || ''), args: t?.args || {}, start: tw ? String(tw.to || '') : undefined };
+    const triggerWires = wires.filter((w: any) => String(w?.from || '') === tid);
+    const triggerStarts = triggerWires.map((w: any) => String(w?.to || '')).filter(Boolean);
+    return {
+      id: tid,
+      type: String(t?.type || ''),
+      args: t?.args || {},
+      inputParams: Array.isArray(t?.inputParams) ? t.inputParams
+        : Array.isArray(t?.args?.inputParams) ? t.args.inputParams : undefined,
+      start: triggerStarts[0],
+      startNodes: triggerStarts.length > 1 ? triggerStarts : undefined,
+    };
   });
 
   return { id, name, version, autostart: false, triggers, steps, start: startNodeId };
@@ -2004,6 +2101,8 @@ export class VMWorkflowEngine extends EventEmitter {
       triggerId?: string;
       /** Optional trigger payload injected into ctx.input/ctx.trigger */
       triggerPayload?: any;
+      /** IANA timezone used by schedules and VM-native time tools */
+      timezone?: string;
     }
   ): Promise<{ ok: boolean; result?: any; error?: string; logs: string[] }> {
     const logs: string[] = [];
@@ -2053,6 +2152,7 @@ export class VMWorkflowEngine extends EventEmitter {
       agentWsUrl: opts.agentWsUrl || 'ws://127.0.0.1:8765/ws',
       cloudAiUrl: opts.cloudAiUrl,
       logFn,
+      timezone: opts.timezone || process.env.STUARD_USER_TIMEZONE || process.env.TZ || 'UTC',
       userId: opts.userId,
       vmTokenSecret: opts.vmTokenSecret,
     };
@@ -2153,6 +2253,7 @@ export class VMWorkflowEngine extends EventEmitter {
         if (sources.length > 1) {
           convergence.pending.set(step.id, new Set(sources));
           convergence.completed.set(step.id, new Map());
+          logFn(`[${step.id}] WaitForAll: expecting ${sources.length} branch(es): ${sources.join(', ')}`);
         }
       }
     }

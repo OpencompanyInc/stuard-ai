@@ -122,6 +122,7 @@ function buildVoiceSystemPrompt(opts: {
       '- telnyx      — SMS, voice calls',
       '- reddit      — subreddits, posts, comments',
       '- discord     — Discord bot operations',
+      '- x           — X/Twitter tweets, timelines, users, DMs',
       '- Pass `tasks` array — one entry sequential, multiple entries in parallel.',
       '- A subagent can ask back via ask_orchestrator. When that happens delegate returns with a questionId — ask the caller verbally, then call reply_to_subagent.',
       '',

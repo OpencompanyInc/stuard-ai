@@ -80,7 +80,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // --- WORKSPACE FILE MANAGEMENT ---
   { id: 'workspace_read_file', category: 'data', kind: 'local', description: 'Read a file from the workflow workspace directory. Path is relative to workspace root (e.g. "data/config.json").', argsTemplate: { path: 'data/config.json' }, outputSchema: { ok: 'boolean', content: 'string', size: 'number', updatedAt: 'string', error: 'string' } },
-  { id: 'workspace_write_file', category: 'data', kind: 'local', description: 'Write/create a file in the workflow workspace directory. Creates parent directories automatically.', argsTemplate: { path: 'data/config.json', content: '{}' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  { id: 'workspace_write_file', category: 'data', kind: 'local', description: 'Write/create a file in the workflow workspace directory. Creates parent directories automatically and asks for approval in workflow chat.', argsTemplate: { path: 'data/config.json', content: '{}', description: 'Save config.json in the workflow workspace.' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'workspace_delete_file', category: 'data', kind: 'local', description: 'Delete a file from the workflow workspace directory.', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
   { id: 'workspace_list_files', category: 'data', kind: 'local', description: 'List files and folders in the workflow workspace (or a subpath).', argsTemplate: { path: '' }, outputSchema: { ok: 'boolean', files: 'array', error: 'string' } },
   { id: 'workspace_create_folder', category: 'data', kind: 'local', description: 'Create a subdirectory in the workflow workspace.', argsTemplate: { path: 'data/exports' }, outputSchema: { ok: 'boolean', error: 'string' } },
@@ -261,6 +261,17 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'threads_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Threads profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
   { id: 'threads_list_posts', category: 'integrations', kind: 'cloud', description: 'List recent posts from the connected Threads profile', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
   { id: 'threads_publish_post', category: 'integrations', kind: 'cloud', description: 'Publish a text post to Threads', argsTemplate: { text: '', reply_control: 'everyone', profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', text: 'string' } },
+  // X / Twitter
+  { id: 'x_search_tweets', category: 'integrations', kind: 'cloud', description: 'Search recent tweets/posts on X/Twitter matching a query', argsTemplate: { query: '', max_results: 20, profile: '' }, outputSchema: { items: 'any[]', count: 'number', next_token: 'string' } },
+  { id: 'x_get_user_timeline', category: 'integrations', kind: 'cloud', description: 'Fetch recent tweets/posts from a specific X/Twitter user timeline by username or user_id', argsTemplate: { username: '', user_id: '', max_results: 20, exclude_replies: false, exclude_retweets: false, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
+  { id: 'x_get_tweet', category: 'integrations', kind: 'cloud', description: 'Fetch a single X/Twitter tweet/post by id with author info and metrics', argsTemplate: { id: '', profile: '' }, outputSchema: { id: 'string', text: 'string', author_id: 'string', author: 'object', created_at: 'string', metrics: 'object', lang: 'string', referenced: 'any[]', url: 'string' } },
+  { id: 'x_post_tweet', category: 'integrations', kind: 'cloud', description: 'Post a new tweet/post on X/Twitter. Optionally reply to an existing tweet by passing reply_to_tweet_id', argsTemplate: { text: '', reply_to_tweet_id: '', profile: '' }, outputSchema: { id: 'string', text: 'string', url: 'string' } },
+  { id: 'x_delete_tweet', category: 'integrations', kind: 'cloud', description: 'Delete one of your X/Twitter tweets/posts by id', argsTemplate: { id: '', profile: '' }, outputSchema: { deleted: 'boolean' } },
+  { id: 'x_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message (DM) on X/Twitter to another user', argsTemplate: { recipient_id: '', recipient_username: '', text: '', profile: '' }, outputSchema: { dm_event_id: 'string', conversation_id: 'string' } },
+  { id: 'x_list_dms', category: 'integrations', kind: 'cloud', description: 'List recent X/Twitter direct message (DM) events from a conversation with another user', argsTemplate: { conversation_id: '', participant_id: '', max_results: 20, profile: '' }, outputSchema: { events: 'any[]', count: 'number', next_token: 'string' } },
+  { id: 'x_get_user', category: 'integrations', kind: 'cloud', description: 'Look up an X/Twitter user profile by username or user_id', argsTemplate: { username: '', user_id: '', profile: '' }, outputSchema: { id: 'string', username: 'string', name: 'string', description: 'string', verified: 'boolean', location: 'string', profile_image_url: 'string', created_at: 'string', metrics: 'object', url: 'string' } },
+  { id: 'x_list_followers', category: 'integrations', kind: 'cloud', description: 'List followers of an X/Twitter user', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
+  { id: 'x_list_following', category: 'integrations', kind: 'cloud', description: 'List the accounts an X/Twitter user is following', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_call_control', category: 'integrations', kind: 'cloud', description: 'Send a control action (hangup, hold, unhold, speak, playback_stop) to an active Telnyx call', argsTemplate: { call_control_id: '', action: 'hangup' }, outputSchema: { ok: 'boolean', error: 'string' } },
@@ -885,6 +896,19 @@ if (TOOL_SCHEMAS['write_file']) {
     append: {
       ...(TOOL_SCHEMAS['write_file'].args.append || { type: 'boolean', label: 'Append' }),
       advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['workspace_write_file']) {
+  TOOL_SCHEMAS['workspace_write_file'].args = {
+    ...TOOL_SCHEMAS['workspace_write_file'].args,
+    description: {
+      type: 'string',
+      label: 'Explain this step',
+      description: 'A short, non-technical explanation shown in the workflow chat approval bar.',
+      required: false,
+      placeholder: 'Example: Save the generated report to data/report.md',
     },
   };
 }

@@ -11,6 +11,8 @@ describe('meta-tools registry', () => {
       'telnyx_send_mms',
       'whatsapp_send_message',
       'facebook_get_me',
+      'x_post_tweet',
+      'x_search_tweets',
       'cloud_storage_upload',
       'proactive_task_create',
     ];

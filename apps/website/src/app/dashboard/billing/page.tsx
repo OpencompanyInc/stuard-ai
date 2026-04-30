@@ -137,6 +137,7 @@ export default function BillingPage() {
   const [logsPage, setLogsPage] = useState(0);
   const [logsLoading, setLogsLoading] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
 
   const [prefs, setPrefs] = useState<BillingPrefs | null>(null);
   const [prefsLoading, setPrefsLoading] = useState(true);
@@ -146,6 +147,8 @@ export default function BillingPage() {
   const [addonLoading, setAddonLoading] = useState<string | null>(null);
   const [isManaging, setIsManaging] = useState(false);
   const [isUpdatingSubscription, setIsUpdatingSubscription] = useState(false);
+  const [isCancellingSubscription, setIsCancellingSubscription] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'usage' | 'logs' | 'settings'>('overview');
@@ -387,21 +390,24 @@ export default function BillingPage() {
   }, [user]);
 
   const loadSubscription = useCallback(async () => {
-    if (!user) return;
+    if (!user) { setSubscriptionLoading(false); return; }
+    setSubscriptionLoading(true);
     try {
       const token = await getBillingAuthToken();
-      if (!token) return;
+      if (!token) { setSubscriptionLoading(false); return; }
       const res = await fetch('/api/polar/subscription', {
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) return;
+      if (!res.ok) { setSubscriptionLoading(false); return; }
       const data = await res.json();
       if (!mountedRef.current) return;
       setSubscription(data?.subscription || null);
       if (data?.subscription?.amount) setAmount(Math.round(data.subscription.amount / 100));
     } catch {
       // network error or timeout — leave subscription unset
+    } finally {
+      if (mountedRef.current) setSubscriptionLoading(false);
     }
   }, [user]);
 
@@ -479,9 +485,9 @@ export default function BillingPage() {
 
   const tier = useMemo(() => {
     switch (planTierFromAmount(amount)) {
-      case 'power': return { name: 'Whale', badge: 'Best Rate', color: 'text-amber-600' };
-      case 'pro': return { name: 'Pro', badge: 'Boosted Rate', color: 'text-gray-900' };
-      default: return { name: 'Starter', badge: 'Standard Rate', color: 'text-gray-600' };
+      case 'power': return { name: 'Best rate', badge: '🐋 Most credits/dollar', color: 'text-amber-600' };
+      case 'pro': return { name: 'Better rate', badge: 'More credits/dollar', color: 'text-gray-900' };
+      default: return { name: 'Base rate', badge: 'Standard credits/dollar', color: 'text-gray-600' };
     }
   }, [amount]);
 
@@ -556,6 +562,27 @@ export default function BillingPage() {
     }
   };
 
+  const handleCancelSubscription = async () => {
+    setError(null);
+    setIsCancellingSubscription(true);
+    try {
+      const token = await getBillingAuthToken();
+      if (!token) { setError('Missing session token.'); return; }
+      const res = await fetch('/api/polar/subscription', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.message || data?.error || 'Failed to cancel subscription.'); return; }
+      setShowCancelConfirm(false);
+      await loadSubscription();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to cancel subscription.');
+    } finally {
+      setIsCancellingSubscription(false);
+    }
+  };
+
   const handleSavePrefs = async (next: Partial<BillingPrefs>) => {
     if (!prefs) return;
     const merged = { ...prefs, ...next };
@@ -607,7 +634,20 @@ export default function BillingPage() {
                 <CreditCard className="w-5 h-5 text-white" />
               </div>
               <div>
-                <p className="text-[12px] font-medium text-gray-500 uppercase tracking-wide">Current Balance</p>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <p className="text-[12px] font-medium text-gray-500 uppercase tracking-wide">Current Balance</p>
+                  {!subscriptionLoading && isSubscribed && !subscription?.cancelAtPeriodEnd && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                      Subscribed
+                    </span>
+                  )}
+                  {!subscriptionLoading && subscription?.cancelAtPeriodEnd && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] font-semibold text-amber-700">
+                      Cancels {subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toLocaleDateString() : 'at period end'}
+                    </span>
+                  )}
+                </div>
                 <p className="text-3xl font-bold text-gray-900">
                   {creditSummary.unlimited ? 'Unlimited' : Number(creditSummary.remaining || 0).toLocaleString()}
                   {!creditSummary.unlimited && <span className="text-sm font-medium text-gray-400 ml-2">credits</span>}
@@ -783,22 +823,45 @@ export default function BillingPage() {
 
           {/* Subscription picker */}
           <div id="plans" className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-start justify-between mb-4">
               <div>
-                <h2 className="text-[15px] font-semibold text-gray-900">
-                  {isSubscribed ? 'Change your monthly amount' : 'Choose your monthly amount'}
-                </h2>
-                <p className="text-[12px] text-gray-500 mt-0.5">
-                  Pay what you want. Minimum $5/mo. Credits roll over for 30 days.
+                <div className="flex items-center gap-2 mb-0.5">
+                  <h2 className="text-[15px] font-semibold text-gray-900">
+                    {isSubscribed ? 'Your monthly amount' : 'Choose your monthly amount'}
+                  </h2>
+                  {subscriptionLoading ? (
+                    <span className="inline-block h-5 w-24 rounded-full bg-gray-100 animate-pulse" />
+                  ) : isSubscribed ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                      Active · {formatCents(subscription!.amount)}/mo
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-[12px] text-gray-500">
+                  Pay what you want — not a plan. Higher amounts get more credits per dollar.
                 </p>
               </div>
-              {isSubscribed && subscription?.amount != null && (
-                <div className="text-right">
-                  <p className="text-[11px] text-gray-400 uppercase tracking-wide">Current</p>
-                  <p className="text-lg font-semibold text-gray-900">{formatCents(subscription.amount)}/mo</p>
-                </div>
-              )}
             </div>
+
+            {subscription?.cancelAtPeriodEnd && (
+              <div className="mb-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  <span className="text-[13px] text-amber-800">
+                    Subscription cancels at the end of this billing period
+                    {subscription.currentPeriodEnd ? ` (${new Date(subscription.currentPeriodEnd).toLocaleDateString()})` : ''}.
+                  </span>
+                </div>
+                <button
+                  onClick={handleManagePortal}
+                  disabled={isManaging}
+                  className="ml-4 text-[12px] font-medium text-amber-700 underline whitespace-nowrap"
+                >
+                  {isManaging ? 'Loading…' : 'Resume →'}
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
               <div className="lg:col-span-3">
@@ -810,7 +873,6 @@ export default function BillingPage() {
                       <p className="text-[12px] text-gray-500">per month</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[12px] text-gray-500">Tier</p>
                       <p className={`text-xl font-semibold ${tier.color}`}>{tier.name}</p>
                       <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-gray-900 text-[11px] font-medium text-white">
                         {tier.badge}
@@ -873,7 +935,7 @@ export default function BillingPage() {
                 <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
                   <p className="text-[12px] text-gray-400">Monthly credits</p>
                   <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
-                  <p className="text-[12px] text-gray-400 mt-1">${amount}/mo · {tier.name} tier</p>
+                  <p className="text-[12px] text-gray-400 mt-1">${amount}/mo · credits roll over 30 days</p>
                 </div>
                 <div className="space-y-3 text-[13px] mb-5">
                   <div className="flex justify-between">
@@ -887,13 +949,46 @@ export default function BillingPage() {
                 </div>
                 <div className="mt-auto space-y-2">
                   {isSubscribed ? (
-                    <button
-                      onClick={handleUpdateSubscriptionAmount}
-                      disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
-                      className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {isUpdatingSubscription ? 'Updating…' : 'Change amount'}
-                    </button>
+                    <>
+                      <button
+                        onClick={handleUpdateSubscriptionAmount}
+                        disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
+                        className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {isUpdatingSubscription ? 'Updating…' : subscription?.amount === Math.round(amount * 100) ? `Current amount — $${amount}/mo` : `Switch to $${amount}/mo`}
+                      </button>
+                      {!subscription?.cancelAtPeriodEnd && (
+                        <>
+                          {showCancelConfirm ? (
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+                              <p className="text-[12px] text-red-700">Cancel your subscription? You keep access until the end of this billing period.</p>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleCancelSubscription}
+                                  disabled={isCancellingSubscription}
+                                  className="flex-1 py-1.5 text-[12px] font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {isCancellingSubscription ? 'Cancelling…' : 'Yes, cancel'}
+                                </button>
+                                <button
+                                  onClick={() => setShowCancelConfirm(false)}
+                                  className="flex-1 py-1.5 text-[12px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                  Never mind
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setShowCancelConfirm(true)}
+                              className="w-full py-2 text-[12px] font-medium text-gray-400 hover:text-red-600 transition-colors"
+                            >
+                              Cancel subscription
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </>
                   ) : (
                     <button
                       onClick={handleCheckoutSubscription}
@@ -903,7 +998,9 @@ export default function BillingPage() {
                       Subscribe ${amount}/mo
                     </button>
                   )}
-                  <p className="text-[11px] text-gray-400 text-center">Minimum $5/month. Cancel anytime.</p>
+                  {!isSubscribed && (
+                    <p className="text-[11px] text-gray-400 text-center">Minimum $5/month. Cancel anytime.</p>
+                  )}
                 </div>
               </div>
             </div>

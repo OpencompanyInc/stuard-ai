@@ -191,7 +191,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
   makeFunctionTool(
     'delegate',
-    'Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, discord. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.',
+    'Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, discord, x. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.',
     {
       type: 'object',
       properties: {
@@ -203,7 +203,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
             properties: {
               subagent: {
                 type: 'string',
-                description: 'Subagent name: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, or discord.',
+                description: 'Subagent name: browser, file_ops, workflow, reminders, ffmpeg, google, outlook, github, meta, whatsapp, telnyx, reddit, discord, or x.',
               },
               instruction: {
                 type: 'string',

@@ -212,6 +212,18 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   reddit_view_comments: ['reddit', 'comments'],
   reddit_create_post: ['reddit', 'post'],
 
+  // X (Twitter)
+  x_search_tweets: ['x', 'twitter', 'search tweets'],
+  x_get_user_timeline: ['x', 'twitter', 'timeline'],
+  x_get_tweet: ['x', 'twitter', 'tweet'],
+  x_post_tweet: ['x', 'twitter', 'post tweet', 'tweet'],
+  x_delete_tweet: ['x', 'twitter', 'delete tweet'],
+  x_send_dm: ['x', 'twitter', 'dm', 'direct message'],
+  x_list_dms: ['x', 'twitter', 'dms', 'inbox'],
+  x_get_user: ['x', 'twitter', 'user', 'profile'],
+  x_list_followers: ['x', 'twitter', 'followers'],
+  x_list_following: ['x', 'twitter', 'following'],
+
   // Discord
   discord_list_guilds: ['discord', 'servers'],
   discord_list_channels: ['discord', 'channels'],
@@ -281,6 +293,18 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   reddit_view_comments: ['reddit comments', 'post comments', 'reddit discussion', 'read comments'],
   reddit_create_post: ['post on reddit', 'submit to reddit', 'create reddit post', 'new reddit post'],
   reddit_comment: ['reply on reddit', 'reddit comment', 'respond on reddit', 'comment reddit'],
+
+  // X (Twitter)
+  x_search_tweets: ['search x', 'search twitter', 'find tweets', 'twitter query'],
+  x_get_user_timeline: ['user tweets', 'timeline', 'twitter timeline', 'x feed', 'tweets by user'],
+  x_get_tweet: ['fetch tweet', 'get tweet', 'twitter status'],
+  x_post_tweet: ['tweet', 'post on twitter', 'post on x', 'send tweet', 'new tweet', 'reply tweet'],
+  x_delete_tweet: ['delete tweet', 'remove tweet', 'untweet'],
+  x_send_dm: ['twitter dm', 'x dm', 'direct message twitter', 'send twitter message'],
+  x_list_dms: ['twitter inbox', 'x dms', 'twitter messages', 'list twitter dms'],
+  x_get_user: ['twitter profile', 'x user', 'lookup twitter user', 'twitter handle'],
+  x_list_followers: ['twitter followers', 'x followers', 'who follows'],
+  x_list_following: ['twitter following', 'x following', 'who are they following'],
 
   // Browser
   // Files

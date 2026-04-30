@@ -102,8 +102,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=gmail`, "gmail"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=sheets`, "google-sheets"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=tasks`, "google-tasks"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/x/status`, "x"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status`, "facebook"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status`, "instagram"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/threads/status`, "threads"),
@@ -179,6 +181,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
       { slug: "reddit", name: "Reddit", description: "Browse, search, post, and comment on Reddit.", category: "Communication", homepage: "https://reddit.com/", available: true },
+      { slug: "x", name: "X (Twitter)", description: "Read timelines, post tweets, send DMs, and look up users. Pay-as-you-go API usage is deducted from your Stuard credits.", category: "Communication", homepage: "https://x.com/", available: true },
       { slug: "facebook", name: "Facebook", description: "Connect your Facebook account with OAuth for social automations and account access.", category: "Communication", homepage: "https://www.facebook.com/", available: true },
       { slug: "instagram", name: "Instagram", description: "Connect Instagram with OAuth and securely store access tokens for account-based features.", category: "Communication", homepage: "https://www.instagram.com/", available: true },
       { slug: "threads", name: "Threads", description: "Connect your Threads account with OAuth for identity and future publishing workflows.", category: "Communication", homepage: "https://www.threads.net/", available: true },
@@ -188,6 +191,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "gmail", name: "Gmail", description: "Send and read email.", category: "Communication", homepage: "https://mail.google.com/", available: true },
       { slug: "google-sheets", name: "Google Sheets", description: "Read spreadsheet ranges.", category: "Data", homepage: "https://sheets.google.com/", available: true },
       { slug: "google-docs", name: "Google Docs", description: "Read document content.", category: "Files", homepage: "https://docs.google.com/", available: true },
+      { slug: "google-tasks", name: "Google Tasks", description: "List, create, and complete tasks.", category: "Productivity", homepage: "https://tasks.google.com/", available: true },
       { slug: "telnyx", name: "Phone (SMS/Call)", description: "Verify your phone number to receive SMS and voice call notifications from Stuard.", category: "Communication", homepage: "https://telnyx.com/", available: true },
       { slug: "whatsapp", name: "WhatsApp", description: "Connect your WhatsApp number to receive messages, voice notes, images, and files from Stuard.", category: "Communication", homepage: "https://business.whatsapp.com/", available: true },
     ],
@@ -556,6 +560,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     if (slug === "outlook") return "outlook";
     if (slug === "discord") return "discord";
     if (slug === "reddit") return "reddit";
+    if (slug === "x") return "x";
     if (slug === "facebook") return "facebook";
     if (slug === "instagram") return "instagram";
     if (slug === "threads") return "threads";
@@ -984,6 +989,17 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "x") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/x/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await pollStatus(`${CLOUD_AI_HTTP}/integrations/x/status${statusProfileParam}`, "x");
+      await refreshProfiles('x');
+      await syncConnectedFromServer(token);
+      return;
+    }
+
     if (slug === "facebook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
@@ -1017,12 +1033,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
-    if (slug === "google-drive" || slug === "google-calendar" || slug === "gmail" || slug === "google-sheets" || slug === "google-docs") {
+    if (slug === "google-drive" || slug === "google-calendar" || slug === "gmail" || slug === "google-sheets" || slug === "google-docs" || slug === "google-tasks") {
       const target = slug === "google-drive" ? "drive"
         : slug === "google-calendar" ? "calendar"
         : slug === "gmail" ? "gmail"
         : slug === "google-sheets" ? "sheets"
-        : "docs";
+        : slug === "google-docs" ? "docs"
+        : "tasks";
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}${profileParam}`;
       openExternal(url);

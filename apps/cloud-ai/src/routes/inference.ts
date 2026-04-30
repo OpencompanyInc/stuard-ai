@@ -632,28 +632,20 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
 
       // Select model
       const modelId = modelChoice === 'quality' ? 'gpt-4.1-mini' : 'gemini-2.5-flash';
-      const aiModel = modelChoice === 'quality' ? openai(modelId) : google(modelId);
+      const FALLBACK_MODEL_ID = 'gemini-3-flash-preview';
 
       // Build full prompt
       const fullPrompt = input ? `${prompt}\n\n---\nInput:\n${input}` : prompt;
 
-      try {
+      const runInference = async (model: any, mId: string) => {
         if (mode === 'json' && schema) {
-          // JSON mode with schema
           const schemaDesc = JSON.stringify(schema);
           const jsonPrompt = `${fullPrompt}\n\nRespond with a valid JSON object matching this schema: ${schemaDesc}\nOutput ONLY the JSON, no markdown or explanation.`;
-
           const messages: any[] = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, { role: 'user', content: jsonPrompt }]
             : [{ role: 'user', content: jsonPrompt }];
-
-          const result = await generateText({
-            model: aiModel as any,
-            messages,
-            temperature,
-          });
-          await logInferenceUsage(textUserId, modelId, result.usage, textCallerLabel || 'AI Inference (JSON)');
-
+          const result = await generateText({ model: model as any, messages, temperature });
+          await logInferenceUsage(textUserId, mId, result.usage, textCallerLabel || 'AI Inference (JSON)');
           let jsonResult: any;
           try {
             const text = result.text.trim();
@@ -672,26 +664,35 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
               throw new Error('Failed to parse JSON from response');
             }
           }
-
-          writeJson(res, 200, { ok: true, json: jsonResult, model: modelId }, corsOrigin);
+          writeJson(res, 200, { ok: true, json: jsonResult, model: mId }, corsOrigin);
         } else {
-          // Text mode
           const messages: any[] = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, { role: 'user', content: fullPrompt }]
             : [{ role: 'user', content: fullPrompt }];
-
-          const result = await generateText({
-            model: aiModel as any,
-            messages,
-            temperature,
-          });
-          await logInferenceUsage(textUserId, modelId, result.usage, textCallerLabel || 'AI Inference (text)');
-
+          const result = await generateText({ model: model as any, messages, temperature });
+          await logInferenceUsage(textUserId, mId, result.usage, textCallerLabel || 'AI Inference (text)');
           const text = result.text?.trim() || '';
-          writeJson(res, 200, { ok: true, text, model: modelId }, corsOrigin);
+          writeJson(res, 200, { ok: true, text, model: mId }, corsOrigin);
         }
+      };
+
+      const aiModel = modelChoice === 'quality' ? openai(modelId) : google(modelId);
+      try {
+        await runInference(aiModel, modelId);
         return true;
       } catch (e: any) {
+        const isOverloaded = e?.reason === 'maxRetriesExceeded' &&
+          Array.isArray(e?.errors) && e.errors.some((err: any) => err?.statusCode === 503);
+        if (isOverloaded && modelChoice !== 'quality') {
+          try {
+            await runInference(google(FALLBACK_MODEL_ID), FALLBACK_MODEL_ID);
+            return true;
+          } catch (e2: any) {
+            console.error('[inference] ai/text error (fallback):', e2);
+            writeJson(res, 500, { ok: false, error: e2?.message || 'ai_inference_failed', model: FALLBACK_MODEL_ID }, corsOrigin);
+            return true;
+          }
+        }
         console.error('[inference] ai/text error:', e);
         writeJson(res, 500, { ok: false, error: e?.message || 'ai_inference_failed', model: modelId }, corsOrigin);
         return true;

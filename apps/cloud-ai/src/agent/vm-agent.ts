@@ -1066,7 +1066,11 @@ const CLOUD_AI_URL = process.env.CLOUD_AI_URL || '';
 // ── Agent Data Change Detection ──────────────────────────────────────────────
 // Track file modification times to avoid syncing when nothing changed.
 const SYNC_INTERVAL_MS = 5 * 60_000; // 5 minutes
-const DB_FILES_TO_WATCH = ['knowledge.db', 'memory.db', 'knowledge.db-wal', 'memory.db-wal'];
+const DB_FILES_TO_WATCH = [
+  'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
+  'memory.db', 'memory.db-wal', 'memory.db-shm',
+  'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+];
 const _lastSyncMtimes = new Map<string, number>();
 let _syncInFlight = false;
 
@@ -1312,6 +1316,35 @@ function hasAgentDataChanged(): boolean {
   return false;
 }
 
+/** Files that changed since the last successful VM-side agent-data sync. */
+function getChangedAgentDataFiles(): string[] {
+  const changed = new Set<string>();
+  for (const name of DB_FILES_TO_WATCH) {
+    const filePath = `${AGENT_DATA_DIR}/${name}`;
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const mtime = fs.statSync(filePath).mtimeMs;
+      const prev = _lastSyncMtimes.get(name);
+      if (prev === undefined || mtime > prev) changed.add(name);
+    } catch {
+      changed.add(name);
+    }
+  }
+
+  for (const group of [
+    ['knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm'],
+    ['memory.db', 'memory.db-wal', 'memory.db-shm'],
+    ['file_index.db', 'file_index.db-wal', 'file_index.db-shm'],
+  ]) {
+    if (!group.some((name) => changed.has(name))) continue;
+    for (const name of group) {
+      if (fs.existsSync(`${AGENT_DATA_DIR}/${name}`)) changed.add(name);
+    }
+  }
+
+  return Array.from(changed);
+}
+
 /** Snapshot current mtimes so we know what we last synced. */
 function snapshotMtimes(): void {
   try {
@@ -1332,7 +1365,7 @@ function snapshotMtimes(): void {
  * Notify cloud-ai that the VM has uploaded new agent data.
  * Cloud-ai will relay this to the desktop if online.
  */
-async function notifyAgentDataUploaded(): Promise<void> {
+async function notifyAgentDataUploaded(mode: 'full' | 'delta' = 'full'): Promise<void> {
   if (!CLOUD_AI_URL || !VM_SECRET || !USER_ID) return;
   try {
     const payload = JSON.stringify({
@@ -1346,7 +1379,7 @@ async function notifyAgentDataUploaded(): Promise<void> {
     await fetch(`${CLOUD_AI_URL}/v1/cloud-engine/vm/agent-data-updated`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: USER_ID, vmToken }),
+      body: JSON.stringify({ userId: USER_ID, vmToken, mode }),
       signal: AbortSignal.timeout(15_000),
     });
   } catch (e: any) {
@@ -1421,12 +1454,12 @@ async function periodicAgentDataSync(): Promise<void> {
 
   _syncInFlight = true;
   try {
-    const result = await syncAgentData({ direction: 'upload' });
+    const result = await syncAgentData({ direction: 'upload', mode: 'delta' });
     if (result.ok) {
       snapshotMtimes();
       console.log(`[vm-agent] Auto-synced agent data (${result.bytes} bytes)`);
       // Notify cloud-ai so it can tell the desktop
-      await notifyAgentDataUploaded();
+      await notifyAgentDataUploaded(result.mode === 'delta' ? 'delta' : 'full');
     }
   } catch (e: any) {
     console.warn('[vm-agent] Periodic sync failed:', e?.message);
@@ -1436,7 +1469,7 @@ async function periodicAgentDataSync(): Promise<void> {
 }
 
 /** Request signed GCS URLs from the cloud-ai backend (VM → backend auth via HMAC). */
-async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: string } | null> {
+async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: string; deltaUploadUrl?: string; deltaDownloadUrl?: string } | null> {
   const cloudAiUrl = process.env.CLOUD_AI_URL || '';
   if (!cloudAiUrl || !VM_SECRET || !USER_ID) return null;
 
@@ -1457,7 +1490,12 @@ async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: 
     });
     if (!resp.ok) return null;
     const data: any = await resp.json();
-    return data.ok ? { uploadUrl: data.uploadUrl, downloadUrl: data.downloadUrl } : null;
+    return data.ok ? {
+      uploadUrl: data.uploadUrl,
+      downloadUrl: data.downloadUrl,
+      deltaUploadUrl: data.deltaUploadUrl,
+      deltaDownloadUrl: data.deltaDownloadUrl,
+    } : null;
   } catch (e: any) {
     console.warn('[vm-agent] Failed to get signed URLs:', e?.message);
     return null;
@@ -1466,24 +1504,41 @@ async function requestSignedUrls(): Promise<{ uploadUrl?: string; downloadUrl?: 
 
 async function syncAgentData(args: any): Promise<any> {
   const direction = String(args.direction || 'upload').toLowerCase();
+  const mode = String(args.mode || 'full').toLowerCase() === 'delta' ? 'delta' : 'full';
   const { execFileSync } = require('child_process');
 
   if (direction === 'upload') {
     if (!fs.existsSync(AGENT_DATA_DIR)) return { ok: false, error: 'agent_data_dir_missing' };
 
     const archivePath = `/tmp/agent-data-sync-${Date.now()}.tar.gz`;
+    const fileListPath = `/tmp/agent-data-sync-files-${Date.now()}.txt`;
     try {
-      execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 300_000 });
+      if (mode === 'delta') {
+        const changedFiles = getChangedAgentDataFiles().filter((name) => {
+          const filePath = `${AGENT_DATA_DIR}/${name}`;
+          return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+        });
+        if (changedFiles.length === 0) {
+          return { ok: true, direction: 'upload', mode: 'delta', bytes: 0, skipped: true, reason: 'no_changed_files' };
+        }
+        fs.writeFileSync(fileListPath, changedFiles.join('\n') + '\n');
+        execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '-T', fileListPath], { timeout: 300_000 });
+      } else {
+        execFileSync('tar', ['-czf', archivePath, '-C', AGENT_DATA_DIR, '.'], { timeout: 300_000 });
+      }
       const stats = fs.statSync(archivePath);
 
       // Get signed upload URL (from command args, or request from backend)
-      let uploadUrl = args.uploadUrl;
+      let uploadUrl = mode === 'delta'
+        ? (args.deltaUploadUrl || args.uploadUrl)
+        : args.uploadUrl;
       if (!uploadUrl) {
         const urls = await requestSignedUrls();
-        uploadUrl = urls?.uploadUrl;
+        uploadUrl = mode === 'delta' ? (urls?.deltaUploadUrl || urls?.uploadUrl) : urls?.uploadUrl;
       }
       if (!uploadUrl) {
         try { fs.unlinkSync(archivePath); } catch {}
+        try { fs.unlinkSync(fileListPath); } catch {}
         return { ok: false, error: 'no_upload_url' };
       }
 
@@ -1499,12 +1554,14 @@ async function syncAgentData(args: any): Promise<any> {
         signal: AbortSignal.timeout(600_000),
       });
       try { fs.unlinkSync(archivePath); } catch {}
+      try { fs.unlinkSync(fileListPath); } catch {}
       if (!resp.ok) return { ok: false, error: `gcs_upload_http_${resp.status}` };
 
-      console.log(`[vm-agent] Agent data uploaded via signed URL (${stats.size} bytes)`);
-      return { ok: true, direction: 'upload', bytes: stats.size };
+      console.log(`[vm-agent] Agent data ${mode} uploaded via signed URL (${stats.size} bytes)`);
+      return { ok: true, direction: 'upload', mode, bytes: stats.size };
     } catch (e: any) {
       try { fs.unlinkSync(archivePath); } catch {}
+      try { fs.unlinkSync(fileListPath); } catch {}
       return { ok: false, error: e?.message || 'sync_upload_failed' };
     }
   } else if (direction === 'download') {
@@ -1512,7 +1569,7 @@ async function syncAgentData(args: any): Promise<any> {
     let downloadUrl = args.downloadUrl;
     if (!downloadUrl) {
       const urls = await requestSignedUrls();
-      downloadUrl = urls?.downloadUrl;
+      downloadUrl = mode === 'delta' ? (urls?.deltaDownloadUrl || urls?.downloadUrl) : urls?.downloadUrl;
     }
     if (!downloadUrl) return { ok: false, error: 'no_download_url' };
 
@@ -1650,7 +1707,7 @@ async function syncAgentData(args: any): Promise<any> {
 
       const restored = fs.readdirSync(AGENT_DATA_DIR);
       console.log(`[vm-agent] Agent data dir now contains: ${restored.join(', ')}`);
-      return { ok: true, direction: 'download', files: restored };
+      return { ok: true, direction: 'download', mode, files: restored };
     } catch (e: any) {
       try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
       try { fs.unlinkSync(tempPath); } catch {}
@@ -2517,7 +2574,7 @@ export function startAgent(): void {
     memStore.destroy();
     // Final sync of agent databases before exit
     if (GCS_BUCKET) {
-      await syncAgentData({ direction: 'upload' }).catch(() => {});
+      await syncAgentData({ direction: 'upload', mode: 'delta' }).catch(() => {});
       console.log('[vm-agent] Final agent data sync complete');
     }
     closeAgentWs();

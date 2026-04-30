@@ -89,6 +89,8 @@ interface WorkflowMainContentProps {
     showReasoning: boolean;
     setShowReasoning: (show: boolean) => void;
     busy: boolean;
+    pendingApprovals?: any[];
+    respondToApproval?: (id: string, allow: boolean) => void;
     sendMessage: (text: string) => void;
     stopGeneration: () => void;
     pastSessions: any[];
@@ -345,6 +347,8 @@ export function WorkflowMainContent({
                     setShowReasoning={chat.setShowReasoning}
                     busy={chat.busy}
                     onUndo={onApplyModel}
+                    pendingApprovals={chat.pendingApprovals}
+                    onRespondToApproval={chat.respondToApproval}
                     pastSessions={chat.pastSessions}
                     showSessionHistory={chat.showSessionHistory}
                     setShowSessionHistory={chat.setShowSessionHistory}

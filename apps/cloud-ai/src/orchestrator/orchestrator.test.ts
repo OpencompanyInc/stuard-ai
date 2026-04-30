@@ -127,6 +127,8 @@ describe('Capability Packs', () => {
       'tasks_list',
       'outlook_list_messages',
       'github_list_repos',
+      'x_post_tweet',
+      'x_search_tweets',
       'read_file',
     ];
     const googleTools = resolveIntegrationTools('google', allTools);
@@ -137,7 +139,11 @@ describe('Capability Packs', () => {
     expect(googleTools).toContain('tasks_list');
     expect(googleTools).not.toContain('outlook_list_messages');
     expect(googleTools).not.toContain('github_list_repos');
+    expect(googleTools).not.toContain('x_post_tweet');
     expect(googleTools).not.toContain('read_file');
+
+    const xTools = resolveIntegrationTools('x', allTools);
+    expect(xTools).toEqual(['x_post_tweet', 'x_search_tweets']);
   });
 
   it('resolveIntegrationTools returns empty for unknown group', async () => {
@@ -154,7 +160,13 @@ describe('Capability Packs', () => {
     expect(pack.toolNames).toContain('calendar_list_events');
     expect(pack.toolNames).toContain('search_tools');
     expect(pack.toolNames).toContain('get_tool_schema');
+    expect(pack.toolNames).toContain('execute_tool');
     expect(pack.maxSteps).toBe(30);
+  });
+
+  it('exposes x as a known integration subagent', async () => {
+    const { KNOWN_SUBAGENT_NAMES } = await import('./capability-packs');
+    expect(KNOWN_SUBAGENT_NAMES).toContain('x');
   });
 
   it('getCapabilityPack returns defined packs and undefined for unknown', async () => {

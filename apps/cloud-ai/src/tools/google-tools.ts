@@ -450,17 +450,31 @@ export const calendar_list_events = createTool({
     const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events'], profile);
     if ((gate as any).ok !== true) return gate;
     const { calendarId, timeMin, timeMax, maxResults, singleEvents, orderBy } = inputData as any;
+    const wantSingle = typeof singleEvents === 'boolean' ? singleEvents : true;
+    // Google requires orderBy=startTime to be paired with singleEvents=true,
+    // otherwise it 400s with "Bad Request".
+    const safeOrder = !wantSingle && orderBy === 'startTime' ? 'updated' : (orderBy || 'startTime');
     const params = new URLSearchParams();
-    if (timeMin) params.set('timeMin', timeMin);
-    if (timeMax) params.set('timeMax', timeMax);
+    if (timeMin) params.set('timeMin', toRfc3339(timeMin));
+    if (timeMax) params.set('timeMax', toRfc3339(timeMax, /*endOfDay*/ true));
     params.set('maxResults', String(maxResults || 10));
-    params.set('singleEvents', (typeof singleEvents === 'boolean' ? singleEvents : true) ? 'true' : 'false');
-    params.set('orderBy', orderBy || 'startTime');
+    params.set('singleEvents', wantSingle ? 'true' : 'false');
+    params.set('orderBy', safeOrder);
     const data = await googleAuthorizedFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/events?${params.toString()}`);
     const items = Array.isArray((data as any)?.items) ? (data as any).items : [];
     return { items, count: items.length, nextPageToken: (data as any)?.nextPageToken };
   },
 });
+
+// Coerce date-only inputs ("2026-04-29") to RFC 3339 timestamps so Google
+// Calendar doesn't 400. Pass-through for already-formatted timestamps.
+function toRfc3339(value: string, endOfDay = false): string {
+  const s = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return endOfDay ? `${s}T23:59:59Z` : `${s}T00:00:00Z`;
+  }
+  return s;
+}
 
 export const calendar_create_event = createTool({
   id: 'calendar_create_event',

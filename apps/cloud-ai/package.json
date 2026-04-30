@@ -19,6 +19,8 @@
     "sync:tools:force": "tsx scripts/sync-tools-to-db.ts --force --disable-obsolete",
     "sync:tools:status": "tsx scripts/sync-tools-to-db.ts --status",
     "sync:tools:validate": "tsx scripts/sync-tools-to-db.ts --validate",
+    "sync:workflow-docs": "tsx src/sync-workflow-docs-embeddings.ts",
+    "sync:workflow-docs:force": "tsx src/sync-workflow-docs-embeddings.ts --force",
     "test:telnyx:sms": "tsx scripts/telnyx-send-test.ts --send"
   },
   "dependencies": {

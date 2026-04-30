@@ -643,19 +643,39 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               // Tool results
               else if (ct === 'tool-result') {
                 const tr = chunk.payload || {};
+                const result = tr.result;
+                const isError =
+                  tr.status === 'error' ||
+                  tr.status === 'failed' ||
+                  tr.status === 'timeout' ||
+                  typeof tr.error !== 'undefined' ||
+                  result?.ok === false;
                 emitToClient('tool_result', {
                   tool: tr.toolName,
                   toolCallId: tr.toolCallId,
-                  result: tr.result,
+                  result,
+                  status: isError ? 'error' : 'completed',
+                  error: tr.error || result?.error,
                 });
                 // Capture return_control result as fallback for summary extraction
                 const trName = tr.toolName || '';
-                if (trName === 'return_control' && tr.result) {
-                  const res = typeof tr.result === 'string' ? (() => { try { return JSON.parse(tr.result); } catch { return {}; } })() : tr.result;
+                if (trName === 'return_control' && result) {
+                  const res = typeof result === 'string' ? (() => { try { return JSON.parse(result); } catch { return {}; } })() : result;
                   if (res?.summary && !returnControlResult) {
                     returnControlResult = res.summary;
                   }
                 }
+              }
+              // Stream/tool errors
+              else if (ct === 'error') {
+                const errPayload = chunk.payload || {};
+                const errMessage = errPayload.message || errPayload.error || 'Subagent stream error';
+                emitToClient('tool_result', {
+                  tool: errPayload.toolName || errPayload.tool || 'stream',
+                  toolCallId: errPayload.toolCallId || errPayload.id || `subagent-err-${Date.now()}`,
+                  status: 'error',
+                  error: String(errMessage),
+                });
               }
               // Step boundaries
               else if (ct === 'step-start') {
@@ -693,7 +713,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
 
           // ── Halt-and-resume compaction check ──
-          if (needsCompaction && !localAbort.signal.aborted && compactionRound < MAX_COMPACTION_ROUNDS) {
+          //
+          // A resumed stream can itself exceed the token budget. Keep compacting
+          // and resuming until the stream finishes normally or the configured
+          // compaction limit is reached; otherwise an abort used only to stop the
+          // oversized stream can fall through as an empty successful result.
+          while (needsCompaction && !localAbort.signal.aborted && compactionRound < MAX_COMPACTION_ROUNDS) {
             compactionRound++;
             console.log(`[subagent:${subagentId}] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
 
@@ -751,12 +776,34 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                     emitToClient('tool_call', { tool: tc.toolName, toolCallId: tc.toolCallId, args: tc.args });
                   } else if (ct === 'tool-result') {
                     const tr = chunk.payload || {};
-                    emitToClient('tool_result', { tool: tr.toolName, toolCallId: tr.toolCallId, result: tr.result });
+                    const result = tr.result;
+                    const isError =
+                      tr.status === 'error' ||
+                      tr.status === 'failed' ||
+                      tr.status === 'timeout' ||
+                      typeof tr.error !== 'undefined' ||
+                      result?.ok === false;
+                    emitToClient('tool_result', {
+                      tool: tr.toolName,
+                      toolCallId: tr.toolCallId,
+                      result,
+                      status: isError ? 'error' : 'completed',
+                      error: tr.error || result?.error,
+                    });
                     const trName = tr.toolName || '';
-                    if (trName === 'return_control' && tr.result) {
-                      const res = typeof tr.result === 'string' ? (() => { try { return JSON.parse(tr.result); } catch { return {}; } })() : tr.result;
+                    if (trName === 'return_control' && result) {
+                      const res = typeof result === 'string' ? (() => { try { return JSON.parse(result); } catch { return {}; } })() : result;
                       if (res?.summary && !returnControlResult) returnControlResult = res.summary;
                     }
+                  } else if (ct === 'error') {
+                    const errPayload = chunk.payload || {};
+                    const errMessage = errPayload.message || errPayload.error || 'Subagent stream error';
+                    emitToClient('tool_result', {
+                      tool: errPayload.toolName || errPayload.tool || 'stream',
+                      toolCallId: errPayload.toolCallId || errPayload.id || `subagent-err-${Date.now()}`,
+                      status: 'error',
+                      error: String(errMessage),
+                    });
                   } else if (ct === 'finish') {
                     const payload = chunk.payload || chunk;
                     if (payload?.usage) {
@@ -786,6 +833,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               console.warn(`[subagent:${subagentId}] Halt-and-resume compaction failed:`, compactError);
               // Continue with whatever we have
             }
+          }
+
+          if (needsCompaction && !localAbort.signal.aborted && compactionRound >= MAX_COMPACTION_ROUNDS) {
+            throw new Error(`Subagent exceeded context budget after ${MAX_COMPACTION_ROUNDS} compaction rounds before producing a final result.`);
           }
 
           return { text: fullText, steps: Array.isArray(streamResult?.steps) ? streamResult.steps : [] };
@@ -831,6 +882,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         }
 
         const finalResult = returnControlSummary || text;
+
+        if (!finalResult.trim()) {
+          throw new Error(
+            toolCalls.length > 0
+              ? `Subagent ended after ${toolCalls.length} tool calls without final text or return_control.`
+              : 'Subagent ended without final text or return_control.',
+          );
+        }
 
         console.log(`[subagent:${subagentId}] completed in ${durationMs}ms | text=${text.length}chars | steps=${steps.length} | toolCalls=${toolCalls.length} | returnControl=${!!returnControlSummary}`);
         if (toolCalls.length > 0) {
@@ -937,14 +996,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     }
 
     writeLog('subagent_error', { subagentId, error: error.message, durationMs });
-
-    onEvent?.({
-      type: 'subagent_event',
-      subagentId,
-      runId,
-      event: 'error',
-      data: { error: error.message, durationMs },
-    });
+    emitToClient('error', { error: error.message, durationMs });
 
     return {
       ok: false,
@@ -978,6 +1030,7 @@ function detectIntegrationGroup(text: string): string | null {
     ['telnyx', ['telnyx', 'sms', 'phone call']],
     ['reddit', ['reddit', 'subreddit']],
     ['discord', ['discord', 'discord bot']],
+    ['x', ['twitter', 'tweet', 'tweets', 'x integration', 'integration group: x']],
   ];
 
   for (const [group, keywords] of groups) {

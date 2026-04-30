@@ -145,16 +145,17 @@ export interface PendingMemory {
 
 // Stream chunk types for interleaved display
 export type StreamChunk =
-| { type: 'text'; content: string }
-| { type: 'reasoning'; content: string; nested?: boolean }
+| { type: 'text'; content: string; nested?: boolean; subagentId?: string }
+| { type: 'reasoning'; content: string; nested?: boolean; subagentId?: string }
 | { type: 'tool'; tool: ToolCall }
 | {
   type: 'status';
   id?: string;
   variant?: 'compacting';
   label: string;
-  state: 'active' | 'complete';
+  state: 'active' | 'complete' | 'error';
   nested?: boolean;
+  subagentId?: string;
   meta?: Record<string, any>;
 };
 
@@ -561,6 +562,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   // File-modifying tool names
   const FILE_MODIFYING_TOOLS = new Set([
     'write_file', 'write_file_base64', 'delete_file', 'move_file', 'copy_file',
+    'workspace_write_file', 'workspace_delete_file', 'workspace_create_folder',
     'create_directory', 'edit_and_apply', 'edit_file', 'file_edit', 'patch_file',
     'run_command', 'run_system_command', 'run_python_script', 'run_node_script',
   ]);
@@ -2004,21 +2006,35 @@ export function useAgent(options?: string | UseAgentOptions) {
               const text = typeof data.text === 'string' ? data.text : '';
               if (text) {
                 streamingRef.current = true;
+                const subagentId = subEvt.subagentId || '';
                 updateStreamingTab(t => {
-                  const newResponse = t.currentResponse + text;
+                  // Subagent text is the delegated agent's narration to the
+                  // orchestrator — do NOT merge into the parent's reply
+                  // (currentResponse). Emit a nested text chunk so it renders
+                  // inside the chain-of-thought / delegation card instead of
+                  // leaking into the user-facing message bubble.
                   const chunks = [...t.currentStreamChunks];
                   const lastChunk = chunks[chunks.length - 1];
-                  if (lastChunk?.type === 'text') {
-                    chunks[chunks.length - 1] = { type: 'text', content: lastChunk.content + text };
+                  if (
+                    lastChunk?.type === 'text' &&
+                    lastChunk.nested === true &&
+                    lastChunk.subagentId === subagentId
+                  ) {
+                    chunks[chunks.length - 1] = {
+                      type: 'text',
+                      content: lastChunk.content + text,
+                      nested: true,
+                      subagentId,
+                    };
                   } else {
-                    chunks.push({ type: 'text', content: text });
+                    chunks.push({ type: 'text', content: text, nested: true, subagentId });
                   }
-                  return { ...t, currentResponse: newResponse, currentStreamChunks: chunks };
+                  return { ...t, currentStreamChunks: chunks };
                 });
                 setStreamingAI((prev) => ({
                   ...prev,
                   phase: 'responding',
-                  statusText: 'Agent responding…'
+                  statusText: 'Subagent working…'
                 }));
                 setState((s) => ({ ...s, status: 'responding' }));
               }
@@ -2026,11 +2042,16 @@ export function useAgent(options?: string | UseAgentOptions) {
               if (!reasoningStartTimeRef.current) {
                 reasoningStartTimeRef.current = Date.now();
               }
+              const subagentId = subEvt.subagentId || '';
               updateStreamingTab(t => {
                 const chunks = [...t.currentStreamChunks];
                 const lastChunk = chunks[chunks.length - 1];
-                if (lastChunk?.type !== 'reasoning') {
-                  chunks.push({ type: 'reasoning', content: '', nested: true });
+                if (
+                  lastChunk?.type !== 'reasoning' ||
+                  lastChunk.nested !== true ||
+                  lastChunk.subagentId !== subagentId
+                ) {
+                  chunks.push({ type: 'reasoning', content: '', nested: true, subagentId });
                 }
                 return { ...t, currentStreamChunks: chunks };
               });
@@ -2046,25 +2067,33 @@ export function useAgent(options?: string | UseAgentOptions) {
                 if (!reasoningStartTimeRef.current) {
                   reasoningStartTimeRef.current = Date.now();
                 }
+                const subagentId = subEvt.subagentId || '';
                 updateStreamingTab(t => {
-                  const newReasoning = mergeStreamingText(t.currentReasoning, text);
+                  // Subagent reasoning belongs to the delegated agent — keep it
+                  // out of the parent's `currentReasoning` so the parent's
+                  // "Thought" panel doesn't mix in the subagent's CoT.
                   const chunks = [...t.currentStreamChunks];
                   const lastChunk = chunks[chunks.length - 1];
-                  if (lastChunk?.type === 'reasoning') {
+                  if (
+                    lastChunk?.type === 'reasoning' &&
+                    lastChunk.nested === true &&
+                    lastChunk.subagentId === subagentId
+                  ) {
                     chunks[chunks.length - 1] = {
                       type: 'reasoning',
                       content: mergeStreamingText(lastChunk.content, text),
                       nested: true,
+                      subagentId,
                     };
                   } else {
-                    chunks.push({ type: 'reasoning', content: text, nested: true });
+                    chunks.push({ type: 'reasoning', content: text, nested: true, subagentId });
                   }
-                  return { ...t, currentReasoning: newReasoning, currentStreamChunks: chunks };
+                  return { ...t, currentStreamChunks: chunks };
                 });
                 setStreamingAI((prev) => ({
                   ...prev,
                   phase: 'responding',
-                  statusText: 'Thinking…'
+                  statusText: 'Subagent thinking…'
                 }));
                 setState((s) => ({ ...s, status: 'reasoning' }));
               }
@@ -2102,17 +2131,59 @@ export function useAgent(options?: string | UseAgentOptions) {
             } else if (eventType === 'tool_result') {
               const toolId = data.toolCallId || data.id || '';
               if (toolId) {
-                updateStreamingTab(t => ({
-                  ...t,
-                  currentToolCalls: t.currentToolCalls.map(tc =>
-                    tc.id === toolId ? { ...tc, status: 'completed' as const, result: data.result } : tc
-                  ),
-                  currentStreamChunks: t.currentStreamChunks.map(ch =>
-                    ch.type === 'tool' && ch.tool.id === toolId
-                      ? { ...ch, tool: { ...ch.tool, status: 'completed' as const, result: data.result } }
-                      : ch
-                  ),
-                }));
+                const result = data.result;
+                const rawStatus = typeof data.status === 'string' ? data.status.toLowerCase() : '';
+                const isError =
+                  rawStatus === 'error' ||
+                  rawStatus === 'failed' ||
+                  rawStatus === 'timeout' ||
+                  typeof data.error !== 'undefined' ||
+                  result?.ok === false;
+                const nextStatus: ToolCall['status'] = isError ? 'error' : 'completed';
+                const error = data.error || result?.error || (isError ? 'Tool failed' : undefined);
+                const subagentId = subEvt.subagentId || '';
+                const toolName = data.tool || data.name || data.toolName || 'tool';
+
+                updateStreamingTab(t => {
+                  const existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                  const nextCall: ToolCall = existing
+                    ? {
+                        ...existing,
+                        tool: existing.tool || toolName,
+                        status: nextStatus,
+                        result: isError ? existing.result : result,
+                        error,
+                        subagentId: existing.subagentId || subagentId,
+                        nested: true,
+                      }
+                    : {
+                        id: toolId,
+                        tool: toolName,
+                        status: nextStatus,
+                        args: data.args,
+                        result: isError ? undefined : result,
+                        error,
+                        timestamp: Date.now(),
+                        description: data.description || humanizeToolName(toolName),
+                        subagentId,
+                        nested: true,
+                      };
+
+                  const currentToolCalls = existing
+                    ? t.currentToolCalls.map(tc => tc.id === toolId ? nextCall : tc)
+                    : [...t.currentToolCalls, nextCall];
+
+                  const hasChunk = t.currentStreamChunks.some(ch => ch.type === 'tool' && ch.tool.id === toolId);
+                  const currentStreamChunks = hasChunk
+                    ? t.currentStreamChunks.map(ch =>
+                        ch.type === 'tool' && ch.tool.id === toolId
+                          ? { ...ch, tool: { ...ch.tool, ...nextCall } }
+                          : ch
+                      )
+                    : [...t.currentStreamChunks, { type: 'tool' as const, tool: nextCall }];
+
+                  return { ...t, currentToolCalls, currentStreamChunks };
+                });
               }
               setStreamingAI((prev) => ({
                 ...prev,
@@ -2142,6 +2213,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   label,
                   state: (phase === 'done' ? 'complete' : 'active') as 'active' | 'complete',
                   nested: true,
+                  subagentId,
                   meta: { round, maxRounds, tokensBefore, tokensAfter },
                 };
                 if (existingIdx >= 0) {
@@ -2164,6 +2236,46 @@ export function useAgent(options?: string | UseAgentOptions) {
                 statusText: phase === 'done' ? 'Responding…' : 'Compacting context…',
               }));
               setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
+            } else if (eventType === 'retry' || eventType === 'error' || eventType === 'cancelled' || eventType === 'completed') {
+              const subagentId = subEvt.subagentId || '';
+              const id = `subagent-${eventType}-${subagentId || 'sub'}-${Date.now()}`;
+              const reason = typeof data.reason === 'string'
+                ? data.reason
+                : typeof data.error === 'string'
+                  ? data.error
+                  : '';
+              const label =
+                eventType === 'retry'
+                  ? 'Subagent retrying after tool error'
+                  : eventType === 'error'
+                    ? 'Subagent hit an error'
+                    : eventType === 'cancelled'
+                      ? 'Subagent cancelled'
+                      : 'Subagent finished';
+              const state: 'complete' | 'error' = eventType === 'error' || eventType === 'cancelled'
+                ? 'error'
+                : 'complete';
+
+              updateStreamingTab(t => ({
+                ...t,
+                currentStreamChunks: [
+                  ...t.currentStreamChunks,
+                  {
+                    type: 'status' as const,
+                    id,
+                    label: reason ? `${label}: ${reason}` : label,
+                    state,
+                    nested: true,
+                    subagentId,
+                  },
+                ],
+              }));
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: eventType === 'error' || eventType === 'cancelled' ? 'error' : 'responding',
+                statusText: eventType === 'retry' ? 'Subagent retrying…' : eventType === 'completed' ? 'Responding…' : label,
+              }));
+              setState((s) => ({ ...s, status: eventType === 'retry' ? 'responding' : eventType }));
             }
           } else if (msg.type === 'conversation') {
             const cid = msg.conversationId;

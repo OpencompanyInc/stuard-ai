@@ -91,6 +91,14 @@ export interface CloudDeployment {
   auto_restart: boolean;
   schedule: string | null;
   pid: number | null;
+  logs_tail?: string | null;
+  source_workflow_id?: string | null;
+  trigger_bindings?: Array<{ triggerId: string; type: string; mode?: string | null; args?: Record<string, any> }>;
+  timezone?: string | null;
+  run_count?: number;
+  last_run_at?: string | null;
+  last_completed_at?: string | null;
+  last_trigger_source?: string | null;
   error_message: string | null;
   started_at: string | null;
   stopped_at: string | null;
@@ -140,6 +148,14 @@ async function cloudFetch(path: string, opts?: RequestInit & { timeoutMs?: numbe
 }
 
 // ── Module-level cache so tab re-mounts are instant ──────────────────
+function detectBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
 interface EngineCache {
   engine: CloudEngine | null;
   metrics: CloudMetrics | null;
@@ -310,7 +326,7 @@ export function useCloudEngine() {
         console.error('[cloud-engine] Agent data upload error (non-fatal):', e);
       }
 
-      const body: any = { tier, diskSizeGb };
+      const body: any = { tier, diskSizeGb, timezone: detectBrowserTimezone() };
       if (vcpus) body.vcpus = vcpus;
       if (ramGb) body.ramGb = ramGb;
       const data = await cloudFetch('/v1/cloud-engine/provision', {

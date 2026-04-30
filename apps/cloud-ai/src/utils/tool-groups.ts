@@ -95,6 +95,7 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   telnyx: ['telnyx_'],
   reddit: ['reddit_'],
   discord: ['discord_'],
+  x: ['x_'],
 };
 
 function isAllowedTool(name: string, enabledIntegrations: string[]): boolean {

@@ -83,6 +83,16 @@ export const REDDIT_CLIENT_ID = clean(process.env.REDDIT_CLIENT_ID || '');
 export const REDDIT_CLIENT_SECRET = clean(process.env.REDDIT_CLIENT_SECRET || '');
 export const REDDIT_REDIRECT_PATH = clean(process.env.REDDIT_REDIRECT_PATH || '/integrations/reddit/callback');
 
+// X (Twitter) OAuth 2.0 + PKCE. CLIENT_SECRET is optional (only used for confidential apps).
+export const X_CLIENT_ID = clean(process.env.X_CLIENT_ID || process.env.TWITTER_CLIENT_ID || '');
+export const X_CLIENT_SECRET = clean(process.env.X_CLIENT_SECRET || process.env.TWITTER_CLIENT_SECRET || '');
+export const X_REDIRECT_PATH = clean(process.env.X_REDIRECT_PATH || '/integrations/x/callback');
+// X pay-as-you-go USD per call. Tunable via env so prices can be updated without a deploy.
+export const X_PRICE_USD_READ = Number(process.env.X_PRICE_USD_READ || '0.001');
+export const X_PRICE_USD_POST = Number(process.env.X_PRICE_USD_POST || '0.10');
+export const X_PRICE_USD_DM = Number(process.env.X_PRICE_USD_DM || '0.01');
+export const X_PRICE_USD_USER = Number(process.env.X_PRICE_USD_USER || '0.001');
+
 export const TELNYX_API_KEY = clean(process.env.TELNYX_API_KEY || '');
 export const TELNYX_FROM_NUMBER = clean(process.env.TELNYX_FROM_NUMBER || '');
 export const TELNYX_MESSAGING_PROFILE_ID = clean(process.env.TELNYX_MESSAGING_PROFILE_ID || '');

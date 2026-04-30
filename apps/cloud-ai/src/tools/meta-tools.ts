@@ -8,6 +8,7 @@ import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
 import * as discordTools from './discord-tools';
 import * as redditTools from './reddit-tools';
+import * as xTools from './x-tools';
 import * as youtubeTools from './youtube-tools';
 import * as marketplaceTools from './marketplace-tools';
 import * as ttsTools from './tts-tools';
@@ -474,6 +475,7 @@ if (outlookTools.outlook_send_mail) {
 Object.values(githubTools).forEach(t => registerTool(t, 'GitHub'));
 Object.values(discordTools).forEach(t => registerTool(t, 'Discord'));
 Object.values(redditTools).forEach(t => registerTool(t, 'Reddit'));
+Object.values(xTools).forEach(t => registerTool(t, 'X'));
 Object.values(youtubeTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
 });

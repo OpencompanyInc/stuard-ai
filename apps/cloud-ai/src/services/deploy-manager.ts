@@ -88,10 +88,102 @@ export interface Deployment {
   updated_at: string;
 }
 
+export interface VMDeployCompatibilityIssue {
+  type: 'tool' | 'trigger' | 'schedule';
+  name: string;
+  id?: string;
+  label?: string;
+  reason: string;
+}
+
+export class DeploymentValidationError extends Error {
+  issues: VMDeployCompatibilityIssue[];
+
+  constructor(message: string, issues: VMDeployCompatibilityIssue[]) {
+    super(message);
+    this.name = 'DeploymentValidationError';
+    this.issues = issues;
+  }
+}
+
 // Deploy command timeout (2 min for install + start)
 const DEPLOY_TIMEOUT_MS = 2 * 60 * 1000;
 const DEPLOY_TABLE = 'vm_deployments';
 const WEBHOOK_CONSUMERS_METADATA_KEY = 'stuardConsumers';
+
+const VM_PHYSICAL_DESKTOP_TOOLS = new Map<string, string>([
+  ['capture_media', 'camera or microphone capture requires a physical desktop device'],
+  ['stop_capture', 'media capture sessions only exist on the desktop'],
+  ['list_active_captures', 'media capture sessions only exist on the desktop'],
+  ['describe_media_capture_capabilities', 'media capture devices are desktop-only'],
+  ['capture_screen', 'screen capture requires a physical display'],
+  ['stop_screen_capture', 'screen capture sessions only exist on the desktop'],
+  ['describe_screen_capture_capabilities', 'screen capture targets are desktop-only'],
+  ['capture_system_audio', 'system audio capture requires the desktop audio device'],
+  ['stop_system_audio', 'system audio capture sessions only exist on the desktop'],
+  ['describe_system_audio_capabilities', 'system audio devices are desktop-only'],
+  ['stream_speech', 'microphone streaming requires the desktop microphone'],
+  ['stop_stream_speech', 'microphone streaming sessions only exist on the desktop'],
+  ['take_screenshot', 'desktop screenshots require a physical display'],
+  ['capture_screen_to_file', 'desktop screenshots require a physical display'],
+  ['analyze_current_screen', 'current-screen analysis requires the desktop display'],
+  ['get_screen_text', 'desktop OCR requires the desktop display'],
+  ['ocr_screen', 'desktop OCR requires the desktop display'],
+  ['find_text', 'desktop OCR requires the desktop display'],
+  ['find_text_on_screen', 'desktop OCR requires the desktop display'],
+  ['find_and_click_text', 'desktop OCR and clicking require the desktop display'],
+  ['computer_use', 'GUI automation requires a physical desktop session'],
+  ['computer_use_agent', 'GUI automation requires a physical desktop session'],
+  ['click_at', 'mouse automation requires a physical desktop session'],
+  ['click_at_coordinates', 'mouse automation requires a physical desktop session'],
+  ['double_click', 'mouse automation requires a physical desktop session'],
+  ['double_click_at_coordinates', 'mouse automation requires a physical desktop session'],
+  ['right_click', 'mouse automation requires a physical desktop session'],
+  ['drag_to', 'mouse automation requires a physical desktop session'],
+  ['drag_and_drop', 'mouse automation requires a physical desktop session'],
+  ['mouse_move', 'mouse automation requires a physical desktop session'],
+  ['mouse_click', 'mouse automation requires a physical desktop session'],
+  ['move_cursor', 'mouse automation requires a physical desktop session'],
+  ['get_mouse_position', 'mouse automation requires a physical desktop session'],
+  ['send_hotkey', 'keyboard automation requires a physical desktop session'],
+  ['type_text', 'keyboard automation requires a physical desktop session'],
+  ['press_key', 'keyboard automation requires a physical desktop session'],
+  ['scroll', 'mouse wheel automation requires a physical desktop session'],
+  ['scroll_up', 'mouse wheel automation requires a physical desktop session'],
+  ['scroll_down', 'mouse wheel automation requires a physical desktop session'],
+  ['scroll_to', 'mouse wheel automation requires a physical desktop session'],
+  ['list_open_windows', 'desktop window management requires a physical desktop session'],
+  ['list_windows', 'desktop window management requires a physical desktop session'],
+  ['bring_window_to_foreground', 'desktop window management requires a physical desktop session'],
+  ['smart_bring_window_to_foreground', 'desktop window management requires a physical desktop session'],
+  ['get_window_info', 'desktop window management requires a physical desktop session'],
+  ['set_window_bounds', 'desktop window management requires a physical desktop session'],
+  ['smart_focus', 'desktop window management requires a physical desktop session'],
+  ['focus_window', 'desktop window management requires a physical desktop session'],
+  ['close_window', 'desktop window management requires a physical desktop session'],
+  ['minimize_window', 'desktop window management requires a physical desktop session'],
+  ['maximize_window', 'desktop window management requires a physical desktop session'],
+  ['open_file', 'opening files with a desktop app is not available on headless VMs'],
+  ['open_application', 'launching desktop applications is not available on headless VMs'],
+  ['launch_application_or_uri', 'launching desktop applications is not available on headless VMs'],
+  ['get_clipboard', 'desktop clipboard access requires a physical desktop session'],
+  ['set_clipboard', 'desktop clipboard access requires a physical desktop session'],
+  ['get_clipboard_content', 'desktop clipboard access requires a physical desktop session'],
+  ['set_clipboard_content', 'desktop clipboard access requires a physical desktop session'],
+  ['play_audio', 'audio playback requires a desktop audio device'],
+  ['custom_ui', 'custom UI windows require the desktop app'],
+  ['update_custom_ui', 'custom UI windows require the desktop app'],
+  ['close_custom_ui', 'custom UI windows require the desktop app'],
+  ['send_ui_event', 'custom UI windows require the desktop app'],
+  ['run_ui_script', 'custom UI windows require the desktop app'],
+  ['list_custom_ui_windows', 'custom UI windows require the desktop app'],
+]);
+
+const VM_BLOCKED_TRIGGER_TYPES = new Map<string, string>([
+  ['hotkey', 'global hotkey triggers require the desktop keyboard hook'],
+  ['hotkey.release', 'global hotkey triggers require the desktop keyboard hook'],
+  ['keystroke', 'keyboard triggers require the desktop keyboard hook'],
+]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GCS
@@ -242,6 +334,124 @@ function normalizeTriggerBindings(input: any): WorkflowTriggerBinding[] {
     });
   }
   return out;
+}
+
+function normalizeToolName(value: any): string {
+  return String(value || '').trim();
+}
+
+function pushToolUse(out: VMDeployCompatibilityIssue[], step: any): void {
+  const name = normalizeToolName(step?.tool || step?.name || step?.id);
+  if (!name) return;
+  const reason = VM_PHYSICAL_DESKTOP_TOOLS.get(name);
+  if (!reason) return;
+  out.push({
+    type: 'tool',
+    name,
+    id: step?.id == null ? undefined : String(step.id),
+    label: step?.label == null ? undefined : String(step.label),
+    reason,
+  });
+}
+
+function collectToolUses(value: any, out: VMDeployCompatibilityIssue[]): void {
+  if (!value || typeof value !== 'object') return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectToolUses(item, out);
+    return;
+  }
+
+  if ('tool' in value || 'name' in value) {
+    pushToolUse(out, value);
+  }
+
+  const args = value.args && typeof value.args === 'object' ? value.args : null;
+  if (args) {
+    for (const key of ['steps', 'tasks', 'children', 'branches', 'parallel', 'sequence']) {
+      if (Array.isArray(args[key])) collectToolUses(args[key], out);
+    }
+  }
+}
+
+function collectWorkflowTools(payload: any): VMDeployCompatibilityIssue[] {
+  const issues: VMDeployCompatibilityIssue[] = [];
+  if (!payload || typeof payload !== 'object') return issues;
+  collectToolUses(Array.isArray(payload.nodes) ? payload.nodes : [], issues);
+  collectToolUses(Array.isArray(payload.steps) ? payload.steps : [], issues);
+  return issues;
+}
+
+function collectWorkflowTriggerIssues(payload: any): VMDeployCompatibilityIssue[] {
+  const triggers = Array.isArray(payload?.triggers) ? payload.triggers : [];
+  const issues: VMDeployCompatibilityIssue[] = [];
+  for (const trigger of triggers) {
+    const type = String(trigger?.type || '').trim();
+    const reason = VM_BLOCKED_TRIGGER_TYPES.get(type);
+    if (!type || !reason) continue;
+    issues.push({
+      type: 'trigger',
+      name: type,
+      id: trigger?.id == null ? undefined : String(trigger.id),
+      label: trigger?.label == null ? undefined : String(trigger.label),
+      reason,
+    });
+  }
+  return issues;
+}
+
+function isValidBasicCronExpression(value: string): boolean {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const ranges: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+  return parts.every((part, index) => isValidCronField(part, ranges[index][0], ranges[index][1]));
+}
+
+function isValidCronField(field: string, min: number, max: number): boolean {
+  for (const rawPart of field.split(',')) {
+    const part = rawPart.trim();
+    if (!part) return false;
+    const [rangePart, stepPart] = part.split('/');
+    const step = stepPart == null ? 1 : Number(stepPart);
+    if (!Number.isInteger(step) || step <= 0) return false;
+    if (rangePart === '*') continue;
+    const range = rangePart.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) return false;
+      continue;
+    }
+    const exact = Number(rangePart);
+    if (!Number.isInteger(exact) || exact < min || exact > max || step !== 1) return false;
+  }
+  return true;
+}
+
+export function validateDeployRequestForVM(req: DeployRequest): void {
+  if (req.kind !== 'workflow') return;
+
+  const issues: VMDeployCompatibilityIssue[] = [
+    ...collectWorkflowTools(req.payload),
+    ...collectWorkflowTriggerIssues(req.payload),
+  ];
+
+  const schedule = String(req.schedule || '').trim();
+  if (schedule && !isValidBasicCronExpression(schedule)) {
+    issues.push({
+      type: 'schedule',
+      name: schedule,
+      reason: 'VM cron schedules must use five fields: minute hour day-of-month month day-of-week',
+    });
+  }
+
+  if (issues.length === 0) return;
+
+  const names = Array.from(new Set(issues.map((issue) => issue.name))).slice(0, 6).join(', ');
+  throw new DeploymentValidationError(
+    `Workflow cannot be deployed to a VM because it uses desktop-only capabilities: ${names}. Use VM browser/file tools or keep this workflow on the desktop.`,
+    issues,
+  );
 }
 
 function isCloudWebhookBinding(binding: WorkflowTriggerBinding): boolean {
@@ -429,6 +639,8 @@ export async function dispatchTriggerToDeployment(
  * Create and start a new deployment on the user's Cloud VM.
  */
 export async function createDeployment(userId: string, req: DeployRequest): Promise<Deployment> {
+  validateDeployRequestForVM(req);
+
   const deployId = randomUUID();
   let gcsObject: string | null = null;
   const triggerBindings = normalizeTriggerBindings(req.triggerBindings);

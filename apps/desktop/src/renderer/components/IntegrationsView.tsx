@@ -87,6 +87,7 @@ function slugToProvider(slug: string): string | null {
   if (slug === "outlook") return "outlook";
   if (slug === "discord") return "discord";
   if (slug === "reddit") return "reddit";
+  if (slug === "x") return "x";
   if (slug === "facebook") return "facebook";
   if (slug === "instagram") return "instagram";
   if (slug === "threads") return "threads";
@@ -116,6 +117,7 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'github': return <Github className={size} />;
     case 'discord': return <Users className={size} />;
     case 'reddit': return <ArrowUpRight className={size} />;
+    case 'x': return <MessageSquare className={size} />;
     case 'facebook': return <Globe className={size} />;
     case 'instagram': return <MessageSquare className={size} />;
     case 'threads': return <Users className={size} />;

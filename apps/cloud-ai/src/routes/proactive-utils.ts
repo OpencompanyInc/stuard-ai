@@ -22,6 +22,7 @@ const PROACTIVE_TOOL_FAMILY_PREFIXES = [
   ['facebook_', 'instagram_', 'threads_'],
   ['whatsapp_'],
   ['telnyx_'],
+  ['x_'],
 ] as const;
 
 export function isBlockedProactiveToolName(name: string): boolean {

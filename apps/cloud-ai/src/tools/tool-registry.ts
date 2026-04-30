@@ -25,6 +25,7 @@ const CATEGORY_LOCATION: Record<string, ToolLocation> = {
   GitHub: 'cloud',
   Discord: 'cloud',
   Reddit: 'cloud',
+  X: 'cloud',
   YouTube: 'cloud',
   Marketplace: 'cloud',
   Search: 'cloud',

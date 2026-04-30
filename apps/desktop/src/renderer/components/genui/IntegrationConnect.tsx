@@ -30,10 +30,12 @@ function getConnectUrl(slug: string, token: string): string | null {
     case 'google-drive': return `${base}/integrations/google/connect?${tokenParam}&target=drive`;
     case 'google-calendar': return `${base}/integrations/google/connect?${tokenParam}&target=calendar`;
     case 'google-docs': return `${base}/integrations/google/connect?${tokenParam}&target=docs`;
+    case 'google-tasks': return `${base}/integrations/google/connect?${tokenParam}&target=tasks`;
     case 'gmail': return `${base}/integrations/google/connect?${tokenParam}&target=gmail`;
     case 'github': return `${base}/integrations/github/connect?${tokenParam}`;
     case 'discord': return `${base}/integrations/discord/connect?${tokenParam}`;
     case 'reddit': return `${base}/integrations/reddit/connect?${tokenParam}`;
+    case 'x': return `${base}/integrations/x/connect?${tokenParam}`;
     case 'outlook': return `${base}/integrations/outlook/connect?${tokenParam}`;
     case 'facebook': return `${base}/integrations/facebook/connect?${tokenParam}`;
     case 'instagram': return `${base}/integrations/instagram/connect?${tokenParam}`;
@@ -49,10 +51,12 @@ function getStatusUrl(slug: string): string | null {
     case 'google-drive': return `${base}/integrations/google/status?target=drive`;
     case 'google-calendar': return `${base}/integrations/google/status?target=calendar`;
     case 'google-docs': return `${base}/integrations/google/status?target=docs`;
+    case 'google-tasks': return `${base}/integrations/google/status?target=tasks`;
     case 'gmail': return `${base}/integrations/google/status?target=gmail`;
     case 'github': return `${base}/integrations/github/status`;
     case 'discord': return `${base}/integrations/discord/status`;
     case 'reddit': return `${base}/integrations/reddit/status`;
+    case 'x': return `${base}/integrations/x/status`;
     case 'outlook': return `${base}/integrations/outlook/status`;
     case 'facebook': return `${base}/integrations/facebook/status`;
     case 'instagram': return `${base}/integrations/instagram/status`;
@@ -87,6 +91,7 @@ const INTEGRATION_ICONS: Record<string, { bg: string; fg: string; emoji: string 
   'google-drive': { bg: 'from-blue-500/20 to-cyan-500/20', fg: 'text-blue-400', emoji: '📁' },
   'google-calendar': { bg: 'from-yellow-500/20 to-orange-500/20', fg: 'text-yellow-500', emoji: '📅' },
   'google-docs': { bg: 'from-blue-500/20 to-indigo-500/20', fg: 'text-blue-500', emoji: '📄' },
+  'google-tasks': { bg: 'from-sky-500/20 to-blue-500/20', fg: 'text-sky-400', emoji: '✅' },
   'gmail': { bg: 'from-red-500/20 to-rose-500/20', fg: 'text-red-400', emoji: '📧' },
   'github': { bg: 'from-gray-500/20 to-neutral-600/20', fg: 'text-gray-300', emoji: '🐙' },
   'discord': { bg: 'from-indigo-500/20 to-violet-500/20', fg: 'text-indigo-400', emoji: '💬' },

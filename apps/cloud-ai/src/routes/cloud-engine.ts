@@ -138,6 +138,17 @@ export function getProvisionStep(userId: string): { step: ProvisionStep; updated
   return _provisionProgress.get(userId) || null;
 }
 
+function sanitizeTimezone(value: any): string | null {
+  const tz = String(value || '').trim();
+  if (!tz) return null;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    return null;
+  }
+}
+
 function json(res: ServerResponse, status: number, body: any): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -297,7 +308,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
       // Fetch user timezone for VM env
       const syncPrefs = await getSyncPreferences(user.userId);
-      const userTimezone = syncPrefs.timezone || null;
+      const userTimezone = sanitizeTimezone(body.timezone) || sanitizeTimezone(syncPrefs.timezone) || null;
 
       const provider = getComputeProvider();
       setProvisionStep(user.userId, 'vm_creating');
@@ -1008,8 +1019,12 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
 
       // Generate signed download URL so the VM doesn't need direct GCS access
-      const { generateAgentDataDownloadUrl } = await import('../services/cold-storage');
-      const urlResult = await generateAgentDataDownloadUrl(user.userId);
+      const { generateAgentDataDownloadUrl, generateAgentDataDeltaDownloadUrl } = await import('../services/cold-storage');
+      const body = await readBody(req, 4096).catch(() => ({}));
+      const mode = String(body?.mode || 'full').toLowerCase();
+      const urlResult = mode === 'delta'
+        ? await generateAgentDataDeltaDownloadUrl(user.userId)
+        : await generateAgentDataDownloadUrl(user.userId);
       if (!urlResult) {
         json(res, 404, { ok: false, error: 'no_agent_data', message: 'No agent data found in cloud storage' });
         return true;
@@ -1018,8 +1033,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       const result = await sendVMCommand(user.userId, 'sync_agent_data', {
         direction: 'download',
         downloadUrl: urlResult.downloadUrl,
+        mode,
       }, 10 * 60_000);
-      json(res, 200, { ok: Boolean(result.ok), direction: 'download' });
+      json(res, 200, { ok: Boolean(result.ok), direction: 'download', mode });
     } catch (e: any) {
       console.error('[cloud-engine] sync-agent-data error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_agent_data_failed', message: e?.message || 'failed' });
@@ -1057,17 +1073,27 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
 
       // Generate signed URLs for this user only
-      const { generateAgentDataUploadUrl, generateAgentDataDownloadUrl } = await import('../services/cold-storage');
-      const [uploadResult, downloadResult] = await Promise.all([
+      const {
+        generateAgentDataUploadUrl,
+        generateAgentDataDownloadUrl,
+        generateAgentDataDeltaUploadUrl,
+        generateAgentDataDeltaDownloadUrl,
+      } = await import('../services/cold-storage');
+      const [uploadResult, downloadResult, deltaUploadResult, deltaDownloadResult] = await Promise.all([
         generateAgentDataUploadUrl(userId),
         generateAgentDataDownloadUrl(userId),
+        generateAgentDataDeltaUploadUrl(userId),
+        generateAgentDataDeltaDownloadUrl(userId),
       ]);
 
       json(res, 200, {
         ok: true,
         uploadUrl: uploadResult.uploadUrl,
         downloadUrl: downloadResult?.downloadUrl || null,
+        deltaUploadUrl: deltaUploadResult.uploadUrl,
+        deltaDownloadUrl: deltaDownloadResult?.downloadUrl || null,
         objectName: uploadResult.objectName,
+        deltaObjectName: deltaUploadResult.objectName,
       });
     } catch (e: any) {
       console.error('[cloud-engine] vm/agent-data-urls error:', e?.message);
@@ -1084,6 +1110,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       const body = await readBody(req, 4096);
       const userId = body?.userId;
       const vmToken = body?.vmToken;
+      const mode = String(body?.mode || 'full').toLowerCase() === 'delta' ? 'delta' : 'full';
       if (!userId || !vmToken) {
         json(res, 400, { ok: false, error: 'missing userId or vmToken' });
         return true;
@@ -1109,6 +1136,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           desktopWs.send(JSON.stringify({
             type: 'agent_data_updated',
             source: 'vm',
+            mode,
             timestamp: new Date().toISOString(),
           }));
           console.log(`[cloud-engine] Notified desktop of agent data update for user ${userId}`);
@@ -1177,8 +1205,12 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
 
       // Generate signed download URL for the VM
-      const { generateAgentDataDownloadUrl } = await import('../services/cold-storage');
-      const urlResult = await generateAgentDataDownloadUrl(user.userId);
+      const body = await readBody(req, 4096).catch(() => ({}));
+      const mode = String(body?.mode || 'full').toLowerCase();
+      const { generateAgentDataDownloadUrl, generateAgentDataDeltaDownloadUrl } = await import('../services/cold-storage');
+      const urlResult = mode === 'delta'
+        ? await generateAgentDataDeltaDownloadUrl(user.userId)
+        : await generateAgentDataDownloadUrl(user.userId);
       if (!urlResult) {
         json(res, 404, { ok: false, error: 'no_agent_data' });
         return true;
@@ -1188,9 +1220,10 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       const result = await sendVMCommand(user.userId, 'sync_agent_data', {
         direction: 'download',
         downloadUrl: urlResult.downloadUrl,
+        mode,
       }, 10 * 60_000);
 
-      json(res, 200, { ok: Boolean(result.ok), direction: 'download', vmResult: result });
+      json(res, 200, { ok: Boolean(result.ok), direction: 'download', mode, vmResult: result });
     } catch (e: any) {
       console.error('[cloud-engine] push-agent-data error:', e?.message);
       json(res, 500, { ok: false, error: 'push_agent_data_failed', message: e?.message || 'failed' });

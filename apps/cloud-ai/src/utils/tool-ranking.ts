@@ -37,6 +37,7 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   instagram: ['instagram_'],
   threads: ['threads_'],
   whatsapp: ['whatsapp_'],
+  x: ['x_'],
   notion: ['notion_'],
   linear: ['linear_'],
   stripe: ['stripe_'],

@@ -158,7 +158,7 @@ async function runDelegateTask(
   chatWs: any,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
@@ -305,7 +305,8 @@ export const delegate = createTool({
     '  whatsapp    — WhatsApp messaging\n' +
     '  telnyx      — SMS, voice calls\n' +
     '  reddit      — subreddits, posts, comments\n' +
-    '  discord     — Discord bot operations\n\n' +
+    '  discord     — Discord bot operations\n' +
+    '  x           — X/Twitter tweets, timelines, users, DMs\n\n' +
     'A subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
     'this tool returns with the question and a questionId. Use reply_to_subagent to answer.',
   inputSchema: z.object({

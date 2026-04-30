@@ -2,14 +2,16 @@
  * SmartArgEditor - Main schema-aware argument editor component
  * Uses modular editors from ./editors folder
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Paintbrush, Plus, X, Settings, Code2, LayoutGrid } from 'lucide-react';
 import type { WorkflowVariable } from '../../types';
-import { getToolSchema } from '../../constants/tool-schemas';
+import { getToolSchema, type ArgOption } from '../../constants/tool-schemas';
 import { SmartValueEditor } from '../SmartValueEditor';
 import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
 import type { UIWindowConfig } from '../../../ui-builder/types';
 import { extractHtmlFromComponent } from '../../../ui-builder/utils/codeGenerator';
+import { supabase } from '../../../lib/supabaseClient';
+import { getCloudAiHttp } from '../../../utils/cloud';
 import { HotkeyEditor } from './editors/HotkeyEditor';
 import { AcceleratorEditor } from './editors/AcceleratorEditor';
 import { SelectInput } from './editors/SelectInput';
@@ -29,6 +31,105 @@ import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
 
 export type { UpstreamNode };
+
+interface IntegrationProfileOption {
+  provider: string;
+  profile: string;
+  email?: string | null;
+  isDefault?: boolean;
+}
+
+let googleProfileOptionsCache: ArgOption[] | null = null;
+let googleProfileOptionsPromise: Promise<ArgOption[]> | null = null;
+
+function isGoogleProfileArg(toolName: string, argKey: string): boolean {
+  if (argKey !== 'profile') return false;
+  return (
+    toolName.startsWith('google_') ||
+    toolName.startsWith('gmail_') ||
+    toolName.startsWith('drive_') ||
+    toolName.startsWith('calendar_') ||
+    toolName.startsWith('sheets_') ||
+    toolName.startsWith('docs_') ||
+    toolName.startsWith('tasks_') ||
+    toolName === 'gmail.new_email' ||
+    toolName === 'drive.new_file'
+  );
+}
+
+async function fetchGoogleProfileOptions(): Promise<ArgOption[]> {
+  if (googleProfileOptionsCache) return googleProfileOptionsCache;
+  if (googleProfileOptionsPromise) return googleProfileOptionsPromise;
+
+  googleProfileOptionsPromise = (async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return [];
+
+    const resp = await fetch(`${getCloudAiHttp()}/integrations/profiles?provider=google`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await resp.json().catch(() => null);
+    const profiles = Array.isArray(json?.profiles) ? json.profiles as IntegrationProfileOption[] : [];
+
+    const options = profiles
+      .map((profile): ArgOption | null => {
+        const value = String((profile as any).profile || (profile as any).profile_label || '').trim();
+        if (!value) return null;
+        const email = String((profile as any).email || (profile as any).account_email || '').trim();
+        const isDefault = Boolean((profile as any).isDefault ?? (profile as any).is_default);
+        return {
+          value,
+          label: email ? `${email}${isDefault ? ' (default)' : ''}` : `${value}${isDefault ? ' (default)' : ''}`,
+          description: email && email !== value ? value : undefined,
+        };
+      })
+      .filter((option): option is ArgOption => !!option);
+
+    googleProfileOptionsCache = options;
+    return options;
+  })().finally(() => {
+    googleProfileOptionsPromise = null;
+  });
+
+  return googleProfileOptionsPromise;
+}
+
+function useGoogleProfileOptions(enabled: boolean): ArgOption[] {
+  const [options, setOptions] = useState<ArgOption[]>(googleProfileOptionsCache || []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+
+    fetchGoogleProfileOptions()
+      .then((nextOptions) => {
+        if (!cancelled) setOptions(nextOptions);
+      })
+      .catch(() => {
+        if (!cancelled) setOptions([]);
+      });
+
+    const refresh = () => {
+      googleProfileOptionsCache = null;
+      fetchGoogleProfileOptions()
+        .then((nextOptions) => {
+          if (!cancelled) setOptions(nextOptions);
+        })
+        .catch(() => {
+          if (!cancelled) setOptions([]);
+        });
+    };
+
+    window.addEventListener('integrations.connected.changed', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('integrations.connected.changed', refresh);
+    };
+  }, [enabled]);
+
+  return options;
+}
 
 /**
  * Unescape double-escaped component code from LLM output.
@@ -66,6 +167,8 @@ export interface SmartArgEditorProps {
 export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNodes, workflowVariables }: SmartArgEditorProps) {
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const argSchema = schema?.args[argKey];
+  const isGoogleProfile = isGoogleProfileArg(toolName, argKey);
+  const googleProfileOptions = useGoogleProfileOptions(isGoogleProfile);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -169,6 +272,18 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           upstreamNodes={upstreamNodes}
           workflowVariables={workflowVariables}
           isParallel={toolName === 'run_parallel'}
+        />
+      );
+    }
+
+    if (isGoogleProfile) {
+      return (
+        <SelectInput
+          value={value}
+          onChange={onChange}
+          options={googleProfileOptions}
+          placeholder={googleProfileOptions.length > 0 ? 'Use default Google account' : 'No Google accounts connected'}
+          allowFreeform
         />
       );
     }
