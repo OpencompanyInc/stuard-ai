@@ -47,10 +47,16 @@ workflows: resolve(__dirname, "src/renderer/workflows.html"),
     },
   },
   resolve: {
-    modules: [resolve(__dirname, "node_modules"), "node_modules"],
     alias: {
       "@": resolve(__dirname, "src/renderer"),
       "@website-assets": resolve(__dirname, "../website/assets"),
+      "clsx": resolve(__dirname, "node_modules/clsx"),
+      "lucide-react": resolve(__dirname, "node_modules/lucide-react"),
+      "framer-motion": resolve(__dirname, "node_modules/framer-motion"),
+      "react-markdown": resolve(__dirname, "node_modules/react-markdown"),
+      "rehype-katex": resolve(__dirname, "node_modules/rehype-katex"),
+      "remark-gfm": resolve(__dirname, "node_modules/remark-gfm"),
+      "remark-math": resolve(__dirname, "node_modules/remark-math"),
     },
   },
 }));
