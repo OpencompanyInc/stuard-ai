@@ -17,7 +17,7 @@ function resolveExistingDirectory(input: unknown): string | undefined {
   if (!trimmed) return undefined;
 
   const expanded = expandHomeDirectory(trimmed);
-  if (expanded.includes('{{') && expanded.includes('}}') && !path.isAbsolute(expanded)) {
+  if (expanded.includes('{{') && expanded.includes('}}')) {
     return undefined;
   }
 
