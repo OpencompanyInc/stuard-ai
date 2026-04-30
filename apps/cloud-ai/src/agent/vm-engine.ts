@@ -74,6 +74,8 @@ export interface StuardStep {
   id: string;
   label?: string;
   tool?: string;
+  kind?: 'cloud' | 'local' | 'vm-native' | 'orchestration' | 'desktop-relay';
+  designerType?: string;
   args?: any;
   next?: StuardEdge[];
   fallback?: { to: string };
@@ -263,6 +265,19 @@ function getToolKind(toolName: string): ToolKind {
   if (DESKTOP_ONLY_TOOLS.has(toolName)) return 'desktop-relay';
   // Default: try the local Python agent (run_python_script, etc.)
   return 'local';
+}
+
+function normalizeStepKind(value: any): StuardStep['kind'] | undefined {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === 'cloud' || raw === 'cloud.tool') return 'cloud';
+  if (raw === 'orchestration') return 'orchestration';
+  if (raw === 'desktop-relay' || raw === 'desktop.relay' || raw === 'desktop.tool') return 'desktop-relay';
+  if (raw === 'vm-native' || raw === 'vm.native') return 'vm-native';
+  // Designer "local.tool" means "run where the workflow is executing".
+  // On a VM that should still allow VM-native tools like log/read_file/run_command
+  // to use the in-process handlers instead of being forced through the Python agent.
+  return undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -675,13 +690,18 @@ function buildVMAuthHeaders(ctx: RouterContext): Record<string, string> {
 /** Execute a tool via Cloud AI HTTP endpoint */
 async function execCloudTool(tool: string, args: any, ctx: RouterContext): Promise<any> {
   try {
-    const url = `${ctx.cloudAiUrl}/tools/${tool}`;
-    ctx.logFn(`Cloud AI: ${tool}`);
+    const endpoint = `/tools/${tool}`;
+    const url = `${ctx.cloudAiUrl}${endpoint}`;
+    const requestedTimeoutMs = Number(args?.timeoutMs || args?.__timeoutMs || process.env.VM_CLOUD_TOOL_TIMEOUT_MS || 300_000);
+    const timeoutMs = Number.isFinite(requestedTimeoutMs)
+      ? Math.max(1_000, Math.min(requestedTimeoutMs, 600_000))
+      : 300_000;
+    ctx.logFn(`Cloud AI: ${tool} (${endpoint}, timeout=${timeoutMs}ms)`);
 
     const headers = buildVMAuthHeaders(ctx);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 120_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const resp = await fetch(url, {
@@ -700,15 +720,23 @@ async function execCloudTool(tool: string, args: any, ctx: RouterContext): Promi
       const nested = result?.result;
       if (result?.ok === true && nested && typeof nested === 'object') {
         if (nested.ok === false) return nested;
-        return nested;
+        return { ok: true, ...nested };
       }
       return { ok: true, ...result };
     } finally {
       clearTimeout(timer);
     }
   } catch (e: any) {
-    ctx.logFn(`Cloud AI error: ${e?.message}`);
-    return { ok: false, error: String(e?.message || 'cloud_failed') };
+    const isAbort = e?.name === 'AbortError' || /aborted/i.test(String(e?.message || ''));
+    const requestedTimeoutMs = Number(args?.timeoutMs || args?.__timeoutMs || process.env.VM_CLOUD_TOOL_TIMEOUT_MS || 300_000);
+    const timeoutMs = Number.isFinite(requestedTimeoutMs)
+      ? Math.max(1_000, Math.min(requestedTimeoutMs, 600_000))
+      : 300_000;
+    const msg = isAbort
+      ? `cloud_timeout: ${tool} did not respond within ${timeoutMs}ms`
+      : String(e?.message || 'cloud_failed');
+    ctx.logFn(`Cloud AI error: ${msg}`);
+    return { ok: false, error: msg };
   }
 }
 
@@ -1577,12 +1605,18 @@ async function aiDecideNext(
 // Unified Tool Executor
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function execTool(toolName: string, args: any, ctx: EngineContext, deployDir?: string): Promise<any> {
+async function execTool(
+  toolName: string,
+  args: any,
+  ctx: EngineContext,
+  deployDir?: string,
+  preferredKind?: StuardStep['kind'],
+): Promise<any> {
   if (toolName === 'run_system_command') {
     toolName = 'run_command';
     args = { ...(args || {}), shell: typeof args?.shell === 'string' ? args.shell : 'default' };
   }
-  const kind = getToolKind(toolName);
+  const kind = preferredKind || getToolKind(toolName);
 
   switch (kind) {
     case 'cloud':
@@ -1634,7 +1668,7 @@ async function executeStep(
     const toolName = step.tool || 'noop';
     const mergedArgs = interpolateForTool(deepMerge(step.args || {}, ctx?.__argsPatch?.[step.id] || {}), ctx, toolName);
 
-    const kind = getToolKind(toolName);
+    const kind = step.kind || getToolKind(toolName);
     let result: any;
 
     if (kind === 'orchestration') {
@@ -1653,6 +1687,7 @@ async function executeStep(
         { ...mergedArgs, flowId: spec.id, __workflowToolCall: true },
         engineCtx,
         deployDir,
+        step.kind,
       );
     }
 
@@ -1775,7 +1810,12 @@ async function execRunSequential(
     const toolName = String(s?.tool || '').trim();
     if (!toolName) continue;
 
-    const subStep: StuardStep = { id: String(s?.id || `${parentStep.id}__${i}`), tool: toolName, args: s?.args || {} };
+    const subStep: StuardStep = {
+      id: String(s?.id || `${parentStep.id}__${i}`),
+      tool: toolName,
+      args: s?.args || {},
+      kind: normalizeStepKind(s?.kind),
+    };
     let subExec: ExecuteStepResult;
     try {
       subExec = await executeStep(spec, subStep, ctx, engineCtx, deployDir);
@@ -1815,6 +1855,7 @@ async function execRunParallel(
         { ...(s?.args || {}), flowId, __workflowToolCall: true },
         engineCtx,
         deployDir,
+        normalizeStepKind(s?.kind),
       );
       return { tool: toolName, ok: subResult?.ok ?? true, result: subResult };
     } catch (e: any) {
@@ -2067,7 +2108,16 @@ export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpe
       }
       return edge;
     });
-    const step: any = { id: fromId, tool: String(n?.tool || 'noop'), args: n?.args || {}, next };
+    const designerType = String(n?.type || '').trim();
+    const step: any = {
+      id: fromId,
+      tool: String(n?.tool || 'noop'),
+      args: n?.args || {},
+      next,
+    };
+    const normalizedKind = normalizeStepKind(designerType || n?.kind);
+    if (normalizedKind) step.kind = normalizedKind;
+    if (designerType) step.designerType = designerType;
     if (n?.label) step.label = String(n.label);
     if (n?.waitForAll === true) step.waitForAll = true;
     if (n?.fallbackTo) step.fallback = { to: String(n.fallbackTo).trim() };

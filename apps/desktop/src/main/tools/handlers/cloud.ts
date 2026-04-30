@@ -4,6 +4,7 @@ import { net } from 'electron';
 import WebSocket from 'ws';
 import { RouterContext } from '../types';
 import { TOOL_REGISTRY } from '../registry';
+import { resolveRedactedFilePath } from './redacted-path';
 
 /**
  * Execute a tool via Cloud AI HTTP endpoint
@@ -462,8 +463,11 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
     const mediaParts: Array<{ data: string; mimeType: string }> = [];
     
     for (const src of sources) {
-      const filePath = String(src?.path || '').trim();
-      ctx.logFn(`analyze_media: checking path="${filePath}"`);
+      const requestedPath = String(src?.path || '').trim();
+      const recoveredPath = resolveRedactedFilePath(requestedPath);
+      const filePath = recoveredPath.path;
+      const logPath = recoveredPath.recovered ? requestedPath : filePath;
+      ctx.logFn(`analyze_media: checking path="${logPath}"${recoveredPath.recovered ? ' (recovered local file)' : ''}`);
       if (!filePath) continue;
       
       const mimeType = src?.mimeType || inferMimeType(filePath);
@@ -472,10 +476,10 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
         const buf = fs.readFileSync(filePath);
         const data = buf.toString('base64');
         mediaParts.push({ data, mimeType });
-        ctx.logFn(`analyze_media: Loaded ${path.basename(filePath)} (${mimeType}, ${Math.round(buf.length / 1024)}KB)`);
+        ctx.logFn(`analyze_media: Loaded ${recoveredPath.recovered ? 'recovered media file' : path.basename(filePath)} (${mimeType}, ${Math.round(buf.length / 1024)}KB)`);
       } catch (e: any) {
-        ctx.logFn(`analyze_media: Failed to read ${filePath}: ${e?.message}`);
-        return { ok: false, error: `read_file_failed: ${filePath}` };
+        ctx.logFn(`analyze_media: Failed to read ${logPath}: ${e?.message}`);
+        return { ok: false, error: `read_file_failed: ${logPath}` };
       }
     }
     

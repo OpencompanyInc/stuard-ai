@@ -60,6 +60,7 @@ export function RichCodeEditor({
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const highlightedRef = useRef<HTMLPreElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Validate JSON in real-time
@@ -241,6 +242,12 @@ export function RichCodeEditor({
     return esc(value);
   }, [value, language]);
 
+  useEffect(() => {
+    if (highlightedRef.current) {
+      highlightedRef.current.innerHTML = highlightedCode;
+    }
+  }, [highlightedCode]);
+
   // Dynamic height
   const editorHeight = isExpanded ? '80vh' : undefined;
   const editorMinHeight = isExpanded ? '80vh' : `${minHeight}px`;
@@ -347,7 +354,7 @@ export function RichCodeEditor({
           {/* Syntax Highlighting Backdrop */}
           <div ref={backdropRef} className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
             <pre
-              dangerouslySetInnerHTML={{ __html: highlightedCode }}
+              ref={highlightedRef}
               className={`m-0 ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
               style={{
                 fontFamily: VSCODE.font,
