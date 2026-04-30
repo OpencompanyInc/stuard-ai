@@ -47,6 +47,7 @@ workflows: resolve(__dirname, "src/renderer/workflows.html"),
     },
   },
   resolve: {
+    modules: [resolve(__dirname, "node_modules"), "node_modules"],
     alias: {
       "@": resolve(__dirname, "src/renderer"),
       "@website-assets": resolve(__dirname, "../website/assets"),
