@@ -566,8 +566,7 @@ function DashboardApp() {
               .neq('source', 'workflow')
               .order('updated_at', { ascending: false })
               .limit(requestedLimit)
-              .then(r => r.data ?? null)
-              .catch(() => null)
+              .then(r => r.data ?? null, () => null)
           : Promise.resolve(null),
       ]);
 

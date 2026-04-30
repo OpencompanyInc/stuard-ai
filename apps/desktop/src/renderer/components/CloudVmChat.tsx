@@ -1160,7 +1160,7 @@ export function CloudVmChat({
     </div>
   ) : null;
 
-  const attachmentPickerInput = uploadFileToVmApi ? (
+  const attachmentPickerInput = (
     <input
       ref={attachmentInputRef}
       type="file"
@@ -1168,7 +1168,7 @@ export function CloudVmChat({
       onChange={handleAttachmentFilesSelected}
       className="hidden"
     />
-  ) : null;
+  );
 
   const composer = variant === 'workspace' ? (
     <div className="rounded-2xl border border-theme/10 bg-theme-card/30 transition-colors focus-within:border-primary/30">
@@ -1187,17 +1187,15 @@ export function CloudVmChat({
       {attachmentPickerInput}
       <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
         <div className="flex items-center gap-1.5">
-          {uploadFileToVmApi && (
-            <button
-              type="button"
-              onClick={handleAttachClick}
-              disabled={loading || !isRunning}
-              className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors disabled:opacity-40"
-              title="Attach files to this VM chat"
-            >
-              <Paperclip className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleAttachClick}
+            disabled={loading || !isRunning}
+            className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors disabled:opacity-40"
+            title="Attach files to this VM chat"
+          >
+            <Paperclip className="w-3.5 h-3.5" />
+          </button>
           {modelSelector}
           {historyButton}
           <span className={clsx('h-1.5 w-1.5 rounded-full ml-1', loading ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
@@ -1252,17 +1250,15 @@ export function CloudVmChat({
       {attachmentPickerInput}
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {uploadFileToVmApi && (
-            <button
-              type="button"
-              onClick={handleAttachClick}
-              disabled={loading || !isRunning}
-              className="dashboard-refresh-button inline-flex items-center gap-2 px-2.5 py-1.5 text-xs !rounded-xl disabled:opacity-40"
-              title="Attach files to this VM chat"
-            >
-              <Paperclip className="w-3.5 h-3.5" /> Attach
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleAttachClick}
+            disabled={loading || !isRunning}
+            className="dashboard-refresh-button inline-flex items-center gap-2 px-2.5 py-1.5 text-xs !rounded-xl disabled:opacity-40"
+            title="Attach files to this VM chat"
+          >
+            <Paperclip className="w-3.5 h-3.5" /> Attach
+          </button>
           {modelSelector}
           {historyButton}
           <div className="dashboard-pill flex items-center gap-2 px-2.5 py-1.5 text-xs text-theme-muted">
