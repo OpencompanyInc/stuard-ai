@@ -9,6 +9,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 // Store for event listeners
 const eventListeners: Map<string, Set<(data: any) => void>> = new Map();
+const streamSubscriptionListeners: Map<string, (data: any) => void> = new Map();
 
 // Handle incoming events from main process
 ipcRenderer.on('stuard:event', (_event, { eventName, data }) => {
@@ -338,12 +339,21 @@ contextBridge.exposeInMainWorld('stuard', {
    * @param callback - Called with each chunk { data, index, streamId }
    * @returns Promise resolving to { ok, subscriberId } — call unsubscribeStream(subscriberId) to stop
    */
-  subscribeStream: (streamId: string, callback: (chunk: { data: any; index: number; streamId: string }) => void): Promise<{ ok: boolean; subscriberId?: string }> => {
+  subscribeStream: async (streamId: string, callback: (chunk: { data: any; index: number; streamId: string }) => void): Promise<{ ok: boolean; subscriberId?: string }> => {
     if (!eventListeners.has('__stream_chunk__')) {
       eventListeners.set('__stream_chunk__', new Set());
     }
-    eventListeners.get('__stream_chunk__')!.add(callback);
-    return ipcRenderer.invoke('stuard:subscribeStream', { streamId });
+    const wrapped = (chunk: { data: any; index: number; streamId: string }) => {
+      if (chunk?.streamId === streamId) callback(chunk);
+    };
+    eventListeners.get('__stream_chunk__')!.add(wrapped);
+    const result = await ipcRenderer.invoke('stuard:subscribeStream', { streamId });
+    if (result?.ok && result?.subscriberId) {
+      streamSubscriptionListeners.set(`${streamId}:${result.subscriberId}`, wrapped);
+    } else {
+      eventListeners.get('__stream_chunk__')?.delete(wrapped);
+    }
+    return result;
   },
 
   /**
@@ -351,8 +361,17 @@ contextBridge.exposeInMainWorld('stuard', {
    * @param streamId - The stream ID
    * @param subscriberId - The subscriber ID returned from subscribeStream
    */
-  unsubscribeStream: (streamId: string, subscriberId: string): Promise<void> => {
-    return ipcRenderer.invoke('stuard:unsubscribeStream', { streamId, subscriberId });
+  unsubscribeStream: async (streamId: string, subscriberId: string): Promise<void> => {
+    try {
+      await ipcRenderer.invoke('stuard:unsubscribeStream', { streamId, subscriberId });
+    } finally {
+      const key = `${streamId}:${subscriberId}`;
+      const wrapped = streamSubscriptionListeners.get(key);
+      if (wrapped) {
+        eventListeners.get('__stream_chunk__')?.delete(wrapped);
+        streamSubscriptionListeners.delete(key);
+      }
+    }
   },
 
   /**
@@ -440,6 +459,7 @@ contextBridge.exposeInMainWorld('stuard', {
   }> => {
     return ipcRenderer.invoke('stuard:getScreenInfo');
   },
+
 });
 
 // Handle variable update events from main process

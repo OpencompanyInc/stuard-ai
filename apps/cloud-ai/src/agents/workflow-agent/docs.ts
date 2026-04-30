@@ -542,8 +542,8 @@ WHEN TO USE:
 • Reuse one node from multiple UI buttons (all wire to it with callNode: true).
 
 callTool vs callNode:
-• callTool — quick invisible tool call from UI (e.g. get_clipboard_content).
-• callNode — visible node with a callNode wire; animates; can use {{caller.X}}.
+• callNode — preferred for UI actions; visible node with a callNode wire; animates; can use {{caller.X}}.
+• callTool — legacy invisible escape hatch for tiny helper calls only.
 
 TIP: If {{caller.X}} resolves to "" in the worker, the wire is likely missing
 callNode: true — engine auto-traversed it once at start, so caller data wasn't
@@ -1559,8 +1559,8 @@ TIP: To stream AI text into markdown live:
 Promises unless noted as fire-and-forget (void).
 
 TOOL & NODE ROUTING:
-  await stuard.callTool(name, args)   — call any workflow tool (invisible)
-  await stuard.callNode(idOrLabel, data) — call sibling node via callNode wire
+  await stuard.callNode(idOrLabel, data) — preferred: call sibling node via callNode wire
+  await stuard.callTool(name, args)   — legacy escape hatch; invisible, no canvas animation
 
 FILE / FOLDER (native OS dialogs):
   await stuard.pickFile({ title, filters, multiple })
@@ -1584,10 +1584,16 @@ WINDOW LIFECYCLE (fire-and-forget):
 
 WINDOW CONTROLS (fire-and-forget):
   stuard.resize(w, h)
-  stuard.moveTo(x, y)
+  stuard.moveTo(x, y)        // same screen coordinate space as mouse tools
   stuard.center()
   stuard.setAlwaysOnTop(true)
   stuard.minimize()
+
+COORDINATES:
+  custom_ui explicit window x/y and stuard.moveTo(x, y) use the same origin and
+  scaling as get_mouse_position, move_cursor, and click_at_coordinates. On
+  high-DPI displays the desktop converts those mouse-tool pixels to Electron
+  window coordinates internally.
 
 VARIABLE API:
   await stuard.getVar(name)           // { ok, name, value, type }

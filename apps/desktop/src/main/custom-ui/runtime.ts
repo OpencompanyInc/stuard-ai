@@ -217,6 +217,9 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     if (existingData) {
       existingData.data = safeData;
       existingData.flowId = flowId;
+      if (args?.__flowSteps) existingData.flowSpec = { steps: args.__flowSteps };
+      if (args?.__stepId) existingData.stepId = args.__stepId;
+      existingData.accessToken = ctx.accessToken || args?.__accessToken || existingData.accessToken;
     }
 
     if (!blocking) {

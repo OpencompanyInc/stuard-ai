@@ -2,12 +2,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BrowserWindow, screen, ipcMain, dialog, clipboard, Notification, app } from 'electron';
 import type { RouterContext } from '../tool-router';
-import { execTool } from '../tools/index';
+import { execTool, execLocalTool } from '../tools/index';
 import { onVariableChange, variableStore, setVariable, getVariable, type VariableEntry } from '../workflow-variables';
 import { customUiWindows, windowData } from './state';
 import { approvePathForWindow, isPathAllowed, isPathApprovedForWindow } from './security';
 import { emitStepEvent } from '../engine/events';
 import { interpolateForTool } from '../engine/utils';
+import { mousePointToElectronPoint } from './position';
 
 function varNameMatches(storeKey: string, bindName: string): boolean {
   if (storeKey === bindName) return true;
@@ -240,6 +241,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       if (!toolName) {
         return { ok: false, error: `node_has_no_tool: "${nodeId}" has no tool defined` };
       }
+      const targetStepId = targetStep.id;
 
       const ctx = getRouterContext();
       // Propagate access token from engine context so cloud tools can authenticate
@@ -308,7 +310,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       resolvedArgs.flowId = winFlowId;
 
       // Emit step running event — animates the wire from the custom_ui to the target node
-      emitStepEvent(winFlowId, nodeId, 'running', { wireFromId: callerStepId });
+      emitStepEvent(winFlowId, targetStepId, 'running', { wireFromId: callerStepId });
 
       // ── Special handling: call_function is an engine-internal tool ──
       // It needs the full workflow spec + engine context to execute the function trigger chain.
@@ -318,7 +320,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         const inputs = resolvedArgs?.inputs || {};
 
         if (!triggerId) {
-          emitStepEvent(winFlowId!, nodeId, 'error', { error: 'missing triggerId' });
+          emitStepEvent(winFlowId!, targetStepId, 'error', { error: 'missing triggerId' });
           return { ok: false, error: 'missing triggerId for call_function' };
         }
 
@@ -326,7 +328,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         const { readWorkflowModel, designerModelToStuardSpec } = require('../workflows/workflows');
         const model = readWorkflowModel(winFlowId);
         if (!model) {
-          emitStepEvent(winFlowId!, nodeId, 'error', { error: 'workflow_not_found' });
+          emitStepEvent(winFlowId!, targetStepId, 'error', { error: 'workflow_not_found' });
           return { ok: false, error: `workflow_not_found: ${winFlowId}` };
         }
         const fullSpec = designerModelToStuardSpec(model);
@@ -350,10 +352,10 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         const { executeFromTrigger } = require('../engine/function-call');
         try {
           const fnResult = await executeFromTrigger(fullSpec, triggerId, inputs, parentCtx, engineCtx);
-          emitStepEvent(winFlowId!, nodeId, fnResult.ok ? 'completed' : 'error', fnResult);
+          emitStepEvent(winFlowId!, targetStepId, fnResult.ok ? 'completed' : 'error', fnResult);
           return fnResult;
         } catch (fnErr: any) {
-          emitStepEvent(winFlowId!, nodeId, 'error', { error: fnErr?.message });
+          emitStepEvent(winFlowId!, targetStepId, 'error', { error: fnErr?.message });
           return { ok: false, error: fnErr?.message || 'call_function failed' };
         }
       }
@@ -361,10 +363,10 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       try {
         const result = await execTool(toolName, resolvedArgs, ctx);
         // Emit completion — node turns green briefly
-        emitStepEvent(winFlowId, nodeId, 'completed', { result });
+        emitStepEvent(winFlowId, targetStepId, 'completed', { result });
         return result;
       } catch (toolErr: any) {
-        emitStepEvent(winFlowId, nodeId, 'error', { error: toolErr?.message });
+        emitStepEvent(winFlowId, targetStepId, 'error', { error: toolErr?.message });
         throw toolErr;
       }
     } catch (e: any) {
@@ -560,8 +562,8 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
   ipcMain.handle('stuard:subscribeStream', async (event, { streamId }) => {
     try {
       const ctx = getRouterContext();
-      const subResult = await execTool(
-        '_stream_subscribe',
+      const subResult = await execLocalTool(
+        'stream_subscribe',
         {
           streamId,
           label: `custom_ui_${Date.now()}`,
@@ -583,17 +585,18 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         if (!win || win.isDestroyed()) {
           clearInterval(pollInterval);
           streamPollers.delete(subscriberId);
-          await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => { });
+          await execLocalTool('stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => { });
           return;
         }
         try {
-          const readResult = await execTool(
-            '_stream_read',
+          const readResult = await execLocalTool(
+            'stream_read',
             {
               streamId,
               subscriberId,
               maxChunks: 50,
               waitMs: 100,
+              format: 'base64',
             },
             ctx
           );
@@ -645,7 +648,7 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         streamPollers.delete(subscriberId);
       }
       const ctx = getRouterContext();
-      await execTool('_stream_unsubscribe', { streamId, subscriberId }, ctx);
+      await execLocalTool('stream_unsubscribe', { streamId, subscriberId }, ctx);
       return { ok: true };
     } catch {
       return { ok: false };
@@ -797,7 +800,8 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
   ipcMain.on('stuard:moveTo', (event, { x, y }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
-      win.setPosition(x, y);
+      const point = mousePointToElectronPoint(Number(x), Number(y));
+      win.setPosition(point.x, point.y);
     }
   });
 
@@ -823,4 +827,5 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       workArea: display.workArea,
     };
   });
+
 }

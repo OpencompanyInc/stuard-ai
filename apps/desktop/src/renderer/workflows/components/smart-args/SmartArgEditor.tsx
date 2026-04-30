@@ -591,7 +591,7 @@ export function ToolArgsEditor({
           </summary>
           <div className="p-4 space-y-3 bg-white">
             <p className="text-[11px] text-slate-400 leading-snug">
-              Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default). API: stuard.submit(data), stuard.close(), stuard.callTool(name, args). Use useState for multi-page navigation.
+              Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default), useStream(streamId). API: stuard.submit(data), stuard.close(), stuard.callNode(nodeIdOrLabel, data). Use callNode wires for worker actions; callTool is legacy and invisible.
             </p>
             <button
               onClick={() => setShowUIBuilder(true)}

@@ -529,15 +529,16 @@ const DOCS: DocSection[] = [
       {
         id: "ui-interaction",
         title: "Interaction API",
-        summary: "stuard.submit(), stuard.close(), stuard.callTool()",
-        tags: ["custom_ui", "submit", "close", "callTool", "interaction", "api"],
+        summary: "stuard.submit(), stuard.close(), stuard.callNode()",
+        tags: ["custom_ui", "submit", "close", "callNode", "interaction", "api"],
         content: [
           { type: "table", headers: ["Method", "Description"], rows: [
             ["`stuard.submit(data)`", "Submit data and close. Resolves blocking promise."],
             ["`stuard.close()`", "Close window without data."],
-            ["`stuard.callTool(name, args)`", "Call a workflow tool from the UI."],
+            ["`stuard.callNode(nodeIdOrLabel, data)`", "Run a sibling workflow node with visible canvas feedback."],
+            ["`stuard.callTool(name, args)`", "Legacy escape hatch. Runs invisibly without node or wire animation."],
           ]},
-          { type: "code", language: "jsx", value: `// Submit form\n<button onClick={() => stuard.submit({ name, email })}>\n  Submit\n</button>\n\n// Call tool from UI\n<button onClick={async () => {\n  const result = await stuard.callTool('take_screenshot', {});\n  setPath(result.filePath);\n}}>\n  Take Screenshot\n</button>` },
+          { type: "code", language: "jsx", value: `// Submit form\n<button onClick={() => stuard.submit({ name, email })}>\n  Submit\n</button>\n\n// Run a sibling node from UI\n// Add a callNode wire from this custom_ui node to the worker node.\n<button onClick={async () => {\n  const result = await stuard.callNode('Take Screenshot', {});\n  setPath(result.filePath);\n}}>\n  Take Screenshot\n</button>` },
           { type: "heading", value: "Blocking Modes" },
           { type: "table", headers: ["Setting", "Behavior"], rows: [
             ["`blocking: true`", "Workflow waits for submit/close (default)"],
@@ -553,6 +554,7 @@ const DOCS: DocSection[] = [
         tags: ["custom_ui", "window", "size", "position", "frameless", "transparent", "radius"],
         content: [
           { type: "code", language: "json", value: `"window": {\n  "width": 400, "height": 300,\n  "position": "center",       // center|topleft|topright|bottomleft|bottomright|cursor|custom\n  "alwaysOnTop": true,\n  "frameless": true,          // Remove OS title bar\n  "borderRadius": 12,         // Rounded corners (needs frameless)\n  "resizable": false,\n  "draggable": true,          // Drag by background (default)\n  "backgroundColor": "#1a1a2e",\n  "backgroundType": "color",  // color|translucent|transparent\n  "invisible": false          // Hide from screen recordings\n}` },
+          { type: "tip", value: "`window.x`, `window.y`, and `stuard.moveTo(x, y)` use the same screen origin and scaling as `get_mouse_position`, `move_cursor`, and click coordinate tools." },
           { type: "heading", value: "Translucent / Frosted Glass" },
           { type: "code", language: "json", value: `"window": {\n  "backgroundType": "translucent",\n  "frameless": true,\n  "translucent": { "color": "#1a1a2e", "opacity": 0.7, "blur": 12 }\n}` },
           { type: "tip", value: "Set `frameless: true` whenever using `borderRadius` or `translucent`. The OS title bar prevents rounded corners from showing." },

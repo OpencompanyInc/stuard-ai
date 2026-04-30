@@ -2,8 +2,8 @@
  * Tool Palette Sidebar Component for the workflow builder
  */
 import React, { useEffect, useState, useMemo, forwardRef, useImperativeHandle, useRef } from "react";
-import { Search, X, ChevronRight, GripVertical, Box, Lock } from "lucide-react";
-import { PALETTE_CATEGORIES, CATEGORY_COLORS } from "../constants/paletteCategories";
+import { Search, X, ChevronRight, GripVertical, Box, Lock, Package, Workflow } from "lucide-react";
+import { PALETTE_CATEGORIES, CATEGORY_COLORS, type PaletteCategory, type PaletteCategoryItem } from "../constants/paletteCategories";
 
 export interface ToolPaletteRef {
   focusSearch: () => void;
@@ -12,10 +12,12 @@ export interface ToolPaletteRef {
 export const ToolPalette = forwardRef<ToolPaletteRef, {
   onDragStart: (e: React.DragEvent, item: any) => void;
   disabled?: boolean;
-}>(({ onDragStart, disabled }, ref) => {
+  workflowId?: string;
+}>(({ onDragStart, disabled, workflowId }, ref) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['triggers', 'flow']));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['installed', 'triggers', 'flow']));
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [installedFunctionItems, setInstalledFunctionItems] = useState<PaletteCategoryItem[]>([]);
 
   useImperativeHandle(ref, () => ({
     focusSearch: () => searchInputRef.current?.focus(),
@@ -62,10 +64,92 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const buildInputs = (inputParams: any[] | undefined) => {
+      if (!Array.isArray(inputParams)) return {};
+      return Object.fromEntries(
+        inputParams
+          .filter((param) => param?.name)
+          .map((param) => [String(param.name), param.defaultValue ?? param.default ?? ""])
+      );
+    };
+
+    const refreshInstalledFunctions = async () => {
+      const next: PaletteCategoryItem[] = [];
+
+      try {
+        const listRes = await (window as any).desktopAPI?.workflowsList?.();
+        const workflows = Array.isArray(listRes?.items) ? listRes.items : [];
+        for (const workflow of workflows) {
+          const triggers = Array.isArray(workflow?.triggers) ? workflow.triggers : [];
+          if (!workflow?.id || workflow.id === workflowId || !triggers.includes('function')) continue;
+          next.push({
+            k: 'local.tool',
+            t: 'call_workflow',
+            label: workflow.name || workflow.id,
+            icon: Workflow,
+            args: { workflowId: workflow.id, inputs: {} },
+          });
+        }
+      } catch {
+      }
+
+      if (workflowId) {
+        try {
+          const res = await (window as any).desktopAPI?.workflowsListWorkspaceFunctions?.(workflowId);
+          const functions = Array.isArray(res?.functions) ? res.functions : [];
+          for (const fn of functions) {
+            if (!fn?.isFunction || !fn?.path) continue;
+            next.push({
+              k: 'local.tool',
+              t: 'call_workspace_function',
+              label: fn.name || fn.path,
+              icon: Workflow,
+              args: { path: fn.path, inputs: buildInputs(fn.inputParams) },
+            });
+          }
+        } catch {
+        }
+      }
+
+      if (!cancelled) {
+        setInstalledFunctionItems(next);
+      }
+    };
+
+    refreshInstalledFunctions();
+    const timer = window.setInterval(refreshInstalledFunctions, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workflowId]);
+
   const paletteCategories = useMemo(() => {
-    if (ffmpegConnected) return PALETTE_CATEGORIES;
-    return PALETTE_CATEGORIES.filter((c) => c.id !== 'ffmpeg');
-  }, [ffmpegConnected]);
+    const installedItems = installedFunctionItems.length > 0
+      ? installedFunctionItems
+      : [{
+          k: 'local.tool' as const,
+          t: 'call_workspace_function',
+          label: 'No installed functions yet',
+          icon: Workflow,
+          args: { path: '', inputs: {} },
+          disabled: true,
+        }];
+
+    const installedCategory: PaletteCategory = {
+      id: 'installed',
+      label: 'Installed Functions',
+      icon: Package,
+      color: 'indigo',
+      items: installedItems,
+    };
+
+    const baseCategories = ffmpegConnected ? PALETTE_CATEGORIES : PALETTE_CATEGORIES.filter((c) => c.id !== 'ffmpeg');
+    return [installedCategory, ...baseCategories];
+  }, [ffmpegConnected, installedFunctionItems]);
 
   const toggleCategory = (id: string) => {
     setExpandedCategories(prev => {

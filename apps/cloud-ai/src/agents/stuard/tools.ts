@@ -20,6 +20,7 @@ import * as xTools from '../../tools/x-tools';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { http_request } from '../../tools/http-tools';
+import { vm_status, vm_execute_tool, vm_upload_file, vm_download_file } from '../../tools/vm-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
@@ -119,6 +120,10 @@ export const ALL_TOOLS = {
   ffmpeg_extract_frames,
   run_command,
   http_request,
+  vm_status,
+  vm_execute_tool,
+  vm_upload_file,
+  vm_download_file,
   run_python_script,
   // Background terminal polling (non-interactive)
   list_terminals,

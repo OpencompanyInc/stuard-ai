@@ -8,7 +8,7 @@ import { setupIpc } from "./ipc/index";
 import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
-import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
+import { initCustomUiIpc, shutdownAllBrowserUseServers, prewarmBrowserUseServer } from "./tools/index";
 import logger from "./utils/logger";
 
 initEnv();
@@ -251,6 +251,15 @@ app.whenReady().then(async () => {
     logger.info("Browser extension server started");
   } catch (e) {
     logger.error("Failed to start browser extension server:", e);
+  }
+
+  try {
+    logger.info("Pre-warming packaged browser server...");
+    // Fire-and-forget — best-effort warm-up so the first browser_use_*
+    // tool call doesn't pay a 5-10s spawn cost.
+    prewarmBrowserUseServer().catch((e) => logger.warn("Browser pre-warm failed:", e));
+  } catch (e) {
+    logger.warn("Failed to schedule browser pre-warm:", e);
   }
 
 try {

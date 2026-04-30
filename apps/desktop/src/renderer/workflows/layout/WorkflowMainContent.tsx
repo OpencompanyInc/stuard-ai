@@ -402,6 +402,7 @@ export function WorkflowMainContent({
               </div>
               <ToolPalette
                 ref={toolPaletteRef}
+                workflowId={selectedId}
                 onDragStart={(e, item) => {
                   e.dataTransfer.setData("text/plain", JSON.stringify(item));
                   e.dataTransfer.effectAllowed = "copy";

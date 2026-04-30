@@ -616,13 +616,17 @@ export function WorkflowLauncherV2({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
               {showCreateCard && (
-                <div onClick={onCreate} className="group relative h-[200px] rounded-[24px] cursor-pointer overflow-hidden flex flex-col items-center justify-center transition-all border border-blue-500/50 bg-slate-900 hover:border-blue-400 shadow-md hover:shadow-lg">
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180px] h-[180px] bg-blue-500/35 blur-[45px] rounded-full group-hover:bg-blue-400/45 transition-colors duration-500"></div>
+                <button
+                  type="button"
+                  onClick={onCreate}
+                  className="group relative h-[200px] rounded-[24px] cursor-pointer overflow-hidden flex flex-col items-center justify-center transition-all border border-blue-500/50 bg-slate-900 hover:border-blue-400 shadow-md hover:shadow-lg"
+                >
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180px] h-[180px] bg-blue-500/35 blur-[45px] rounded-full group-hover:bg-blue-400/45 transition-colors duration-500" />
                   <div className="relative z-10 flex flex-col items-center justify-center">
                     <Sparkles className="w-9 h-9 text-white mb-3 group-hover:scale-110 transition-transform duration-300" />
                     <span className="text-white font-semibold text-[16px] tracking-wide">Create Workflow</span>
                   </div>
-                </div>
+                </button>
               )}
               {visibleItems.map((item, idx) => (
                 <WorkflowCard

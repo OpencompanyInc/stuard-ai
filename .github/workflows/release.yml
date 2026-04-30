@@ -397,10 +397,12 @@ jobs:
           path: |
             apps/agent/build
             ~/.pyinstaller
-          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec') }}
+          # Include the Python version in the key — caches built against a
+          # different cpython ABI (e.g. 3.11 vs 3.13) contain numpy/cv2 DLLs
+          # that won't load in the new interpreter and crash at runtime.
+          key: pyinstaller-services-${{ runner.os }}-py3.11-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec') }}
           restore-keys: |
-            pyinstaller-services-${{ runner.os }}-
-            pyinstaller-${{ runner.os }}-
+            pyinstaller-services-${{ runner.os }}-py3.11-
 
       - name: Build all service executables
         working-directory: apps/agent

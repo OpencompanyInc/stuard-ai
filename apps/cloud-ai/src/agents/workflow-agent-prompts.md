@@ -62,11 +62,12 @@ Use **modify_workflow** tool with:
 - instructions: Natural language description of changes
 
 CRITICAL RULES:
-1. PRESERVE existing content - never remove unless asked
-2. When ADDING nodes, also ADD wires to connect them
-3. Positions: x: 20-600, y: 20-400, spaced ~140px apart
-4. Each node needs: id, tool, args, position
-5. Each wire needs: from, to (valid IDs)
+1. Inspect the current workflow before every modify_workflow call. Never modify from memory.
+2. PRESERVE existing content - never remove unless asked
+3. When ADDING nodes, also ADD wires to connect them
+4. Positions: x: 20-600, y: 20-400, spaced ~140px apart
+5. Each node needs: id, tool, args, position
+6. Each wire needs: from, to (valid IDs)
 
 ═══════════════════════════════════════════════════════════════════════════════
 TRIGGERS (these are fixed, not tools)
@@ -567,14 +568,20 @@ function App() {
 THE `stuard` API (available in component code)
 ═══════════════════════════════════════════════════════════════════════════════
 
-**TOOL CALLING:**
+**NODE ROUTING (preferred for UI actions):**
 ```jsx
-const result = await stuard.callTool('get_clipboard_content');    // Invisible, no canvas animation
-const search = await stuard.callTool('web_search', { query: 'hello' });
-const aiResult = await stuard.callTool('ai_inference', { prompt: 'Summarize', input: text });
+// Create standalone sibling nodes and connect them with callNode wires.
+const clip = await stuard.callNode('Read Clipboard', {});
+const search = await stuard.callNode('Search Web', { query: 'hello' });
+const aiResult = await stuard.callNode('Summarize Text', { text });
 ```
 
-**NODE ROUTING (callNode) — call sibling nodes by ID or label:**
+**LEGACY TOOL CALLING (escape hatch only):**
+```jsx
+const result = await stuard.callTool('get_clipboard_content');    // Invisible, no canvas animation
+```
+
+**callNode details — call sibling nodes by ID or label:**
 ```jsx
 // Call by step ID:
 const result = await stuard.callNode('step_abc123', { filePath: '/path/to/file' });
@@ -620,11 +627,14 @@ stuard.stopWorkflow();         // Stop the workflow
 **WINDOW CONTROLS:**
 ```jsx
 stuard.resize(800, 600);      // Resize
-stuard.moveTo(100, 100);      // Move
+stuard.moveTo(100, 100);      // Move; same screen coordinates as mouse tools
 stuard.center();               // Center on screen
 stuard.setAlwaysOnTop(true);   // Pin on top
 stuard.minimize();             // Minimize
 ```
+
+custom_ui explicit window x/y and stuard.moveTo(x, y) use the same origin and
+scaling as get_mouse_position, move_cursor, and click_at_coordinates.
 
 **EVENTS:**
 ```jsx
@@ -668,7 +678,7 @@ EXAMPLES
   "args": {
     "id": "clipboard_mgr",
     "title": "Clipboard Manager",
-    "component": "function App() {\n  const [clips, setClips] = useState([]);\n  useEffect(() => {\n    const saved = JSON.parse(localStorage.getItem('clips') || '[]');\n    stuard.callTool('get_clipboard_content').then(r => {\n      if (r.ok && r.text) {\n        const updated = [{text: r.text, time: Date.now()}, ...saved].slice(0, 50);\n        setClips(updated);\n        localStorage.setItem('clips', JSON.stringify(updated));\n      } else setClips(saved);\n    });\n  }, []);\n  return (\n    <div className=\"p-4 space-y-2\">\n      <h2 className=\"text-lg font-bold\">Clipboard History</h2>\n      {clips.map((c, i) => (\n        <button key={i} className=\"w-full text-left p-3 bg-slate-50 hover:bg-blue-50 rounded-lg text-sm truncate\" onClick={() => { stuard.copyToClipboard(c.text); stuard.close(); }}>{c.text.slice(0, 80)}</button>\n      ))}\n    </div>\n  );\n}",
+    "component": "function App() {\n  const [clips, setClips] = useState([]);\n  useEffect(() => {\n    const saved = JSON.parse(localStorage.getItem('clips') || '[]');\n    stuard.readClipboard().then(text => {\n      if (text) {\n        const updated = [{text: text, time: Date.now()}, ...saved].slice(0, 50);\n        setClips(updated);\n        localStorage.setItem('clips', JSON.stringify(updated));\n      } else setClips(saved);\n    });\n  }, []);\n  return (\n    <div className=\"p-4 space-y-2\">\n      <h2 className=\"text-lg font-bold\">Clipboard History</h2>\n      {clips.map((c, i) => (\n        <button key={i} className=\"w-full text-left p-3 bg-slate-50 hover:bg-blue-50 rounded-lg text-sm truncate\" onClick={() => { stuard.copyToClipboard(c.text); stuard.close(); }}>{c.text.slice(0, 80)}</button>\n      ))}\n    </div>\n  );\n}",
     "window": { "width": 400, "height": 500, "frameless": true, "borderRadius": 12 }
   }
 }
@@ -730,7 +740,7 @@ BEST PRACTICES
 4. **Reuse window IDs** for smooth updates (no window flash)
 5. **Tailwind CSS** for all styling (full utility classes offline)
 6. **useVar(name, default)** for reactive workflow variable binding
-7. **stuard.callTool()** for heavy operations (AI, file ops, search)
+7. **stuard.callNode()** for heavy operations (AI, file ops, search) so the worker node is visible in the canvas
 8. **Escape handler:** `useEffect(() => { const h = e => e.key === 'Escape' && stuard.close(); document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, []);`
 9. **Frameless drag:** `className="drag"` on title bar div
 10. **Return data:** `stuard.submit({ myData: value })` on close

@@ -37,6 +37,7 @@ import type { ToolPaletteRef } from "./workflows/components/ToolPalette";
 import { usePreferences } from "./hooks/usePreferences";
 import type { ReasoningLevel } from "./hooks/usePreferences";
 import { WorkflowThemeContext } from "./workflows/WorkflowThemeContext";
+import { getWorkflowTemplate } from "./workflows/constants/workflowTemplates";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
@@ -404,6 +405,7 @@ function WorkflowsApp() {
   }, [model, refresh, selectedId, activeSubPath]);
 
   const [showNameModal, setShowNameModal] = useState(false);
+  const [createTemplateId, setCreateTemplateId] = useState<string>("blank");
 
   const {
     showImport,
@@ -652,58 +654,10 @@ function WorkflowsApp() {
     return { ...inputModel, triggers: newTriggers, nodes: newNodes };
   }, []);
 
-  const create = async (projectName?: string) => {
+  const create = async (projectName?: string, templateId?: string) => {
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
-    const skeleton: DesignerModel = {
-      id: safe,
-      name: projectName || "Hello World Starter",
-      version: "1",
-      triggers: [{ id: `trig_0`, type: 'manual', label: 'Manual Trigger', args: {}, position: { x: 60, y: 50 } }],
-      nodes: [
-        {
-          id: `step_welcome`,
-          type: 'local.tool',
-          tool: 'send_notification',
-          label: 'Show Welcome Notification',
-          args: { title: 'Hello from Stuard', body: 'Your first workflow is running.', severity: 'success' },
-          fallbackTo: '',
-          position: { x: 60, y: 190 }
-        },
-        {
-          id: `step_now`,
-          type: 'local.tool',
-          tool: 'get_datetime',
-          label: 'Get Current Time',
-          args: { format: 'YYYY-MM-DD HH:mm:ss' },
-          fallbackTo: '',
-          position: { x: 60, y: 330 }
-        },
-        {
-          id: `step_clipboard`,
-          type: 'local.tool',
-          tool: 'set_clipboard_content',
-          label: 'Copy Hello Message',
-          args: { text: 'Hello World from Stuard! Ran at {{step_now.formatted}}' },
-          fallbackTo: '',
-          position: { x: 60, y: 470 }
-        },
-        {
-          id: `step_log`,
-          type: 'local.tool',
-          tool: 'log',
-          label: 'Log Completion',
-          args: { message: 'Done! Message copied to clipboard at {{step_now.formatted}}' },
-          fallbackTo: '',
-          position: { x: 60, y: 610 }
-        }
-      ],
-      wires: [
-        { from: 'trig_0', to: 'step_welcome' },
-        { from: 'step_welcome', to: 'step_now' },
-        { from: 'step_now', to: 'step_clipboard' },
-        { from: 'step_clipboard', to: 'step_log' }
-      ],
-    };
+    const template = getWorkflowTemplate(templateId);
+    const skeleton = template.build(safe, projectName || template.defaultName);
     const arrangedSkeleton = applyAutoLayoutToModel(skeleton);
     try {
       const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(arrangedSkeleton, null, 2));
@@ -871,7 +825,10 @@ function WorkflowsApp() {
           runningIds={runningIds}
           updates={updates}
           onSelect={load}
-          onCreate={() => setShowNameModal(true)}
+          onCreate={() => {
+            setCreateTemplateId("blank");
+            setShowNameModal(true);
+          }}
           onImport={() => setShowImport(true)}
           onMarketplace={(slug?: string) => {
             setMarketplaceSlug(slug);
@@ -896,8 +853,9 @@ function WorkflowsApp() {
 
         {showNameModal && (
           <ProjectNameModal
+            initialTemplateId={createTemplateId}
             onClose={() => setShowNameModal(false)}
-            onConfirm={(name) => { setShowNameModal(false); create(name); }}
+            onConfirm={(name, templateId) => { setShowNameModal(false); create(name, templateId); }}
           />
         )}
 

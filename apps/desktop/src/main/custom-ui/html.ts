@@ -643,8 +643,14 @@ function buildRuntimeScript(options: {
 
         React.useEffect(function() {
           if (!hasStuardApi || !streamId) return;
+          var cancelled = false;
+          setChunk(null);
+          setIndex(-1);
+          setDone(false);
+          setFullText('');
 
           window.stuard.subscribeStream(streamId, function(evt) {
+            if (cancelled) return;
             if (evt.closed || evt.index === -1) { setDone(true); return; }
             setChunk(evt.data);
             setIndex(evt.index);
@@ -652,12 +658,19 @@ function buildRuntimeScript(options: {
               setFullText(function(prev) { return prev + evt.data; });
             }
           }).then(function(res) {
-            if (res.ok) subRef.current = res.subscriberId;
+            if (!res.ok) return;
+            if (cancelled) {
+              window.stuard.unsubscribeStream(streamId, res.subscriberId);
+              return;
+            }
+            subRef.current = res.subscriberId;
           });
 
           return function() {
+            cancelled = true;
             if (subRef.current) {
               window.stuard.unsubscribeStream(streamId, subRef.current);
+              subRef.current = null;
             }
           };
         }, [streamId]);

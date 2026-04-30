@@ -19,6 +19,7 @@ import * as telnyxTools from './telnyx-tools';
 import * as whatsappTools from './whatsapp-tools';
 import * as metaSocialTools from './meta-social-tools';
 import * as cloudStorageTools from './cloud-storage-tools';
+import * as vmTools from './vm-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -145,11 +146,11 @@ COMPONENT FIELD:
   - useVar(name, default) — bridges React state to workflow variables. Auto-seeds from data args.
   - stuard.submit(data) — submit data and close (resolves blocking)
   - stuard.close() — close window
-  - stuard.callTool(name, args) — call any workflow tool (invisible, no canvas animation)
-  - stuard.callNode(nodeId, data) — call a SIBLING NODE by ID or label (see NODE-ROUTING below)
+  - stuard.callNode(nodeId, data) — call a SIBLING NODE by ID or label (preferred; visible canvas animation)
+  - stuard.callTool(name, args) — legacy escape hatch; calls a workflow tool invisibly with no canvas animation
 
 NODE-ROUTING ARCHITECTURE (callNode):
-  Instead of encoding all logic inside one custom_ui callTool() block, create STANDALONE
+  Instead of encoding logic inside custom_ui callTool() blocks, create STANDALONE
   tool nodes in the workflow and dispatch to them from the UI via stuard.callNode().
 
   HOW IT WORKS:
@@ -176,6 +177,7 @@ NODE-ROUTING ARCHITECTURE (callNode):
     • callTool(name, args) — runs a tool INVISIBLY, no visual feedback in the canvas
     • callNode(nodeId, data) — routes to a named SIBLING NODE in the same workflow.
       Shows running → completed animation on the teal wire. Uses {{caller.X}} templates.
+      Use this for generated custom_ui worker actions.
 
   WIRE DEFINITION:
     { "from": "ui_node_id", "to": "target_node_id", "callNode": true }
@@ -239,7 +241,7 @@ IMPORTANT: The component field is raw JavaScript/JSX, NOT a JSON string.
             position: z.union([
                 z.enum(['center', 'top-left', 'top-right', 'bottom-left', 'bottom-right']),
                 z.object({ x: z.number(), y: z.number() })
-            ]).optional().describe('Window position (default center)'),
+            ]).optional().describe('Window position (default center). Explicit x/y uses the same screen origin and scaling as mouse tools.'),
             alwaysOnTop: z.boolean().optional().describe('Keep above other windows (default true)'),
             frameless: z.boolean().optional().describe('Hide window frame/titlebar (default false)'),
             resizable: z.boolean().optional(),
@@ -505,6 +507,9 @@ Object.values(metaSocialTools).forEach(t => {
 });
 Object.values(cloudStorageTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'CloudStorage');
+});
+Object.values(vmTools).forEach(t => {
+    if (typeof (t as any)?.execute === 'function') registerTool(t, 'VM');
 });
 
 // 2. Meta Tools

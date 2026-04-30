@@ -58,6 +58,12 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   cloud_storage_delete: ['cloud storage', 'stuard storage'],
   cloud_storage_set_visibility: ['cloud storage', 'stuard storage'],
 
+  // VM operations
+  vm_status: ['vm', 'cloud vm', 'always on', 'remote desktop', 'headless'],
+  vm_execute_tool: ['vm', 'cloud vm', 'headless', 'remote action', 'server'],
+  vm_upload_file: ['vm', 'upload file', 'desktop to vm', 'file transfer'],
+  vm_download_file: ['vm', 'download file', 'vm to desktop', 'file transfer'],
+
   // Vault / credentials
   vault_list: ['vault', 'password', 'credential', 'secret'],
   vault_get: ['vault', 'password', 'credential', 'secret'],

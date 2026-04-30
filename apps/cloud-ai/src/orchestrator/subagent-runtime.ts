@@ -475,6 +475,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     workflow: 'Workflow Agent',
     reminders: 'Reminders Agent',
     media: 'Media Agent',
+    ffmpeg: 'FFmpeg Agent',
+    vm: 'VM Agent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
   const parentConversationId =

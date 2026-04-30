@@ -331,6 +331,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         console.log('[Preview] stuard.callTool:', name, args);
         return { ok: false, error: 'Preview mode - tools disabled' };
       },
+      callNode: async (nodeId, data) => {
+        console.log('[Preview] stuard.callNode:', nodeId, data);
+        return { ok: false, error: 'Preview mode - nodes disabled' };
+      },
       pickFile: async (opts) => ({ canceled: true, filePaths: [] }),
       pickFolder: async (opts) => ({ canceled: true, filePaths: [] }),
       pickSavePath: async (opts) => ({ canceled: true }),
@@ -357,6 +361,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     };
     window.$stuard = {
       tool: window.stuard.callTool,
+      node: window.stuard.callNode,
       emit: window.stuard.emit,
       close: window.stuard.close,
       submit: window.stuard.submit,

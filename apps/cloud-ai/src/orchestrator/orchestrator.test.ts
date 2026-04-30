@@ -117,6 +117,17 @@ describe('Capability Packs', () => {
     expect(WORKFLOW_PACK.timeoutMs).toBeUndefined();
   });
 
+  it('vm pack has the expected tools', async () => {
+    const { VM_PACK, KNOWN_SUBAGENT_NAMES } = await import('./capability-packs');
+    expect(VM_PACK.kind).toBe('vm');
+    expect(VM_PACK.toolNames).toContain('vm_status');
+    expect(VM_PACK.toolNames).toContain('vm_execute_tool');
+    expect(VM_PACK.toolNames).toContain('vm_upload_file');
+    expect(VM_PACK.toolNames).toContain('vm_download_file');
+    expect(VM_PACK.systemPrompt).toContain('always-on cloud VM');
+    expect(KNOWN_SUBAGENT_NAMES).toContain('vm');
+  });
+
   it('resolveIntegrationTools returns matching tools by prefix', async () => {
     const { resolveIntegrationTools } = await import('./capability-packs');
     const allTools = [

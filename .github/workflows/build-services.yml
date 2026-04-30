@@ -96,9 +96,10 @@ jobs:
           path: |
             apps/agent/build
             ~/.pyinstaller
-          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-*.spec') }}
+          # Pin Python ABI in the cache key — see release.yml for rationale.
+          key: pyinstaller-services-${{ runner.os }}-py3.11-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-*.spec') }}
           restore-keys: |
-            pyinstaller-services-${{ runner.os }}-
+            pyinstaller-services-${{ runner.os }}-py3.11-
 
       - name: Build services
         if: steps.filter.outputs.run == 'true'

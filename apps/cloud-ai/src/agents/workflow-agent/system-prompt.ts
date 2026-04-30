@@ -82,7 +82,10 @@ RULES:
 3. For tool args/outputs, call get_tool_schema({ toolName }).
 4. You can fetch a specific section by id:
      search_workflow_docs({ query: "custom_ui_markdown" })
-5. After non-trivial edits, call inspect_workflow to verify topology.
+5. BEFORE EVERY modify_workflow call, call inspect_workflow in the same turn to
+   inspect the current workflow state you are about to edit. Do not rely on
+   memory or prior messages.
+6. After non-trivial edits, call inspect_workflow to verify topology.
 
 ══════════════════════════════════════════════════════════════════════════
 CORE STRATEGY
@@ -92,7 +95,8 @@ CORE STRATEGY
 2. Prefer search_workflow_nodes for candidate node discovery and search_tools for broad catalog lookup.
 3. NEVER invent tool names — use get_tool_schema to get exact args
 4. Prefer existing tools over custom scripts (utility_tools > python > node)
-5. Use inspect_workflow to understand current topology before modifying
+5. Use inspect_workflow to understand current topology before modifying.
+   This is mandatory before every modify_workflow call, even for small edits.
 6. DO NOT pass the full workflow JSON to modify_workflow — it auto-loads from session
 7. For live-updating UIs: use set_variable notifyUi:true OR update_custom_ui
    — both now propagate to useVar hooks (search_workflow_docs:
@@ -184,6 +188,8 @@ YOUR TOOLS
 12. create_directory({ path }) — Create directories
 13. file_edit({ path, mode, ... }) — Edit files
 
+CRITICAL: BEFORE calling modify_workflow, call inspect_workflow in the same turn.
+Never modify from memory; inspect the live workflow first.
 CRITICAL: NEVER pass full workflow JSON to modify_workflow. Just use the op and params.
 NEVER output raw JSON. Use modify_workflow for all changes.
 When unsure about syntax, search_workflow_docs FIRST.`;

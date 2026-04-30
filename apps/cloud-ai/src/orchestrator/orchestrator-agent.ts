@@ -74,7 +74,8 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | file_ops    | Reading/writing files, code editing, terminal commands, compute |
 | workflow    | **Creating**, modifying, and testing StuardAI automation workflows (the Workflow Architect) |
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
-| media       | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames (FFmpeg) |
+| ffmpeg      | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames |
+| vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
 | outlook     | Outlook mail & calendar |
 | github      | Repos, issues, PRs, branches, actions |

@@ -21,7 +21,7 @@ export * from './types';
 export * from './handlers/local'; // for calcToolTimeout
 export { execCloudTool } from './handlers/cloud';
 export { execCustomUi, execCloseCustomUi, initCustomUiIpc } from './handlers/electron';
-export { shutdownAllBrowserUseServers } from './handlers/browser-use';
+export { shutdownAllBrowserUseServers, prewarmBrowserUseServer } from './handlers/browser-use';
 
 function normalizeCommandTool(toolName: string, args: any): { toolName: string; args: any } {
   if (toolName !== 'run_system_command') {

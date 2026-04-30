@@ -158,11 +158,11 @@ async function runDelegateTask(
   chatWs: any,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders';
+    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   writeLog('delegate_start', {
@@ -298,6 +298,7 @@ export const delegate = createTool({
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
     '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
+    '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +

@@ -835,7 +835,7 @@ ${css}
   window.stuard = {
     close: () => {}, submit: () => {}, action: () => {},
     emit: () => {}, on: () => () => {}, onDataUpdate: () => () => {},
-    callTool: async () => ({ ok: false }), getData: async () => ({}),
+    callTool: async () => ({ ok: false }), callNode: async () => ({ ok: false }), getData: async () => ({}),
     getWindowId: async () => 'preview', getFlowId: async () => null,
   };
 ${js}
