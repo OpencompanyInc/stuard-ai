@@ -1418,11 +1418,12 @@ async def write_file(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def write_file_base64(args: Dict[str, Any]) -> Dict[str, Any]:
     p = str(args.get("path") or "").strip()
-    data_b64 = str(args.get("content") or args.get("data") or "")
+    has_content = "content" in args or "data" in args
+    data_b64 = str(args.get("content") if "content" in args else args.get("data") if "data" in args else "")
     if not p:
         raise ValueError("missing path")
-    if not data_b64:
-         raise ValueError("missing content/data")
+    if not has_content:
+        raise ValueError("missing content/data")
     
     p = os.path.expanduser(p)
     if not _is_safe_path(p):
@@ -1432,6 +1433,8 @@ async def write_file_base64(args: Dict[str, Any]) -> Dict[str, Any]:
     d = os.path.dirname(p)
     if d and not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
+    if os.path.exists(p) and args.get("overwrite") is False:
+        return {"ok": False, "error": "file_exists", "path": p}
 
     # Checkpoint
     op = "create" if not os.path.exists(p) else "modify"

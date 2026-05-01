@@ -67,6 +67,10 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [subTab, setSubTab] = useState<TaskSubTab>(defaultSubTab);
+  const [editingGlobalReminderId, setEditingGlobalReminderId] = useState<string | null>(null);
+  const [editGlobalReminderDate, setEditGlobalReminderDate] = useState('');
+  const [editGlobalReminderTime, setEditGlobalReminderTime] = useState('');
+  const [editGlobalReminderMessage, setEditGlobalReminderMessage] = useState('');
 
   // Sync subTab with defaultSubTab prop
   useEffect(() => {
@@ -225,7 +229,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   }
 
   return (
-    <div className={clsx("flex flex-col h-full bg-theme-bg", compact ? "p-3" : "pb-16 max-w-6xl mx-auto w-full")}>
+    <div className={clsx("flex flex-col h-full", compact ? "p-3" : "pb-16 max-w-6xl mx-auto w-full")}>
       <div className={clsx("shrink-0", compact ? "mb-3" : "mb-6")}>
         {compact ? (
           <div className="flex items-center justify-between">
@@ -328,7 +332,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                   <div
                     key={reminder.id}
                     className={clsx(
-                      "flex items-start gap-3 p-3 rounded-xl border transition-all",
+                      "p-3 rounded-xl border transition-all",
                       isOverdue
                         ? "bg-red-500/5 border-red-500/20"
                         : isSoon
@@ -336,91 +340,135 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                           : "bg-theme-card border-theme/10 hover:border-theme/20"
                     )}
                   >
-                    <div className={clsx(
-                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                      isOverdue ? "bg-red-500/10" : isSoon ? "bg-amber-500/10" : "bg-theme-hover"
-                    )}>
-                      <Bell className={clsx(
-                        "w-4 h-4",
-                        isOverdue ? "text-red-500" : isSoon ? "text-amber-500" : "text-theme-muted"
-                      )} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold text-theme-fg">
-                        {reminder.message || reminder.taskTitle}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Clock className="w-3 h-3 text-theme-muted" />
-                        <span className={clsx(
-                          "text-[10px] font-medium",
-                          isOverdue ? "text-red-500" : isSoon ? "text-amber-600" : "text-theme-muted"
-                        )}>
-                          {isOverdue ? 'Overdue: ' : ''}
-                          {reminderDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                          {' at '}
-                          {reminderDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      {reminder.taskTitle && reminder.message && (
-                        <div className="text-[10px] text-theme-muted mt-1 flex items-center gap-1">
-                          <ListChecks className="w-3 h-3" />
-                          {reminder.taskTitle}
+                    {editingGlobalReminderId === reminder.id ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            autoFocus
+                            type="date"
+                            value={editGlobalReminderDate}
+                            onChange={(e) => setEditGlobalReminderDate(e.target.value)}
+                            className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
+                          />
+                          <input
+                            type="time"
+                            value={editGlobalReminderTime}
+                            onChange={(e) => setEditGlobalReminderTime(e.target.value)}
+                            className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
+                          />
                         </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={async () => {
-                        await syncReminderToCloudSMS({
-                          message: reminder.message || reminder.taskTitle || 'Reminder',
-                          scheduledAt: reminder.scheduledAt,
-                        });
-                        try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
-                      }}
-                      className="p-1.5 text-theme-muted hover:text-sky-400 hover:bg-sky-400/10 rounded-lg transition-colors"
-                      title="Sync to cloud SMS"
-                    >
-                      <Cloud className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const defaultDateTime = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
-                        const dateTime = prompt('Edit reminder date/time (YYYY-MM-DDTHH:mm):', defaultDateTime);
-                        if (dateTime === null) return;
-                        const message = prompt('Edit reminder message:', reminder.message || reminder.taskTitle || 'Reminder');
-                        if (message === null) return;
-                        const dt = dateTime.trim();
-                        const scheduledAt = dt ? (dt.length === 16 ? `${dt}:00` : dt) : reminder.scheduledAt;
-                        try {
-                          const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(reminder.taskId, reminder.id, {
-                            scheduledAt,
-                            message,
-                          });
-                          if (res?.ok) {
-                            if (Array.isArray(res.tasks)) setTasks(res.tasks);
-                            else if (res.task) updateTask(res.task);
-                          }
-                        } catch (e) {
-                          console.error(e);
-                        }
-                      }}
-                      className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(reminder.taskId, reminder.id);
-                          if (res?.ok) {
-                            if (Array.isArray(res.tasks)) setTasks(res.tasks);
-                            else if (res.task) updateTask(res.task);
-                          }
-                        } catch (e) { console.error(e); }
-                      }}
-                      className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                        <input
+                          type="text"
+                          value={editGlobalReminderMessage}
+                          onChange={(e) => setEditGlobalReminderMessage(e.target.value)}
+                          placeholder="Reminder message..."
+                          className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none w-full"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (!editGlobalReminderDate) return;
+                              const scheduledAt = `${editGlobalReminderDate}T${editGlobalReminderTime}:00`;
+                              try {
+                                const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(reminder.taskId, reminder.id, {
+                                  scheduledAt,
+                                  message: editGlobalReminderMessage,
+                                });
+                                if (res?.ok) {
+                                  if (Array.isArray(res.tasks)) setTasks(res.tasks);
+                                  else if (res.task) updateTask(res.task);
+                                }
+                              } catch (e) { console.error(e); }
+                              setEditingGlobalReminderId(null);
+                            }}
+                            disabled={!editGlobalReminderDate}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[11px] font-medium hover:opacity-90 disabled:opacity-50"
+                          >
+                            <Check className="w-3 h-3" /> Save
+                          </button>
+                          <button
+                            onClick={() => setEditingGlobalReminderId(null)}
+                            className="px-3 py-1.5 text-[11px] text-theme-muted hover:text-theme-fg rounded-lg"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-3">
+                        <div className={clsx(
+                          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                          isOverdue ? "bg-red-500/10" : isSoon ? "bg-amber-500/10" : "bg-theme-hover"
+                        )}>
+                          <Bell className={clsx(
+                            "w-4 h-4",
+                            isOverdue ? "text-red-500" : isSoon ? "text-amber-500" : "text-theme-muted"
+                          )} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] font-semibold text-theme-fg">
+                            {reminder.message || reminder.taskTitle}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Clock className="w-3 h-3 text-theme-muted" />
+                            <span className={clsx(
+                              "text-[10px] font-medium",
+                              isOverdue ? "text-red-500" : isSoon ? "text-amber-600" : "text-theme-muted"
+                            )}>
+                              {isOverdue ? 'Overdue: ' : ''}
+                              {reminderDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              {' at '}
+                              {reminderDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          {reminder.taskTitle && reminder.message && (
+                            <div className="text-[10px] text-theme-muted mt-1 flex items-center gap-1">
+                              <ListChecks className="w-3 h-3" />
+                              {reminder.taskTitle}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            await syncReminderToCloudSMS({
+                              message: reminder.message || reminder.taskTitle || 'Reminder',
+                              scheduledAt: reminder.scheduledAt,
+                            });
+                            try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
+                          }}
+                          className="p-1.5 text-theme-muted hover:text-sky-400 hover:bg-sky-400/10 rounded-lg transition-colors"
+                          title="Sync to cloud SMS"
+                        >
+                          <Cloud className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const dt = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
+                            setEditGlobalReminderDate(dt.slice(0, 10));
+                            setEditGlobalReminderTime(dt.slice(11, 16) || '09:00');
+                            setEditGlobalReminderMessage(reminder.message || reminder.taskTitle || 'Reminder');
+                            setEditingGlobalReminderId(reminder.id);
+                          }}
+                          className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(reminder.taskId, reminder.id);
+                              if (res?.ok) {
+                                if (Array.isArray(res.tasks)) setTasks(res.tasks);
+                                else if (res.task) updateTask(res.task);
+                              }
+                            } catch (e) { console.error(e); }
+                          }}
+                          className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -623,6 +671,15 @@ const TaskCard: React.FC<TaskCardProps> = ({
   const [reminderTime, setReminderTime] = useState('09:00');
   const [reminderMessage, setReminderMessage] = useState('');
   const [cloudNotify, setCloudNotify] = useState(false);
+  // Inline edit state
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editTitleValue, setEditTitleValue] = useState('');
+  const [editingSubtodoId, setEditingSubtodoId] = useState<string | null>(null);
+  const [editSubtodoValue, setEditSubtodoValue] = useState('');
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
+  const [editReminderDate, setEditReminderDate] = useState('');
+  const [editReminderTime, setEditReminderTime] = useState('');
+  const [editReminderMessage, setEditReminderMessage] = useState('');
 
   const handleAddSubtodo = async () => {
     if (!newSubtodo.trim()) return;
@@ -635,46 +692,58 @@ const TaskCard: React.FC<TaskCardProps> = ({
     } catch (e) { console.error(e); }
   };
 
-  const handleEditTask = async () => {
-    const title = prompt('Edit task title:', task.title || '');
-    if (title === null) return;
-    const nextTitle = title.trim();
-    if (!nextTitle) return;
-    await onUpdateTask(task.id, { title: nextTitle });
+  const handleEditTask = () => {
+    setEditTitleValue(task.title || '');
+    setEditingTitle(true);
   };
 
-  const handleEditSubtodo = async (sub: { id: string; content: string }) => {
-    const content = prompt('Edit sub-task:', sub.content || '');
-    if (content === null) return;
-    const nextContent = content.trim();
-    if (!nextContent) return;
-    try {
-      const res = await (window as any).desktopAPI?.unifiedTasksUpdateSubtodo?.(task.id, sub.id, { content: nextContent });
-      if (res?.ok && res.task) onUpdate(res.task);
-    } catch (e) {
-      console.error(e);
+  const handleSaveTitle = async () => {
+    const nextTitle = editTitleValue.trim();
+    if (nextTitle && nextTitle !== task.title) {
+      await onUpdateTask(task.id, { title: nextTitle });
     }
+    setEditingTitle(false);
   };
 
-  const handleEditReminder = async (reminder: AgentAssignment) => {
-    const defaultDateTime = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
-    const dateTime = prompt('Edit reminder date/time (YYYY-MM-DDTHH:mm):', defaultDateTime);
-    if (dateTime === null) return;
-    const message = prompt('Edit reminder message:', reminder.message || `Reminder: ${task.title}`);
-    if (message === null) return;
+  const handleEditSubtodo = (sub: { id: string; content: string }) => {
+    setEditingSubtodoId(sub.id);
+    setEditSubtodoValue(sub.content);
+  };
 
-    const dt = dateTime.trim();
-    const scheduledAt = dt ? (dt.length === 16 ? `${dt}:00` : dt) : reminder.scheduledAt;
+  const handleSaveSubtodo = async (subId: string) => {
+    const nextContent = editSubtodoValue.trim();
+    if (nextContent) {
+      try {
+        const res = await (window as any).desktopAPI?.unifiedTasksUpdateSubtodo?.(task.id, subId, { content: nextContent });
+        if (res?.ok && res.task) onUpdate(res.task);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setEditingSubtodoId(null);
+  };
 
+  const handleEditReminder = (reminder: AgentAssignment) => {
+    const dt = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
+    setEditReminderDate(dt.slice(0, 10));
+    setEditReminderTime(dt.slice(11, 16) || '09:00');
+    setEditReminderMessage(reminder.message || `Reminder: ${task.title}`);
+    setEditingReminderId(reminder.id);
+  };
+
+  const handleSaveReminder = async (reminderId: string) => {
+    if (!editReminderDate) return;
+    const scheduledAt = `${editReminderDate}T${editReminderTime}:00`;
     try {
-      const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(task.id, reminder.id, {
+      const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(task.id, reminderId, {
         scheduledAt,
-        message,
+        message: editReminderMessage,
       });
       if (res?.ok) onRefreshTasks();
     } catch (e) {
       console.error(e);
     }
+    setEditingReminderId(null);
   };
 
   const handleAddReminder = async () => {
@@ -725,22 +794,43 @@ const TaskCard: React.FC<TaskCardProps> = ({
         </button>
 
         {/* Content */}
-        <div 
-          className="flex-1 min-w-0 cursor-pointer" 
-          onClick={onToggleExpand}
+        <div
+          className="flex-1 min-w-0 cursor-pointer"
+          onClick={editingTitle ? undefined : onToggleExpand}
         >
           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-            <span className={clsx(
-              "font-semibold transition-colors",
-              compact ? "text-[12px]" : "text-[13px]",
-              isCompleted ? "text-theme-muted line-through decoration-theme-muted/50" : "text-theme-fg"
-            )}>
-              {task.title}
-            </span>
-            {task.priority !== 'normal' && task.priority !== 'low' && !isCompleted && (
-              <span className={clsx("text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase", priorityCfg.bg, priorityCfg.color)}>
-                {priorityCfg.label}
-              </span>
+            {editingTitle ? (
+              <input
+                autoFocus
+                type="text"
+                value={editTitleValue}
+                onChange={(e) => setEditTitleValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.stopPropagation(); handleSaveTitle(); }
+                  if (e.key === 'Escape') { e.stopPropagation(); setEditingTitle(false); }
+                }}
+                onBlur={handleSaveTitle}
+                onClick={(e) => e.stopPropagation()}
+                className={clsx(
+                  "flex-1 bg-theme-hover border border-primary/30 rounded-lg px-2 py-0.5 outline-none focus:ring-1 focus:ring-primary/30 font-semibold text-theme-fg",
+                  compact ? "text-[12px]" : "text-[13px]"
+                )}
+              />
+            ) : (
+              <>
+                <span className={clsx(
+                  "font-semibold transition-colors",
+                  compact ? "text-[12px]" : "text-[13px]",
+                  isCompleted ? "text-theme-muted line-through decoration-theme-muted/50" : "text-theme-fg"
+                )}>
+                  {task.title}
+                </span>
+                {task.priority !== 'normal' && task.priority !== 'low' && !isCompleted && (
+                  <span className={clsx("text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase", priorityCfg.bg, priorityCfg.color)}>
+                    {priorityCfg.label}
+                  </span>
+                )}
+              </>
             )}
           </div>
           
@@ -867,43 +957,87 @@ const TaskCard: React.FC<TaskCardProps> = ({
               )}
 
               {task.agentAssignments?.filter(a => a.status === 'pending').map(reminder => (
-                <div key={reminder.id} className="flex items-center gap-2 text-[10px] text-theme-muted bg-amber-500/5 p-2 rounded-lg border border-amber-500/10">
-                  <Bell className="w-3 h-3 text-amber-500" />
-                  <span className="flex-1">
-                    {new Date(reminder.scheduledAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                    {' at '}
-                    {new Date(reminder.scheduledAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      await syncReminderToCloudSMS({
-                        message: reminder.message || `Reminder: ${task.title}`,
-                        scheduledAt: reminder.scheduledAt,
-                      });
-                      try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
-                    }}
-                    className="p-0.5 text-theme-muted hover:text-sky-400"
-                    title="Sync to cloud SMS"
-                  >
-                    <Cloud className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => handleEditReminder(reminder)}
-                    className="p-0.5 text-theme-muted hover:text-theme-fg"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(task.id, reminder.id);
-                        if (res?.ok) onRefreshTasks();
-                      } catch (e) { console.error(e); }
-                    }}
-                    className="p-0.5 text-theme-muted hover:text-red-400"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                <div key={reminder.id} className="flex flex-col gap-1.5 text-[10px] text-theme-muted bg-amber-500/5 p-2 rounded-lg border border-amber-500/10">
+                  {editingReminderId === reminder.id ? (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2">
+                        <input
+                          autoFocus
+                          type="date"
+                          value={editReminderDate}
+                          onChange={(e) => setEditReminderDate(e.target.value)}
+                          className="bg-theme-card border border-theme/10 rounded px-2 py-1 text-[10px] outline-none"
+                        />
+                        <input
+                          type="time"
+                          value={editReminderTime}
+                          onChange={(e) => setEditReminderTime(e.target.value)}
+                          className="bg-theme-card border border-theme/10 rounded px-2 py-1 text-[10px] outline-none"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={editReminderMessage}
+                        onChange={(e) => setEditReminderMessage(e.target.value)}
+                        placeholder="Reminder message..."
+                        className="bg-theme-card border border-theme/10 rounded px-2 py-1 text-[10px] outline-none w-full"
+                      />
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleSaveReminder(reminder.id)}
+                          disabled={!editReminderDate}
+                          className="p-1 bg-amber-500 text-white rounded hover:opacity-90 disabled:opacity-50"
+                        >
+                          <Check className="w-2.5 h-2.5" />
+                        </button>
+                        <button
+                          onClick={() => setEditingReminderId(null)}
+                          className="p-1 text-theme-muted hover:text-theme-fg"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Bell className="w-3 h-3 text-amber-500" />
+                      <span className="flex-1">
+                        {new Date(reminder.scheduledAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        {' at '}
+                        {new Date(reminder.scheduledAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                      <button
+                        onClick={async () => {
+                          await syncReminderToCloudSMS({
+                            message: reminder.message || `Reminder: ${task.title}`,
+                            scheduledAt: reminder.scheduledAt,
+                          });
+                          try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
+                        }}
+                        className="p-0.5 text-theme-muted hover:text-sky-400"
+                        title="Sync to cloud SMS"
+                      >
+                        <Cloud className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => handleEditReminder(reminder)}
+                        className="p-0.5 text-theme-muted hover:text-theme-fg"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(task.id, reminder.id);
+                            if (res?.ok) onRefreshTasks();
+                          } catch (e) { console.error(e); }
+                        }}
+                        className="p-0.5 text-theme-muted hover:text-red-400"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -927,9 +1061,24 @@ const TaskCard: React.FC<TaskCardProps> = ({
                   >
                     {sub.completed && <Check className="w-2.5 h-2.5" />}
                   </button>
-                  <span className={clsx("text-xs flex-1", sub.completed ? "text-theme-muted line-through" : "text-theme-fg")}>
-                    {sub.content}
-                  </span>
+                  {editingSubtodoId === sub.id ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editSubtodoValue}
+                      onChange={(e) => setEditSubtodoValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveSubtodo(sub.id);
+                        if (e.key === 'Escape') setEditingSubtodoId(null);
+                      }}
+                      onBlur={() => handleSaveSubtodo(sub.id)}
+                      className="flex-1 bg-theme-hover border border-primary/30 rounded px-1.5 py-0.5 text-xs outline-none focus:ring-1 focus:ring-primary/30"
+                    />
+                  ) : (
+                    <span className={clsx("text-xs flex-1", sub.completed ? "text-theme-muted line-through" : "text-theme-fg")}>
+                      {sub.content}
+                    </span>
+                  )}
                   <button
                     onClick={() => handleEditSubtodo(sub)}
                     className="opacity-0 group-hover/sub:opacity-100 p-0.5 text-theme-muted hover:text-theme-fg"

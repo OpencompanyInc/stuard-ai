@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { execLocalTool, getBridgeSecrets, safeToolWrite } from './bridge';
 import { resolveVMAddress, sendVMCommand, pingVMAgent } from '../services/vm-command';
 
+const VM_HOME = '/home/stuard';
+const VM_UPLOAD_DIR = `${VM_HOME}/uploads`;
+
 function requireUserId(): string {
   const secrets = getBridgeSecrets();
   const userId = String((secrets as any)?.userId || '').trim();
@@ -14,6 +17,62 @@ function asPositiveTimeout(value: unknown, fallbackMs: number): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallbackMs;
   return Math.max(1_000, Math.min(1_800_000, Math.floor(n)));
+}
+
+function stripFileUri(value: string): string {
+  if (!value.startsWith('file://')) return value;
+  try {
+    const url = new URL(value);
+    const combined = url.host ? `${url.host}${url.pathname}` : url.pathname;
+    return decodeURIComponent(combined);
+  } catch {
+    return value.replace(/^file:\/\/\/?/i, '');
+  }
+}
+
+function basenameFromAnyPath(value: string, fallback = 'upload.bin'): string {
+  const cleaned = stripFileUri(String(value || '')).replace(/[\\/]+$/g, '');
+  const name = cleaned.split(/[\\/]/).filter(Boolean).pop();
+  return (name || fallback).replace(/[^\w.\- ()[\]]+/g, '_') || fallback;
+}
+
+function looksLikeWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\/[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function normalizeVmFilePath(vmPath: string, localPath?: string): string {
+  const original = stripFileUri(String(vmPath || '').trim());
+  if (!original || original === '.' || original === './') {
+    return `${VM_UPLOAD_DIR}/${basenameFromAnyPath(localPath || '')}`;
+  }
+
+  if (looksLikeWindowsPath(original)) {
+    return `${VM_UPLOAD_DIR}/${basenameFromAnyPath(original)}`;
+  }
+
+  const normalized = original.replace(/\\/g, '/');
+  if (normalized === '~') return `${VM_UPLOAD_DIR}/${basenameFromAnyPath(localPath || '')}`;
+  if (normalized.startsWith('~/')) return `${VM_HOME}/${normalized.slice(2)}`;
+
+  if (normalized.startsWith('/')) {
+    if (normalized === VM_HOME || normalized.startsWith(`${VM_HOME}/`)) return normalized;
+    throw new Error(`vm_path_outside_sandbox: use a path under ${VM_HOME}, for example ${VM_UPLOAD_DIR}/${basenameFromAnyPath(localPath || normalized)}`);
+  }
+
+  return normalized;
+}
+
+function vmError(result: any, fallback: string): string {
+  const error = String(result?.error || result?.result?.error || result?.result?.reason || '').trim();
+  const reason = String(result?.result?.reason || '').trim();
+  if (error === 'access_denied' && reason === 'approval_timeout') {
+    return 'vm_permission_timeout: the VM tool asked for approval but delegated VM tool calls cannot surface that VM-local prompt. Enable VM auto-approve for that tool, or use vm_upload_file/vm_download_file for file transfers.';
+  }
+  return error || fallback;
+}
+
+async function writeToolEvent(writer: any, payload: Record<string, any>) {
+  await safeToolWrite(writer as any, { type: 'tool_event', ...payload });
 }
 
 export const vm_status = createTool({
@@ -71,12 +130,18 @@ export const vm_execute_tool = createTool({
     result: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async (inputData: any) => {
+  execute: async (inputData: any, { writer }: any) => {
     const { tool, args = {}, timeoutMs } = inputData as { tool: string; args?: Record<string, any>; timeoutMs?: number };
     const userId = requireUserId();
     const timeout = asPositiveTimeout(timeoutMs, 120_000);
+    await writeToolEvent(writer, { tool: 'vm_execute_tool', status: 'started', vmTool: tool });
     const result = await sendVMCommand(userId, 'tool_exec', { tool, args }, timeout);
-    if (!result.ok) return { ok: false, tool, error: result.error || 'vm_tool_failed', result: result.result };
+    if (!result.ok) {
+      const error = vmError(result, 'vm_tool_failed');
+      await writeToolEvent(writer, { tool: 'vm_execute_tool', status: 'error', vmTool: tool, error });
+      return { ok: false, tool, error, result: result.result };
+    }
+    await writeToolEvent(writer, { tool: 'vm_execute_tool', status: 'completed', vmTool: tool });
     return { ok: true, tool, result: result.result };
   },
 });
@@ -108,31 +173,59 @@ export const vm_upload_file = createTool({
     };
     const userId = requireUserId();
     const timeout = asPositiveTimeout(timeoutMs, 180_000);
-
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'vm_upload_file', status: 'reading_desktop_file', path: localPath });
-    const file = await execLocalTool('read_file_binary', { path: localPath }, writer as any, timeout, { silent: true });
-    const data = String(file?.data || '').trim();
-    if (!data) {
-      return { ok: false, localPath, vmPath, error: file?.error || 'desktop_file_read_failed' };
+    let resolvedVmPath: string;
+    try {
+      resolvedVmPath = normalizeVmFilePath(vmPath, localPath);
+    } catch (e: any) {
+      const error = e?.message || 'invalid_vm_path';
+      await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'error', path: vmPath, error });
+      return { ok: false, localPath, vmPath, error };
     }
 
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'vm_upload_file', status: 'writing_vm_file', path: vmPath });
+    await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'reading_desktop_file', path: localPath });
+    const file = await execLocalTool('read_file_base64', { path: localPath }, writer as any, timeout, { silent: true });
+    if (!file?.ok) {
+      const error = file?.error || 'desktop_file_read_failed';
+      await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'error', path: localPath, error });
+      return { ok: false, localPath, vmPath: resolvedVmPath, error };
+    }
+    const data = typeof file.data === 'string' ? file.data : '';
+    if (!data && Number(file.size || 0) > 0) {
+      const error = 'desktop_file_read_returned_no_data';
+      await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'error', path: localPath, error });
+      return { ok: false, localPath, vmPath: resolvedVmPath, error };
+    }
+
+    if (!overwrite) {
+      const stat = await sendVMCommand(userId, 'file_stat', { path: resolvedVmPath }, 15_000);
+      if (stat.ok) {
+        const error = 'vm_destination_exists';
+        await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'error', path: resolvedVmPath, error });
+        return { ok: false, localPath, vmPath: resolvedVmPath, error, result: stat.result };
+      }
+    }
+
+    await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'writing_vm_file', path: resolvedVmPath });
     const result = await sendVMCommand(
       userId,
-      'tool_exec',
-      { tool: 'write_file_base64', args: { path: vmPath, content: data, overwrite } },
+      'file_write',
+      { path: resolvedVmPath, content: data, encoding: 'base64' },
       timeout,
     );
 
     if (!result.ok) {
-      return { ok: false, localPath, vmPath, error: result.error || 'vm_file_write_failed', result: result.result };
+      const error = vmError(result, 'vm_file_write_failed');
+      await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'error', path: resolvedVmPath, error });
+      return { ok: false, localPath, vmPath: resolvedVmPath, error, result: result.result };
     }
 
+    const bytes = Number(file.size) || Buffer.from(data, 'base64').byteLength;
+    await writeToolEvent(writer, { tool: 'vm_upload_file', status: 'completed', path: resolvedVmPath, bytes });
     return {
       ok: true,
       localPath,
-      vmPath,
-      bytes: Buffer.from(data, 'base64').byteLength,
+      vmPath: resolvedVmPath,
+      bytes,
       result: result.result,
     };
   },
@@ -165,30 +258,48 @@ export const vm_download_file = createTool({
     };
     const userId = requireUserId();
     const timeout = asPositiveTimeout(timeoutMs, 180_000);
+    let resolvedVmPath: string;
+    try {
+      resolvedVmPath = normalizeVmFilePath(vmPath);
+    } catch (e: any) {
+      const error = e?.message || 'invalid_vm_path';
+      await writeToolEvent(writer, { tool: 'vm_download_file', status: 'error', path: vmPath, error });
+      return { ok: false, vmPath, localPath, error };
+    }
 
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'vm_download_file', status: 'reading_vm_file', path: vmPath });
+    await writeToolEvent(writer, { tool: 'vm_download_file', status: 'reading_vm_file', path: resolvedVmPath });
     const readResult = await sendVMCommand(
       userId,
-      'tool_exec',
-      { tool: 'read_file_base64', args: { path: vmPath } },
+      'file_read',
+      { path: resolvedVmPath },
       timeout,
     );
-    const data = String(readResult.result?.data || readResult.result?.content || '').trim();
-    if (!readResult.ok || !data) {
-      return { ok: false, vmPath, localPath, error: readResult.error || readResult.result?.error || 'vm_file_read_failed', result: readResult.result };
+    const fileContent = readResult.result?.content;
+    const encoding = String(readResult.result?.encoding || 'utf-8').toLowerCase();
+    if (!readResult.ok || typeof fileContent !== 'string') {
+      const error = vmError(readResult, 'vm_file_read_failed');
+      await writeToolEvent(writer, { tool: 'vm_download_file', status: 'error', path: resolvedVmPath, error });
+      return { ok: false, vmPath: resolvedVmPath, localPath, error, result: readResult.result };
     }
+    const data = encoding === 'base64'
+      ? fileContent
+      : Buffer.from(fileContent, 'utf8').toString('base64');
 
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'vm_download_file', status: 'writing_desktop_file', path: localPath });
+    await writeToolEvent(writer, { tool: 'vm_download_file', status: 'writing_desktop_file', path: localPath });
     const writeResult = await execLocalTool('write_file_base64', { path: localPath, content: data, overwrite }, writer as any, timeout, { silent: true });
     if (!writeResult?.ok) {
-      return { ok: false, vmPath, localPath, error: writeResult?.error || 'desktop_file_write_failed', result: writeResult };
+      const error = writeResult?.error || 'desktop_file_write_failed';
+      await writeToolEvent(writer, { tool: 'vm_download_file', status: 'error', path: localPath, error });
+      return { ok: false, vmPath: resolvedVmPath, localPath, error, result: writeResult };
     }
 
+    const bytes = Number(readResult.result?.size) || Buffer.from(data, 'base64').byteLength;
+    await writeToolEvent(writer, { tool: 'vm_download_file', status: 'completed', path: localPath, bytes });
     return {
       ok: true,
-      vmPath,
+      vmPath: resolvedVmPath,
       localPath,
-      bytes: Buffer.from(data, 'base64').byteLength,
+      bytes,
       result: writeResult,
     };
   },

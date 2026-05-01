@@ -48,6 +48,7 @@ export interface DiscoveredApp {
 let cachedApps: DiscoveredApp[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+let refreshInFlight: Promise<void> | null = null;
 
 function notifyAppsUpdated(payload: { count: number; iconsReady?: boolean }) {
   BrowserWindow.getAllWindows().forEach((win) => {
@@ -60,19 +61,28 @@ function notifyAppsUpdated(payload: { count: number; iconsReady?: boolean }) {
 }
 
 /**
- * Return the cached list or refresh if stale.
+ * Return the cached list. If it is stale, refresh it in the background so
+ * search never swaps a warmed icon list for raw Get-StartApps results.
  */
 export async function getInstalledApps(forceRefresh = false): Promise<DiscoveredApp[]> {
-  if (!forceRefresh && cachedApps.length > 0 && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+  const hasCache = cachedApps.length > 0;
+  const stale = Date.now() - cacheTimestamp >= CACHE_TTL_MS;
+
+  if (!forceRefresh && hasCache) {
+    if (stale && !refreshInFlight) {
+      refreshAppCache().catch((e) => {
+        logger.warn("[app-discovery] Background app refresh failed:", e?.message || e);
+      });
+    }
     return cachedApps;
   }
-  try {
-    cachedApps = await discoverApps();
-    cacheTimestamp = Date.now();
-    logger.info(`[app-discovery] Discovered ${cachedApps.length} applications`);
-  } catch (e) {
-    logger.error("[app-discovery] Failed to discover apps:", e);
+
+  if (refreshInFlight) {
+    await refreshInFlight;
+    return cachedApps;
   }
+
+  await refreshAppCache();
   return cachedApps;
 }
 
@@ -80,21 +90,41 @@ export async function getInstalledApps(forceRefresh = false): Promise<Discovered
  * Refresh the app cache in the background. Called on startup and periodically.
  */
 export async function refreshAppCache(): Promise<void> {
-  await getInstalledApps(true);
-  notifyAppsUpdated({ count: cachedApps.length, iconsReady: false });
+  if (refreshInFlight) return refreshInFlight;
 
-  // Two-stage icon warming:
-  // 1. Pre-extract via Shell COM (IShellItemImageFactory) for the most reliable
-  //    icons — handles UWP shell:AppsFolder and DLL-resource icons that
-  //    SHGetFileInfo (Electron's getFileIcon) can't resolve. Mutates iconHint.
-  // 2. Warm Electron's nativeImage cache from the now-stable iconHint paths.
-  prewarmWindowsAppIcons(cachedApps)
-    .catch((e) => logger.warn("[app-discovery] Shell COM icon prewarm failed:", e?.message))
-    .then(() => warmDiscoveredAppIconCache(cachedApps, { size: "normal" }))
-    .then(() => notifyAppsUpdated({ count: cachedApps.length, iconsReady: true }))
-    .catch(() => {
-      // Discovery is still valid even if icon warming fails.
-    });
+  // Publish the refreshed list only after icon hints and icon data are warmed.
+  refreshInFlight = (async () => {
+    let discovered: DiscoveredApp[] = [];
+    try {
+      discovered = await discoverApps();
+      logger.info(`[app-discovery] Discovered ${discovered.length} applications`);
+    } catch (e) {
+      logger.error("[app-discovery] Failed to discover apps:", e);
+      return;
+    }
+
+    notifyAppsUpdated({ count: discovered.length, iconsReady: false });
+
+    try {
+      await prewarmWindowsAppIcons(discovered);
+    } catch (e: any) {
+      logger.warn("[app-discovery] Shell COM icon prewarm failed:", e?.message);
+    }
+
+    try {
+      await warmDiscoveredAppIconCache(discovered, { size: "normal" });
+    } catch (e: any) {
+      logger.warn("[app-discovery] Electron icon cache warm failed:", e?.message);
+    }
+
+    cachedApps = discovered;
+    cacheTimestamp = Date.now();
+    notifyAppsUpdated({ count: cachedApps.length, iconsReady: true });
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
 }
 
 // ─────────────────────────────────────────────────────────

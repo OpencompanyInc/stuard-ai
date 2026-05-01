@@ -432,10 +432,10 @@ Common VM-local tools:
 ## Patterns
 
 - Start with vm_status unless the task is a simple file transfer.
-- For desktop -> VM file transfer, use vm_upload_file. For VM -> desktop transfer, use vm_download_file.
+- For desktop -> VM file transfer, use vm_upload_file. For VM -> desktop transfer, use vm_download_file. VM file-transfer paths should be under /home/stuard; if the user gives a Windows-looking destination, save it under /home/stuard/uploads using the same filename.
 - For downloading a URL directly onto the VM, call vm_execute_tool with run_command or http_request if available on the VM.
 - For browser work, keep the browser headless unless the user explicitly asks for a visible session. Use browser_use_content and browser_use_get_interactive_elements before screenshots.
-- For commands, prefer dedicated VM file/browser tools when possible. Use run_command for package installs, curl/wget, service inspection, or quick shell work.
+- For commands, prefer dedicated VM file/browser tools when possible. Use run_command for package installs, curl/wget, service inspection, or quick shell work. If a VM command reports vm_permission_timeout, tell the user the VM-local permission prompt could not be approved from this delegated path and suggest enabling VM auto-approve for that tool.
 - For long-running interactive work, use terminal_create -> terminal_send_input -> terminal_read -> terminal_destroy.
 
 ## Rules

@@ -104,7 +104,9 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// DELETE /api/polar/subscription — cancel at period end
+// DELETE /api/polar/subscription — cancel at period end (user keeps access
+// through the end of the paid period, then the subscription expires).
+// To cancel immediately (admin/refund flow), pass ?immediate=1.
 export async function DELETE(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -114,12 +116,50 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'no_subscription' }, { status: 404 });
   }
 
+  const url = new URL(req.url);
+  const immediate = url.searchParams.get('immediate') === '1';
+
   try {
-    await polar.subscriptions.revoke({ id: subscriptionId });
+    if (immediate) {
+      await polar.subscriptions.revoke({ id: subscriptionId });
+    } else {
+      await polar.subscriptions.update({
+        id: subscriptionId,
+        subscriptionUpdate: { cancelAtPeriodEnd: true } as any,
+      });
+    }
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json(
-      { error: 'failed_to_cancel', message: e?.message },
+      { error: 'failed_to_cancel', message: e?.message, details: e?.body },
+      { status: 500 },
+    );
+  }
+}
+
+// POST /api/polar/subscription/resume — undo a pending cancellation
+export async function POST(req: NextRequest) {
+  const user = await getAuthedUser(req);
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const url = new URL(req.url);
+  if (url.searchParams.get('action') !== 'resume') {
+    return NextResponse.json({ error: 'unknown_action' }, { status: 400 });
+  }
+
+  const subscriptionId = await getUserSubscriptionId(user.id);
+  if (!subscriptionId) {
+    return NextResponse.json({ error: 'no_subscription' }, { status: 404 });
+  }
+
+  try {
+    await polar.subscriptions.update({
+      id: subscriptionId,
+      subscriptionUpdate: { cancelAtPeriodEnd: false } as any,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: 'failed_to_resume', message: e?.message, details: e?.body },
       { status: 500 },
     );
   }

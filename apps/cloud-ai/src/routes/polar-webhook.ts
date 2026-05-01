@@ -207,13 +207,31 @@ function extractPeriodBounds(obj: any) {
 }
 
 function getAmountCents(payload: any): number | null {
+  // Order matters: pre-discount / committed-tier amounts come before
+  // post-discount totals, so a 100%-off coupon still grants the right credits.
   const candidates = [
-    payload?.amount,
+    // Order subtotal (pre-discount) — for order.paid events
+    payload?.subtotal_amount,
+    payload?.subtotalAmount,
+    // Subscription's price tier — preset_amount for custom-amount PWYW prices
+    payload?.prices?.[0]?.preset_amount,
+    payload?.prices?.[0]?.presetAmount,
+    payload?.prices?.[0]?.amount,
+    payload?.product?.prices?.[0]?.preset_amount,
+    payload?.product?.prices?.[0]?.presetAmount,
+    payload?.product?.prices?.[0]?.amount,
+    // Embedded subscription block (for order.paid that has subscription nested)
+    payload?.subscription?.amount,
+    payload?.subscription?.prices?.[0]?.preset_amount,
+    payload?.subscription?.prices?.[0]?.presetAmount,
+    payload?.subscription?.prices?.[0]?.amount,
+    // Fallbacks — net amount, items, checkout
+    payload?.items?.[0]?.amount,
+    payload?.items?.[0]?.price?.amount,
     payload?.price?.amount,
     payload?.price?.amount_cents,
     payload?.price?.amountCents,
-    payload?.items?.[0]?.price?.amount,
-    payload?.items?.[0]?.amount,
+    payload?.amount,
     payload?.checkout?.amount,
   ];
   for (const c of candidates) {
@@ -242,8 +260,11 @@ function planFromProductId(productId: string | null | undefined): PlanTier | nul
 async function updateProfile(userId: string, values: Record<string, any>) {
   const sb = getSupabaseAdmin();
   if (!sb) { writeLog('polar_webhook_no_supabase', {}); return; }
-  const { error } = await sb.from('profiles').update(values).eq('user_id', userId);
-  if (error) await sb.from('profiles').update(values).eq('id', userId);
+  // Upsert so first-time subscribers (no profile row yet) don't silently no-op.
+  const { error } = await sb
+    .from('profiles')
+    .upsert({ id: userId, ...values, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) writeLog('polar_webhook_profile_upsert_error', { userId, error: error.message });
 }
 
 async function upsertCreditGrant(input: {
@@ -332,15 +353,35 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   const sourceRef      = `${subscriptionId || productId || 'subscription'}:${period.end || period.start || 'current'}`;
 
   if (amount) {
+    // Rollover/carryover: when this is a NEW cycle for an existing subscription
+    // (different sourceRef than the prior grant), carry 50% of the prior cycle's
+    // remaining credits forward. When it's a mid-period change (same sourceRef
+    // but bigger total — i.e. an upgrade), preserve the user's leftover credits
+    // by adding them on top of the new plan's allotment.
+    const carryover = await computeCarryover(
+      userId,
+      subscriptionId,
+      sourceRef,
+      amount.credits,
+    );
+    const totalCredits = amount.credits + carryover.bonusCredits;
     await upsertCreditGrant({
       userId,
       sourceType: 'subscription_cycle',
       sourceRef,
       plan,
       amountUsd: amount.amountDollars,
-      totalCredits: amount.credits,
+      totalCredits,
       expiresAt: period.end,
-      metadata: { productId, subscriptionId, currentPeriodStart: period.start, currentPeriodEnd: period.end },
+      metadata: {
+        productId,
+        subscriptionId,
+        currentPeriodStart: period.start,
+        currentPeriodEnd: period.end,
+        baseCredits: amount.credits,
+        carryoverCredits: carryover.bonusCredits,
+        carryoverKind: carryover.kind,
+      },
     });
   }
 
@@ -355,6 +396,107 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   };
   if (amount) values.monthly_token_limit = amount.credits;
   await updateProfile(userId, values);
+}
+
+/**
+ * Compute how many credits to carry forward when a subscription grant is
+ * being created or updated.
+ *
+ * - **Renewal** (new sourceRef for an existing subscription): 50% of the prior
+ *   cycle's remaining credits roll over. We zero out the prior grant's
+ *   remaining_credits so the rollover isn't double-counted.
+ * - **Upgrade** (same sourceRef, new total ≥ existing total): keep the prior
+ *   grant's leftover (remaining - already-counted carryover) on top of the new
+ *   plan's allotment, so users don't lose what they paid for when they upgrade
+ *   mid-period.
+ * - **Downgrade or no change**: zero carryover (handled by the natural
+ *   `remaining = total - consumed` path inside upsertCreditGrant).
+ */
+async function computeCarryover(
+  userId: string,
+  subscriptionId: string | null,
+  sourceRef: string,
+  newBaseCredits: number,
+): Promise<{ bonusCredits: number; kind: 'renewal' | 'upgrade' | 'none' }> {
+  const sb = getSupabaseAdmin();
+  if (!sb || !subscriptionId) return { bonusCredits: 0, kind: 'none' };
+
+  // 1) Look for the same sourceRef (mid-period upgrade case)
+  const { data: sameRef } = await sb
+    .from('credit_grants')
+    .select('id, total_credits, remaining_credits, metadata')
+    .eq('user_id', userId)
+    .eq('source_type', 'subscription_cycle')
+    .eq('source_ref', sourceRef)
+    .maybeSingle();
+
+  if (sameRef?.id) {
+    const existingTotal = Number(sameRef.total_credits) || 0;
+    const existingRemaining = Number(sameRef.remaining_credits) || 0;
+    const existingBase = Number((sameRef.metadata as any)?.baseCredits) || existingTotal;
+    if (newBaseCredits > existingBase + 0.0001) {
+      // Upgrade — preserve unused credits from the prior plan on top of the new total.
+      const consumed = Math.max(0, existingTotal - existingRemaining);
+      const leftover = Math.max(0, existingBase - consumed);
+      return { bonusCredits: leftover, kind: 'upgrade' };
+    }
+    return { bonusCredits: 0, kind: 'none' };
+  }
+
+  // 2) No same-sourceRef grant — this is a new cycle. Find the most recent
+  // prior cycle for this subscription and carry over 50% of its remaining.
+  const { data: priorGrants } = await sb
+    .from('credit_grants')
+    .select('id, total_credits, remaining_credits, metadata, created_at')
+    .eq('user_id', userId)
+    .eq('source_type', 'subscription_cycle')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const prior = (priorGrants || []).find((g: any) => {
+    const md = g.metadata || {};
+    return md.subscriptionId === subscriptionId;
+  });
+
+  if (!prior) return { bonusCredits: 0, kind: 'none' };
+
+  const priorRemaining = Math.max(0, Number(prior.remaining_credits) || 0);
+  if (priorRemaining <= 0) return { bonusCredits: 0, kind: 'renewal' };
+  const rollover = Math.floor(priorRemaining * 0.5);
+  if (rollover <= 0) return { bonusCredits: 0, kind: 'renewal' };
+
+  // Zero out the prior grant's remaining so the rolled-over credits live in the
+  // new cycle only. We also stamp metadata for audit.
+  await sb
+    .from('credit_grants')
+    .update({
+      remaining_credits: 0,
+      metadata: {
+        ...(prior.metadata as any || {}),
+        rolledOverTo: sourceRef,
+        rolledOverCredits: rollover,
+        rolledOverAt: new Date().toISOString(),
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', (prior as any).id);
+
+  await sb.from('credit_transactions').insert({
+    user_id: userId,
+    grant_id: (prior as any).id,
+    entry_type: 'adjustment',
+    source_type: 'subscription_cycle',
+    source_ref: `${sourceRef}:rollover`,
+    credits: -priorRemaining + rollover, // negative net impact on prior grant
+    metadata: {
+      reason: 'rollover_to_next_cycle',
+      newSourceRef: sourceRef,
+      priorRemaining,
+      rolloverCredits: rollover,
+    },
+  });
+
+  return { bonusCredits: rollover, kind: 'renewal' };
 }
 
 async function applyAddonGrant(userId: string, payload: any) {

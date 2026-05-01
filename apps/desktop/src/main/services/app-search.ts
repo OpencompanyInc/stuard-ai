@@ -336,7 +336,10 @@ async function searchFileIndex(
       .filter((item) => item.score >= minScore)
       .sort((a, b) => b.score - a.score);
 
-    return scored.slice(0, limit).map(({ file: f, score }) => ({
+    return scored
+      .filter(({ file: f }) => String(f.kind || "").toLowerCase() !== "application")
+      .slice(0, limit)
+      .map(({ file: f, score }) => ({
       kind: String(f.kind || "file").toLowerCase(),
       name: f.display_name || f.filename || f.path,
       path: String(f.path || ""),

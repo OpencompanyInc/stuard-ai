@@ -520,7 +520,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           .filter((r: any) => r.source === "app-discovery")
           .slice(0, 5);
         const files = res.results
-          .filter((r: any) => r.source !== "app-discovery")
+          .filter((r: any) => r.source !== "app-discovery" && String(r.kind || "").toLowerCase() !== "application")
           .slice(0, 8);
         setAppResults(apps);
         setFileResults(files);
@@ -540,7 +540,9 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               if (!indexed?.ok) return;
 
               const indexedFiles = Array.isArray(indexed.results)
-                ? indexed.results.slice(0, 8)
+                ? indexed.results
+                    .filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
+                    .slice(0, 8)
                 : [];
               if (indexedFiles.length === 0) return;
 
@@ -602,7 +604,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         if (semanticReqIdRef.current !== reqId) return;
         if (res?.ok) {
           setFileResults(
-            Array.isArray(res.results) ? res.results.slice(0, 8) : [],
+            Array.isArray(res.results)
+              ? res.results
+                  .filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
+                  .slice(0, 8)
+              : [],
           );
           setFileSearchMode("hybrid");
         }
@@ -726,6 +732,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       const updates: Record<string, string> = {};
       await Promise.all(
         fileResults.slice(0, 8).map(async (f: any) => {
+          if (String(f?.kind || "").toLowerCase() === "application") return;
           const key = String(f?.path || "").trim();
           if (!key || fileIconCacheRef.current[key]) return;
 

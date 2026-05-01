@@ -36,13 +36,27 @@ function planFromProductId(productId: string | null | undefined): PlanTier | nul
 }
 
 function getAmountCents(payload: any): number | null {
+  // Order matters: pre-discount / committed-tier amounts come before
+  // post-discount totals, so a 100%-off coupon still grants the right credits.
   const candidates = [
-    payload?.amount,
+    payload?.subtotal_amount,
+    payload?.subtotalAmount,
+    payload?.prices?.[0]?.preset_amount,
+    payload?.prices?.[0]?.presetAmount,
+    payload?.prices?.[0]?.amount,
+    payload?.product?.prices?.[0]?.preset_amount,
+    payload?.product?.prices?.[0]?.presetAmount,
+    payload?.product?.prices?.[0]?.amount,
+    payload?.subscription?.amount,
+    payload?.subscription?.prices?.[0]?.preset_amount,
+    payload?.subscription?.prices?.[0]?.presetAmount,
+    payload?.subscription?.prices?.[0]?.amount,
+    payload?.items?.[0]?.amount,
+    payload?.items?.[0]?.price?.amount,
     payload?.price?.amount,
     payload?.price?.amount_cents,
     payload?.price?.amountCents,
-    payload?.items?.[0]?.price?.amount,
-    payload?.items?.[0]?.amount,
+    payload?.amount,
     payload?.checkout?.amount,
   ];
   for (const c of candidates) {
@@ -127,16 +141,11 @@ async function updateProfile(userId: string, values: Record<string, any>) {
     console.error('Missing Supabase env for webhook');
     return;
   }
-  const { error: byUserIdError } = await supabase
+  // Upsert so first-time subscribers (no profile row yet) don't silently no-op.
+  const { error } = await supabase
     .from('profiles')
-    .update(values)
-    .eq('user_id', userId);
-  if (byUserIdError) {
-    await supabase
-      .from('profiles')
-      .update(values)
-      .eq('id', userId);
-  }
+    .upsert({ id: userId, ...values, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) console.error('Polar webhook profile upsert error', { userId, error: error.message });
 }
 
 async function upsertCreditGrant(input: {
@@ -227,19 +236,29 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   const sourceRef = `${subscriptionId || productId || 'subscription'}:${period.end || period.start || 'current'}`;
 
   if (amount) {
+    const carryover = await computeCarryover(
+      userId,
+      subscriptionId,
+      sourceRef,
+      amount.credits,
+    );
+    const totalCredits = amount.credits + carryover.bonusCredits;
     await upsertCreditGrant({
       userId,
       sourceType: 'subscription_cycle',
       sourceRef,
       plan,
       amountUsd: amount.amountDollars,
-      totalCredits: amount.credits,
+      totalCredits,
       expiresAt: period.end,
       metadata: {
         productId,
         subscriptionId,
         currentPeriodStart: period.start,
         currentPeriodEnd: period.end,
+        baseCredits: amount.credits,
+        carryoverCredits: carryover.bonusCredits,
+        carryoverKind: carryover.kind,
       },
     });
   }
@@ -255,6 +274,92 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   };
   if (amount) values.monthly_token_limit = amount.credits;
   await updateProfile(userId, values);
+}
+
+/**
+ * On renewal (new sourceRef): roll over 50% of the prior cycle's remaining
+ * credits and zero out the prior grant's remaining_credits to avoid double-count.
+ * On upgrade (same sourceRef, larger total): preserve leftover credits on top of
+ * the new plan's allotment so users don't lose what they paid for.
+ */
+async function computeCarryover(
+  userId: string,
+  subscriptionId: string | null,
+  sourceRef: string,
+  newBaseCredits: number,
+): Promise<{ bonusCredits: number; kind: 'renewal' | 'upgrade' | 'none' }> {
+  if (!supabase || !subscriptionId) return { bonusCredits: 0, kind: 'none' };
+
+  const { data: sameRef } = await supabase
+    .from('credit_grants')
+    .select('id, total_credits, remaining_credits, metadata')
+    .eq('user_id', userId)
+    .eq('source_type', 'subscription_cycle')
+    .eq('source_ref', sourceRef)
+    .maybeSingle();
+
+  if (sameRef?.id) {
+    const existingTotal = Number((sameRef as any).total_credits) || 0;
+    const existingRemaining = Number((sameRef as any).remaining_credits) || 0;
+    const existingBase = Number(((sameRef as any).metadata as any)?.baseCredits) || existingTotal;
+    if (newBaseCredits > existingBase + 0.0001) {
+      const consumed = Math.max(0, existingTotal - existingRemaining);
+      const leftover = Math.max(0, existingBase - consumed);
+      return { bonusCredits: leftover, kind: 'upgrade' };
+    }
+    return { bonusCredits: 0, kind: 'none' };
+  }
+
+  const { data: priorGrants } = await supabase
+    .from('credit_grants')
+    .select('id, total_credits, remaining_credits, metadata, created_at')
+    .eq('user_id', userId)
+    .eq('source_type', 'subscription_cycle')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const prior = (priorGrants || []).find((g: any) => {
+    const md = g.metadata || {};
+    return md.subscriptionId === subscriptionId;
+  });
+
+  if (!prior) return { bonusCredits: 0, kind: 'none' };
+
+  const priorRemaining = Math.max(0, Number((prior as any).remaining_credits) || 0);
+  if (priorRemaining <= 0) return { bonusCredits: 0, kind: 'renewal' };
+  const rollover = Math.floor(priorRemaining * 0.5);
+  if (rollover <= 0) return { bonusCredits: 0, kind: 'renewal' };
+
+  await supabase
+    .from('credit_grants')
+    .update({
+      remaining_credits: 0,
+      metadata: {
+        ...((prior as any).metadata as any || {}),
+        rolledOverTo: sourceRef,
+        rolledOverCredits: rollover,
+        rolledOverAt: new Date().toISOString(),
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', (prior as any).id);
+
+  await supabase.from('credit_transactions').insert({
+    user_id: userId,
+    grant_id: (prior as any).id,
+    entry_type: 'adjustment',
+    source_type: 'subscription_cycle',
+    source_ref: `${sourceRef}:rollover`,
+    credits: -priorRemaining + rollover,
+    metadata: {
+      reason: 'rollover_to_next_cycle',
+      newSourceRef: sourceRef,
+      priorRemaining,
+      rolloverCredits: rollover,
+    },
+  });
+
+  return { bonusCredits: rollover, kind: 'renewal' };
 }
 
 async function applyAddonGrant(userId: string, payload: any) {

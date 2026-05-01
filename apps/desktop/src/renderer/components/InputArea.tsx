@@ -549,7 +549,10 @@ const InputArea = forwardRef(function InputArea(
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok && Array.isArray(res.results)) {
           const apps = res.results.filter((r: any) => r.source === 'app-discovery');
-          const files = res.results.filter((r: any) => r.source !== 'app-discovery');
+          const files = res.results.filter((r: any) => (
+            r.source !== 'app-discovery' &&
+            String(r.kind || '').toLowerCase() !== 'application'
+          ));
           setAppResults(apps);
           setFileResults(files);
           setFileSearchMode('quick');
@@ -582,7 +585,9 @@ const InputArea = forwardRef(function InputArea(
 
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+        setFileResults(Array.isArray(res.results)
+          ? res.results.filter((r: any) => String(r?.kind || '').toLowerCase() !== 'application')
+          : []);
         setAppResults([]);
         setFileSearchMode('quick');
       } else {
@@ -631,7 +636,9 @@ const InputArea = forwardRef(function InputArea(
 
       if (semanticReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results) ? res.results : []);
+        setFileResults(Array.isArray(res.results)
+          ? res.results.filter((r: any) => String(r?.kind || '').toLowerCase() !== 'application')
+          : []);
         setFileSearchMode('hybrid');
       }
     } catch {
@@ -699,6 +706,10 @@ const InputArea = forwardRef(function InputArea(
       const filePath = String(a.path || '').trim();
       const iconHint = String(a.iconHint || a.launchTarget || '').trim();
       if (!filePath) continue;
+      if (typeof a.iconDataUrl === 'string' && a.iconDataUrl) {
+        fileIconCacheRef.current[filePath] = a.iconDataUrl;
+        continue;
+      }
       if (iconHint || filePath) {
         iconRequests.push({
           displayPath: filePath,
@@ -710,6 +721,7 @@ const InputArea = forwardRef(function InputArea(
     // File results
     for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
       if (!f) continue;
+      if (String(f.kind || '').toLowerCase() === 'application') continue;
       const filePath = String(f.path || '').trim();
       if (!filePath) continue;
       const preferThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
@@ -1319,7 +1331,9 @@ const InputArea = forwardRef(function InputArea(
                     </div>
                     <div className="px-1 space-y-1">
                       {appResults.map((a: any, idx: number) => {
-                        const iconUrl = a?.path ? fileIconDataUrls[String(a.path)] : undefined;
+                        const iconUrl =
+                          a?.iconDataUrl ||
+                          (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
                         return (
                           <button
                             key={String(a.name || idx)}
