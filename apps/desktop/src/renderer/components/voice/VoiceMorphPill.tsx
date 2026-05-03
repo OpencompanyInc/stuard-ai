@@ -5,6 +5,7 @@ import { Mic, MicOff, X, Loader2, Sparkles } from 'lucide-react';
 import { VoiceOrb } from './VoiceOrb';
 import type { VoiceModeState, TranscriptLine, VoiceToolEvent } from '../../hooks/useVoiceMode';
 import { describeTool, friendlyVoiceState } from './voiceLabels';
+import { VoiceMarkdownText } from './VoiceMarkdownText';
 
 interface VoiceMorphPillProps {
   voiceActive: boolean;
@@ -167,7 +168,7 @@ export function VoiceMorphPill({
               <div className="flex-1 min-w-0 flex flex-col justify-center leading-tight">
                 <AnimatePresence mode="wait">
                   {showLiveTranscript ? (
-                    <motion.p
+                    <motion.div
                       key={`t-${lastLine!.id}`}
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -181,11 +182,15 @@ export function VoiceMorphPill({
                         !lastLine!.isFinal && 'opacity-70',
                       )}
                     >
-                      {lastLine!.text}
+                      {lastLine!.role === 'assistant' ? (
+                        <VoiceMarkdownText text={lastLine!.text} />
+                      ) : (
+                        lastLine!.text
+                      )}
                       {!lastLine!.isFinal && (
                         <span className="inline-block w-[1.5px] h-[0.85em] bg-gray-400/80 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
                       )}
-                    </motion.p>
+                    </motion.div>
                   ) : (
                     <motion.div
                       key={`s-${status.label}-${status.detail || ''}`}

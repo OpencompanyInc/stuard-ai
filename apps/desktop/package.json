@@ -123,10 +123,15 @@
         "to": "agent"
       },
       {
+        "from": "resources/wakeword",
+        "to": "wakeword"
+      },
+      {
         "from": "build/.env",
         "to": ".env"
       }
     ],
+    "beforeBuild": "scripts/electron-before-build.cjs",
     "mac": {
       "category": "public.app-category.productivity",
       "target": [

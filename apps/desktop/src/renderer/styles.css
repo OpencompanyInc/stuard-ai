@@ -1362,26 +1362,30 @@ body {
   right: 0;
 }
 
-/* Mode transition animations */
+/* Mode transition animations.
+   Use opacity-only and rely on GPU compositing (will-change) so the
+   animation runs on the compositor thread instead of triggering layout.
+   The previous transform: scale variant caused visible jank on Windows
+   when the BrowserWindow itself was being resized at the same time. */
 @keyframes modeTransition {
   from {
-    opacity: 0.8;
-    transform: scale(0.98);
+    opacity: 0;
   }
-
   to {
     opacity: 1;
-    transform: scale(1);
   }
 }
 
 .mode-transition {
-  animation: modeTransition 0.2s ease-out;
+  animation: modeTransition 120ms ease-out;
+  will-change: opacity;
 }
 
-/* Smooth size transitions for UI elements */
+/* Smooth size transitions for inner UI elements only.
+   Keep this short so it doesn't fight the native window resize, and
+   transition only properties that the GPU can composite cheaply. */
 .smooth-resize {
-  transition: width 0.15s ease-out, height 0.15s ease-out, padding 0.15s ease-out;
+  transition: padding 120ms ease-out;
 }
 
 /* Responsive breakpoints for overlay width */

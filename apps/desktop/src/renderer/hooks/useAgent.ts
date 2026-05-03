@@ -1998,6 +1998,10 @@ export function useAgent(options?: string | UseAgentOptions) {
             deltaBufferRef.current = '';
           } else if (msg.type === 'subagent_event') {
             if (stoppedRef.current) return;
+            // Subagent events are sent directly by the runtime. If one arrives
+            // after its parent turn has finalized, do not let it fall back to
+            // the active tab and appear as a fresh orchestrator stream.
+            if (msg.requestId && !requestIdToTabRef.current.has(msg.requestId)) return;
             const subEvt = msg as any;
             const eventType = subEvt.event || '';
             const data = subEvt.data || {};
@@ -2913,10 +2917,29 @@ export function useAgent(options?: string | UseAgentOptions) {
     resetConversationNextRef.current = true;
   }, []);
 
-  // Watchdog: auto-commit stale streaming state when no messages arrive for 90s
+  // Watchdog: auto-commit stale streaming state when no messages arrive.
+  // Delegated subagents can legitimately be quiet while a long local tool
+  // (grep, file creation, command execution) is running, so give those turns a
+  // much longer window and keep the delegated rectangle alive.
   useEffect(() => {
     const STALE_TIMEOUT_MS = 90_000;
+    const DELEGATED_STALE_TIMEOUT_MS = 30 * 60_000;
     const CHECK_INTERVAL_MS = 15_000;
+    const isPendingStatus = (status?: string) => status === 'called' || status === 'running';
+    const hasPendingDelegatedWork = (tab?: ConversationTab | null) => {
+      if (!tab) return false;
+      if (tab.currentToolCalls.some((tool) => (
+        (tool.tool === 'delegate' || tool.nested || !!tool.subagentId) &&
+        isPendingStatus(tool.status)
+      ))) {
+        return true;
+      }
+      return tab.currentStreamChunks.some((chunk) => (
+        chunk.type === 'tool' &&
+        (chunk.tool.tool === 'delegate' || chunk.tool.nested || !!chunk.tool.subagentId) &&
+        isPendingStatus(chunk.tool.status)
+      ));
+    };
 
     const interval = setInterval(() => {
       const lastActivity = lastStreamActivityRef.current;
@@ -2924,7 +2947,10 @@ export function useAgent(options?: string | UseAgentOptions) {
       const phase = activeTab?.aiState?.phase;
       const isActive = phase === 'responding' || phase === 'tool' || phase === 'routing';
       if (!isActive) return;
-      if (Date.now() - lastActivity < STALE_TIMEOUT_MS) return;
+      const staleTimeout = hasPendingDelegatedWork(activeTab)
+        ? DELEGATED_STALE_TIMEOUT_MS
+        : STALE_TIMEOUT_MS;
+      if (Date.now() - lastActivity < staleTimeout) return;
 
       console.log('[agent] Watchdog: stale stream detected, committing partial state');
       lastStreamActivityRef.current = 0;
@@ -2967,7 +2993,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     }, CHECK_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [activeTab?.aiState?.phase]);
+  }, [activeTab]);
 
   const reconcileTerminalState = useCallback((terminals: Array<{ requestId: string; result: { text: string; finishReason: string; aborted?: boolean; error?: boolean } }>) => {
     if (!terminals || terminals.length === 0) return;

@@ -721,7 +721,11 @@ const InputArea = forwardRef(function InputArea(
     // File results
     for (const f of (Array.isArray(fileResults) ? fileResults : [])) {
       if (!f) continue;
-      if (String(f.kind || '').toLowerCase() === 'application') continue;
+      const kindLower = String(f.kind || '').toLowerCase();
+      if (kindLower === 'application') continue;
+      // Skip folders — Windows shell icons for folders often come with ugly
+      // overlays (lock, sync, etc.). The lucide Folder icon looks far cleaner.
+      if (kindLower === 'folder' || f.is_folder === true) continue;
       const filePath = String(f.path || '').trim();
       if (!filePath) continue;
       const preferThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
@@ -1433,7 +1437,7 @@ const InputArea = forwardRef(function InputArea(
                               {iconUrl ? (
                                 <img src={iconUrl} alt="" className={clsx(isThumbnail ? "w-full h-full object-cover" : "w-5 h-5 object-contain")} />
                               ) : (
-                                <Icon className="w-3.5 h-3.5" />
+                                <Icon className="w-4 h-4" />
                               )}
                             </div>
                             <div className="min-w-0 flex-1">

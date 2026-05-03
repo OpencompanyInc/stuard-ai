@@ -1111,7 +1111,14 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     // desktop while __chatWs is the VM WS (which relays back through
     // Python → vm-agent.ts SSE → the website/desktop VM chat UI).
     // Delegated subagents use it to emit subagent_event to the right socket.
-  }, { ...inheritedSecrets, ...(skillsSecret ? { __skills: skillsSecret } : {}), userId, conversationId, __chatWs: ws });
+  }, {
+    ...inheritedSecrets,
+    ...(skillsSecret ? { __skills: skillsSecret } : {}),
+    userId,
+    conversationId,
+    __chatWs: ws,
+    ...(requestId ? { __requestId: requestId } : {}),
+  });
 
   return resultText ? { text: resultText } : null;
 }

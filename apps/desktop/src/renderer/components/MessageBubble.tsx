@@ -1935,17 +1935,39 @@ const AssistantTracePanel: React.FC<{
             | { type: 'delegation'; step: AssistantTraceStepData; idx: number; children: AssistantTraceStepData[]; lastChildIdx: number };
 
           const items: DisplayItem[] = [];
+          const consumedNestedIndexes = new Set<number>();
           let i = 0;
           while (i < traceSteps.length) {
+            if (consumedNestedIndexes.has(i)) {
+              i++;
+              continue;
+            }
             const step = traceSteps[i];
             const isNested = Boolean(step.nested);
 
-            // Top-level delegation tool: absorb the subsequent run of nested steps as its children.
+            // Top-level delegation tool: absorb later nested subagent steps as
+            // children. Long tool calls can time out and let orchestrator
+            // reasoning interleave before the subagent's final updates arrive,
+            // so this cannot require strict adjacency.
             if (!isNested && step.kind === 'tool' && step.tool && isDelegationToolCall(step.tool)) {
               const children: AssistantTraceStepData[] = [];
+              let lastChildIdx = i;
               let j = i + 1;
-              while (j < traceSteps.length && traceSteps[j].nested) {
-                children.push(traceSteps[j]);
+              while (j < traceSteps.length) {
+                const candidate = traceSteps[j];
+                if (
+                  !candidate.nested &&
+                  candidate.kind === 'tool' &&
+                  candidate.tool &&
+                  isDelegationToolCall(candidate.tool)
+                ) {
+                  break;
+                }
+                if (candidate.nested) {
+                  children.push(candidate);
+                  consumedNestedIndexes.add(j);
+                  lastChildIdx = j;
+                }
                 j++;
               }
               items.push({
@@ -1953,9 +1975,9 @@ const AssistantTracePanel: React.FC<{
                 step,
                 idx: i,
                 children,
-                lastChildIdx: j - 1,
+                lastChildIdx,
               });
-              i = j;
+              i++;
               continue;
             }
 

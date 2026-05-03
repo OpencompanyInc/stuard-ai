@@ -11,10 +11,12 @@ import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWo
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
+import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handlers/wakeword';
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse, shutdownAllBrowserUseServers } from './handlers/browser-use';
 import { captureToolMedia, registerLocalMedia } from '../services/media-library';
+import { isRustFileTool, execRustFileTool } from './handlers/file-indexer';
 
 export * from './registry';
 export * from './types';
@@ -169,6 +171,11 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
   const kind = getToolKind(toolName);
   const withMediaCapture = async (promise: Promise<any>) => captureToolMedia(toolName, args, await promise);
 
+  // File index / search — handled by the native Rust indexer directly, no agent round-trip.
+  if (isRustFileTool(toolName)) {
+    return execRustFileTool(toolName, args);
+  }
+
   switch (kind) {
     case 'electron':
       // Internal: register media files from cloud-originated tools into local media library
@@ -277,6 +284,9 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);
       if (toolName === 'proactive_task_delete') return execProactiveTaskDelete(args, ctx);
+      if (toolName === 'wakeword_start') return execWakewordStart(args);
+      if (toolName === 'wakeword_stop') return execWakewordStop();
+      if (toolName === 'wakeword_status') return execWakewordStatus();
 
       // Auto-skill storage (from cloud-ai auto-skills pipeline)
       if (toolName === 'auto_skill_store') {

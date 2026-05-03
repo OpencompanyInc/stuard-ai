@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import type { ThemeMode, TonePreset } from "../hooks/usePreferences";
-import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Sparkles, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
+import { DEFAULT_CHAT_MODELS, type ChatModelsConfig, type ModelMeta, type ThemeMode, type TonePreset } from "../hooks/usePreferences";
+import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Sparkles, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard, Brain, Scale, Cpu, ChevronDown, Check, Search } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { invalidateRendererSyncPrefsCache } from "../utils/syncPrefs";
 import { clsx } from "clsx";
-import { FileIndexSettings } from "./FileIndexSettings";
 import { BillingSettings } from "./BillingSettings";
+import { useModelRegistry } from "../hooks/useModelRegistry";
 
 type UpdateChannel = "stable" | "beta" | "staging";
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error" | "up-to-date";
@@ -60,6 +61,8 @@ interface SettingsViewProps {
   persona: string | null;
   handleSaveTonePersona: () => void;
   setOnboardingComplete: (v: boolean) => void;
+  chatModels: ChatModelsConfig;
+  setChatModels: (v: ChatModelsConfig) => void;
 }
 
 const SectionHeader = ({ title, description }: { title: string, description: string }) => (
@@ -69,19 +72,70 @@ const SectionHeader = ({ title, description }: { title: string, description: str
   </div>
 );
 
-const PresetButton = ({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) => (
-  <button
-    onClick={onClick}
-    className={clsx(
-      "px-4 py-2 rounded-lg text-[13px] font-semibold tracking-tight transition-all duration-200 border",
-      active
-        ? "bg-primary text-primary-fg border-primary shadow-sm"
-        : "bg-theme-hover/60 text-theme-fg border-theme hover:bg-theme-active hover:border-theme-fg/20"
-    )}
-  >
-    {label}
-  </button>
+interface SegmentedOption { value: string; label: string }
+const SegmentedControl: React.FC<{
+  value: string;
+  options: SegmentedOption[];
+  onChange: (v: string) => void;
+}> = ({ value, options, onChange }) => (
+  <div className="inline-flex items-center gap-0.5 rounded-xl border border-theme bg-theme-hover/40 p-0.5">
+    {options.map((opt) => {
+      const active = value === opt.value;
+      return (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          className={clsx(
+            "px-3.5 py-1.5 rounded-[10px] text-[12px] font-semibold tracking-tight transition-all",
+            active
+              ? "bg-theme-card text-theme-fg shadow-sm border border-theme/50"
+              : "text-theme-muted hover:text-theme-fg"
+          )}
+        >
+          {opt.label}
+        </button>
+      );
+    })}
+  </div>
 );
+
+const ColorField: React.FC<{ label: string; value: string; onChange: (v: string) => void }> = ({ label, value, onChange }) => (
+  <div>
+    <label className="block text-[11px] font-semibold text-theme-muted mb-1.5 tracking-tight">{label}</label>
+    <div className="flex items-center gap-2 p-1 rounded-xl border border-theme bg-theme-card">
+      <div
+        className="relative w-8 h-8 rounded-lg overflow-hidden border border-theme shrink-0"
+        style={{ backgroundColor: value }}
+      >
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          aria-label={label}
+        />
+      </div>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v);
+        }}
+        className="flex-1 bg-transparent text-[12px] font-mono font-semibold text-theme-fg outline-none uppercase tracking-wide"
+      />
+    </div>
+  </div>
+);
+
+const TONE_OPTIONS: SegmentedOption[] = [
+  { value: "concise", label: "Concise" },
+  { value: "friendly", label: "Friendly" },
+  { value: "formal", label: "Formal" },
+  { value: "technical", label: "Technical" },
+  { value: "custom", label: "Custom" },
+];
 
 // Modern pill-style toggle switch
 const Toggle = ({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) => (
@@ -129,6 +183,456 @@ const ToggleRow = ({
     <Toggle checked={checked} onChange={onChange} disabled={disabled} />
   </div>
 );
+
+type AutoModelTier = keyof ChatModelsConfig;
+
+const AUTO_MODEL_TIERS: Array<{
+  id: AutoModelTier;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  accent: string;
+}> = [
+  {
+    id: "smart",
+    label: "Smart",
+    description: "Deep reasoning, planning, and complex work.",
+    icon: <Brain className="w-4 h-4" />,
+    accent: "text-purple-500 bg-purple-500/10",
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    description: "Everyday chats with a good quality and speed mix.",
+    icon: <Scale className="w-4 h-4" />,
+    accent: "text-emerald-500 bg-emerald-500/10",
+  },
+  {
+    id: "fast",
+    label: "Fast",
+    description: "Low-latency responses and lightweight tasks.",
+    icon: <Zap className="w-4 h-4" />,
+    accent: "text-amber-500 bg-amber-500/10",
+  },
+];
+
+function normalizeChatModelsConfig(cfg?: ChatModelsConfig | null): ChatModelsConfig {
+  const source = cfg || DEFAULT_CHAT_MODELS;
+  return {
+    fast: {
+      allowed: Array.isArray(source.fast?.allowed) ? [...source.fast.allowed] : [],
+      default: typeof source.fast?.default === "string" && source.fast.default.trim()
+        ? source.fast.default.trim()
+        : DEFAULT_CHAT_MODELS.fast.default,
+    },
+    balanced: {
+      allowed: Array.isArray(source.balanced?.allowed) ? [...source.balanced.allowed] : [],
+      default: typeof source.balanced?.default === "string" && source.balanced.default.trim()
+        ? source.balanced.default.trim()
+        : DEFAULT_CHAT_MODELS.balanced.default,
+    },
+    smart: {
+      allowed: Array.isArray(source.smart?.allowed) ? [...source.smart.allowed] : [],
+      default: typeof source.smart?.default === "string" && source.smart.default.trim()
+        ? source.smart.default.trim()
+        : DEFAULT_CHAT_MODELS.smart.default,
+    },
+  };
+}
+
+const PROVIDER_FALLBACK_TILES: Record<string, { letter: string; bg: string }> = {
+  OpenAI: { letter: "O", bg: "bg-emerald-500" },
+  Google: { letter: "G", bg: "bg-blue-500" },
+  xAI: { letter: "x", bg: "bg-black" },
+  DeepSeek: { letter: "D", bg: "bg-blue-600" },
+  Perplexity: { letter: "P", bg: "bg-cyan-500" },
+  Anthropic: { letter: "A", bg: "bg-orange-500" },
+  OpenRouter: { letter: "R", bg: "bg-purple-500" },
+};
+
+function ProviderTile({ model, size = 24 }: { model?: ModelMeta; size?: number }) {
+  const dim = { width: size, height: size };
+  if (model?.logoUrl) {
+    return (
+      <div
+        className="rounded-md bg-theme-card border border-theme/40 flex items-center justify-center overflow-hidden flex-shrink-0"
+        style={dim}
+      >
+        <img src={model.logoUrl} alt={model.provider} className="object-contain" style={{ width: size - 8, height: size - 8 }} />
+      </div>
+    );
+  }
+  const fallback = model ? PROVIDER_FALLBACK_TILES[model.provider] : undefined;
+  if (fallback) {
+    return (
+      <div
+        className={clsx("rounded-md flex items-center justify-center text-white font-bold flex-shrink-0", fallback.bg)}
+        style={{ ...dim, fontSize: Math.max(10, Math.floor(size * 0.5)) }}
+      >
+        {fallback.letter}
+      </div>
+    );
+  }
+  return (
+    <div
+      className="rounded-md bg-theme-hover border border-theme/40 flex items-center justify-center flex-shrink-0"
+      style={dim}
+    >
+      <Cpu className="text-theme-muted" style={{ width: size * 0.55, height: size * 0.55 }} />
+    </div>
+  );
+}
+
+interface ModelDropdownProps {
+  value: string;
+  options: ModelMeta[];
+  modelById: Map<string, ModelMeta>;
+  onChange: (id: string) => void;
+  tierLabel: string;
+}
+
+function ModelDropdown({ value, options, modelById, onChange, tierLabel }: ModelDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(0);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState<React.CSSProperties>({});
+
+  const selected = modelById.get(value);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.provider.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q)
+    );
+  }, [options, query]);
+
+  // Group filtered models by provider for cleaner browsing
+  const grouped = useMemo(() => {
+    const groups = new Map<string, ModelMeta[]>();
+    for (const m of filtered) {
+      const arr = groups.get(m.provider) || [];
+      arr.push(m);
+      groups.set(m.provider, arr);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered]);
+
+  const flatList = useMemo(() => grouped.flatMap(([, list]) => list), [grouped]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        panelRef.current && !panelRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setActiveIdx(0);
+      return;
+    }
+    const update = () => {
+      const r = triggerRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const panelW = Math.max(r.width, 320);
+      const panelH = 380;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const openUp = spaceBelow < panelH + 24 && r.top > panelH + 24;
+      const left = Math.max(12, Math.min(r.left, window.innerWidth - panelW - 12));
+      const top = openUp ? r.top - panelH - 8 : r.bottom + 8;
+      setPos({ position: "fixed", left, top, width: panelW, zIndex: 10010 });
+    };
+    update();
+    setTimeout(() => inputRef.current?.focus(), 30);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [query]);
+
+  const handleSelect = (id: string) => {
+    onChange(id);
+    setOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (flatList.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => (i + 1) % flatList.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => (i - 1 + flatList.length) % flatList.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const m = flatList[activeIdx];
+      if (m) handleSelect(m.id);
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={clsx(
+          "w-full flex items-center gap-2.5 rounded-xl border bg-theme-card px-2.5 py-2 text-left transition-all outline-none",
+          open
+            ? "border-primary/50 ring-2 ring-primary/15"
+            : "border-theme hover:border-theme-fg/25 hover:bg-theme-hover/40"
+        )}
+      >
+        <ProviderTile model={selected} size={26} />
+        <div className="min-w-0 flex-1">
+          <div className="text-[12px] font-semibold text-theme-fg truncate leading-tight">
+            {selected?.name || value}
+          </div>
+          <div className="text-[10px] text-theme-muted font-medium truncate leading-tight mt-0.5">
+            {selected?.provider || "Unknown provider"}
+            {selected?.contextWindow ? ` · ${Math.round(selected.contextWindow / 1000)}k ctx` : ""}
+          </div>
+        </div>
+        <ChevronDown
+          className={clsx(
+            "w-3.5 h-3.5 text-theme-muted shrink-0 transition-transform duration-200",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+
+      {open &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={pos}
+            className="rounded-2xl border border-theme/60 bg-theme-card/95 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-theme/40 bg-theme-hover/30">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">
+                {tierLabel} model
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="p-1 rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="px-2.5 pt-2.5">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted" />
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Search models, providers..."
+                  className="w-full pl-8 pr-2.5 py-2 bg-theme-hover/50 border border-theme/40 rounded-xl text-[12px] font-medium text-theme-fg placeholder:text-theme-muted outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-1.5 max-h-[320px] custom-scrollbar">
+              {grouped.length === 0 ? (
+                <div className="py-10 text-center">
+                  <div className="text-[12px] text-theme-muted font-medium">No matches for "{query}"</div>
+                </div>
+              ) : (
+                grouped.map(([provider, list]) => (
+                  <div key={provider} className="mb-2 last:mb-0">
+                    <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted/70">
+                      {provider}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {list.map((m) => {
+                        const isSelected = m.id === value;
+                        const flatIdx = flatList.indexOf(m);
+                        const isActive = flatIdx === activeIdx;
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onMouseEnter={() => setActiveIdx(flatIdx)}
+                            onClick={() => handleSelect(m.id)}
+                            className={clsx(
+                              "w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors",
+                              isActive
+                                ? "bg-primary/10"
+                                : "hover:bg-theme-hover/60"
+                            )}
+                          >
+                            <ProviderTile model={m} size={22} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-[12px] font-semibold text-theme-fg truncate leading-tight">
+                                  {m.name}
+                                </span>
+                                {m.isReasoning && (
+                                  <span className="px-1 py-0 rounded text-[8px] font-bold uppercase tracking-wider text-purple-500 bg-purple-500/10 leading-tight">
+                                    Pro
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-theme-muted font-medium truncate leading-tight mt-0.5">
+                                {m.id}
+                                {m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k` : ""}
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+                                <Check className="w-2.5 h-2.5 text-primary-fg" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="px-3 py-2 border-t border-theme/40 bg-theme-hover/20 text-[10px] text-theme-muted font-medium flex items-center justify-between">
+              <span>↑↓ navigate · ↵ select · esc close</span>
+              <span>{flatList.length} model{flatList.length === 1 ? "" : "s"}</span>
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+function AutoModelRoutingSection({
+  chatModels,
+  onChatModelsChange,
+}: {
+  chatModels: ChatModelsConfig;
+  onChatModelsChange: (v: ChatModelsConfig) => void;
+}) {
+  const { models, modelById, loading, error } = useModelRegistry();
+  const normalized = useMemo(() => normalizeChatModelsConfig(chatModels), [chatModels]);
+  const modelsByTier = useMemo(() => {
+    const rank: Record<string, number> = { smart: 0, balanced: 1, fast: 2, research: 3 };
+    const sortModels = (tier: AutoModelTier) => [...models].sort((a, b) => {
+      const aPreferred = a.category === tier ? 0 : 1;
+      const bPreferred = b.category === tier ? 0 : 1;
+      if (aPreferred !== bPreferred) return aPreferred - bPreferred;
+      const byTier = (rank[a.category] ?? 9) - (rank[b.category] ?? 9);
+      if (byTier !== 0) return byTier;
+      const byProvider = a.provider.localeCompare(b.provider);
+      if (byProvider !== 0) return byProvider;
+      return a.name.localeCompare(b.name);
+    });
+    return {
+      fast: sortModels("fast"),
+      balanced: sortModels("balanced"),
+      smart: sortModels("smart"),
+    };
+  }, [models]);
+
+  const updateTierDefault = (tier: AutoModelTier, modelId: string) => {
+    const next = normalizeChatModelsConfig(chatModels);
+    onChatModelsChange({
+      ...next,
+      [tier]: {
+        ...next[tier],
+        default: modelId,
+      },
+    });
+  };
+
+  return (
+    <div className="dashboard-card p-6">
+      <div className="flex items-start justify-between gap-4 border-b border-theme/50 pb-4 mb-6">
+        <div className="min-w-0">
+          <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">Auto Model Routing</h3>
+          <p className="text-[13px] text-theme-muted font-medium">Pick which model Auto picks for each tier of task.</p>
+        </div>
+        <button
+          onClick={() => onChatModelsChange(normalizeChatModelsConfig(DEFAULT_CHAT_MODELS))}
+          className="shrink-0 px-3 py-2 rounded-lg border border-theme bg-theme-hover/50 text-[11px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          Reset
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {AUTO_MODEL_TIERS.map((tier) => {
+          const selectedId = normalized[tier.id].default;
+          const selectedModel = modelById.get(selectedId);
+          const tierModels = modelsByTier[tier.id];
+          const hasSelectedOption = tierModels.some((m) => m.id === selectedId);
+          const options = hasSelectedOption || !selectedModel
+            ? tierModels
+            : [selectedModel, ...tierModels];
+
+          return (
+            <div key={tier.id} className="p-4 rounded-xl border border-theme bg-theme-hover/40 flex flex-col">
+              <div className="flex items-start gap-3 mb-3">
+                <div className={clsx("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", tier.accent)}>
+                  {tier.icon}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold text-theme-fg tracking-tight">{tier.label}</div>
+                  <p className="text-[11px] text-theme-muted leading-relaxed font-medium mt-0.5">{tier.description}</p>
+                </div>
+              </div>
+
+              <ModelDropdown
+                value={selectedId}
+                options={options}
+                modelById={modelById}
+                onChange={(id) => updateTierDefault(tier.id, id)}
+                tierLabel={tier.label}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2 text-[11px] text-theme-muted font-medium">
+        <Cpu className="w-3.5 h-3.5" />
+        <span>
+          {loading ? "Refreshing model list..." : error ? "Using fallback model list." : "Auto routing applies to new requests."}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Security & Privacy Section
@@ -626,8 +1130,6 @@ const UpdateManager: React.FC = () => {
           </div>
         </div>
 
-        <FileIndexSettings />
-
         <RestartModal open={showRestartModal} version={state.latestVersion || ""} onConfirm={handleInstall} onCancel={() => setShowRestartModal(false)} />
       </div>
     </div>
@@ -773,6 +1275,8 @@ interface GeneralTabProps {
   persona: string | null;
   handleSaveTonePersona: () => void;
   setOnboardingComplete: (v: boolean) => void;
+  chatModels: ChatModelsConfig;
+  setChatModels: (v: ChatModelsConfig) => void;
 }
 
 function GeneralTab({
@@ -790,84 +1294,110 @@ function GeneralTab({
   personaDraft, setPersonaDraft,
   persona, handleSaveTonePersona,
   setOnboardingComplete,
+  chatModels, setChatModels,
 }: GeneralTabProps) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto space-y-6 px-4 py-4 md:px-6 md:py-4">
+        <AutoModelRoutingSection chatModels={chatModels} onChatModelsChange={setChatModels} />
+
         {/* AI Personality */}
         <div className="dashboard-card p-6">
           <SectionHeader title="AI Personality" description="Customize how the assistant communicates with you." />
           <div className="mb-6">
             <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Tone of voice</label>
-            <div className="flex flex-wrap gap-2">
-              {(["concise", "friendly", "formal", "technical", "custom"] as TonePreset[]).map((t) => (
-                <PresetButton key={t} label={t.charAt(0).toUpperCase() + t.slice(1)} active={tone === t} onClick={() => setTone(t)} />
-              ))}
-            </div>
+            <SegmentedControl
+              value={tone}
+              options={TONE_OPTIONS}
+              onChange={(v) => setTone(v as TonePreset)}
+            />
             {tone === "custom" && (
-              <input value={customTone} onChange={(e) => setCustomTone(e.target.value)} placeholder="e.g. Witty, sarcastic, uses lots of emojis" className="mt-3 w-full max-w-md px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted" />
+              <input
+                value={customTone}
+                onChange={(e) => setCustomTone(e.target.value)}
+                placeholder="e.g. Witty, sarcastic, uses lots of emojis"
+                className="mt-3 w-full max-w-md px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted"
+              />
             )}
           </div>
           <div className="mb-6">
             <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-1">System persona</label>
             <p className="text-[11px] text-theme-muted mb-2 font-medium">Instructions included in every system prompt.</p>
-            <textarea value={personaDraft} onChange={(e) => setPersonaDraft(e.target.value)} placeholder="You are an expert TypeScript engineer..." className="w-full min-h-[140px] px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] leading-relaxed font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y shadow-sm placeholder:text-theme-muted" />
+            <textarea
+              value={personaDraft}
+              onChange={(e) => setPersonaDraft(e.target.value)}
+              placeholder="You are an expert TypeScript engineer..."
+              className="w-full min-h-[140px] px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] leading-relaxed font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y shadow-sm placeholder:text-theme-muted"
+            />
           </div>
           <div className="flex justify-end pt-4 border-t border-theme">
-            <button onClick={handleSaveTonePersona} className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm">Save Personality</button>
+            <button
+              onClick={handleSaveTonePersona}
+              className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm"
+            >
+              Save Personality
+            </button>
           </div>
         </div>
 
         {/* Appearance */}
         <div className="dashboard-card p-6">
           <SectionHeader title="Appearance" description="Customize the look of your desktop overlay." />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-5">
             <div>
               <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Color theme</label>
-              <div className="flex gap-2 mb-4">
-                <PresetButton label="Light" active={themeMode === "light"} onClick={() => setThemeMode("light")} />
-                <PresetButton label="Dark" active={themeMode === "dark"} onClick={() => setThemeMode("dark")} />
-                <PresetButton label="Custom" active={themeMode === "custom"} onClick={() => setThemeMode("custom")} />
-              </div>
-              <ToggleRow
-                title="Translucent Overlay"
-                description="Makes the compact bar semi-transparent with a blur effect."
-                checked={translucentMode}
-                onChange={setTranslucentMode}
+              <SegmentedControl
+                value={themeMode}
+                options={[
+                  { value: "light", label: "Light" },
+                  { value: "dark", label: "Dark" },
+                  { value: "custom", label: "Custom" },
+                ]}
+                onChange={(v) => setThemeMode(v as ThemeMode)}
               />
             </div>
-            {themeMode === 'custom' && (
-              <div className="space-y-4 p-4 bg-theme-hover/50 rounded-xl border border-theme">
-                <div>
-                  <label className="block text-[11px] font-semibold text-theme-muted mb-1 tracking-tight">Gradient start</label>
-                  <div className="flex items-center gap-3">
-                    <div className="relative overflow-hidden w-10 h-6 rounded border border-theme">
-                      <input type="color" value={themeDarkShade} onChange={(e) => setThemeDarkShade(e.target.value)} className="absolute -top-1 -left-1 w-12 h-8 cursor-pointer" />
-                    </div>
-                    <span className="text-[11px] font-mono font-semibold text-theme-fg bg-theme-card px-2 py-0.5 rounded border border-theme">{themeDarkShade}</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-theme-muted mb-1 tracking-tight">Gradient end</label>
-                  <div className="flex items-center gap-3">
-                    <div className="relative overflow-hidden w-10 h-6 rounded border border-theme">
-                      <input type="color" value={themeLightShade} onChange={(e) => setThemeLightShade(e.target.value)} className="absolute -top-1 -left-1 w-12 h-8 cursor-pointer" />
-                    </div>
-                    <span className="text-[11px] font-mono font-semibold text-theme-fg bg-theme-card px-2 py-0.5 rounded border border-theme">{themeLightShade}</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-theme-muted mb-1 tracking-tight">Text contrast</label>
-                  <div className="flex gap-2">
-                    <PresetButton label="White Text" active={themeText === "white"} onClick={() => setThemeText("white")} />
-                    <PresetButton label="Black Text" active={themeText === "black"} onClick={() => setThemeText("black")} />
-                  </div>
+
+            {themeMode === "custom" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-theme-hover/50 rounded-xl border border-theme">
+                <ColorField
+                  label="Gradient start"
+                  value={themeDarkShade}
+                  onChange={setThemeDarkShade}
+                />
+                <ColorField
+                  label="Gradient end"
+                  value={themeLightShade}
+                  onChange={setThemeLightShade}
+                />
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-2 tracking-tight">Text contrast</label>
+                  <SegmentedControl
+                    value={themeText}
+                    options={[
+                      { value: "white", label: "White text" },
+                      { value: "black", label: "Black text" },
+                    ]}
+                    onChange={(v) => setThemeText(v as "white" | "black")}
+                  />
                 </div>
               </div>
             )}
+
+            <ToggleRow
+              icon={<Palette className="w-4 h-4" />}
+              title="Translucent Overlay"
+              description="Makes the compact bar semi-transparent with a blur effect."
+              checked={translucentMode}
+              onChange={setTranslucentMode}
+            />
           </div>
           <div className="mt-6 flex justify-end pt-4 border-t border-theme">
-            <button onClick={handleSaveTheme} className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm">Apply Theme</button>
+            <button
+              onClick={handleSaveTheme}
+              className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm"
+            >
+              Apply Theme
+            </button>
           </div>
         </div>
 

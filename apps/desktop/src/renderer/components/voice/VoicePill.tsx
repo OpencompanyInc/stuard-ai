@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { Mic, MicOff, X, Loader2 } from 'lucide-react';
 import { VoiceOrb, type VoiceState } from './VoiceOrb';
+import { VoiceMarkdownText } from './VoiceMarkdownText';
 
 interface VoicePillProps {
   state: VoiceState;
@@ -81,7 +82,7 @@ export function VoicePill({
       <div className="flex items-center gap-2 min-w-0 pr-1" style={{ maxWidth: 320 }}>
         <AnimatePresence mode="wait">
           {showTranscript ? (
-            <motion.p
+            <motion.div
               key={`t-${transcript}`}
               initial={{ opacity: 0, x: 6 }}
               animate={{ opacity: 1, x: 0 }}
@@ -93,11 +94,15 @@ export function VoicePill({
                 !isFinal && 'text-gray-400',
               )}
             >
-              {transcript}
+              {transcriptRole === 'assistant' ? (
+                <VoiceMarkdownText text={transcript} />
+              ) : (
+                transcript
+              )}
               {!isFinal && (
                 <span className="inline-block w-[1.5px] h-[0.85em] bg-gray-400 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
               )}
-            </motion.p>
+            </motion.div>
           ) : statusText ? (
             <motion.div
               key={`s-${statusText}`}

@@ -6,6 +6,8 @@ Builds one or more services into standalone executables using PyInstaller:
   - agent      : The main AI agent (FastAPI server)
   - browser    : Browser automation server (Playwright + aiohttp)
   - mediapipe  : MediaPipe vision service (aiohttp + mediapipe)
+  - wakeword   : Local wake word listener (NumPy + sounddevice)
+  - file_indexer: Native Rust filesystem indexer
 
 Usage:
   python build-services.py                    # Build all services
@@ -57,6 +59,22 @@ SERVICES = {
         "exe_linux": "stuard-mediapipe-linux",
         "requirements": None,  # needs mediapipe + opencv + numpy
     },
+    "wakeword": {
+        "spec": "stuard-wakeword.spec",
+        "description": "Wake Word Listener",
+        "exe_win": "stuard-wakeword.exe",
+        "exe_mac": "stuard-wakeword-macos",
+        "exe_linux": "stuard-wakeword-linux",
+        "requirements": None,  # needs numpy + sounddevice from requirements.txt
+    },
+    "file_indexer": {
+        "cargo_manifest": "native/file-indexer/Cargo.toml",
+        "description": "Native File Indexer (Rust)",
+        "exe_win": "stuard-file-indexer.exe",
+        "exe_mac": "stuard-file-indexer-macos",
+        "exe_linux": "stuard-file-indexer-linux",
+        "requirements": None,
+    },
 }
 
 
@@ -81,6 +99,39 @@ def clean_directory(path: Path):
 def build_service(name: str, agent_dir: Path, dist_dir: Path) -> tuple[str, bool, str]:
     """Build a single service. Returns (name, success, message)."""
     svc = SERVICES[name]
+    if "cargo_manifest" in svc:
+        print(f"\n{'='*60}")
+        print(f"  Building: {svc['description']} ({name})")
+        print(f"  Cargo:    {svc['cargo_manifest']}")
+        print(f"{'='*60}\n")
+
+        start = time.time()
+        manifest_path = agent_dir / svc["cargo_manifest"]
+        if not manifest_path.exists():
+            return name, False, f"Cargo manifest not found: {manifest_path}"
+
+        result = subprocess.run(
+            ["cargo", "build", "--release", "--manifest-path", str(manifest_path)],
+            cwd=agent_dir,
+        )
+        if result.returncode != 0:
+            return name, False, f"Cargo build failed with exit code {result.returncode}"
+
+        cargo_exe = manifest_path.parent / "target" / "release" / ("stuard-file-indexer.exe" if sys.platform == "win32" else "stuard-file-indexer")
+        if not cargo_exe.exists():
+            return name, False, f"Expected Rust binary not found: {cargo_exe}"
+
+        dest_exe = dist_dir / get_exe_name(svc)
+        if dest_exe.exists():
+            dest_exe.unlink()
+        shutil.copy2(str(cargo_exe), str(dest_exe))
+        if sys.platform != "win32":
+            os.chmod(dest_exe, 0o755)
+
+        elapsed = time.time() - start
+        size_mb = dest_exe.stat().st_size / (1024 * 1024)
+        return name, True, f"Built {dest_exe.name} ({size_mb:.1f} MB) in {elapsed:.0f}s"
+
     spec_file = agent_dir / svc["spec"]
 
     if not spec_file.exists():

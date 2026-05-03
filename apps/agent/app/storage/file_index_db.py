@@ -33,6 +33,7 @@ from dataclasses import dataclass, asdict
 # ═══════════════════════════════════════════════════════════════════════════════
 
 VECTOR_DIM = 3072  # text-embedding-3-large
+BULK_LOOKUP_CHUNK_SIZE = 500
 
 FileKind = Literal['document', 'image', 'video', 'audio', 'code', 'binary', 'archive', 'folder', 'application', 'other']
 FileStatus = Literal['pending', 'indexed', 'stale', 'error', 'deleted']
@@ -446,7 +447,12 @@ def init() -> None:
         """)
 
         cur.execute("""
-            CREATE TRIGGER files_fts_update AFTER UPDATE ON indexed_files BEGIN
+            CREATE TRIGGER files_fts_update AFTER UPDATE ON indexed_files
+            WHEN OLD.filename IS NOT NEW.filename
+              OR OLD.path IS NOT NEW.path
+              OR OLD.summary IS NOT NEW.summary
+              OR OLD.keywords IS NOT NEW.keywords
+            BEGIN
                 INSERT INTO files_fts(files_fts, rowid, filename, path, summary, keywords)
                 VALUES ('delete', OLD.rowid, OLD.filename, OLD.path, OLD.summary, OLD.keywords);
                 INSERT INTO files_fts(rowid, filename, path, summary, keywords)
@@ -482,6 +488,10 @@ def init() -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_scan ON indexed_files(last_seen_scan_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_identity ON indexed_files(root_id, volume_serial, file_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_parent_identity ON indexed_files(root_id, volume_serial, parent_file_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_root_status ON indexed_files(root_id, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_root_kind_status ON indexed_files(root_id, kind, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_root_mtime ON indexed_files(root_id, mtime_ms DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_files_filename_nocase ON indexed_files(filename COLLATE NOCASE)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_roots_backend ON indexed_roots(backend)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folders_root ON folder_summaries(root_id)")
         
@@ -950,37 +960,133 @@ def upsert_files_batch(files_data: List[Dict[str, Any]]) -> Tuple[int, int, int]
     Batch upsert files in a single transaction.
     Returns (new_count, changed_count, unchanged_count).
     """
-    new_count = 0
-    changed_count = 0
-    unchanged_count = 0
-    
+    if not files_data:
+        return 0, 0, 0
+
+    now = _now_iso()
+    prepared: List[Dict[str, Any]] = []
+    paths: List[str] = []
+
+    for data in files_data:
+        normalized_path = os.path.normpath(os.path.abspath(data['path']))
+        filename = os.path.basename(normalized_path)
+        extension = os.path.splitext(filename)[1].lower() if '.' in filename else ''
+        kind = data.get('kind_override') or get_file_kind(extension)
+        preview_kind, preview_eligible = _get_preview_fields(extension, kind)
+        if data.get('preview_kind'):
+            preview_kind = data['preview_kind']
+        if data.get('preview_eligible') is not None:
+            preview_eligible = bool(data['preview_eligible'])
+
+        prepared.append({
+            'id': str(uuid.uuid4()),
+            'root_id': data['root_id'],
+            'path': normalized_path,
+            'filename': filename,
+            'extension': extension,
+            'kind': kind,
+            'size': data['size'],
+            'mtime_ms': data['mtime_ms'],
+            'volume_serial': _normalize_volume_serial(data.get('volume_serial')),
+            'file_id': data.get('file_id'),
+            'parent_file_id': data.get('parent_file_id'),
+            'win_attrs': data.get('win_attrs'),
+            'content_hash': data.get('content_hash'),
+            'preview_kind': preview_kind,
+            'preview_eligible': 1 if preview_eligible else 0,
+            'scan_id': data['scan_id'],
+            'created_at': now,
+        })
+        paths.append(normalized_path)
+
     with get_conn() as conn:
-        for data in files_data:
-            _, outcome = _upsert_file_row(
-                conn,
-                root_id=data['root_id'],
-                path=data['path'],
-                size=data['size'],
-                mtime_ms=data['mtime_ms'],
-                scan_id=data['scan_id'],
-                content_hash=data.get('content_hash'),
-                kind_override=data.get('kind_override'),
-                volume_serial=data.get('volume_serial'),
-                file_id=data.get('file_id'),
-                parent_file_id=data.get('parent_file_id'),
-                win_attrs=data.get('win_attrs'),
-                preview_kind=data.get('preview_kind'),
-                preview_eligible=data.get('preview_eligible'),
-            )
-            if outcome == 'new':
+        existing_by_path: Dict[str, sqlite3.Row] = {}
+        for i in range(0, len(paths), BULK_LOOKUP_CHUNK_SIZE):
+            chunk = paths[i:i + BULK_LOOKUP_CHUNK_SIZE]
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = conn.execute(
+                f"""SELECT path, size, mtime_ms, content_hash, status, kind
+                    FROM indexed_files
+                    WHERE path IN ({placeholders})""",
+                tuple(chunk),
+            ).fetchall()
+            existing_by_path.update({r['path']: r for r in rows})
+
+        new_count = 0
+        changed_count = 0
+        unchanged_count = 0
+        for item in prepared:
+            existing = existing_by_path.get(item['path'])
+            if not existing:
                 new_count += 1
-            elif outcome == 'changed':
+                continue
+
+            kind_changed = existing['kind'] != item['kind']
+            stat_changed = existing['size'] != item['size'] or existing['mtime_ms'] != item['mtime_ms']
+            hash_matches = bool(item['content_hash']) and existing['content_hash'] == item['content_hash']
+            if existing['status'] == 'deleted' or kind_changed or (stat_changed and not hash_matches):
                 changed_count += 1
             else:
                 unchanged_count += 1
-        
+
+        rows_to_upsert = [
+            (
+                item['id'],
+                item['root_id'],
+                item['path'],
+                item['filename'],
+                item['extension'],
+                item['kind'],
+                item['size'],
+                item['mtime_ms'],
+                item['volume_serial'],
+                item['file_id'],
+                item['parent_file_id'],
+                item['win_attrs'],
+                item['content_hash'],
+                item['preview_kind'],
+                item['preview_eligible'],
+                item['scan_id'],
+                item['created_at'],
+            )
+            for item in prepared
+        ]
+
+        conn.executemany(
+            """INSERT INTO indexed_files
+               (id, root_id, path, filename, extension, kind, size, mtime_ms,
+                volume_serial, file_id, parent_file_id, win_attrs, content_hash,
+                preview_kind, preview_eligible, status, last_seen_scan_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                root_id = excluded.root_id,
+                filename = excluded.filename,
+                extension = excluded.extension,
+                kind = excluded.kind,
+                size = excluded.size,
+                mtime_ms = excluded.mtime_ms,
+                volume_serial = COALESCE(excluded.volume_serial, indexed_files.volume_serial),
+                file_id = COALESCE(excluded.file_id, indexed_files.file_id),
+                parent_file_id = COALESCE(excluded.parent_file_id, indexed_files.parent_file_id),
+                win_attrs = COALESCE(excluded.win_attrs, indexed_files.win_attrs),
+                content_hash = COALESCE(excluded.content_hash, indexed_files.content_hash),
+                preview_kind = excluded.preview_kind,
+                preview_eligible = excluded.preview_eligible,
+                status = CASE
+                    WHEN indexed_files.status = 'deleted' THEN
+                        CASE WHEN indexed_files.summary IS NOT NULL OR indexed_files.vector IS NOT NULL
+                             THEN 'indexed' ELSE 'pending' END
+                    WHEN indexed_files.kind != excluded.kind THEN 'stale'
+                    WHEN indexed_files.size != excluded.size OR indexed_files.mtime_ms != excluded.mtime_ms THEN
+                        CASE WHEN excluded.content_hash IS NOT NULL AND indexed_files.content_hash = excluded.content_hash
+                             THEN indexed_files.status ELSE 'stale' END
+                    ELSE indexed_files.status
+                END,
+                last_seen_scan_id = excluded.last_seen_scan_id""",
+            rows_to_upsert,
+        )
         conn.commit()
-        
+
     return new_count, changed_count, unchanged_count
 
 
@@ -1270,21 +1376,34 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
 
     results = [_row_to_file(r) for r in rows]
     
-    # If FTS returned few results, supplement with LIKE search on filename
-    # This catches cases where FTS tokenization misses partial app names
+    # If FTS returned few results, supplement with filename LIKE search.
+    # Keep this filename-focused so large home-directory indexes do not fall
+    # back to broad wildcard scans over every absolute path.
     if len(results) < limit and original_query and len(original_query) >= 2:
         existing_ids = {r.id for r in results}
         like_sql = """
             SELECT * FROM indexed_files
-            WHERE status != 'deleted' AND (filename LIKE ? OR path LIKE ?)
+            WHERE status != 'deleted' AND filename LIKE ?
         """
-        like_params: List[Any] = [f'%{original_query}%', f'%{original_query}%']
+        like_params: List[Any] = [f'%{original_query}%']
         if kind:
             like_sql += " AND kind = ?"
             like_params.append(kind)
         if root_id:
             like_sql += " AND root_id = ?"
             like_params.append(root_id)
+        if ("\\" in original_query or "/" in original_query) and len(original_query) >= 4:
+            like_sql = """
+                SELECT * FROM indexed_files
+                WHERE status != 'deleted' AND (filename LIKE ? OR path LIKE ?)
+            """
+            like_params = [f'%{original_query}%', f'%{original_query}%']
+            if kind:
+                like_sql += " AND kind = ?"
+                like_params.append(kind)
+            if root_id:
+                like_sql += " AND root_id = ?"
+                like_params.append(root_id)
         like_sql += " ORDER BY CASE WHEN kind = 'application' THEN 0 WHEN extension IN ('.lnk','.url','.appref-ms','.exe') THEN 0 ELSE 1 END, filename LIMIT ?"
         like_params.append(limit - len(results))
         

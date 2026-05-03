@@ -1582,6 +1582,8 @@ function DashboardApp() {
                               persona={persona}
                               handleSaveTonePersona={handleSaveTonePersona}
                               setOnboardingComplete={setOnboardingComplete}
+                              chatModels={chatModels}
+                              setChatModels={setChatModels}
                             />
                           )}
 

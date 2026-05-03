@@ -11,7 +11,7 @@ import { stopHeadlessAgent } from '../tools/stop-headless-agent';
 import { get_skill_info } from '../tools/skill-tools';
 import { agent_todo, search_local_workflows, run_workflow } from '../tools/device-tools';
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
-import { withClientBridge } from '../tools/bridge';
+import { runWithSecrets, withClientBridge } from '../tools/bridge';
 import { sendVMCommand } from '../services/vm-command';
 import { search_past_conversations, get_conversation_context } from '../tools/device/memory';
 import {
@@ -59,6 +59,7 @@ const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
   wait: 60_000,
 };
 const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 30_000;
+const VOICE_DELEGATED_SUBAGENT_MODEL_TIER = 'fast';
 
 function voiceToolTimeoutFor(name: string): number {
   return VOICE_TOOL_TIMEOUTS_MS[name] ?? DEFAULT_VOICE_TOOL_TIMEOUT_MS;
@@ -551,6 +552,7 @@ async function withVoiceBridge<T>(
   voiceSessionId: string | undefined,
   fn: () => Promise<T>,
   userId?: string,
+  secrets?: Record<string, any>,
 ): Promise<T> {
   // Prefer the bridge registered against this voice session (the desktop WS
   // that opened a per-session relay). Fall back to the user's main desktop
@@ -558,8 +560,8 @@ async function withVoiceBridge<T>(
   // common when voice sessions start before the per-session bridge is
   // requested or when reusing the desktop's existing chat WS.
   const bridgeWs = getVoiceBridgeWs(voiceSessionId) || (userId ? getDesktopWs(userId) : undefined);
-  if (!bridgeWs) return fn();
-  return withClientBridge(bridgeWs, fn) as Promise<T>;
+  if (!bridgeWs) return secrets ? runWithSecrets(secrets, fn) : fn();
+  return withClientBridge(bridgeWs, fn, secrets) as Promise<T>;
 }
 
 function formatDesktopMemorySummary(payload: any): string {
@@ -844,7 +846,8 @@ async function dispatchVoiceTool(
   ctx: { userId: string; channel: VoiceRuntimeChannel; voiceSessionId?: string },
 ): Promise<any> {
   const { userId, channel, voiceSessionId } = ctx;
-  const bridge = <T>(fn: () => Promise<T>) => withVoiceBridge(voiceSessionId, fn, userId);
+  const bridge = <T>(fn: () => Promise<T>, secrets?: Record<string, any>) =>
+    withVoiceBridge(voiceSessionId, fn, userId, secrets);
   switch (toolName) {
     case 'search_tools': {
       const result = await bridge(async () =>
@@ -912,6 +915,10 @@ async function dispatchVoiceTool(
         (delegate as any).execute?.({
           tasks: Array.isArray(args.tasks) ? args.tasks : [],
         }, {} as any),
+        {
+          userId,
+          __modelTier: VOICE_DELEGATED_SUBAGENT_MODEL_TIER,
+        },
       );
     }
 

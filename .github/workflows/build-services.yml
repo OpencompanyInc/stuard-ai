@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: 'Services to build (space-separated: agent browser mediapipe)'
+        description: 'Services to build (space-separated: agent browser mediapipe wakeword)'
         required: false
-        default: 'agent browser mediapipe'
+        default: 'agent browser mediapipe wakeword'
       os:
         description: 'Target OS'
         type: choice
@@ -20,7 +20,7 @@ on:
     inputs:
       services:
         type: string
-        default: 'agent browser'
+        default: 'agent browser wakeword'
       ref:
         type: string
         default: ''

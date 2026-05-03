@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { Mic, MicOff, X } from 'lucide-react';
+import { VoiceMarkdownText } from './VoiceMarkdownText';
 
 // =============================================================================
 // TYPES
@@ -69,16 +70,20 @@ export function VoiceTranscript({ lines, displayDuration = 4000 }: VoiceTranscri
             transition={{ duration: 0.35, ease: 'easeOut' }}
             className="w-full text-center"
           >
-            <p className={clsx(
+            <div className={clsx(
               'text-[14px] leading-relaxed font-light',
               line.role === 'user' ? 'text-white/70' : 'text-white/55 italic',
               !line.isFinal && 'text-white/40',
             )}>
-              {line.text}
+              {line.role === 'assistant' ? (
+                <VoiceMarkdownText text={line.text} />
+              ) : (
+                line.text
+              )}
               {!line.isFinal && (
                 <span className="inline-block w-[2px] h-[0.9em] bg-white/40 ml-1 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
               )}
-            </p>
+            </div>
           </motion.div>
         ))}
       </AnimatePresence>

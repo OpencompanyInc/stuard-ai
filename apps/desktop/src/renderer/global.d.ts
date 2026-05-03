@@ -102,6 +102,7 @@ declare global {
       mediaOpenPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
       mediaDelete: (itemId: string, deleteFile?: boolean) => Promise<{ ok: boolean; id?: string; error?: string }>;
       onShow: (cb: () => void) => () => void;
+      onWakewordDetected: (cb: (data: any) => void) => () => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => () => void;
       onVMStreamEvent: (cb: (data: any) => void) => () => void;

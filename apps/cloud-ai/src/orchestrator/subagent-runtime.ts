@@ -41,6 +41,7 @@ import { resolveExecutionTools } from './execution-tools-resolver';
 
 // Track running subagents so they can be aborted when the parent stream is cancelled
 const runningSubagents = new Map<string, AbortController>();
+const DEFAULT_SUBAGENT_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function abortRunningSubagent(subagentId: string): boolean {
   const controller = runningSubagents.get(subagentId);
@@ -215,11 +216,14 @@ export function wrapToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Rec
         const activeBridgeScope = setActiveBridge(bridgeWs, bridgeSecrets);
         try {
           if (localToolSpec) {
+            const subagentToolSpec = typeof localToolSpec.timeoutMs === 'undefined'
+              ? { ...localToolSpec, timeoutMs: DEFAULT_SUBAGENT_LOCAL_TOOL_TIMEOUT_MS }
+              : localToolSpec;
             return await execLocalToolWithCapturedBridge(
               toolId,
               args,
               ctx?.writer,
-              localToolSpec,
+              subagentToolSpec,
               { ws: bridgeWs, secrets: bridgeSecrets },
             );
           }
@@ -434,11 +438,19 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     ? setActiveBridge(bridgeWs, bridgeSecrets)
     : (bridgeSecrets ? setActiveBridge(null, bridgeSecrets) : undefined);
 
-  const emitToClient = (event: string, data: any) => {
+  const requestId =
+    typeof (bridgeSecrets as any)?.__requestId === 'string' && (bridgeSecrets as any).__requestId
+      ? (bridgeSecrets as any).__requestId
+      : undefined;
+  let suppressClientEvents = false;
+
+  const emitToClient = (event: string, data: any, opts?: { force?: boolean }) => {
+    if (suppressClientEvents && !opts?.force) return;
     const msg = {
       type: 'subagent_event' as const,
       subagentId,
       runId,
+      ...(requestId ? { requestId } : {}),
       event,
       data,
     };
@@ -507,11 +519,18 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     },
   });
 
+  let timedOut = false;
+  let timeoutTimer: NodeJS.Timeout | undefined;
+
   try {
     // Only create a timeout promise if timeoutMs > 0 (0 = no timeout)
     const timeoutPromise = timeoutMs > 0
       ? new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`Subagent timed out after ${timeoutMs}ms`)), timeoutMs);
+          timeoutTimer = setTimeout(() => {
+            timedOut = true;
+            try { localAbort.abort(); } catch {}
+            reject(new Error(`Subagent timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
         })
       : null;
 
@@ -641,6 +660,30 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                   toolCallId: tc.toolCallId,
                   args: tc.args,
                 });
+              }
+              else if (ct === 'tool_event') {
+                const te = chunk.payload || chunk;
+                const status = String(te.status || '').toLowerCase();
+                const toolCallId = te.toolCallId || te.id || `subagent-tool-${Date.now()}`;
+                const tool = te.tool || te.toolName || 'tool';
+
+                if (status === 'called' || status === 'started' || status === 'running') {
+                  emitToClient('tool_call', {
+                    tool,
+                    toolCallId,
+                    args: te.args,
+                    description: te.description,
+                  });
+                } else if (status) {
+                  const isError = status === 'error' || status === 'failed' || status === 'timeout';
+                  emitToClient('tool_result', {
+                    tool,
+                    toolCallId,
+                    result: isError ? undefined : (te.result ?? te),
+                    status: isError ? 'error' : 'completed',
+                    error: isError ? (te.error || (status === 'timeout' ? 'Tool timed out' : 'Tool failed')) : undefined,
+                  });
+                }
               }
               // Tool results
               else if (ct === 'tool-result') {
@@ -776,6 +819,28 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                     const tc = chunk.payload || {};
                     allToolCalls.push(tc);
                     emitToClient('tool_call', { tool: tc.toolName, toolCallId: tc.toolCallId, args: tc.args });
+                  } else if (ct === 'tool_event') {
+                    const te = chunk.payload || chunk;
+                    const status = String(te.status || '').toLowerCase();
+                    const toolCallId = te.toolCallId || te.id || `subagent-tool-${Date.now()}`;
+                    const tool = te.tool || te.toolName || 'tool';
+                    if (status === 'called' || status === 'started' || status === 'running') {
+                      emitToClient('tool_call', {
+                        tool,
+                        toolCallId,
+                        args: te.args,
+                        description: te.description,
+                      });
+                    } else if (status) {
+                      const isError = status === 'error' || status === 'failed' || status === 'timeout';
+                      emitToClient('tool_result', {
+                        tool,
+                        toolCallId,
+                        result: isError ? undefined : (te.result ?? te),
+                        status: isError ? 'error' : 'completed',
+                        error: isError ? (te.error || (status === 'timeout' ? 'Tool timed out' : 'Tool failed')) : undefined,
+                      });
+                    }
                   } else if (ct === 'tool-result') {
                     const tr = chunk.payload || {};
                     const result = tr.result;
@@ -857,6 +922,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         const racers = [runPromise, abortPromise] as Promise<any>[];
         if (timeoutPromise) racers.push(timeoutPromise as Promise<any>);
         const response: any = await Promise.race(racers);
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = undefined;
+        }
         // Success — break out of retry loop
         const text = response?.text || fullText || '';
         const steps = Array.isArray(response?.steps) ? response.steps : [];
@@ -933,7 +1002,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
             })();
 
         writeLog('subagent_complete', { subagentId, ok: true, durationMs, textLength: finalResult.length, toolCallCount: toolCalls.length, stepsCount: steps.length, usage: usageSummary });
-        emitToClient('completed', { ok: true, durationMs, usage: usageSummary });
+        emitToClient('completed', { ok: true, durationMs, usage: usageSummary }, { force: true });
+        suppressClientEvents = true;
 
         return {
           ok: true,
@@ -972,6 +1042,11 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     throw new Error('Subagent execution failed after retries');
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = undefined;
+    }
+    const isTimeout = error?.message?.startsWith('Subagent timed out after') || timedOut;
     const isAborted = localAbort.signal.aborted || error?.message === 'Subagent aborted';
 
     await billingTracker.settleToUsageList(
@@ -981,14 +1056,28 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           ? [{ usage: streamUsage, providerMetadata: streamUsage?.providerMetadata }]
           : [],
       {
-        trigger: isAborted ? 'aborted' : 'error',
+        trigger: isAborted && !isTimeout ? 'aborted' : 'error',
         partial: true,
       },
     );
 
+    if (isTimeout) {
+      const message = error?.message || `Subagent timed out after ${timeoutMs}ms`;
+      writeLog('subagent_timeout', { subagentId, durationMs, timeoutMs });
+      emitToClient('error', { error: message, durationMs, timedOut: true }, { force: true });
+      suppressClientEvents = true;
+      return {
+        ok: false,
+        subagentId,
+        error: message,
+        durationMs,
+      };
+    }
+
     if (isAborted) {
       writeLog('subagent_aborted', { subagentId, durationMs });
-      emitToClient('cancelled', { durationMs });
+      emitToClient('cancelled', { durationMs }, { force: true });
+      suppressClientEvents = true;
       return {
         ok: false,
         subagentId,
@@ -998,7 +1087,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     }
 
     writeLog('subagent_error', { subagentId, error: error.message, durationMs });
-    emitToClient('error', { error: error.message, durationMs });
+    emitToClient('error', { error: error.message, durationMs }, { force: true });
+    suppressClientEvents = true;
 
     return {
       ok: false,
@@ -1007,6 +1097,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
       durationMs,
     };
   } finally {
+    suppressClientEvents = true;
     runningSubagents.delete(subagentId);
     if (runtimeBridgeScope) {
       clearActiveBridge(runtimeBridgeScope);

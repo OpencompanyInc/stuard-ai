@@ -38,6 +38,9 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'proactive_task_update': { kind: 'electron' },
   'proactive_task_create': { kind: 'electron' },
   'proactive_task_delete': { kind: 'electron' },
+  'wakeword_start': { kind: 'electron' },
+  'wakeword_stop': { kind: 'electron' },
+  'wakeword_status': { kind: 'electron' },
 
   // Auto-skill storage (called from cloud-ai auto-skills pipeline)
   'auto_skill_store': { kind: 'electron' },

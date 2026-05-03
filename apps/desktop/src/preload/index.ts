@@ -171,6 +171,11 @@ contextBridge.exposeInMainWorld("desktopAPI", {
       try { ipcRenderer.off("overlay:showed", handler); } catch { }
     };
   },
+  onWakewordDetected: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('wakeword:detected', handler);
+    return () => { try { ipcRenderer.off('wakeword:detected', handler); } catch { } };
+  },
   // Agent
   agentStart: (id?: string) => ipcRenderer.invoke('agent:start', id),
   agentStop: (id: string) => ipcRenderer.invoke('agent:stop', id),

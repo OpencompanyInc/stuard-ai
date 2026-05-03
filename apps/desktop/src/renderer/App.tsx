@@ -66,7 +66,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
   const { modelById } = useModelRegistry();
   const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
     try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
@@ -214,6 +214,10 @@ export default function App() {
     reconcileTerminalState,
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
 
+  useEffect(() => {
+    setChatModels(defaultChatModels);
+  }, [defaultChatModels, setChatModels]);
+
   // Listen for approval responses from notification overlay (when permission was handled out-of-app)
   useEffect(() => {
     const cleanup = (window as any).desktopAPI?.onApprovalResponse?.((data: { id: string; allow: boolean }) => {
@@ -322,6 +326,27 @@ export default function App() {
       lastVoiceErrorRef.current = null;
     }
   }, [voice.error]);
+
+  const handleWakewordDetected = useCallback(async () => {
+    try {
+      window.desktopAPI.show();
+      setShowMiniOutput(false);
+      setOverlayMode('compact');
+      window.desktopAPI.setMode('compact');
+      setTimeout(() => inputRef.current?.focus(), 0);
+
+      if (!voiceActive) {
+        await startVoiceSession();
+      }
+    } catch { }
+  }, [voiceActive, startVoiceSession]);
+
+  useEffect(() => {
+    const cleanup = window.desktopAPI?.onWakewordDetected?.(() => {
+      void handleWakewordDetected();
+    });
+    return () => { cleanup?.(); };
+  }, [handleWakewordDetected]);
 
   // Hold-to-voice: main process sends voice:setActive when the global hotkey
   // is held past the hold threshold; release sends false.
@@ -647,25 +672,7 @@ export default function App() {
         const d = evt.data || {};
 
         if (evt.event === 'wakeword_detected') {
-          try {
-            window.desktopAPI.show();
-            setOverlayMode('window');
-            window.desktopAPI.setMode('window');
-            setTimeout(() => inputRef.current?.focus(), 0);
-
-            if (!isRecording) {
-              // Check current auth state directly (not stale closure)
-              const { data: sessionData } = await supabase.auth.getSession();
-              const isCurrentlySignedIn = !!sessionData?.session;
-              if (!isCurrentlySignedIn) {
-                try { (window as any).desktopAPI?.notify?.('Wakeword detected', 'Sign in to use voice.'); } catch { }
-                try { handleSignIn(); } catch { }
-                return;
-              }
-              baseQueryRef.current = query;
-              startRecording();
-            }
-          } catch { }
+          await handleWakewordDetected();
           return;
         }
 
@@ -719,7 +726,7 @@ export default function App() {
       } catch { }
     });
     return () => { try { unsub?.(); } catch { } };
-  }, [subscribeProgress, isRecording]);
+  }, [subscribeProgress, handleWakewordDetected]);
 
   // Wakeword service lifecycle
   useEffect(() => {
@@ -730,7 +737,7 @@ export default function App() {
         try {
           if ((window as any).desktopAPI?.execTool) {
             if (wakewordEnabled) {
-              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.0 });
+              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: 0.9, cooldown: 1.0, triggerCount: 5 });
             } else {
               await (window as any).desktopAPI.execTool('wakeword_stop', {});
             }
@@ -743,7 +750,7 @@ export default function App() {
     };
     tryStart();
     return () => { canceled = true; };
-  }, [wakewordEnabled, wakewordSensitivity, state?.connected]);
+  }, [wakewordEnabled, state?.connected]);
 
   // Auth & Updates
   useEffect(() => {
@@ -1519,7 +1526,7 @@ export default function App() {
           </>
         )}
         <div
-          className="w-full h-full overflow-hidden transition-all duration-200 ease-out bg-transparent flex flex-col"
+          className="w-full h-full overflow-hidden bg-transparent flex flex-col"
         >
           {overlayMode === 'sidebar' || overlayMode === 'window' ? (
             <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">

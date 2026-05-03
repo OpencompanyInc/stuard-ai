@@ -55,7 +55,11 @@ export interface UnifiedSearchOptions {
 }
 
 const SEARCH_CACHE_TTL_MS = 30_000;
-const FILE_SEARCH_TIMEOUT_MS = 600;
+// The Rust indexer runs as a persistent daemon so follow-up queries finish in
+// ~70ms, but the *first* query after app start has to wait for the daemon to
+// launch + cold-hit a large SQLite index. 2.5s gives that first shot enough
+// room without visibly hanging the launcher.
+const FILE_SEARCH_TIMEOUT_MS = 2500;
 const searchCache = new Map<string, { expiresAt: number; results: SearchResult[] }>();
 const inFlightSearches = new Map<string, Promise<SearchResult[]>>();
 
@@ -343,6 +347,8 @@ async function searchFileIndex(
       kind: String(f.kind || "file").toLowerCase(),
       name: f.display_name || f.filename || f.path,
       path: String(f.path || ""),
+      iconHint: String(f.icon_path || f.target_path || f.path || ""),
+      iconDataUrl: peekCachedFileIcon([f.icon_path, f.target_path, f.path], "normal"),
       score: clampScore(score),
       source: "file-index",
       extension: f.extension,

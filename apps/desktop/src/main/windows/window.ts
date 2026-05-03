@@ -264,18 +264,30 @@ const MODE_SIZE_CONSTRAINTS = {
 // Track internal sidebar state for width management
 let internalSidebarOpen = false;
 
+// Track applied chrome state so we can skip redundant native calls.
+// Each native chrome change can trigger a Windows DWM repaint and produce
+// a visible flicker, so we only re-apply when something actually changed.
+let appliedChrome: { alwaysOnTop: boolean; skipTaskbar: boolean; hasShadow: boolean } | null = null;
 function applyOverlayChrome(mode: OverlayMode) {
   if (!win) return;
+  const desired = mode === 'window'
+    ? { alwaysOnTop: false, skipTaskbar: false, hasShadow: true }
+    : { alwaysOnTop: true, skipTaskbar: true, hasShadow: false };
   try {
-    if (mode === 'window') {
-      try { win.setAlwaysOnTop(false); } catch { }
-      try { win.setSkipTaskbar(false); } catch { }
-      try { win.setHasShadow(true); } catch { }
-    } else {
-      try { win.setSkipTaskbar(true); } catch { }
-      try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
-      try { win.setHasShadow(false); } catch { }
+    if (!appliedChrome || appliedChrome.alwaysOnTop !== desired.alwaysOnTop) {
+      if (desired.alwaysOnTop) {
+        try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
+      } else {
+        try { win.setAlwaysOnTop(false); } catch { }
+      }
     }
+    if (!appliedChrome || appliedChrome.skipTaskbar !== desired.skipTaskbar) {
+      try { win.setSkipTaskbar(desired.skipTaskbar); } catch { }
+    }
+    if (!appliedChrome || appliedChrome.hasShadow !== desired.hasShadow) {
+      try { win.setHasShadow(desired.hasShadow); } catch { }
+    }
+    appliedChrome = desired;
   } catch { }
 }
 
@@ -314,12 +326,22 @@ export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "bo
 }
 
 function centerTopWithContentSize(target: BrowserWindow, contentWidth: number, contentHeight: number) {
-  target.setContentSize(contentWidth, contentHeight);
+  // For a frameless transparent window with useContentSize:true the outer
+  // bounds equal the content bounds, so we can compute the position in one
+  // pass and apply size + position together via setBounds. This avoids two
+  // separate native calls (setContentSize + setPosition) which on Windows
+  // can each trigger a DWM repaint and cause visible flicker.
   const { workArea } = screen.getPrimaryDisplay();
-  const b = target.getBounds();
-  const x = Math.round(workArea.x + (workArea.width - b.width) / 2);
+  const x = Math.round(workArea.x + (workArea.width - contentWidth) / 2);
   const y = Math.round(workArea.y + workArea.height * 0.12);
-  target.setPosition(x, y);
+  try {
+    target.setBounds({ x, y, width: contentWidth, height: contentHeight });
+  } catch {
+    try {
+      target.setContentSize(contentWidth, contentHeight);
+      target.setPosition(x, y);
+    } catch { }
+  }
 }
 
 function repositionTopCenter(target: BrowserWindow) {
@@ -327,6 +349,7 @@ function repositionTopCenter(target: BrowserWindow) {
   const b = target.getBounds();
   const x = Math.round(workArea.x + (workArea.width - b.width) / 2);
   const y = Math.round(workArea.y + workArea.height * 0.12);
+  if (b.x === x && b.y === y) return;
   target.setPosition(x, y);
 }
 
@@ -550,14 +573,20 @@ export function createWindow() {
   win.on("closed", () => {
     win = null;
   });
-  // Handle resize events - allow user resizing while enforcing constraints
-  win.on('move', () => { /* No longer repositioning external sidebar */ });
+  // Handle resize events - allow user resizing while enforcing constraints.
+  // Resize handler is throttled via rAF-style coalescing so user-drag resizes
+  // don't fire dozens of IPC messages per second to the renderer.
+  let resizeRafScheduled = false;
   win.on('resize', () => {
     assertOverlaySize();
-    handleUserResize();
+    if (resizeRafScheduled) return;
+    resizeRafScheduled = true;
+    setImmediate(() => {
+      resizeRafScheduled = false;
+      handleUserResize();
+    });
   });
   win.on('will-resize', (_event, newBounds) => {
-    // Notify renderer of incoming resize for smooth animations
     try {
       win?.webContents.send('overlay:resizing', { width: newBounds.width, height: newBounds.height });
     } catch { }
@@ -578,12 +607,6 @@ export function createWindow() {
   win.on('show', () => {
     if (win?.isFocused()) unregisterMoveShortcuts();
     else registerMoveShortcuts();
-  });
-  win.on('move', () => {
-    // No longer repositioning external sidebar - using internal sidebar
-  });
-  win.on('resize', () => {
-    // No longer repositioning external sidebar - using internal sidebar
   });
 
   // Restore window bounds after resuming from sleep/hibernate.
@@ -1222,17 +1245,24 @@ export function showWindow() {
     }
   } catch { }
 
+  // Use show() + focus() rather than showInactive() + focus(). The
+  // showInactive -> focus pair causes Windows to do an extra activation
+  // pass which on transparent windows produces a brief flicker. A direct
+  // show() activates once and is visibly smoother.
   try {
-    win.showInactive();
-    win.focus();
+    win.show();
   } catch {
-    try { win.show(); } catch { }
-    try { win.focus(); } catch { }
+    try { win.showInactive(); } catch { }
   }
 
   lastShowAt = Date.now();
 
-  try { win.moveTop(); } catch { }
+  // moveTop is only needed when we expect another window to be on top of
+  // ours. Skipping the call when we already had focus avoids one more
+  // synchronous Windows API hop on every show.
+  if (!wasVisible) {
+    try { win.moveTop(); } catch { }
+  }
 
   wasHidden = false;
 
@@ -1243,7 +1273,15 @@ export function hideWindow() {
   const now = Date.now();
   if (now - lastShowAt < 250) return;
   wasHidden = true;
+  // Hide first so any subsequent native resize from the mode reset isn't
+  // visible to the user. We then reset to compact while hidden so the
+  // next show is instant and pre-rendered.
   win?.hide();
+  if (currentMode !== 'compact') {
+    setImmediate(() => {
+      try { setOverlayMode('compact'); } catch { }
+    });
+  }
 }
 
 export function toggleWindow() {
@@ -1264,7 +1302,22 @@ export function toggleWindow() {
     }
   } else {
     if (currentMode !== 'compact') {
+      // We have to switch from window/sidebar to compact AND show the
+      // overlay. setOverlayMode resizes the native window AND fires an
+      // IPC to tell the renderer to swap its DOM. If we call show()
+      // immediately the renderer hasn't repainted yet, and the user sees
+      // the old (window-mode) UI clipped to the compact bounds for a
+      // frame – that's the visible flicker.
+      //
+      // We dispatch the mode change first (which sends the IPC and does
+      // the native resize) and then defer the show() to the next macro
+      // tick so the renderer gets a chance to paint compact-mode content
+      // before the window becomes visible.
       try { setOverlayMode('compact'); } catch { }
+      setImmediate(() => {
+        try { showWindow(); } catch { }
+      });
+      return;
     }
     showWindow();
   }
@@ -1276,46 +1329,48 @@ export function setOverlaySize(width: number, height: number, reposition = false
   baseContentWidth = width;
   baseContentHeight = height;
 
+  // Skip the native call entirely if the window is already at the target size
+  // and position-anchor doesn't require a move. This avoids unnecessary DWM
+  // repaints when toggling back to the same size.
+  const current = win.getBounds();
+  const sameSize = current.width === width && current.height === height;
+
   if (anchor === 'bottom') {
-    // Math must be done on *outer* bounds to be accurate
-    const currentBounds = win.getBounds();
-    // We can't easily predict the new outer height from content height without setContentSize...
-    // But setContentSize is top-anchored.
-    // Cleanest way: set size, see difference, fix position? No, that causes flash.
-    // Better: use setBounds if we know the frame differences. The frame is transparent/frameless, so content size ~= outer size usually?
-    // Electron's useContentSize: true means width/height in constructor are content.
-    // win.getBounds() is outer.
-    // Let's assume for this frameless window, setBounds width/height is close enough or use setBounds directly.
-    const dy = height - currentBounds.height; // Approximation if mixing content/outer, but for frameless it's 1:1 usually
-    const newY = currentBounds.y - dy;
-    win.setBounds({ x: currentBounds.x, y: newY, width: width, height: height });
+    // Frameless + useContentSize: outer bounds == content bounds, so dy is exact.
+    const dy = height - current.height;
+    const newY = current.y - dy;
+    if (!sameSize || newY !== current.y) {
+      win.setBounds({ x: current.x, y: newY, width, height });
+    }
   } else {
-    // Only reposition to center-top if explicitly requested or if window isn't visible yet
     if (reposition || !win.isVisible()) {
       centerTopWithContentSize(win, width, height);
-    } else {
+    } else if (!sameSize) {
       win.setContentSize(width, height);
     }
   }
 
-  setTimeout(() => {
-    if (!win) { resizingProgrammatically = false; return; }
-    const ob = win.getBounds();
-    baseOuterWidth = ob.width;
-    baseOuterHeight = ob.height;
-    // Don't lock min/max to exact size - use mode constraints so window can expand/shrink
-    // for dropdowns like Quick Actions. The mode constraints handle the actual limits.
-    const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
-    try {
-      win.setMinimumSize(constraints.minW, constraints.minH);
-      win.setMaximumSize(constraints.maxW, constraints.maxH);
-    } catch { }
+  // Update outer size baseline immediately (synchronous) so subsequent moves
+  // don't see a stale value. We still defer constraint reapplication to next
+  // tick so it doesn't fight the bounds change above.
+  const ob = win.getBounds();
+  baseOuterWidth = ob.width;
+  baseOuterHeight = ob.height;
+
+  setImmediate(() => {
+    if (!win || win.isDestroyed()) { resizingProgrammatically = false; return; }
     resizingProgrammatically = false;
-  }, 0);
+  });
 }
 
 export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
+  if (prevMode === mode && mode !== 'sidebar') {
+    // No-op: mode didn't change and there is nothing special to redo for
+    // compact/window. (Sidebar is special because re-entering it should
+    // re-snap the split layout.)
+    return;
+  }
   currentMode = mode;
 
   applyOverlayChrome(mode);
@@ -1325,7 +1380,6 @@ export function setOverlayMode(mode: OverlayMode) {
     internalSidebarOpen = false;
     // Reset userModeSizes for current mode to remove expanded width
     if (prevMode !== 'sidebar' && userModeSizes[prevMode]) {
-      const constraints = MODE_SIZE_CONSTRAINTS[prevMode];
       const currentWidth = userModeSizes[prevMode].width;
       // If width seems expanded (larger than default + some buffer), reset to default
       if (currentWidth > DEFAULT_MODE_SIZES[prevMode].width + 100) {
@@ -1342,7 +1396,9 @@ export function setOverlayMode(mode: OverlayMode) {
     lastSplitTarget = null;
   }
 
-  // Update size constraints for the new mode
+  // Update min/max constraints once for the new mode. setOverlaySize used to
+  // re-apply these on a timeout, which caused two passes of native constraint
+  // updates per mode change.
   updateSizeConstraints(mode);
 
   if (mode === "sidebar") {
@@ -1350,6 +1406,10 @@ export function setOverlayMode(mode: OverlayMode) {
     // Sidebar: Take ~35% of screen width (not equal split - more room for active window)
     const sidebarWidth = Math.round(workArea.width * 0.35);
     const h = workArea.height;
+
+    // Tell the renderer about the upcoming layout BEFORE we resize the
+    // native window so its DOM can update in parallel with the resize.
+    try { win?.webContents.send('overlay:modeChanged', { mode, width: sidebarWidth, height: h, prevMode }); } catch { }
 
     // Split-screen: use the last active window handle if available, otherwise capture.
     try {
@@ -1462,9 +1522,6 @@ if ($targetWindow -ne 0) {
       win?.setBounds({ x: sidebarX, y: workArea.y, width: sidebarWidth, height: h });
       setOverlaySize(sidebarWidth, h, false);
     }
-
-    // Notify renderer of mode change
-    try { win?.webContents.send('overlay:modeChanged', { mode, width: sidebarWidth, height: h, prevMode }); } catch { }
     return;
   }
 
@@ -1476,10 +1533,14 @@ if ($targetWindow -ne 0) {
   width = Math.max(constraints.minW, Math.min(constraints.maxW, width));
   height = Math.max(constraints.minH, Math.min(constraints.maxH, height));
 
-  setOverlaySize(width, height, true);
-
-  // Notify renderer of mode change
+  // Notify the renderer FIRST so it can start swapping its DOM (compact
+  // <-> window) in parallel with the native bounds change. If we resize
+  // the BrowserWindow before the renderer has switched mode the user sees
+  // the wrong UI clipped to the new size for a frame, which reads as a
+  // glitch. Sending the IPC first lets both happen on the same frame.
   try { win?.webContents.send('overlay:modeChanged', { mode, width, height, prevMode }); } catch { }
+
+  setOverlaySize(width, height, true);
 }
 
 // Get current mode
@@ -1491,15 +1552,51 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+// Coalesce many tiny moves (e.g. Ctrl+Arrow at 60fps from renderer) into a
+// single native setPosition per UI frame. Each setPosition is a synchronous
+// Windows API call; firing 60+ per second can stutter, so we accumulate the
+// requested delta and flush it once per ~16 ms.
+let pendingMoveDx = 0;
+let pendingMoveDy = 0;
+let moveFlushScheduled = false;
+function flushPendingMove() {
+  moveFlushScheduled = false;
+  if (!win || win.isDestroyed() || !win.isVisible()) {
+    pendingMoveDx = 0;
+    pendingMoveDy = 0;
+    return;
+  }
+  const dx = pendingMoveDx;
+  const dy = pendingMoveDy;
+  pendingMoveDx = 0;
+  pendingMoveDy = 0;
+  if (dx === 0 && dy === 0) return;
+  try {
+    const outer = win.getBounds();
+    const display = screen.getDisplayMatching({ x: outer.x, y: outer.y, width: outer.width, height: outer.height });
+    const wa = display.workArea;
+    // Lock the outer width/height to the baseline. setPosition on a
+    // transparent frameless Electron window with useContentSize:true can
+    // drift width by 1-2px per call due to DPI rounding, so we go through
+    // setBounds with explicit size to keep the window stable while moving.
+    const lockedW = baseOuterWidth || outer.width;
+    const lockedH = baseOuterHeight || outer.height;
+    const targetOuterX = clamp(outer.x + dx, wa.x, wa.x + wa.width - lockedW);
+    const targetOuterY = clamp(outer.y + dy, wa.y, wa.y + wa.height - lockedH);
+    if (targetOuterX === outer.x && targetOuterY === outer.y && outer.width === lockedW && outer.height === lockedH) return;
+    win.setBounds({ x: targetOuterX, y: targetOuterY, width: lockedW, height: lockedH });
+  } catch { }
+}
+
 export function moveOverlayBy(dx: number, dy: number) {
-  if (!win) return;
-  const outer = win.getBounds();
-  const display = screen.getDisplayMatching({ x: outer.x, y: outer.y, width: outer.width, height: outer.height });
-  const wa = display.workArea;
-  const targetOuterX = clamp(outer.x + dx, wa.x, wa.x + wa.width - outer.width);
-  const targetOuterY = clamp(outer.y + dy, wa.y, wa.y + wa.height - outer.height);
-  // Lock the outer width/height absolutely when moving
-  win.setBounds({ x: targetOuterX, y: targetOuterY, width: baseOuterWidth, height: baseOuterHeight });
+  if (!win || win.isDestroyed()) return;
+  pendingMoveDx += dx;
+  pendingMoveDy += dy;
+  if (moveFlushScheduled) return;
+  moveFlushScheduled = true;
+  // setImmediate is the fastest available in main process and lets multiple
+  // queued IPC messages from the renderer coalesce into a single setPosition.
+  setImmediate(flushPendingMove);
 }
 
 export function setOverlayBounds(bounds: { x?: number; y?: number; width?: number; height?: number }) {

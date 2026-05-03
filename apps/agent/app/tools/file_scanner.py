@@ -18,11 +18,14 @@ import asyncio
 import atexit
 import ctypes
 import hashlib
+import json
 import os
+import subprocess
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional, Callable
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Callable, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from ..storage import file_index_db as db
@@ -34,6 +37,7 @@ from ..storage import file_index_db as db
 MAX_HASH_FILE_SIZE = 50 * 1024 * 1024  # 50MB - don't hash files larger than this
 QUICK_HASH_SAMPLE_SIZE = 64 * 1024  # 64KB for quick signature
 HASH_CHUNK_SIZE = 8192  # 8KB chunks for hashing
+SCAN_BATCH_SIZE = 5000
 WATCHER_DEBOUNCE_SECONDS = 1.0
 WATCHER_BUFFER_SIZE = 64 * 1024
 
@@ -469,6 +473,99 @@ def _flush_batch(
         batch_data.clear()
 
 
+def _find_native_file_indexer() -> Optional[str]:
+    override = os.getenv("STUARD_FILE_INDEXER")
+    if override and os.path.isfile(override):
+        return override
+
+    exe_name = "stuard-file-indexer.exe" if sys.platform == "win32" else "stuard-file-indexer"
+    candidates: List[Path] = []
+    try:
+        candidates.append(Path(sys.executable).resolve().parent / exe_name)
+    except Exception:
+        pass
+    here = Path(__file__).resolve()
+    candidates.extend([
+        here.parents[4] / "dist" / exe_name,
+        here.parents[2] / "native" / "file-indexer" / "target" / "release" / exe_name,
+        here.parents[2] / "native" / "file-indexer" / "target" / "debug" / exe_name,
+    ])
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+async def _scan_root_native_helper(
+    root_id: str,
+    progress_callback: Optional[Callable[[ScanProgress], None]] = None,
+) -> ScanProgress:
+    if sys.platform != "win32":
+        raise RuntimeError("native Rust file indexer is only enabled for Windows scans")
+
+    helper = _find_native_file_indexer()
+    if not helper:
+        raise RuntimeError(
+            "Rust file indexer not found. Build it with: "
+            "cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml"
+        )
+
+    root = db.get_root(root_id)
+    if not root:
+        raise ValueError(f"Root not found: {root_id}")
+    if not os.path.isdir(root.path):
+        raise ValueError(f"Root path not accessible: {root.path}")
+
+    cmd = [
+        helper,
+        "--db",
+        db._DB_PATH,
+        "--root-id",
+        root_id,
+        "--root-path",
+        root.path,
+        "--workers",
+        str(max(4, min(24, (os.cpu_count() or 4) * 2))),
+    ]
+    loop = asyncio.get_event_loop()
+
+    def run_helper() -> Dict[str, Any]:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60 * 30,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or f"native helper exited {proc.returncode}").strip())
+        output = (proc.stdout or "").strip().splitlines()[-1] if proc.stdout else ""
+        return json.loads(output)
+
+    result = await loop.run_in_executor(None, run_helper)
+
+    progress_data = result.get("progress") or {}
+    progress = ScanProgress()
+    progress.total_dirs = int(progress_data.get("total_dirs") or 0)
+    progress.scanned_dirs = int(progress_data.get("scanned_dirs") or 0)
+    progress.total_files = int(progress_data.get("total_files") or 0)
+    progress.new_files = int(progress_data.get("new_files") or 0)
+    progress.changed_files = int(progress_data.get("changed_files") or 0)
+    progress.unchanged_files = int(progress_data.get("unchanged_files") or 0)
+    progress.skipped_files = int(progress_data.get("skipped_files") or 0)
+    progress.deleted_files = int(progress_data.get("deleted_files") or 0)
+    progress.moved_files = int(progress_data.get("moved_files") or 0)
+    progress.errors = ["native helper errors"] * int(progress_data.get("errors") or 0)
+    elapsed_seconds = float(progress_data.get("elapsed_seconds") or 0)
+    if elapsed_seconds > 0:
+        progress.start_time = time.time() - elapsed_seconds
+    _ensure_windows_root_watcher(root_id, root.path)
+    if progress_callback:
+        progress_callback(progress)
+    return progress
+
+
 async def _scan_root_generic(
     root_id: str,
     progress_callback: Optional[Callable[[ScanProgress], None]] = None,
@@ -483,8 +580,8 @@ async def _scan_root_generic(
 
     progress = ScanProgress()
     scan_id = db.increment_scan_id(root_id, backend="generic", last_reconcile_at=db._now_iso())
-    deleted_files = {f.content_hash: f for f in db.get_deleted_files_with_hash(root_id) if f.content_hash}
-    existing_files_map = db.get_root_file_metadata(root_id)
+    deleted_files = {f.content_hash: f for f in db.get_deleted_files_with_hash(root_id) if f.content_hash} if compute_hashes else {}
+    existing_files_map = db.get_root_file_metadata(root_id) if compute_hashes else {}
 
     cpu_count = os.cpu_count() or 4
     max_workers = max(2, cpu_count // 2)
@@ -534,7 +631,7 @@ async def _scan_root_generic(
         progress_callback(progress)
 
     batch_data: List[Dict[str, Any]] = []
-    batch_size = 100
+    batch_size = SCAN_BATCH_SIZE
 
     for file_path in all_files:
         if max_files and files_processed >= max_files:
@@ -658,7 +755,7 @@ def _enumerate_windows_tree(
     return entries, root_volume_serial, root_file_id
 
 
-async def _scan_root_windows(
+def _scan_root_windows_sync(
     root_id: str,
     progress_callback: Optional[Callable[[ScanProgress], None]] = None,
     compute_hashes: bool = True,
@@ -671,129 +768,171 @@ async def _scan_root_windows(
         raise ValueError(f"Root path not accessible: {root.path}")
 
     progress = ScanProgress()
-    loop = asyncio.get_event_loop()
-    entries, root_volume_serial, _ = await loop.run_in_executor(None, _enumerate_windows_tree, root.path, progress)
+    root_volume_serial, root_file_id = _get_windows_identity(root.path, is_dir=True)
+    if not root_file_id:
+        raise RuntimeError(f"Failed to get file identity for {root.path}")
+
     scan_id = db.increment_scan_id(
         root_id,
         backend="win32",
         volume_serial=root_volume_serial,
         last_reconcile_at=db._now_iso(),
     )
+    deleted_files = {f.content_hash: f for f in db.get_deleted_files_with_hash(root_id) if f.content_hash} if compute_hashes else {}
+    existing_files_map = db.get_root_file_metadata(root_id) if compute_hashes else {}
 
-    deleted_files = {f.content_hash: f for f in db.get_deleted_files_with_hash(root_id) if f.content_hash}
-    existing_files_map = db.get_root_file_metadata(root_id)
-
-    cpu_count = os.cpu_count() or 4
-    max_workers = max(2, cpu_count // 2)
-    executor = ThreadPoolExecutor(max_workers=max_workers)
+    batch_data: List[Dict[str, Any]] = []
+    processed = 0
+    scan_complete = True
+    stack: List[Tuple[str, Optional[str], Optional[str]]] = [(root.path, root_file_id, root_volume_serial)]
 
     if progress_callback:
         progress_callback(progress)
 
-    batch_data: List[Dict[str, Any]] = []
-    batch_size = 100
-    processed = 0
-
-    for entry in entries:
+    while stack:
         if max_files and processed >= max_files:
+            scan_complete = False
             break
 
-        path = entry["path"]
-        size = entry["size"]
-        mtime_ms = entry["mtime_ms"]
-        volume_serial = entry.get("volume_serial")
-        file_id = entry.get("file_id")
-        parent_file_id = entry.get("parent_file_id")
-        win_attrs = entry.get("win_attrs")
-        is_dir = bool(entry.get("is_dir"))
-        kind_override = entry.get("kind_override")
-        _, ext = os.path.splitext(path)
-        ext = ext.lower()
+        dir_path, parent_file_id, parent_volume_serial = stack.pop()
+        progress.scanned_dirs += 1
+        try:
+            dir_entries = _iter_windows_dir(dir_path)
+        except Exception as exc:
+            progress.errors.append(f"Dir error: {dir_path}: {exc}")
+            continue
 
-        content_hash = None
-        existing_meta = existing_files_map.get(path)
-        is_unchanged = _existing_file_is_unchanged(existing_meta, size, mtime_ms, volume_serial, file_id)
-        if is_unchanged and existing_meta:
-            content_hash = existing_meta.get("content_hash")
-        elif not is_dir and compute_hashes and ext not in db.METADATA_ONLY_EXTENSIONS:
-            content_hash = await loop.run_in_executor(executor, compute_content_hash, path, ext)
+        for find_data in dir_entries:
+            if max_files and processed >= max_files:
+                scan_complete = False
+                break
 
-        if not is_dir and not is_unchanged and content_hash and content_hash in deleted_files:
-            _flush_batch(batch_data, progress, progress_callback)
-            old_file = deleted_files[content_hash]
-            db.upsert_file(
-                root_id,
-                path,
-                size,
-                mtime_ms,
-                scan_id,
-                content_hash,
-                volume_serial=volume_serial,
-                file_id=file_id,
-                parent_file_id=parent_file_id,
-                win_attrs=win_attrs,
-            )
-            if db.transfer_file_metadata(old_file.id, path):
-                progress.moved_files += 1
-                del deleted_files[content_hash]
-                processed += 1
+            name = find_data.cFileName
+            full_path = os.path.join(dir_path, name)
+            attrs = int(find_data.dwFileAttributes)
+            is_dir = bool(attrs & FILE_ATTRIBUTE_DIRECTORY)
+            is_reparse = bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT)
+
+            if name in db.IGNORE_PATTERNS and db.should_skip_path(full_path):
+                continue
+            if is_reparse:
+                progress.skipped_files += 1
+                continue
+            if is_dir and db.should_skip_path(full_path):
                 continue
 
-        batch_data.append({
-            "root_id": root_id,
-            "path": path,
-            "size": size,
-            "mtime_ms": mtime_ms,
-            "scan_id": scan_id,
-            "content_hash": content_hash,
-            "kind_override": kind_override,
-            "volume_serial": volume_serial,
-            "file_id": file_id,
-            "parent_file_id": parent_file_id,
-            "win_attrs": win_attrs,
-        })
-        processed += 1
-        if len(batch_data) >= batch_size:
-            _flush_batch(batch_data, progress, progress_callback)
+            mtime_ms = _filetime_to_unix_ms(find_data.ftLastWriteTime)
+            size = 0 if is_dir else ((int(find_data.nFileSizeHigh) << 32) | int(find_data.nFileSizeLow))
+
+            if is_dir:
+                volume_serial, file_id = _get_windows_identity(full_path, is_dir=True)
+                if not file_id:
+                    progress.skipped_files += 1
+                    continue
+                effective_volume = volume_serial or parent_volume_serial
+                stack.append((full_path, file_id, effective_volume))
+                progress.total_dirs += 1
+                kind_override = "folder"
+            else:
+                file_id = None
+                effective_volume = parent_volume_serial
+                kind_override = None
+
+            _, ext = os.path.splitext(full_path)
+            ext = ext.lower()
+            content_hash = None
+            existing_meta = existing_files_map.get(full_path) if compute_hashes else None
+            is_unchanged = _existing_file_is_unchanged(existing_meta, size, mtime_ms, effective_volume, file_id)
+            if is_unchanged and existing_meta:
+                content_hash = existing_meta.get("content_hash")
+            elif not is_dir and compute_hashes and ext not in db.METADATA_ONLY_EXTENSIONS:
+                content_hash = compute_content_hash(full_path, ext)
+
+            if not is_dir and not is_unchanged and content_hash and content_hash in deleted_files:
+                _flush_batch(batch_data, progress, progress_callback)
+                old_file = deleted_files[content_hash]
+                db.upsert_file(
+                    root_id,
+                    full_path,
+                    size,
+                    mtime_ms,
+                    scan_id,
+                    content_hash,
+                    volume_serial=effective_volume,
+                    file_id=file_id,
+                    parent_file_id=parent_file_id,
+                    win_attrs=attrs,
+                )
+                if db.transfer_file_metadata(old_file.id, full_path):
+                    progress.moved_files += 1
+                    del deleted_files[content_hash]
+                    processed += 1
+                    progress.total_files += 1
+                    continue
+
+            batch_data.append({
+                "root_id": root_id,
+                "path": full_path,
+                "size": size,
+                "mtime_ms": mtime_ms,
+                "scan_id": scan_id,
+                "content_hash": content_hash,
+                "kind_override": kind_override,
+                "volume_serial": effective_volume,
+                "file_id": file_id,
+                "parent_file_id": parent_file_id,
+                "win_attrs": attrs,
+            })
+            processed += 1
+            progress.total_files += 1
+
+            if len(batch_data) >= SCAN_BATCH_SIZE:
+                _flush_batch(batch_data, progress, progress_callback)
+
+        if not scan_complete:
+            break
 
     _flush_batch(batch_data, progress, progress_callback)
-    progress.deleted_files = db.mark_deleted_files(root_id, scan_id)
-    executor.shutdown(wait=False)
+    if scan_complete:
+        progress.deleted_files = db.mark_deleted_files(root_id, scan_id)
     if progress_callback:
         progress_callback(progress)
     _ensure_windows_root_watcher(root_id, root.path)
     return progress
 
 
-async def scan_root(
+async def _scan_root_windows(
     root_id: str,
     progress_callback: Optional[Callable[[ScanProgress], None]] = None,
     compute_hashes: bool = True,
     max_files: Optional[int] = None,
 ) -> ScanProgress:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        _scan_root_windows_sync,
+        root_id,
+        progress_callback,
+        compute_hashes,
+        max_files,
+    )
+
+
+async def scan_root(
+    root_id: str,
+    progress_callback: Optional[Callable[[ScanProgress], None]] = None,
+    compute_hashes: bool = False,
+    max_files: Optional[int] = None,
+) -> ScanProgress:
     """
     Scan a root folder and update the file index.
     """
-    if sys.platform == "win32" and WINDOWS_FAST_PATH_AVAILABLE:
-        try:
-            return await _scan_root_windows(
-                root_id,
-                progress_callback=progress_callback,
-                compute_hashes=compute_hashes,
-                max_files=max_files,
-            )
-        except Exception as exc:
-            root = db.get_root(root_id)
-            if root:
-                db.update_root(root_id, backend="generic", watch_state="error", volume_serial=root.volume_serial)
-            progress = await _scan_root_generic(
-                root_id,
-                progress_callback=progress_callback,
-                compute_hashes=compute_hashes,
-                max_files=max_files,
-            )
-            progress.errors.append(f"Windows fast path fallback: {exc}")
-            return progress
+    if sys.platform == "win32":
+        if compute_hashes:
+            raise RuntimeError("Windows file indexing is Rust metadata-first only; content hashing runs in deferred semantic/indexing stages.")
+        if max_files is not None:
+            raise RuntimeError("Rust file indexer does not support max_files; use a smaller root for bounded scans.")
+        return await _scan_root_native_helper(root_id, progress_callback=progress_callback)
 
     return await _scan_root_generic(
         root_id,
@@ -1088,7 +1227,7 @@ async def scan_index_root(args: Dict[str, Any]) -> Dict[str, Any]:
     if not root_id:
         raise ValueError("missing root_id or path")
     
-    compute_hashes = args.get("compute_hashes", True)
+    compute_hashes = args.get("compute_hashes", False)
     max_files = args.get("max_files")
     
     progress = await scan_root(

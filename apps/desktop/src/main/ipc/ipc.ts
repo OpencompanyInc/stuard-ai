@@ -1256,9 +1256,12 @@ export function setupIpc() {
     }
   });
 
-  ipcMain.handle('fileIndex:scan', async (_e, rootId: string) => {
+  ipcMain.handle('fileIndex:scan', async (_e, rootId: string, options?: { computeHashes?: boolean; maxFiles?: number }) => {
     try {
-      const progress = await scanRoot(rootId);
+      const progress = await scanRoot(rootId, undefined, {
+        computeHashes: options?.computeHashes ?? false,
+        maxFiles: options?.maxFiles,
+      });
       return { ok: true, progress };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };

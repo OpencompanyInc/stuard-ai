@@ -338,7 +338,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
       
-      # Build Python service executables (agent + browser + mediapipe)
+      # Build Python service executables (agent + browser + mediapipe + wakeword)
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
@@ -364,33 +364,33 @@ jobs:
           path: |
             apps/agent/build
             ~/.pyinstaller
-          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec') }}
+          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec', 'apps/agent/stuard-wakeword.spec', 'apps/desktop/resources/wakeword/listen_numpy.py', 'apps/desktop/resources/wakeword/models/kws_weights.npz') }}
           restore-keys: |
             pyinstaller-services-${{ runner.os }}-
             pyinstaller-${{ runner.os }}-
 
       - name: Build all service executables
         working-directory: apps/agent
-        run: python build-services.py --services agent browser mediapipe
+        run: python build-services.py --services agent browser mediapipe wakeword
 
       - name: Verify service binaries
         run: |
           echo "=== Service binaries ==="
           if [ "$RUNNER_OS" == "Windows" ]; then
-            ls -la dist/stuard-agent.exe dist/stuard-browser.exe dist/stuard-mediapipe.exe 2>/dev/null || true
+            ls -la dist/stuard-agent.exe dist/stuard-browser.exe dist/stuard-mediapipe.exe dist/stuard-wakeword.exe 2>/dev/null || true
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            ls -la dist/stuard-agent-macos dist/stuard-browser-macos dist/stuard-mediapipe-macos 2>/dev/null || true
+            ls -la dist/stuard-agent-macos dist/stuard-browser-macos dist/stuard-mediapipe-macos dist/stuard-wakeword-macos 2>/dev/null || true
           else
-            ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux 2>/dev/null || true
+            ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux dist/stuard-wakeword-linux 2>/dev/null || true
           fi
-          echo "=== Required: agent + browser ==="
-          # Agent and browser are required; mediapipe is optional
+          echo "=== Required: agent + browser + wakeword ==="
+          # Agent, browser, and wakeword are required; mediapipe is optional
           if [ "$RUNNER_OS" == "Windows" ]; then
-            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe
+            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos
+            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos
           else
-            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux
+            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux
           fi
         shell: bash
       
@@ -555,7 +555,7 @@ jobs:
           fi
 
           echo "Uploading service binaries for $PLAT (v$VERSION)..."
-          for bin in dist/stuard-browser* dist/stuard-mediapipe*; do
+          for bin in dist/stuard-browser* dist/stuard-mediapipe* dist/stuard-wakeword*; do
             if [ -f "$bin" ]; then
               FNAME=$(basename "$bin")
               # Upload versioned + latest

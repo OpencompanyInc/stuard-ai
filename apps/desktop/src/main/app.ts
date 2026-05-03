@@ -9,6 +9,7 @@ import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdat
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc, shutdownAllBrowserUseServers, prewarmBrowserUseServer } from "./tools/index";
+import { shutdownWakewordListener } from "./tools/handlers/wakeword";
 import logger from "./utils/logger";
 
 initEnv();
@@ -380,14 +381,11 @@ try {
 
   // Run file indexing in the background after a short delay
   // This allows the agent to fully initialize first
-  setTimeout(async () => {
-    try {
-      logger.info("Starting background file indexing...");
-      await runStartupIndexing();
-      logger.info("Background file indexing complete");
-    } catch (e) {
-      logger.error("Background file indexing failed:", e);
-    }
+  setTimeout(() => {
+    logger.info("Starting background file indexing...");
+    runStartupIndexing()
+      .then(() => logger.info("Background file indexing complete"))
+      .catch((e) => logger.error("Background file indexing failed:", e));
   }, 5000); // 5 second delay to let agent fully start
 
   // Discover installed applications immediately (no agent dependency)
@@ -412,6 +410,11 @@ async function runShutdownCleanup(): Promise<void> {
     try { stopReminderScheduler(); } catch (e) { logger.error("Failed to stop reminder scheduler during shutdown:", e); }
     try { stopSmsInbox(); } catch (e) { logger.error("Failed to stop SMS inbox during shutdown:", e); }
     try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
+    try { shutdownWakewordListener(); } catch (e) { logger.error("Failed to stop wakeword listener during shutdown:", e); }
+    try {
+      const { shutdownRustFileIndexer } = require('./services/rust-file-indexer');
+      shutdownRustFileIndexer?.();
+    } catch (e) { logger.error("Failed to shutdown Rust file indexer during shutdown:", e); }
     try { require('./workflow-variables').saveVariablesSync(); } catch (e) { logger.error("Failed to flush workflow variables during shutdown:", e); }
 
     await Promise.allSettled([

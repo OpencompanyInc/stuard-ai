@@ -8,6 +8,8 @@
 //   Agent       | "Stuard AI Agent.exe"     | "stuard-agent"
 //   Browser     | "stuard-browser.exe"      | "stuard-browser"
 //   MediaPipe   | "stuard-mediapipe.exe"    | "stuard-mediapipe"
+//   Wakeword    | "stuard-wakeword.exe"     | "stuard-wakeword"
+//   FileIndexer | "stuard-file-indexer.exe" | "stuard-file-indexer"
 //
 // When packaged binaries exist, the desktop app spawns them directly.
 // When they don't exist, it falls back to `python <script>.py` (dev mode).
@@ -173,9 +175,35 @@ function main() {
     console.log(`[prepare-agent] MediaPipe binary: NOT FOUND (optional — will install on demand)`);
   }
 
+  // 4. Wakeword listener binary (optional in dev, included in release builds)
+  const wakewordCopied = copyServiceBinary(distDir, outDir, {
+    winName: "stuard-wakeword.exe",
+    macName: "stuard-wakeword-macos",
+    linuxName: "stuard-wakeword-linux",
+    destName: process.platform === "win32" ? "stuard-wakeword.exe" : "stuard-wakeword",
+  });
+  if (wakewordCopied) {
+    console.log(`[prepare-agent] Wakeword binary: OK`);
+  } else {
+    console.log(`[prepare-agent] Wakeword binary: NOT FOUND (will use Python fallback in dev)`);
+  }
+
+  // 5. Native file indexer used by the Python agent for high-throughput scans.
+  const fileIndexerCopied = copyServiceBinary(distDir, outDir, {
+    winName: "stuard-file-indexer.exe",
+    macName: "stuard-file-indexer-macos",
+    linuxName: "stuard-file-indexer-linux",
+    destName: process.platform === "win32" ? "stuard-file-indexer.exe" : "stuard-file-indexer",
+  });
+  if (fileIndexerCopied) {
+    console.log(`[prepare-agent] File indexer binary: OK`);
+  } else {
+    console.log(`[prepare-agent] File indexer binary: NOT FOUND (Python scanner fallback will be used)`);
+  }
+
   // Summary
-  const total = [agentCopied, browserCopied, mediapipeCopied].filter(Boolean).length;
-  console.log(`\n[prepare-agent] Done. ${total}/3 service binaries packaged.`);
+  const total = [agentCopied, browserCopied, mediapipeCopied, wakewordCopied, fileIndexerCopied].filter(Boolean).length;
+  console.log(`\n[prepare-agent] Done. ${total}/5 service binaries packaged.`);
 }
 
 main();

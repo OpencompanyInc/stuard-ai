@@ -108,6 +108,7 @@ def format_file_result(f: db.IndexedFile, score: float = 0.0, match_type: str = 
         "is_folder": effective_kind == 'folder',
         "preview_kind": f.preview_kind,
         "preview_eligible": bool(f.preview_eligible),
+        "icon_path": f.path,
     }
     
     # For application-type files, resolve friendly display name and target
@@ -183,6 +184,7 @@ def format_folder_result(f: db.FolderSummary, score: float = 0.0) -> Dict[str, A
         "is_folder": True,
         "preview_kind": "icon",
         "preview_eligible": True,
+        "icon_path": f.path,
     }
 
 
@@ -206,6 +208,7 @@ def format_root_result(root: db.IndexedRoot, score: float = 0.0, match_type: str
         "is_folder": True,
         "preview_kind": "icon",
         "preview_eligible": True,
+        "icon_path": root.path,
     }
 
 

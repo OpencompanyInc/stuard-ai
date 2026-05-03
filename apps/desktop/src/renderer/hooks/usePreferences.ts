@@ -249,7 +249,7 @@ export const FALLBACK_MODELS: ModelMeta[] = ALL_CHAT_MODEL_IDS.map((id) => {
 const DEFAULT_CHAT_MODE: ChatMode = 'auto';
 
 // Legacy config support (can be simplified later)
-const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
+export const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
   fast: { allowed: [], default: 'deepseek/deepseek-chat' },
   balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
   smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
@@ -310,7 +310,7 @@ export function usePreferences() {
   const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));
   const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
-  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.7));
+  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.9));
   const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
@@ -388,7 +388,7 @@ export function usePreferences() {
           if (key === 'theme_text') setThemeTextState(val ?? 'white');
           if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
-          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.7);
+          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.9);
           if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
