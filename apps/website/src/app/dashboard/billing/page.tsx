@@ -536,6 +536,14 @@ export default function BillingPage() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data?.message || data?.error || 'Failed to update amount.'); return; }
+      // Polar's API doesn't allow updating the PWYW amount on an active
+      // subscription, so the API responds with a fresh checkout URL for the
+      // new amount. The webhook revokes the previous subscription once the
+      // new one becomes active, so the user is never double-billed.
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
       await loadSubscription();
       await loadCredits();
     } catch (e: any) {
@@ -955,8 +963,13 @@ export default function BillingPage() {
                         disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
                         className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        {isUpdatingSubscription ? 'Updating…' : subscription?.amount === Math.round(amount * 100) ? `Current amount — $${amount}/mo` : `Switch to $${amount}/mo`}
+                        {isUpdatingSubscription ? 'Redirecting…' : subscription?.amount === Math.round(amount * 100) ? `Current amount — $${amount}/mo` : `Switch to $${amount}/mo`}
                       </button>
+                      {subscription?.amount !== Math.round(amount * 100) && (
+                        <p className="text-[11px] text-gray-400 text-center">
+                          Switching opens checkout for ${amount}/mo. Your current plan is replaced automatically.
+                        </p>
+                      )}
                       {!subscription?.cancelAtPeriodEnd && (
                         <>
                           {showCancelConfirm ? (

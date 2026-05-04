@@ -79,15 +79,12 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_get_identity',
   // Planner internal tools
   'planner_list_items',
-  // Internal subagent lifecycle tools
-  'subagent_spawn',
+  // Internal subagent management tools — spawn-style ones are surfaced as
+  // delegation rectangles instead (see DELEGATION_TOOL_NAMES below).
   'subagent_update',
   'subagent_status',
   'subagent_list',
   'subagent_stop',
-  'subagent_create',
-  'run_subagent',
-  'spawn_agent',
   // Internal meta-tools (invisible to user)
   'get_tool_schema',
   'search_tools',
@@ -119,7 +116,7 @@ const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
     : tool.tool;
 
   // For subagent tools, show the objective/task instead of generic tool name
-  const isSubagentTool = resolvedToolName === 'deploy_headless_agent' || resolvedToolName === 'deploy_subagent';
+  const isSubagentTool = resolvedToolName === 'deploy_headless_agent';
   const subagentObjective = isSubagentTool && tool.args?.objective
     ? String(tool.args.objective).slice(0, 80) + (String(tool.args.objective).length > 80 ? '…' : '')
     : null;
@@ -1219,12 +1216,15 @@ interface AssistantTraceStepData {
   tool?: ToolCall;
   nested?: boolean;
   subagentId?: string;
+  subagentKind?: string;
   statusVariant?: 'compacting';
   statusMeta?: {
     round?: number;
     maxRounds?: number;
     tokensBefore?: number;
     tokensAfter?: number;
+    subagentKind?: string;
+    subagentLabel?: string;
   };
 }
 
@@ -1361,7 +1361,11 @@ const CollapsibleToolGroup: React.FC<{
 
 // Tool names that represent delegation to a subagent — rendered as a distinct rectangle card
 // so long-running delegated work is easy to track at a glance.
-const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'deploy_subagent']);
+// `delegate` is the orchestrator's specialised-subagent tool; `deploy_headless_agent`
+// is the general user-facing background-agent tool. Those are the only two real
+// spawn entry points — every other name (subagent_create, spawn_agent, run_subagent,
+// deploy_subagent) was a dead alias.
+const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent']);
 
 function resolveToolName(tool: ToolCall): string {
   return tool.tool === 'execute_tool' && tool.args?.tool_name
@@ -1384,13 +1388,128 @@ function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
       instruction: typeof t?.instruction === 'string' ? t.instruction : undefined,
     }));
   }
-  // `deploy_subagent` / `deploy_headless_agent` — flat args
+  // `deploy_headless_agent` — flat args
   const kind = args.subagent || args.kind || args.agent || args.agent_kind || 'subagent';
   const instruction = args.objective || args.task || args.prompt || args.instruction;
   return [{
     subagent: String(kind),
     instruction: typeof instruction === 'string' ? instruction : undefined,
   }];
+}
+
+function normalizeSubagentName(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+agent$/i, '')
+    .replace(/[\s-]+/g, '_');
+}
+
+function getStepLabelText(label: React.ReactNode): string {
+  return typeof label === 'string' ? label : '';
+}
+
+function deriveDelegationStatus(parentStatus: TraceStatus, childSteps: AssistantTraceStepData[]): TraceStatus {
+  if (childSteps.some((child) => child.status === 'error')) return 'error';
+
+  const terminalLabel = childSteps
+    .map((child) => getStepLabelText(child.label).toLowerCase())
+    .find((label) => label.includes('subagent finished') || label.includes('subagent hit an error') || label.includes('subagent cancelled'));
+
+  if (terminalLabel?.includes('error') || terminalLabel?.includes('cancelled')) return 'error';
+  if (terminalLabel?.includes('finished')) return 'complete';
+  if (childSteps.some((child) => child.status === 'active' || child.status === 'pending')) return 'active';
+  return parentStatus;
+}
+
+function buildDelegationTaskStep(
+  parentStep: AssistantTraceStepData,
+  task: DelegationTask,
+  taskIndex: number,
+  childSteps: AssistantTraceStepData[],
+): AssistantTraceStepData {
+  const parentTool = parentStep.tool!;
+  const { tasks: _tasks, ...restArgs } = (parentTool.args || {}) as Record<string, any>;
+  const instructionArgs = task.instruction ? { instruction: task.instruction } : {};
+  const taskTool: ToolCall = {
+    ...parentTool,
+    id: `${parentTool.id || parentStep.id}:task-${taskIndex}`,
+    args: {
+      ...restArgs,
+      subagent: task.subagent,
+      ...instructionArgs,
+    },
+  };
+
+  return {
+    ...parentStep,
+    id: `${parentStep.id}:task-${taskIndex}`,
+    status: deriveDelegationStatus(parentStep.status, childSteps),
+    tool: taskTool,
+  };
+}
+
+function assignDelegationChildrenToTasks(
+  tasks: DelegationTask[],
+  childEntries: Array<{ step: AssistantTraceStepData; idx: number }>,
+): Array<{ children: AssistantTraceStepData[]; lastChildIdx: number }> {
+  const groupsBySubagent = new Map<string, Array<{ step: AssistantTraceStepData; idx: number }>>();
+  const unassigned: Array<{ step: AssistantTraceStepData; idx: number }> = [];
+
+  for (const entry of childEntries) {
+    const subagentId = entry.step.subagentId?.trim();
+    if (!subagentId) {
+      unassigned.push(entry);
+      continue;
+    }
+    const group = groupsBySubagent.get(subagentId) || [];
+    group.push(entry);
+    groupsBySubagent.set(subagentId, group);
+  }
+
+  const assignments = tasks.map(() => ({ children: [] as AssistantTraceStepData[], lastChildIdx: -1 }));
+  const usedTaskIndexes = new Set<number>();
+  const deferredGroups: Array<Array<{ step: AssistantTraceStepData; idx: number }>> = [];
+
+  const findAvailableTaskByKind = (kind: string): number => {
+    const normalizedKind = normalizeSubagentName(kind);
+    if (!normalizedKind) return -1;
+
+    const matches = tasks
+      .map((task, index) => ({ index, task }))
+      .filter(({ index, task }) => !usedTaskIndexes.has(index) && normalizeSubagentName(task.subagent) === normalizedKind);
+
+    return matches.length === 1 ? matches[0].index : -1;
+  };
+
+  for (const group of groupsBySubagent.values()) {
+    const kind = group.find(({ step }) => step.subagentKind || step.statusMeta?.subagentKind)?.step.subagentKind
+      || group.find(({ step }) => step.statusMeta?.subagentKind)?.step.statusMeta?.subagentKind
+      || '';
+    const taskIndex = findAvailableTaskByKind(kind);
+    if (taskIndex >= 0) {
+      assignments[taskIndex].children.push(...group.map(({ step }) => step));
+      assignments[taskIndex].lastChildIdx = Math.max(assignments[taskIndex].lastChildIdx, ...group.map(({ idx }) => idx));
+      usedTaskIndexes.add(taskIndex);
+    } else {
+      deferredGroups.push(group);
+    }
+  }
+
+  for (const group of deferredGroups) {
+    const taskIndex = tasks.findIndex((_, index) => !usedTaskIndexes.has(index));
+    const targetIndex = taskIndex >= 0 ? taskIndex : Math.max(0, tasks.length - 1);
+    assignments[targetIndex].children.push(...group.map(({ step }) => step));
+    assignments[targetIndex].lastChildIdx = Math.max(assignments[targetIndex].lastChildIdx, ...group.map(({ idx }) => idx));
+    usedTaskIndexes.add(targetIndex);
+  }
+
+  if (unassigned.length > 0 && assignments.length > 0) {
+    assignments[0].children.push(...unassigned.map(({ step }) => step));
+    assignments[0].lastChildIdx = Math.max(assignments[0].lastChildIdx, ...unassigned.map(({ idx }) => idx));
+  }
+
+  return assignments;
 }
 
 const DelegationCard: React.FC<{
@@ -1568,7 +1687,7 @@ const DelegationCard: React.FC<{
                       ) : child.label
                     }
                   >
-                    {child.kind === 'reasoning' && child.content ? (
+                    {(child.kind === 'reasoning' || child.kind === 'text') && child.content ? (
                       <div
                         className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
                         style={{
@@ -2180,18 +2299,51 @@ const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   return null;
 };
 
-function summarizeReasoningLabel(content: string): string {
+function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
   const plain = content
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/[`*_>#-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!plain) return 'Planning next moves';
+  if (!plain) return fallback;
 
   const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
   const summary = truncatePreviewText(sentence, 72);
-  return summary.split(' ').length >= 2 ? summary : 'Planning next moves';
+  return summary.split(' ').length >= 2 ? summary : fallback;
+}
+
+// Fallback label used when a nested subagent reply has no summarizable content
+// yet (empty stream, single-token, or symbols-only). Kept distinct so the UI
+// still conveys "this came from a subagent" in that rare case.
+const SUBAGENT_REPLY_FALLBACK = 'Subagent reply';
+
+function getStreamingStepFallback(step: AssistantTraceStepData): string {
+  return step.kind === 'text' ? SUBAGENT_REPLY_FALLBACK : 'Planning next moves';
+}
+
+function tryMergeStreamingStep(
+  last: AssistantTraceStepData,
+  step: AssistantTraceStepData,
+): AssistantTraceStepData | null {
+  if (last.kind !== step.kind) return null;
+  if (step.kind !== 'reasoning' && step.kind !== 'text') return null;
+  if (!step.content || !last.content) return null;
+  if (Boolean(step.nested) !== Boolean(last.nested)) return null;
+  if (step.subagentId !== last.subagentId) return null;
+  if (!isRedundantStreamingUpdate(last.content, step.content)) return null;
+
+  const mergedContent = mergeStreamingText(last.content, step.content);
+  return {
+    ...last,
+    id: step.id,
+    label: summarizeReasoningLabel(mergedContent, getStreamingStepFallback(step)),
+    status: step.status === 'active' ? 'active' : last.status,
+    content: mergedContent,
+    nested: step.nested,
+    subagentId: step.subagentId,
+    subagentKind: step.subagentKind,
+  };
 }
 
 function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantTraceStepData[] {
@@ -2199,24 +2351,12 @@ function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantT
 
   for (const step of steps) {
     const last = compacted[compacted.length - 1];
-    if (
-      step.kind === 'reasoning'
-      && last?.kind === 'reasoning'
-      && step.content
-      && last.content
-      && Boolean(step.nested) === Boolean(last.nested)
-      && isRedundantStreamingUpdate(last.content, step.content)
-    ) {
-      const mergedContent = mergeStreamingText(last.content, step.content);
-      compacted[compacted.length - 1] = {
-        ...last,
-        id: step.id,
-        label: summarizeReasoningLabel(mergedContent),
-        status: step.status === 'active' ? 'active' : last.status,
-        content: mergedContent,
-        nested: step.nested,
-      };
-      continue;
+    if (last) {
+      const merged = tryMergeStreamingStep(last, step);
+      if (merged) {
+        compacted[compacted.length - 1] = merged;
+        continue;
+      }
     }
 
     compacted.push(step);
@@ -2279,12 +2419,14 @@ const AssistantTracePanel: React.FC<{
         }
 
         // Nested text = a delegated subagent's narration to the orchestrator.
-        // Render it inside the chain-of-thought rather than the main bubble.
+        // Render it inside the chain-of-thought with a live summary of the
+        // subagent's prose as the label (mirroring how reasoning/thought tokens
+        // display), rather than a static "Subagent reply" tag.
         if (chunk.type === 'text' && chunk.nested) {
           steps.push({
             id: `nested-text-${index}`,
             kind: 'text',
-            label: 'Subagent reply',
+            label: summarizeReasoningLabel(chunk.content, SUBAGENT_REPLY_FALLBACK),
             status: isStreaming && index === lastNestedTextIndex ? 'active' : 'complete',
             content: chunk.content,
             nested: true,
@@ -2304,6 +2446,7 @@ const AssistantTracePanel: React.FC<{
             status: mapTraceStatus(tc, isStreaming),
             tool: tc,
             nested: isDelegatedToolCall(tc),
+            subagentId: tc.subagentId,
           });
           return;
         }
@@ -2316,6 +2459,7 @@ const AssistantTracePanel: React.FC<{
             status: chunk.state === 'error' ? 'error' : chunk.state === 'active' ? 'active' : 'complete',
             nested: chunk.nested,
             subagentId: chunk.subagentId,
+            subagentKind: typeof chunk.meta?.subagentKind === 'string' ? chunk.meta.subagentKind : undefined,
             statusVariant: chunk.variant,
             statusMeta: chunk.meta,
           });
@@ -2345,6 +2489,7 @@ const AssistantTracePanel: React.FC<{
           status: mapTraceStatus(tool, isStreaming),
           tool,
           nested: isDelegatedToolCall(tool),
+          subagentId: tool.subagentId,
         });
       });
 
@@ -2393,7 +2538,7 @@ const AssistantTracePanel: React.FC<{
             // reasoning interleave before the subagent's final updates arrive,
             // so this cannot require strict adjacency.
             if (!isNested && step.kind === 'tool' && step.tool && isDelegationToolCall(step.tool)) {
-              const children: AssistantTraceStepData[] = [];
+              const childEntries: Array<{ step: AssistantTraceStepData; idx: number }> = [];
               let lastChildIdx = i;
               let j = i + 1;
               while (j < traceSteps.length) {
@@ -2407,19 +2552,34 @@ const AssistantTracePanel: React.FC<{
                   break;
                 }
                 if (candidate.nested) {
-                  children.push(candidate);
+                  childEntries.push({ step: candidate, idx: j });
                   consumedNestedIndexes.add(j);
                   lastChildIdx = j;
                 }
                 j++;
               }
-              items.push({
-                type: 'delegation',
-                step,
-                idx: i,
-                children,
-                lastChildIdx,
-              });
+              const tasks = extractDelegationTasks(step.tool);
+              if (tasks.length > 1) {
+                const taskAssignments = assignDelegationChildrenToTasks(tasks, childEntries);
+                taskAssignments.forEach((assignment, taskIndex) => {
+                  items.push({
+                    type: 'delegation',
+                    step: buildDelegationTaskStep(step, tasks[taskIndex], taskIndex, assignment.children),
+                    idx: i,
+                    children: assignment.children,
+                    lastChildIdx: assignment.lastChildIdx >= 0 ? assignment.lastChildIdx : i,
+                  });
+                });
+              } else {
+                const children = childEntries.map(({ step: child }) => child);
+                items.push({
+                  type: 'delegation',
+                  step,
+                  idx: i,
+                  children,
+                  lastChildIdx,
+                });
+              }
               i++;
               continue;
             }
@@ -2508,7 +2668,7 @@ const AssistantTracePanel: React.FC<{
                   ) : (statusLabelNode || step.label)
                 }
               >
-                {step.kind === 'reasoning' && step.content ? (
+                {(step.kind === 'reasoning' || step.kind === 'text') && step.content ? (
                   <div
                     className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
                     style={{

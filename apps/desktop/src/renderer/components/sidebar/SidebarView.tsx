@@ -1,27 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { Bot, Globe, GripVertical, Layers, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
-import { SpacesSidebar } from '../SpacesSidebar';
-import { SubAgentsView } from '../SubAgentsView';
+import { GripVertical, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
 import { XTerminalPanel } from '../XTerminalPanel';
-import { SidebarBrowserPanel } from './SidebarBrowserPanel';
 import { SidebarTodoPanel } from './SidebarTodoPanel';
 
-type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
+type SidebarTabId = 'terminal' | 'todo';
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'spaces', label: 'Spaces', icon: Layers },
   { id: 'todo', label: 'To-Do', icon: ListTodo },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
-  { id: 'tasks', label: 'Agents', icon: Bot },
-  { id: 'browser', label: 'Browser', icon: Globe },
 ];
-
-const AGENT_HTTP = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
 
 interface SidebarViewProps {
   activeTab: SidebarTabId;
@@ -30,8 +22,6 @@ interface SidebarViewProps {
   onClose?: () => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
-  selectedItem?: { type: 'space'; id: string } | null;
-  onSelectedItemHandled?: () => void;
 }
 
 export const SidebarView: React.FC<SidebarViewProps> = ({
@@ -41,52 +31,10 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
   onClose,
   isExpanded = false,
   onToggleExpand,
-  selectedItem,
-  onSelectedItemHandled,
 }) => {
-  const [hasRunningAgents, setHasRunningAgents] = useState(false);
-  const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
   const [hasTodoActivity, setHasTodoActivity] = useState(false);
+  const [hasTerminalActivity, setHasTerminalActivity] = useState(false);
   const [hoveredTab, setHoveredTab] = useState<SidebarTabId | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const checkAgents = async () => {
-      try {
-        const res = await fetch(`${AGENT_HTTP}/v1/subagents/list?limit=10`);
-        const data = await res.json();
-        if (!cancelled && data.ok && Array.isArray(data.tasks)) {
-          const running = data.tasks.some((t: any) => t.status === 'running');
-          setHasRunningAgents(running);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    checkAgents();
-    const interval = setInterval(checkAgents, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  useEffect(() => {
-    let resetTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = (window as any).desktopAPI?.onBrowserActivity?.((data: any) => {
-      setHasBrowserActivity(true);
-      if (resetTimer) clearTimeout(resetTimer);
-      resetTimer = setTimeout(() => setHasBrowserActivity(false), 10000);
-    });
-    return () => {
-      if (resetTimer) clearTimeout(resetTimer);
-      try { typeof unsub === 'function' && unsub(); } catch {}
-    };
-  }, []);
-
-  // No auto-switching: activity dots are enough to signal the user.
-  // Auto-switching tabs while the user is working is disruptive.
 
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -102,7 +50,21 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     };
   }, []);
 
-  // Keyboard navigation: Alt+1..5 to switch tabs
+  useEffect(() => {
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      setHasTerminalActivity(true);
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => setHasTerminalActivity(false), 15000);
+    };
+    window.addEventListener('agent-terminal-activity', handler);
+    return () => {
+      if (resetTimer) clearTimeout(resetTimer);
+      window.removeEventListener('agent-terminal-activity', handler);
+    };
+  }, []);
+
+  // Keyboard navigation: Alt+1..2 to switch tabs
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey) return;
@@ -128,25 +90,10 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'spaces':
-        return (
-          <SpacesSidebar
-            onClose={onClose}
-            className="w-full h-full"
-            translucentMode={translucentMode}
-            selectedSpaceId={selectedItem?.type === 'space' ? selectedItem.id : undefined}
-            onSelectedSpaceHandled={selectedItem?.type === 'space' ? onSelectedItemHandled : undefined}
-            embedded
-          />
-        );
       case 'todo':
         return <SidebarTodoPanel className="w-full h-full" />;
       case 'terminal':
         return <XTerminalPanel onClose={onClose} className="w-full h-full" />;
-      case 'tasks':
-        return <SubAgentsView />;
-      case 'browser':
-        return <SidebarBrowserPanel className="w-full h-full" />;
       default:
         return null;
     }
@@ -177,9 +124,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             const isHovered = hoveredTab === tab.id;
-            const showDot = (tab.id === 'tasks' && hasRunningAgents && !isActive)
-              || (tab.id === 'browser' && hasBrowserActivity && !isActive)
-              || (tab.id === 'todo' && hasTodoActivity && !isActive);
+            const showDot = (tab.id === 'todo' && hasTodoActivity && !isActive)
+              || (tab.id === 'terminal' && hasTerminalActivity && !isActive);
 
             return (
               <div key={tab.id} className="relative group">
@@ -204,7 +150,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
 
                   {/* Activity dot */}
                   {showDot && (
-                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-theme-bg animate-pulse" />
+                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-theme-bg animate-pulse" />
                   )}
 
                   {/* Active indicator bar */}
@@ -266,8 +212,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                 <span className="text-[13px] font-bold text-theme-fg">{currentTab.label}</span>
               </>
             )}
-            {((activeTab === 'tasks' && hasRunningAgents) || (activeTab === 'browser' && hasBrowserActivity) || (activeTab === 'todo' && hasTodoActivity)) && (
-              <span className="px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[9px] font-bold uppercase tracking-wider leading-none">
+            {((activeTab === 'todo' && hasTodoActivity) || (activeTab === 'terminal' && hasTerminalActivity)) && (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[9px] font-bold uppercase tracking-wider leading-none">
                 Active
               </span>
             )}

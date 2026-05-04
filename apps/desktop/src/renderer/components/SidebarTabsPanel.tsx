@@ -1,13 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import { clsx } from "clsx";
-import { ArrowLeft, Bot, Globe, Layers, ListTodo, Maximize2, Terminal, X } from "lucide-react";
-import { SpacesSidebar } from "./SpacesSidebar";
-import { SubAgentsView } from "./SubAgentsView";
+import { ArrowLeft, ListTodo, Maximize2, Terminal, X } from "lucide-react";
 import { XTerminalPanel } from "./XTerminalPanel";
-import { SidebarBrowserPanel } from "./sidebar/SidebarBrowserPanel";
 import { SidebarTodoPanel } from "./sidebar/SidebarTodoPanel";
 
-type SidebarTabId = "spaces" | "terminal" | "tasks" | "browser" | "todo";
+type SidebarTabId = "terminal" | "todo";
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
@@ -15,14 +12,9 @@ const SIDEBAR_TABS: Array<{
   icon: React.ComponentType<{ className?: string }>;
   desc: string;
 }> = [
-  { id: "spaces", label: "Spaces", icon: Layers, desc: "Knowledge & files" },
   { id: "todo", label: "To-Do", icon: ListTodo, desc: "Agent task list" },
   { id: "terminal", label: "Terminal", icon: Terminal, desc: "Shell access" },
-  { id: "tasks", label: "Agents", icon: Bot, desc: "Running sub-agents" },
-  { id: "browser", label: "Browser", icon: Globe, desc: "Web browsing" },
 ];
-
-const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
 interface SidebarTabsPanelProps {
   isOpen: boolean;
@@ -39,79 +31,20 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   onSwitchTab,
   translucentMode,
 }) => {
-  const panelShadow = translucentMode
-    ? "0 20px 48px rgba(15, 23, 42, 0.16)"
-    : "0 18px 42px rgba(15, 23, 42, 0.10)";
-  const contentBackground = translucentMode
-    ? "color-mix(in srgb, var(--card-bg) 78%, transparent)"
-    : "color-mix(in srgb, var(--card-bg) 92%, var(--background) 8%)";
+  const panelShadow = "0 18px 40px rgba(15, 23, 42, 0.08)";
+  const outerBackground = translucentMode
+    ? "color-mix(in srgb, var(--background) 76%, transparent)"
+    : undefined;
+  const innerBackground = translucentMode
+    ? "color-mix(in srgb, var(--card-bg) 84%, transparent)"
+    : undefined;
 
   const [showTabPicker, setShowTabPicker] = useState(false);
 
-  const [hasRunningAgents, setHasRunningAgents] = useState(false);
-  const [hasBrowserActivity, setHasBrowserActivity] = useState(false);
   const [hasTodoActivity, setHasTodoActivity] = useState(false);
-  const agentAutoSwitchedRef = useRef(false);
-  const browserAutoSwitchedRef = useRef(false);
+  const [hasTerminalActivity, setHasTerminalActivity] = useState(false);
   const todoAutoSwitchedRef = useRef(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let cancelled = false;
-    const checkAgents = async () => {
-      try {
-        const res = await fetch(`${AGENT_HTTP}/v1/subagents/list?limit=10`);
-        const data = await res.json();
-        if (!cancelled && data.ok && Array.isArray(data.tasks)) {
-          const running = data.tasks.some((t: any) => t.status === "running");
-          setHasRunningAgents(running);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    checkAgents();
-    const interval = setInterval(checkAgents, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
-    let resetTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = window.desktopAPI?.onBrowserActivity?.(() => {
-      setHasBrowserActivity(true);
-      if (resetTimer) clearTimeout(resetTimer);
-      resetTimer = setTimeout(() => setHasBrowserActivity(false), 10000);
-    });
-    return () => {
-      if (resetTimer) clearTimeout(resetTimer);
-      try { typeof unsub === 'function' && unsub(); } catch {}
-    };
-  }, []);
-
-  useEffect(() => {
-    if (hasRunningAgents && !agentAutoSwitchedRef.current && activeTab !== "tasks" && activeTab !== "browser") {
-      agentAutoSwitchedRef.current = true;
-      onSwitchTab("tasks");
-    }
-    if (!hasRunningAgents) {
-      agentAutoSwitchedRef.current = false;
-    }
-  }, [hasRunningAgents, activeTab, onSwitchTab]);
-
-  useEffect(() => {
-    if (hasBrowserActivity && !browserAutoSwitchedRef.current && activeTab !== "browser") {
-      browserAutoSwitchedRef.current = true;
-      onSwitchTab("browser");
-    }
-    if (!hasBrowserActivity) {
-      browserAutoSwitchedRef.current = false;
-    }
-  }, [hasBrowserActivity, activeTab, onSwitchTab]);
+  const terminalAutoSwitchedRef = useRef(false);
 
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -128,7 +61,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    if (hasTodoActivity && !todoAutoSwitchedRef.current && activeTab !== "todo" && activeTab !== "browser") {
+    if (hasTodoActivity && !todoAutoSwitchedRef.current && activeTab !== "todo") {
       todoAutoSwitchedRef.current = true;
       onSwitchTab("todo");
     }
@@ -136,6 +69,30 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
       todoAutoSwitchedRef.current = false;
     }
   }, [hasTodoActivity, activeTab, onSwitchTab]);
+
+  useEffect(() => {
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      setHasTerminalActivity(true);
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => setHasTerminalActivity(false), 15000);
+    };
+    window.addEventListener('agent-terminal-activity', handler);
+    return () => {
+      if (resetTimer) clearTimeout(resetTimer);
+      window.removeEventListener('agent-terminal-activity', handler);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasTerminalActivity && !terminalAutoSwitchedRef.current && activeTab !== "terminal") {
+      terminalAutoSwitchedRef.current = true;
+      onSwitchTab("terminal");
+    }
+    if (!hasTerminalActivity) {
+      terminalAutoSwitchedRef.current = false;
+    }
+  }, [hasTerminalActivity, activeTab, onSwitchTab]);
 
   const currentTab = SIDEBAR_TABS.find((t) => t.id === activeTab);
 
@@ -146,23 +103,10 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
   const renderContent = () => {
     switch (activeTab) {
-      case "spaces":
-        return (
-          <SpacesSidebar
-            onClose={onClose}
-            className="w-full h-full"
-            translucentMode={translucentMode}
-            embedded
-          />
-        );
       case "todo":
         return <SidebarTodoPanel className="w-full h-full" />;
       case "terminal":
         return <XTerminalPanel onClose={onClose} className="w-full h-full" />;
-      case "tasks":
-        return <SubAgentsView compact />;
-      case "browser":
-        return <SidebarBrowserPanel className="w-full h-full" />;
       default:
         return null;
     }
@@ -170,15 +114,21 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
   if (!isOpen) return null;
 
+  const showActiveBadge =
+    (activeTab === 'todo' && hasTodoActivity) ||
+    (activeTab === 'terminal' && hasTerminalActivity);
+
   return (
     <div
       className={clsx(
-        "relative h-full min-h-0 shrink-0 flex flex-col overflow-hidden rounded-l-[32px] border border-theme",
+        "relative h-full min-h-0 shrink-0 flex flex-col p-3 overflow-hidden",
+        "rounded-l-[28px] rounded-r-none border border-theme/60 border-r-0",
         translucentMode
-          ? "bg-theme-bg backdrop-blur-3xl"
-          : "bg-theme-card",
+          ? "bg-theme-bg backdrop-blur-2xl"
+          : "bg-theme-bg",
       )}
       style={{
+        background: outerBackground,
         boxShadow: panelShadow,
         transition: "transform 150ms ease-out, opacity 150ms ease-out",
         width: 304,
@@ -186,132 +136,144 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
       }}
     >
       <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 10%, transparent) 0%, transparent 40%)",
-        }}
-      />
-
-      {/* Header Bar */}
-      <div className="relative flex items-center gap-2 px-3 h-11 shrink-0 border-b border-theme/8">
-        <button
-          onClick={() => setShowTabPicker(!showTabPicker)}
-          className={clsx(
-            "flex items-center justify-center w-8 h-8 rounded-xl transition-all duration-200",
-            showTabPicker
-              ? "bg-primary/10 text-primary"
-              : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-          )}
-          title="Switch tab"
-        >
-          <ArrowLeft className={clsx(
-            "w-4 h-4 transition-transform duration-200",
-            showTabPicker && "rotate-[-90deg]"
-          )} />
-        </button>
-
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {currentTab && (
-            <>
-              <currentTab.icon className="w-4 h-4 text-primary/70 shrink-0" />
-              <span className="text-[13px] font-bold text-theme-fg truncate">{currentTab.label}</span>
-            </>
-          )}
-          {((activeTab === 'tasks' && hasRunningAgents) || (activeTab === 'browser' && hasBrowserActivity) || (activeTab === 'todo' && hasTodoActivity)) && (
-            <span className="px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[9px] font-bold uppercase tracking-wider leading-none">
-              Active
-            </span>
-          )}
-        </div>
-
-        <button
-          onClick={() => {
-            onClose();
-            (window as any).desktopAPI?.openSidebar?.({
-              tab: activeTab,
-              expanded: true,
-            });
+        className={clsx(
+          "relative flex-1 min-h-0 flex flex-col overflow-hidden",
+          "rounded-l-[24px] rounded-r-none border border-theme border-r-0",
+          translucentMode
+            ? "bg-theme-bg backdrop-blur-xl"
+            : "bg-theme-card shadow-sm",
+        )}
+        style={{ background: innerBackground }}
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 8%, transparent) 0%, transparent 45%)",
           }}
-          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted/60 hover:text-theme-fg hover:bg-theme-hover transition-all duration-200"
-          title="Open in separate window"
-        >
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
+        />
 
-        <button
-          onClick={onClose}
-          className="flex items-center justify-center w-7 h-7 rounded-lg text-theme-muted/60 hover:text-red-500 hover:bg-red-500/8 transition-all duration-200"
-          title="Close Sidebar"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {/* Header Bar — matches chat header padding */}
+        <div className="relative flex items-center gap-1 px-2 py-2 shrink-0 border-b border-theme">
+          <button
+            onClick={() => setShowTabPicker(!showTabPicker)}
+            className={clsx(
+              "w-8 h-8 rounded-lg flex items-center justify-center transition-colors border border-theme/10",
+              showTabPicker
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "bg-theme-card/80 text-theme-muted hover:bg-theme-hover hover:text-theme-fg"
+            )}
+            title="Switch tab"
+          >
+            <ArrowLeft
+              className={clsx(
+                "w-3.5 h-3.5 transition-transform duration-200",
+                showTabPicker && "rotate-[-90deg]"
+              )}
+            />
+          </button>
+
+          <div className="flex items-center gap-2 flex-1 min-w-0 px-1">
+            {currentTab && (
+              <>
+                <currentTab.icon className="w-3.5 h-3.5 text-primary/80 shrink-0" />
+                <span className="text-[12px] font-semibold text-theme-fg truncate">
+                  {currentTab.label}
+                </span>
+              </>
+            )}
+            {showActiveBadge && (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[9px] font-bold uppercase tracking-wider leading-none">
+                Active
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={() => {
+              onClose();
+              (window as any).desktopAPI?.openSidebar?.({
+                tab: activeTab,
+                expanded: true,
+              });
+            }}
+            className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10 text-theme-muted hover:text-theme-fg"
+            title="Open in separate window"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={onClose}
+            className="w-8 h-8 bg-theme-card/80 rounded-lg flex items-center justify-center hover:bg-red-500/10 hover:text-red-500 transition-colors border border-theme/10 text-theme-muted"
+            title="Close Sidebar"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Main area: either tab picker or content */}
+        {showTabPicker ? (
+          <div className="relative flex-1 min-h-0 flex flex-col p-2 gap-0.5 overflow-y-auto scrollbar-invisible">
+            {SIDEBAR_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              const showDot =
+                (tab.id === "todo" && hasTodoActivity && !isActive) ||
+                (tab.id === "terminal" && hasTerminalActivity && !isActive);
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleSelectTab(tab.id)}
+                  className={clsx(
+                    "relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left group border",
+                    isActive
+                      ? "bg-primary/10 text-primary border-primary/20"
+                      : "text-theme-fg border-transparent hover:bg-theme-hover/70 hover:border-theme/20"
+                  )}
+                >
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+                  )}
+
+                  <div
+                    className={clsx(
+                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200",
+                      isActive ? "bg-primary/15" : "bg-theme-hover/40 group-hover:bg-theme-hover/70"
+                    )}
+                  >
+                    <Icon className="w-[18px] h-[18px]" />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <span
+                      className={clsx(
+                        "text-[13px] block truncate",
+                        isActive ? "font-bold" : "font-semibold"
+                      )}
+                    >
+                      {tab.label}
+                    </span>
+                    <span className="text-[10px] text-theme-muted block truncate mt-0.5">
+                      {tab.desc}
+                    </span>
+                  </div>
+
+                  {showDot && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="relative flex-1 min-h-0 overflow-hidden">
+            {renderContent()}
+          </div>
+        )}
       </div>
-
-      {/* Main area: either tab picker or content */}
-      {showTabPicker ? (
-        <div
-          className="relative flex-1 min-h-0 flex flex-col p-2 gap-0.5 overflow-y-auto scrollbar-invisible"
-          style={{ background: contentBackground }}
-        >
-          {SIDEBAR_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            const showDot = (tab.id === "tasks" && hasRunningAgents && !isActive)
-              || (tab.id === "browser" && hasBrowserActivity && !isActive)
-              || (tab.id === "todo" && hasTodoActivity && !isActive);
-
-            return (
-              <button
-                key={tab.id}
-                onClick={() => handleSelectTab(tab.id)}
-                className={clsx(
-                  "relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left group",
-                  isActive
-                    ? "bg-primary/10 text-primary"
-                    : "text-theme-fg hover:bg-theme-hover/70"
-                )}
-              >
-                {/* Active bar */}
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
-                )}
-
-                <div className={clsx(
-                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200",
-                  isActive ? "bg-primary/15" : "bg-theme-hover/40 group-hover:bg-theme-hover/70"
-                )}>
-                  <Icon className="w-[18px] h-[18px]" />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <span className={clsx(
-                    "text-[13px] block truncate",
-                    isActive ? "font-bold" : "font-semibold"
-                  )}>
-                    {tab.label}
-                  </span>
-                  <span className="text-[10px] text-theme-muted block truncate mt-0.5">
-                    {tab.desc}
-                  </span>
-                </div>
-
-                {showDot && (
-                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div
-          className="relative flex-1 min-h-0 overflow-hidden"
-          style={{ background: contentBackground }}
-        >
-          {renderContent()}
-        </div>
-      )}
     </div>
   );
 };

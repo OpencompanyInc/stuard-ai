@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
 import {
@@ -84,6 +84,7 @@ export const useAuth = () => {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isClient, setIsClient] = useState(false);
+  const profileLoadSeqRef = useRef(0);
 
   useEffect(() => {
     setIsClient(typeof window !== 'undefined');
@@ -93,19 +94,30 @@ export const useAuth = () => {
     let isMounted = true;
     if (!isClient) return;
 
+    const applyUser = async (nextUser: User | null) => {
+      const seq = ++profileLoadSeqRef.current;
+      setUser(nextUser);
+
+      if (!nextUser) {
+        setUserData(null);
+        return;
+      }
+
+      const { data, error } = await fetchProfile(nextUser.id);
+      if (!isMounted || seq !== profileLoadSeqRef.current) return;
+
+      if (!error && data) {
+        setUserData(mapUserData(nextUser, data));
+      } else {
+        setUserData(null);
+      }
+    };
+
     const initializeAuth = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!isMounted) return;
-        setUser(user ?? null);
-
-        if (user) {
-          const { data, error } = await fetchProfile(user.id);
-          if (!isMounted) return;
-          if (!error && data) {
-            setUserData(mapUserData(user, data));
-          }
-        }
+        await applyUser(user ?? null);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -113,22 +125,12 @@ export const useAuth = () => {
 
     initializeAuth();
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(async (_event: string, session: { user: User | null } | null) => {
-      if (!isMounted) return;
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event: string, session: { user: User | null } | null) => {
       const nextUser = session?.user ?? null;
-      setUser(nextUser);
-
-      if (nextUser) {
-        const { data, error } = await fetchProfile(nextUser.id);
+      window.setTimeout(() => {
         if (!isMounted) return;
-        if (!error && data) {
-          setUserData(mapUserData(nextUser, data));
-        } else {
-          setUserData(null);
-        }
-      } else {
-        setUserData(null);
-      }
+        void applyUser(nextUser);
+      }, 0);
     });
 
     return () => {

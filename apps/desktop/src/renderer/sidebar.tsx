@@ -1,23 +1,24 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
 import './scrollbar.css';
 import { usePreferences } from './hooks/usePreferences';
 import { SidebarView } from './components/sidebar/SidebarView';
 
-type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
+type SidebarTabId = 'terminal' | 'todo';
 
 function SidebarApp() {
   const { translucentMode, themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
 
   // Parse URL params for initial tab and expanded state
   const urlParams = new URLSearchParams(window.location.search);
-  const initialTab = (urlParams.get('tab') as SidebarTabId) || 'spaces';
+  const rawTab = urlParams.get('tab') as SidebarTabId | null;
+  const initialTab: SidebarTabId =
+    rawTab === 'terminal' || rawTab === 'todo' ? rawTab : 'todo';
   const initialExpanded = urlParams.get('expanded') === 'true';
 
   const [activeTab, setActiveTab] = useState<SidebarTabId>(initialTab);
   const [isExpanded, setIsExpanded] = useState(initialExpanded);
-  const [selectedItem, setSelectedItem] = useState<{ type: 'space'; id: string } | null>(null);
 
   // Notify main process of active tab changes
   useEffect(() => {
@@ -86,17 +87,6 @@ function SidebarApp() {
     return () => { try { (typeof unsub === 'function') && unsub(); } catch { } };
   }, []);
 
-  // Listen for selectItem event from main process (bookmark navigation)
-  useEffect(() => {
-    const unsub = (window as any).desktopAPI?.onSidebarSelectItem?.((data: { type: 'space'; id: string }) => {
-      if (data?.type && data?.id) {
-        if (data.type === 'space') setActiveTab('spaces');
-        setSelectedItem(data);
-      }
-    });
-    return () => { try { (typeof unsub === 'function') && unsub(); } catch { } };
-  }, []);
-
   return (
     <div className="w-full h-full">
       <SidebarView
@@ -105,8 +95,6 @@ function SidebarApp() {
         translucentMode={translucentMode}
         isExpanded={isExpanded}
         onToggleExpand={handleToggleExpand}
-        selectedItem={selectedItem}
-        onSelectedItemHandled={() => setSelectedItem(null)}
         onClose={() => {
           try { (window as any).desktopAPI?.closeSidebar?.(); } catch {}
         }}

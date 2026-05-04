@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useCallback,
   useDeferredValue,
   useEffect,
@@ -117,9 +117,9 @@ interface LauncherViewProps {
   onAddTab?: () => void;
 
   // Internal Sidebar
-  activeSidebarTab?: "spaces" | "terminal" | "tasks" | "browser" | "todo";
+  activeSidebarTab?: "terminal" | "todo";
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "terminal" | "todo") => void;
 
   // Voice Mode
   voiceActive?: boolean;
@@ -285,7 +285,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onAddTab,
 
   // Internal Sidebar
-  activeSidebarTab = "spaces",
+  activeSidebarTab = "todo",
   onCloseInternalSidebar,
   onSwitchSidebarTab,
 
@@ -853,11 +853,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const voiceFriendlyDetail = topVoiceTool?.detail;
   const voiceStatusText = voiceActive
     ? (voiceActiveTool
-        ? `Using ${voiceActiveTool.replace(/_/g, " ")}…`
+        ? `Using ${voiceActiveTool.replace(/_/g, " ")}â€¦`
         : voiceState === "connecting"
-          ? "Connecting…"
+          ? "Connectingâ€¦"
           : voiceState === "thinking"
-            ? "Thinking…"
+            ? "Thinkingâ€¦"
             : voiceState === "speaking"
               ? "Speaking"
               : voiceState === "listening"
@@ -1027,13 +1027,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               loadingConversations={loadingConversations}
               onSelectConversation={onSelectConversation}
               onDeleteConversation={onDeleteConversation}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              onSwitchSidebarTab={onSwitchSidebarTab}
             />
           </div>
 
-          {/* Main Content Area — hidden in compact mode (no vertical room) */}
+          {/* Main Content Area â€” hidden in compact mode (no vertical room) */}
           {!isCompact && (
           <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto scrollbar-minimal">
             {viewMode === "tasks" ? (
@@ -1133,7 +1130,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </div>
                     </button>
 
-                    {/* Apps — always first */}
+                    {/* Apps â€” always first */}
                     {appResults.length > 0 && (
                       <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                         <div className="flex items-center gap-2 mb-3">
@@ -1194,7 +1191,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </div>
                     )}
 
-                    {/* Files — after apps */}
+                    {/* Files â€” after apps */}
                     {fileResults.length > 0 && (
                       <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                         <div className="flex items-center gap-2 mb-3">
@@ -1279,12 +1276,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               isCompact ? "px-1.5 pb-1" : "max-w-3xl mx-auto px-4 pb-4",
             )}
           >
-            {/* Compact-mode quick shortcuts row — apps first, then bookmarks */}
+            {/* Compact-mode quick shortcuts row â€” apps first, then bookmarks */}
             {overlayMode === "compact" &&
               !showResults &&
               (discoveredApps.length > 0 || bookmarks.length > 0) && (
                 <div className="flex items-center gap-1 mb-1 overflow-x-auto scrollbar-hidden">
-                  {/* Discovered apps — icon-only dock */}
+                  {/* Discovered apps â€” icon-only dock */}
                   {discoveredApps.slice(0, 6).map((da: any) => {
                     const iconUrl =
                       da?.iconDataUrl || fileIconDataUrls[String(da.id || "")];
@@ -1310,7 +1307,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </button>
                     );
                   })}
-                  {/* Bookmarks fill remaining slots — icon-only */}
+                  {/* Bookmarks fill remaining slots â€” icon-only */}
                   {bookmarks
                     .slice(
                       0,

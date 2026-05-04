@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { polar } from '@/lib/polar';
+import { POLAR_SUBSCRIPTION_ID } from '@/lib/polarProducts';
 
 export const runtime = 'nodejs';
 
@@ -63,7 +64,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PATCH /api/polar/subscription — update PWYW amount on an existing subscription
+// PATCH /api/polar/subscription — switch the PWYW amount on an existing
+// subscription. Polar's API does not allow updating the amount on an active
+// pay-what-you-want subscription (the SubscriptionUpdate union only accepts
+// productId / discountId / trialEnd / seats / currentBillingPeriodEnd /
+// cancelAtPeriodEnd / revoke). So we schedule the current subscription to
+// cancel at period end and return a checkout URL for the new amount. The
+// webhook revokes the now-stale subscription once the new one becomes active
+// (see /api/webhook).
 export async function PATCH(req: NextRequest) {
   const user = await getAuthedUser(req);
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -79,29 +87,43 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'no_subscription' }, { status: 404 });
   }
 
+  // Set the current subscription to cancel at the end of the period as a
+  // fallback safety net: if the user completes the new checkout, the webhook
+  // revokes it immediately; if they abandon checkout, it just expires
+  // gracefully. Best-effort — failures here shouldn't block the redirect.
   try {
-    const sub: any = await polar.subscriptions.update({
+    await polar.subscriptions.update({
       id: subscriptionId,
-      subscriptionUpdate: { amount } as any,
-    });
-    return NextResponse.json({
-      ok: true,
-      subscription: {
-        id: sub.id,
-        status: sub.status,
-        amount: sub.amount ?? sub.price?.amount ?? amount,
-      },
+      subscriptionUpdate: { cancelAtPeriodEnd: true } as any,
     });
   } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: 'failed_to_update',
-        message: e?.message,
-        details: e?.body,
-      },
-      { status: 500 },
-    );
+    console.warn('Polar subscription cancel-at-period-end before switch failed', {
+      subscriptionId,
+      message: e?.message,
+    });
   }
+
+  const productId = POLAR_SUBSCRIPTION_ID;
+  if (!productId) {
+    return NextResponse.json({ error: 'missing_product_id' }, { status: 500 });
+  }
+
+  const origin = req.headers.get('origin')
+    || process.env.NEXT_PUBLIC_SITE_URL
+    || new URL(req.url).origin;
+
+  const qs = new URLSearchParams({
+    products: productId,
+    customerEmail: user.email || '',
+    customerExternalId: user.id,
+    metadata: JSON.stringify({ userId: user.id, replacesSubscriptionId: subscriptionId }),
+    amount: String(Math.round(amount)),
+  });
+
+  return NextResponse.json({
+    ok: true,
+    url: `${origin}/api/polar/checkout?${qs.toString()}`,
+  });
 }
 
 // DELETE /api/polar/subscription — cancel at period end (user keeps access

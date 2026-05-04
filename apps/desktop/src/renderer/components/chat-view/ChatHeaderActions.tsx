@@ -2,11 +2,9 @@ import React from 'react';
 import { clsx } from 'clsx';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
-  LayoutGrid,
   Home,
   Clock,
   Trash2,
-  ListTodo,
   AppWindow,
   PanelRight,
   PanelLeftClose,
@@ -25,9 +23,6 @@ interface ChatHeaderActionsProps {
   loadingConversations: boolean;
   onSelectConversation: (id: string) => void;
   onDeleteConversation?: (id: string) => void;
-  viewMode?: 'chat' | 'tasks';
-  onViewModeChange?: (mode: 'chat' | 'tasks') => void;
-  onSwitchSidebarTab?: (tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => void;
 }
 
 export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
@@ -42,9 +37,6 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
   loadingConversations,
   onSelectConversation,
   onDeleteConversation,
-  viewMode = 'chat',
-  onViewModeChange,
-  onSwitchSidebarTab,
 }) => {
   return (
     <div className="flex items-center gap-1 flex-shrink-0">
@@ -59,30 +51,6 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
           title="Sidebar (Spaces, Terminal)"
         >
           <PanelLeftClose className="w-3.5 h-3.5" />
-        </button>
-      )}
-
-      {/* Tasks Toggle - opens sidebar todo tab when sidebar available, else toggles chat view */}
-      {onViewModeChange && (
-        <button
-          onClick={() => {
-            if (sidebarOpen && onSwitchSidebarTab) {
-              onSwitchSidebarTab('todo');
-            } else if (onSwitchSidebarTab && (overlayMode === 'sidebar' || overlayMode === 'window')) {
-              // Open sidebar with todo tab
-              onToggleSidebar?.();
-              onSwitchSidebarTab('todo');
-            } else {
-              onViewModeChange(viewMode === 'tasks' ? 'chat' : 'tasks');
-            }
-          }}
-          className={clsx(
-            "w-8 h-8 rounded-lg flex items-center justify-center hover:bg-theme-hover transition-colors border border-theme/10",
-            viewMode === 'tasks' ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-theme-card/80 text-theme-muted"
-          )}
-          title="Tasks"
-        >
-          <ListTodo className="w-3.5 h-3.5" />
         </button>
       )}
 

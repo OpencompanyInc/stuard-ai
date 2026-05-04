@@ -1,4 +1,4 @@
-
+﻿
 import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen, powerMonitor } from "electron";
 import path from "path";
 import fs from "fs";
@@ -977,7 +977,7 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
 }
 
 // Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
-export function openSidebarWindow(options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) {
+export function openSidebarWindow(options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
 
   if (sidebarWin && !sidebarWin.isDestroyed()) {
@@ -1077,7 +1077,7 @@ export function closeSidebarWindow() {
   try { sidebarWin?.close(); } catch { }
 }
 
-export function toggleSidebarWindow(options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) {
+export function toggleSidebarWindow(options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
     openSidebarWindow(options);
     return;
@@ -1110,9 +1110,10 @@ export function toggleSidebarExpanded() {
   return { expanded: true };
 }
 
-// Legacy Spaces Window functions - now redirect to sidebar
+// Legacy Spaces window — Spaces have been removed. No-op stubs kept for IPC
+// surface compatibility; they simply open/close the sidebar (Todo tab).
 export function openSpacesWindow() {
-  openSidebarWindow({ tab: 'spaces' });
+  openSidebarWindow({ tab: 'todo' });
 }
 
 export function closeSpacesWindow() {
@@ -1120,7 +1121,7 @@ export function closeSpacesWindow() {
 }
 
 export function toggleSpacesWindow() {
-  toggleSidebarWindow({ tab: 'spaces' });
+  toggleSidebarWindow({ tab: 'todo' });
 }
 
 // HUD Window - 3D Curved Launcher
@@ -1307,7 +1308,7 @@ export function toggleWindow() {
       // IPC to tell the renderer to swap its DOM. If we call show()
       // immediately the renderer hasn't repainted yet, and the user sees
       // the old (window-mode) UI clipped to the compact bounds for a
-      // frame – that's the visible flicker.
+      // frame â€“ that's the visible flicker.
       //
       // We dispatch the mode change first (which sends the IPC and does
       // the native resize) and then defer the show() to the next macro
@@ -1736,7 +1737,7 @@ export function registerGlobalShortcuts() {
       logger.warn(`Stored hotkey ${storedHotkey} is already registered by another application.`);
     } else {
       const success = globalShortcut.register(storedHotkey, () => {
-        // No-op — uiohook hold-detector handles tap (release < 280ms) and hold.
+        // No-op â€” uiohook hold-detector handles tap (release < 280ms) and hold.
       });
 
       if (success) {
@@ -1766,7 +1767,7 @@ export function registerGlobalShortcuts() {
         }
 
         const success = globalShortcut.register(a, () => {
-          // No-op — uiohook hold-detector handles tap and hold.
+          // No-op â€” uiohook hold-detector handles tap and hold.
         });
 
         if (success) {

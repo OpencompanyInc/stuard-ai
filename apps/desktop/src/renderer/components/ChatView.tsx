@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   memo,
   useCallback,
   useMemo,
@@ -139,10 +139,10 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
-  activeSidebarTab?: "spaces" | "terminal" | "tasks" | "browser" | "todo";
+  activeSidebarTab?: "terminal" | "todo";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "spaces" | "terminal" | "tasks" | "browser" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "terminal" | "todo") => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -214,7 +214,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   // Internal Sidebar
   internalSidebarOpen = false,
-  activeSidebarTab = "spaces",
+  activeSidebarTab = "todo",
   onToggleInternalSidebar,
   onCloseInternalSidebar,
   onSwitchSidebarTab,
@@ -293,7 +293,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const displayModelName = (() => {
     const serverChosen = (modelName || "").trim();
     if (selectedModelId === "auto") {
-      if (serverChosen) return `Auto • ${serverChosen}`;
+      if (serverChosen) return `Auto â€¢ ${serverChosen}`;
       return "Auto";
     }
     return selectedModelLabel;
@@ -494,9 +494,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   loadingConversations={loadingConversations}
                   onSelectConversation={onSelectConversation}
                   onDeleteConversation={onDeleteConversation}
-                  viewMode={viewMode}
-                  onViewModeChange={setViewMode}
-                  onSwitchSidebarTab={onSwitchSidebarTab}
                 />
               </div>
 
@@ -703,9 +700,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   loadingConversations={loadingConversations}
                   onSelectConversation={onSelectConversation}
                   onDeleteConversation={onDeleteConversation}
-                  viewMode={viewMode}
-                  onViewModeChange={setViewMode}
-                  onSwitchSidebarTab={onSwitchSidebarTab}
                 />
               </div>
 

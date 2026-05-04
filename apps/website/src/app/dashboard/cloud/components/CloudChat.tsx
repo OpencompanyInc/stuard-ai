@@ -62,8 +62,10 @@ function formatDuration(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
-// Tools treated as delegation (render as a rectangle card with subagent children)
-const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'deploy_subagent']);
+// Tools treated as delegation (render as a rectangle card with subagent children).
+// `delegate` is the orchestrator's specialised-subagent tool; `deploy_headless_agent`
+// is the general user-facing background-agent tool.
+const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent']);
 
 // Internal tools that are noisy or meaningless to show in the UI
 const HIDDEN_TOOL_NAMES = new Set([
@@ -77,7 +79,6 @@ const HIDDEN_TOOL_NAMES = new Set([
   'knowledge_add_fact', 'knowledge_update_fact', 'knowledge_build_context',
   'knowledge_get_directives', 'knowledge_get_identity', 'planner_list_items',
   'subagent_spawn', 'subagent_update', 'subagent_status', 'subagent_list', 'subagent_stop',
-  'subagent_create', 'run_subagent', 'spawn_agent',
   'get_tool_schema', 'search_tools', 'reply_to_subagent', 'ask_user',
 ]);
 

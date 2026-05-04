@@ -51,12 +51,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
   // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
-  openSidebar: (options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  openSidebar: (options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
-  toggleSidebar: (options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebar: (options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
   toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
   isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
-  onSidebarNavigate: (cb: (data: { tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo' }) => void) => {
+  onSidebarNavigate: (cb: (data: { tab: 'terminal' | 'todo' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };

@@ -1,6 +1,6 @@
 export { };
 
- type SidebarTabId = 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo';
+ type SidebarTabId = 'terminal' | 'todo';
  type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown';
  type MediaSyncMode = 'local-only' | 'mirror-cloud';
  type MediaSyncStatus = 'local-only' | 'pending' | 'synced' | 'cloud-only' | 'failed';

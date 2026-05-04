@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
@@ -21,6 +21,8 @@ function AuthPageContent() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState<AuthStatus>('idle');
+  const publishInFlightRef = useRef(false);
+  const publishDoneRef = useRef(false);
 
   const [cid, nonce] = useMemo(() => {
     const qCid = searchParams.get('cid');
@@ -68,7 +70,9 @@ function AuthPageContent() {
     };
     void persistPendingOnboardingProfile();
     const { data: sub } = supabase.auth.onAuthStateChange((evt) => {
-      if (evt === 'SIGNED_IN') void persistPendingOnboardingProfile();
+      if (evt === 'SIGNED_IN') {
+        window.setTimeout(() => void persistPendingOnboardingProfile(), 0);
+      }
     });
     return () => { isActive = false; sub.subscription.unsubscribe(); };
   }, []);
@@ -78,7 +82,9 @@ function AuthPageContent() {
     const publishIfReady = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!isActive || !session || !hasDesktopHandoff) return;
+      if (publishInFlightRef.current || publishDoneRef.current) return;
       try {
+        publishInFlightRef.current = true;
         setStatus('publishing');
         const channel = supabase.channel(`auth:${cid}`, { config: { broadcast: { ack: true } } });
         await new Promise<void>((resolve, reject) => {
@@ -94,15 +100,20 @@ function AuthPageContent() {
           });
         });
         await supabase.removeChannel(channel);
+        publishDoneRef.current = true;
         setStatus('done');
       } catch (e: unknown) {
         setError(typeof e === 'string' ? e : e instanceof Error ? e.message : 'Failed to notify the desktop app');
         setStatus('idle');
+      } finally {
+        publishInFlightRef.current = false;
       }
     };
     publishIfReady();
     const { data: sub } = supabase.auth.onAuthStateChange((evt) => {
-      if (evt === 'SIGNED_IN') publishIfReady();
+      if (evt === 'SIGNED_IN') {
+        window.setTimeout(() => void publishIfReady(), 0);
+      }
     });
     return () => { isActive = false; sub.subscription.unsubscribe(); };
   }, [cid, nonce, hasDesktopHandoff]);

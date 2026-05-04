@@ -316,21 +316,6 @@ export {
   browse_topic_collections,
   get_collection_detail,
   synthesize_collection,
-  list_user_spaces,
-  get_space_contents,
-  add_to_space,
-  ensure_space_path,
-  list_space_path,
-  add_to_space_path,
-  get_space_tree,
-  create_space,
-  add_source_to_space,
-  add_note_to_space,
-  add_code_snippet_to_space,
-  link_conversation_to_space,
-  find_or_create_space,
-  update_space_item,
-  delete_space_item,
 } from './device/memory';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -338,11 +323,27 @@ export {
 // ═══════════════════════════════════════════════════════════════════════════════
 export const agent_todo = createTool({
   id: 'agent_todo',
-  description: 'Track multi-step tasks. Actions: list, create, bulk_create, start, complete, fail, delete, clear, progress, get_current, get_next, block.',
+  description: [
+    'Track multi-step tasks for the current session.',
+    'Actions: list, create, bulk_create, update, start, complete, fail, block, delete, clear, progress, get_current, get_next.',
+    '`data` MUST be an object (not a JSON string). Shape per action:',
+    '  • create: { title: string, description?: string, priority?: number, tags?: string[] }',
+    '  • bulk_create: { items: Array<{ title: string, description?: string, priority?: number, tags?: string[] }> }',
+    '  • start | complete | fail | block | delete: { id: string, note?: string, reason?: string }',
+    '  • update: { id: string, title?, description?, status?, priority?, tags?, metadata? }',
+    '  • list: { includeCompleted?: boolean }',
+    '  • clear: { keepInProgress?: boolean }',
+    '  • progress | get_current | get_next: omit data',
+  ].join(' '),
   inputSchema: z.object({
-    action: z.string().describe('The action to perform'),
+    action: z.enum([
+      'list', 'create', 'bulk_create', 'update', 'start', 'complete',
+      'fail', 'block', 'delete', 'clear', 'progress', 'get_current', 'get_next',
+    ]).describe('The action to perform'),
     sessionId: z.string().describe('The conversation/thread ID'),
-    data: z.any().optional().describe('Action-specific data'),
+    data: z.record(z.string(), z.any()).optional().describe(
+      'Action-specific data as an object. Pass an empty object {} if not needed. Do NOT JSON-stringify.'
+    ),
   }),
   outputSchema: z.object({
     ok: z.boolean(),

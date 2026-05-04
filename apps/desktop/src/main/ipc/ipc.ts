@@ -1,4 +1,4 @@
-
+﻿
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
@@ -283,10 +283,10 @@ export function setupIpc() {
   ipcMain.handle('spaces:toggle', () => toggleSpacesWindow());
 
   // Sidebar window (new unified sidebar with Spaces, Canvas, Terminal)
-  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => openSidebarWindow(options));
+  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => openSidebarWindow(options));
   ipcMain.handle('sidebar:close', () => closeSidebarWindow());
-  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'; expanded?: boolean }) => toggleSidebarWindow(options));
-  ipcMain.handle('sidebar:navigate', (_e, tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => {
+  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => toggleSidebarWindow(options));
+  ipcMain.handle('sidebar:navigate', (_e, tab: 'terminal' | 'todo') => {
     const sidebar = getSidebarWindow();
     if (sidebar && !sidebar.isDestroyed()) {
       sidebar.webContents.send('sidebar:navigate', { tab });
@@ -300,7 +300,7 @@ export function setupIpc() {
     const { isSidebarExpanded } = require('../windows');
     return { expanded: isSidebarExpanded() };
   });
-  ipcMain.handle('sidebar:setPresentation', (_e, payload?: { mode?: 'full' | 'popup'; tab?: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo' }) => {
+  ipcMain.handle('sidebar:setPresentation', (_e, payload?: { mode?: 'full' | 'popup'; tab?: 'terminal' | 'todo' }) => {
     const { setSidebarPresentation } = require('../windows');
     const mode = payload?.mode === 'popup' ? 'popup' : 'full';
     return setSidebarPresentation(mode, payload?.tab);
@@ -671,7 +671,7 @@ export function setupIpc() {
     win?.setIgnoreMouseEvents(ignore, options);
   });
 
-  // Notification overlay → main process → forward permission response to main app window
+  // Notification overlay â†’ main process â†’ forward permission response to main app window
   ipcMain.handle('notification:respondToPermission', (_e, payload: { id: string; allow: boolean }) => {
     try {
       const mainWin = getMainWindow();
@@ -684,7 +684,7 @@ export function setupIpc() {
     }
   });
 
-  // Notification overlay → main process → settle pending notification response (ask_user, etc.)
+  // Notification overlay â†’ main process â†’ settle pending notification response (ask_user, etc.)
   ipcMain.handle('notification:respondToNotification', (_e, payload: any) => {
     try {
       settleNotificationResponse(payload);
@@ -798,7 +798,7 @@ export function setupIpc() {
         } catch { }
       }
 
-      // .ico / .png / .bmp — read actual image bytes via nativeImage
+      // .ico / .png / .bmp â€” read actual image bytes via nativeImage
       const extLow = cleaned.toLowerCase();
       if (extLow.endsWith('.ico') || extLow.endsWith('.png') || extLow.endsWith('.bmp')) {
         try {
@@ -809,7 +809,7 @@ export function setupIpc() {
         } catch { }
       }
 
-      // Use Electron's built-in app.getFileIcon() — works for .exe, .app, and any file
+      // Use Electron's built-in app.getFileIcon() â€” works for .exe, .app, and any file
       try {
         const img = await app.getFileIcon(
           cleaned,
@@ -898,7 +898,7 @@ export function setupIpc() {
     return syncMainAuthSession(session);
   });
 
-  // Cloud Engine — agent data upload (desktop → GCS → VM)
+  // Cloud Engine â€” agent data upload (desktop â†’ GCS â†’ VM)
   ipcMain.handle('cloud:uploadAgentData', async () => {
     try {
       const ok = await pushDesktopAgentDataToVM();
@@ -1100,7 +1100,7 @@ export function setupIpc() {
     }
   });
 
-  // Custom UI prebuilt assets (for UI builder preview — avoids CDN)
+  // Custom UI prebuilt assets (for UI builder preview â€” avoids CDN)
   ipcMain.handle('customUi:getPrebuiltAssets', async () => {
     try {
       const { getReactUmd, getReactDomUmd, getFramerMotionUmd } = require('../custom-ui/assets/react-runtime');
@@ -1217,7 +1217,7 @@ export function setupIpc() {
     return handleProactiveReply(wakeUpId, text);
   });
 
-  // ─── Bots (multi-bot proactive entity layer) ──────────────────────────
+  // â”€â”€â”€ Bots (multi-bot proactive entity layer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   ipcMain.handle('bots:list', () => ({ ok: true, bots: botService.list() }));
   ipcMain.handle('bots:get', (_e, id: string) => {
     const bot = botService.get(String(id || ''));
@@ -1363,7 +1363,7 @@ export function setupIpc() {
     }
   });
 
-  // ── App Discovery & Unified Search ──
+  // â”€â”€ App Discovery & Unified Search â”€â”€
   ipcMain.handle('apps:list', async (_e, forceRefresh?: boolean) => {
     try {
       const apps = await getInstalledApps(forceRefresh ?? false);
@@ -1546,10 +1546,9 @@ export function setupIpc() {
           openDashboardWindow({ tab: target || undefined });
           break;
         case 'space':
-          openSidebarWindow({ tab: 'spaces', expanded: true });
-          break;
         case 'canvas':
-          openSidebarWindow({ tab: 'spaces', expanded: true });
+          // Spaces/canvas removed — bookmark falls back to Todo tab.
+          openSidebarWindow({ tab: 'todo', expanded: true });
           break;
         case 'tasks':
           setOverlayMode('window');
@@ -1582,7 +1581,7 @@ export function setupIpc() {
         });
         if (ok) {
           registeredBookmarkKeybinds.add(accel);
-          logger.info(`Registered bookmark keybind: ${accel} → ${bm.name}`);
+          logger.info(`Registered bookmark keybind: ${accel} â†’ ${bm.name}`);
         } else {
           logger.warn(`Failed to register bookmark keybind (may be in use): ${accel}`);
         }
@@ -1831,30 +1830,9 @@ export function setupIpc() {
           return { ok: false, error: 'No workflow ID specified' };
 
         case 'space':
-          // Open sidebar to spaces tab in expanded mode and select specific space
-          openSidebarWindow({ tab: 'spaces', expanded: true });
-          // Navigate to specific space if target is space ID
-          if (target && target !== 'spaces') {
-            sendSidebarSelectItem({ type: 'space', id: target });
-          }
-          return { ok: true };
-
         case 'canvas':
-          // Canvas documents currently live behind the unified spaces view.
-          openSidebarWindow({ tab: 'spaces', expanded: true });
-          // Handle special '_new' target to create a fresh canvas
-          if (target === '_new') {
-            const newId = `canvas_${Date.now()}`;
-            const now = new Date().toISOString();
-            const newDoc = { id: newId, title: 'Untitled', content: '', createdAt: now, updatedAt: now };
-            const docs = loadCanvasDocs();
-            docs.unshift(newDoc);
-            saveCanvasDocs(docs);
-            sendSidebarSelectItem({ type: 'canvas', id: newId });
-          } else if (target && target !== 'canvas') {
-            // Navigate to specific canvas document if target is document ID
-            sendSidebarSelectItem({ type: 'canvas', id: target });
-          }
+          // Spaces/canvas removed from sidebar — bookmark falls back to Todo.
+          openSidebarWindow({ tab: 'todo', expanded: true });
           return { ok: true };
 
         case 'dashboard':
@@ -1968,7 +1946,7 @@ export function setupIpc() {
       const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
       if (payload.token) authHeaders['Authorization'] = `Bearer ${payload.token}`;
 
-      // 1. Ask cloud-ai for a signed URL (small request — fits Cloud Run easily).
+      // 1. Ask cloud-ai for a signed URL (small request â€” fits Cloud Run easily).
       // raw=true returns the direct GCS URL instead of the Cloudflare-proxied one,
       // bypassing the CF Worker's request-size limit on large files.
       const urlResp = await fetch(`${cloudAiUrl}/v1/cloud-storage/upload-url`, {
@@ -1991,7 +1969,7 @@ export function setupIpc() {
         };
       }
 
-      // 2. PUT raw buffer directly to GCS — no Cloud Run hop
+      // 2. PUT raw buffer directly to GCS â€” no Cloud Run hop
       const putResp = await fetch(urlData.uploadUrl, {
         method: 'PUT',
         headers: {

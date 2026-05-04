@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Webhooks } from '@polar-sh/nextjs';
 import { creditsFromAmountCents } from '@/lib/creditPricing';
+import { polar } from '@/lib/polar';
 import { POLAR_ADDON_ID, POLAR_SUBSCRIPTION_ID } from '@/lib/polarProducts';
 
 export const runtime = 'nodejs';
@@ -226,6 +227,30 @@ async function upsertCreditGrant(input: {
   }
 }
 
+async function getCurrentBillingSubscriptionId(userId: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from('profiles')
+    .select('billing_subscription_id')
+    .eq('id', userId)
+    .maybeSingle();
+  return (data as any)?.billing_subscription_id || null;
+}
+
+async function revokeStaleSubscription(staleSubscriptionId: string) {
+  try {
+    await polar.subscriptions.revoke({ id: staleSubscriptionId });
+  } catch (e: any) {
+    // 404 / already-canceled is fine; anything else just gets logged so the
+    // new subscription activation isn't blocked.
+    console.warn('Polar revoke stale subscription failed', {
+      staleSubscriptionId,
+      statusCode: e?.statusCode,
+      message: e?.message,
+    });
+  }
+}
+
 async function applySubscriptionGrant(userId: string, payload: any, status: string) {
   const amountCents = getAmountCents(payload);
   const productId = extractProductId(payload);
@@ -234,6 +259,21 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   const amount = amountCents ? creditsFromAmountCents(amountCents) : null;
   const plan = planFromProductId(productId) || amount?.plan || 'starter';
   const sourceRef = `${subscriptionId || productId || 'subscription'}:${period.end || period.start || 'current'}`;
+
+  // If the user is already tied to a different subscription (e.g. they just
+  // switched their PWYW amount via /api/polar/subscription PATCH), revoke the
+  // previous one so they aren't double-billed. Polar's API doesn't support
+  // updating a PWYW amount in place, so the only way to switch is replace.
+  const existingSubId = await getCurrentBillingSubscriptionId(userId);
+  if (
+    existingSubId &&
+    subscriptionId &&
+    existingSubId !== subscriptionId &&
+    status !== 'canceled' &&
+    status !== 'revoked'
+  ) {
+    await revokeStaleSubscription(existingSubId);
+  }
 
   if (amount) {
     const carryover = await computeCarryover(
@@ -443,10 +483,18 @@ export const POST = webhookSecret
     try {
       const userId = extractUserId(subscription);
       if (!userId) return;
+      // If this is a stale subscription that's already been replaced by a
+      // newer one (e.g. user switched PWYW amount), don't overwrite the
+      // active billing fields with the old one.
+      const eventSubId = extractSubscriptionId(subscription);
+      const currentSubId = await getCurrentBillingSubscriptionId(userId);
+      if (currentSubId && eventSubId && currentSubId !== eventSubId) {
+        return;
+      }
       const period = extractPeriodBounds(subscription);
       await updateProfile(userId, {
         billing_customer_id: extractCustomerId(subscription),
-        billing_subscription_id: extractSubscriptionId(subscription),
+        billing_subscription_id: eventSubId,
         billing_product_id: extractProductId(subscription),
         billing_subscription_status: 'canceled',
         current_period_start: period.start,
@@ -460,11 +508,18 @@ export const POST = webhookSecret
     try {
       const userId = extractUserId(subscription);
       if (!userId) return;
+      // Same guard as onSubscriptionCanceled: a revoke event for a
+      // superseded subscription must not downgrade the user to free.
+      const eventSubId = extractSubscriptionId(subscription);
+      const currentSubId = await getCurrentBillingSubscriptionId(userId);
+      if (currentSubId && eventSubId && currentSubId !== eventSubId) {
+        return;
+      }
       await updateProfile(userId, {
         plan: 'free',
         monthly_token_limit: 0,
         billing_customer_id: extractCustomerId(subscription),
-        billing_subscription_id: extractSubscriptionId(subscription),
+        billing_subscription_id: eventSubId,
         billing_product_id: extractProductId(subscription),
         billing_subscription_status: 'revoked',
       });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
 import 'katex/dist/katex.min.css'; // Global Katex styles
 import { useAgent } from './hooks/useAgent';
@@ -306,7 +306,7 @@ export default function App() {
     }
     await startVoiceSession();
   }, [voiceActive, startVoiceSession, stopVoiceSession]);
-  // Auto-deactivate if voice session ends externally — but ONLY when the
+  // Auto-deactivate if voice session ends externally â€” but ONLY when the
   // hold-to-voice key is NOT pressed.  During a hold the UI must stay
   // visible; the hold-release IPC will clean up.
   useEffect(() => {
@@ -416,7 +416,7 @@ export default function App() {
           if (existing) {
             return [{ ...existing, created_at: event.timestamp || existing.created_at }, ...prev.filter(c => String(c.id) !== String(event.conversationId))];
           }
-          // New conversation — prepend it
+          // New conversation â€” prepend it
           return [{ id: event.conversationId, title: event.data?.title || 'New conversation', created_at: event.timestamp }, ...prev].slice(0, 20);
         });
       } else if (event.action === 'title_update' && event.data?.title) {
@@ -435,7 +435,7 @@ export default function App() {
       if (data?.text) {
         // Inject page context into the message
         const contextNote = data.pageContext?.url
-          ? `\n\n[Browser context: ${data.pageContext.title || ''} — ${data.pageContext.url}]`
+          ? `\n\n[Browser context: ${data.pageContext.title || ''} â€” ${data.pageContext.url}]`
           : '';
         sendMessage({
           text: data.text + contextNote,
@@ -840,7 +840,7 @@ export default function App() {
   };
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo'>('spaces');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'terminal' | 'todo'>('todo');
 
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
@@ -1273,7 +1273,36 @@ export default function App() {
     }
     setInternalSidebarOpen(false);
   }, [overlayMode]);
-  const handleSwitchSidebarTab = useCallback((tab: 'spaces' | 'terminal' | 'tasks' | 'browser' | 'todo') => setActiveSidebarTab(tab), []);
+  const handleSwitchSidebarTab = useCallback((tab: 'terminal' | 'todo') => setActiveSidebarTab(tab), []);
+
+  // Auto-open sidebar in window mode when an agent runs a terminal command
+  // or creates a to-do list. The sidebar opens to the relevant tab.
+  useEffect(() => {
+    if (overlayMode !== 'window') return;
+
+    const openSidebarToTab = async (tab: 'terminal' | 'todo') => {
+      setActiveSidebarTab(tab);
+      if (internalSidebarOpen) return;
+      try {
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(true);
+        if (result) {
+          setInternalSidebarOpen(result.open);
+          return;
+        }
+      } catch {}
+      setInternalSidebarOpen(true);
+    };
+
+    const handleTodo = () => { void openSidebarToTab('todo'); };
+    const handleTerminal = () => { void openSidebarToTab('terminal'); };
+
+    window.addEventListener('agent-todo-update', handleTodo);
+    window.addEventListener('agent-terminal-activity', handleTerminal);
+    return () => {
+      window.removeEventListener('agent-todo-update', handleTodo);
+      window.removeEventListener('agent-terminal-activity', handleTerminal);
+    };
+  }, [overlayMode, internalSidebarOpen]);
 
   const handleClosePalette = useCallback(() => setShowPalette(false), []);
   const handleCloseHotkeys = useCallback(() => setShowHotkeys(false), []);
@@ -1309,10 +1338,10 @@ export default function App() {
   const inputStatusText = useMemo(() => {
     if (isRecording) return 'Recording...';
     if (queueDepth > 0) return `Queued: ${queueDepth}`;
-    if (state?.connecting) return 'Connecting…';
+    if (state?.connecting) return 'Connectingâ€¦';
     if (!state?.connected) {
       if (state?.status === 'error') return 'Connection error';
-      return 'Starting…';
+      return 'Startingâ€¦';
     }
     // Check if AI is actively doing something (not idle states)
     const idleStates = ['ready', 'idle', 'connected', ''];
@@ -1356,8 +1385,8 @@ export default function App() {
   const chatStatusText = useMemo(() => {
     if (connectionStatus === 'connecting') {
       const aiText = ai?.statusText;
-      if (aiText === 'Starting…') return 'Starting…';
-      return 'Connecting…';
+      if (aiText === 'Startingâ€¦') return 'Startingâ€¦';
+      return 'Connectingâ€¦';
     }
     if (connectionStatus === 'disconnected') return 'Offline';
     if (connectionStatus === 'error') return 'Connection error';
@@ -1536,7 +1565,7 @@ export default function App() {
               )}
               {/* Main Content - Full Width */}
               <div className="flex flex-col h-full w-full relative smooth-resize">
-                {/* Permission Approval Overlay — shows the first queued approval; next auto-appears on dismiss */}
+                {/* Permission Approval Overlay â€” shows the first queued approval; next auto-appears on dismiss */}
                 {approvalQueue.length > 0 && (() => {
                   const ap = approvalQueue[0];
                   return (

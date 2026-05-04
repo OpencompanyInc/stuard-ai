@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable, Awaitable
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 import json
 
@@ -107,7 +107,37 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
     """
     action = str(args.get("action") or "").lower()
     session_id = str(args.get("sessionId") or args.get("session_id") or "default")
-    data = args.get("data") or {}
+
+    # Accept data as a dict, JSON string, or None. Some clients (and some LLMs)
+    # serialize the payload as a JSON string instead of an object, which would
+    # crash later .get() calls. Coerce to a dict here.
+    raw_data = args.get("data")
+    if isinstance(raw_data, str):
+        stripped = raw_data.strip()
+        if not stripped:
+            data: Dict[str, Any] = {}
+        else:
+            try:
+                parsed = json.loads(stripped)
+                data = parsed if isinstance(parsed, dict) else {"value": parsed}
+            except (json.JSONDecodeError, ValueError):
+                # Treat the bare string as a title for create-like actions
+                data = {"title": stripped}
+    elif isinstance(raw_data, dict):
+        data = raw_data
+    elif isinstance(raw_data, list):
+        # If a list is passed directly, treat it as items for bulk_create
+        data = {"items": raw_data}
+    else:
+        data = {}
+
+    # Promote top-level convenience fields onto data so callers can pass either
+    # nested ({data: {title: "..."}}) or flat ({title: "..."}) payloads.
+    for key in ("title", "description", "items", "id", "status", "priority",
+                "tags", "metadata", "parentId", "note", "reason", "error",
+                "includeCompleted", "keepInProgress"):
+        if key not in data and key in args:
+            data[key] = args[key]
 
     async def _emit_update(current_session_id: str) -> None:
         if not emit:

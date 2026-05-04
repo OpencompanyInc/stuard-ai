@@ -1415,6 +1415,20 @@ export function useAgent(options?: string | UseAgentOptions) {
 
               const requestIdKey = String(msg.requestId || activeRequestIdRef.current || '');
 
+              if (
+                (tool === 'start_terminal' ||
+                  tool === 'run_terminal_command' ||
+                  tool === 'terminal_create' ||
+                  tool === 'run_command') &&
+                (normalizedStatus === 'called' || normalizedStatus === 'started')
+              ) {
+                try {
+                  window.dispatchEvent(
+                    new CustomEvent('agent-terminal-activity', { detail: evt.data?.args }),
+                  );
+                } catch {}
+              }
+
               const updateHiddenStateForTool = (toolName: string, args: any, result: any) => {
                 const now = Date.now();
                 updateStreamingTab(t => {
@@ -1432,7 +1446,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                       newHiddenState.terminals = termMap;
                     }
                   }
-                  if (toolName === 'subagent_create' || toolName === 'run_subagent' || toolName === 'spawn_agent') {
+                  if (toolName === 'deploy_headless_agent') {
                     const taskId = result?.taskId || result?.id || args?.taskId;
                     if (taskId) {
                       const subagentMap = new Map(t.hiddenState.subagents);
@@ -1677,7 +1691,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                           }
                         }
                         // Track subagent creation
-                        if ((tool === 'subagent_create' || tool === 'run_subagent' || tool === 'spawn_agent') && result?.taskId) {
+                        if (tool === 'deploy_headless_agent' && result?.taskId) {
                           const subagentMap = new Map(t.hiddenState.subagents);
                           const existingArgs = t.currentToolCalls.find(findMatch)?.args;
                           subagentMap.set(result.taskId, {
@@ -2013,7 +2027,46 @@ export function useAgent(options?: string | UseAgentOptions) {
             const eventType = subEvt.event || '';
             const data = subEvt.data || {};
 
-            if (eventType === 'delta') {
+            if (eventType === 'started') {
+              const subagentId = subEvt.subagentId || '';
+              const kind = typeof data.kind === 'string' && data.kind
+                ? data.kind
+                : typeof data.label === 'string' && data.label
+                  ? data.label
+                  : 'subagent';
+              const id = `subagent-started-${subagentId || subEvt.runId || Date.now()}`;
+
+              updateStreamingTab(t => {
+                const chunks = [...t.currentStreamChunks];
+                const existingIdx = chunks.findIndex(
+                  (ch) => ch.type === 'status' && ch.id === id,
+                );
+                const nextChunk = {
+                  type: 'status' as const,
+                  id,
+                  label: `${humanizeToolName(kind)} agent started`,
+                  state: 'complete' as const,
+                  nested: true,
+                  subagentId,
+                  meta: {
+                    subagentKind: kind,
+                    subagentLabel: typeof data.label === 'string' ? data.label : undefined,
+                  },
+                };
+                if (existingIdx >= 0) {
+                  chunks[existingIdx] = nextChunk;
+                } else {
+                  chunks.push(nextChunk);
+                }
+                return { ...t, currentStreamChunks: chunks };
+              });
+              setStreamingAI((prev) => ({
+                ...prev,
+                phase: 'responding',
+                statusText: `${humanizeToolName(kind)} agent started…`
+              }));
+              setState((s) => ({ ...s, status: 'responding' }));
+            } else if (eventType === 'delta') {
               const text = typeof data.text === 'string' ? data.text : '';
               if (text) {
                 streamingRef.current = true;

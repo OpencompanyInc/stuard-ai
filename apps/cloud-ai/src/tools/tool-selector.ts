@@ -34,16 +34,6 @@ const CORE_TOOLS = new Set([
   'browse_topic_collections',
   'get_collection_detail',
   'synthesize_collection',
-  // Spaces — always available for knowledge management
-  'list_user_spaces',
-  'get_space_contents',
-  'add_to_space',
-  'create_space',
-  'find_or_create_space',
-  'ensure_space_path',
-  'list_space_path',
-  'add_to_space_path',
-  'get_space_tree',
   // System
   'run_command',
 ]);

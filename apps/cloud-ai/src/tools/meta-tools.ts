@@ -43,22 +43,7 @@ const MEMORY_AI_TOOL_IDS = new Set([
     'memory_extract_texts',
     'search_past_conversations',
     'get_conversation_context',
-    'list_user_spaces',
-    'get_space_contents',
-    'add_to_space',
-    'ensure_space_path',
-    'list_space_path',
-    'add_to_space_path',
-    'get_space_tree',
-    'create_space',
     'get_memory_stats',
-    'add_source_to_space',
-    'add_note_to_space',
-    'add_code_snippet_to_space',
-    'link_conversation_to_space',
-    'find_or_create_space',
-    'update_space_item',
-    'delete_space_item',
 ]);
 
 const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
