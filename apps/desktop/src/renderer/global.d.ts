@@ -255,6 +255,13 @@ declare global {
       botsGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
       botsDeployToVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
       botsStopOnVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
+      // Bot kanban + run log (private bot-owned memory, separate from user tasks)
+      botsMemoryListCards: (id: string, status?: string) => Promise<{ ok: boolean; cards?: any[]; error?: string }>;
+      botsMemoryCreateCard: (id: string, input: { title: string; notes?: string; status?: string }) => Promise<{ ok: boolean; card?: any; error?: string }>;
+      botsMemoryUpdateCard: (id: string, cardId: string, patch: { title?: string; notes?: string; status?: string }) => Promise<{ ok: boolean; card?: any; error?: string }>;
+      botsMemoryDeleteCard: (id: string, cardId: string) => Promise<{ ok: boolean; error?: string }>;
+      botsMemoryListRunLog: (id: string, limit?: number) => Promise<{ ok: boolean; runLog?: any[]; error?: string }>;
+      onBotMemoryChanged: (cb: (data: { botId: string }) => void) => () => void;
 
       // Subagent protocol events from orchestrator
       onSubagentMessage: (cb: (msg: any) => void) => () => void;

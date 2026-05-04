@@ -7,15 +7,15 @@ const region = z
 
 export const take_screenshot = makeLocalTool(
   'take_screenshot',
-  'Capture screenshot with optional region and return a local file path (PNG).',
-  z.object({ region: region.optional(), hideUI: z.boolean().optional() }),
+  'Capture screenshot with optional region and return a local file path (PNG). Includes the mouse cursor by default.',
+  z.object({ region: region.optional(), hideUI: z.boolean().optional(), includeCursor: z.boolean().optional().default(true) }),
   z.object({ filePath: z.string() }),
 );
 
 export const capture_screen_to_file = makeLocalTool(
   'capture_screen_to_file',
-  'Save screenshot to file',
-  z.object({ filePath: z.string(), region: region.optional(), hideUI: z.boolean().optional() }),
+  'Save screenshot to file. Includes the mouse cursor by default.',
+  z.object({ filePath: z.string(), region: region.optional(), hideUI: z.boolean().optional(), includeCursor: z.boolean().optional().default(true) }),
   z.object({ filePath: z.string() }),
 );
 

@@ -11,6 +11,7 @@ import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWo
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
+import { execBotMemoryList, execBotMemoryCreate, execBotMemoryUpdate, execBotMemoryDelete, execBotMemoryLog } from './handlers/bot-memory';
 import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handlers/wakeword';
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
@@ -284,6 +285,11 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);
       if (toolName === 'proactive_task_delete') return execProactiveTaskDelete(args, ctx);
+      if (toolName === 'bot_memory_list') return execBotMemoryList(args, ctx);
+      if (toolName === 'bot_memory_create') return execBotMemoryCreate(args, ctx);
+      if (toolName === 'bot_memory_update') return execBotMemoryUpdate(args, ctx);
+      if (toolName === 'bot_memory_delete') return execBotMemoryDelete(args, ctx);
+      if (toolName === 'bot_memory_log') return execBotMemoryLog(args, ctx);
       if (toolName === 'wakeword_start') return execWakewordStart(args);
       if (toolName === 'wakeword_stop') return execWakewordStop();
       if (toolName === 'wakeword_status') return execWakewordStatus();

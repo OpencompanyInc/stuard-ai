@@ -8,6 +8,20 @@ export const PROACTIVE_TASK_TOOL_NAMES = [
   'proactive_task_delete',
 ] as const;
 
+/**
+ * Bot's private kanban + run-log tools. Distinct from proactive_task_*
+ * (which are user-facing tasks): bot_memory_* is the *bot's own* working
+ * memory across runs, surfaced in the Kanban tab of BotsView. Always
+ * force-included for proactive runs so the bot can remember.
+ */
+export const BOT_MEMORY_TOOL_NAMES = [
+  'bot_memory_list',
+  'bot_memory_create',
+  'bot_memory_update',
+  'bot_memory_delete',
+  'bot_memory_log',
+] as const;
+
 export function hasProactiveModeMarker(hiddenContext: unknown): boolean {
   return typeof hiddenContext === 'string' && (
     hiddenContext.includes('[PROACTIVE MODE]') ||
@@ -16,7 +30,11 @@ export function hasProactiveModeMarker(hiddenContext: unknown): boolean {
 }
 
 export function mergeForcedToolNames(rankedToolNames?: string[]): string[] {
-  const merged = new Set([...(rankedToolNames || []), ...PROACTIVE_TASK_TOOL_NAMES]);
+  const merged = new Set([
+    ...(rankedToolNames || []),
+    ...PROACTIVE_TASK_TOOL_NAMES,
+    ...BOT_MEMORY_TOOL_NAMES,
+  ]);
   return Array.from(merged);
 }
 

@@ -45,6 +45,11 @@ export const capture_screen = makeLocalTool(
       .boolean()
       .default(false)
       .describe('Include system audio in the recording (what you hear from speakers)'),
+    includeCursor: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe('Include the mouse cursor in recorded frames. Defaults to true.'),
     fps: z
       .number()
       .int()

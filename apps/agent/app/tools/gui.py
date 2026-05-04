@@ -6,6 +6,8 @@ import os
 import time
 from typing import Any, Dict
 
+from .cursor_overlay import save_mss_png_with_cursor
+
 
 async def get_mouse_position(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get the current mouse cursor position on screen."""
@@ -215,6 +217,7 @@ async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
     return_data_url = bool(args.get("returnDataUrl") or False)
     image_quality = int(args.get("imageQuality") or 60)
     image_max_pixels = int(args.get("imageMaxPixels") or 2_000_000)
+    include_cursor = bool(args.get("includeCursor", True))
 
     try:
         import pyautogui as pag  # type: ignore
@@ -223,7 +226,6 @@ async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         import mss  # type: ignore
-        from mss import tools as msstools  # type: ignore
     except Exception:
         raise RuntimeError("mss not installed")
 
@@ -339,7 +341,7 @@ async def computer_use(args: Dict[str, Any]) -> Dict[str, Any]:
         tmpdir = os.path.join(os.path.expanduser("~"), "Documents", "StuardAI", "media", "screenshots")
         os.makedirs(tmpdir, exist_ok=True)
         file_path = os.path.join(tmpdir, f"computer_use_{int(time.time()*1000)}.png")
-        msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
+        save_mss_png_with_cursor(sct_img, mon, file_path, include_cursor)
 
     pos = pag.position()
     result.update(
@@ -393,9 +395,9 @@ def _get_dpi_scale() -> float:
 
 async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
     region = args.get("region") or {}
+    include_cursor = bool(args.get("includeCursor", True))
     try:
         import mss  # type: ignore
-        from mss import tools as msstools  # type: ignore
     except Exception:
         raise RuntimeError("mss not installed")
     with mss.mss() as sct:
@@ -415,19 +417,19 @@ async def take_screenshot(args: Dict[str, Any]) -> Dict[str, Any]:
         tmpdir = os.path.join(os.path.expanduser("~"), "Documents", "StuardAI", "media", "screenshots")
         os.makedirs(tmpdir, exist_ok=True)
         file_path = os.path.join(tmpdir, f"screenshot_{int(time.time()*1000)}.png")
-        msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
+        save_mss_png_with_cursor(sct_img, monitor, file_path, include_cursor)
     return {"ok": True, "filePath": file_path}
 
 
 async def capture_screen_to_file(args: Dict[str, Any]) -> Dict[str, Any]:
     file_path = str(args.get("filePath") or "screenshot.png")
     region = args.get("region") or {}
+    include_cursor = bool(args.get("includeCursor", True))
     d = os.path.dirname(file_path)
     if d and not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
     try:
         import mss  # type: ignore
-        from mss import tools as msstools  # type: ignore
     except Exception:
         raise RuntimeError("mss not installed")
     with mss.mss() as sct:
@@ -442,7 +444,7 @@ async def capture_screen_to_file(args: Dict[str, Any]) -> Dict[str, Any]:
         else:
             monitor = sct.monitors[0]
         sct_img = sct.grab(monitor)
-        msstools.to_png(sct_img.rgb, sct_img.size, output=file_path)
+        save_mss_png_with_cursor(sct_img, monitor, file_path, include_cursor)
     return {"ok": True, "filePath": file_path}
 
 

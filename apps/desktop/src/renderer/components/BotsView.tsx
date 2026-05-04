@@ -6,8 +6,9 @@ import {
   Loader2, Settings2, Activity, Brain, Trash2, Cloud, Monitor,
   Sparkles, Terminal, ListTodo, Clock, Calendar, Link as LinkIcon,
   Mail, Hand, Copy, Check, Zap, AlertCircle, X, Wrench, Search,
-  Maximize2,
+  Maximize2, LayoutGrid,
 } from 'lucide-react';
+import { KanbanTab } from './bots/KanbanTab';
 import {
   SCHEDULE_LABELS,
   NOTIFICATION_CHANNEL_LABELS,
@@ -837,17 +838,28 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
 // ─── Bot detail view (two-column, mirrors ProactiveView layout) ───────────
 
-type DetailTab = 'activity' | 'memory' | 'settings';
+type DetailTab = 'activity' | 'kanban' | 'memory' | 'settings';
 
 function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void; onChange: () => Promise<void> | void }) {
   const [tab, setTab] = useState<DetailTab>('activity');
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [tasks, setTasks] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [kanbanCards, setKanbanCards] = useState<any[]>([]);
+  const [runLog, setRunLog] = useState<any[]>([]);
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const status = statusInfo(bot.status);
+
+  const reloadKanban = useCallback(async () => {
+    const [cardsRes, logRes] = await Promise.all([
+      window.desktopAPI.botsMemoryListCards(bot.id),
+      window.desktopAPI.botsMemoryListRunLog(bot.id, 30),
+    ]);
+    if (cardsRes?.ok && Array.isArray(cardsRes.cards)) setKanbanCards(cardsRes.cards);
+    if (logRes?.ok && Array.isArray(logRes.runLog)) setRunLog(logRes.runLog);
+  }, [bot.id]);
 
   const reload = useCallback(async () => {
     const [cfgRes, tasksRes, logsRes] = await Promise.all([
@@ -858,9 +870,20 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
     if (cfgRes?.ok && cfgRes.config) setConfig(cfgRes.config);
     if (tasksRes?.ok && Array.isArray(tasksRes.tasks)) setTasks(tasksRes.tasks);
     if (logsRes?.ok && Array.isArray(logsRes.logs)) setLogs(logsRes.logs);
-  }, [bot.id]);
+    await reloadKanban();
+  }, [bot.id, reloadKanban]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Live-refresh the kanban when the bot (or the user) edits it from another
+  // surface — e.g. a wake-up just appended a run-log entry, or another window
+  // edited a card. The handler is bot-scoped so we don't repaint for siblings.
+  useEffect(() => {
+    const off = window.desktopAPI.onBotMemoryChanged?.(({ botId }) => {
+      if (botId === bot.id) reloadKanban();
+    });
+    return () => { off?.(); };
+  }, [bot.id, reloadKanban]);
 
   const handleToggleStatus = async () => {
     setSaving(true);
@@ -952,8 +975,10 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
   const selectedLog = selectedLogIndex >= 0 ? logs[selectedLogIndex] : null;
   const selectedLogTrigger = selectedLog?.triggerId ? triggersById.get(selectedLog.triggerId) || null : null;
 
+  const activeKanbanCount = kanbanCards.filter(c => c.status === 'in_progress' || c.status === 'queued').length;
   const tabs: { id: DetailTab; label: string; icon: any; showCount?: boolean; count?: number }[] = [
     { id: 'activity', label: 'Activity', icon: Activity, showCount: true, count: tasks.length },
+    { id: 'kanban', label: 'Kanban', icon: LayoutGrid, showCount: true, count: activeKanbanCount },
     { id: 'memory', label: 'Memory', icon: Brain },
     { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
@@ -1006,60 +1031,86 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
         </div>
       </div>
 
-      {/* ─── Two-column body ─────────────────────────────────────── */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-hidden lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-        {/* ── LEFT: Overview / Config / Focus Brief ─────────────── */}
-        <aside className="overflow-y-auto px-1 pb-2 scrollbar-minimal">
-          <div className="space-y-7">
-            {/* Overview */}
-            <section>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-[15px] font-semibold text-theme-fg">Overview</h2>
-                <DashboardBadge label={status.label} tone={status.badgeTone} />
-              </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                <StatCard
-                  value={(nextRunValue || '').includes(':') ? nextRunValue.replace(':', ' : ') : nextRunValue}
-                  label="Next Check-in"
-                />
-                <StatCard value={padCount(tasks.length)} label="Active Tasks" />
-                <StatCard value={padCount(logs.length)} label="Total Runs" className="col-span-2 sm:col-span-1" />
-              </div>
-            </section>
-
-            {/* Config */}
-            <section>
-              <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Config</h2>
-              <div className="grid grid-cols-3 gap-2.5">
-                <StatCard size="md" value={executionTargetMeta.label} label={bot.vmDeployedAt ? 'VM + Local' : 'Executor'} />
-                <StatCard size="md" value={modelModeMeta.label} label="Intelligence" />
-                <StatCard size="md" value={triggerSummary} label="Trigger" />
-              </div>
-            </section>
-
-            {/* Focus Brief */}
-            {config && (
+      {/* ─── Body: two-column for most tabs, full-width for kanban ───── */}
+      {/*
+       * The Kanban tab is a horizontal board — it needs the full container
+       * width to breathe. For everything else, the side aside (Overview /
+       * Config / Focus Brief) gives quick context. On kanban, that context
+       * collapses into a thin summary strip across the top so users still
+       * see status at a glance without sacrificing card real-estate.
+       */}
+      {tab === 'kanban' && (
+        <KanbanSummaryStrip
+          status={status}
+          nextRunValue={nextRunValue}
+          activeTaskCount={tasks.length}
+          totalRuns={logs.length}
+          executionLabel={executionTargetMeta.label}
+          modelLabel={modelModeMeta.label}
+          triggerLabel={triggerSummary}
+          vmDeployed={!!bot.vmDeployedAt}
+        />
+      )}
+      <div className={clsx(
+        'grid min-h-0 flex-1 gap-6 overflow-hidden',
+        tab === 'kanban'
+          ? 'grid-cols-1'
+          : 'grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]',
+      )}>
+        {/* ── LEFT aside (hidden on kanban tab) ─────────────────── */}
+        {tab !== 'kanban' && (
+          <aside className="overflow-y-auto px-1 pb-2 scrollbar-minimal">
+            <div className="space-y-7">
+              {/* Overview */}
               <section>
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 className="text-[15px] font-semibold text-theme-fg">Focus Brief</h2>
-                  {saving && <span className="text-[11px] font-medium text-primary">Saving…</span>}
+                  <h2 className="text-[15px] font-semibold text-theme-fg">Overview</h2>
+                  <DashboardBadge label={status.label} tone={status.badgeTone} />
                 </div>
-                <div className="rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 px-4 py-3.5">
-                  <textarea
-                    value={config.instructions || ''}
-                    onChange={e => setConfig(prev => prev ? { ...prev, instructions: e.target.value } : prev)}
-                    onBlur={() => updateConfigField({ instructions: config.instructions || '' })}
-                    placeholder="Today: focus on the launch announcement."
-                    rows={5}
-                    className="min-h-[128px] w-full resize-none bg-transparent text-[13px] leading-6 text-theme-fg placeholder:text-theme-muted/50 outline-none"
+                <div className="grid grid-cols-2 gap-2.5">
+                  <StatCard
+                    value={(nextRunValue || '').includes(':') ? nextRunValue.replace(':', ' : ') : nextRunValue}
+                    label="Next Check-in"
                   />
+                  <StatCard value={padCount(tasks.length)} label="Active Tasks" />
+                  <StatCard value={padCount(logs.length)} label="Total Runs" className="col-span-2 sm:col-span-1" />
                 </div>
               </section>
-            )}
-          </div>
-        </aside>
 
-        {/* ── RIGHT: Tabs + tab content ────────────────────────── */}
+              {/* Config */}
+              <section>
+                <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Config</h2>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <StatCard size="md" value={executionTargetMeta.label} label={bot.vmDeployedAt ? 'VM + Local' : 'Executor'} />
+                  <StatCard size="md" value={modelModeMeta.label} label="Intelligence" />
+                  <StatCard size="md" value={triggerSummary} label="Trigger" />
+                </div>
+              </section>
+
+              {/* Focus Brief */}
+              {config && (
+                <section>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h2 className="text-[15px] font-semibold text-theme-fg">Focus Brief</h2>
+                    {saving && <span className="text-[11px] font-medium text-primary">Saving…</span>}
+                  </div>
+                  <div className="rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 px-4 py-3.5">
+                    <textarea
+                      value={config.instructions || ''}
+                      onChange={e => setConfig(prev => prev ? { ...prev, instructions: e.target.value } : prev)}
+                      onBlur={() => updateConfigField({ instructions: config.instructions || '' })}
+                      placeholder="Today: focus on the launch announcement."
+                      rows={5}
+                      className="min-h-[128px] w-full resize-none bg-transparent text-[13px] leading-6 text-theme-fg placeholder:text-theme-muted/50 outline-none"
+                    />
+                  </div>
+                </section>
+              )}
+            </div>
+          </aside>
+        )}
+
+        {/* ── RIGHT/MAIN: Tabs + tab content ────────────────────── */}
         <main className="flex min-h-0 flex-col overflow-hidden">
           {/* Tabs */}
           <div className="mb-4 flex flex-shrink-0 items-center gap-2 p-0.5">
@@ -1102,6 +1153,16 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
                   logs={logs}
                   triggersById={triggersById}
                   onSelectLog={(id) => setSelectedLogId(id)}
+                />
+              </div>
+            )}
+            {tab === 'kanban' && (
+              <div className="animate-in fade-in duration-200">
+                <KanbanTab
+                  botId={bot.id}
+                  cards={kanbanCards}
+                  runLog={runLog}
+                  onChanged={reloadKanban}
                 />
               </div>
             )}
@@ -1308,6 +1369,61 @@ function MemoryTab({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+
+// ─── Kanban summary strip ──────────────────────────────────────────────────
+//
+// Slim horizontal context bar shown above the kanban board when that tab is
+// active. The kanban tab hides the side aside to give cards room to breathe;
+// this strip preserves the at-a-glance status info (next run, tasks, runs,
+// executor, model, trigger) without taking real estate from the columns.
+
+function KanbanSummaryStrip({
+  status,
+  nextRunValue,
+  activeTaskCount,
+  totalRuns,
+  executionLabel,
+  modelLabel,
+  triggerLabel,
+  vmDeployed,
+}: {
+  status: { dot: string; label: string; textColor: string; badgeTone: BadgeTone };
+  nextRunValue: string;
+  activeTaskCount: number;
+  totalRuns: number;
+  executionLabel: string;
+  modelLabel: string;
+  triggerLabel: string;
+  vmDeployed: boolean;
+}) {
+  const items: Array<{ label: string; value: string }> = [
+    { label: 'Next', value: nextRunValue },
+    { label: 'Tasks', value: padCount(activeTaskCount) },
+    { label: 'Runs', value: padCount(totalRuns) },
+    { label: vmDeployed ? 'VM + Local' : 'Executor', value: executionLabel },
+    { label: 'Intelligence', value: modelLabel },
+    { label: 'Trigger', value: triggerLabel },
+  ];
+  return (
+    <div className="mb-4 flex flex-shrink-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className={clsx('h-2 w-2 rounded-full', status.dot)} />
+        <span className={clsx('text-[12px] font-semibold uppercase tracking-wide', status.textColor)}>{status.label}</span>
+      </div>
+      <div className="h-4 w-px bg-theme/15" />
+      {items.map((it, i) => (
+        <React.Fragment key={it.label}>
+          {i > 0 && <div className="h-4 w-px bg-theme/15" />}
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-theme-muted">{it.label}</span>
+            <span className="text-[12.5px] font-semibold text-theme-fg">{it.value}</span>
+          </div>
+        </React.Fragment>
+      ))}
     </div>
   );
 }

@@ -567,6 +567,17 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsGetAvailableTools: () => ipcRenderer.invoke('bots:getAvailableTools'),
   botsDeployToVm: (id: string) => ipcRenderer.invoke('bots:deployToVm', id),
   botsStopOnVm: (id: string) => ipcRenderer.invoke('bots:stopOnVm', id),
+  // Bot kanban + run log (private bot-owned memory, separate from user tasks)
+  botsMemoryListCards: (id: string, status?: string) => ipcRenderer.invoke('bots:memoryListCards', id, status),
+  botsMemoryCreateCard: (id: string, input: { title: string; notes?: string; status?: string }) => ipcRenderer.invoke('bots:memoryCreateCard', id, input),
+  botsMemoryUpdateCard: (id: string, cardId: string, patch: { title?: string; notes?: string; status?: string }) => ipcRenderer.invoke('bots:memoryUpdateCard', id, cardId, patch),
+  botsMemoryDeleteCard: (id: string, cardId: string) => ipcRenderer.invoke('bots:memoryDeleteCard', id, cardId),
+  botsMemoryListRunLog: (id: string, limit?: number) => ipcRenderer.invoke('bots:memoryListRunLog', id, limit),
+  onBotMemoryChanged: (cb: (data: { botId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('bot-memory-changed', handler);
+    return () => { try { ipcRenderer.off('bot-memory-changed', handler); } catch { } };
+  },
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),

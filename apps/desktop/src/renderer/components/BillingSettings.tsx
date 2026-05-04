@@ -30,7 +30,6 @@ import {
 import {
   aggregateComputeBillingEvents,
   categorizeModelForUsage,
-  computeBillingCredits,
   getUsageSourceCategory,
   getUsageSourceLabel,
   isNonBillableUsageEvent,
@@ -69,6 +68,11 @@ interface CreditSummary {
   currentPeriodStart?: string | null;
   currentPeriodEnd?: string | null;
 }
+
+type BillingUser = {
+  id: string;
+  email?: string | null;
+};
 
 interface UsageBreakdownItem {
   category: string;
@@ -183,31 +187,6 @@ function resolvePeriodDate(since: string | null): Date {
     : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 }
 
-async function loadUsageCreditTotal(uid: string, sinceIso: string): Promise<number> {
-  try {
-    const { data, error } = await (supabase as any).rpc("get_usage_credit_total", {
-      p_user_id: uid,
-      p_since: sinceIso,
-    });
-    if (!error && data != null) return Math.max(0, Number(data) || 0);
-  } catch {
-    // Older databases may not have the aggregate RPC yet.
-  }
-
-  const { data } = await supabase
-    .from("usage_events")
-    .select("model, credit_cost, raw")
-    .eq("user_id", uid)
-    .gte("created_at", sinceIso);
-
-  let used = 0;
-  for (const e of (data as any[]) || []) {
-    if (isNonBillableUsageEvent({ model: e.model, raw: e.raw })) continue;
-    used += Number(e.credit_cost) || 0;
-  }
-  return used;
-}
-
 async function loadUsageBreakdownRows(uid: string, sinceIso: string): Promise<UsageBreakdownItem[]> {
   try {
     const { data, error } = await (supabase as any).rpc("get_usage_breakdown", {
@@ -315,16 +294,16 @@ async function loadComputeBillingRows(uid: string, sinceIso: string, limit?: num
 }> {
   let query = supabase
     .from("compute_billing_events")
-    .select("id, event_type, credits_deducted, details, billing_hour, created_at", { count: "exact" })
+    .select("id, event_type, credits_deducted, details, billing_hour, created_at")
     .eq("user_id", uid)
     .gte("billing_hour", sinceIso)
     .order("billing_hour", { ascending: false });
 
   if (limit && limit > 0) query = query.limit(limit);
 
-  const { data, error, count } = await query;
+  const { data, error } = await query;
   if (error || !Array.isArray(data)) return { rows: [], total: 0 };
-  return { rows: data as ComputeBillingEventRow[], total: count ?? data.length };
+  return { rows: data as ComputeBillingEventRow[], total: data.length };
 }
 
 export const BillingSettings: React.FC = () => {
@@ -364,7 +343,8 @@ export const BillingSettings: React.FC = () => {
 
   // ── Core credit loader — queries Supabase directly, no local server needed ──
   const loadCredits = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user as BillingUser | undefined;
     if (!user) return null;
 
     const [{ data: profile }, { data: rawGrants }] = await Promise.all([
@@ -389,17 +369,9 @@ export const BillingSettings: React.FC = () => {
       ? new Date((profile as any).current_period_start)
       : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-    const periodStartIso = periodStart.toISOString();
-    const [usageCredits, computeBilling] = await Promise.all([
-      loadUsageCreditTotal(user.id, periodStartIso),
-      loadComputeBillingRows(user.id, periodStartIso),
-    ]);
-    const computeCredits = computeBilling.rows.reduce((sum, row) => sum + computeBillingCredits(row), 0);
-    const used = usageCredits + computeCredits;
     const totalCredits = includedCredits + addonCredits;
     const grantRemaining = includedRemaining + addonRemaining;
-    const usageBasedRemaining = totalCredits > 0 ? Math.max(0, totalCredits - used) : grantRemaining;
-    const remaining = Math.min(grantRemaining, usageBasedRemaining);
+    const used = Math.max(0, totalCredits - grantRemaining);
 
     return {
       user,
@@ -407,7 +379,7 @@ export const BillingSettings: React.FC = () => {
         plan: String((profile as any)?.plan || "Free"),
         limit: Math.ceil(totalCredits),
         used: Math.ceil(used),
-        remaining: Math.ceil(remaining),
+        remaining: Math.ceil(grantRemaining),
         unlimited: false,
         includedCredits: Math.ceil(includedCredits),
         includedRemaining: Math.ceil(includedRemaining),
@@ -433,7 +405,7 @@ export const BillingSettings: React.FC = () => {
       setUsageBreakdown(mergeUsageBreakdowns(
         usageRows,
         aggregateComputeBillingEvents(computeBilling.rows)
-      ));
+      ).filter((item) => item.credits > 0 || item.costUsd > 0));
     } finally {
       if (mountedRef.current) setUsageLoading(false);
     }
@@ -536,12 +508,16 @@ export const BillingSettings: React.FC = () => {
       setUserId(user.id);
       setUserEmail(user.email || null);
       setCreditSummary(summary);
-      // Load breakdown, logs, and products in parallel
-      void Promise.all([
-        loadUsageBreakdown(user.id, summary.currentPeriodStart || null),
-        loadLogs(user.id, summary.currentPeriodStart || null, 0),
-        loadProducts(),
-      ]);
+      if (mountedRef.current) setLoading(false);
+      window.setTimeout(() => {
+        if (!mountedRef.current) return;
+        // Detail sections are useful, but they should never block opening Billing.
+        void Promise.all([
+          loadUsageBreakdown(user.id, summary.currentPeriodStart || null),
+          loadLogs(user.id, summary.currentPeriodStart || null, 0),
+          loadProducts(),
+        ]);
+      }, 0);
     } catch (e: any) {
       if (!mountedRef.current) return;
       setError(e?.message || "Failed to load billing information");

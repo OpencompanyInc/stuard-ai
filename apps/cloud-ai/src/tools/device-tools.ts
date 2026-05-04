@@ -296,6 +296,15 @@ export {
   proactive_task_create,
 } from './proactive-task-tools';
 
+// Bot's private kanban + run-log tools (desktop-backed, scoped to running bot)
+export {
+  bot_memory_list,
+  bot_memory_create,
+  bot_memory_update,
+  bot_memory_delete,
+  bot_memory_log,
+} from './bot-memory-tools';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // KNOWLEDGE GRAPH TOOLS
 // ═══════════════════════════════════════════════════════════════════════════════

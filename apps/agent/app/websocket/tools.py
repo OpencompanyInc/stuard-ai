@@ -53,6 +53,12 @@ CLIENT_TOOLS = {
     "proactive_task_list",
     "proactive_task_update",
     "proactive_task_create",
+    # Bot's private kanban + run log (desktop-backed, scoped by running bot)
+    "bot_memory_list",
+    "bot_memory_create",
+    "bot_memory_update",
+    "bot_memory_delete",
+    "bot_memory_log",
 }
 # On VM, browser_use_* tools are handled locally (headless) — not forwarded to desktop
 _IS_VM = os.environ.get("STUARD_AGENT_MODE") == "vm"

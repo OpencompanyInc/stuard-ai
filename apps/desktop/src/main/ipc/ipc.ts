@@ -8,7 +8,7 @@ import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop,
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, botMemoryService } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -1243,8 +1243,14 @@ export function setupIpc() {
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:delete', (_e, id: string) => {
-    const result = botService.delete(String(id || ''));
-    if (result.ok) syncBotTriggers(String(id || ''));
+    const botId = String(id || '');
+    const result = botService.delete(botId);
+    if (result.ok) {
+      syncBotTriggers(botId);
+      // Cascade: drop the bot's private kanban + run log so a re-created bot
+      // with a recycled id doesn't inherit ghost cards.
+      try { botMemoryService.clearForBot(botId); } catch (e) { logger.warn('[ipc] clearForBot failed:', e); }
+    }
     return result;
   });
   ipcMain.handle('bots:getConfig', (_e, id: string) => {
@@ -1302,6 +1308,43 @@ export function setupIpc() {
   });
   ipcMain.handle('bots:stopOnVm', async (_e, id: string) => {
     return stopBotOnVm(String(id || ''));
+  });
+
+  // ─── Bot kanban + run log (private bot-owned memory) ──────────────────────
+  // Separate from proactive-service tasks (which are user-owned). Both the bot
+  // (via the bot_memory tool during a run) and the user (via the Kanban tab)
+  // can read/write these; lastEditedBy distinguishes them in the UI.
+  function broadcastBotMemoryChanged(botId: string) {
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('bot-memory-changed', { botId });
+      }
+    } catch { }
+  }
+  const VALID_KANBAN_STATUSES = new Set(['queued', 'in_progress', 'completed', 'failed']);
+  ipcMain.handle('bots:memoryListCards', (_e, id: string, status?: string) => {
+    const opts = status && VALID_KANBAN_STATUSES.has(String(status)) ? { status: String(status) as any } : {};
+    return { ok: true, cards: botMemoryService.listCards(String(id || ''), opts) };
+  });
+  ipcMain.handle('bots:memoryCreateCard', (_e, id: string, input: any) => {
+    const card = botMemoryService.createCard(String(id || ''), input || { title: '' }, 'user');
+    if (!card) return { ok: false, error: 'invalid_input' };
+    broadcastBotMemoryChanged(String(id || ''));
+    return { ok: true, card };
+  });
+  ipcMain.handle('bots:memoryUpdateCard', (_e, id: string, cardId: string, patch: any) => {
+    const card = botMemoryService.updateCard(String(id || ''), String(cardId || ''), patch || {}, 'user');
+    if (!card) return { ok: false, error: 'not_found' };
+    broadcastBotMemoryChanged(String(id || ''));
+    return { ok: true, card };
+  });
+  ipcMain.handle('bots:memoryDeleteCard', (_e, id: string, cardId: string) => {
+    const ok = botMemoryService.deleteCard(String(id || ''), String(cardId || ''));
+    if (ok) broadcastBotMemoryChanged(String(id || ''));
+    return ok ? { ok: true } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:memoryListRunLog', (_e, id: string, limit?: number) => {
+    return { ok: true, runLog: botMemoryService.listRunLog(String(id || ''), typeof limit === 'number' ? limit : 20) };
   });
 
   // File Indexing

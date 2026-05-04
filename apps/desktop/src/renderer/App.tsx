@@ -1338,10 +1338,10 @@ export default function App() {
   const inputStatusText = useMemo(() => {
     if (isRecording) return 'Recording...';
     if (queueDepth > 0) return `Queued: ${queueDepth}`;
-    if (state?.connecting) return 'Connectingâ€¦';
+    if (state?.connecting) return 'Connecting\u2026';
     if (!state?.connected) {
       if (state?.status === 'error') return 'Connection error';
-      return 'Startingâ€¦';
+      return 'Starting\u2026';
     }
     // Check if AI is actively doing something (not idle states)
     const idleStates = ['ready', 'idle', 'connected', ''];
@@ -1385,8 +1385,8 @@ export default function App() {
   const chatStatusText = useMemo(() => {
     if (connectionStatus === 'connecting') {
       const aiText = ai?.statusText;
-      if (aiText === 'Startingâ€¦') return 'Startingâ€¦';
-      return 'Connectingâ€¦';
+      if (aiText === 'Starting\u2026') return 'Starting\u2026';
+      return 'Connecting\u2026';
     }
     if (connectionStatus === 'disconnected') return 'Offline';
     if (connectionStatus === 'error') return 'Connection error';

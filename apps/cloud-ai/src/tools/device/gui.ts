@@ -74,6 +74,7 @@ export const computer_use = makeLocalTool(
     result: z.enum(['success', 'failure']).optional(),
     monitorIndex: z.number().int().optional(),
     includeScreenshot: z.boolean().optional(),
+    includeCursor: z.boolean().optional().default(true),
     returnDataUrl: z.boolean().optional(),
     imageQuality: z.number().int().min(1).max(95).optional(),
     imageMaxPixels: z.number().int().min(4096).optional(),

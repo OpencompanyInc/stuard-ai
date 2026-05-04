@@ -853,11 +853,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const voiceFriendlyDetail = topVoiceTool?.detail;
   const voiceStatusText = voiceActive
     ? (voiceActiveTool
-        ? `Using ${voiceActiveTool.replace(/_/g, " ")}â€¦`
+        ? `Using ${voiceActiveTool.replace(/_/g, " ")}\u2026`
         : voiceState === "connecting"
-          ? "Connectingâ€¦"
+          ? "Connecting\u2026"
           : voiceState === "thinking"
-            ? "Thinkingâ€¦"
+            ? "Thinking\u2026"
             : voiceState === "speaking"
               ? "Speaking"
               : voiceState === "listening"

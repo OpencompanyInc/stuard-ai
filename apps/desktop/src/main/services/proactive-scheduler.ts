@@ -14,6 +14,7 @@ import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
 import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
+import { botMemoryService } from './bot-memory-service';
 import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
@@ -1225,12 +1226,15 @@ async function executeWakeUp(opts: {
     const activeSkills = loadSkills().filter(s => s.isActive);
 
     // Compose the instructions sent to the agent from the bot's identity
-    // (systemPrompt = personality/objective, storedFacts = user-curated memory)
-    // and the on-the-fly focus brief (config.instructions). This is what makes
-    // a bot actually behave like its UI says it should.
+    // (systemPrompt = personality/objective, storedFacts = user-curated memory),
+    // its private kanban + run log (bot-curated memory across runs), and the
+    // on-the-fly focus brief. This is what makes a bot actually behave like
+    // its UI says it should.
+    const kanbanSection = config.memoryEnabled ? botMemoryService.formatForPrompt(botId) : '';
     const composedInstructions = [
       bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
       config.memoryEnabled && bot.storedFacts?.trim() ? `# Things to remember\n${bot.storedFacts.trim()}` : '',
+      kanbanSection,
       config.instructions?.trim() ? `# Today's focus\n${config.instructions.trim()}` : '',
     ].filter(Boolean).join('\n\n');
 
@@ -1417,6 +1421,27 @@ async function executeWakeUp(opts: {
       usage: executionResult.usage,
       modelId: executionResult.modelId || modelSelection.modelId || undefined,
     });
+
+    // Auto-append a run-log entry to the bot's private memory so its next run
+    // can see what just happened. Bots can also append richer entries
+    // mid-run via the bot_memory tool; this is the always-on safety net.
+    try {
+      const summary = (agentMessage || executionResult.partialResponse || '(no agent message)')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 280);
+      botMemoryService.appendRunLog(botId, {
+        summary,
+        outcome: executionResult.partialResponse && !agentMessage ? 'partial' : 'success',
+      });
+      try {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('bot-memory-changed', { botId });
+        }
+      } catch { }
+    } catch (e) {
+      logger.warn('[proactive-scheduler] Failed to append run log:', e);
+    }
     logger.info(`[proactive-scheduler] Wake-up complete: ${agentMessage?.slice(0, 100) || '(no message)'}`);
   } catch (e: any) {
     logger.error('[proactive-scheduler] Wake-up failed:', e);
@@ -1438,6 +1463,21 @@ async function executeWakeUp(opts: {
       timedOut: !!e?.timedOut,
     }), { wakeUpId: logId, botId });
     broadcastUpdate({ type: 'wake-up-failed', logId, botId, error: String(e.message || e), timedOut: !!e?.timedOut });
+    // Append a failure run-log entry so the bot can see the error context next run.
+    try {
+      const reason = String(e?.userFacingMessage || e?.message || e).replace(/\s+/g, ' ').trim().slice(0, 280);
+      botMemoryService.appendRunLog(botId, {
+        summary: e?.timedOut ? `Timed out: ${reason}` : `Failed: ${reason}`,
+        outcome: 'failed',
+      });
+      try {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('bot-memory-changed', { botId });
+        }
+      } catch { }
+    } catch (logErr) {
+      logger.warn('[proactive-scheduler] Failed to append failure run log:', logErr);
+    }
   } finally {
     runningRuns.delete(botId);
 

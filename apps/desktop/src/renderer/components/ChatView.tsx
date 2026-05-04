@@ -293,7 +293,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const displayModelName = (() => {
     const serverChosen = (modelName || "").trim();
     if (selectedModelId === "auto") {
-      if (serverChosen) return `Auto â€¢ ${serverChosen}`;
+      if (serverChosen) return `Auto \u2022 ${serverChosen}`;
       return "Auto";
     }
     return selectedModelLabel;

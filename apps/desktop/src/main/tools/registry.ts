@@ -38,6 +38,12 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'proactive_task_update': { kind: 'electron' },
   'proactive_task_create': { kind: 'electron' },
   'proactive_task_delete': { kind: 'electron' },
+  // Bot's private kanban + run log (scoped by ctx.proactiveBotId)
+  'bot_memory_list': { kind: 'electron' },
+  'bot_memory_create': { kind: 'electron' },
+  'bot_memory_update': { kind: 'electron' },
+  'bot_memory_delete': { kind: 'electron' },
+  'bot_memory_log': { kind: 'electron' },
   'wakeword_start': { kind: 'electron' },
   'wakeword_stop': { kind: 'electron' },
   'wakeword_status': { kind: 'electron' },

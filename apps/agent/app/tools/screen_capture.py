@@ -22,6 +22,8 @@ import time
 import uuid
 from typing import Any, Dict, Callable, Awaitable, Optional, List
 
+from .cursor_overlay import draw_cursor_on_bgr_frame
+
 # Global registry of active capture sessions
 _active_screen_sessions: Dict[str, threading.Event] = {}
 _active_screen_recordings: Dict[str, Dict[str, Any]] = {}
@@ -192,6 +194,7 @@ async def capture_screen(
     quality = str(args.get("quality") or "medium").strip().lower()
     explicit_path = str(args.get("filePath") or "").strip()
     session_id = str(args.get("sessionId") or args.get("session_id") or args.get("id") or "").strip() or str(uuid.uuid4())[:8]
+    include_cursor = bool(args.get("includeCursor", True))
     max_duration_ms = _duration_param(args, "maxDuration", "maxDurationMs", 7200000)
     silence_threshold_raw = float(args.get("silenceThreshold") or 5)
     silence_threshold = _normalize_silence_threshold(silence_threshold_raw)
@@ -227,6 +230,7 @@ async def capture_screen(
             "fps": fps,
             "quality": quality,
             "includeSystemAudio": include_audio,
+            "includeCursor": include_cursor,
         })
 
     # Get current event loop
@@ -265,6 +269,7 @@ async def capture_screen(
                     "target": target,
                     "fps": fps,
                     "includeSystemAudio": include_audio,
+                    "includeCursor": include_cursor,
                 },
             })
             stream_id = str(stream_result.get("streamId") or "")
@@ -427,6 +432,13 @@ async def capture_screen(
                         # Resize if needed
                         if scale != 1.0:
                             frame = cv2.resize(frame, (out_width, out_height))
+                        if include_cursor:
+                            draw_cursor_on_bgr_frame(
+                                frame,
+                                int(monitor.get("left") or 0),
+                                int(monitor.get("top") or 0),
+                                scale,
+                            )
                         last_frame = frame
 
                         if stream_mod and stream_id:
