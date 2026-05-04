@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateComputeBillingEvents,
   buildCreditsApiPath,
   getUsageSourceCategory,
   getUsageSourceLabel,
+  normalizeComputeBillingLogEntry,
   normalizeUsageLogEntry,
 } from "./BillingSettings.utils";
 
@@ -119,5 +121,34 @@ describe("BillingSettings log normalization", () => {
     expect(log.sourceType).toBe("messaging:whatsapp");
     expect(getUsageSourceLabel(log.sourceType)).toBe("WhatsApp Agent");
     expect(getUsageSourceCategory(log.sourceType)).toBe("messaging");
+  });
+
+  it("normalizes VM compute billing rows for usage logs", () => {
+    const log = normalizeComputeBillingLogEntry({
+      id: "compute_1",
+      event_type: "compute",
+      credits_deducted: "2.25",
+      details: { machineType: "e2-standard-4", hourlyUsd: 0.067 },
+      billing_hour: "2026-05-01T12:00:00.000Z",
+    });
+
+    expect(log.sourceType).toBe("compute");
+    expect(log.sourceLabel).toBe("VM Runtime");
+    expect(log.model).toBe("compute:e2-standard-4");
+    expect(log.credits).toBe(2.25);
+    expect(getUsageSourceCategory(log.sourceType)).toBe("compute");
+  });
+
+  it("aggregates compute and storage billing rows into dashboard categories", () => {
+    const rows = aggregateComputeBillingEvents([
+      { event_type: "compute", credits_deducted: 2, details: { hourlyUsd: 0.06 } },
+      { event_type: "hot_storage", credits_deducted: 0.5, details: { hourlyUsd: 0.01 } },
+      { event_type: "cold_storage", credits_deducted: 0.25, details: { hourlyUsd: 0.005 } },
+    ]);
+
+    expect(rows).toEqual([
+      { category: "compute", credits: 2, costUsd: 0.06, count: 1 },
+      { category: "storage", credits: 0.75, costUsd: 0.015, count: 2 },
+    ]);
   });
 });

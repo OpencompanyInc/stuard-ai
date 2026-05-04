@@ -95,6 +95,12 @@ const HIDDEN_TOOL_NAMES = new Set([
   'reply_to_subagent',
   // ask_user renders inline prompt, not a tool pill
   'ask_user',
+  // Low-level binary I/O helpers — only ever called transitively from
+  // analyze_media / OCR / cloud-storage tools; the base64 payload is huge and
+  // useless to display in the trace.
+  'read_file_binary',
+  'read_file_base64',
+  'upload_file_to_url',
   // GenUI display tools (rendered as UI, don't need pill)
   ...GENUI_TOOL_NAMES,
 ]);
@@ -1032,12 +1038,182 @@ function humanizeToolName(tool: string): string {
     .trim();
 }
 
+function getFilenameFromPath(p: string): string {
+  return p.split(/[/\\]/).pop() || p;
+}
+
+// A subtle inline `code`-styled chip used inside step labels to highlight the
+// argument that matters most (file path, command, query). Kept small so it
+// blends with the surrounding label text.
+const InlineCodeChip: React.FC<{ children: React.ReactNode; title?: string; max?: number }> = ({ children, title, max = 60 }) => {
+  const text = typeof children === 'string' ? children : String(children ?? '');
+  const display = text.length > max ? text.slice(0, max - 1) + '…' : text;
+  return (
+    <code
+      className="rounded px-1 py-px font-mono text-[11.5px] align-baseline"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 60%, transparent)',
+        color: 'color-mix(in srgb, var(--foreground) 88%, transparent)',
+        wordBreak: 'break-all',
+      }}
+      title={title || (text !== display ? text : undefined)}
+    >
+      {display}
+    </code>
+  );
+};
+
+function getQueryFromArgs(args: Record<string, any>): string | null {
+  const candidates = ['query', 'search_term', 'q', 'pattern'];
+  for (const k of candidates) {
+    if (typeof args[k] === 'string' && args[k].trim()) return args[k].trim();
+  }
+  return null;
+}
+
+function getAnalyzeMediaTarget(args: Record<string, any>): string | null {
+  const sources = Array.isArray(args.sources) ? args.sources : [];
+  if (sources.length === 0) return null;
+  if (sources.length === 1) {
+    const src = sources[0] || {};
+    if (src.captureScreen) return 'screen capture';
+    if (typeof src.path === 'string') return getFilenameFromPath(src.path);
+    if (typeof src.url === 'string') {
+      try { return new URL(src.url).hostname.replace(/^www\./, ''); } catch { return src.url; }
+    }
+    return 'media';
+  }
+  return `${sources.length} media files`;
+}
+
+// Build a richer, action-oriented label for the chain-of-thought trace row.
+// For known tools we surface the most relevant argument (file path, command,
+// query) inline so the user can scan the trace without expanding each step.
+// Falls back to the AI-supplied description / humanized tool name otherwise.
+function getToolStepLabel(tool: ToolCall): React.ReactNode {
+  const args = (tool.args || {}) as Record<string, any>;
+  const path = typeof args.path === 'string' ? args.path : null;
+  const filename = path ? getFilenameFromPath(path) : null;
+
+  switch (tool.tool) {
+    case 'write_file':
+    case 'workspace_write_file': {
+      if (!filename) break;
+      const verb = args.append ? 'Appended to' : 'Wrote';
+      return <span>{verb} <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'file_edit': {
+      if (!filename) break;
+      const mode = typeof args.mode === 'string' ? args.mode : 'replace';
+      const verb = mode === 'delete' ? 'Removed from' : mode === 'insert_before' || mode === 'insert_after' ? 'Inserted into' : 'Edited';
+      return <span>{verb} <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'read_file':
+    case 'file_read':
+    case 'workspace_read_file': {
+      if (!filename) break;
+      const ls = Number(args.line_start);
+      const le = Number(args.line_end);
+      const range = Number.isFinite(ls) && Number.isFinite(le) ? ` (L${ls}–${le})` : '';
+      return <span>Read <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip>{range}</span>;
+    }
+    case 'list_directory':
+    case 'workspace_list': {
+      if (!filename) break;
+      return <span>Listed <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'create_directory': {
+      if (!filename) break;
+      return <span>Created folder <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'delete_file': {
+      if (!filename) break;
+      return <span>Deleted <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'move_file':
+    case 'copy_file': {
+      const src = typeof args.src === 'string' ? getFilenameFromPath(args.src) : null;
+      const dest = typeof args.dest === 'string' ? getFilenameFromPath(args.dest) : null;
+      if (!src && !dest) break;
+      const verb = tool.tool === 'copy_file' ? 'Copied' : 'Moved';
+      return (
+        <span>
+          {verb} <InlineCodeChip title={args.src}>{src || '?'}</InlineCodeChip>
+          {' '}<span className="opacity-60">→</span>{' '}
+          <InlineCodeChip title={args.dest}>{dest || '?'}</InlineCodeChip>
+        </span>
+      );
+    }
+    case 'open_file': {
+      if (!filename) break;
+      return <span>Opened <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'analyze_media': {
+      const target = getAnalyzeMediaTarget(args);
+      return target
+        ? <span>Analyzed <InlineCodeChip>{target}</InlineCodeChip></span>
+        : 'Analyzed media';
+    }
+    case 'web_search': {
+      const q = getQueryFromArgs(args);
+      return q ? <span>Searched the web for <InlineCodeChip max={48}>{q}</InlineCodeChip></span> : 'Searched the web';
+    }
+    case 'scrape_url': {
+      const url = typeof args.url === 'string' ? args.url : (typeof args.target === 'string' ? args.target : null);
+      if (!url) break;
+      let host = url;
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      return <span>Scraped <InlineCodeChip title={url}>{host}</InlineCodeChip></span>;
+    }
+    case 'glob': {
+      const pat = typeof args.pattern === 'string' ? args.pattern : null;
+      return pat ? <span>Searched files <InlineCodeChip max={48}>{pat}</InlineCodeChip></span> : 'Searched files';
+    }
+    case 'grep': {
+      const pat = typeof args.pattern === 'string' ? args.pattern : null;
+      return pat ? <span>Searched code <InlineCodeChip max={48}>{pat}</InlineCodeChip></span> : 'Searched code';
+    }
+    case 'run_command':
+    case 'run_terminal_command':
+    case 'start_terminal':
+    case 'terminal_create': {
+      const cmd = typeof args.command === 'string' ? args.command : null;
+      return cmd ? <span>Ran <InlineCodeChip max={64}>{cmd}</InlineCodeChip></span> : 'Ran command';
+    }
+    case 'run_python_script':
+    case 'run_node_script': {
+      const lang = tool.tool === 'run_python_script' ? 'Python' : 'Node';
+      const code = typeof args.code === 'string' ? args.code : (typeof args.script === 'string' ? args.script : null);
+      const firstLine = code ? code.split('\n').find((l: string) => l.trim().length > 0) || '' : '';
+      return firstLine
+        ? <span>Ran {lang} <InlineCodeChip max={56}>{firstLine.trim()}</InlineCodeChip></span>
+        : `Ran ${lang} script`;
+    }
+    case 'capture_screen':
+    case 'take_screenshot':
+      return 'Captured screen';
+    case 'browser_use_navigate': {
+      const url = typeof args.url === 'string' ? args.url : null;
+      if (!url) break;
+      let host = url;
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      return <span>Navigated to <InlineCodeChip title={url}>{host}</InlineCodeChip></span>;
+    }
+    case 'browser_use_click': {
+      const sel = typeof args.selector === 'string' ? args.selector : (typeof args.text === 'string' ? args.text : null);
+      return sel ? <span>Clicked <InlineCodeChip max={48}>{sel}</InlineCodeChip></span> : 'Clicked element';
+    }
+  }
+
+  return tool.description || humanizeToolName(tool.tool);
+}
+
 type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
 interface AssistantTraceStepData {
   id: string;
   kind: 'reasoning' | 'tool' | 'status' | 'text';
-  label: string;
+  label: React.ReactNode;
   status: TraceStatus;
   content?: string;
   tool?: ToolCall;
@@ -1707,6 +1883,232 @@ const ToolPayloadPreview: React.FC<{
   );
 };
 
+const MAX_DIFF_LINES_PER_SIDE = 24;
+const MAX_FILE_SNIPPET_LINES = 18;
+
+// Render a unified-style diff for file_edit's old_string → new_string. Each
+// removed line is shown red with `-`, each added line green with `+`.
+const FileEditDiffPreview: React.FC<{
+  oldText: string;
+  newText: string;
+  mode?: string;
+  description?: string;
+}> = ({ oldText, newText, mode, description }) => {
+  const oldLines = (oldText || '').split('\n');
+  const newLines = (newText || '').split('\n');
+
+  const renderSide = (lines: string[], sign: '-' | '+', sideLabel: string) => {
+    const shown = lines.slice(0, MAX_DIFF_LINES_PER_SIDE);
+    const overflow = lines.length - shown.length;
+    const isMinus = sign === '-';
+    const lineColor = isMinus ? 'rgb(248,113,113)' : 'rgb(74,222,128)';
+    const lineBg = isMinus
+      ? 'color-mix(in srgb, rgb(248,113,113) 12%, transparent)'
+      : 'color-mix(in srgb, rgb(74,222,128) 10%, transparent)';
+    return (
+      <>
+        {shown.map((line, i) => (
+          <div key={`${sign}-${i}`} className="flex" style={{ backgroundColor: lineBg }}>
+            <span
+              className="w-4 shrink-0 select-none text-center"
+              style={{ color: lineColor, opacity: 0.85 }}
+            >
+              {sign}
+            </span>
+            <span
+              className="flex-1 whitespace-pre-wrap break-all px-1.5"
+              style={{ color: lineColor }}
+            >
+              {line || '\u00A0'}
+            </span>
+          </div>
+        ))}
+        {overflow > 0 ? (
+          <div
+            className="px-2 py-0.5 text-[10px]"
+            style={{ color: 'color-mix(in srgb, var(--foreground-muted) 80%, transparent)' }}
+          >
+            … {overflow} more {sideLabel} line{overflow === 1 ? '' : 's'}
+          </div>
+        ) : null}
+      </>
+    );
+  };
+
+  const isInsert = mode === 'insert_before' || mode === 'insert_after';
+  const isDelete = mode === 'delete';
+
+  return (
+    <div className="space-y-1.5">
+      {description ? (
+        <div
+          className="text-[11px] leading-snug"
+          style={{ color: 'color-mix(in srgb, var(--foreground) 60%, transparent)' }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div
+        className="overflow-hidden rounded-lg font-mono text-[11px] leading-[1.55]"
+        style={{
+          border: '1px solid color-mix(in srgb, var(--foreground-muted) 14%, transparent)',
+          backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
+        }}
+      >
+        <div className="py-0.5">
+          {!isInsert ? renderSide(oldLines, '-', 'removed') : null}
+          {!isDelete ? renderSide(newLines, '+', 'added') : null}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Render a write_file payload: file actions row + a short content preview.
+const WriteFilePreview: React.FC<{
+  path?: string;
+  content?: string;
+  description?: string;
+  appended?: boolean;
+}> = ({ path, content, description, appended }) => {
+  const lines = (content || '').split('\n');
+  const shown = lines.slice(0, MAX_FILE_SNIPPET_LINES).join('\n');
+  const overflow = lines.length - Math.min(lines.length, MAX_FILE_SNIPPET_LINES);
+  const bytes = (content || '').length;
+  const sizeLabel = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+
+  return (
+    <div className="space-y-1.5">
+      {description ? (
+        <div
+          className="text-[11px] leading-snug"
+          style={{ color: 'color-mix(in srgb, var(--foreground) 60%, transparent)' }}
+        >
+          {description}
+        </div>
+      ) : null}
+      {path ? <FilePathActions filePath={path} /> : null}
+      {content ? (
+        <div
+          className="overflow-hidden rounded-lg font-mono text-[11px] leading-[1.55]"
+          style={{
+            border: '1px solid color-mix(in srgb, var(--foreground-muted) 14%, transparent)',
+            backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
+          }}
+        >
+          <div
+            className="flex items-center justify-between px-2.5 py-1 text-[10px]"
+            style={{
+              color: 'color-mix(in srgb, var(--foreground-muted) 90%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 35%, transparent)',
+            }}
+          >
+            <span>{appended ? 'Appended' : 'Content'} · {lines.length} line{lines.length === 1 ? '' : 's'} · {sizeLabel}</span>
+          </div>
+          <pre className="whitespace-pre-wrap break-all px-2.5 py-1.5 m-0">
+            {shown}
+            {overflow > 0 ? `\n… +${overflow} more line${overflow === 1 ? '' : 's'}` : ''}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// Render a read_file completion: file actions + small metadata badges.
+const ReadFilePreview: React.FC<{
+  path?: string;
+  result: any;
+}> = ({ path, result }) => {
+  const r = (result && typeof result === 'object') ? result as Record<string, any> : {};
+  const ok = r.ok !== false;
+  const totalLines = typeof r.total_lines === 'number' ? r.total_lines : null;
+  const lineStart = typeof r.line_start === 'number' ? r.line_start : null;
+  const lineEnd = typeof r.line_end === 'number' ? r.line_end : null;
+  const linesReturned = typeof r.lines_returned === 'number' ? r.lines_returned : null;
+  const truncated = r.truncated === true;
+  const mime = typeof r.mime_type === 'string' ? r.mime_type : null;
+  const docType = typeof r.document_type === 'string' ? r.document_type : null;
+  const errMsg = typeof r.error === 'string' ? r.error : (typeof r.message === 'string' && !ok ? r.message : null);
+
+  const badges: Array<{ label: string; value: string }> = [];
+  if (totalLines !== null) badges.push({ label: 'Total', value: `${totalLines} lines` });
+  if (lineStart !== null && lineEnd !== null) badges.push({ label: 'Range', value: `L${lineStart}–${lineEnd}` });
+  else if (linesReturned !== null) badges.push({ label: 'Returned', value: `${linesReturned} lines` });
+  if (mime) badges.push({ label: 'Type', value: mime });
+  if (docType && docType !== mime) badges.push({ label: 'Doc', value: docType });
+  if (truncated) badges.push({ label: 'Status', value: 'Truncated' });
+
+  return (
+    <div className="space-y-1.5">
+      {path ? <FilePathActions filePath={path} /> : null}
+      {errMsg ? (
+        <div
+          className="rounded-lg px-3 py-2 text-[11px] leading-relaxed text-red-500/90"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--destructive) 8%, transparent)' }}
+        >
+          {errMsg}
+        </div>
+      ) : null}
+      {badges.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {badges.map((b) => (
+            <PreviewBadge key={`${b.label}-${b.value}`} label={b.label} value={b.value} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// Render an analyze_media completion: just the model summary text. Hides the
+// raw input (sources may include base64 / very long URLs we don't want to dump
+// in the trace).
+const AnalyzeMediaPreview: React.FC<{
+  args: Record<string, any>;
+  result: any;
+}> = ({ args, result }) => {
+  const summary = typeof result?.summary === 'string'
+    ? result.summary
+    : (typeof result === 'string' ? result : '');
+  const sources = Array.isArray(args?.sources) ? args.sources : [];
+  const filePaths = sources
+    .map((s: any) => (typeof s?.path === 'string' ? s.path : null))
+    .filter((p: string | null): p is string => !!p && isFilePath(p));
+  const task = typeof args?.task === 'string' ? args.task : '';
+
+  return (
+    <div className="space-y-1.5">
+      {task ? (
+        <div
+          className="text-[11px] leading-snug italic"
+          style={{ color: 'color-mix(in srgb, var(--foreground) 55%, transparent)' }}
+        >
+          {truncatePreviewText(task, 160)}
+        </div>
+      ) : null}
+      {filePaths.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {filePaths.map((p: string) => <FilePathActions key={p} filePath={p} />)}
+        </div>
+      ) : null}
+      {summary ? (
+        <div
+          className="rounded-lg px-3 py-2 text-[11.5px] leading-relaxed whitespace-pre-wrap break-words"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+            color: 'color-mix(in srgb, var(--foreground) 80%, transparent)',
+          }}
+        >
+          {summary}
+        </div>
+      ) : (
+        <div className="text-[11px] text-theme-muted">No summary returned.</div>
+      )}
+    </div>
+  );
+};
+
 const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   if (tool.status === 'error') {
     const errorText =
@@ -1724,6 +2126,47 @@ const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   }
 
   if (tool.status === 'completed') {
+    const args = (tool.args || {}) as Record<string, any>;
+
+    if (tool.tool === 'file_edit') {
+      return (
+        <FileEditDiffPreview
+          oldText={String(args.old_string ?? '')}
+          newText={String(args.new_string ?? '')}
+          mode={typeof args.mode === 'string' ? args.mode : undefined}
+          description={typeof args.description === 'string' ? args.description : undefined}
+        />
+      );
+    }
+
+    if (tool.tool === 'write_file' || tool.tool === 'workspace_write_file') {
+      return (
+        <WriteFilePreview
+          path={typeof args.path === 'string' ? args.path : undefined}
+          content={typeof args.content === 'string' ? args.content : undefined}
+          description={typeof args.description === 'string' ? args.description : undefined}
+          appended={Boolean(args.append)}
+        />
+      );
+    }
+
+    if (
+      tool.tool === 'read_file'
+      || tool.tool === 'file_read'
+      || tool.tool === 'workspace_read_file'
+    ) {
+      return (
+        <ReadFilePreview
+          path={typeof args.path === 'string' ? args.path : undefined}
+          result={tool.result}
+        />
+      );
+    }
+
+    if (tool.tool === 'analyze_media' || tool.tool === 'browser_use_analyze_screenshot') {
+      return <AnalyzeMediaPreview args={args} result={tool.result} />;
+    }
+
     return (
       <ToolPayloadPreview
         data={tool.result}
@@ -1857,7 +2300,7 @@ const AssistantTracePanel: React.FC<{
           steps.push({
             id: tc.id || `tool-${index}`,
             kind: 'tool',
-            label: tc.description || humanizeToolName(tc.tool),
+            label: getToolStepLabel(tc),
             status: mapTraceStatus(tc, isStreaming),
             tool: tc,
             nested: isDelegatedToolCall(tc),
@@ -1898,7 +2341,7 @@ const AssistantTracePanel: React.FC<{
         steps.push({
           id: tool.id || `tool-fallback-${index}`,
           kind: 'tool',
-          label: tool.description || humanizeToolName(tool.tool),
+          label: getToolStepLabel(tool),
           status: mapTraceStatus(tool, isStreaming),
           tool,
           nested: isDelegatedToolCall(tool),

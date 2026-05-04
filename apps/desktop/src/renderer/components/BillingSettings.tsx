@@ -28,11 +28,16 @@ import {
   Tooltip,
 } from "recharts";
 import {
+  aggregateComputeBillingEvents,
   categorizeModelForUsage,
+  computeBillingCredits,
   getUsageSourceCategory,
   getUsageSourceLabel,
   isNonBillableUsageEvent,
+  mergeUsageBreakdowns,
+  normalizeComputeBillingLogEntry,
   normalizeUsageLogEntry,
+  type ComputeBillingEventRow,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
 
@@ -134,6 +139,12 @@ const formatModel = (model: string): string => {
   if (!model || model === "unknown") return "Unknown";
   if (model.startsWith("voice:")) return "-";
   if (model.startsWith("messaging:") || model === "telnyx" || model === "sms") return "-";
+  if (model.startsWith("compute:")) return model.slice("compute:".length);
+  if (model === "compute") return "VM";
+  if (model === "storage:hot") return "Hot storage";
+  if (model === "storage:cold") return "Cold storage";
+  if (model === "storage:purchase") return "Storage purchase";
+  if (model.startsWith("storage:")) return "Storage";
   return model.replace("anthropic/", "").replace("openai/", "").replace("google/", "").replace("deepseek/", "");
 };
 
@@ -165,6 +176,156 @@ const PieTooltip = ({ active, payload }: any) => {
     </div>
   );
 };
+
+function resolvePeriodDate(since: string | null): Date {
+  return since && !Number.isNaN(Date.parse(since))
+    ? new Date(since)
+    : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+}
+
+async function loadUsageCreditTotal(uid: string, sinceIso: string): Promise<number> {
+  try {
+    const { data, error } = await (supabase as any).rpc("get_usage_credit_total", {
+      p_user_id: uid,
+      p_since: sinceIso,
+    });
+    if (!error && data != null) return Math.max(0, Number(data) || 0);
+  } catch {
+    // Older databases may not have the aggregate RPC yet.
+  }
+
+  const { data } = await supabase
+    .from("usage_events")
+    .select("model, credit_cost, raw")
+    .eq("user_id", uid)
+    .gte("created_at", sinceIso);
+
+  let used = 0;
+  for (const e of (data as any[]) || []) {
+    if (isNonBillableUsageEvent({ model: e.model, raw: e.raw })) continue;
+    used += Number(e.credit_cost) || 0;
+  }
+  return used;
+}
+
+async function loadUsageBreakdownRows(uid: string, sinceIso: string): Promise<UsageBreakdownItem[]> {
+  try {
+    const { data, error } = await (supabase as any).rpc("get_usage_breakdown", {
+      p_user_id: uid,
+      p_since: sinceIso,
+    });
+    if (!error && Array.isArray(data)) {
+      return data.map((row: any) => ({
+        category: String(row?.category || "usage"),
+        credits: Number(Number(row?.credits || 0).toFixed(2)),
+        costUsd: Number(Number(row?.cost_usd || row?.costUsd || 0).toFixed(6)),
+        count: Math.max(0, Number(row?.count ?? row?.event_count) || 0),
+      }));
+    }
+  } catch {
+    // Fall back to direct reads below.
+  }
+
+  const { data } = await supabase
+    .from("usage_events")
+    .select("model, cost_usd, credit_cost, raw")
+    .eq("user_id", uid)
+    .gte("created_at", sinceIso);
+
+  const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
+  for (const row of (data as any[]) || []) {
+    if (isNonBillableUsageEvent({ model: row.model, raw: row.raw })) continue;
+    const category = categorizeModelForUsage(String(row.model || "unknown"));
+    if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
+    buckets[category].credits += Number(row.credit_cost) || 0;
+    buckets[category].costUsd += Number(row.cost_usd) || 0;
+    buckets[category].count += 1;
+  }
+
+  return Object.entries(buckets).map(([category, v]) => ({
+    category,
+    credits: Number(v.credits.toFixed(2)),
+    costUsd: Number(v.costUsd.toFixed(6)),
+    count: v.count,
+  }));
+}
+
+async function loadUsageLogRows(
+  uid: string,
+  sinceIso: string,
+  limit: number
+): Promise<{ logs: UsageLogEntry[]; total: number }> {
+  try {
+    const { data, error } = await (supabase as any).rpc("get_usage_logs_aggregated", {
+      p_user_id: uid,
+      p_limit: limit,
+      p_offset: 0,
+      p_since: sinceIso,
+    });
+    if (!error && Array.isArray(data)) {
+      const total = Number(data[0]?.total_count ?? data.length);
+      return { logs: data.map(normalizeUsageLogEntry), total };
+    }
+  } catch {
+    // Fall back to direct reads below.
+  }
+
+  const fetchLimit = Math.max(limit * 8, 200);
+  const { data } = await supabase
+    .from("usage_events")
+    .select("id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at")
+    .eq("user_id", uid)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(fetchLimit);
+
+  const groups = new Map<string, any>();
+  for (const row of (data as any[]) || []) {
+    const raw = row.raw && typeof row.raw === "object" ? row.raw : {};
+    if (isNonBillableUsageEvent({ model: row.model, raw })) continue;
+    const key = raw.sourceRef || raw.source_ref || row.id;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: key, source_ref: key, model: row.model,
+        conversation_id: row.conversation_id,
+        source_type: raw.sourceType || raw.source_type || null,
+        source_label: raw.source_label || raw.sourceLabel || null,
+        subagent_kind: raw.subagentKind || raw.subagent_kind || null,
+        prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
+        cost_usd: 0, credit_cost: 0, step_count: 0, created_at: row.created_at,
+      });
+    }
+    const g = groups.get(key)!;
+    g.prompt_tokens += Number(row.prompt_tokens || 0);
+    g.completion_tokens += Number(row.completion_tokens || 0);
+    g.total_tokens += Number(row.total_tokens || 0);
+    g.cost_usd += Number(row.cost_usd || 0);
+    g.credit_cost += Number(row.credit_cost || 0);
+    g.step_count += 1;
+    if (row.created_at > g.created_at) g.created_at = row.created_at;
+  }
+
+  const allGroups = Array.from(groups.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  return { logs: allGroups.map(normalizeUsageLogEntry), total: allGroups.length };
+}
+
+async function loadComputeBillingRows(uid: string, sinceIso: string, limit?: number): Promise<{
+  rows: ComputeBillingEventRow[];
+  total: number;
+}> {
+  let query = supabase
+    .from("compute_billing_events")
+    .select("id, event_type, credits_deducted, details, billing_hour, created_at", { count: "exact" })
+    .eq("user_id", uid)
+    .gte("billing_hour", sinceIso)
+    .order("billing_hour", { ascending: false });
+
+  if (limit && limit > 0) query = query.limit(limit);
+
+  const { data, error, count } = await query;
+  if (error || !Array.isArray(data)) return { rows: [], total: 0 };
+  return { rows: data as ComputeBillingEventRow[], total: count ?? data.length };
+}
 
 export const BillingSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -228,25 +389,25 @@ export const BillingSettings: React.FC = () => {
       ? new Date((profile as any).current_period_start)
       : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-    const { data: periodEvents } = await supabase
-      .from("usage_events")
-      .select("model, credit_cost, raw")
-      .eq("user_id", user.id)
-      .gte("created_at", periodStart.toISOString());
-
-    let used = 0;
-    for (const e of (periodEvents as any[]) || []) {
-      if (isNonBillableUsageEvent({ model: e.model, raw: e.raw })) continue;
-      used += Number(e.credit_cost) || 0;
-    }
+    const periodStartIso = periodStart.toISOString();
+    const [usageCredits, computeBilling] = await Promise.all([
+      loadUsageCreditTotal(user.id, periodStartIso),
+      loadComputeBillingRows(user.id, periodStartIso),
+    ]);
+    const computeCredits = computeBilling.rows.reduce((sum, row) => sum + computeBillingCredits(row), 0);
+    const used = usageCredits + computeCredits;
+    const totalCredits = includedCredits + addonCredits;
+    const grantRemaining = includedRemaining + addonRemaining;
+    const usageBasedRemaining = totalCredits > 0 ? Math.max(0, totalCredits - used) : grantRemaining;
+    const remaining = Math.min(grantRemaining, usageBasedRemaining);
 
     return {
       user,
       summary: {
         plan: String((profile as any)?.plan || "Free"),
-        limit: Math.ceil(includedCredits + addonCredits),
+        limit: Math.ceil(totalCredits),
         used: Math.ceil(used),
-        remaining: Math.ceil(includedRemaining + addonRemaining),
+        remaining: Math.ceil(remaining),
         unlimited: false,
         includedCredits: Math.ceil(includedCredits),
         includedRemaining: Math.ceil(includedRemaining),
@@ -261,34 +422,18 @@ export const BillingSettings: React.FC = () => {
   const loadUsageBreakdown = useCallback(async (uid: string, since: string | null) => {
     setUsageLoading(true);
     try {
-      const start = since && !Number.isNaN(Date.parse(since))
-        ? new Date(since)
-        : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
-      const { data } = await supabase
-        .from("usage_events")
-        .select("model, cost_usd, credit_cost, raw")
-        .eq("user_id", uid)
-        .gte("created_at", start.toISOString());
+      const start = resolvePeriodDate(since);
+      const sinceIso = start.toISOString();
+      const [usageRows, computeBilling] = await Promise.all([
+        loadUsageBreakdownRows(uid, sinceIso),
+        loadComputeBillingRows(uid, sinceIso),
+      ]);
 
       if (!mountedRef.current) return;
-      const buckets: Record<string, { credits: number; costUsd: number; count: number }> = {};
-      for (const row of (data as any[]) || []) {
-        if (isNonBillableUsageEvent({ model: row.model, raw: row.raw })) continue;
-        const category = categorizeModelForUsage(String(row.model || "unknown"));
-        if (!buckets[category]) buckets[category] = { credits: 0, costUsd: 0, count: 0 };
-        buckets[category].credits += Number(row.credit_cost) || 0;
-        buckets[category].costUsd += Number(row.cost_usd) || 0;
-        buckets[category].count += 1;
-      }
-      setUsageBreakdown(
-        Object.entries(buckets).map(([category, v]) => ({
-          category,
-          credits: Number(v.credits.toFixed(2)),
-          costUsd: Number(v.costUsd.toFixed(6)),
-          count: v.count,
-        }))
-      );
+      setUsageBreakdown(mergeUsageBreakdowns(
+        usageRows,
+        aggregateComputeBillingEvents(computeBilling.rows)
+      ));
     } finally {
       if (mountedRef.current) setUsageLoading(false);
     }
@@ -297,63 +442,36 @@ export const BillingSettings: React.FC = () => {
   const loadLogs = useCallback(async (uid: string, since: string | null, page: number) => {
     setLogsLoading(true);
     try {
-      const start = since && !Number.isNaN(Date.parse(since))
-        ? new Date(since)
-        : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
-      const fetchLimit = Math.max(LOGS_PER_PAGE * 8, 200);
-      const { data } = await supabase
-        .from("usage_events")
-        .select("id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, credit_cost, conversation_id, raw, created_at")
-        .eq("user_id", uid)
-        .gte("created_at", start.toISOString())
-        .order("created_at", { ascending: false })
-        .limit(fetchLimit);
+      const start = resolvePeriodDate(since);
+      const sinceIso = start.toISOString();
+      const fetchLimit = Math.max((page + 1) * LOGS_PER_PAGE, LOGS_PER_PAGE);
+      const [usageResult, computeBilling] = await Promise.all([
+        loadUsageLogRows(uid, sinceIso, fetchLimit),
+        loadComputeBillingRows(uid, sinceIso, fetchLimit),
+      ]);
 
       if (!mountedRef.current) return;
 
-      const groups = new Map<string, any>();
-      for (const row of (data as any[]) || []) {
-        const raw = row.raw && typeof row.raw === "object" ? row.raw : {};
-        if (isNonBillableUsageEvent({ model: row.model, raw })) continue;
-        const key = raw.sourceRef || raw.source_ref || row.id;
-        if (!groups.has(key)) {
-          groups.set(key, {
-            id: key, source_ref: key, model: row.model,
-            conversation_id: row.conversation_id,
-            source_type: raw.sourceType || raw.source_type || null,
-            source_label: raw.source_label || raw.sourceLabel || null,
-            subagent_kind: raw.subagentKind || raw.subagent_kind || null,
-            prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
-            cost_usd: 0, credit_cost: 0, step_count: 0, created_at: row.created_at,
-          });
-        }
-        const g = groups.get(key)!;
-        g.prompt_tokens += Number(row.prompt_tokens || 0);
-        g.completion_tokens += Number(row.completion_tokens || 0);
-        g.total_tokens += Number(row.total_tokens || 0);
-        g.cost_usd += Number(row.cost_usd || 0);
-        g.credit_cost += Number(row.credit_cost || 0);
-        g.step_count += 1;
-        if (row.created_at > g.created_at) g.created_at = row.created_at;
-      }
-
-      const allGroups = Array.from(groups.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      const allGroups = [
+        ...usageResult.logs,
+        ...computeBilling.rows.map(normalizeComputeBillingLogEntry),
+      ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
       const pageSlice = allGroups.slice(page * LOGS_PER_PAGE, (page + 1) * LOGS_PER_PAGE);
 
       // Apply cached conversation titles then resolve missing ones in background
       const applyCache = (rows: any[]) => rows.map((g) => {
-        const cached = g.conversation_id ? convTitleCacheRef.current[g.conversation_id] : null;
-        return cached ? { ...g, chat_name: cached } : g;
+        const conversationId = g.conversationId || g.conversation_id;
+        const cached = conversationId ? convTitleCacheRef.current[conversationId] : null;
+        return cached ? { ...g, chatName: cached, chat_name: cached } : g;
       });
 
-      const normalizedLogs = applyCache(pageSlice).map(normalizeUsageLogEntry);
+      const normalizedLogs = applyCache(pageSlice).map((entry) => entry.createdAt ? entry as UsageLogEntry : normalizeUsageLogEntry(entry));
       setUsageLogs(normalizedLogs);
-      setLogsTotal(allGroups.length);
+      setLogsTotal(usageResult.total + computeBilling.total);
       setLogsPage(page);
 
       const missingIds = Array.from(new Set(
-        pageSlice.map((g) => g.conversation_id).filter((id): id is string => !!id && !convTitleCacheRef.current[id])
+        pageSlice.map((g) => g.conversationId).filter((id): id is string => !!id && !convTitleCacheRef.current[id])
       ));
       if (missingIds.length > 0) {
         void supabase.from("conversations").select("id, title").in("id", missingIds).then(({ data: convData }) => {

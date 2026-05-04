@@ -13,6 +13,7 @@
 import { Notification, BrowserWindow, desktopCapturer, net } from 'electron';
 import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
+import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
 import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
@@ -76,7 +77,31 @@ const INTERVAL_MS: Record<string, number> = {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isRunning = false;
-let currentRunId: string | null = null;
+/**
+ * Tracks the active wake-up run for each bot (botId → runId). Multiple bots
+ * may run concurrently (parallel mode); we just guard against the SAME bot
+ * starting two overlapping runs.
+ */
+const runningRuns = new Map<string, string>();
+
+/** Convenience: legacy callers that ask "is anything running?" */
+function anyRunActive(): boolean {
+  return runningRuns.size > 0;
+}
+
+/**
+ * Resolves a bot + its effective config by id. Returns null if the bot does
+ * not exist (which can happen briefly during deletion). Used everywhere
+ * inside the scheduler so we never read from the legacy single-config path
+ * for non-default bots.
+ */
+function resolveBotForRun(botId: string): { bot: Bot; config: BotConfig } | null {
+  const bot = botService.get(botId);
+  if (!bot) return null;
+  const config = botService.resolveConfig(botId);
+  if (!config) return null;
+  return { bot, config };
+}
 
 // ─── Follow-up Conversation History (in-memory) ─────────────────────────────
 
@@ -341,17 +366,28 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
   // Mark the notification as engaged (user replied)
   proactiveService.markNotificationEngagement(wakeUpId, 'replied', { replyText: text });
 
+  // Resolve which bot owns the original wake-up. Replies must use the same
+  // bot's config so the model/personality/tools match what said the message.
+  let botId = DEFAULT_BOT_ID;
+  try {
+    const { logs } = proactiveService.getWakeUpLog(200);
+    const originLog = logs.find(l => l.id === wakeUpId);
+    if (originLog?.botId) botId = originLog.botId;
+  } catch { /* fall through to default */ }
+
   try {
     pruneStaleConversations();
 
-    const { config } = proactiveService.getConfig();
+    const config = botService.resolveConfig(botId);
+    if (!config) return { ok: false, error: 'bot_not_found' };
     const token = await getAuthToken();
     const modelSelection = buildModelSelection(config);
     let reply: string;
 
-    // Log the follow-up as its own activity entry
+    // Log the follow-up as its own activity entry, scoped to the same bot.
     proactiveService.addWakeUpLog({
       id: replyLogId,
+      botId,
       startedAt,
       status: 'running',
       contextUsed: ['follow-up'],
@@ -367,6 +403,7 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
     broadcastUpdate({
       type: 'wake-up-start',
       logId: replyLogId,
+      botId,
       startedAt,
       executionTarget: config.executionTarget,
       modelMode: modelSelection.model,
@@ -419,7 +456,7 @@ ${contextToUse}
         },
         prompt: cloudPrompt,
         context: {},
-        tasks: proactiveService.getActiveTasks(),
+        tasks: proactiveService.getActiveTasks(botId),
       });
       reply = cleanProactiveResponseText(result.text);
     } else {
@@ -442,6 +479,7 @@ ${contextToUse}
           cloudAiUrl: getCloudAiUrl(),
           accessToken: token || undefined,
           logFn: (msg) => logger.info(`[proactive-scheduler reply] ${msg}`),
+          proactiveBotId: botId,
         };
 
         const onMessage = async (raw: WebSocket.RawData) => {
@@ -683,6 +721,9 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
     cloudAiUrl: getCloudAiUrl(),
     accessToken: token || undefined,
     logFn: (msg) => logger.info(`[proactive-scheduler] ${msg}`),
+    // Tools invoked during this run (e.g. proactive_task_create) inherit the
+    // botId so kanban mutations are scoped to the calling bot.
+    proactiveBotId: typeof payload?.botId === 'string' ? payload.botId : undefined,
   };
 
   return new Promise<WakeUpExecutionResult>((resolve) => {
@@ -996,17 +1037,35 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
 
 // ─── Main Wake-Up Flow ──────────────────────────────────────────────────────
 
-async function executeWakeUp() {
-  if (currentRunId) {
-    logger.debug('[proactive-scheduler] Skipping wake-up, already running');
+async function executeWakeUp(opts: {
+  botId?: string;
+  manual?: boolean;
+  triggerId?: string;
+  /** Optional payload from the trigger source (e.g. webhook body, email metadata). */
+  triggerPayload?: any;
+} = {}) {
+  const botId = opts.botId || DEFAULT_BOT_ID;
+  const triggerId = opts.triggerId;
+
+  // Same-bot reentrancy guard. Different bots can run in parallel.
+  if (runningRuns.has(botId)) {
+    logger.debug(`[proactive-scheduler] Skipping wake-up for ${botId}, already running`);
     return;
   }
 
-  const { config } = proactiveService.getConfig();
-  if (!config.enabled) return;
+  const resolved = resolveBotForRun(botId);
+  if (!resolved) {
+    logger.warn(`[proactive-scheduler] Cannot run wake-up: bot ${botId} not found`);
+    return;
+  }
+  const { bot, config } = resolved;
+
+  // Manual triggers (e.g. "Run Once" from the UI) intentionally bypass the
+  // running-status check so users can test a paused bot without flipping it on.
+  if (bot.status !== 'running' && !opts.manual) return;
 
   const logId = `pwake_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  currentRunId = logId;
+  runningRuns.set(botId, logId);
 
   const contextUsed: string[] = [];
   let taskIds: string[] = [];
@@ -1015,9 +1074,10 @@ async function executeWakeUp() {
   const startedAt = new Date().toISOString();
   const modelSelection = buildModelSelection(config);
 
-  // Age out stale "pending" notifications as "ignored" (user never replied)
+  // Age out stale "pending" notifications as "ignored" (user never replied).
+  // Scoped per bot so one bot's history doesn't get cleared by another's run.
   try {
-    const recentNotifs = proactiveService.getRecentNotifications(20);
+    const recentNotifs = proactiveService.getRecentNotifications(20, { botId });
     for (const n of recentNotifs) {
       if (n.engagement === 'pending' && n.channel !== 'skip') {
         proactiveService.markNotificationEngagement(n.wakeUpId, 'ignored');
@@ -1026,10 +1086,12 @@ async function executeWakeUp() {
   } catch { }
 
   try {
-    logger.info(`[proactive-scheduler] Starting wake-up (target: ${config.executionTarget})`);
+    logger.info(`[proactive-scheduler] Starting wake-up for ${botId} (target: ${config.executionTarget})`);
 
     proactiveService.addWakeUpLog({
       id: logId,
+      botId,
+      triggerId,
       startedAt,
       status: 'running',
       contextUsed: [],
@@ -1044,6 +1106,8 @@ async function executeWakeUp() {
     broadcastUpdate({
       type: 'wake-up-start',
       logId,
+      botId,
+      triggerId,
       startedAt,
       executionTarget: config.executionTarget,
       modelMode: modelSelection.model,
@@ -1079,6 +1143,7 @@ async function executeWakeUp() {
         agentWsUrl: getAgentWsUrl(),
         cloudAiUrl: getCloudAiUrl(),
         logFn: (msg) => logger.info(`[proactive-scheduler] ${msg}`),
+        proactiveBotId: botId,
       };
 
       if (config.contextPermissions.systemAudio) {
@@ -1123,6 +1188,7 @@ async function executeWakeUp() {
         agentWsUrl: getAgentWsUrl(),
         cloudAiUrl: getCloudAiUrl(),
         logFn: (msg: string) => logger.debug(`[proactive-scheduler] ${msg}`),
+        proactiveBotId: botId,
       };
       const winResult = await execListOpenWindows({}, toolCtx);
       if (winResult?.ok && Array.isArray(winResult.windows)) {
@@ -1139,14 +1205,14 @@ async function executeWakeUp() {
       logger.debug('[proactive-scheduler] open windows capture failed:', e);
     }
 
-    // Load recent session summaries for pattern awareness
-    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(5);
+    // Load recent session summaries for pattern awareness (per-bot memory).
+    const recentSessionSummaries = proactiveService.getRecentSessionSummaries(5, { botId });
 
-    // Load notification digest so the agent knows what it recently said
-    const notificationDigest = proactiveService.getNotificationDigest(8);
+    // Load notification digest so the agent knows what it recently said.
+    const notificationDigest = proactiveService.getNotificationDigest(8, { botId });
 
-    // Get all active tasks (queued + in_progress) — agent manages lifecycle via tools
-    const activeTasks = proactiveService.getActiveTasks();
+    // Get all active tasks (queued + in_progress) — agent manages lifecycle via tools.
+    const activeTasks = proactiveService.getActiveTasks(botId);
     taskIds = activeTasks.map(t => t.id);
 
     if (activeTasks.length > 0) {
@@ -1158,9 +1224,21 @@ async function executeWakeUp() {
     // Load active skills for context
     const activeSkills = loadSkills().filter(s => s.isActive);
 
+    // Compose the instructions sent to the agent from the bot's identity
+    // (systemPrompt = personality/objective, storedFacts = user-curated memory)
+    // and the on-the-fly focus brief (config.instructions). This is what makes
+    // a bot actually behave like its UI says it should.
+    const composedInstructions = [
+      bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
+      config.memoryEnabled && bot.storedFacts?.trim() ? `# Things to remember\n${bot.storedFacts.trim()}` : '',
+      config.instructions?.trim() ? `# Today's focus\n${config.instructions.trim()}` : '',
+    ].filter(Boolean).join('\n\n');
+
     const wakeUpPayload = {
+      botId,
+      botName: bot.name,
       config: {
-        instructions: config.instructions,
+        instructions: composedInstructions,
         allowedTools: config.allowedTools,
         modelMode: normalizeProactiveModelMode((config as any).modelMode),
         modelId: String((config as any).modelId || '').trim(),
@@ -1198,14 +1276,14 @@ async function executeWakeUp() {
       executionResult = await executeCloud(logId, wakeUpPayload);
       agentMessage = executionResult.text;
 
-      // Apply agent-returned mutations
+      // Apply agent-returned mutations (scoped to the running bot).
       if (executionResult.taskUpdates.length > 0) {
         proactiveService.applyTaskUpdates(executionResult.taskUpdates as any);
       }
       if (executionResult.newTasks.length > 0) {
-        proactiveService.applyNewTasks(executionResult.newTasks as any);
+        proactiveService.applyNewTasks(executionResult.newTasks as any, { botId });
       }
-      // Apply deletions from cloud agent
+      // Apply deletions from cloud agent.
       if (Array.isArray((executionResult as any).deletedTaskIds)) {
         for (const taskId of (executionResult as any).deletedTaskIds) {
           proactiveService.deleteTask(String(taskId));
@@ -1219,9 +1297,10 @@ async function executeWakeUp() {
       // are applied immediately by the proactive task handlers.
     }
 
-    // Broadcast task board refresh so UI updates immediately
-    const updatedTasks = proactiveService.listTasks();
-    broadcastUpdate({ type: 'tasks-refreshed', tasks: updatedTasks.tasks });
+    // Broadcast task board refresh so UI updates immediately. Send the bot's
+    // own task list so per-bot views can refresh in place.
+    const updatedTasks = proactiveService.listTasks({ botId, limit: 500 });
+    broadcastUpdate({ type: 'tasks-refreshed', botId, tasks: updatedTasks.tasks });
 
     if (executionResult.partialResponse) {
       proactiveService.updateWakeUpLog(logId, { partialResponse: executionResult.partialResponse });
@@ -1255,7 +1334,14 @@ async function executeWakeUp() {
       modelId: executionResult.modelId || modelSelection.modelId || undefined,
     });
 
-    proactiveService.setLastWakeUp(new Date().toISOString());
+    // Stamp lastRunAt on the bot row. For the legacy default bot, also mirror
+    // to proactive-data.json's lastWakeUpAt so the existing UI keeps showing
+    // "last run" until the multi-bot UI lands in Phase 2.
+    const lastRunAt = new Date().toISOString();
+    botService.recordRun(botId, { lastRunAt });
+    if (bot.isLegacyDefault) {
+      proactiveService.setLastWakeUp(lastRunAt);
+    }
     emitStage(logId, 'complete');
 
     // Use agent's urgency-based channel choice if available, otherwise fall back to configured channels
@@ -1286,6 +1372,7 @@ async function executeWakeUp() {
     });
     proactiveService.addSessionSummary(sessionSummary, {
       wakeUpId: logId,
+      botId,
       notificationEngagement: primaryChannel && primaryChannel !== 'skip' ? 'pending' : undefined,
     });
 
@@ -1300,11 +1387,11 @@ async function executeWakeUp() {
         sendTelnyxNotification('call', agentMessage.slice(0, 500)).catch(() => { });
       }
 
-      // Log the notification for dedup and engagement tracking
       const primaryChannel = channels[0] || 'skip';
       if (primaryChannel !== 'skip') {
         proactiveService.logNotification({
           wakeUpId: logId,
+          botId,
           message: agentMessage.slice(0, 300),
           channel: primaryChannel,
           urgency: agentUrgency || 'normal',
@@ -1312,9 +1399,9 @@ async function executeWakeUp() {
         });
       }
     } else if (agentChannel === 'skip') {
-      // Agent explicitly chose to stay silent — still log it so we track the skip
       proactiveService.logNotification({
         wakeUpId: logId,
+        botId,
         message: '(skipped — nothing new)',
         channel: 'skip',
         urgency: agentUrgency || 'low',
@@ -1325,6 +1412,7 @@ async function executeWakeUp() {
     broadcastUpdate({
       type: 'wake-up-complete',
       logId,
+      botId,
       agentMessage,
       usage: executionResult.usage,
       modelId: executionResult.modelId || modelSelection.modelId || undefined,
@@ -1348,40 +1436,90 @@ async function executeWakeUp() {
       openWindows,
       failureReason: String(e.message || e),
       timedOut: !!e?.timedOut,
-    }), { wakeUpId: logId });
-    broadcastUpdate({ type: 'wake-up-failed', logId, error: String(e.message || e), timedOut: !!e?.timedOut });
+    }), { wakeUpId: logId, botId });
+    broadcastUpdate({ type: 'wake-up-failed', logId, botId, error: String(e.message || e), timedOut: !!e?.timedOut });
   } finally {
-    currentRunId = null;
+    runningRuns.delete(botId);
 
-    const freshConfig = proactiveService.getConfig().config;
-    if (freshConfig.enabled) {
-      const next = computeNextWakeUp(freshConfig.interval);
-      proactiveService.setNextWakeUp(next);
-      broadcastUpdate({ type: 'next-wakeup-scheduled', nextWakeUpAt: next });
+    // Reschedule the bot's interval-based trigger. Cron and webhook triggers
+    // self-manage; we only roll forward the `nextRunAt` here. Paused bots
+    // and bots with no interval trigger get a null nextRunAt (silent).
+    const freshBot = botService.get(botId);
+    const intervalTrigger = freshBot?.triggers.find(t =>
+      t.type === 'schedule.interval' && t.enabled !== false,
+    );
+    const every = intervalTrigger ? String(intervalTrigger.args?.every || '30m') : null;
+    if (freshBot && freshBot.status === 'running' && every && every !== 'manual') {
+      const next = computeNextWakeUp(every);
+      botService.recordRun(botId, { nextRunAt: next });
+      if (freshBot.isLegacyDefault) {
+        proactiveService.setNextWakeUp(next);
+      }
+      broadcastUpdate({ type: 'next-wakeup-scheduled', botId, nextWakeUpAt: next });
+    } else {
+      botService.recordRun(botId, { nextRunAt: null });
+      if (freshBot?.isLegacyDefault) {
+        proactiveService.setNextWakeUp(null);
+      }
     }
   }
+}
+
+/**
+ * Public entry point used by the bot-trigger-dispatcher (cron jobs) and the
+ * cloud webhook relay. Equivalent to `triggerManualWakeUp` for the manual
+ * case but lets external callers identify which trigger fired.
+ */
+export function executeWakeUpForBot(opts: {
+  botId: string;
+  triggerId?: string;
+  triggerPayload?: any;
+  manual?: boolean;
+}): void {
+  if (!opts.botId) return;
+  if (runningRuns.has(opts.botId)) {
+    logger.debug(`[proactive-scheduler] Skipping fire for ${opts.botId} (${opts.triggerId}); already running`);
+    return;
+  }
+  executeWakeUp(opts);
 }
 
 // ─── Polling ────────────────────────────────────────────────────────────────
 
 function checkSchedule() {
   try {
-    const { config } = proactiveService.getConfig();
-    if (!config.enabled || config.interval === 'manual') return;
-    if (currentRunId) return;
+    const bots = botService.list();
+    for (const bot of bots) {
+      // Only running bots get scheduled. Paused/errored bots are quiescent.
+      if (bot.status !== 'running') continue;
+      if (runningRuns.has(bot.id)) continue;
 
-    const nextAt = config.nextWakeUpAt;
-    if (!nextAt) {
-      const next = computeNextWakeUp(config.interval);
-      proactiveService.setNextWakeUp(next);
-      return;
-    }
+      // Find the bot's interval-based trigger (at most one per bot in v1).
+      // Cron triggers are handled by the bot-trigger-dispatcher's node-cron
+      // jobs; webhook/gmail triggers fire from the cloud relay.
+      const intervalTrigger = bot.triggers.find(t =>
+        t.type === 'schedule.interval' && t.enabled !== false,
+      );
+      if (!intervalTrigger) continue;
 
-    const nextTime = new Date(nextAt).getTime();
-    if (isNaN(nextTime)) return;
+      const every = String(intervalTrigger.args?.every || '30m');
+      if (every === 'manual') continue;
 
-    if (Date.now() >= nextTime) {
-      executeWakeUp();
+      // Initialize nextRunAt if it hasn't been set yet (first time the bot
+      // becomes running, or trigger was just added).
+      if (!bot.nextRunAt) {
+        const next = computeNextWakeUp(every);
+        botService.recordRun(bot.id, { nextRunAt: next });
+        if (bot.isLegacyDefault) proactiveService.setNextWakeUp(next);
+        continue;
+      }
+
+      const nextTime = new Date(bot.nextRunAt).getTime();
+      if (isNaN(nextTime)) continue;
+
+      if (Date.now() >= nextTime) {
+        executeWakeUp({ botId: bot.id, triggerId: intervalTrigger.id });
+      }
     }
   } catch (e) {
     logger.warn('[proactive-scheduler] Check failed:', e);
@@ -1413,10 +1551,16 @@ export function stopProactiveScheduler() {
   logger.info('[proactive-scheduler] Stopped proactive scheduler');
 }
 
-export function triggerManualWakeUp() {
-  if (currentRunId) return { ok: false, error: 'Already running a check-in' };
-  executeWakeUp();
-  return { ok: true };
+export function triggerManualWakeUp(botId?: string) {
+  const targetBotId = botId || DEFAULT_BOT_ID;
+  if (runningRuns.has(targetBotId)) {
+    return { ok: false, error: `Already running a check-in for ${targetBotId}` };
+  }
+  if (!botService.get(targetBotId)) {
+    return { ok: false, error: 'Bot not found' };
+  }
+  executeWakeUp({ botId: targetBotId, manual: true });
+  return { ok: true, botId: targetBotId };
 }
 
 export function isProactiveSchedulerRunning() {

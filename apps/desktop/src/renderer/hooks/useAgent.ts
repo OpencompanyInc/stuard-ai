@@ -68,6 +68,13 @@ const HIDDEN_TOOL_NAMES = new Set([
   'message_add',
   'message_list',
   'memory_stats',
+
+  // Low-level binary I/O helpers used internally by analyze_media, OCR tools,
+  // cloud-storage tools, etc. Their base64 payloads are huge and noisy in the
+  // chain-of-thought trace.
+  'read_file_binary',
+  'read_file_base64',
+  'upload_file_to_url',
 ]);
 
 const HIDDEN_WRAPPER_TOOL_NAMES = new Set([

@@ -115,14 +115,22 @@ const LEGACY_MAPPING: Record<string, string> = {
 };
 
 /**
- * Get the default model ID for a specific category
+ * Get the default model ID for a specific category.
+ *
+ * These defaults are server-side fallbacks used when the desktop client doesn't
+ * supply a `modelConfig.<tier>.default`. They MUST match the desktop client's
+ * `DEFAULT_CHAT_MODELS` (apps/desktop/src/renderer/hooks/usePreferences.ts) so
+ * a fresh user gets the same model whether their preferences propagate or not.
+ *
+ * `balanced` deliberately avoids OpenAI: GPT-5 family models cost more and
+ * leave us exposed to provider-specific quota outages bringing down a tier
+ * the user expects to be cheap and reliable.
  */
 export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
-    // Return the first one or a specific preferred one
     if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
-    if (category === 'balanced') return 'openai/gpt-5-chat-latest';
+    if (category === 'balanced') return 'xai/grok-4-1-fast';
     if (category === 'smart') return 'google/gemini-3.1-pro-preview';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;

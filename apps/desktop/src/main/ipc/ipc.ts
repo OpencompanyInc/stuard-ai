@@ -8,7 +8,7 @@ import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop,
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -1206,9 +1206,8 @@ export function setupIpc() {
   ipcMain.handle('proactive:getWakeUpLog', (_e, limit?: number) =>
     proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 20)
   );
-  ipcMain.handle('proactive:triggerNow', () => triggerManualWakeUp());
+  ipcMain.handle('proactive:triggerNow', (_e, botId?: string) => triggerManualWakeUp(botId));
   ipcMain.handle('proactive:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
-  ipcMain.handle('proactive:submitResult', (_e, _payload: any) => ({ ok: true }));
   ipcMain.handle('proactive:isRunning', () => ({ ok: true, running: isProactiveSchedulerRunning() }));
   ipcMain.handle('proactive:reply', async (_e, payload: { wakeUpId: string; text: string }) => {
     const wakeUpId = String(payload?.wakeUpId || '').trim();
@@ -1216,6 +1215,93 @@ export function setupIpc() {
     if (!wakeUpId) return { ok: false, error: 'wakeUpId_required' };
     if (!text) return { ok: false, error: 'text_required' };
     return handleProactiveReply(wakeUpId, text);
+  });
+
+  // ─── Bots (multi-bot proactive entity layer) ──────────────────────────
+  ipcMain.handle('bots:list', () => ({ ok: true, bots: botService.list() }));
+  ipcMain.handle('bots:get', (_e, id: string) => {
+    const bot = botService.get(String(id || ''));
+    return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:create', (_e, input: any) => {
+    const name = String(input?.name || '').trim();
+    if (!name) return { ok: false, error: 'name_required' };
+    const bot = botService.create({
+      name,
+      emoji: input?.emoji,
+      systemPrompt: input?.systemPrompt,
+      status: input?.status,
+      config: input?.config,
+      triggers: input?.triggers,
+    } as any);
+    syncBotTriggers(bot.id);
+    return { ok: true, bot };
+  });
+  ipcMain.handle('bots:update', (_e, id: string, patch: any) => {
+    const bot = botService.update(String(id || ''), patch || {});
+    if (bot) syncBotTriggers(bot.id);
+    return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:delete', (_e, id: string) => {
+    const result = botService.delete(String(id || ''));
+    if (result.ok) syncBotTriggers(String(id || ''));
+    return result;
+  });
+  ipcMain.handle('bots:getConfig', (_e, id: string) => {
+    const config = botService.resolveConfig(String(id || ''));
+    return config ? { ok: true, config } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:updateConfig', (_e, id: string, patch: any) => {
+    const config = botService.updateConfig(String(id || ''), patch || {});
+    return config ? { ok: true, config } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:setStatus', (_e, id: string, status: any) => {
+    const bot = botService.setStatus(String(id || ''), status);
+    if (bot) syncBotTriggers(bot.id);
+    return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:deploy', (_e, id: string) => {
+    const bot = botService.setStatus(String(id || ''), 'running');
+    if (bot) syncBotTriggers(bot.id);
+    return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:pause', (_e, id: string) => {
+    const bot = botService.setStatus(String(id || ''), 'paused');
+    if (bot) syncBotTriggers(bot.id);
+    return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:triggerNow', (_e, id: string) => triggerManualWakeUp(String(id || '')));
+  ipcMain.handle('bots:listTasks', (_e, id: string) => proactiveService.listTasks({ botId: String(id || ''), limit: 500 }));
+  ipcMain.handle('bots:getWakeUpLog', (_e, id: string, limit?: number) =>
+    proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 50, { botId: String(id || '') })
+  );
+  ipcMain.handle('bots:addTrigger', (_e, id: string, input: any) => {
+    const trigger = botService.addTrigger(String(id || ''), input || {});
+    if (trigger) syncBotTriggers(String(id || ''));
+    return trigger ? { ok: true, trigger } : { ok: false, error: 'invalid_input' };
+  });
+  ipcMain.handle('bots:updateTrigger', (_e, id: string, triggerId: string, patch: any) => {
+    const trigger = botService.updateTrigger(String(id || ''), String(triggerId || ''), patch || {});
+    if (trigger) syncBotTriggers(String(id || ''));
+    return trigger ? { ok: true, trigger } : { ok: false, error: 'not_found' };
+  });
+  ipcMain.handle('bots:removeTrigger', (_e, id: string, triggerId: string) => {
+    const ok = botService.removeTrigger(String(id || ''), String(triggerId || ''));
+    if (ok) syncBotTriggers(String(id || ''));
+    return ok ? { ok: true } : { ok: false, error: 'cannot_remove_last' };
+  });
+
+  // Available tools for the bot tools picker. Mirrors proactive:getAvailableTools
+  // because the underlying registry is process-global; both views show the
+  // same union, minus the proactive_task_* helpers (those are kanban plumbing).
+  ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
+
+  // Deploy / undeploy a bot to the user's cloud VM (in addition to local).
+  ipcMain.handle('bots:deployToVm', async (_e, id: string) => {
+    return deployBotToVm(String(id || ''));
+  });
+  ipcMain.handle('bots:stopOnVm', async (_e, id: string) => {
+    return stopBotOnVm(String(id || ''));
   });
 
   // File Indexing

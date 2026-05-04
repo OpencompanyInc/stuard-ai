@@ -3,36 +3,35 @@ import { getDefaultModelForCategory } from '../../pricing';
 import type { ModelChoice } from '../../router/model-router';
 
 export function getModel(model: ModelChoice, modelId?: string) {
-  let selectedModel: any;
-  const override = typeof modelId === 'string' && modelId.trim() ? buildProviderModel(modelId) : null;
-  
-  if (override) {
-    selectedModel = override;
-  } else {
-    // Use the new pricing system to get the default model for the category
-    const defaultId = getDefaultModelForCategory(model as any);
-    selectedModel = buildProviderModel(defaultId);
-    
-    if (!selectedModel) {
-      if (model === 'fast') {
-        selectedModel = buildProviderModel('google/gemini-3.1-flash-lite-preview');
-      } else if (model === 'balanced') {
-        selectedModel =
-          buildProviderModel('openai/gpt-5-chat-latest') ||
-          buildProviderModel('google/gemini-3.1-flash-lite-preview');
-      } else if (model === 'research') {
-        selectedModel =
-          buildProviderModel('perplexity/sonar-pro') ||
-          buildProviderModel('google/gemini-3.1-pro-preview');
-      } else {
-        selectedModel =
-          buildProviderModel('google/gemini-3.1-pro-preview') ||
-          buildProviderModel('google/gemini-3.1-flash-lite-preview');
-      }
-    }
+  const trimmedId = typeof modelId === 'string' ? modelId.trim() : '';
+  const override = trimmedId ? buildProviderModel(trimmedId) : null;
+  if (override) return override;
+
+  const defaultId = getDefaultModelForCategory(model as any);
+  const selected = buildProviderModel(defaultId);
+  if (selected) return selected;
+
+  // Final defense: pick something we know is always wired up. Avoid OpenAI
+  // here so a depleted OpenAI quota can't take down a whole tier.
+  if (model === 'fast') {
+    return buildProviderModel('google/gemini-3.1-flash-lite-preview');
   }
-  
-  return selectedModel;
+  if (model === 'balanced') {
+    return (
+      buildProviderModel('xai/grok-4-1-fast') ||
+      buildProviderModel('google/gemini-3.1-flash-lite-preview')
+    );
+  }
+  if (model === 'research') {
+    return (
+      buildProviderModel('perplexity/sonar-pro') ||
+      buildProviderModel('google/gemini-3.1-pro-preview')
+    );
+  }
+  return (
+    buildProviderModel('google/gemini-3.1-pro-preview') ||
+    buildProviderModel('google/gemini-3.1-flash-lite-preview')
+  );
 }
 
 export function getAgentName(model: ModelChoice): string {

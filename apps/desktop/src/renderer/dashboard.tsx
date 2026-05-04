@@ -18,7 +18,7 @@ import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
 import { MediaLibraryView } from "./components/MediaLibraryView";
-import { ProactiveView } from "./components/ProactiveView";
+import { BotsView } from "./components/BotsView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
 import {
   LayoutDashboard,
@@ -39,7 +39,7 @@ import {
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
-import { isNonBillableUsageEvent } from './components/BillingSettings.utils';
+import { computeBillingCredits, isNonBillableUsageEvent, type ComputeBillingEventRow } from './components/BillingSettings.utils';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
@@ -228,7 +228,9 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'proactive', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
+      // 'proactive' deep-links now redirect to 'bots' since the legacy view was retired.
+      if (initialTab === 'proactive') return 'bots';
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'bots', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -514,24 +516,48 @@ function DashboardApp() {
           ? new Date((profileRow as any).current_period_start)
           : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-        const { data: periodEvents } = await supabase
-          .from('usage_events')
-          .select('model, credit_cost, raw')
-          .eq('user_id', userId)
-          .gte('created_at', periodStart.toISOString());
-
         let used = 0;
-        for (const e of (periodEvents as any[]) || []) {
-          if (isNonBillableUsageEvent({ model: (e as any).model, raw: (e as any).raw })) continue;
-          used += Number((e as any).credit_cost) || 0;
+        const periodStartIso = periodStart.toISOString();
+        try {
+          const { data: usageTotal, error: usageTotalError } = await (supabase as any).rpc('get_usage_credit_total', {
+            p_user_id: userId,
+            p_since: periodStartIso,
+          });
+          if (!usageTotalError && usageTotal != null) {
+            used = Number(usageTotal) || 0;
+          } else {
+            throw usageTotalError || new Error('usage_total_unavailable');
+          }
+        } catch {
+          const { data: periodEvents } = await supabase
+            .from('usage_events')
+            .select('model, credit_cost, raw')
+            .eq('user_id', userId)
+            .gte('created_at', periodStartIso);
+          for (const e of (periodEvents as any[]) || []) {
+            if (isNonBillableUsageEvent({ model: (e as any).model, raw: (e as any).raw })) continue;
+            used += Number((e as any).credit_cost) || 0;
+          }
         }
 
+        const { data: computeEvents } = await supabase
+          .from('compute_billing_events')
+          .select('credits_deducted')
+          .eq('user_id', userId)
+          .gte('billing_hour', periodStartIso);
+        for (const row of (computeEvents as ComputeBillingEventRow[]) || []) {
+          used += computeBillingCredits(row);
+        }
+
+        const totalLimit = includedCredits + addonCredits;
+        const grantRemaining = includedRemaining + addonRemaining;
+        const usageBasedRemaining = totalLimit > 0 ? Math.max(0, totalLimit - used) : grantRemaining;
         setCreditsInfo({
           ok: true,
           plan: String((profileRow as any)?.plan || 'Free'),
-          limit: Math.ceil(includedCredits + addonCredits),
+          limit: Math.ceil(totalLimit),
           used: Math.ceil(used),
-          remaining: Math.ceil(includedRemaining + addonRemaining),
+          remaining: Math.ceil(Math.min(grantRemaining, usageBasedRemaining)),
           unlimited: false,
         });
       } catch { }
@@ -1302,7 +1328,7 @@ function DashboardApp() {
       key: 'intelligence',
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
-        { id: 'proactive', label: 'Proactive', icon: Sparkles },
+        { id: 'bots', label: 'Bots', icon: Sparkles },
       ],
     },
     {
@@ -1328,6 +1354,7 @@ function DashboardApp() {
     planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
     proactive: { title: 'Proactive', subtitle: 'Discover suggestions and actions Stuard can take for you.' },
+    bots: { title: 'Bots', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
     memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
@@ -1340,7 +1367,7 @@ function DashboardApp() {
     title: tab.charAt(0).toUpperCase() + tab.slice(1),
     subtitle: 'Manage your Stuard workspace from a single dashboard.',
   };
-  const showGlobalHeader = !['integrations', 'settings', 'proactive', 'cloud'].includes(tab);
+  const showGlobalHeader = !['integrations', 'settings', 'bots', 'cloud'].includes(tab);
   const showRefresh = showGlobalHeader && !['planner', 'memories', 'media'].includes(tab);
 
 
@@ -1550,8 +1577,8 @@ function DashboardApp() {
                             <TasksView />
                           )}
 
-                          {tab === 'proactive' && (
-                            <ProactiveView />
+                          {tab === 'bots' && (
+                            <BotsView />
                           )}
 
                           {tab === 'settings' && userEmail && (

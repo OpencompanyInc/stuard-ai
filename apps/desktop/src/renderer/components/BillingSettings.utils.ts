@@ -16,6 +16,24 @@ export interface UsageLogEntry {
   stepCount: number;
 }
 
+export interface ComputeBillingEventRow {
+  id?: string | null;
+  event_type?: string | null;
+  credits_deducted?: number | string | null;
+  details?: Record<string, any> | null;
+  billing_hour?: string | null;
+  created_at?: string | null;
+}
+
+export interface UsageBreakdownLike {
+  category: string;
+  credits: number;
+  costUsd: number;
+  count: number;
+}
+
+const CREDITS_PER_USD_FALLBACK = 33;
+
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   inference: "Chat",
   subagent: "Subagent",
@@ -32,8 +50,15 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   discord_dm: "Discord DM",
   discord_dm_fallback: "Discord DM",
   reddit: "Reddit Agent",
+  cloud_compute: "Cloud Compute",
+  billing_compute: "Cloud Compute",
   compute: "Cloud Compute",
   storage: "Storage",
+  hot_storage: "Hot Storage",
+  cold_storage: "Cold Storage",
+  storage_purchase: "Storage",
+  billing_hot_storage: "Hot Storage",
+  billing_cold_storage: "Cold Storage",
   messaging: "Messaging",
   "messaging:discord": "Discord",
   "messaging:telnyx": "SMS",
@@ -191,7 +216,7 @@ export function getUsageSourceCategory(
   const normalized = String(sourceType || "usage").trim().toLowerCase();
   if (subagentKind || normalized === "subagent") return "subagent";
   if (normalized.startsWith("voice:") || normalized === "voice") return "voice";
-  if (normalized === "compute") return "compute";
+  if (normalized === "compute" || normalized.includes("compute")) return "compute";
   if (normalized.includes("storage")) return "storage";
   if (
     normalized.startsWith("messaging") ||
@@ -222,10 +247,123 @@ export function categorizeModelForUsage(model: string): string {
   const m = String(model || "unknown");
   if (m.startsWith("voice:")) return "voice";
   if (m.startsWith("messaging:") || ["telnyx", "sms", "reminder_sms", "reminder_whatsapp", "whatsapp"].includes(m)) return "messaging";
-  if (m.startsWith("compute") || m.startsWith("cloud_compute")) return "compute";
-  if (m.startsWith("storage")) return "storage";
+  if (m.startsWith("compute") || m.startsWith("cloud_compute") || m.startsWith("billing_compute")) return "compute";
+  if (
+    m.startsWith("storage") ||
+    m.startsWith("hot_storage") ||
+    m.startsWith("cold_storage") ||
+    m.startsWith("storage_purchase") ||
+    m.startsWith("billing_hot_storage") ||
+    m.startsWith("billing_cold_storage")
+  ) return "storage";
   if (m.startsWith("subagent") || m.startsWith("browser") || m.startsWith("delegation")) return "subagent";
   return `inference:${m}`;
+}
+
+function computeBillingCategory(eventType: string): "compute" | "storage" {
+  return eventType === "compute" ? "compute" : "storage";
+}
+
+function computeBillingLabel(eventType: string): string {
+  switch (eventType) {
+    case "compute":
+      return "VM Runtime";
+    case "hot_storage":
+      return "VM Hot Storage";
+    case "cold_storage":
+      return "VM Cold Storage";
+    case "storage_purchase":
+      return "Storage Purchase";
+    default:
+      return "Cloud Engine";
+  }
+}
+
+function computeBillingModel(eventType: string, details: Record<string, any>): string {
+  if (eventType === "compute") {
+    const machine = pickFirstString(details?.machineType, details?.machine_type, details?.tier);
+    return machine ? `compute:${machine}` : "compute";
+  }
+  if (eventType === "hot_storage") return "storage:hot";
+  if (eventType === "cold_storage") return "storage:cold";
+  if (eventType === "storage_purchase") return "storage:purchase";
+  return eventType || "compute";
+}
+
+export function computeBillingCredits(row: ComputeBillingEventRow): number {
+  return Math.max(0, pickFirstNumber(row?.credits_deducted));
+}
+
+function computeBillingCostUsd(row: ComputeBillingEventRow): number {
+  const details = row?.details && typeof row.details === "object" ? row.details : {};
+  const explicitUsd = pickFirstNumber(
+    details?.costUsd,
+    details?.cost_usd,
+    details?.hourlyUsd,
+    details?.hourly_usd,
+    details?.amountUsd,
+    details?.amount_usd
+  );
+  if (explicitUsd > 0) return explicitUsd;
+  return computeBillingCredits(row) / CREDITS_PER_USD_FALLBACK;
+}
+
+export function aggregateComputeBillingEvents(rows: ComputeBillingEventRow[]): UsageBreakdownLike[] {
+  const buckets: Record<string, UsageBreakdownLike> = {};
+  for (const row of rows || []) {
+    const eventType = String(row?.event_type || "").trim().toLowerCase();
+    if (!eventType) continue;
+    const category = computeBillingCategory(eventType);
+    if (!buckets[category]) buckets[category] = { category, credits: 0, costUsd: 0, count: 0 };
+    buckets[category].credits += computeBillingCredits(row);
+    buckets[category].costUsd += computeBillingCostUsd(row);
+    buckets[category].count += 1;
+  }
+  return Object.values(buckets).map((item) => ({
+    ...item,
+    credits: Number(item.credits.toFixed(2)),
+    costUsd: Number(item.costUsd.toFixed(6)),
+  }));
+}
+
+export function mergeUsageBreakdowns(
+  usageRows: UsageBreakdownLike[],
+  computeRows: UsageBreakdownLike[]
+): UsageBreakdownLike[] {
+  const merged: Record<string, UsageBreakdownLike> = {};
+  for (const row of [...(usageRows || []), ...(computeRows || [])]) {
+    const category = String(row?.category || "usage");
+    if (!merged[category]) merged[category] = { category, credits: 0, costUsd: 0, count: 0 };
+    merged[category].credits += Number(row?.credits) || 0;
+    merged[category].costUsd += Number(row?.costUsd) || 0;
+    merged[category].count += Number(row?.count) || 0;
+  }
+  return Object.values(merged)
+    .map((item) => ({
+      ...item,
+      credits: Number(item.credits.toFixed(2)),
+      costUsd: Number(item.costUsd.toFixed(6)),
+    }))
+    .sort((a, b) => b.credits - a.credits || b.count - a.count);
+}
+
+export function normalizeComputeBillingLogEntry(row: ComputeBillingEventRow): UsageLogEntry {
+  const eventType = String(row?.event_type || "compute").trim().toLowerCase();
+  const details = row?.details && typeof row.details === "object" ? row.details : {};
+  const createdAt = pickFirstString(row?.billing_hour, row?.created_at) || "";
+  const id = pickFirstString(row?.id) || `compute-billing:${eventType}:${createdAt}`;
+
+  return normalizeUsageLogEntry({
+    id,
+    source_ref: `compute-billing:${eventType}:${createdAt || id}`,
+    model: computeBillingModel(eventType, details),
+    source_type: computeBillingCategory(eventType),
+    source_label: computeBillingLabel(eventType),
+    credit_cost: computeBillingCredits(row),
+    cost_usd: computeBillingCostUsd(row),
+    created_at: createdAt,
+    step_count: 1,
+  });
 }
 
 export function normalizeUsageLogEntry(entry: any): UsageLogEntry {

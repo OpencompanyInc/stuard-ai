@@ -3,6 +3,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../utils/logger';
 
+// Inlined to avoid circular dep with ./bot-service. Must match.
+const DEFAULT_BOT_ID = 'bot_default';
+
+/**
+ * Returns the effective botId for a record/query. Legacy entries that pre-date
+ * the multi-bot refactor have no botId; we treat them as the default bot.
+ */
+function effectiveBotId(value: string | undefined): string {
+  return (value && value.trim()) || DEFAULT_BOT_ID;
+}
+
 interface ProactiveContextPermissions {
   screenshot: boolean;
   systemAudio: boolean;
@@ -25,6 +36,12 @@ interface ProactiveConfig {
 
 interface ProactiveTask {
   id: string;
+  /**
+   * Owner bot id. Optional in the type for back-compat with legacy entries
+   * that pre-date the multi-bot refactor; reads default unfiltered entries
+   * to the legacy default bot.
+   */
+  botId?: string;
   title: string;
   instructions: string;
   status: 'queued' | 'in_progress' | 'completed' | 'failed';
@@ -66,6 +83,10 @@ type NotificationEngagement = 'pending' | 'replied' | 'dismissed' | 'ignored';
 
 interface WakeUpLog {
   id: string;
+  /** Owner bot id; missing on legacy entries → treat as the default bot. */
+  botId?: string;
+  /** Which trigger fired this run (if any). Useful for activity attribution. */
+  triggerId?: string;
   startedAt: string;
   completedAt?: string | null;
   status: 'running' | 'completed' | 'failed';
@@ -163,8 +184,10 @@ export const proactiveService = {
     return { ok: true, config: data.config };
   },
 
-  listTasks(opts?: { status?: string; limit?: number; offset?: number }): { ok: true; tasks: ProactiveTask[]; total: number; hasMore: boolean } {
+  listTasks(opts?: { status?: string; limit?: number; offset?: number; botId?: string }): { ok: true; tasks: ProactiveTask[]; total: number; hasMore: boolean } {
+    const botId = opts?.botId !== undefined ? effectiveBotId(opts.botId) : undefined;
     let tasks = loadData().tasks;
+    if (botId) tasks = tasks.filter(t => effectiveBotId(t.botId) === botId);
     const total = tasks.length;
 
     if (opts?.status) {
@@ -178,11 +201,12 @@ export const proactiveService = {
     return { ok: true, tasks: paged, total, hasMore: offset + limit < tasks.length };
   },
 
-  addTask(task: Partial<ProactiveTask>): { ok: true; task: ProactiveTask; tasks: ProactiveTask[] } {
+  addTask(task: Partial<ProactiveTask> & { botId?: string }): { ok: true; task: ProactiveTask; tasks: ProactiveTask[] } {
     const data = loadData();
     const now = new Date().toISOString();
     const newTask: ProactiveTask = {
       id: `ptask_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      botId: effectiveBotId(task.botId),
       title: task.title || 'Untitled Task',
       instructions: task.instructions || '',
       status: 'queued',
@@ -211,12 +235,18 @@ export const proactiveService = {
     return { ok: true, tasks: data.tasks };
   },
 
-  getQueuedTasks(): ProactiveTask[] {
-    return loadData().tasks.filter(t => t.status === 'queued');
+  getQueuedTasks(botId?: string): ProactiveTask[] {
+    const tasks = loadData().tasks.filter(t => t.status === 'queued');
+    if (!botId) return tasks;
+    const id = effectiveBotId(botId);
+    return tasks.filter(t => effectiveBotId(t.botId) === id);
   },
 
-  getActiveTasks(): ProactiveTask[] {
-    return loadData().tasks.filter(t => t.status === 'queued' || t.status === 'in_progress');
+  getActiveTasks(botId?: string): ProactiveTask[] {
+    const tasks = loadData().tasks.filter(t => t.status === 'queued' || t.status === 'in_progress');
+    if (!botId) return tasks;
+    const id = effectiveBotId(botId);
+    return tasks.filter(t => effectiveBotId(t.botId) === id);
   },
 
   applyTaskUpdates(updates: Array<{ id: string; status: ProactiveTask['status']; result?: string }>): { ok: true; tasks: ProactiveTask[] } {
@@ -234,12 +264,13 @@ export const proactiveService = {
     return { ok: true, tasks: data.tasks };
   },
 
-  applyNewTasks(newTasks: Array<{ title: string; instructions?: string; status?: ProactiveTask['status'] }>): { ok: true; tasks: ProactiveTask[] } {
+  applyNewTasks(newTasks: Array<{ title: string; instructions?: string; status?: ProactiveTask['status']; botId?: string }>, defaults?: { botId?: string }): { ok: true; tasks: ProactiveTask[] } {
     const data = loadData();
     const now = new Date().toISOString();
     for (const t of newTasks) {
       const task: ProactiveTask = {
         id: `ptask_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        botId: effectiveBotId(t.botId || defaults?.botId),
         title: t.title,
         instructions: t.instructions || '',
         status: t.status || 'queued',
@@ -254,8 +285,9 @@ export const proactiveService = {
 
   addWakeUpLog(log: WakeUpLog): { ok: true } {
     const data = loadData();
-    data.wakeUpLog.unshift(log);
-    if (data.wakeUpLog.length > 100) data.wakeUpLog = data.wakeUpLog.slice(0, 100);
+    const stamped: WakeUpLog = { ...log, botId: effectiveBotId(log.botId) };
+    data.wakeUpLog.unshift(stamped);
+    if (data.wakeUpLog.length > 200) data.wakeUpLog = data.wakeUpLog.slice(0, 200);
     saveData(data);
     return { ok: true };
   },
@@ -331,9 +363,14 @@ export const proactiveService = {
     return { ok: true };
   },
 
-  getWakeUpLog(limit = 20): { ok: true; logs: WakeUpLog[] } {
+  getWakeUpLog(limit = 20, opts?: { botId?: string }): { ok: true; logs: WakeUpLog[] } {
     const data = loadData();
-    return { ok: true, logs: data.wakeUpLog.slice(0, limit) };
+    let logs = data.wakeUpLog;
+    if (opts?.botId !== undefined) {
+      const id = effectiveBotId(opts.botId);
+      logs = logs.filter(l => effectiveBotId(l.botId) === id);
+    }
+    return { ok: true, logs: logs.slice(0, limit) };
   },
 
   setNextWakeUp(nextAt: string | null): void {
@@ -354,6 +391,7 @@ export const proactiveService = {
     wakeUpId?: string;
     notificationEngagement?: NotificationEngagement;
     userReplyPreview?: string;
+    botId?: string;
   }): void {
     if (!summary?.trim()) return;
     try {
@@ -365,6 +403,7 @@ export const proactiveService = {
         wakeUpId: typeof opts?.wakeUpId === 'string' && opts.wakeUpId.trim() ? opts.wakeUpId.trim() : undefined,
         notificationEngagement: opts?.notificationEngagement,
         userReplyPreview: normalizeSummaryPreview(opts?.userReplyPreview),
+        botId: effectiveBotId(opts?.botId),
       };
       const existingIdx = nextEntry.wakeUpId
         ? existing.findIndex((entry) => entry.wakeUpId === nextEntry.wakeUpId)
@@ -374,8 +413,8 @@ export const proactiveService = {
       } else {
         existing.unshift(nextEntry);
       }
-      // Keep last 50 summaries
-      const trimmed = existing.slice(0, 50);
+      // Keep last 100 summaries (bumped from 50 since we're now multi-bot).
+      const trimmed = existing.slice(0, 100);
       fs.writeFileSync(p, JSON.stringify(trimmed, null, 2), 'utf-8');
     } catch (e) {
       logger.warn('[proactive] Failed to save session summary:', e);
@@ -402,9 +441,13 @@ export const proactiveService = {
     }
   },
 
-  getRecentSessionSummaries(limit = 5): string[] {
+  getRecentSessionSummaries(limit = 5, opts?: { botId?: string }): string[] {
     try {
-      const summaries = loadSessionSummaries();
+      let summaries = loadSessionSummaries();
+      if (opts?.botId !== undefined) {
+        const id = effectiveBotId(opts.botId);
+        summaries = summaries.filter(s => effectiveBotId(s.botId) === id);
+      }
       return summaries.slice(0, limit).map(s => {
         const timeAgo = getTimeAgo(s.at);
         const parts = [`[${timeAgo}] ${s.summary}`];
@@ -421,7 +464,7 @@ export const proactiveService = {
   // Tracks what was said, when, and whether the user engaged — so the agent
   // can avoid repeating itself and learn what kinds of check-ins get replies.
 
-  logNotification(entry: Omit<NotificationLogEntry, 'id' | 'at'>): void {
+  logNotification(entry: Omit<NotificationLogEntry, 'id' | 'at'> & { botId?: string }): void {
     try {
       const p = notificationLogPath();
       const existing = loadNotificationLog();
@@ -429,9 +472,10 @@ export const proactiveService = {
         ...entry,
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         at: new Date().toISOString(),
+        botId: effectiveBotId(entry.botId),
       });
-      // Keep last 100 entries
-      fs.writeFileSync(p, JSON.stringify(existing.slice(0, 100), null, 2), 'utf-8');
+      // Keep last 200 entries (bumped from 100 since we're now multi-bot).
+      fs.writeFileSync(p, JSON.stringify(existing.slice(0, 200), null, 2), 'utf-8');
     } catch (e) {
       logger.warn('[proactive] Failed to save notification log:', e);
     }
@@ -461,19 +505,28 @@ export const proactiveService = {
     }
   },
 
-  getRecentNotifications(limit = 15): NotificationLogEntry[] {
+  getRecentNotifications(limit = 15, opts?: { botId?: string }): NotificationLogEntry[] {
     try {
-      return loadNotificationLog().slice(0, limit);
+      let log = loadNotificationLog();
+      if (opts?.botId !== undefined) {
+        const id = effectiveBotId(opts.botId);
+        log = log.filter(e => effectiveBotId(e.botId) === id);
+      }
+      return log.slice(0, limit);
     } catch {
       return [];
     }
   },
 
   /** Build a compact digest of recent notifications for the agent's context */
-  getNotificationDigest(limit = 8): string[] {
+  getNotificationDigest(limit = 8, opts?: { botId?: string }): string[] {
     try {
-      const log = loadNotificationLog().slice(0, limit);
-      return log.map(entry => {
+      let log = loadNotificationLog();
+      if (opts?.botId !== undefined) {
+        const id = effectiveBotId(opts.botId);
+        log = log.filter(e => effectiveBotId(e.botId) === id);
+      }
+      return log.slice(0, limit).map(entry => {
         const timeAgo = getTimeAgo(entry.at);
         const eng = entry.engagement === 'replied' ? '(user replied)'
           : entry.engagement === 'dismissed' ? '(dismissed)'
@@ -497,6 +550,7 @@ interface SessionSummaryEntry {
   wakeUpId?: string;
   notificationEngagement?: NotificationEngagement;
   userReplyPreview?: string;
+  botId?: string;
 }
 
 function sessionSummariesPath(): string {
@@ -516,6 +570,7 @@ function loadSessionSummaries(): SessionSummaryEntry[] {
             wakeUpId: typeof entry?.wakeUpId === 'string' && entry.wakeUpId.trim() ? entry.wakeUpId.trim() : undefined,
             notificationEngagement: normalizeNotificationEngagement(entry?.notificationEngagement),
             userReplyPreview: normalizeSummaryPreview(entry?.userReplyPreview),
+            botId: typeof entry?.botId === 'string' && entry.botId.trim() ? entry.botId.trim() : undefined,
           }))
           .filter((entry: SessionSummaryEntry) => !!entry.summary.trim())
         : [];
@@ -535,6 +590,7 @@ export interface NotificationLogEntry {
   engagement: NotificationEngagement;
   at: string;
   replyPreview?: string;
+  botId?: string;
 }
 
 function notificationLogPath(): string {
@@ -557,6 +613,7 @@ function loadNotificationLog(): NotificationLogEntry[] {
             engagement: normalizeNotificationEngagement(entry?.engagement) || 'pending',
             at: typeof entry?.at === 'string' ? entry.at : new Date().toISOString(),
             replyPreview: normalizeSummaryPreview(entry?.replyPreview),
+            botId: typeof entry?.botId === 'string' && entry.botId.trim() ? entry.botId.trim() : undefined,
           }))
           .filter((entry: NotificationLogEntry) => !!entry.wakeUpId)
         : [];

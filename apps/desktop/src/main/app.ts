@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService, startProactiveScheduler, stopProactiveScheduler, startBotTriggerDispatcher, stopBotTriggerDispatcher } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc, shutdownAllBrowserUseServers, prewarmBrowserUseServer } from "./tools/index";
@@ -379,6 +379,27 @@ try {
     logger.error("Failed to start voice bridge service:", e);
   }
 
+  // Start the proactive (bots) scheduler. The scheduler itself early-returns
+  // for any bot whose config is disabled or in 'manual' interval mode, so
+  // starting it is always safe — it just means scheduled bots will actually
+  // fire on time instead of only running when manually triggered.
+  try {
+    startProactiveScheduler();
+    logger.info("Proactive scheduler started");
+  } catch (e) {
+    logger.error("Failed to start proactive scheduler:", e);
+  }
+
+  // Start the bot trigger dispatcher (cron jobs, future cloud webhook
+  // registrations). Cheap to run; reads bots.json on start and registers
+  // node-cron jobs for any running bot with cron triggers.
+  try {
+    startBotTriggerDispatcher();
+    logger.info("Bot trigger dispatcher started");
+  } catch (e) {
+    logger.error("Failed to start bot trigger dispatcher:", e);
+  }
+
   // Run file indexing in the background after a short delay
   // This allows the agent to fully initialize first
   setTimeout(() => {
@@ -409,6 +430,8 @@ async function runShutdownCleanup(): Promise<void> {
     try { disposeUpdates(); } catch (e) { logger.error("Failed to dispose updates during shutdown:", e); }
     try { stopReminderScheduler(); } catch (e) { logger.error("Failed to stop reminder scheduler during shutdown:", e); }
     try { stopSmsInbox(); } catch (e) { logger.error("Failed to stop SMS inbox during shutdown:", e); }
+    try { stopProactiveScheduler(); } catch (e) { logger.error("Failed to stop proactive scheduler during shutdown:", e); }
+    try { stopBotTriggerDispatcher(); } catch (e) { logger.error("Failed to stop bot trigger dispatcher during shutdown:", e); }
     try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
     try { shutdownWakewordListener(); } catch (e) { logger.error("Failed to stop wakeword listener during shutdown:", e); }
     try {

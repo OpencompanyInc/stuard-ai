@@ -93,7 +93,10 @@ describe('pricing module', () => {
     });
 
     it('should return correct default for balanced category', () => {
-      expect(getDefaultModelForCategory('balanced')).toBe('openai/gpt-5-chat-latest');
+      // Must match desktop's DEFAULT_CHAT_MODELS.balanced.default. Avoiding
+      // OpenAI here keeps the balanced tier reachable when an OpenAI key is
+      // out of quota — the regression that motivated this default.
+      expect(getDefaultModelForCategory('balanced')).toBe('xai/grok-4-1-fast');
     });
 
     it('should return correct default for smart category', () => {

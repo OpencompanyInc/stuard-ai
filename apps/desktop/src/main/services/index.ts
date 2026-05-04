@@ -9,4 +9,20 @@ export { startReminderScheduler, stopReminderScheduler } from "./reminder-schedu
 export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
 export { startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
 export { proactiveService } from "./proactive-service";
-export { triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply } from "./proactive-scheduler";
+export {
+  startProactiveScheduler,
+  stopProactiveScheduler,
+  triggerManualWakeUp,
+  isProactiveSchedulerRunning,
+  handleProactiveReply,
+  executeWakeUpForBot,
+} from "./proactive-scheduler";
+export {
+  startBotTriggerDispatcher,
+  stopBotTriggerDispatcher,
+  syncBotTriggers,
+  syncAllBotTriggers,
+} from "./bot-trigger-dispatcher";
+export { botService, DEFAULT_BOT_ID } from "./bot-service";
+export type { Bot, BotStatus, BotConfig, BotTrigger, BotTriggerType, DeployTarget } from "./bot-service";
+export { deployBotToVm, stopBotOnVm } from "./bot-vm-deploy";

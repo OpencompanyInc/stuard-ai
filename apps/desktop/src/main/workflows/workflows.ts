@@ -10,6 +10,20 @@ import { prepareForSave, prepareForLoad, isEncrypted } from "../crypto";
 import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } from "../workflow-variables";
 import { getTimezone } from "../settings";
 import { waitForAgentReady } from "../services/agent";
+// Lazy-imported inside handlers to avoid circular deps with bot-trigger-dispatcher
+// → bot-service → proactive-service → … → workflows.
+let _routeWebhookToBots: ((slug: string, payload: any) => number) | null = null;
+function tryRouteWebhookToBots(slug: string, payload: any): number {
+  try {
+    if (!_routeWebhookToBots) {
+      _routeWebhookToBots = require('../services/bot-trigger-dispatcher').routeWebhookToBots;
+    }
+    return _routeWebhookToBots ? _routeWebhookToBots(slug, payload) : 0;
+  } catch (e) {
+    console.warn('[Workflows] tryRouteWebhookToBots failed:', e);
+    return 0;
+  }
+}
 
 let chokidar: any = null;
 try { chokidar = require('chokidar'); } catch { }
@@ -967,12 +981,17 @@ export function handleCloudWebhookEvent(msg: any) {
 
     if (t === 'webhook_trigger') {
       const slug = typeof msg?.webhook?.slug === 'string' ? msg.webhook.slug : '';
+      // Bots get first crack at the slug. Bot slugs use a `bot_…` prefix so
+      // they don't collide with workflow IDs in practice; if both happen to
+      // match we deliver to both (parallel subscribers).
+      const botsFired = slug ? tryRouteWebhookToBots(slug, data) : 0;
       const candidate = safeFlowId(slug);
       if (candidate && cloudWebhookEnabledFlows.has(candidate)) {
         const tId = cloudWebhookEnabledFlows.get(candidate);
         executeWorkflowFromTrigger(candidate, 'webhook.cloud', data, tId);
-        return { ok: true, delivered: 1 };
+        return { ok: true, delivered: 1 + botsFired };
       }
+      if (botsFired > 0) return { ok: true, delivered: botsFired };
     }
 
     let delivered = 0;
@@ -1033,11 +1052,14 @@ export function startLocalWebhookServer() {
               try { json = JSON.parse(raw); } catch { json = null; }
               let delivered = 0;
               if (topicId) {
+                // Deliver to any bot whose webhook trigger matches this slug.
+                // Bots are independent from workflows; both can subscribe.
+                try { delivered += tryRouteWebhookToBots(topicId, json); } catch { }
                 const safe = safeFlowId(topicId);
                 if (webhookEnabledFlows.has(safe)) {
                   const tId = webhookEnabledFlows.get(safe);
                   try { executeWorkflowFromTrigger(safe, 'webhook.local', json, tId); } catch { }
-                  delivered = 1;
+                  delivered += 1;
                 }
                 try { delivered += handleStuardWebhook(topicId, json); } catch { }
               } else {

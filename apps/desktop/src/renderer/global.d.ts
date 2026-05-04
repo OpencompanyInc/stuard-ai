@@ -228,13 +228,33 @@ declare global {
       proactiveGetWakeUpLog: (limit?: number) => Promise<{ ok: boolean; logs?: any[]; error?: string }>;
       proactiveTriggerNow: () => Promise<{ ok: boolean; error?: string }>;
       proactiveGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
-      proactiveSubmitResult: (payload: any) => Promise<{ ok: boolean; error?: string }>;
       proactiveIsRunning: () => Promise<{ ok: boolean; running?: boolean }>;
       onProactiveUpdate: (cb: (data: any) => void) => () => void;
       onProactiveWakeUp: (cb: (data: any) => void) => () => void;
       onProactiveProgress: (cb: (data: any) => void) => () => void;
       onProactiveCheckin: (cb: (data: any) => void) => () => void;
       proactiveReply: (payload: { wakeUpId: string; text: string }) => Promise<{ ok: boolean; error?: string }>;
+
+      // Bots (multi-bot proactive entity layer)
+      botsList: () => Promise<{ ok: boolean; bots?: any[]; error?: string }>;
+      botsGet: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsCreate: (input: any) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsUpdate: (id: string, patch: any) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
+      botsGetConfig: (id: string) => Promise<{ ok: boolean; config?: any; error?: string }>;
+      botsUpdateConfig: (id: string, patch: any) => Promise<{ ok: boolean; config?: any; error?: string }>;
+      botsSetStatus: (id: string, status: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsDeploy: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsPause: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
+      botsTriggerNow: (id: string) => Promise<{ ok: boolean; botId?: string; error?: string }>;
+      botsListTasks: (id: string) => Promise<{ ok: boolean; tasks?: any[]; total?: number; hasMore?: boolean; error?: string }>;
+      botsGetWakeUpLog: (id: string, limit?: number) => Promise<{ ok: boolean; logs?: any[]; error?: string }>;
+      botsAddTrigger: (id: string, input: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;
+      botsUpdateTrigger: (id: string, triggerId: string, patch: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;
+      botsRemoveTrigger: (id: string, triggerId: string) => Promise<{ ok: boolean; error?: string }>;
+      botsGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
+      botsDeployToVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
+      botsStopOnVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
 
       // Subagent protocol events from orchestrator
       onSubagentMessage: (cb: (msg: any) => void) => () => void;

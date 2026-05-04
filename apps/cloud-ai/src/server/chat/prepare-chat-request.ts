@@ -100,6 +100,27 @@ export async function prepareChatRequest({
   if (chosenModelId) {
     secretBag.__modelId = chosenModelId;
   }
+
+  // Surface how the model got picked. We hit a regression where users had a
+  // tier default configured in Settings → Auto Model Routing but the server
+  // still fell back to its hard-coded default (openai/gpt-5-chat-latest)
+  // because `modelConfig` wasn't propagating end-to-end. Logging the inputs
+  // makes that class of bug debuggable from the cloud-ai logs alone.
+  try {
+    const tierKeys = msg?.modelConfig && typeof msg.modelConfig === 'object'
+      ? Object.keys(msg.modelConfig)
+      : [];
+    const tierDefault = msg?.modelConfig?.[routedTier]?.default;
+    writeLog('chat_model_resolved', {
+      requestedMode,
+      routedTier,
+      chosenModelId: chosenModelId || null,
+      explicitModelId: typeof msg?.modelId === 'string' ? msg.modelId : null,
+      modelConfigTiers: tierKeys,
+      modelConfigTierDefault: typeof tierDefault === 'string' ? tierDefault : null,
+    });
+  } catch { }
+
   send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
 
   const { enabledIntegrations, mcpTools } = authUser
