@@ -23,6 +23,9 @@ declare module '@polar-sh/sdk' {
 
     subscriptions: {
       list(args?: Record<string, any>): Promise<PolarListResult<any>>;
+      get(args: { id: string } & Record<string, any>): Promise<any>;
+      update(args: { id: string; subscriptionUpdate: Record<string, any> } & Record<string, any>): Promise<any>;
+      revoke(args: { id: string } & Record<string, any>): Promise<any>;
     };
 
     orders: {

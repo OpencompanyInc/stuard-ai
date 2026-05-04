@@ -310,7 +310,7 @@ export function usePreferences() {
   const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));
   const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
-  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.9));
+  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.95));
   const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
@@ -388,7 +388,7 @@ export function usePreferences() {
           if (key === 'theme_text') setThemeTextState(val ?? 'white');
           if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
-          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.9);
+          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.95);
           if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { Polar } from '@polar-sh/sdk';
 import { getSupabaseAdmin } from '../supabase';
 import { writeLog } from '../utils/logger';
 
@@ -255,6 +256,47 @@ function planFromProductId(productId: string | null | undefined): PlanTier | nul
   return null;
 }
 
+// ─── Helpers for the "switch PWYW amount" flow ────────────────────────────────
+
+async function getCurrentBillingSubscriptionId(userId: string): Promise<string | null> {
+  const sb = getSupabaseAdmin();
+  if (!sb) return null;
+  const { data } = await sb
+    .from('profiles')
+    .select('billing_subscription_id')
+    .eq('id', userId)
+    .maybeSingle();
+  return (data as any)?.billing_subscription_id || null;
+}
+
+function getPolarClient(): Polar | null {
+  const accessToken = (process.env.POLAR_ACCESS_TOKEN || '').trim();
+  if (!accessToken) return null;
+  const mode = String(process.env.POLAR_MODE || '').toLowerCase().startsWith('sand') ? 'sandbox' : 'production';
+  return new Polar({ accessToken, server: mode });
+}
+
+async function revokeStaleSubscription(staleSubscriptionId: string) {
+  const polar = getPolarClient();
+  if (!polar) {
+    writeLog('polar_webhook_revoke_stale_no_client', { staleSubscriptionId });
+    return;
+  }
+  try {
+    await polar.subscriptions.revoke({ id: staleSubscriptionId });
+  } catch (e: any) {
+    // 404 / 410 / already-canceled is fine; anything else just gets logged so
+    // it doesn't block the new subscription's activation.
+    const status = Number(e?.statusCode);
+    if (status === 404 || status === 410) return;
+    writeLog('polar_webhook_revoke_stale_failed', {
+      staleSubscriptionId,
+      statusCode: e?.statusCode,
+      message: e?.message,
+    });
+  }
+}
+
 // ─── Supabase writes ──────────────────────────────────────────────────────────
 
 async function updateProfile(userId: string, values: Record<string, any>) {
@@ -351,6 +393,22 @@ async function applySubscriptionGrant(userId: string, payload: any, status: stri
   const amount         = amountCents ? creditsFromAmountCents(amountCents) : null;
   const plan           = planFromProductId(productId) || amount?.plan || 'starter';
   const sourceRef      = `${subscriptionId || productId || 'subscription'}:${period.end || period.start || 'current'}`;
+
+  // If the user is already bound to a different active subscription (e.g.
+  // they hit the website's PATCH /api/polar/subscription to switch their
+  // PWYW amount and somehow the previous revoke didn't propagate), revoke
+  // the prior one so they aren't double-billed. Polar's API can't update a
+  // PWYW amount in place — the only way to switch is to replace.
+  const existingSubId = await getCurrentBillingSubscriptionId(userId);
+  if (
+    existingSubId &&
+    subscriptionId &&
+    existingSubId !== subscriptionId &&
+    status !== 'canceled' &&
+    status !== 'revoked'
+  ) {
+    await revokeStaleSubscription(existingSubId);
+  }
 
   if (amount) {
     // Rollover/carryover: when this is a NEW cycle for an existing subscription
@@ -540,10 +598,20 @@ async function handlePolarEvent(eventType: string, payload: any) {
       break;
     }
     case 'subscription.canceled': {
+      // Only act on the user's currently-bound subscription. This prevents a
+      // stale cancel event (e.g. for an old sub that was just replaced via
+      // the website's "Switch to $X/mo" PATCH endpoint) from overwriting the
+      // active billing row.
+      const eventSubId = extractSubscriptionId(payload);
+      const currentSubId = await getCurrentBillingSubscriptionId(userId);
+      if (!currentSubId || !eventSubId || currentSubId !== eventSubId) {
+        writeLog('polar_webhook_skip_stale_cancel', { userId, eventSubId, currentSubId });
+        break;
+      }
       const period = extractPeriodBounds(payload);
       await updateProfile(userId, {
         billing_customer_id: extractCustomerId(payload),
-        billing_subscription_id: extractSubscriptionId(payload),
+        billing_subscription_id: eventSubId,
         billing_product_id: extractProductId(payload),
         billing_subscription_status: 'canceled',
         current_period_start: period.start,
@@ -552,11 +620,22 @@ async function handlePolarEvent(eventType: string, payload: any) {
       break;
     }
     case 'subscription.revoked': {
+      // Same guard as subscription.canceled. Critical here because without
+      // it, a revoke event for a superseded subscription downgrades the user
+      // to plan='free' even though they have a brand new active sub — that's
+      // the exact bug that caused "credits got added but plan didn't change"
+      // after switching PWYW amounts.
+      const eventSubId = extractSubscriptionId(payload);
+      const currentSubId = await getCurrentBillingSubscriptionId(userId);
+      if (!currentSubId || !eventSubId || currentSubId !== eventSubId) {
+        writeLog('polar_webhook_skip_stale_revoke', { userId, eventSubId, currentSubId });
+        break;
+      }
       await updateProfile(userId, {
         plan: 'free',
         monthly_token_limit: 0,
         billing_customer_id: extractCustomerId(payload),
-        billing_subscription_id: extractSubscriptionId(payload),
+        billing_subscription_id: eventSubId,
         billing_product_id: extractProductId(payload),
         billing_subscription_status: 'revoked',
       });

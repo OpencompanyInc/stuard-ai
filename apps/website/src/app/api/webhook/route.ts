@@ -483,12 +483,12 @@ export const POST = webhookSecret
     try {
       const userId = extractUserId(subscription);
       if (!userId) return;
-      // If this is a stale subscription that's already been replaced by a
-      // newer one (e.g. user switched PWYW amount), don't overwrite the
-      // active billing fields with the old one.
+      // Only act if the event is for the user's currently-bound subscription.
+      // This skips stale events (e.g. the old sub being canceled mid-switch
+      // to a new PWYW amount) so we don't overwrite the active billing row.
       const eventSubId = extractSubscriptionId(subscription);
       const currentSubId = await getCurrentBillingSubscriptionId(userId);
-      if (currentSubId && eventSubId && currentSubId !== eventSubId) {
+      if (!currentSubId || !eventSubId || currentSubId !== eventSubId) {
         return;
       }
       const period = extractPeriodBounds(subscription);
@@ -508,11 +508,13 @@ export const POST = webhookSecret
     try {
       const userId = extractUserId(subscription);
       if (!userId) return;
-      // Same guard as onSubscriptionCanceled: a revoke event for a
-      // superseded subscription must not downgrade the user to free.
+      // Same guard as onSubscriptionCanceled — only the user's currently-
+      // bound subscription is allowed to downgrade them to free. The
+      // /api/polar/subscription PATCH endpoint clears the subscription
+      // marker before revoking, so a switch revoke is correctly ignored.
       const eventSubId = extractSubscriptionId(subscription);
       const currentSubId = await getCurrentBillingSubscriptionId(userId);
-      if (currentSubId && eventSubId && currentSubId !== eventSubId) {
+      if (!currentSubId || !eventSubId || currentSubId !== eventSubId) {
         return;
       }
       await updateProfile(userId, {

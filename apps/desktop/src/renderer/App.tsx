@@ -66,7 +66,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
   const { modelById } = useModelRegistry();
   const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
     try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
@@ -737,7 +737,7 @@ export default function App() {
         try {
           if ((window as any).desktopAPI?.execTool) {
             if (wakewordEnabled) {
-              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: 0.9, cooldown: 1.0, triggerCount: 5 });
+              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.0, triggerCount: 5 });
             } else {
               await (window as any).desktopAPI.execTool('wakeword_stop', {});
             }
@@ -750,7 +750,7 @@ export default function App() {
     };
     tryStart();
     return () => { canceled = true; };
-  }, [wakewordEnabled, state?.connected]);
+  }, [wakewordEnabled, wakewordSensitivity, state?.connected]);
 
   // Auth & Updates
   useEffect(() => {

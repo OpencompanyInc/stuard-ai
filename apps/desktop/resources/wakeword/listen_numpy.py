@@ -5,7 +5,7 @@ No TensorFlow, No PyTorch, No ONNX.
 Memory usage: ~30-50MB.
 
 Usage:
-    python listen_numpy.py --weights models/kws_weights.npz --sensitivity 0.9 --trigger-count 5
+    python listen_numpy.py --weights models/kws_weights.npz --sensitivity 0.95 --trigger-count 5
 """
 import argparse
 import time
@@ -247,7 +247,7 @@ class NumPyDS_CNN:
 
 def listen(
     weights_path,
-    sensitivity=0.9,
+    sensitivity=0.95,
     cooldown=1.0,
     device=None,
     show_status=True,
@@ -364,7 +364,7 @@ def listen(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", default="models/kws_weights.npz")
-    parser.add_argument("--sensitivity", type=float, default=0.9)
+    parser.add_argument("--sensitivity", type=float, default=0.95)
     parser.add_argument("--cooldown", type=float, default=1.0)
     parser.add_argument("--device", type=int, default=None, help="Input device index (see --list-devices)")
     parser.add_argument("--list-devices", action="store_true", help="List input devices and exit")

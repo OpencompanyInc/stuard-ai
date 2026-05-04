@@ -967,7 +967,7 @@ export default function BillingPage() {
                       </button>
                       {subscription?.amount !== Math.round(amount * 100) && (
                         <p className="text-[11px] text-gray-400 text-center">
-                          Switching opens checkout for ${amount}/mo. Your current plan is replaced automatically.
+                          Switches take effect immediately at checkout. Credits already in your balance carry over.
                         </p>
                       )}
                       {!subscription?.cancelAtPeriodEnd && (
