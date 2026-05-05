@@ -82,6 +82,7 @@ function normalizeBotWakeupBody(raw: any): Record<string, any> {
     ? cfg.notificationChannels
     : (Array.isArray(raw?.notificationChannels) ? raw.notificationChannels : ['app']);
   return {
+    botId: typeof raw?.botId === 'string' ? raw.botId : undefined,
     tasks: [],
     instructions: typeof cfg.instructions === 'string' ? cfg.instructions : (raw?.instructions || ''),
     prompt: '',
@@ -440,6 +441,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     const rawBody = await readJsonBody(req);
     const body = path === '/v1/bot/wakeup' ? normalizeBotWakeupBody(rawBody) : rawBody;
     const {
+      botId = '',
       tasks: incomingTasks = [],
       instructions = '',
       prompt = '',
@@ -699,6 +701,9 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     // Set up secrets context so get_skill_info can access skills
     const secretBag: Record<string, any> = {};
     secretBag.userId = auth.userId;
+    if (typeof botId === 'string' && botId.trim()) {
+      secretBag.proactiveBotId = botId.trim();
+    }
     if (Array.isArray(incomingSkills) && incomingSkills.length > 0) {
       secretBag.__skills = incomingSkills;
     }

@@ -454,6 +454,7 @@ ${contextToUse}
     if (config.executionTarget === 'cloud') {
       emitStage(replyLogId, 'thinking', 'Cloud VM processing follow-up');
       const result = await executeCloud(replyLogId, {
+        botId,
         config: {
           instructions: 'The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.',
           allowedTools: config.allowedTools,
@@ -990,6 +991,7 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       : allActiveSkills.filter(s => payloadSkillIds.includes(s.id));
 
     const body = JSON.stringify({
+      botId: typeof payload.botId === 'string' ? payload.botId : undefined,
       tasks: payload.tasks || [],
       instructions: payload.config?.instructions || '',
       prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,

@@ -683,14 +683,24 @@ async function handleToolRequest(msg: any, socket: WebSocket): Promise<void> {
 
     logger.info(`[cloud-webhooks] tool_request: ${tool} (id=${id})`);
 
+    const proactiveBotId = typeof args?.__proactiveBotId === 'string' && args.__proactiveBotId.trim()
+        ? args.__proactiveBotId.trim()
+        : (typeof args?.proactiveBotId === 'string' && args.proactiveBotId.trim() ? args.proactiveBotId.trim() : undefined);
+    const toolArgs = (() => {
+        if (!args || typeof args !== 'object') return args || {};
+        const { __proactiveBotId, proactiveBotId: _proactiveBotId, ...rest } = args;
+        return rest;
+    })();
+
     const ctx: RouterContext = {
         agentWsUrl: 'ws://127.0.0.1:8765/ws',
         cloudAiUrl: getCloudAiHttpBase(),
         logFn: (m: string) => logger.info(`[cloud-webhooks][tool] ${m}`),
+        proactiveBotId,
     };
 
     try {
-        const result = await execTool(tool, args || {}, ctx);
+        const result = await execTool(tool, toolArgs, ctx);
         if (socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({ type: 'tool_result', id, result }));
         }

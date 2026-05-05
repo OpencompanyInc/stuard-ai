@@ -180,6 +180,15 @@ function injectLocalToolInput(
   inputData: any,
   secrets?: Record<string, any>,
 ) {
+  if (id.startsWith('bot_memory_')) {
+    const base = inputData && typeof inputData === 'object' ? { ...(inputData as any) } : {};
+    const proactiveBotId = String(base.__proactiveBotId || base.proactiveBotId || secrets?.proactiveBotId || '').trim();
+    if (proactiveBotId) {
+      base.__proactiveBotId = proactiveBotId;
+    }
+    return base;
+  }
+
   if (!id.startsWith('browser_use_')) return inputData;
   const base = inputData && typeof inputData === 'object' ? { ...(inputData as any) } : {};
   const injectedSessionId = String(base.session_id || secrets?.browserUseSessionId || '').trim();
