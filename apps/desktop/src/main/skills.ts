@@ -63,6 +63,15 @@ function broadcastSkillsUpdated(): void {
       win.webContents.send('skills:updated', skillsCache);
     } catch {}
   }
+  // Mirror to the cloud VM so any deployed bots see the change on the next
+  // wakeup. Fire-and-forget; runtime-required to avoid an import cycle with
+  // bot-vm-deploy.ts.
+  try {
+    const mod = require('./services/bot-vm-deploy');
+    if (mod && typeof mod.pushSkillsToVm === 'function') {
+      mod.pushSkillsToVm().catch(() => { /* non-fatal */ });
+    }
+  } catch { /* desktop-only build path; safe to ignore */ }
 }
 
 // ============================================================================

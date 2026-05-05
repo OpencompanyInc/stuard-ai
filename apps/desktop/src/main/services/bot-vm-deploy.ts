@@ -14,6 +14,7 @@
 import { BrowserWindow, net } from 'electron';
 import logger from '../utils/logger';
 import { botService, type Bot, type BotConfig } from './bot-service';
+import { loadSkills } from '../skills';
 
 function getCloudAiHttp(): string {
   return String(
@@ -72,6 +73,32 @@ async function callVmConfig(payload: Record<string, any>): Promise<DeployResult>
   }
 }
 
+/**
+ * Push the user's full active skill set to the VM. Bots on the VM filter this
+ * by their own skillIds at wakeup time (mirrors the desktop scheduler).
+ * Called on every bot deploy and whenever skills change.
+ */
+export async function pushSkillsToVm(): Promise<{ ok: boolean; count?: number; error?: string }> {
+  const token = await getAuthToken();
+  if (!token) return { ok: false, error: 'not_authenticated' };
+  const cloud = getCloudAiHttp();
+  const activeSkills = loadSkills().filter(s => s.isActive);
+  try {
+    const resp = await net.fetch(`${cloud}/v1/bot/skills-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ skills: activeSkills }),
+    });
+    const data = await resp.json() as any;
+    if (!resp.ok || data?.ok === false) {
+      return { ok: false, error: String(data?.error || `http_${resp.status}`) };
+    }
+    return { ok: true, count: data?.count };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'vm_unreachable') };
+  }
+}
+
 export async function deployBotToVm(botId: string): Promise<DeployResult & { bot?: Bot }> {
   const bot = botService.get(botId);
   if (!bot) return { ok: false, error: 'bot_not_found' };
@@ -99,6 +126,17 @@ export async function deployBotToVm(botId: string): Promise<DeployResult & { bot
     logger.warn(`[bot-vm-deploy] Deploy failed for ${botId}: ${result.error}`);
     return result;
   }
+
+  // Push the user's active skills alongside the config so the VM bot scheduler
+  // can include the right subset on each wakeup. Non-fatal if it fails — the
+  // bot will still run, just without skills until the next sync.
+  const skillsResult = await pushSkillsToVm();
+  if (!skillsResult.ok) {
+    logger.warn(`[bot-vm-deploy] Skills sync failed for ${botId}: ${skillsResult.error}`);
+  } else {
+    logger.info(`[bot-vm-deploy] Synced ${skillsResult.count ?? 0} skill(s) to VM`);
+  }
+
   const updated = botService.update(botId, { vmDeployedAt: new Date().toISOString() });
   logger.info(`[bot-vm-deploy] Deployed bot ${botId} to VM (interval=${interval})`);
   return { ...result, bot: updated || undefined };

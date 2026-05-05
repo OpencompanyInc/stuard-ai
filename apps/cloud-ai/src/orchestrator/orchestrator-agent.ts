@@ -243,5 +243,6 @@ export function getOrchestratorAgent(
   (agent as any).__diagTools = activeTools;
   (agent as any).__diagInstructions = instructions;
   (agent as any).__activeToolNames = Object.keys(activeTools);
+  (agent as any).__executionToolNames = Object.keys(executionTools);
   return agent;
 }

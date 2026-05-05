@@ -22,7 +22,7 @@ import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext
 import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
-import { buildProactiveMessageContent, expandProactiveAllowedToolNames, filterProactiveTools, generateWithToolRecovery, isBlockedProactiveToolName } from './proactive-utils';
+import { buildProactiveMessageContent, expandProactiveAllowedToolNames, filterProactiveTools, generateWithToolRecovery, getProactiveCoreToolNames, isProactiveToolAllowed } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -69,6 +69,33 @@ function writeJson(res: ServerResponse, status: number, obj: any) {
   } catch {
     try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"internal"}'); } catch { }
   }
+}
+
+/**
+ * Reshape the VM bot scheduler's wakeup payload into the proactive runner's
+ * shape. The VM nests bot config under `config`, has no kanban tasks, and
+ * always wants notifications delivered.
+ */
+function normalizeBotWakeupBody(raw: any): Record<string, any> {
+  const cfg = (raw && typeof raw.config === 'object' && raw.config) || {};
+  const channels = Array.isArray(cfg.notificationChannels)
+    ? cfg.notificationChannels
+    : (Array.isArray(raw?.notificationChannels) ? raw.notificationChannels : ['app']);
+  return {
+    tasks: [],
+    instructions: typeof cfg.instructions === 'string' ? cfg.instructions : (raw?.instructions || ''),
+    prompt: '',
+    allowedTools: Array.isArray(cfg.allowedTools) ? cfg.allowedTools : (Array.isArray(raw?.allowedTools) ? raw.allowedTools : []),
+    modelMode: typeof cfg.modelMode === 'string' ? cfg.modelMode : (raw?.modelMode || 'balanced'),
+    modelId: cfg.modelId || raw?.modelId,
+    context: (raw && typeof raw.context === 'object' && raw.context) || {},
+    memoryContext: typeof raw?.memoryContext === 'string' ? raw.memoryContext : undefined,
+    skills: Array.isArray(raw?.skills) ? raw.skills : [],
+    notificationChannels: channels,
+    deliverNotifications: true,
+    sendNotifications: true,
+    notificationDigest: [],
+  };
 }
 
 async function requireProactiveAuth(req: IncomingMessage, res: ServerResponse): Promise<{ userId: string } | null> {
@@ -391,7 +418,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
   const path = parsedUrl.pathname;
 
   // CORS preflight
-  if (req.method === 'OPTIONS' && path.startsWith('/v1/proactive/')) {
+  if (req.method === 'OPTIONS' && (path.startsWith('/v1/proactive/') || path === '/v1/bot/wakeup')) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -402,11 +429,16 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     return true;
   }
 
-  if (req.method === 'POST' && path === '/v1/proactive/wakeup') {
+  // /v1/bot/wakeup — single-bot wakeup invoked by the VM bot scheduler.
+  // Shares the proactive runner; only the request body is reshaped: VM bots
+  // nest fields under `config`, have no kanban tasks, and always want
+  // notifications delivered (nothing else hears their output).
+  if (req.method === 'POST' && (path === '/v1/proactive/wakeup' || path === '/v1/bot/wakeup')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true; // 401 already sent
 
-    const body = await readJsonBody(req);
+    const rawBody = await readJsonBody(req);
+    const body = path === '/v1/bot/wakeup' ? normalizeBotWakeupBody(rawBody) : rawBody;
     const {
       tasks: incomingTasks = [],
       instructions = '',
@@ -442,7 +474,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     const proactiveSearchTools = createTool({
       id: 'search_tools',
-      description: 'Search for available tools by category or query. Discovered tools can be called via execute_tool({ tool_name, args }) or after fetching their schema with get_tool_schema.',
+      description: 'Search the tools available to this bot by category or query. Discovered tools can be called via execute_tool({ tool_name, args }) or after fetching their schema with get_tool_schema.',
       inputSchema: (search_tools as any).inputSchema,
       outputSchema: (search_tools as any).outputSchema,
       execute: async (inputData, runCtx) => {
@@ -450,7 +482,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
         if (result && Array.isArray((result as any).tools)) {
           return {
             ...(result as any),
-            tools: (result as any).tools.filter((tool: any) => !isBlockedProactiveToolName(String(tool?.name || ''))),
+            tools: (result as any).tools.filter((tool: any) => isProactiveToolAllowed(String(tool?.name || ''), allowedTools)),
           };
         }
         return result;
@@ -464,14 +496,14 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       outputSchema: (get_tool_schema as any).outputSchema,
       execute: async (inputData, runCtx) => {
         const toolName = String((inputData as any)?.tool_name || '').trim();
-        if (isBlockedProactiveToolName(toolName)) {
-          throw new Error(`Tool '${toolName}' is not available to proactive agents. Use headless browser_use_* tools instead.`);
+        if (!isProactiveToolAllowed(toolName, allowedTools)) {
+          throw new Error(`Tool '${toolName}' is not allowed for this bot.`);
         }
         const result = await (get_tool_schema as any).execute?.(inputData, runCtx);
         // Dynamically register the tool into the agent's tool map so the LLM can call it directly
         if (result && toolName && !tools[toolName]) {
           const registeredTool = getToolRegistry().get(toolName);
-          if (registeredTool && typeof (registeredTool as any).execute === 'function' && !isBlockedProactiveToolName(toolName)) {
+          if (registeredTool && typeof (registeredTool as any).execute === 'function' && isProactiveToolAllowed(toolName, allowedTools)) {
             tools[toolName] = wrapProactiveTool(toolName, registeredTool);
           }
         }
@@ -486,17 +518,17 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       outputSchema: (execute_tool as any).outputSchema,
       execute: async (inputData, runCtx) => {
         const toolName = String((inputData as any)?.tool_name || '').trim();
-        if (isBlockedProactiveToolName(toolName)) {
+        if (!isProactiveToolAllowed(toolName, allowedTools)) {
           return {
             success: false,
             tool: toolName,
-            error: `Tool '${toolName}' is not available to proactive agents. Use headless browser_use_* tools instead.`,
+            error: `Tool '${toolName}' is not allowed for this bot.`,
           };
         }
         // Also register the tool for future direct calls
         if (toolName && !tools[toolName]) {
           const registeredTool = getToolRegistry().get(toolName);
-          if (registeredTool && typeof (registeredTool as any).execute === 'function' && !isBlockedProactiveToolName(toolName)) {
+          if (registeredTool && typeof (registeredTool as any).execute === 'function' && isProactiveToolAllowed(toolName, allowedTools)) {
             tools[toolName] = wrapProactiveTool(toolName, registeredTool);
           }
         }
@@ -535,12 +567,16 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     try {
       initToolRegistry();
       const registry = getToolRegistry();
-      for (const name of expandedAllowedTools) {
+      const directlyAllowedToolNames = Array.from(new Set([
+        ...getProactiveCoreToolNames(),
+        ...expandedAllowedTools,
+      ]));
+      for (const name of directlyAllowedToolNames) {
         if (name.endsWith('_')) {
           for (const [toolName, tool] of registry.entries()) {
             if (
               !availableTools[toolName] &&
-              !isBlockedProactiveToolName(toolName) &&
+              isProactiveToolAllowed(toolName, allowedTools) &&
               toolName.startsWith(name) &&
               tool &&
               typeof (tool as any).execute === 'function'
@@ -551,7 +587,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           continue;
         }
         const tool = registry.get(name);
-        if (!availableTools[name] && !isBlockedProactiveToolName(name) && tool && typeof (tool as any).execute === 'function') {
+        if (!availableTools[name] && isProactiveToolAllowed(name, allowedTools) && tool && typeof (tool as any).execute === 'function') {
           availableTools[name] = wrapProactiveTool(name, tool);
         }
       }
@@ -726,7 +762,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           maxRetries: 3,
           onToolNotFound: (toolName: string) => {
             // Dynamically register missing tools so the retry finds them
-            if (!tools[toolName] && !isBlockedProactiveToolName(toolName)) {
+            if (!tools[toolName] && isProactiveToolAllowed(toolName, allowedTools)) {
               initToolRegistry();
               const registeredTool = getToolRegistry().get(toolName);
               if (registeredTool && typeof (registeredTool as any).execute === 'function') {
@@ -824,6 +860,25 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     try {
       const result = await sendVMCommand(auth.userId, 'proactive_config', { updates: vmUpdates }, 15_000);
       writeJson(res, 200, { ok: result.ok, config: result.result?.config, error: result.error });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // ── Sync skills.json to VM ──────────────────────────────────────────────────
+  // Desktop pushes the user's full active skill set so the VM bot scheduler
+  // can include the right subset of skills in /v1/bot/wakeup payloads.
+  if (req.method === 'POST' && path === '/v1/bot/skills-sync') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const skills = Array.isArray(body?.skills) ? body.skills : [];
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'skills_sync', { skills }, 15_000);
+      writeJson(res, 200, { ok: result.ok, count: result.result?.count, error: result.error });
     } catch (e: any) {
       writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
     }

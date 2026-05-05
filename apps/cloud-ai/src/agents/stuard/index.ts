@@ -50,6 +50,7 @@ export function getAgent(
   (agent as any).__diagInstructions = instructions;
   // Names of tools the LLM should see — pass as `activeTools` in stream options
   (agent as any).__activeToolNames = Object.keys(activeTools);
+  (agent as any).__executionToolNames = Object.keys(executionTools);
   return agent;
 }
 
@@ -88,6 +89,7 @@ export async function getAgentForQuery(
   (agent as any).__diagTools = activeTools;
   (agent as any).__diagInstructions = instructions;
   (agent as any).__activeToolNames = Object.keys(activeTools);
+  (agent as any).__executionToolNames = Object.keys(executionTools);
   return agent;
 }
 

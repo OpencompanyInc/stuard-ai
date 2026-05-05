@@ -13,7 +13,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { VMWorkflowEngine } from './vm-engine';
-import { mintVMToken } from '../services/vm-tokens';
+import { mintVMToken } from './lib/vm-token-mint';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

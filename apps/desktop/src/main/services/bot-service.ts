@@ -63,6 +63,13 @@ export interface BotConfig {
    * to recall past runs and user context. On by default.
    */
   memoryEnabled: boolean;
+  /**
+   * Per-bot skill selection. Each entry is a skill id from skills.json.
+   * - undefined  → inherit all globally-active skills (legacy behavior, kept for migration)
+   * - []         → no skills (explicit opt-out)
+   * - [ids…]     → only these skills (intersected with globally-active)
+   */
+  skillIds?: string[];
 }
 
 export interface Bot {
@@ -243,6 +250,8 @@ function normalizeConfig(raw: any): BotConfig {
       ? raw.notificationChannels
       : ['app'],
     memoryEnabled: raw?.memoryEnabled !== false,
+    // Preserve `undefined` (legacy → inherit) vs `[]` (explicit opt-out).
+    skillIds: Array.isArray(raw?.skillIds) ? raw.skillIds.map((x: any) => String(x)) : undefined,
   };
 }
 
@@ -342,9 +351,8 @@ function legacyConfigToBotConfig(): BotConfig {
 }
 
 function applyConfigPatchToLegacy(patch: Partial<BotConfig>): BotConfig {
-  // memoryEnabled isn't part of legacy config yet; accepted but not persisted
-  // through proactiveService. It will be persisted on the bot row instead.
-  const { memoryEnabled: _omit, ...legacyPatch } = patch;
+  // memoryEnabled and skillIds are bot-row fields, not in legacy proactive config.
+  const { memoryEnabled: _omitMem, skillIds: _omitSkills, ...legacyPatch } = patch;
   proactiveService.updateConfig(legacyPatch as any);
   return legacyConfigToBotConfig();
 }
@@ -435,8 +443,12 @@ export const botService = {
     if (!bot) return null;
     if (bot.isLegacyDefault) {
       const cfg = legacyConfigToBotConfig();
-      // memoryEnabled is bot-level; pull from row
-      return { ...cfg, memoryEnabled: bot.config?.memoryEnabled !== false };
+      // memoryEnabled and skillIds are bot-level; pull from row
+      return {
+        ...cfg,
+        memoryEnabled: bot.config?.memoryEnabled !== false,
+        skillIds: bot.config?.skillIds,
+      };
     }
     return bot.config || { ...DEFAULT_BOT_CONFIG };
   },
@@ -447,11 +459,22 @@ export const botService = {
 
     if (bot.isLegacyDefault) {
       const nextCfg = applyConfigPatchToLegacy(patch);
-      // memoryEnabled lives on the bot row even for the legacy default
-      if (patch.memoryEnabled !== undefined) {
-        this.update(id, { config: { ...(bot.config || DEFAULT_BOT_CONFIG), memoryEnabled: patch.memoryEnabled } });
+      // memoryEnabled and skillIds live on the bot row even for the legacy default
+      if (patch.memoryEnabled !== undefined || patch.skillIds !== undefined) {
+        this.update(id, {
+          config: {
+            ...(bot.config || DEFAULT_BOT_CONFIG),
+            ...(patch.memoryEnabled !== undefined ? { memoryEnabled: patch.memoryEnabled } : {}),
+            ...(patch.skillIds !== undefined ? { skillIds: patch.skillIds } : {}),
+          },
+        });
       }
-      return { ...nextCfg, memoryEnabled: this.get(id)?.config?.memoryEnabled !== false };
+      const stored = this.get(id)?.config;
+      return {
+        ...nextCfg,
+        memoryEnabled: stored?.memoryEnabled !== false,
+        skillIds: stored?.skillIds,
+      };
     }
 
     const merged: BotConfig = { ...DEFAULT_BOT_CONFIG, ...(bot.config || {}), ...patch };

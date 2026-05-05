@@ -1,16 +1,18 @@
-import { PROACTIVE_TASK_TOOL_NAMES as PROACTIVE_INTERNAL_TOOL_NAMES } from '../tools/proactive-task-tools';
+import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../tools/proactive-task-tools';
 
-/** Core tools that should ALWAYS be available to proactive agents, even when allowedTools filtering is active */
+/**
+ * Internal tools that should ALWAYS be available to bot/proactive agents, even
+ * when allowedTools filtering is active. These are bot plumbing: task-board
+ * management, the bot's private kanban, notification/session bookkeeping, and
+ * the meta-tools needed to inspect the allowed tool surface.
+ */
 const PROACTIVE_CORE_TOOLS = [
-  ...PROACTIVE_INTERNAL_TOOL_NAMES,
-  'web_search',
-  'deploy_headless_agent',
+  ...PROACTIVE_TASK_TOOL_NAMES,
+  ...BOT_MEMORY_TOOL_NAMES,
   'search_tools',
   'get_tool_schema',
   'execute_tool',
   'get_skill_info',
-  'search_past_conversations',
-  'get_conversation_context',
   'choose_notification_channel',
   'write_session_summary',
 ] as const;
@@ -302,14 +304,26 @@ export function filterProactiveTools<T extends Record<string, any>>(tools: T, al
   }
 
   const expandedAllowed = expandProactiveAllowedToolNames(allowedTools);
-  const allowed = new Set(expandedAllowed);
-
-  // Always keep core proactive tools + user-allowed tools
-  const keep = new Set<string>([...PROACTIVE_CORE_TOOLS, ...allowed]);
   const filteredEntries = Object.entries(tools).filter(([name]) => {
-    if (isBlockedProactiveToolName(name)) return false;
-    if (keep.has(name)) return true;
-    return expandedAllowed.some((allowedName) => allowedName.endsWith('_') && name.startsWith(allowedName));
+    return isProactiveToolAllowed(name, expandedAllowed);
   });
   return Object.fromEntries(filteredEntries) as T;
+}
+
+export function isProactiveToolAllowed(name: string, allowedTools: unknown): boolean {
+  const toolName = String(name || '').trim();
+  if (!toolName || isBlockedProactiveToolName(toolName)) return false;
+
+  if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
+    return true;
+  }
+
+  const expandedAllowed = expandProactiveAllowedToolNames(allowedTools);
+  if ((PROACTIVE_CORE_TOOLS as readonly string[]).includes(toolName)) return true;
+  if (expandedAllowed.includes(toolName)) return true;
+  return expandedAllowed.some((allowedName) => allowedName.endsWith('_') && toolName.startsWith(allowedName));
+}
+
+export function getProactiveCoreToolNames(): string[] {
+  return Array.from(PROACTIVE_CORE_TOOLS);
 }

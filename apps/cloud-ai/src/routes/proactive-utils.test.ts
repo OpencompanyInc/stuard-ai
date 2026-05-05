@@ -59,12 +59,17 @@ describe('filterProactiveTools', () => {
     expect(filterProactiveTools(tools, [])).toEqual(tools);
   });
 
-  it('always keeps core proactive tools (task tools + meta-tools + web_search) while filtering non-core', () => {
+  it('always keeps internal bot tools (task tools, private kanban, and meta-tools) while filtering non-core', () => {
     const tools = {
       proactive_task_list: 1,
       proactive_task_update: 2,
       proactive_task_create: 3,
       proactive_task_delete: 4,
+      bot_memory_list: 5,
+      bot_memory_create: 6,
+      bot_memory_update: 7,
+      bot_memory_delete: 8,
+      bot_memory_log: 9,
       web_search: 5,
       execute_tool: 6,
       search_tools: 7,
@@ -82,16 +87,21 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('proactive_task_update');
     expect(result).toHaveProperty('proactive_task_create');
     expect(result).toHaveProperty('proactive_task_delete');
-    expect(result).toHaveProperty('web_search');
+    expect(result).toHaveProperty('bot_memory_list');
+    expect(result).toHaveProperty('bot_memory_create');
+    expect(result).toHaveProperty('bot_memory_update');
+    expect(result).toHaveProperty('bot_memory_delete');
+    expect(result).toHaveProperty('bot_memory_log');
     expect(result).toHaveProperty('execute_tool');
     expect(result).toHaveProperty('search_tools');
     expect(result).toHaveProperty('get_tool_schema');
     expect(result).toHaveProperty('get_skill_info');
-    expect(result).toHaveProperty('deploy_headless_agent');
-    expect(result).toHaveProperty('search_past_conversations');
-    expect(result).toHaveProperty('get_conversation_context');
     // Explicitly allowed tool is kept
     expect(result).toHaveProperty('some_random_tool');
+    expect(result).not.toHaveProperty('web_search');
+    expect(result).not.toHaveProperty('deploy_headless_agent');
+    expect(result).not.toHaveProperty('search_past_conversations');
+    expect(result).not.toHaveProperty('get_conversation_context');
   });
 
   it('filters out non-core tools not in the allow-list', () => {
@@ -104,7 +114,7 @@ describe('filterProactiveTools', () => {
 
     const result = filterProactiveTools(tools, ['another_tool']);
     expect(result).toHaveProperty('proactive_task_list');
-    expect(result).toHaveProperty('web_search');
+    expect(result).not.toHaveProperty('web_search');
     expect(result).toHaveProperty('another_tool');
     expect(result).not.toHaveProperty('some_other_tool');
   });
@@ -122,7 +132,7 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('browser_use_navigate');
   });
 
-  it('preserves conversation memory tools', () => {
+  it('keeps conversation memory tools only when allowed', () => {
     const tools = {
       proactive_task_list: 1,
       web_search: 2,
@@ -131,11 +141,11 @@ describe('filterProactiveTools', () => {
       some_other_tool: 5,
     };
 
-    const result = filterProactiveTools(tools, ['web_search']);
+    const result = filterProactiveTools(tools, ['web_search', 'get_conversation_context']);
     expect(result).toHaveProperty('proactive_task_list');
     expect(result).toHaveProperty('web_search');
     expect(result).toHaveProperty('get_conversation_context');
-    expect(result).toHaveProperty('search_past_conversations');
+    expect(result).not.toHaveProperty('search_past_conversations');
     expect(result).not.toHaveProperty('some_other_tool');
   });
 

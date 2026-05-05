@@ -20,6 +20,7 @@ import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-too
 import { getOrchestratorAgent } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
+import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../../tools/proactive-task-tools';
 import {
   appendInterjectionToMessages,
   drainInterjectionPayload,
@@ -166,6 +167,35 @@ function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undef
 
 function send(ws: WebSocket, data: unknown) {
   try { ws.send(JSON.stringify(data)); } catch { }
+}
+
+function buildBotScopedActiveTools(agent: any, allowedTools: unknown): string[] | undefined {
+  if (!Array.isArray(allowedTools) || allowedTools.length === 0) return undefined;
+
+  const executionToolNames = new Set<string>(
+    Array.isArray(agent?.__executionToolNames)
+      ? agent.__executionToolNames
+      : (Array.isArray(agent?.__activeToolNames) ? agent.__activeToolNames : []),
+  );
+  if (executionToolNames.size === 0) return undefined;
+
+  const allowed = Array.from(new Set(
+    allowedTools.map((tool) => String(tool || '').trim()).filter(Boolean),
+  ));
+  const defaults = [
+    ...PROACTIVE_TASK_TOOL_NAMES,
+    ...BOT_MEMORY_TOOL_NAMES,
+    'write_session_summary',
+  ];
+
+  const isAllowed = (name: string) => {
+    if (defaults.includes(name as any)) return true;
+    if (allowed.includes(name)) return true;
+    if (name === 'run_system_command' && allowed.includes('run_command')) return true;
+    return allowed.some((prefix) => prefix.endsWith('_') && name.startsWith(prefix));
+  };
+
+  return Array.from(executionToolNames).filter(isAllowed);
 }
 
 // Store active abort controllers by WebSocket
@@ -395,7 +425,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Mastra's `activeTools` controls which tools the LLM sees in its schema.
       // The Agent is constructed with the FULL tool universe so execution never
       // fails with "Tool X not found", but we limit the LLM to the lean set.
-      const activeToolNames: string[] | undefined = (agent as any).__activeToolNames;
+      const botScopedActiveTools = buildBotScopedActiveTools(agent as any, context.allowedTools);
+      const activeToolNames: string[] | undefined = botScopedActiveTools || (agent as any).__activeToolNames;
       const buildStreamOptions = (): any => ({
         maxSteps: maxToolSteps,
         ...(Object.keys(providerOpts).length > 0 ? { providerOptions: { ...providerOpts } } : {}),

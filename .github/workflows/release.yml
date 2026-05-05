@@ -250,8 +250,8 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build & upload VM agent bundle
-        working-directory: apps/cloud-ai
-        run: node scripts/build-vm-agent.cjs --upload
+        working-directory: apps/vm-agent
+        run: node scripts/build.cjs --upload
         env:
           CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
 

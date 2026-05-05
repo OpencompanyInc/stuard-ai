@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { mintVMToken } from '../services/vm-tokens';
+import { mintVMToken } from './lib/vm-token-mint';
 import { buildVMMemoryContext } from './vm-agent-ws';
 
 // ─────────────────────────────────────────────────────────────────────────────

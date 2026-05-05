@@ -15,7 +15,7 @@ import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
 import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
-import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, splitProactiveStructuredContent } from './proactive-scheduler-utils';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, isProactiveSkipResponse, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
@@ -438,7 +438,11 @@ ${contextToUse}
 
 Continue the conversation naturally. Be brief, warm, and helpful. This is a follow-up reply, not a new check-in. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.`;
 
-    const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.
+    const allowedToolsNote = Array.isArray(config.allowedTools) && config.allowedTools.length > 0
+      ? `\n\nAllowed non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are blocked. Task-board and private kanban tools remain available by default.`
+      : '';
+
+    const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.${allowedToolsNote}
 
 Conversation so far:
 """
@@ -452,6 +456,7 @@ ${contextToUse}
       const result = await executeCloud(replyLogId, {
         config: {
           instructions: 'The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.',
+          allowedTools: config.allowedTools,
           modelMode: modelSelection.model,
           modelId: modelSelection.modelId || '',
         },
@@ -491,7 +496,12 @@ ${contextToUse}
             const toolRequest = extractAgentToolRequest(msg);
             if (toolRequest) {
               const { execTool } = await import('../tools');
-              const toolResult = await executeAgentToolRequest(toolRequest, toolCtx, execTool);
+              const toolResult = await executeAgentToolRequest(
+                toolRequest,
+                toolCtx,
+                execTool,
+                Array.isArray(config.allowedTools) ? config.allowedTools : [],
+              );
               try {
                 ws.send(JSON.stringify(toolResult));
               } catch { }
@@ -520,6 +530,7 @@ ${contextToUse}
           ...(modelSelection.model ? { model: modelSelection.model } : {}),
           ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
           ...(token ? { auth: { accessToken: token } } : {}),
+          context: { allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [] },
           hiddenContext: localHiddenContext,
         }));
       });
@@ -805,7 +816,12 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
             return;
           }
           const { execTool } = await import('../tools');
-          const toolResult = await executeAgentToolRequest(toolRequest, toolCtx, execTool);
+          const toolResult = await executeAgentToolRequest(
+            toolRequest,
+            toolCtx,
+            execTool,
+            Array.isArray(payload?.config?.allowedTools) ? payload.config.allowedTools : [],
+          );
           try {
             ws.send(JSON.stringify(toolResult));
           } catch { }
@@ -902,7 +918,10 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
       ...(modelSelection.model ? { model: modelSelection.model } : {}),
       ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
       ...(token ? { auth: { accessToken: token } } : {}),
-      context: payload.context?.screenshot ? { screenshots: [payload.context.screenshot] } : undefined,
+      context: {
+        ...(payload.context?.screenshot ? { screenshots: [payload.context.screenshot] } : {}),
+        allowedTools: Array.isArray(payload?.config?.allowedTools) ? payload.config.allowedTools : [],
+      },
       hiddenContext: buildLocalProactiveHiddenContext(payload),
     };
 
@@ -958,8 +977,17 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
   const requestTimeout = setTimeout(() => abortController.abort(), AGENT_RESPONSE_TIMEOUT_MS);
 
   try {
-    // Load active skills to pass to cloud agent
-    const activeSkills = loadSkills().filter(s => s.isActive);
+    // Load active skills, narrowed to this bot's per-bot selection (mirrors
+    // the local-path filtering above). The bot's skillIds list arrives via
+    // payload.skills (already filtered), so we resolve full skill objects
+    // from the global active set by id-membership.
+    const payloadSkillIds = Array.isArray(payload.skills)
+      ? payload.skills.map((s: any) => String(s?.id || '')).filter(Boolean)
+      : null;
+    const allActiveSkills = loadSkills().filter(s => s.isActive);
+    const activeSkills = payloadSkillIds === null
+      ? allActiveSkills
+      : allActiveSkills.filter(s => payloadSkillIds.includes(s.id));
 
     const body = JSON.stringify({
       tasks: payload.tasks || [],
@@ -1222,8 +1250,15 @@ async function executeWakeUp(opts: {
 
     // No auto in_progress marking — the agent controls task status via kanban tools
 
-    // Load active skills for context
-    const activeSkills = loadSkills().filter(s => s.isActive);
+    // Load active skills for context, narrowed to this bot's selection.
+    // skillIds === undefined → legacy behavior (all globally-active skills).
+    // skillIds === []        → opt-out (no skills available to this bot).
+    // skillIds === [...ids]  → only those skills (intersected with active).
+    const allActiveSkills = loadSkills().filter(s => s.isActive);
+    const botSkillIds = (config as any).skillIds as string[] | undefined;
+    const activeSkills = botSkillIds === undefined
+      ? allActiveSkills
+      : allActiveSkills.filter(s => botSkillIds.includes(s.id));
 
     // Compose the instructions sent to the agent from the bot's identity
     // (systemPrompt = personality/objective, storedFacts = user-curated memory),
@@ -1299,6 +1334,16 @@ async function executeWakeUp(opts: {
       agentMessage = executionResult.text;
       // Local path executes desktop-backed tool calls inline, so task-board mutations
       // are applied immediately by the proactive task handlers.
+    }
+
+    // The prompt asks the agent to reply with just "skip" when it has nothing
+    // to say. Treat that sentinel as silence — clear the message and force the
+    // skip channel so the user never sees a notification literally reading "skip"
+    // (and the wake-up log records an empty message rather than "skip").
+    if (isProactiveSkipResponse(agentMessage)) {
+      logger.info('[proactive-scheduler] Agent returned skip sentinel — suppressing notification');
+      agentMessage = '';
+      executionResult.agentChannel = 'skip';
     }
 
     // Broadcast task board refresh so UI updates immediately. Send the bot's

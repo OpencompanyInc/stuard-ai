@@ -21,7 +21,7 @@ import { EventEmitter } from 'events';
 import { execSync, spawn, ChildProcess } from 'child_process';
 import { randomUUID, createHash } from 'crypto';
 import WebSocket from 'ws';
-import { mintVMToken } from '../services/vm-tokens';
+import { mintVMToken } from './lib/vm-token-mint';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

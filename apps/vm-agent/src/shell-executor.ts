@@ -30,10 +30,14 @@ export class ShellExecutor extends EventEmitter {
 
   private async getPty() {
     if (this.pty) return this.pty;
+    // node-pty is installed lazily on the VM after startup, so it may not
+    // exist at type-check or first-call time. Both branches load it dynamically.
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       this.pty = require('node-pty');
     } catch {
       try {
+        // @ts-expect-error — node-pty is an optional VM-side runtime dep
         this.pty = await import('node-pty');
       } catch {
         throw new Error('node-pty is not installed yet — terminal will be available shortly');

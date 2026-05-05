@@ -256,6 +256,18 @@ export function extractAgentTextFromWsMessage(msg: any, fallback = ''): string {
 }
 
 /**
+ * The proactive prompt instructs the model to reply with just the word "skip"
+ * when it has nothing worth saying. Detect that sentinel so the scheduler can
+ * suppress the notification instead of literally showing "skip" to the user.
+ */
+export function isProactiveSkipResponse(text: string): boolean {
+  const normalized = String(text || '')
+    .replace(/[\s"'`*_.!?,;:()\[\]{}<>]+/g, '')
+    .toLowerCase();
+  return normalized === 'skip' || normalized === 'skipnotification' || normalized === 'noop';
+}
+
+/**
  * Strip leaked tool-call artifacts (XML tags, function-call syntax) from
  * proactive agent responses.  Models sometimes output these as plain text
  * when the tool isn't registered in the current chat session.
@@ -288,6 +300,19 @@ export interface AgentToolRequest {
   args: any;
 }
 
+const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
+  'proactive_task_list',
+  'proactive_task_update',
+  'proactive_task_create',
+  'proactive_task_delete',
+  'bot_memory_list',
+  'bot_memory_create',
+  'bot_memory_update',
+  'bot_memory_delete',
+  'bot_memory_log',
+  'write_session_summary',
+]);
+
 export function extractAgentToolRequest(msg: any): AgentToolRequest | null {
   if (String(msg?.type || '').toLowerCase() !== 'tool_request') return null;
 
@@ -306,8 +331,16 @@ export async function executeAgentToolRequest(
   request: AgentToolRequest,
   ctx: RouterContext,
   execTool: (toolName: string, args: any, ctx: RouterContext) => Promise<any>,
+  allowedTools?: string[],
 ): Promise<{ type: 'tool_result'; id: string; result: any }> {
   try {
+    if (!isLocalProactiveToolAllowed(request.tool, allowedTools)) {
+      return {
+        type: 'tool_result',
+        id: request.id,
+        result: { ok: false, error: `Tool '${request.tool}' is not allowed for this bot.` },
+      };
+    }
     const result = await execTool(request.tool, request.args, ctx);
     return { type: 'tool_result', id: request.id, result };
   } catch (e: any) {
@@ -320,6 +353,19 @@ export async function executeAgentToolRequest(
 }
 
 const LOCAL_PROACTIVE_MARKER = '[PROACTIVE MODE]';
+
+export function isLocalProactiveToolAllowed(toolName: string, allowedTools?: string[]): boolean {
+  const name = String(toolName || '').trim();
+  if (!name) return false;
+  if (!Array.isArray(allowedTools) || allowedTools.length === 0) return true;
+  if (LOCAL_PROACTIVE_INTERNAL_TOOLS.has(name)) return true;
+
+  const allowed = new Set(allowedTools.map(t => String(t || '').trim()).filter(Boolean));
+  if (allowed.has(name)) return true;
+  if (name === 'run_system_command' && allowed.has('run_command')) return true;
+
+  return Array.from(allowed).some(prefix => prefix.endsWith('_') && name.startsWith(prefix));
+}
 
 export function buildLocalProactivePrompt(payload: any): string {
   const parts: string[] = ['[Proactive Wake-Up] — Read the room, then decide what to do.'];
@@ -432,7 +478,8 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
   if (instructions) lines.push(`\nUser-configured proactive instructions: ${instructions}`);
 
   if (Array.isArray(payload?.config?.allowedTools) && payload.config.allowedTools.length > 0) {
-    lines.push(`Preferred non-proactive tools: ${payload.config.allowedTools.join(', ')}.`);
+    lines.push(`Allowed non-internal tools for this bot: ${payload.config.allowedTools.join(', ')}.`);
+    lines.push('All other non-internal tools are blocked. Your task-board and private kanban tools remain available by default.');
   }
 
   // Inject previous session summaries for pattern awareness

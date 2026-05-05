@@ -9,9 +9,9 @@
  * Output: dist/vm-agent-bundle.js
  *
  * Usage:
- *   node scripts/build-vm-agent.cjs
- *   node scripts/build-vm-agent.cjs --upload   # also upload to GCS
- *   node scripts/build-vm-agent.cjs --no-obfuscate   # skip obfuscation (dev builds)
+ *   node scripts/build.cjs
+ *   node scripts/build.cjs --upload         # also upload to GCS
+ *   node scripts/build.cjs --no-obfuscate   # skip obfuscation (dev builds)
  */
 
 const { execSync } = require('child_process');
@@ -19,7 +19,7 @@ const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const ENTRY = path.join(ROOT, 'src', 'agent', 'vm-agent.ts');
+const ENTRY = path.join(ROOT, 'src', 'vm-agent.ts');
 const OUTFILE = path.join(ROOT, 'dist', 'vm-agent-bundle.js');
 
 const skipObfuscate = process.argv.includes('--no-obfuscate');
@@ -61,15 +61,12 @@ async function uploadToGCS(localPath, bucket, objectName) {
   });
 }
 
-// Ensure dist/ exists
 fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });
 
-// ── Step 1: esbuild bundle + minify ─────────────────────────────────────────
 console.log('[build-vm-agent] Step 1: Bundling with esbuild...');
 
 async function build() {
   try {
-    // Use esbuild JS API — avoids "esbuild: not found" in CI
     const esbuild = require('esbuild');
     await esbuild.build({
       entryPoints: [ENTRY],
@@ -89,11 +86,9 @@ async function build() {
     process.exit(1);
   }
 
-  // ── Step 2: javascript-obfuscator (identifier mangling + string encryption) ─
   if (!skipObfuscate) {
     console.log('[build-vm-agent] Step 2: Obfuscating...');
     try {
-      // Ensure javascript-obfuscator is available
       try {
         require.resolve('javascript-obfuscator');
       } catch {
@@ -105,41 +100,29 @@ async function build() {
       const source = fs.readFileSync(OUTFILE, 'utf8');
 
       const result = JavaScriptObfuscator.obfuscate(source, {
-        // ── Identifier mangling ───────────────────────────────────────────
         identifierNamesGenerator: 'hexadecimal',
-        renameGlobals: false,              // don't break require() / module.exports
-        renameProperties: false,           // safe: don't rename obj.property
-
-        // ── String protection ─────────────────────────────────────────────
-        // NOTE: splitStrings MUST be false — it breaks JSON.parse/stringify
-        // of workflow payloads and structured data. stringArrayThreshold is
-        // lowered to avoid mangling JSON-heavy code paths.
+        renameGlobals: false,
+        renameProperties: false,
         stringArray: true,
-        stringArrayThreshold: 0.5,         // encrypt ~50% of strings (lower = safer for JSON)
-        stringArrayEncoding: ['rc4'],      // RC4 encoded strings
+        stringArrayThreshold: 0.5,
+        stringArrayEncoding: ['rc4'],
         stringArrayWrappersCount: 2,
         stringArrayWrappersChainedCalls: true,
         rotateStringArray: true,
         shuffleStringArray: true,
-        splitStrings: false,               // DISABLED: breaks workflow JSON and structured data
-
-        // ── Control flow ──────────────────────────────────────────────────
+        splitStrings: false,
         controlFlowFlattening: true,
-        controlFlowFlatteningThreshold: 0.3, // lowered to reduce code bloat
+        controlFlowFlatteningThreshold: 0.3,
         deadCodeInjection: true,
         deadCodeInjectionThreshold: 0.15,
-
-        // ── Other protections ─────────────────────────────────────────────
-        transformObjectKeys: false,        // DISABLED: breaks JSON object keys
-        unicodeEscapeSequence: false,      // keep size reasonable
-        selfDefending: false,              // skip: can break in Node.js
-        disableConsoleOutput: false,        // keep console.log for VM diagnostics
-        debugProtection: false,             // not needed for server-side
-
-        // ── Performance ───────────────────────────────────────────────────
+        transformObjectKeys: false,
+        unicodeEscapeSequence: false,
+        selfDefending: false,
+        disableConsoleOutput: false,
+        debugProtection: false,
         compact: true,
         simplify: true,
-        numbersToExpressions: false,       // DISABLED: can break numeric comparisons in JSON
+        numbersToExpressions: false,
         target: 'node',
       });
 
@@ -149,13 +132,11 @@ async function build() {
       console.log(`[build-vm-agent] Obfuscated: ${(finalStats.size / 1024).toFixed(1)} KB`);
     } catch (err) {
       console.error('[build-vm-agent] Obfuscation failed (bundle still minified):', err.message);
-      // Don't exit — the minified bundle is still usable
     }
   } else {
     console.log('[build-vm-agent] Step 2: Skipping obfuscation (--no-obfuscate)');
   }
 
-  // ── Step 3: Upload to GCS ───────────────────────────────────────────────────
   if (process.argv.includes('--upload')) {
     const bucket = process.env.CLOUD_ENGINE_BUCKET || 'stuard-user-data';
     const objectName = 'agent/vm-agent-bundle.js';

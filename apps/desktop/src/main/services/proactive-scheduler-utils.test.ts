@@ -73,6 +73,40 @@ describe('proactive tool request helpers', () => {
       result: { ok: false, error: 'boom' },
     });
   });
+
+  it('blocks non-internal tools outside the bot allow-list', async () => {
+    const execTool = async () => ({ ok: true });
+
+    await expect(
+      executeAgentToolRequest(
+        { id: 'req-3', tool: 'run_command', args: {} },
+        { agentWsUrl: 'ws://127.0.0.1:8765/ws', cloudAiUrl: 'http://127.0.0.1:8082', logFn: () => {} },
+        execTool,
+        ['web_search'],
+      )
+    ).resolves.toEqual({
+      type: 'tool_result',
+      id: 'req-3',
+      result: { ok: false, error: "Tool 'run_command' is not allowed for this bot." },
+    });
+  });
+
+  it('allows bot task-board tools even with a narrow allow-list', async () => {
+    const execTool = async () => ({ ok: true, tasks: [] });
+
+    await expect(
+      executeAgentToolRequest(
+        { id: 'req-4', tool: 'bot_memory_list', args: {} },
+        { agentWsUrl: 'ws://127.0.0.1:8765/ws', cloudAiUrl: 'http://127.0.0.1:8082', logFn: () => {} },
+        execTool,
+        ['web_search'],
+      )
+    ).resolves.toEqual({
+      type: 'tool_result',
+      id: 'req-4',
+      result: { ok: true, tasks: [] },
+    });
+  });
 });
 
 describe('local proactive prompt helpers', () => {
@@ -100,6 +134,7 @@ describe('local proactive prompt helpers', () => {
     });
 
     expect(hidden).toContain('[PROACTIVE MODE]');
+    expect(hidden).toContain('Allowed non-internal tools');
     expect(hidden).toContain('web_search');
     expect(hidden).toContain('DO THE WORK');
     expect(hidden).toContain('Email Helper');

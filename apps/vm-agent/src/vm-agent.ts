@@ -40,6 +40,8 @@ import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
 import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
 import { getVMProactiveScheduler } from './vm-proactive';
+import { getVMBotScheduler, type VMBot } from './vm-bots';
+import { saveSkills as saveVMSkills, loadSkills as loadVMSkills, getStats as getVMSkillsStats, type Skill as VMSkill } from './vm-skills';
 import * as fileManager from './file-manager';
 import { getAgentWs, sendToAgent, sendToAgentStreaming, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
 
@@ -336,6 +338,22 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return handleProactiveTaskUpdate(args);
     case 'proactive_task_delete':
       return handleProactiveTaskDelete(args);
+
+    // ── Bot Commands (multi-bot scheduler) ───────────────────────────
+    case 'bots_status':
+      return handleBotsStatus();
+    case 'bots_sync':
+      return handleBotsSync(args);
+    case 'bots_run':
+      return await handleBotsRun(args);
+    case 'bots_list':
+      return handleBotsList();
+
+    // ── Skills Sync (desktop is source of truth) ─────────────────────
+    case 'skills_sync':
+      return handleSkillsSync(args);
+    case 'skills_status':
+      return handleSkillsStatus();
 
     // ── Tool Execution (proxy to Python agent) ─────────────────────────
     case 'tool_exec':
@@ -1053,6 +1071,44 @@ function handleProactiveTaskUpdate(args: any): any {
 
 function handleProactiveTaskDelete(args: any): any {
   return { ok: getVMProactiveScheduler().deleteTask(args.id) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bot Handlers (multi-bot scheduler)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleBotsStatus(): any {
+  return { ok: true, ...getVMBotScheduler().getStatus() };
+}
+
+function handleBotsSync(args: any): any {
+  const incoming = Array.isArray(args?.bots) ? (args.bots as VMBot[]) : [];
+  const bots = getVMBotScheduler().syncBots(incoming);
+  return { ok: true, count: bots.length };
+}
+
+async function handleBotsRun(args: any): Promise<any> {
+  const id = String(args?.id || '');
+  if (!id) return { ok: false, error: 'missing id' };
+  const result = await getVMBotScheduler().runBotManual(id);
+  return result;
+}
+
+function handleBotsList(): any {
+  return { ok: true, bots: getVMBotScheduler().listBots() };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skills Sync Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleSkillsSync(args: any): any {
+  const incoming = Array.isArray(args?.skills) ? (args.skills as VMSkill[]) : [];
+  return saveVMSkills(incoming);
+}
+
+function handleSkillsStatus(): any {
+  return { ok: true, ...getVMSkillsStats() };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2520,7 +2576,8 @@ export function startAgent(): void {
   const memStore = getVMMemoryStore();
   console.log(`[vm-agent] Memory store: ${memStore.getStats().totalMemories} memories, ${memStore.getStats().totalConversations} conversations`);
 
-  // Initialize proactive scheduler
+  // Initialize proactive scheduler (legacy single-config path; will retire
+  // once all users have migrated to the multi-bot scheduler below).
   const proactive = getVMProactiveScheduler();
   const proactiveConfig = proactive.getConfig();
   if (proactiveConfig.enabled) {
@@ -2529,6 +2586,13 @@ export function startAgent(): void {
   } else {
     console.log('[vm-agent] Proactive scheduler: disabled (enable via proactive_config command)');
   }
+
+  // Initialize multi-bot scheduler — runs every cloud-target bot the desktop
+  // has synced via the `bots_sync` command on its own intervals/cron triggers.
+  const botScheduler = getVMBotScheduler();
+  botScheduler.start();
+  const botStatus = botScheduler.getStatus();
+  console.log(`[vm-agent] Bot scheduler: started (${botStatus.botCount} bot${botStatus.botCount === 1 ? '' : 's'} loaded)`);
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[vm-agent] Listening on http://0.0.0.0:${PORT}`);
@@ -2571,6 +2635,7 @@ export function startAgent(): void {
     deployExecutor.stopAll();
     shellExecutor.destroyAll();
     proactive.destroy();
+    botScheduler.destroy();
     memStore.destroy();
     // Final sync of agent databases before exit
     if (GCS_BUCKET) {
