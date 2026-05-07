@@ -81,10 +81,10 @@ function saveFile(file: BotMemoryFile): void {
 }
 
 function normalizeRecord(raw: any): BotMemoryRecord {
-  const cards = Array.isArray(raw?.cards)
+  const cards: BotKanbanCard[] = Array.isArray(raw?.cards)
     ? raw.cards.map(normalizeCard).filter((card: BotKanbanCard | null): card is BotKanbanCard => !!card)
     : [];
-  const runLog = Array.isArray(raw?.runLog)
+  const runLog: BotRunLogEntry[] = Array.isArray(raw?.runLog)
     ? raw.runLog.map(normalizeRunLog).filter((entry: BotRunLogEntry | null): entry is BotRunLogEntry => !!entry)
     : [];
   return {
