@@ -114,14 +114,32 @@ function prependCompactContextMessage(msg: any, inputMessages: any[], enabledInt
       contextParts.push(`Integrations: ${enabledIntegrations.join(', ')}`);
     }
 
-    const paths: Array<{ path: string; name: string; isDirectory: boolean }> = Array.isArray(incomingContext?.paths)
+    const paths: Array<{ path: string; name: string; isDirectory: boolean; type?: string; metadata?: any }> = Array.isArray(incomingContext?.paths)
       ? incomingContext.paths
       : [];
-    if (paths.length > 0) {
-      const pathText = paths
+    const fileContextPaths = paths.filter((path) => !(path.type === 'bot' || String(path.path || '').startsWith('bot://')));
+    if (fileContextPaths.length > 0) {
+      const pathText = fileContextPaths
         .map((path) => `${path.isDirectory ? '📁' : '📄'} ${path.name}: ${path.path}`)
         .join(', ');
       contextParts.push(`Referenced: ${pathText}`);
+    }
+
+    const mentionedBots = paths.filter((path) => path.type === 'bot' || String(path.path || '').startsWith('bot://'));
+    if (mentionedBots.length > 0) {
+      const botText = mentionedBots
+        .map((path) => {
+          const metadata = path.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+          const id = String(metadata.id || path.path || '').replace(/^bot:\/\//, '');
+          const status = metadata.status ? `, status: ${metadata.status}` : '';
+          const lastRunAt = metadata.lastRunAt ? `, lastRunAt: ${metadata.lastRunAt}` : '';
+          const nextRunAt = metadata.nextRunAt ? `, nextRunAt: ${metadata.nextRunAt}` : '';
+          const vm = metadata.vmDeployedAt ? ', vm: deployed' : '';
+          return `@${path.name} (id: ${id}${status}${lastRunAt}${nextRunAt}${vm})`;
+        })
+        .join(', ');
+      contextParts.push(`Mentioned bots: ${botText}`);
+      contextParts.push('When the user addresses one of these @mentioned bots or asks for bot status/details, use bot_ask or bot_get_status before answering. Use bot_create and bot_deploy when the user asks to create or deploy bots from chat.');
     }
 
     const personaRaw = typeof incomingContext?.persona === 'string' ? incomingContext.persona.trim() : '';

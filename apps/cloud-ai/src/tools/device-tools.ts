@@ -294,7 +294,18 @@ export {
   proactive_task_list,
   proactive_task_update,
   proactive_task_create,
+  proactive_task_delete,
 } from './proactive-task-tools';
+
+// Bot management tools (desktop-backed, available in normal chat)
+export {
+  bot_list,
+  bot_get_status,
+  bot_create,
+  bot_deploy,
+  bot_pause,
+  bot_ask,
+} from './bot-tools';
 
 // Bot's private kanban + run-log tools (desktop-backed, scoped to running bot)
 export {

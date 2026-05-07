@@ -940,6 +940,8 @@ export default function App() {
         path: p.path,
         name: p.name,
         isDirectory: p.isDirectory,
+        type: p.type,
+        metadata: p.metadata,
       }));
     }
 
@@ -1715,6 +1717,9 @@ export default function App() {
                     query={query}
                     setQuery={setQuery}
                     onSend={handleSend}
+                    contextPaths={contextPaths}
+                    onAddContext={handleAddContext}
+                    onRemoveContext={handleRemoveContext}
                     commands={commands}
                     statusText={inputStatusText}
                     connectionStatus={connectionStatus}

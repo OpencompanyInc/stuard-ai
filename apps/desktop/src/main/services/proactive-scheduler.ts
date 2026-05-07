@@ -381,6 +381,8 @@ export async function handleProactiveReply(wakeUpId: string, text: string): Prom
 
     const config = botService.resolveConfig(botId);
     if (!config) return { ok: false, error: 'bot_not_found' };
+    const bot = botService.get(botId);
+    const botName = bot?.name || 'Stuard bot';
     const token = await getAuthToken();
     const modelSelection = buildModelSelection(config);
     let reply: string;
@@ -439,8 +441,8 @@ ${contextToUse}
 Continue the conversation naturally. Be brief, warm, and helpful. This is a follow-up reply, not a new check-in. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.`;
 
     const allowedToolsNote = Array.isArray(config.allowedTools) && config.allowedTools.length > 0
-      ? `\n\nAllowed non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are blocked. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context) remains available regardless.`
-      : '';
+      ? `\n\nAdded non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are not part of this bot. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context) remains available regardless.\nIf asked what tools you have, list only those added tools plus the default toolkit. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`
+      : `\n\nAdded non-internal tools for this bot: (none).\nIf asked what tools you have, list only your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context). Do not answer with a generic Stuard main-chat capability list. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`;
 
     const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.${allowedToolsNote}
 
@@ -455,6 +457,7 @@ ${contextToUse}
       emitStage(replyLogId, 'thinking', 'Cloud VM processing follow-up');
       const result = await executeCloud(replyLogId, {
         botId,
+        botName,
         config: {
           instructions: 'The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.',
           allowedTools: config.allowedTools,
@@ -525,13 +528,20 @@ ${contextToUse}
         ws.on('message', onMessage);
         ws.send(JSON.stringify({
           type: 'chat',
+          agent: 'bot',
           requestId: replyId,
           text,
           reasoningLevel: 'none',
           ...(modelSelection.model ? { model: modelSelection.model } : {}),
           ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
           ...(token ? { auth: { accessToken: token } } : {}),
-          context: { allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [] },
+          context: {
+            mode: 'bot',
+            botId,
+            botName,
+            proactiveBotId: botId,
+            allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [],
+          },
           hiddenContext: localHiddenContext,
         }));
       });
@@ -913,6 +923,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
 
     const chatPayload = {
       type: 'chat',
+      agent: 'bot',
       requestId: logId,
       text: buildLocalProactivePrompt(payload),
       reasoningLevel: 'none',
@@ -921,6 +932,10 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
       ...(token ? { auth: { accessToken: token } } : {}),
       context: {
         ...(payload.context?.screenshot ? { screenshots: [payload.context.screenshot] } : {}),
+        mode: 'bot',
+        botId: typeof payload.botId === 'string' ? payload.botId : '',
+        botName: typeof payload.botName === 'string' ? payload.botName : '',
+        proactiveBotId: typeof payload.botId === 'string' ? payload.botId : '',
         allowedTools: Array.isArray(payload?.config?.allowedTools) ? payload.config.allowedTools : [],
       },
       hiddenContext: buildLocalProactiveHiddenContext(payload),
@@ -992,6 +1007,7 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
 
     const body = JSON.stringify({
       botId: typeof payload.botId === 'string' ? payload.botId : undefined,
+      botName: typeof payload.botName === 'string' ? payload.botName : undefined,
       tasks: payload.tasks || [],
       instructions: payload.config?.instructions || '',
       // The bot's private kanban gets its own field so the cloud can render
@@ -1008,6 +1024,7 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
         micAudio: payload.context?.micAudio || false,
         openWindows: payload.context?.openWindows || [],
         recentSessionSummaries: payload.context?.recentSessionSummaries || [],
+        triggerPayload: payload.context?.triggerPayload || null,
       },
       notificationChannels: payload.config?.notificationChannels || ['app'],
       notificationDigest: payload.context?.notificationDigest || [],
@@ -1296,6 +1313,7 @@ async function executeWakeUp(opts: {
         openWindows,
         recentSessionSummaries,
         notificationDigest,
+        triggerPayload: opts.triggerPayload,
       },
       tasks: activeTasks.map(t => ({
         id: t.id,

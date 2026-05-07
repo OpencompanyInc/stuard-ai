@@ -363,6 +363,8 @@ interface SendMessageOptions {
   modelConfig?: any;
   reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
   silent?: boolean;
+  targetTabId?: string;
+  queueFront?: boolean;
 }
 
 type QueuedMessage = {
@@ -374,6 +376,23 @@ type QueuedMessage = {
   kind?: 'message' | 'steer';
   tabId?: string;
   requestId?: string;
+};
+
+type PendingSendItem = {
+  id: string;
+  text: string;
+  timestamp: number;
+  payload?: any;
+  tabId?: string;
+  requestId?: string;
+  silent?: boolean;
+  attachments?: ChatAttachment[];
+  contextPaths?: ContextPath[];
+};
+
+type OutboundQueueItem = PendingSendItem & {
+  payload: any;
+  tabId: string;
 };
 
 interface ConversationTab {
@@ -553,13 +572,14 @@ export function useAgent(options?: string | UseAgentOptions) {
   const waitingQueuedStartRef = useRef<boolean>(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const queuedMessagesRef = useRef<QueuedMessage[]>([]);
+  const sendMessageRef = useRef<(options: SendMessageOptions) => Promise<void>>(async () => {});
   // Tracks tabs whose current turn already has a partial assistant message committed
   // ahead of a steer interjection. When set, the 'final' handler must commit only the
   // post-steer chunks (t.currentResponse) instead of the server's full-turn finalText
   // to avoid duplicating the pre-steer content.
   const turnHadPartialCommitRef = useRef<Map<string, boolean>>(new Map());
-  const pendingSendRef = useRef<Array<{ id: string; text: string; timestamp: number; payload?: any; tabId?: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
-  const outboundQueueRef = useRef<Array<{ id: string; text: string; timestamp: number; payload: any; tabId: string; silent?: boolean; attachments?: ChatAttachment[]; contextPaths?: ContextPath[] }>>([]);
+  const pendingSendRef = useRef<PendingSendItem[]>([]);
+  const outboundQueueRef = useRef<OutboundQueueItem[]>([]);
   const runningTabsRef = useRef<Set<string>>(new Set());
   const reasoningStartTimeRef = useRef<number | null>(null); // Track when reasoning started
   const lastStreamActivityRef = useRef<number>(0); // Watchdog: last time we received streaming data
@@ -860,6 +880,17 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Generate a unique requestId to track this request/response pair
       const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       requestIdToTabRef.current.set(requestId, targetTabId);
+      next.requestId = requestId;
+      pendingSendRef.current = pendingSendRef.current.map((item) =>
+        item.id === next.id ? { ...item, requestId } : item
+      );
+      const nextQueuedMessages = queuedMessagesRef.current.map((item) =>
+        item.id === next.id ? { ...item, requestId } : item
+      );
+      queuedMessagesRef.current = nextQueuedMessages;
+      queueDepthRef.current = nextQueuedMessages.length;
+      setQueuedMessages(nextQueuedMessages);
+      setQueueDepth(nextQueuedMessages.length);
 
       // Set tracking refs
       streamingTabIdRef.current = targetTabId;
@@ -1288,58 +1319,54 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
             } else if (evt.event === 'start') {
               streamingConversationIdRef.current = conversationIdRef.current;
+              const targetTabId = getTargetTabId();
+              const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
               // Reset file tracking for new turn (checkpoint created lazily by backend on first file modification)
               modifiedFilesRef.current = new Set();
               turnCheckpointIdRef.current = null;
               // New turn — clear any partial-commit flag from a previous turn on this tab.
-              turnHadPartialCommitRef.current.delete(getTargetTabId());
-              // Promote appropriate user message into chat when processing actually starts
-              if (waitingQueuedStartRef.current && queueDepthRef.current > 0) {
-                const firstIndex = queuedMessagesRef.current.findIndex((item) => item.kind !== 'steer' && item.tabId === getTargetTabId());
-                const first = firstIndex >= 0 ? queuedMessagesRef.current[firstIndex] : undefined;
-                if (first) {
-                  updateStreamingTab(t => ({
-                    ...t,
-                    messages: [...t.messages, {
-                      id: first.id,
-                      role: 'user',
-                      text: first.text,
-                      timestamp: first.timestamp,
-                      attachments: first.attachments,
-                      contextPaths: first.contextPaths,
-                    }],
-                  }));
-                  const promotedId = first.id;
-                  pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== promotedId);
-                  syncQueuedMessages((prev) => {
-                    const nextList = prev.filter((item) => item.id !== promotedId);
-                    return nextList;
+              turnHadPartialCommitRef.current.delete(targetTabId);
+
+              // Promote only the pending message that belongs to this request.
+              // A stopped turn can leave an older pending item behind; using FIFO
+              // here lets a later tab accidentally render/send that stale message.
+              const queuedIndex = queuedMessagesRef.current.findIndex((item) =>
+                item.kind !== 'steer'
+                && (requestId ? item.requestId === requestId : item.tabId === targetTabId)
+              );
+              const queuedMatch = queuedIndex >= 0 ? queuedMessagesRef.current[queuedIndex] : undefined;
+              const pendingIndex = pendingSendRef.current.findIndex((item) =>
+                requestId ? item.requestId === requestId : item.tabId === targetTabId
+              );
+              const pendingMatch = pendingIndex >= 0 ? pendingSendRef.current[pendingIndex] : undefined;
+              const messageToPromote = queuedMatch || pendingMatch;
+
+              if (messageToPromote) {
+                pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== messageToPromote.id);
+                if (queuedMatch) {
+                  syncQueuedMessages((prev) => prev.filter((item) => item.id !== queuedMatch.id));
+                }
+                const promoteSilently = pendingMatch?.id === messageToPromote.id && pendingMatch.silent === true;
+                if (!promoteSilently) {
+                  updateStreamingTab(t => {
+                    // Avoid duplicates if message was added optimistically.
+                    if (t.messages.some(m => m.id === messageToPromote.id)) return t;
+                    return {
+                      ...t,
+                      messages: [...t.messages, {
+                        id: messageToPromote.id,
+                        role: 'user',
+                        text: messageToPromote.text,
+                        timestamp: messageToPromote.timestamp,
+                        attachments: messageToPromote.attachments,
+                        contextPaths: messageToPromote.contextPaths,
+                      }],
+                    };
                   });
                 }
-                waitingQueuedStartRef.current = false;
-              } else {
-                const p = pendingSendRef.current.shift();
-                if (p) {
-                  if (!p.silent) {
-                    updateStreamingTab(t => {
-                      // Avoid duplicates if message was added optimistically
-                      if (t.messages.some(m => m.id === p.id)) return t;
-                      return {
-                        ...t,
-                        messages: [...t.messages, {
-                          id: p.id,
-                          role: 'user',
-                          text: p.text,
-                          timestamp: p.timestamp,
-                          attachments: p.attachments,
-                          contextPaths: p.contextPaths,
-                        }],
-                      };
-                    });
-                  }
-                }
               }
-              setTabLastError(getTargetTabId(), null);
+              waitingQueuedStartRef.current = false;
+              setTabLastError(targetTabId, null);
             } else if (evt.event === 'ack') {
               // Server acknowledged receipt - show immediate feedback
               setStreamingAI((prev) => {
@@ -1870,6 +1897,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               }));
               setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
             } else if (evt.event === 'interjection_applied') {
+              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId);
               setStreamingAI((prev) => ({
                 ...prev,
                 phase: prev.phase === 'idle' ? 'responding' : prev.phase,
@@ -1894,11 +1922,15 @@ export function useAgent(options?: string | UseAgentOptions) {
             const pos = Number(msg.position || 0);
             const queuedText = msg.text || '';
             const queueId = msg.id || `q-${Date.now()}`;
-            const peek = pendingSendRef.current[0];
-            if (peek?.silent) {
+            const queuedRequestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
+            const targetTabId = getTargetTabId();
+            const pendingIndex = pendingSendRef.current.findIndex((item) =>
+              queuedRequestId ? item.requestId === queuedRequestId : item.tabId === targetTabId
+            );
+            const p = pendingIndex >= 0 ? pendingSendRef.current.splice(pendingIndex, 1)[0] : undefined;
+            if (p?.silent) {
               return;
             }
-            const p = pendingSendRef.current.shift();
             waitingQueuedStartRef.current = true;
             const visibleId = p?.id || queueId;
             const fullText = (p?.text && p.text.trim()) ? p.text : queuedText;
@@ -1913,7 +1945,8 @@ export function useAgent(options?: string | UseAgentOptions) {
                 attachments: p?.attachments,
                 contextPaths: p?.contextPaths,
                 kind: 'message' as const,
-                tabId: p?.tabId,
+                tabId: p?.tabId || targetTabId,
+                requestId: queuedRequestId,
               }];
               return nextList;
             });
@@ -2001,15 +2034,48 @@ export function useAgent(options?: string | UseAgentOptions) {
             refreshPendingMemories();
 
             // Clean up request tracking and mark tab as no longer running
+            const completedRequestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
             }
+            pendingSendRef.current = pendingSendRef.current.filter((item) =>
+              completedRequestId ? item.requestId !== completedRequestId : item.tabId !== completedTabId
+            );
+            syncQueuedMessages((prev) => prev.filter((item) =>
+              item.kind === 'steer'
+                || (completedRequestId ? item.requestId !== completedRequestId : item.tabId !== completedTabId)
+            ));
             // Also remove from legacy FIFO queue if present
             const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
             if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
             runningTabsRef.current.delete(completedTabId);
             turnHadPartialCommitRef.current.delete(completedTabId);
-            tryDequeueAndSend();
+            const fallbackSteers = queuedMessagesRef.current.filter((item) =>
+              item.kind === 'steer'
+              && item.tabId === completedTabId
+              && (completedRequestId ? item.requestId === completedRequestId : true)
+            );
+            if (!isAborted && fallbackSteers.length > 0) {
+              const fallbackIds = new Set(fallbackSteers.map((item) => item.id));
+              const fallbackText = fallbackSteers
+                .map((item) => item.text.trim())
+                .filter(Boolean)
+                .join('\n\n');
+              syncQueuedMessages((prev) => prev.filter((item) => !fallbackIds.has(item.id)));
+              if (fallbackText) {
+                setTimeout(() => {
+                  void sendMessageRef.current({
+                    text: fallbackText,
+                    targetTabId: completedTabId,
+                    queueFront: true,
+                  });
+                }, 0);
+              } else {
+                tryDequeueAndSend();
+              }
+            } else {
+              tryDequeueAndSend();
+            }
             setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {
             console.log('[agent] Stream stopped by server:', msg.success);
@@ -2580,7 +2646,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         attachments: normalizeChatAttachments(options.attachments || []),
       };
 
-      const targetTabId = activeTabId;
+      const targetTabId = options.targetTabId || activeTabIdRef.current;
       const isTabRunning = runningTabsRef.current.has(targetTabId);
 
       // Get active tab history BEFORE adding the new message
@@ -2676,8 +2742,13 @@ export function useAgent(options?: string | UseAgentOptions) {
         attachments: userMsg.attachments,
         contextPaths: userMsg.contextPaths,
       };
-      outboundQueueRef.current.push(pendingItem);
-      pendingSendRef.current.push(pendingItem);
+      if (options.queueFront) {
+        outboundQueueRef.current.unshift(pendingItem);
+        pendingSendRef.current.unshift(pendingItem);
+      } else {
+        outboundQueueRef.current.push(pendingItem);
+        pendingSendRef.current.push(pendingItem);
+      }
 
       // If THIS TAB is currently running, mark status as queued for same-tab queuing
       if (isTabRunning) {
@@ -2702,6 +2773,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     },
     [messages, activeTabId, tryDequeueAndSend, connect, syncQueuedMessages]
   );
+  sendMessageRef.current = sendMessage;
 
   const newChat = useCallback(() => {
     addTab();

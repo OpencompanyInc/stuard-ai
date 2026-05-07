@@ -2,6 +2,7 @@
 import { WebSocket } from 'ws';
 
 import { getSkillsFromContext } from '../../tools/skill-tools';
+import { getBotAgent } from '../../agents/bot-agent';
 import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
@@ -122,7 +123,7 @@ function isToolCallParseError(error: unknown): error is { error?: unknown; input
   );
 }
 
-type AgentType = 'stuard' | 'workflow' | 'skill';
+type AgentType = 'stuard' | 'workflow' | 'skill' | 'bot';
 
 interface AgentMessage {
   text: string;
@@ -134,7 +135,7 @@ interface AgentMessage {
   integrations?: string[];
   history?: any[]; // Context history
   context?: {
-    paths?: Array<{ path: string; name: string; isDirectory: boolean }>;
+    paths?: Array<{ path: string; name: string; isDirectory: boolean; type?: string; metadata?: any }>;
     tone?: string;
     persona?: string;
     [key: string]: any;
@@ -302,6 +303,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       ? 'Workflow Architect'
       : agentType === 'skill'
         ? 'Skill Agent'
+        : agentType === 'bot'
+          ? 'Bot Agent'
         : 'Chat';
     const billingTracker = new LiveUsageBillingTracker({
       userId,
@@ -350,16 +353,38 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         ? getWorkflowAgent(chosenModelId)
         : agentType === 'skill'
           ? getSkillAgent(chosenModelId)
-          : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills);
+          : agentType === 'bot'
+            ? getBotAgent({
+                botId: String(context?.proactiveBotId || context?.botId || '').trim() || undefined,
+                botName: String(context?.botName || '').trim() || undefined,
+                model: model as ModelChoice,
+                modelId: chosenModelId,
+                allowedTools: Array.isArray(context?.allowedTools) ? context.allowedTools : [],
+              })
+            : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills);
       console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
 
       // Build context prefix for paths
       let contextPrefix = '';
       if (context.paths && context.paths.length > 0) {
-        const pathsList = context.paths.map(p =>
-          `- ${p.isDirectory ? '[DIR]' : '[FILE]'} ${p.path}`
-        ).join('\n');
-        contextPrefix = `[Context: The user has provided these local file/folder paths for reference]\n${pathsList}\n\n`;
+        const botRefs = context.paths.filter(p => p.type === 'bot' || String(p.path || '').startsWith('bot://'));
+        const fileRefs = context.paths.filter(p => !(p.type === 'bot' || String(p.path || '').startsWith('bot://')));
+        const parts: string[] = [];
+        if (fileRefs.length > 0) {
+          const pathsList = fileRefs.map(p =>
+            `- ${p.isDirectory ? '[DIR]' : '[FILE]'} ${p.path}`
+          ).join('\n');
+          parts.push(`User added this as context:\n${pathsList}`);
+        }
+        if (botRefs.length > 0) {
+          const botList = botRefs.map(p => {
+            const metadata = p.metadata && typeof p.metadata === 'object' ? p.metadata : {};
+            const id = String(metadata.id || p.path || '').replace(/^bot:\/\//, '');
+            return `- [BOT] @${p.name} id=${id}${metadata.status ? ` status=${metadata.status}` : ''}${metadata.vmDeployedAt ? ' vm=deployed' : ''}`;
+          }).join('\n');
+          parts.push(`User added this as context (bots — use bot_ask or bot_get_status before answering status/detail questions):\n${botList}`);
+        }
+        contextPrefix = parts.length > 0 ? `${parts.join('\n\n')}\n\n` : '';
       }
 
       // Hidden context (e.g. SMS formatting instructions) — prepend as system-level guidance

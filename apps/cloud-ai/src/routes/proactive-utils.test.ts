@@ -54,9 +54,9 @@ describe('buildProactiveMessageContent', () => {
 });
 
 describe('filterProactiveTools', () => {
-  it('preserves all tools when no allow-list is provided', () => {
+  it('keeps only internal bot tools when no extra tools are added', () => {
     const tools = { proactive_task_list: 1, web_search: 2, execute_tool: 3 };
-    expect(filterProactiveTools(tools, [])).toEqual(tools);
+    expect(filterProactiveTools(tools, [])).toEqual({ proactive_task_list: 1, execute_tool: 3 });
   });
 
   it('always keeps internal bot tools (task tools, private kanban, and meta-tools) while filtering non-core', () => {
@@ -151,7 +151,7 @@ describe('filterProactiveTools', () => {
     expect(result).not.toHaveProperty('some_other_tool');
   });
 
-  it('expands related Google tool families so proactive agents do not lose sibling tools', () => {
+  it('keeps provider tools exact unless a prefix is explicitly allowed', () => {
     const tools = {
       proactive_task_list: 1,
       search_tools: 2,
@@ -165,12 +165,12 @@ describe('filterProactiveTools', () => {
     const result = filterProactiveTools(tools, ['gmail_list_recent_brief', 'tasks_list', 'search_tools']);
     expect(result).toHaveProperty('gmail_list_recent_brief');
     expect(result).toHaveProperty('tasks_list');
-    expect(result).toHaveProperty('calendar_list_events');
-    expect(result).toHaveProperty('docs_get_document');
+    expect(result).not.toHaveProperty('calendar_list_events');
+    expect(result).not.toHaveProperty('docs_get_document');
     expect(result).not.toHaveProperty('unrelated_tool');
   });
 
-  it('expands X tool family when one X tool is allowed', () => {
+  it('does not expand one X tool into the whole X family', () => {
     const tools = {
       proactive_task_list: 1,
       search_tools: 2,
@@ -181,26 +181,37 @@ describe('filterProactiveTools', () => {
 
     const result = filterProactiveTools(tools, ['x_post_tweet']);
     expect(result).toHaveProperty('x_post_tweet');
+    expect(result).not.toHaveProperty('x_search_tweets');
+    expect(result).not.toHaveProperty('unrelated_tool');
+  });
+
+  it('allows explicit provider prefixes when configured', () => {
+    const tools = {
+      proactive_task_list: 1,
+      search_tools: 2,
+      x_post_tweet: 3,
+      x_search_tweets: 4,
+      unrelated_tool: 5,
+    };
+
+    const result = filterProactiveTools(tools, ['x_']);
+    expect(result).toHaveProperty('x_post_tweet');
     expect(result).toHaveProperty('x_search_tweets');
     expect(result).not.toHaveProperty('unrelated_tool');
   });
 });
 
 describe('expandProactiveAllowedToolNames', () => {
-  it('completes the meta-tool trio and expands provider families', () => {
+  it('completes the meta-tool trio without expanding provider families', () => {
     const result = expandProactiveAllowedToolNames(['gmail_list_recent_brief', 'search_tools']);
 
     expect(result).toContain('search_tools');
     expect(result).toContain('get_tool_schema');
     expect(result).toContain('execute_tool');
-    expect(result).toContain('gmail_');
-    expect(result).toContain('calendar_');
-    expect(result).toContain('tasks_');
-  });
-
-  it('expands X provider prefixes', () => {
-    const result = expandProactiveAllowedToolNames(['x_post_tweet']);
-    expect(result).toContain('x_');
+    expect(result).toContain('gmail_list_recent_brief');
+    expect(result).not.toContain('gmail_');
+    expect(result).not.toContain('calendar_');
+    expect(result).not.toContain('tasks_');
   });
 
   it('drops legacy headed browser_* tools while keeping browser_use_*', () => {

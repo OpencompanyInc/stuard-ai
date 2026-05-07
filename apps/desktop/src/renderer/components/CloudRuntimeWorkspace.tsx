@@ -1,7 +1,8 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import {
   Activity,
+  Bot as BotIcon,
   CreditCard,
   FolderOpen,
   Link2,
@@ -15,6 +16,7 @@ import {
   Trash2,
   Sparkles,
   X,
+  Zap,
   Loader2,
   ChevronDown,
   ChevronUp,
@@ -29,7 +31,13 @@ export type CloudRuntimeView =
   | 'proactive'
   | 'deploys'
   | 'integrations'
-  | 'permissions';
+  | 'permissions'
+  | 'bots'
+  | 'automations';
+
+export type CloudRuntimeMode = 'normal' | 'developer';
+
+const MODE_STORAGE_KEY = 'cloud:runtime-mode';
 
 export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
 
@@ -52,12 +60,21 @@ interface CloudRuntimeWorkspaceProps {
   previewUrlBuilder?: PreviewUrlBuilder | null;
 }
 
-const VIEW_ITEMS: Array<{
+type ViewItem = {
   id: CloudRuntimeView | 'files' | 'terminal';
   icon: any;
   label: string;
   toggle?: 'explorer' | 'terminal';
-}> = [
+};
+
+const NORMAL_VIEW_ITEMS: ViewItem[] = [
+  { id: 'chat', icon: MessageCircle, label: 'Chat' },
+  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'files', icon: FolderOpen, label: 'Files' },
+  { id: 'automations', icon: Zap, label: 'Automations' },
+];
+
+const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'files', icon: FolderOpen, label: 'Files', toggle: 'explorer' },
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
@@ -102,11 +119,37 @@ function CloudRuntimeWorkspaceInner({
   terminal,
   views,
 }: CloudRuntimeWorkspaceProps) {
+  const [mode, setModeState] = useState<CloudRuntimeMode>(() => {
+    if (typeof window === 'undefined') return 'normal';
+    const stored = window.localStorage?.getItem(MODE_STORAGE_KEY);
+    return stored === 'developer' ? 'developer' : 'normal';
+  });
+  const setMode = useCallback((next: CloudRuntimeMode) => {
+    setModeState(next);
+    try { window.localStorage?.setItem(MODE_STORAGE_KEY, next); } catch { /* noop */ }
+  }, []);
+
   const [activeView, setActiveView] = useState<CloudRuntimeView>('chat');
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
   const [viewerWidth, setViewerWidth] = useState(DEFAULT_VIEWER_W);
+
+  const items = mode === 'normal' ? NORMAL_VIEW_ITEMS : DEVELOPER_VIEW_ITEMS;
+
+  // If the active view doesn't exist in the current mode's nav, snap to chat.
+  useEffect(() => {
+    const allowed = items.filter(i => !i.toggle).map(i => i.id);
+    if (!allowed.includes(activeView)) setActiveView('chat');
+  }, [items, activeView]);
+
+  // Force technical panels closed when switching to Normal mode.
+  useEffect(() => {
+    if (mode === 'normal') {
+      setExplorerOpen(false);
+      setTerminalOpen(false);
+    }
+  }, [mode]);
 
   const fileViewer = useFileViewer();
   const viewerVisible = fileViewer.isOpen && fileViewer.tabs.length > 0;
@@ -128,8 +171,8 @@ function CloudRuntimeWorkspaceInner({
   }, [viewerWidth]);
 
   const activeLabel = useMemo(
-    () => VIEW_ITEMS.find(item => item.id === activeView)?.label ?? 'Chat',
-    [activeView],
+    () => items.find(item => item.id === activeView)?.label ?? 'Chat',
+    [items, activeView],
   );
 
   const planLabel = String(engine?.tier || 'cloud').replace(/^\w/, (c: string) => c.toUpperCase());
@@ -159,7 +202,7 @@ function CloudRuntimeWorkspaceInner({
       {/* Activity Bar */}
       <aside className="w-[48px] shrink-0 flex flex-col items-center py-2 gap-0.5 border-r border-theme bg-theme-card/20">
         <nav className="flex flex-col items-center gap-0.5 w-full px-1.5">
-          {VIEW_ITEMS.map(item => {
+          {items.map(item => {
             const Icon = item.icon;
             const isActive =
               item.toggle === 'explorer'
@@ -206,8 +249,8 @@ function CloudRuntimeWorkspaceInner({
         </div>
       </aside>
 
-      {/* Explorer panel */}
-      {explorerOpen && (
+      {/* Explorer panel — developer mode only (Normal mode renders Files in the main pane) */}
+      {mode === 'developer' && explorerOpen && (
         <section className="w-[240px] shrink-0 border-r border-theme overflow-hidden bg-theme-card/10">
           {explorer}
         </section>
@@ -221,39 +264,75 @@ function CloudRuntimeWorkspaceInner({
             <span className="text-theme-muted truncate">{engine?.instance_name || 'Cloud Engine'}</span>
             <span className="text-theme-muted/30">/</span>
             <span className="text-theme-fg font-medium">{activeLabel}</span>
-            <span className="text-theme-muted/30 hidden sm:inline">·</span>
-            <span className="text-theme-muted hidden sm:inline">{planLabel} · {machineLabel}</span>
+            {mode === 'developer' && (
+              <>
+                <span className="text-theme-muted/30 hidden sm:inline">·</span>
+                <span className="text-theme-muted hidden sm:inline">{planLabel} · {machineLabel}</span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-theme-muted mr-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Running
-            </div>
-            {/* Sync status badge */}
-            {syncState === 'synced' && (
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-green-500 mr-1" title="Memories synced">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                Synced
-              </div>
-            )}
-            {syncState === 'out_of_sync' && (
+            {/* Mode toggle — text-button pill */}
+            <div className="mr-2 inline-flex items-center rounded-full bg-theme-hover/40 p-0.5 text-[10px] font-bold">
               <button
                 type="button"
-                onClick={onSync}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-amber-500 hover:bg-amber-500/10 transition-colors mr-1"
-                title="Memories out of sync — click to sync"
+                onClick={() => setMode('normal')}
+                className={clsx(
+                  'px-2.5 py-1 rounded-full transition-colors',
+                  mode === 'normal'
+                    ? 'bg-theme-card text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg',
+                )}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                Out of Sync
+                Normal
               </button>
+              <button
+                type="button"
+                onClick={() => setMode('developer')}
+                className={clsx(
+                  'px-2.5 py-1 rounded-full transition-colors',
+                  mode === 'developer'
+                    ? 'bg-theme-card text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg',
+                )}
+              >
+                Developer
+              </button>
+            </div>
+
+            {mode === 'developer' && (
+              <>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-theme-muted mr-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Running
+                </div>
+                {syncState === 'synced' && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-green-500 mr-1" title="Memories synced">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Synced
+                  </div>
+                )}
+                {syncState === 'out_of_sync' && (
+                  <button
+                    type="button"
+                    onClick={onSync}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-amber-500 hover:bg-amber-500/10 transition-colors mr-1"
+                    title="Memories out of sync — click to sync"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Out of Sync
+                  </button>
+                )}
+                {syncState === 'syncing' && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-blue-400 mr-1" title="Syncing memories...">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Syncing
+                  </div>
+                )}
+              </>
             )}
-            {syncState === 'syncing' && (
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] text-blue-400 mr-1" title="Syncing memories...">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Syncing
-              </div>
-            )}
+
             <button
               type="button"
               className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
@@ -266,28 +345,30 @@ function CloudRuntimeWorkspaceInner({
               type="button"
               className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
               onClick={onPause}
-              title="Pause"
+              title={mode === 'normal' ? 'Pause your cloud' : 'Pause'}
             >
               {pauseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
             </button>
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-              onClick={onDelete}
-              title="Delete"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            {mode === 'developer' && (
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                onClick={onDelete}
+                title="Delete"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </header>
 
         {/* Active view */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {views[activeView]}
+          {(activeView as string) === 'files' ? explorer : views[activeView]}
         </div>
 
-        {/* Terminal dock (anchored under chat/main area) */}
-        {terminalOpen && (
+        {/* Terminal dock (anchored under chat/main area) — developer mode only */}
+        {mode === 'developer' && terminalOpen && (
           <div className="shrink-0 flex flex-col border-t border-theme" style={{ height: terminalHeight }}>
             {/* Resize handle */}
             <div

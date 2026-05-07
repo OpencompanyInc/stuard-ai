@@ -16,13 +16,11 @@ import { requireAuth } from '../auth/http';
 import { PROACTIVE_SYSTEM_PROMPT } from '../agents/stuard/prompts';
 import { getModel } from '../agents/stuard/models';
 import { search_tools, get_tool_schema, execute_tool, initToolRegistry } from '../tools/meta-tools';
-import { web_search } from '../tools/perplexity-tools';
-import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
 import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
-import { buildProactiveMessageContent, expandProactiveAllowedToolNames, filterProactiveTools, generateWithToolRecovery, getProactiveCoreToolNames, isProactiveToolAllowed } from './proactive-utils';
+import { buildProactiveMessageContent, expandProactiveAllowedToolNames, generateWithToolRecovery, isProactiveToolAllowed } from './proactive-utils';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -84,6 +82,7 @@ function normalizeBotWakeupBody(raw: any): Record<string, any> {
     : (Array.isArray(raw?.notificationChannels) ? raw.notificationChannels : ['app']);
   return {
     botId: typeof raw?.botId === 'string' ? raw.botId : undefined,
+    botName: typeof raw?.botName === 'string' ? raw.botName : undefined,
     tasks: [],
     instructions: typeof cfg.instructions === 'string' ? cfg.instructions : (raw?.instructions || ''),
     kanbanContext: typeof raw?.kanbanContext === 'string' ? raw.kanbanContext : undefined,
@@ -91,7 +90,10 @@ function normalizeBotWakeupBody(raw: any): Record<string, any> {
     allowedTools: Array.isArray(cfg.allowedTools) ? cfg.allowedTools : (Array.isArray(raw?.allowedTools) ? raw.allowedTools : []),
     modelMode: typeof cfg.modelMode === 'string' ? cfg.modelMode : (raw?.modelMode || 'balanced'),
     modelId: cfg.modelId || raw?.modelId,
-    context: (raw && typeof raw.context === 'object' && raw.context) || {},
+    context: {
+      ...((raw && typeof raw.context === 'object' && raw.context) || {}),
+      ...((raw?.triggerPayload || raw?.context?.triggerPayload) ? { triggerPayload: raw?.triggerPayload || raw?.context?.triggerPayload } : {}),
+    },
     memoryContext: typeof raw?.memoryContext === 'string' ? raw.memoryContext : undefined,
     skills: Array.isArray(raw?.skills) ? raw.skills : [],
     notificationChannels: channels,
@@ -240,6 +242,26 @@ function wrapBotScopedTool(name: string, tool: any, scope: { botId?: string; use
       return await tool.execute(scopedInput, runCtx);
     },
   });
+}
+
+function formatBotAllowedToolsSection(allowedTools: unknown): string {
+  const names = Array.isArray(allowedTools)
+    ? Array.from(new Set(
+        allowedTools
+          .map((tool) => String(tool || '').trim())
+          .filter(Boolean),
+      ))
+    : [];
+
+  const allowedText = names.length > 0 ? names.join(', ') : '(none added)';
+  return `## BOT TOOL SCOPE
+Added non-internal tools for this bot: ${allowedText}.
+
+${names.length > 0 ? 'All other non-internal tools are not part of this bot.' : 'This bot has no added non-internal tools.'} Do not mention or imply access to tools outside this bot. If the user asks what tools you have, list only:
+- the added non-internal tools above, and
+- your internal bot tools: proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool, get_skill_info.
+
+Kanban truth rule: if the user asks you to add, update, move, or delete a card, call the matching bot_memory_* tool and check that it returned ok=true before saying it was done.`;
 }
 
 // ─── In-Memory Kanban Tools Factory ──────────────────────────────────────────
@@ -463,6 +485,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     const body = path === '/v1/bot/wakeup' ? normalizeBotWakeupBody(rawBody) : rawBody;
     const {
       botId = '',
+      botName = '',
       tasks: incomingTasks = [],
       instructions = '',
       kanbanContext = '',
@@ -573,15 +596,15 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       },
     });
 
-    // Build tool set — every bot gets these by default:
+    // Build this bot's own tool set. It starts with bot-internal tools only;
+    // configured tools are added below by exact name or explicit prefix.
     //   - kanban.tools = the user's task board (proactive_task_*)
     //   - bot_memory_* = the bot's private kanban (working memory across runs)
     //   - search_past_conversations / get_conversation_context = recall memory
     //   - choose_notification_channel + write_session_summary = bookkeeping
-    //   - search_tools / get_tool_schema / execute_tool = lazy-load the rest of the surface
-    // Additional tools come from the bot's per-bot allowedTools setting; the
-    // loop below pulls them out of the global registry and wraps them.
-    const availableTools: Record<string, any> = {
+    //   - search_tools / get_tool_schema / execute_tool = lazy-load only this
+    //     bot's added tools, not Stuard's global tool surface.
+    const tools: Record<string, any> = {
       ...kanban.tools,
       bot_memory_list: wrapBotScopedTool('bot_memory_list', bot_memory_list, { botId, userId: auth.userId }),
       bot_memory_create: wrapBotScopedTool('bot_memory_create', bot_memory_create, { botId, userId: auth.userId }),
@@ -590,8 +613,6 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       bot_memory_log: wrapBotScopedTool('bot_memory_log', bot_memory_log, { botId, userId: auth.userId }),
       choose_notification_channel: channelSelector.tool,
       write_session_summary: sessionSummaryTool.tool,
-      web_search,
-      deploy_headless_agent: deployHeadlessAgent,
       search_tools: proactiveSearchTools,
       get_tool_schema: proactiveGetToolSchema,
       execute_tool: proactiveExecuteTool,
@@ -603,34 +624,29 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     try {
       initToolRegistry();
       const registry = getToolRegistry();
-      const directlyAllowedToolNames = Array.from(new Set([
-        ...getProactiveCoreToolNames(),
-        ...expandedAllowedTools,
-      ]));
-      for (const name of directlyAllowedToolNames) {
+      for (const name of expandedAllowedTools) {
         if (name.endsWith('_')) {
           for (const [toolName, tool] of registry.entries()) {
             if (
-              !availableTools[toolName] &&
+              !tools[toolName] &&
               isProactiveToolAllowed(toolName, allowedTools) &&
               toolName.startsWith(name) &&
               tool &&
               typeof (tool as any).execute === 'function'
             ) {
-              availableTools[toolName] = wrapProactiveTool(toolName, tool);
+              tools[toolName] = wrapProactiveTool(toolName, tool);
             }
           }
           continue;
         }
         const tool = registry.get(name);
-        if (!availableTools[name] && isProactiveToolAllowed(name, allowedTools) && tool && typeof (tool as any).execute === 'function') {
-          availableTools[name] = wrapProactiveTool(name, tool);
+        if (!tools[name] && isProactiveToolAllowed(name, allowedTools) && tool && typeof (tool as any).execute === 'function') {
+          tools[name] = wrapProactiveTool(name, tool);
         }
       }
     } catch (e: any) {
       console.warn('[proactive] Failed to augment allowed tools from registry:', e?.message || e);
     }
-    const tools = filterProactiveTools(availableTools, expandedAllowedTools);
 
     // Build system prompt with user instructions and skill awareness
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
@@ -652,6 +668,8 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 - **choose_notification_channel / write_session_summary** — pick how to reach the user, and journal the run.
 
 Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Bots → Kanban tab.`;
+
+    systemPrompt += `\n\n${formatBotAllowedToolsSection(allowedTools)}`;
 
     // Render the bot's actual kanban (cards + recent run log) as its own
     // section. This is the *content* — the section above is the *contract*.
@@ -783,10 +801,12 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
           ? modelId.trim()
           : getDefaultModelForCategory(resolvedModelChoice as any);
       const model = getModel(resolvedModelChoice, resolvedModelId);
+      const safeBotId = String(botId || 'default').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 80) || 'default';
+      const displayBotName = String(botName || safeBotId).trim().slice(0, 80);
 
       const agent = new Agent({
-        id: 'stuard-proactive',
-        name: 'stuard-proactive',
+        id: `stuard-bot-${safeBotId}`,
+        name: displayBotName ? `Stuard Bot: ${displayBotName}` : `Stuard Bot ${safeBotId}`,
         instructions: [{ role: 'system', content: systemPrompt }] as any,
         model,
         tools,
@@ -811,6 +831,7 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
         systemAudio: systemAudioData,
         micAudio: micAudioData,
         notificationDigest: Array.isArray(notificationDigest) ? notificationDigest : [],
+        triggerPayload: context.triggerPayload,
       });
 
       try {

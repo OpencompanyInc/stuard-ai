@@ -1426,13 +1426,13 @@ export function ProactiveView() {
                       }
                     />
                     <ConfigRow
-                      label="Permission Level"
+                      label="Extra Tools"
                       control={
                         <Select<'unrestricted' | 'restricted'>
                           value={config.allowedTools.length === 0 ? 'unrestricted' : 'restricted'}
                           options={[
-                            { value: 'unrestricted', label: 'Unrestricted' },
-                            { value: 'restricted', label: 'Restricted' },
+                            { value: 'unrestricted', label: 'Default tools only' },
+                            { value: 'restricted', label: 'Add specific tools' },
                           ]}
                           onChange={value => {
                             if (value === 'unrestricted') updateConfig({ allowedTools: [] });
@@ -1443,7 +1443,7 @@ export function ProactiveView() {
                     {config.allowedTools.length > 0 && (
                       <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card p-4 shadow-sm">
                         <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">
-                          Allowed tools
+                          Added tools
                         </div>
                         <ToolSelector
                           selected={config.allowedTools}

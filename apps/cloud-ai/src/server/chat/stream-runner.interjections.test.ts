@@ -218,4 +218,64 @@ describe('runPreparedChatStream interjections', () => {
       'req-steer',
     );
   });
+
+  it('defers a queued interjection when the stream finishes before another step', async () => {
+    const ws = { send: vi.fn() } as any;
+    const history: any[] = [{ role: 'user', content: 'Original request' }];
+
+    const agent = {
+      stream: vi.fn(async (_messages: any[], options: any) => {
+        const { enqueueInterjection } = await import('../socket/state');
+        enqueueInterjection(ws, 'req-steer-finish', 'Use the smaller patch.');
+
+        await options.onFinish({
+          text: 'Done',
+          steps: [],
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        });
+
+        return {
+          fullStream: (async function* emptyStream() {})(),
+        };
+      }),
+    };
+
+    const { runPreparedChatStream } = await import('./stream-runner');
+
+    await runPreparedChatStream({
+      ws,
+      msg: {},
+      requestId: 'req-steer-finish',
+      messages: [{ role: 'user', content: 'Original request' }],
+      history,
+      prompt: 'Original request',
+      inputMessages: [{ role: 'user', content: 'Original request' }],
+      agent,
+      agentType: 'stuard',
+      authUser: { userId: 'user-1' },
+      requestedMode: 'balanced',
+      routedTier: 'balanced',
+      chosenModelId: 'openai/test-model',
+      conversationId: 'conv-1',
+      conversationCreatedNow: false,
+      modelLabel: 'openai/test-model',
+      resource: 'resource-1',
+      thread: 'thread-1',
+      maxSteps: 3,
+      providerOptions: {},
+    } as any);
+
+    expect(addUserMessageMock).not.toHaveBeenCalled();
+    expect(history.some((message) => String(message.content).includes('Use the smaller patch.'))).toBe(false);
+    expect(sendMock).toHaveBeenCalledWith(
+      ws,
+      expect.objectContaining({
+        type: 'progress',
+        event: 'interjection_deferred',
+        data: { count: 1 },
+      }),
+      'req-steer-finish',
+    );
+  });
 });

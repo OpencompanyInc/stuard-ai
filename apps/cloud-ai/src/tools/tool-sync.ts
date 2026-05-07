@@ -110,6 +110,12 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   deploy_headless_agent: ['agent', 'background task', 'parallel', 'sub-agent'],
   get_headless_agent_status: ['agent', 'background task'],
   list_headless_agent_tasks: ['agent', 'background task'],
+  bot_list: ['bot', 'agent', 'proactive', 'background task', 'status'],
+  bot_get_status: ['bot', 'agent', 'proactive', 'background task', 'status'],
+  bot_create: ['bot', 'agent', 'proactive', 'background task', 'automation'],
+  bot_deploy: ['bot', 'agent', 'proactive', 'background task', 'cloud vm'],
+  bot_pause: ['bot', 'agent', 'proactive', 'background task'],
+  bot_ask: ['bot', 'agent', 'proactive', 'status', '@mention'],
 
   // MediaPipe
   mediapipe_pose: ['mediapipe', 'pose', 'body tracking'],
@@ -369,6 +375,12 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   get_headless_agent_status: ['task status', 'agent status', 'background status'],
   list_headless_agent_tasks: ['list tasks', 'background tasks'],
   stop_headless_agent: ['cancel task', 'stop agent', 'abort task'],
+  bot_list: ['list bots', 'show bots', 'what bots exist', 'proactive agents'],
+  bot_get_status: ['bot status', 'status update from bot', 'what is this bot doing', 'bot tasks', 'recent bot runs'],
+  bot_create: ['create bot', 'make a bot', 'new proactive agent', 'background bot', 'monitoring bot'],
+  bot_deploy: ['deploy bot', 'start bot', 'run bot', 'deploy to vm', 'always on bot'],
+  bot_pause: ['pause bot', 'stop bot', 'turn off bot', 'stop vm bot'],
+  bot_ask: ['ask bot', '@tag bot', 'mention bot', 'ask bot for update', 'bot status update'],
 
   // UI
   custom_ui: ['dialog', 'prompt', 'interface', 'form', 'popup', 'pages', 'spa', 'multi-page', 'app', 'navigation'],

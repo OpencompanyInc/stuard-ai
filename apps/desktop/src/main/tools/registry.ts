@@ -38,6 +38,13 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'proactive_task_update': { kind: 'electron' },
   'proactive_task_create': { kind: 'electron' },
   'proactive_task_delete': { kind: 'electron' },
+  // Bot management tools for normal agent chat (@tag status, create, deploy)
+  'bot_list': { kind: 'electron' },
+  'bot_get_status': { kind: 'electron' },
+  'bot_create': { kind: 'electron' },
+  'bot_deploy': { kind: 'electron' },
+  'bot_pause': { kind: 'electron' },
+  'bot_ask': { kind: 'electron' },
   // Bot's private kanban + run log (scoped by ctx.proactiveBotId)
   'bot_memory_list': { kind: 'electron' },
   'bot_memory_create': { kind: 'electron' },

@@ -3,7 +3,7 @@ import type { WebSocket } from 'ws';
 import type { ModelChoice } from '../../router/model-router';
 import type { TierChoice } from '../socket/helpers';
 
-export type AgentType = 'stuard' | 'workflow';
+export type AgentType = 'stuard' | 'workflow' | 'bot';
 
 export interface AuthUser {
   userId: string;

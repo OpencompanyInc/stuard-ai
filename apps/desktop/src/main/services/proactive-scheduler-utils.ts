@@ -34,6 +34,16 @@ function truncateText(value: string, maxLength: number): string {
   return normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 1))}…` : normalized;
 }
 
+function formatTriggerPayload(value: any, maxLength = 2000): string {
+  if (!value) return '';
+  try {
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    return String(text || '').trim().slice(0, maxLength);
+  } catch {
+    return String(value || '').trim().slice(0, maxLength);
+  }
+}
+
 function compactWindowTitle(title: string): string {
   const normalized = truncateText(title, 120);
   if (!normalized) return '';
@@ -301,8 +311,9 @@ export interface AgentToolRequest {
 }
 
 // Tools that stay available to bots regardless of the per-bot allowedTools
-// filter. These are the bot's "default kit": user task board, private kanban,
-// cross-run memory recall, plus the bookkeeping tools the scheduler relies on.
+// These are the bot's "default kit": user task board, private kanban, cross-run
+// memory recall, plus the bookkeeping tools the scheduler relies on. External
+// tools are added on top by exact name or explicit prefix.
 const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
   'proactive_task_list',
   'proactive_task_update',
@@ -362,10 +373,10 @@ const LOCAL_PROACTIVE_MARKER = '[PROACTIVE MODE]';
 export function isLocalProactiveToolAllowed(toolName: string, allowedTools?: string[]): boolean {
   const name = String(toolName || '').trim();
   if (!name) return false;
-  if (!Array.isArray(allowedTools) || allowedTools.length === 0) return true;
   if (LOCAL_PROACTIVE_INTERNAL_TOOLS.has(name)) return true;
 
-  const allowed = new Set(allowedTools.map(t => String(t || '').trim()).filter(Boolean));
+  const allowedValues = Array.isArray(allowedTools) ? allowedTools : [];
+  const allowed = new Set(allowedValues.map(t => String(t || '').trim()).filter(Boolean));
   if (allowed.has(name)) return true;
   if (name === 'run_system_command' && allowed.has('run_command')) return true;
 
@@ -399,6 +410,11 @@ export function buildLocalProactivePrompt(payload: any): string {
     parts.push(`\nFocus instructions: ${String(payload.config.instructions).trim()}`);
   }
 
+  const triggerPayload = formatTriggerPayload(payload?.context?.triggerPayload);
+  if (triggerPayload) {
+    parts.push(`\nTrigger payload:\n${triggerPayload}`);
+  }
+
   if (payload?.context?.screenshot) {
     parts.push('\n(A screenshot of the user\'s current screen is attached.)');
   }
@@ -414,7 +430,7 @@ export function buildLocalProactivePrompt(payload: any): string {
     parts.push('Only bring up a topic from above if it has meaningfully escalated.');
   }
 
-  parts.push('\nYour response becomes the user notification. Write only the plain text message you want the user to see — no tool calls, no XML, no code blocks. If you have nothing new or important to say, respond with just the word "skip".');
+  parts.push('\nUse tools as needed to do the work. Your final response becomes the user notification, so the final text should be only the plain message you want the user to see — no XML, no code blocks, and no raw tool-call syntax. If you have nothing new or important to say, respond with just the word "skip".');
   return parts.join('\n');
 }
 
@@ -424,7 +440,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     'This is a proactive wake-up. Your job: DO things, not remind about things. Act first, notify with results.',
     'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences.',
     '',
-    '## YOUR DEFAULT TOOLKIT (always available, regardless of allowedTools)',
+    '## YOUR DEFAULT TOOLKIT (always available before added tools)',
     '- proactive_task_* — manage the USER\'s task board (tasks they see).',
     '- bot_memory_* — manage YOUR PRIVATE kanban. This is your working memory across runs:',
     '  • bot_memory_list — see your cards.',
@@ -434,6 +450,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     '  • bot_memory_log({ summary, outcome }) — append a one-line run wrap-up.',
     '- search_past_conversations / get_conversation_context — recall prior runs and chats.',
     'Use bot_memory_* aggressively. Without it every run starts blind. The user can also edit these cards from the Bots → Kanban tab; lastEditedBy distinguishes their edits from yours.',
+    'Kanban truth rule: if the user asks you to add, update, move, or delete a kanban card, call the matching bot_memory_* tool and verify ok=true before saying it was done. Never claim memory or kanban changes from text alone.',
     '',
     '## HOW TO THINK',
     '1. Read the context below (windows, calendar, session history) and your kanban (in the user message). What is the user doing, and what does your past self want you to pick up?',
@@ -500,9 +517,20 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
   const instructions = String(payload?.config?.instructions || '').trim();
   if (instructions) lines.push(`\nUser-configured proactive instructions: ${instructions}`);
 
+  const triggerPayload = formatTriggerPayload(payload?.context?.triggerPayload);
+  if (triggerPayload) {
+    lines.push('');
+    lines.push('[TRIGGER PAYLOAD]');
+    lines.push(triggerPayload);
+  }
+
   if (Array.isArray(payload?.config?.allowedTools) && payload.config.allowedTools.length > 0) {
-    lines.push(`Allowed non-internal tools for this bot: ${payload.config.allowedTools.join(', ')}.`);
-    lines.push('All other non-internal tools are blocked. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool) remains available regardless.');
+    lines.push(`Added non-internal tools for this bot: ${payload.config.allowedTools.join(', ')}.`);
+    lines.push('All other non-internal tools are not part of this bot. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool) remains available regardless.');
+    lines.push('If the user asks what tools you have, list only the added non-internal tools above plus your default toolkit. Do not answer with Stuard main-chat capabilities.');
+  } else {
+    lines.push('Added non-internal tools for this bot: (none).');
+    lines.push('If the user asks what tools you have, list only your default toolkit. Do not answer with a generic Stuard main-chat capability list.');
   }
 
   // Inject previous session summaries for pattern awareness

@@ -8,20 +8,13 @@ import {
   PlusCircledIcon,
   MagnifyingGlassIcon
 } from "@radix-ui/react-icons";
-import { 
-  Layout, 
-  Database, 
-  Folder, 
-  File, 
-  Loader2, 
+import {
+  Folder,
+  File,
+  Loader2,
   Search,
   Box,
-  FileText,
-  Link2,
-  Image as ImageIcon,
-  CornerDownLeft,
-  ArrowUp,
-  ArrowDown
+  Sparkles
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -29,7 +22,7 @@ export interface ContextItem {
   path: string;
   name: string;
   isDirectory: boolean;
-  type?: 'file' | 'directory' | 'space' | 'space-item';
+  type?: 'file' | 'directory' | 'bot';
   metadata?: any;
 }
 
@@ -43,72 +36,52 @@ export interface FileNavProps {
 export interface FileNavRef {
   moveSelection: (direction: number) => void;
   selectCurrent: () => void;
-}
-
-interface Space {
-  id: string;
-  name: string;
-  type: string;
-  icon?: string;
-  color?: string;
-}
-
-interface SpaceItem {
-  id: string;
-  title: string;
-  type: string;
-  content?: string;
+  /** Add the currently-highlighted item as context, even when it's a directory.
+   *  Unlike selectCurrent, this never drills into folders.
+   *  Returns true if a real entry was added; false when the listing has no
+   *  match for what's typed (caller should leave the textarea text alone). */
+  addCurrent: () => boolean;
 }
 
 export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, onClose, onNavigate, filter = "" }, ref) => {
-  // We use filter to determine the current "path" or context
-  // If filter contains '/', we are exploring a directory or space.
-  
-  const [spaces, setSpaces] = useState<Space[]>([]);
-  const [spacesLoaded, setSpacesLoaded] = useState(false);
+  const [bots, setBots] = useState<any[]>([]);
   const [currentEntries, setCurrentEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Determine effective path and query from filter
+  // Determine effective path and query from filter.
   // e.g. "src/" -> path="src/", query=""
   // e.g. "src/co" -> path="src/", query="co"
-  // e.g. "SpaceName/" -> path="SpaceName/", query=""
   const { pathContext, queryText, isRoot } = useMemo(() => {
     const lastSlashIndex = filter.lastIndexOf('/');
     if (lastSlashIndex === -1) {
       return { pathContext: "", queryText: filter, isRoot: true };
     }
     return {
-      pathContext: filter.substring(0, lastSlashIndex + 1), // includes trailing slash
+      pathContext: filter.substring(0, lastSlashIndex + 1),
       queryText: filter.substring(lastSlashIndex + 1),
       isRoot: false
     };
   }, [filter]);
 
-  // Load Spaces on mount
+  // Load proactive bots so @mentions can address bots from normal chat.
   useEffect(() => {
-    const loadSpaces = async () => {
+    const loadBots = async () => {
       try {
-        const res = await (window as any).desktopAPI?.execTool?.('space_list', { limit: 50 });
-        if (res?.ok && Array.isArray(res?.spaces)) {
-          setSpaces(res.spaces);
+        const res = await (window as any).desktopAPI?.botsList?.();
+        if (res?.ok && Array.isArray(res?.bots)) {
+          setBots(res.bots);
         }
       } catch (e) {
-        console.error("Failed to load spaces", e);
-      } finally {
-        setSpacesLoaded(true);
+        console.error("Failed to load bots", e);
       }
     };
-    loadSpaces();
+    loadBots();
   }, []);
 
   // Load content based on pathContext
   useEffect(() => {
-    // Wait for spaces to be loaded before trying to match space names
-    if (!spacesLoaded && !isRoot) return;
-    
     const loadContent = async () => {
       setLoading(true);
       setError("");
@@ -116,69 +89,18 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
       setSelectedIndex(0);
 
       try {
-        if (isRoot) {
-          // At root: List Spaces + Home Directory
-          // We already have spaces in state (or they are loading)
-          // We need to list home dir
-          if ((window as any).desktopAPI?.listDirectory) {
-            const res = await (window as any).desktopAPI.listDirectory("~");
-            if (res.ok && res.entries) {
-              setCurrentEntries(res.entries);
-            } else {
-              setError(res.error || "Failed to list directory");
-            }
-          }
-        } else {
-          // Inside a context
-          // Check if pathContext starts with a Space Name
-          const pathParts = pathContext.split('/').filter(Boolean);
-          const firstPart = pathParts[0];
-          
-          // Try to match by name (case-insensitive)
-          const matchedSpace = spaces.find(s => 
-            s.name.toLowerCase() === firstPart.toLowerCase()
-          );
-          
-          if (matchedSpace) {
-            // We are in a Space - load its items
-            // console.log('[FileNavigator] Loading space items for:', matchedSpace.name, matchedSpace.id);
-            const res = await (window as any).desktopAPI?.execTool?.('space_item_list', { space_id: matchedSpace.id, limit: 100 });
-            // console.log('[FileNavigator] Space items result:', res);
-            
-            if (res?.ok && Array.isArray(res?.items)) {
-              // Map space items to entries
-              const items = res.items.map((item: any) => ({
-                name: item.title || item.content?.substring(0, 30) || "Untitled",
-                path: `space-item://${matchedSpace.id}/${item.id}`,
-                isDirectory: false, // Items are leaves for now
-                type: 'space-item',
-                metadata: item
-              }));
-              setCurrentEntries(items);
-              
-              if (items.length === 0) {
-                setError("This space is empty");
-              }
-            } else {
-              setError(res?.error || "Failed to load space items");
-            }
+        const fsPath = isRoot
+          ? "~"
+          : (pathContext.startsWith('/') || pathContext.startsWith('~') || pathContext.match(/^[a-zA-Z]:/)
+              ? pathContext
+              : "~/" + pathContext);
+
+        if ((window as any).desktopAPI?.listDirectory) {
+          const res = await (window as any).desktopAPI.listDirectory(fsPath);
+          if (res.ok && res.entries) {
+            setCurrentEntries(res.entries);
           } else {
-            // Assume file system path
-            // pathContext is something like "src/" or "~/" or "/etc/"
-            // If it doesn't start with / or ~, prepend ~?
-            let fsPath = pathContext;
-            if (!fsPath.startsWith('/') && !fsPath.startsWith('~') && !fsPath.match(/^[a-zA-Z]:/)) {
-              fsPath = "~/" + fsPath;
-            }
-            
-            if ((window as any).desktopAPI?.listDirectory) {
-              const res = await (window as any).desktopAPI.listDirectory(fsPath);
-              if (res.ok && res.entries) {
-                setCurrentEntries(res.entries);
-              } else {
-                setError(res.error || "Failed to list directory");
-              }
-            }
+            setError(res.error || "Failed to list directory");
           }
         }
       } catch (e: any) {
@@ -191,41 +113,48 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
     // Debounce slightly to avoid hammering on rapid typing
     const timer = setTimeout(loadContent, 10);
     return () => clearTimeout(timer);
-  }, [pathContext, isRoot, spaces, spacesLoaded]); // Re-run when context changes or spaces load
+  }, [pathContext, isRoot]);
 
   // Filter entries based on queryText
   const filteredItems = useMemo(() => {
     let items = [...currentEntries];
-    
-    // If at root, also include spaces in the list
+
+    // At root, also include bots so @mentions can address them.
     if (isRoot) {
-      const spaceItems = spaces.map(s => ({
-        name: s.name,
-        path: `space://${s.id}`,
-        isDirectory: true, // Treat spaces as folders
-        type: 'space',
-        metadata: s
+      const botItems = bots.map(b => ({
+        name: b.name,
+        path: `bot://${b.id}`,
+        isDirectory: false,
+        type: 'bot',
+        metadata: {
+          id: b.id,
+          status: b.status,
+          lastRunAt: b.lastRunAt,
+          nextRunAt: b.nextRunAt,
+          vmDeployedAt: b.vmDeployedAt,
+          emoji: b.emoji,
+        }
       }));
-      items = [...spaceItems, ...items];
+      items = [...botItems, ...items];
     }
 
     if (!queryText) return items;
 
     const q = queryText.toLowerCase();
     return items.filter(i => i.name.toLowerCase().includes(q));
-  }, [currentEntries, spaces, isRoot, queryText]);
+  }, [currentEntries, bots, isRoot, queryText]);
 
   // Sorting
   const sortedItems = useMemo(() => {
     return filteredItems.sort((a, b) => {
-      // Spaces first (if root)
-      if (a.type === 'space' && b.type !== 'space') return -1;
-      if (a.type !== 'space' && b.type === 'space') return 1;
-      
+      // Bots first (at root)
+      if (a.type === 'bot' && b.type !== 'bot') return -1;
+      if (a.type !== 'bot' && b.type === 'bot') return 1;
+
       // Directories first
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
-      
+
       return a.name.localeCompare(b.name);
     });
   }, [filteredItems]);
@@ -261,6 +190,17 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
         const item = sortedItems[selectedIndex];
         executeAction(item, item.isDirectory ? 'navigate' : 'select');
       }
+    },
+    addCurrent: () => {
+      // Add the highlighted entry only if it resolves to something real in
+      // the current listing. If nothing matches, return false so the caller
+      // can leave the typed "@<filter>" alone in the textarea.
+      const item = sortedItems[selectedIndex];
+      if (item) {
+        onSelect(item);
+        return true;
+      }
+      return false;
     }
   }));
 
@@ -293,34 +233,55 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
     onNavigate?.(newPath);
   };
 
+  // Build breadcrumb segments from pathContext for the header.
+  const crumbs = useMemo(() => {
+    const parts = pathContext.split('/').filter(Boolean);
+    return parts.map((part, i) => ({
+      name: part,
+      path: parts.slice(0, i + 1).join('/') + '/',
+    }));
+  }, [pathContext]);
+
   return (
-    <div 
-      className="flex flex-col w-full max-h-[320px] bg-gray-100/95 text-theme-fg rounded-xl border border-gray-300/50 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+    <div
+      className="flex flex-col w-full max-h-[340px] bg-theme-card/95 text-theme-fg rounded-2xl border border-theme/40 shadow-2xl backdrop-blur-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
     >
-      {/* Header / Path */}
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-200/40 border-b border-gray-200 text-[12px] font-medium select-none">
-        <div className="flex items-center gap-1.5 flex-1 truncate">
-          <div className="w-5 h-5 rounded-md bg-primary/10 flex items-center justify-center">
-            <Search className="w-3 h-3 text-primary" />
-          </div>
-          <div className="flex flex-col leading-none gap-0.5">
-             <div className="flex items-center gap-1">
-                <span className="text-theme-muted font-medium">Context</span>
-                <span className="text-theme-muted/50">/</span>
-                <span className="text-primary font-bold">{pathContext || "~"}</span>
-             </div>
-             {queryText && <span className="text-theme-muted text-[10px]">Filter: "{queryText}"</span>}
-          </div>
-        </div>
-        {pathContext && (
-          <button 
+      {/* Search bar — mirrors what the user is typing into the @ picker
+          since the textarea below intentionally hides that. */}
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-theme-active/30 border-b border-theme/10 select-none">
+        {pathContext ? (
+          <button
             onClick={handleGoUp}
-            className="p-1.5 hover:bg-theme-hover rounded-md text-theme-muted hover:text-theme-fg transition-colors group"
+            className="p-1 hover:bg-theme-hover rounded-md text-theme-muted hover:text-theme-fg transition-colors group shrink-0"
             title="Go up one level"
           >
             <ArrowLeftIcon className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
           </button>
+        ) : (
+          <Search className="w-3.5 h-3.5 text-theme-muted shrink-0" strokeWidth={2.5} />
         )}
+        <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden">
+          {crumbs.map((crumb, i) => (
+            <React.Fragment key={crumb.path}>
+              <button
+                onClick={() => onNavigate?.(crumb.path)}
+                className="px-1.5 py-0.5 rounded-md text-[11px] font-bold truncate max-w-[100px] text-theme-muted hover:bg-theme-hover hover:text-theme-fg transition-colors shrink-0"
+              >
+                {crumb.name}
+              </button>
+              <ChevronRightIcon className="w-3 h-3 text-theme-muted/50 shrink-0" />
+            </React.Fragment>
+          ))}
+          <span className={clsx(
+            "text-[14px] font-semibold truncate min-w-0",
+            queryText ? "text-theme-fg" : "text-theme-muted/60"
+          )}>
+            {queryText || (crumbs.length === 0 ? "Search files, folders, bots…" : "Filter…")}
+          </span>
+          {queryText && (
+            <span className="inline-block w-[2px] h-4 bg-primary/70 rounded-full animate-pulse shrink-0" />
+          )}
+        </div>
       </div>
 
       {/* List */}
@@ -365,29 +326,31 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                 {/* Icon */}
                 <div className={clsx(
                   "w-6 h-6 flex items-center justify-center shrink-0 rounded-md transition-colors",
-                  item.type === 'space' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
-                  item.isDirectory ? (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-hover text-theme-muted") :
-                  item.type === 'space-item' ? (isSelected ? "bg-blue-500 text-white shadow-blue-500/20 shadow-lg" : "bg-blue-500/10 text-blue-400") :
-                  (isSelected ? "bg-primary text-primary-fg shadow-primary/20 shadow-lg" : "bg-primary/10 text-primary")
+                  item.type === 'bot'
+                    ? (isSelected ? "bg-amber-500 text-white shadow-amber-500/20 shadow-lg" : "bg-amber-500/10 text-amber-500")
+                    : item.isDirectory
+                      ? (isSelected ? "bg-theme-fg text-theme-bg" : "bg-theme-hover text-theme-muted")
+                      : (isSelected ? "bg-theme-active text-theme-fg" : "bg-theme-hover text-theme-muted")
                 )}>
-                  {item.type === 'space' ? <Layout className="w-3.5 h-3.5" /> :
-                   item.isDirectory ? <Folder className="w-3.5 h-3.5" /> :
-                   item.type === 'space-item' ? <FileText className="w-3.5 h-3.5" /> :
-                   <File className="w-3.5 h-3.5" />}
+                  {item.type === 'bot'
+                    ? <Sparkles className="w-3.5 h-3.5" />
+                    : item.isDirectory
+                      ? <Folder className="w-3.5 h-3.5" />
+                      : <File className="w-3.5 h-3.5" />}
                 </div>
 
                 {/* Name */}
                 <div className="flex-1 min-w-0 flex flex-col justify-center">
                   <span className={clsx(
                     "text-[13px] truncate transition-colors",
-                    isSelected ? "text-theme-fg font-semibold" : 
+                    isSelected ? "text-theme-fg font-semibold" :
                     item.isDirectory ? "text-theme-fg font-medium" : "text-theme-muted"
                   )}>
                     {item.name}
                   </span>
-                  {item.type === 'space' && (
-                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-blue-300" : "text-theme-muted")}>
-                      Space • {item.metadata?.type}
+                  {item.type === 'bot' && (
+                    <span className={clsx("text-[10px] truncate transition-colors", isSelected ? "text-amber-200" : "text-theme-muted")}>
+                      Bot - {item.metadata?.status || "paused"}{item.metadata?.vmDeployedAt ? " - VM" : ""}
                     </span>
                   )}
                 </div>
@@ -401,11 +364,11 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
                       "p-1.5 rounded-md transition-colors",
                       isSelected ? "bg-theme-bg/20 text-theme-fg hover:bg-theme-bg/30" : "hover:bg-theme-hover text-theme-muted hover:text-theme-fg"
                     )}
-                    title={item.isDirectory ? "Add folder as context" : item.type === 'space' ? "Add space as context" : "Add to context"}
+                    title={item.isDirectory ? "Add folder as context" : item.type === 'bot' ? "Mention bot" : "Add to context"}
                   >
                     <PlusCircledIcon className="w-4 h-4" />
                   </button>
-                  
+
                   {/* Navigate Hint */}
                   {item.isDirectory && (
                     <div className={clsx("px-1.5 py-0.5 rounded text-[10px] font-mono", isSelected ? "text-theme-muted" : "text-theme-muted/70")}>
@@ -420,15 +383,26 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
       </div>
       
       {/* Footer Hint */}
-      <div className="px-3 py-2 bg-theme-bg/50 border-t border-theme text-[10px] text-theme-muted flex items-center justify-between font-medium">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1"><span className="bg-theme-hover px-1 rounded text-theme-fg">↑↓</span> to navigate</span>
-          <span className="flex items-center gap-1"><span className="bg-theme-hover px-1 rounded text-theme-fg">↵</span> to select</span>
+      <div className="px-3 py-2 bg-theme-bg/40 border-t border-theme/10 text-[10px] text-theme-muted flex items-center justify-between font-semibold">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="flex items-center gap-1">
+            <kbd className="bg-theme-hover px-1.5 py-0.5 rounded text-theme-fg font-mono text-[9px] border border-theme/20">↑↓</kbd>
+            navigate
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="bg-theme-hover px-1.5 py-0.5 rounded text-theme-fg font-mono text-[9px] border border-theme/20">↵</kbd>
+            open / pick file
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="bg-theme-hover px-1.5 py-0.5 rounded text-theme-fg font-mono text-[9px] border border-theme/20">space</kbd>
+            add as context
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="bg-theme-hover px-1.5 py-0.5 rounded text-theme-fg font-mono text-[9px] border border-theme/20">esc</kbd>
+            close
+          </span>
         </div>
-        <div className="flex items-center gap-1">
-           <span className="bg-theme-hover px-1 rounded text-theme-fg">@</span> 
-           <span>type to filter</span>
-        </div>
+        <span className="text-theme-muted/60 shrink-0 ml-2">{sortedItems.length} item{sortedItems.length === 1 ? '' : 's'}</span>
       </div>
     </div>
   );

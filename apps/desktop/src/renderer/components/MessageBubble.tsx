@@ -3200,26 +3200,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       )}
 
 
-      {/* Context paths indicator for user messages */}
-      {role === 'user' && contextPaths && contextPaths.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-1.5 max-w-[90%] justify-end">
-          {contextPaths.map((ctx, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-1 px-2 py-0.5 bg-violet-500/20 border border-violet-500/30 rounded-full text-[10px] text-violet-300"
-              title={ctx.path}
-            >
-              {ctx.isDirectory ? (
-                <Folder className="w-3 h-3" />
-              ) : (
-                <FileText className="w-3 h-3" />
-              )}
-              <span className="truncate max-w-[100px]">{ctx.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
       {attachments && attachments.length > 0 && (
         <div className={clsx("mb-2 flex", role === 'user' ? 'justify-end' : 'justify-start')}>
           <AttachmentPreviewStrip
@@ -3604,6 +3584,24 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 Edit
               </span>
             </button>
+          </div>
+        )}
+        {/* Context indicator for user messages — subtle, right-aligned */}
+        {role === 'user' && contextPaths && contextPaths.length > 0 && (
+          <div className="flex flex-wrap gap-1 justify-end mt-1.5 max-w-[85%] ml-auto">
+            {contextPaths.map((ctx, i) => {
+              const Icon = ctx.isDirectory ? Folder : FileText;
+              return (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
+                  title={ctx.path}
+                >
+                  <Icon className="w-3 h-3 shrink-0" strokeWidth={2} />
+                  <span className="truncate">{ctx.name}</span>
+                </span>
+              );
+            })}
           </div>
         )}
         {/* Modified files indicator */}

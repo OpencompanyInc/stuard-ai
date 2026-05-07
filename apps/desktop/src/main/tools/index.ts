@@ -11,6 +11,7 @@ import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWo
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
+import { execBotList, execBotGetStatus, execBotCreate, execBotDeploy, execBotPause, execBotAsk } from './handlers/bots';
 import { execBotMemoryList, execBotMemoryCreate, execBotMemoryUpdate, execBotMemoryDelete, execBotMemoryLog } from './handlers/bot-memory';
 import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handlers/wakeword';
 import { skills_save, skills_list } from '../skills';
@@ -285,6 +286,12 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);
       if (toolName === 'proactive_task_delete') return execProactiveTaskDelete(args, ctx);
+      if (toolName === 'bot_list') return execBotList(args, ctx);
+      if (toolName === 'bot_get_status') return execBotGetStatus(args, ctx);
+      if (toolName === 'bot_create') return execBotCreate(args, ctx);
+      if (toolName === 'bot_deploy') return execBotDeploy(args, ctx);
+      if (toolName === 'bot_pause') return execBotPause(args, ctx);
+      if (toolName === 'bot_ask') return execBotAsk(args, ctx);
       if (toolName === 'bot_memory_list') return execBotMemoryList(args, ctx);
       if (toolName === 'bot_memory_create') return execBotMemoryCreate(args, ctx);
       if (toolName === 'bot_memory_update') return execBotMemoryUpdate(args, ctx);

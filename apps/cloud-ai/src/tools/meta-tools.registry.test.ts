@@ -15,6 +15,7 @@ describe('meta-tools registry', () => {
       'x_search_tweets',
       'cloud_storage_upload',
       'proactive_task_create',
+      'bot_create',
     ];
 
     for (const toolName of expectedTools) {

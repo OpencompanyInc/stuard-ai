@@ -17,6 +17,8 @@ import { CloudVmPermissions } from './CloudVmPermissions';
 import { CloudVmIntegrations } from './CloudVmIntegrations';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
 import { ProactiveView } from './ProactiveView';
+import { BotsView } from './BotsView';
+import { AutomationsView } from './AutomationsView';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -817,6 +819,16 @@ export function CloudEngineDashboard() {
               <CloudVmPermissions engine={engine} variant="workspace" />
             </div>
           ),
+          bots: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <BotsView />
+            </div>
+          ),
+          automations: (
+            <div className="custom-scrollbar h-full overflow-y-auto p-6">
+              <CloudAutomationsTab />
+            </div>
+          ),
         }}
       />
       </div>
@@ -895,6 +907,30 @@ export function CloudEngineDashboard() {
     </div>
     </div>
   );
+}
+
+/* ─── Automations Tab (Normal mode) ──────────────────────────────── */
+
+function CloudAutomationsTab() {
+  const [stuards, setStuards] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await (window as any).desktopAPI?.stuardsList?.();
+      if (res?.ok && Array.isArray(res.items)) setStuards(res.items);
+      else setStuards([]);
+    } catch {
+      setStuards([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { void load(); }, [load]);
+
+  return <AutomationsView stuards={stuards} stuardsLoading={loading} loadStuards={load} />;
 }
 
 /* ─── Billing Tab ─────────────────────────────────────────────────── */

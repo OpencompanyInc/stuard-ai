@@ -1624,8 +1624,8 @@ function ToolsSection({
           </h3>
           <p className="mt-0.5 text-[12px] text-theme-muted">
             {selected.length === 0
-              ? 'Unrestricted — bot can use every tool the agent has.'
-              : `${selected.length} tool${selected.length === 1 ? '' : 's'} allowed. Other tools blocked.`}
+              ? 'No extra tools added. Bot can use only its default bot tools.'
+              : `${selected.length} extra tool${selected.length === 1 ? '' : 's'} added to this bot.`}
           </p>
         </div>
         <button
@@ -1639,7 +1639,7 @@ function ToolsSection({
 
       {selected.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-3 text-[12px] text-theme-muted">
-          No restrictions. Click <span className="font-medium text-theme-fg">Add tools</span> to limit the bot to a specific set.
+          This bot starts with only its default bot tools. Click <span className="font-medium text-theme-fg">Add tools</span> to give it specific extra tools.
         </div>
       ) : (
         <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-3.5 py-3 shadow-sm">
@@ -1717,7 +1717,7 @@ function ToolsPickerModal({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-stuard text-lg font-semibold text-theme-fg">Add tools</h2>
-              <p className="mt-0.5 text-[12px] text-theme-muted">Pick the exact tools this bot is allowed to call. Empty = unrestricted.</p>
+              <p className="mt-0.5 text-[12px] text-theme-muted">Pick exact extra tools for this bot. Empty = default bot tools only.</p>
             </div>
             <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">{draft.size} selected</span>
           </div>

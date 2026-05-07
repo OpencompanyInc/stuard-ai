@@ -134,7 +134,7 @@ describe('local proactive prompt helpers', () => {
     });
 
     expect(hidden).toContain('[PROACTIVE MODE]');
-    expect(hidden).toContain('Allowed non-internal tools');
+    expect(hidden).toContain('Added non-internal tools');
     expect(hidden).toContain('web_search');
     expect(hidden).toContain('DO THE WORK');
     expect(hidden).toContain('Email Helper');

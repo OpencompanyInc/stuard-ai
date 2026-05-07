@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { WebSocket } from 'ws';
 
+import { getBotAgent } from '../../agents/bot-agent';
 import { getWorkflowAgent } from '../../agents/workflow-agent';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
 import { getOrchestratorAgent } from '../../orchestrator';
@@ -52,6 +53,10 @@ export async function prepareChatRequest({
   const { authUser, authResult } = await resolveAuth(msg);
   if (authUser?.userId) {
     secretBag.userId = authUser.userId;
+  }
+  const proactiveBotId = String(msg?.context?.proactiveBotId || msg?.context?.botId || '').trim();
+  if (proactiveBotId) {
+    secretBag.proactiveBotId = proactiveBotId;
   }
 
   if (REQUIRE_AUTH && !authUser) {
@@ -207,7 +212,7 @@ export async function prepareChatRequest({
     prompt,
     history,
     providedMessages,
-    enabledIntegrations,
+    enabledIntegrations: agentType === 'bot' ? [] : enabledIntegrations,
     agentType,
     agent,
   });
@@ -381,6 +386,17 @@ function resolveAgentType(ws: WebSocket, msg: any): AgentType {
     || contextMode === 'workflow';
 
   if (
+    rawAgentLower === 'bot'
+    || rawAgentLower === 'proactive_bot'
+    || rawAgentLower === 'proactive-bot'
+    || contextMode === 'bot'
+    || contextMode === 'proactive_bot'
+    || contextMode === 'proactive-bot'
+  ) {
+    return 'bot';
+  }
+
+  if (
     rawAgentLower === 'workflow'
     || rawAgentLower === 'workflow_agent'
     || rawAgentLower === 'workflow-architect'
@@ -430,6 +446,19 @@ async function resolveAgent({
 }: ResolveAgentArgs) {
   if (agentType === 'workflow') {
     return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId);
+  }
+
+  if (agentType === 'bot') {
+    const ctx = msg?.context || {};
+    await ensureExecutionToolsRegistered();
+    return getBotAgent({
+      botId: String(ctx?.proactiveBotId || ctx?.botId || '').trim() || undefined,
+      botName: String(ctx?.botName || '').trim() || undefined,
+      model: routedTier,
+      modelId: chosenModelId,
+      allowedTools: Array.isArray(ctx?.allowedTools) ? ctx.allowedTools : [],
+      mcpTools,
+    });
   }
 
   await ensureExecutionToolsRegistered();

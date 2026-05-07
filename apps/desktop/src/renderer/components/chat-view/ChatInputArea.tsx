@@ -3,11 +3,11 @@ import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo } from 'lucide-react';
+import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo, Folder, Sparkles, AtSign } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
-import { FileNavRef } from '../FileNavigator';
+import { ContextItem, FileNavRef } from '../FileNavigator';
 import { FolderPermissionsPopover } from './FolderPermissionsPopover';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
 import type { ContextUsageMetrics } from '../../utils/contextUsage';
@@ -132,6 +132,13 @@ interface ChatInputAreaProps {
   fileNavRef?: React.RefObject<FileNavRef>;
   /** Current tab ID — passed to FolderPermissionsPopover for session scoping. */
   activeTabId?: string;
+  /** Attached context items (files, folders, spaces, bots) — rendered as pills above the textarea. */
+  contextPaths?: ContextItem[];
+  onRemoveContext?: (index: number) => void;
+  /** Open the @ file navigator (used by the "+" attach menu). */
+  onOpenFileNav?: () => void;
+  /** Close the @ file navigator and strip leftover @&lt;filter&gt; from the textarea. */
+  onCloseFileNav?: () => void;
 }
 
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -165,6 +172,10 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onReasoningLevelChange,
   fileNavRef,
   activeTabId,
+  contextPaths = [],
+  onRemoveContext,
+  onOpenFileNav,
+  onCloseFileNav,
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
@@ -448,6 +459,53 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}
       </AnimatePresence>
 
+      <AnimatePresence initial={false}>
+        {contextPaths.length > 0 && (
+          <motion.div
+            key="context-pills"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="px-2 pt-2 pb-1 flex flex-wrap gap-1.5">
+              {contextPaths.map((ctx, idx) => {
+                const Icon =
+                  ctx.type === 'bot' ? Sparkles
+                  : ctx.isDirectory ? Folder
+                  : File;
+                return (
+                  <motion.div
+                    key={`ctx-${idx}-${ctx.path}`}
+                    layout
+                    initial={{ opacity: 0, scale: 0.92 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.92 }}
+                    transition={{ duration: 0.14 }}
+                    className="group flex items-center gap-1.5 pl-2 pr-1 py-1 bg-theme-hover hover:bg-theme-active rounded-lg text-[12px] text-theme-fg border border-theme/10 max-w-[260px]"
+                    title={ctx.path}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0 text-theme-muted" strokeWidth={2} />
+                    <span className="truncate font-semibold leading-none">{ctx.name}</span>
+                    {onRemoveContext && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveContext(idx)}
+                        className="ml-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-card rounded-md p-0.5 transition-colors opacity-60 group-hover:opacity-100"
+                        title={`Remove ${ctx.name}`}
+                      >
+                        <X className="w-3 h-3" strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {attachments.length > 0 && (
         <div className="px-2 pt-2 pb-1 flex flex-wrap gap-2">
           {attachments.map((att, idx) => (
@@ -647,7 +705,17 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
-            <DropdownMenu.Content className="DropdownContent z-[10005] min-w-[180px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" sideOffset={8} align="start" collisionPadding={10}>
+            <DropdownMenu.Content className="DropdownContent z-[10005] min-w-[200px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" sideOffset={8} align="start" collisionPadding={10}>
+              {onOpenFileNav && (
+                <DropdownMenu.Item
+                  onSelect={() => onOpenFileNav()}
+                  className="group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-theme-hover cursor-pointer"
+                >
+                  <AtSign className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" strokeWidth={2.2} />
+                  <span className="flex-1">Add context</span>
+                  <span className="text-[10px] font-mono text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">@</span>
+                </DropdownMenu.Item>
+              )}
               <DropdownMenu.Item
                 onSelect={() => onAttachFiles?.()}
                 className={clsx(
@@ -672,22 +740,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        <div className={clsx(
-          "flex-1 relative rounded-xl transition-all flex items-center",
-          showFileNav && "ring-2 ring-primary/40 bg-primary/5"
-        )}>
+        <div className="flex-1 relative rounded-xl transition-all flex items-center">
           <TextareaAutosize
             ref={textareaRef}
             data-onboarding="chat-input"
-            className={clsx(
-              "w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2",
-              showFileNav && "text-primary placeholder:text-primary/40"
-            )}
-            placeholder={showFileNav
-              ? "Type to filter context..."
-              : isStreaming
-                ? "Ask next or steer current step"
-                : "Just ask Stuard"}
+            className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2"
+            placeholder={isStreaming
+              ? "Ask next or steer current step"
+              : "Just ask Stuard"}
             value={query}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
             onPaste={onPaste}
@@ -711,9 +771,21 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                   return;
                 }
                 if (e.key === 'Escape') {
-                  // Optional: Close on Escape handled by parent usually, but we can prevent default
-                  // The parent (ChatView) handles onClose via other means or we might need a prop to close it explicitly here if desired.
-                  // For now let's just let it bubble or preventDefault if we had an onClose prop.
+                  e.preventDefault();
+                  onCloseFileNav?.();
+                  return;
+                }
+                // Space while the navigator is open:
+                //   - If the typed token resolves to a real entry, add it.
+                //   - If nothing matches, let the space fall through so the
+                //     "@<typed>" stays in the textarea and the popup closes
+                //     (the picker's auto-dismiss-on-whitespace handles it).
+                if (e.key === ' ') {
+                  const added = fileNavRef.current.addCurrent();
+                  if (added) {
+                    e.preventDefault();
+                  }
+                  return;
                 }
               }
 

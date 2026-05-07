@@ -74,7 +74,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const toolCallsMap = new Map<string, any>();
   const streamChunks: StreamChunkRecord[] = [];
   const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
-  const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : 'Chat';
+  const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'bot' ? 'Bot Agent' : 'Chat';
   const billingTracker = new LiveUsageBillingTracker({
     userId: authUser?.userId ?? null,
     conversationId,
@@ -134,6 +134,14 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
         appliedTo,
       });
     } catch { }
+  };
+
+  const deferInterjectionToQueuedTurn = (interjection: InterjectionPayload) => {
+    send(ws, {
+      type: 'progress',
+      event: 'interjection_deferred',
+      data: { count: interjection.count },
+    }, requestId);
   };
 
   const setRequestTerminalResult = (payload: {
@@ -304,7 +312,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
         const carriedInterjection = drainInterjectionPayload(ws, requestId);
         if (carriedInterjection) {
-          await persistUserInterjection(carriedInterjection, 'next_turn');
+          deferInterjectionToQueuedTurn(carriedInterjection);
         }
 
         scheduleHistoryCompaction(ws, history);
@@ -524,7 +532,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
         }
         const carriedInterjection = drainInterjectionPayload(ws, requestId);
         if (carriedInterjection) {
-          await persistUserInterjection(carriedInterjection, 'next_turn');
+          deferInterjectionToQueuedTurn(carriedInterjection);
         }
 
         send(ws, {

@@ -1,8 +1,9 @@
 import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../tools/proactive-task-tools';
 
 /**
- * Internal tools that should ALWAYS be available to bot/proactive agents, even
- * when allowedTools filtering is active. These are bot plumbing:
+ * Internal tools that should ALWAYS be available to bot/proactive agents.
+ * External tools are added on top of this set from the bot's configured
+ * allowedTools list. These are bot plumbing:
  *   - the user's task board (`proactive_task_*`)
  *   - the bot's private kanban (`bot_memory_*`)
  *   - cross-run memory recall (`search_past_conversations`, `get_conversation_context`)
@@ -27,16 +28,6 @@ const PROACTIVE_CORE_TOOLS = [
   'get_conversation_context',
 ] as const;
 
-const PROACTIVE_TOOL_FAMILY_PREFIXES = [
-  ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
-  ['outlook_'],
-  ['github_'],
-  ['facebook_', 'instagram_', 'threads_'],
-  ['whatsapp_'],
-  ['telnyx_'],
-  ['x_'],
-] as const;
-
 export function isBlockedProactiveToolName(name: string): boolean {
   const trimmed = String(name || '').trim();
   return trimmed.startsWith('browser_') && !trimmed.startsWith('browser_use_');
@@ -56,6 +47,7 @@ export function buildProactiveUserMessage(args: {
   tasks?: TaskSnapshot[];
   screenshot?: string | boolean;
   notificationDigest?: string[];
+  triggerPayload?: any;
 }): string {
   const parts: string[] = [];
 
@@ -88,6 +80,24 @@ export function buildProactiveUserMessage(args: {
     parts.push('\nA screenshot of the user\'s current screen is attached.');
   }
 
+  if (args.triggerPayload) {
+    try {
+      const text = typeof args.triggerPayload === 'string' ? args.triggerPayload : JSON.stringify(args.triggerPayload, null, 2);
+      if (text.trim()) {
+        parts.push('');
+        parts.push('[TRIGGER PAYLOAD]');
+        parts.push(text.trim().slice(0, 2000));
+      }
+    } catch {
+      const text = String(args.triggerPayload || '').trim();
+      if (text) {
+        parts.push('');
+        parts.push('[TRIGGER PAYLOAD]');
+        parts.push(text.slice(0, 2000));
+      }
+    }
+  }
+
   // Inject notification digest so the agent knows what it recently said
   if (Array.isArray(args.notificationDigest) && args.notificationDigest.length > 0) {
     parts.push('');
@@ -106,13 +116,14 @@ export function buildProactiveUserMessage(args: {
  * Build the user message content array for the proactive agent.
  * When a screenshot is available, returns a multi-part message with both text and image.
  */
-export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null; systemAudio?: string | null; micAudio?: string | null; notificationDigest?: string[] }): any[] {
+export function buildProactiveMessageContent(args: { prompt?: string; taskCount: number; tasks?: TaskSnapshot[]; screenshot?: string | null; systemAudio?: string | null; micAudio?: string | null; notificationDigest?: string[]; triggerPayload?: any }): any[] {
   const textPart = buildProactiveUserMessage({
     prompt: args.prompt,
     taskCount: args.taskCount,
     tasks: args.tasks,
     screenshot: args.screenshot || undefined,
     notificationDigest: args.notificationDigest,
+    triggerPayload: args.triggerPayload,
   });
 
   const content: any[] = [{ type: 'text', text: textPart }];
@@ -296,23 +307,10 @@ export function expandProactiveAllowedToolNames(allowedTools: unknown): string[]
     expanded.add('execute_tool');
   }
 
-  for (const family of PROACTIVE_TOOL_FAMILY_PREFIXES) {
-    const matched = Array.from(expanded).some((name) => family.some((prefix) => name.startsWith(prefix)));
-    if (!matched) continue;
-    for (const prefix of family) {
-      expanded.add(prefix);
-    }
-  }
-
   return Array.from(expanded);
 }
 
 export function filterProactiveTools<T extends Record<string, any>>(tools: T, allowedTools: unknown): T {
-  if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
-    const filteredEntries = Object.entries(tools).filter(([name]) => !isBlockedProactiveToolName(name));
-    return Object.fromEntries(filteredEntries) as T;
-  }
-
   const expandedAllowed = expandProactiveAllowedToolNames(allowedTools);
   const filteredEntries = Object.entries(tools).filter(([name]) => {
     return isProactiveToolAllowed(name, expandedAllowed);
@@ -323,10 +321,6 @@ export function filterProactiveTools<T extends Record<string, any>>(tools: T, al
 export function isProactiveToolAllowed(name: string, allowedTools: unknown): boolean {
   const toolName = String(name || '').trim();
   if (!toolName || isBlockedProactiveToolName(toolName)) return false;
-
-  if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
-    return true;
-  }
 
   const expandedAllowed = expandProactiveAllowedToolNames(allowedTools);
   if ((PROACTIVE_CORE_TOOLS as readonly string[]).includes(toolName)) return true;

@@ -1,15 +1,13 @@
 ﻿import React, {
   memo,
-  useCallback,
   useMemo,
-  useRef,
   useState,
   useEffect,
 } from "react";
 import { clsx } from "clsx";
-import { X, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import MessageList from "./MessageList";
-import { ContextItem, FileNavRef } from "./FileNavigator";
+import { ContextItem } from "./FileNavigator";
 import type {
   ChatMode,
   ChatModelsConfig,
@@ -26,7 +24,7 @@ import { SubagentDashboard } from "./chat-view/SubagentDashboard";
 import { AskUserPrompt } from "./chat-view/AskUserPrompt";
 import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
 import { buildContextUsageMetrics } from "../utils/contextUsage";
-import { chooseDropdownPlacement } from "../utils/dropdownPlacement";
+import { useFileNavigator } from "../hooks/useFileNavigator";
 
 interface ChatViewProps {
   messages: any[];
@@ -299,136 +297,18 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     return selectedModelLabel;
   })();
 
-  // --- File Navigator State (@ context) ---
-  const [showFileNav, setShowFileNav] = useState(false);
-  const [fileNavFilter, setFileNavFilter] = useState("");
-  const fileNavDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const fileNavRef = useRef<FileNavRef>(null);
-
-  const [fileNavOverlay, setFileNavOverlay] = useState<null | {
-    left: number;
-    top: number;
-    placement: "top" | "bottom";
-    width: number;
-  }>(null);
-
-  const updateFileNavOverlayPos = useCallback(() => {
-    if (!showFileNav) return;
-    const el = textareaRef.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    const margin = 10;
-    const dropdownGap = 12;
-    // Match input width, max 600px
-    const width = Math.min(Math.max(320, rect.width), 600);
-
-    const left = Math.min(
-      Math.max(rect.left, margin),
-      Math.max(margin, window.innerWidth - width - margin),
-    );
-
-    const spaceAbove = rect.top - margin;
-    const spaceBelow = window.innerHeight - rect.bottom - margin;
-    const placement = chooseDropdownPlacement({
-      currentPlacement: fileNavOverlay?.placement ?? "bottom",
-      spaceAbove,
-      spaceBelow,
-      minComfortableSpace: 280,
-      hysteresis: 36,
-    });
-    const top = placement === "top" ? rect.top - dropdownGap : rect.bottom + dropdownGap;
-
-    setFileNavOverlay({ left, top, placement, width });
-  }, [fileNavOverlay?.placement, showFileNav]);
-
-  useEffect(() => {
-    if (fileNavDebounceRef.current) {
-      clearTimeout(fileNavDebounceRef.current);
-    }
-
-    fileNavDebounceRef.current = setTimeout(() => {
-      const lastAt = query.lastIndexOf("@");
-      if (lastAt === -1) {
-        setShowFileNav(false);
-        setFileNavFilter("");
-        return;
-      }
-      const afterAt = query.substring(lastAt + 1);
-      if (afterAt.length === 0) {
-        const charBefore = lastAt > 0 ? query[lastAt - 1] : " ";
-        if (charBefore === " " || charBefore === "\n" || lastAt === 0) {
-          setShowFileNav(true);
-          setFileNavFilter("");
-        } else {
-          setShowFileNav(false);
-          setFileNavFilter("");
-        }
-        return;
-      }
-      if (/\s/.test(afterAt)) {
-        setShowFileNav(false);
-        setFileNavFilter("");
-        return;
-      }
-      const charBefore = lastAt > 0 ? query[lastAt - 1] : " ";
-      if (charBefore === " " || charBefore === "\n" || lastAt === 0) {
-        setShowFileNav(true);
-        setFileNavFilter(afterAt);
-      } else {
-        setShowFileNav(false);
-        setFileNavFilter("");
-      }
-    }, 100);
-
-    return () => {
-      if (fileNavDebounceRef.current) {
-        clearTimeout(fileNavDebounceRef.current);
-      }
-    };
-  }, [query]);
-
-  const handleFileSelect = useCallback(
-    (item: ContextItem) => {
-      const lastAt = query.lastIndexOf("@");
-      if (lastAt >= 0) {
-        setQuery(query.substring(0, lastAt).trimEnd());
-      }
-      onAddContext?.(item);
-      setShowFileNav(false);
-      setFileNavFilter("");
-    },
-    [query, setQuery, onAddContext],
-  );
-
-  const handleNavigate = useCallback(
-    (path: string) => {
-      const lastAt = query.lastIndexOf("@");
-      if (lastAt >= 0) {
-        setQuery(query.substring(0, lastAt + 1) + path);
-      }
-    },
-    [query, setQuery],
-  );
-
-  useEffect(() => {
-    if (!showFileNav) return;
-    updateFileNavOverlayPos();
-
-    const handler = () => updateFileNavOverlayPos();
-    window.addEventListener("resize", handler);
-    window.addEventListener("scroll", handler, true);
-    return () => {
-      window.removeEventListener("resize", handler);
-      window.removeEventListener("scroll", handler, true);
-    };
-  }, [showFileNav, updateFileNavOverlayPos]);
-
-  useEffect(() => {
-    if (!showFileNav) return;
-    updateFileNavOverlayPos();
-  }, [showFileNav, fileNavFilter, updateFileNavOverlayPos]);
+  // --- File Navigator (@ context) ---
+  const {
+    showFileNav,
+    fileNavFilter,
+    fileNavOverlay,
+    textareaRef,
+    fileNavRef,
+    handleFileSelect,
+    handleNavigate,
+    handleCloseFileNav,
+    handleOpenFileNav,
+  } = useFileNavigator({ query, setQuery, onAddContext });
 
   return (
     <>
@@ -438,7 +318,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
         fileNavOverlay={fileNavOverlay}
         fileNavFilter={fileNavFilter}
         onSelect={handleFileSelect}
-        onClose={() => setShowFileNav(false)}
+        onClose={handleCloseFileNav}
         onNavigate={handleNavigate}
       />
       <div className="flex h-full min-w-0 bg-transparent relative font-sans smooth-resize min-h-0">
@@ -548,26 +428,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   </div>
                 )}
 
-              {/* Secondary Header: Context Pills */}
-              {viewMode === "chat" && contextPaths.length > 0 && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
-                  {contextPaths.map((ctx, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap"
-                    >
-                      <span className="truncate max-w-[120px]">{ctx.name}</span>
-                      <button
-                        onClick={() => onRemoveContext(idx)}
-                        className="hover:bg-theme-hover rounded-full p-0.5 transition-colors"
-                      >
-                        <X className="w-3 h-3 text-theme-muted" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {viewMode === "tasks" ? (
@@ -657,6 +517,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               reasoningLevel={reasoningLevel}
               onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}
+              activeTabId={activeTabId}
+              contextPaths={contextPaths}
+              onRemoveContext={onRemoveContext}
+              onOpenFileNav={handleOpenFileNav}
+              onCloseFileNav={handleCloseFileNav}
             />
           </div>
         ) : (
@@ -754,26 +619,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   </div>
                 )}
 
-              {/* Secondary Header: Context Pills */}
-              {viewMode === "chat" && contextPaths.length > 0 && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-theme-active/20 border-b border-theme/10 overflow-x-auto scrollbar-hidden">
-                  {contextPaths.map((ctx, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-theme-card rounded-full text-[11px] text-theme-fg font-bold border border-theme/10 whitespace-nowrap"
-                    >
-                      <span className="truncate max-w-[120px]">{ctx.name}</span>
-                      <button
-                        onClick={() => onRemoveContext(idx)}
-                        className="hover:bg-theme-hover rounded-full p-0.5 transition-colors"
-                      >
-                        <X className="w-3 h-3 text-theme-muted" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {/* Messages or Tasks View */}
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {viewMode === "tasks" ? (
@@ -863,6 +708,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               reasoningLevel={reasoningLevel}
               onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}
+              activeTabId={activeTabId}
+              contextPaths={contextPaths}
+              onRemoveContext={onRemoveContext}
+              onOpenFileNav={handleOpenFileNav}
+              onCloseFileNav={handleCloseFileNav}
             />
           </>
         )}

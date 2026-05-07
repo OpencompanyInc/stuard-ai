@@ -66,6 +66,9 @@ import {
 } from "./QuickShortcuts";
 import { TasksView, type TaskSubTab } from "./TasksView";
 import { SuggestedPrompts } from "./onboarding/SuggestedPrompts";
+import { ContextItem } from "./FileNavigator";
+import { FileNavigatorOverlay } from "./chat-view/FileNavigatorOverlay";
+import { useFileNavigator } from "../hooks/useFileNavigator";
 
 interface LauncherViewProps {
   query: string;
@@ -132,6 +135,11 @@ interface LauncherViewProps {
   voiceActiveTool?: string | null;
   voiceActiveTools?: VoiceToolEvent[];
   voiceLastTool?: VoiceToolEvent | null;
+
+  // @ context picker
+  contextPaths?: ContextItem[];
+  onAddContext?: (item: ContextItem) => void;
+  onRemoveContext?: (index: number) => void;
 }
 
 // Helper to get icon for next up item
@@ -300,7 +308,21 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   voiceActiveTool,
   voiceActiveTools = [],
   voiceLastTool = null,
+  contextPaths = [],
+  onAddContext,
+  onRemoveContext,
 }) => {
+  const {
+    showFileNav,
+    fileNavFilter,
+    fileNavOverlay,
+    textareaRef,
+    fileNavRef,
+    handleFileSelect,
+    handleNavigate,
+    handleCloseFileNav,
+  } = useFileNavigator({ query, setQuery, onAddContext });
+
   const { modelById } = useModelRegistry();
   const CLOUD_AI_HTTP =
     (window as any).__CLOUD_AI_HTTP__ ||
@@ -949,6 +971,16 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const isCompact = overlayMode === "compact";
 
   return (
+    <>
+      <FileNavigatorOverlay
+        ref={fileNavRef}
+        showFileNav={showFileNav}
+        fileNavOverlay={fileNavOverlay}
+        fileNavFilter={fileNavFilter}
+        onSelect={handleFileSelect}
+        onClose={handleCloseFileNav}
+        onNavigate={handleNavigate}
+      />
     <div className="flex h-full min-w-0 overflow-hidden">
       {/* Internal Sidebar - outside main container for proper corner rendering */}
       <SidebarTabsPanel
@@ -1582,6 +1614,38 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   </AnimatePresence>
                 </motion.div>
               ) : (
+                <div className="flex flex-col gap-1.5">
+                  {contextPaths.length > 0 && (
+                    <div className="flex flex-wrap gap-1 px-1">
+                      {contextPaths.map((ctx, idx) => {
+                        const Icon = ctx.type === "bot"
+                          ? Sparkles
+                          : ctx.isDirectory
+                            ? Folder
+                            : FileIcon;
+                        return (
+                          <span
+                            key={`lc-${idx}-${ctx.path}`}
+                            className="group inline-flex items-center gap-1 pl-1.5 pr-1 py-0.5 bg-theme-hover/60 hover:bg-theme-active rounded-md text-[11px] text-theme-fg border border-theme/10 max-w-[200px]"
+                            title={ctx.path}
+                          >
+                            <Icon className="w-3 h-3 shrink-0 text-theme-muted" strokeWidth={2} />
+                            <span className="truncate font-semibold">{ctx.name}</span>
+                            {onRemoveContext && (
+                              <button
+                                type="button"
+                                onClick={() => onRemoveContext(idx)}
+                                className="ml-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-card rounded-sm p-0.5 transition-colors opacity-60 group-hover:opacity-100"
+                                title={`Remove ${ctx.name}`}
+                              >
+                                <X className="w-2.5 h-2.5" strokeWidth={2.5} />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 <div
                   className={clsx(
                     "flex items-center transition-all",
@@ -1592,6 +1656,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 >
                   <div className="flex-1 relative flex items-center min-w-0">
                     <TextareaAutosize
+                      ref={textareaRef}
                       className={clsx(
                         "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/80 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
                         isCompact
@@ -1608,6 +1673,33 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                         e: React.KeyboardEvent<HTMLTextAreaElement>,
                       ) => {
                         if ((e.nativeEvent as any)?.isComposing) return;
+                        if (showFileNav && fileNavRef.current) {
+                          if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            fileNavRef.current.moveSelection(1);
+                            return;
+                          }
+                          if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            fileNavRef.current.moveSelection(-1);
+                            return;
+                          }
+                          if (e.key === "Enter" || e.key === "Tab") {
+                            e.preventDefault();
+                            fileNavRef.current.selectCurrent();
+                            return;
+                          }
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            handleCloseFileNav();
+                            return;
+                          }
+                          if (e.key === " ") {
+                            const added = fileNavRef.current.addCurrent();
+                            if (added) e.preventDefault();
+                            return;
+                          }
+                        }
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
                           onSend();
@@ -1645,6 +1737,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     </button>
                   )}
                 </div>
+                </div>
               )}
             </div>
           </div>
@@ -1659,5 +1752,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         onSave={saveBookmarks}
       />
     </div>
+    </>
   );
 };
