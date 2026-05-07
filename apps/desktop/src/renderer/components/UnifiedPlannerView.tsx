@@ -726,7 +726,7 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
 
           {calendarView === "today" && (
             <div
-              className="flex-1 overflow-y-auto custom-scrollbar relative px-6 pb-6"
+              className="flex-1 overflow-y-auto custom-scrollbar relative px-6 pt-3 pb-6"
               ref={timelineRef}
             >
               {allDayBlocks.length > 0 && (
@@ -755,77 +755,119 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleTimelineDrop}
               >
-                {HOURS.map(h => (
-                  <div
-                    key={h}
-                    className="absolute inset-x-0 flex items-start"
-                    style={{ top: h * HOUR_HEIGHT, height: HOUR_HEIGHT }}
-                  >
-                    <span className="w-[62px] pr-4 pt-1 text-right text-[12px] text-theme-muted/80 h-fit font-medium tracking-[0.08em]">
-                      {h === 0 ? '12 am' : h < 12 ? `${h} am` : h === 12 ? '12 pm' : `${h - 12} pm`}
-                    </span>
-                    <div className="flex-1 h-[calc(100%-10px)] rounded-[20px] border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)]/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]" />
-                  </div>
-                ))}
-
-                {viewDateIso === currentLocalIso && (
-                  <div
-                    className="absolute left-[62px] right-0 z-10 pointer-events-none"
-                    style={{
-                      top: (new Date().getHours() * HOUR_HEIGHT) + (new Date().getMinutes() / 60 * HOUR_HEIGHT)
-                    }}
-                  >
-                    <div className="relative h-[2px] bg-primary/95 shadow-[0_0_18px_rgba(0,122,204,0.35)]">
-                      <div className="absolute -left-1.5 -top-[5px] w-4 h-4 rounded-full bg-primary shadow-[0_0_18px_rgba(0,122,204,0.45)]" />
-                    </div>
-                  </div>
-                )}
-
-                <div className="absolute left-[62px] right-0 top-0 bottom-0">
-                {dayBlockLayouts.map((entry) => {
-                  const b = entry.block;
-                  const isSelected = selectedBlockId === String(b.id);
-                  const left = `calc(${(entry.column * 100) / entry.maxColumns}% + ${entry.column * 8}px)`;
-                  const width = `calc(${100 / entry.maxColumns}% - 8px)`;
-                  return (
+                {/* Time gutter — labels sit on the hour line */}
+                <div className="absolute left-0 top-0 bottom-0 w-[62px] pointer-events-none">
+                  {HOURS.map(h => (
                     <div
-                      key={b.id}
-                      draggable={true}
-                      className={clsx(
-                        "absolute rounded-[18px] border p-4 text-left overflow-hidden cursor-pointer transition-all hover:z-20 cursor-move shadow-[0_14px_34px_rgba(0,0,0,0.18)] group/block",
-                        isSelected
-                          ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-orange-400 z-20 shadow-[0_18px_40px_rgba(0,0,0,0.22)]"
-                          : b.source === 'reminder'
-                            ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-amber-500 hover:border-amber-400 z-10"
-                            : b.source === 'task'
-                              ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-emerald-500 hover:border-emerald-400 z-10"
-                              : b.source === 'local'
-                                ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-violet-500 hover:border-violet-400 z-10"
-                                : "bg-[color:var(--dashboard-panel-solid)] text-theme-fg border-orange-400 hover:border-orange-300 z-10"
-                      )}
+                      key={h}
+                      className="absolute right-3 -translate-y-1/2"
+                      style={{ top: h * HOUR_HEIGHT }}
+                    >
+                      <span className="text-[10.5px] text-theme-muted/70 font-semibold uppercase tracking-[0.08em] tabular-nums">
+                        {h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Continuous timeline surface */}
+                <div className="absolute left-[62px] right-0 top-0 bottom-0 rounded-[20px] border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)]/40 overflow-hidden">
+                  {HOURS.map(h => h === 0 ? null : (
+                    <div
+                      key={`hr-${h}`}
+                      className="absolute inset-x-0 border-t border-[color:var(--dashboard-panel-border)]/70"
+                      style={{ top: h * HOUR_HEIGHT }}
+                    />
+                  ))}
+                  {HOURS.map(h => (
+                    <div
+                      key={`half-${h}`}
+                      className="absolute inset-x-0 border-t border-dashed border-[color:var(--dashboard-panel-border)]/35"
+                      style={{ top: h * HOUR_HEIGHT + HOUR_HEIGHT / 2 }}
+                    />
+                  ))}
+
+                  {viewDateIso === currentLocalIso && (
+                    <div
+                      className="absolute inset-x-0 z-10 pointer-events-none"
                       style={{
-                        top: entry.top + 8,
-                        left,
-                        width,
-                        height: Math.max(entry.height - 12, 84),
-                      }}
-                      onDragStart={(e) => {
-                        setDragBlock(b);
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/plain", String(b.id));
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectBlock(String(b.id));
+                        top: (new Date().getHours() * HOUR_HEIGHT) + (new Date().getMinutes() / 60 * HOUR_HEIGHT)
                       }}
                     >
-                      <div className="text-[16px] font-semibold leading-tight break-words">{b.title || "(No title)"}</div>
-                     <div className="text-[13px] opacity-75 mt-4 font-medium">
-                        {entry.start.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric' })}, {entry.start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – {entry.end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      <div className="relative h-[2px] bg-primary shadow-[0_0_18px_color-mix(in_srgb,var(--primary)_35%,transparent)]">
+                        <div className="absolute -left-[5px] -top-[5px] w-3 h-3 rounded-full bg-primary shadow-[0_0_18px_color-mix(in_srgb,var(--primary)_45%,transparent)] ring-2 ring-[color:var(--dashboard-panel-solid)]" />
                       </div>
                     </div>
-                  );
-                })}
+                  )}
+
+                  {dayBlockLayouts.map((entry) => {
+                    const b = entry.block;
+                    const isSelected = selectedBlockId === String(b.id);
+                    const cols = Math.max(1, entry.maxColumns);
+                    const left = `calc(${(entry.column * 100) / cols}% + ${entry.column === 0 ? 4 : 4 + entry.column * 4}px)`;
+                    const width = `calc(${100 / cols}% - ${cols === 1 ? 8 : 8 + 4}px)`;
+                    const blockHeight = Math.max(entry.height - 2, 22);
+                    const isCompact = blockHeight < 52;
+                    const isMicro = blockHeight < 30;
+
+                    const sourcePalette: Record<string, { tint: string; rail: string; hoverRing: string }> = {
+                      reminder: { tint: 'bg-amber-500/12',   rail: 'bg-amber-500',   hoverRing: 'hover:ring-amber-500/55' },
+                      task:     { tint: 'bg-emerald-500/12', rail: 'bg-emerald-500', hoverRing: 'hover:ring-emerald-500/55' },
+                      local:    { tint: 'bg-violet-500/12',  rail: 'bg-violet-500',  hoverRing: 'hover:ring-violet-500/55' },
+                      event:    { tint: 'bg-orange-500/12',  rail: 'bg-orange-500',  hoverRing: 'hover:ring-orange-500/55' },
+                    };
+                    const srcKey = b.source && sourcePalette[b.source as string] ? (b.source as string) : 'event';
+                    const palette = sourcePalette[srcKey];
+
+                    return (
+                      <div
+                        key={b.id}
+                        draggable={true}
+                        className={clsx(
+                          "absolute rounded-[12px] overflow-hidden cursor-pointer cursor-move transition-all group/block",
+                          isSelected
+                            ? "z-20 ring-2 ring-[color:var(--primary)] shadow-[0_18px_40px_rgba(0,0,0,0.24)]"
+                            : ["z-10 ring-1 ring-inset ring-[color:var(--dashboard-panel-border)] shadow-[0_4px_14px_rgba(0,0,0,0.10)] hover:z-20 hover:ring-1 hover:ring-inset hover:shadow-[0_10px_24px_rgba(0,0,0,0.16)]", palette.hoverRing]
+                        )}
+                        style={{
+                          top: entry.top + 1,
+                          left,
+                          width,
+                          height: blockHeight,
+                        }}
+                        onDragStart={(e) => {
+                          setDragBlock(b);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", String(b.id));
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectBlock(String(b.id));
+                        }}
+                      >
+                        <div className="absolute inset-0 bg-[color:var(--dashboard-panel-solid)]" />
+                        <div className={clsx("absolute inset-0", palette.tint)} />
+                        <div className={clsx("absolute left-0 top-0 bottom-0 w-[3px]", palette.rail)} />
+
+                        <div className={clsx(
+                          "relative h-full pl-3 pr-2.5 flex flex-col text-left",
+                          isMicro ? "py-0 justify-center" : isCompact ? "py-1 justify-center gap-0.5" : "py-2 justify-start gap-1"
+                        )}>
+                          <div className={clsx(
+                            "font-semibold leading-tight text-theme-fg",
+                            isMicro || isCompact ? "text-[12px] truncate" : "text-[13.5px] line-clamp-2 break-words"
+                          )}>
+                            {b.title || "(No title)"}
+                          </div>
+                          {!isCompact && (
+                            <div className="text-[11px] text-theme-muted font-medium tabular-nums tracking-tight">
+                              {entry.start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – {entry.end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -870,9 +912,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                           }}
                           className={clsx(
                             "relative h-[64px] rounded-[18px] transition-all hover:z-10 cursor-pointer overflow-hidden flex items-center justify-center",
-                            isSelected
-                              ? "border border-primary bg-primary/5 shadow-[0_0_0_1px_rgba(37,99,235,0.2)]"
-                              : day.isCurrentMonth ? "border border-transparent hover:bg-[color:var(--dashboard-hover)]" : "border border-transparent opacity-30"
+                            isSelected && isToday
+                              ? "border border-[color:var(--primary)] bg-primary shadow-[0_8px_22px_color-mix(in_srgb,var(--primary)_28%,transparent)]"
+                              : isSelected
+                                ? "border border-[color:var(--primary)] bg-[color-mix(in_srgb,var(--primary)_8%,transparent)] shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_22%,transparent)]"
+                                : isToday
+                                  ? "border border-[color-mix(in_srgb,var(--primary)_45%,transparent)] bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--primary)_16%,transparent)]"
+                                  : day.isCurrentMonth ? "border border-transparent hover:bg-[color:var(--dashboard-hover)]" : "border border-transparent opacity-30"
                           )}
                         >
                           {day.blocks.length > 0 && (
@@ -894,8 +940,14 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                             </div>
                           )}
                           <span className={clsx(
-                            "text-[24px] font-medium leading-none transition-all",
-                            isSelected ? "text-theme-fg" : isToday ? "text-primary" : day.isCurrentMonth ? "text-theme-fg/92" : "text-theme-muted"
+                            "text-[24px] leading-none transition-all",
+                            isSelected && isToday
+                              ? "text-primary-fg font-semibold"
+                              : isSelected
+                                ? "text-theme-fg font-medium"
+                                : isToday
+                                  ? "text-[color:var(--primary)] font-semibold"
+                                  : day.isCurrentMonth ? "text-theme-fg/92 font-medium" : "text-theme-muted font-medium"
                           )}>
                             {dayNum}
                           </span>

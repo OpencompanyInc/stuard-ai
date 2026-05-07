@@ -2,9 +2,17 @@ import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../tools/proac
 
 /**
  * Internal tools that should ALWAYS be available to bot/proactive agents, even
- * when allowedTools filtering is active. These are bot plumbing: task-board
- * management, the bot's private kanban, notification/session bookkeeping, and
- * the meta-tools needed to inspect the allowed tool surface.
+ * when allowedTools filtering is active. These are bot plumbing:
+ *   - the user's task board (`proactive_task_*`)
+ *   - the bot's private kanban (`bot_memory_*`)
+ *   - cross-run memory recall (`search_past_conversations`, `get_conversation_context`)
+ *   - notification/session bookkeeping
+ *   - meta-tools for discovering the rest of the surface
+ *
+ * If the user wants to gate memory recall they can do it via the bot's
+ * `memoryEnabled` toggle — that flag is what controls whether the kanban gets
+ * injected into the system prompt at all. The tools themselves stay available
+ * so the agent can self-recover if it ever needs to look something up.
  */
 const PROACTIVE_CORE_TOOLS = [
   ...PROACTIVE_TASK_TOOL_NAMES,
@@ -15,6 +23,8 @@ const PROACTIVE_CORE_TOOLS = [
   'get_skill_info',
   'choose_notification_channel',
   'write_session_summary',
+  'search_past_conversations',
+  'get_conversation_context',
 ] as const;
 
 const PROACTIVE_TOOL_FAMILY_PREFIXES = [

@@ -8,7 +8,7 @@ import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop,
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, botMemoryService } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, botMemoryService } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -1218,6 +1218,10 @@ export function setupIpc() {
   });
 
   // â”€â”€â”€ Bots (multi-bot proactive entity layer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  function syncVmBotIfDeployed(botId: string) {
+    syncBotDeploymentToVm(botId).catch((e) => logger.warn('[ipc] syncBotDeploymentToVm failed:', e));
+  }
+
   ipcMain.handle('bots:list', () => ({ ok: true, bots: botService.list() }));
   ipcMain.handle('bots:get', (_e, id: string) => {
     const bot = botService.get(String(id || ''));
@@ -1240,10 +1244,19 @@ export function setupIpc() {
   ipcMain.handle('bots:update', (_e, id: string, patch: any) => {
     const bot = botService.update(String(id || ''), patch || {});
     if (bot) syncBotTriggers(bot.id);
+    if (bot?.vmDeployedAt) syncVmBotIfDeployed(bot.id);
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
-  ipcMain.handle('bots:delete', (_e, id: string) => {
+  ipcMain.handle('bots:delete', async (_e, id: string) => {
     const botId = String(id || '');
+    const existing = botService.get(botId);
+    if (existing?.vmDeployedAt) {
+      const stopped = await stopBotOnVm(botId).catch((e) => {
+        logger.warn('[ipc] stopBotOnVm before delete failed:', e);
+        return { ok: false, error: String(e?.message || e) };
+      });
+      if (!stopped.ok) return { ok: false, error: `vm_stop_failed:${stopped.error || 'unknown'}` };
+    }
     const result = botService.delete(botId);
     if (result.ok) {
       syncBotTriggers(botId);
@@ -1258,7 +1271,9 @@ export function setupIpc() {
     return config ? { ok: true, config } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:updateConfig', (_e, id: string, patch: any) => {
-    const config = botService.updateConfig(String(id || ''), patch || {});
+    const botId = String(id || '');
+    const config = botService.updateConfig(botId, patch || {});
+    if (config) syncVmBotIfDeployed(botId);
     return config ? { ok: true, config } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:setStatus', (_e, id: string, status: any) => {
@@ -1284,16 +1299,19 @@ export function setupIpc() {
   ipcMain.handle('bots:addTrigger', (_e, id: string, input: any) => {
     const trigger = botService.addTrigger(String(id || ''), input || {});
     if (trigger) syncBotTriggers(String(id || ''));
+    if (trigger) syncVmBotIfDeployed(String(id || ''));
     return trigger ? { ok: true, trigger } : { ok: false, error: 'invalid_input' };
   });
   ipcMain.handle('bots:updateTrigger', (_e, id: string, triggerId: string, patch: any) => {
     const trigger = botService.updateTrigger(String(id || ''), String(triggerId || ''), patch || {});
     if (trigger) syncBotTriggers(String(id || ''));
+    if (trigger) syncVmBotIfDeployed(String(id || ''));
     return trigger ? { ok: true, trigger } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:removeTrigger', (_e, id: string, triggerId: string) => {
     const ok = botService.removeTrigger(String(id || ''), String(triggerId || ''));
     if (ok) syncBotTriggers(String(id || ''));
+    if (ok) syncVmBotIfDeployed(String(id || ''));
     return ok ? { ok: true } : { ok: false, error: 'cannot_remove_last' };
   });
 
@@ -1322,7 +1340,8 @@ export function setupIpc() {
     } catch { }
   }
   const VALID_KANBAN_STATUSES = new Set(['queued', 'in_progress', 'completed', 'failed']);
-  ipcMain.handle('bots:memoryListCards', (_e, id: string, status?: string) => {
+  ipcMain.handle('bots:memoryListCards', async (_e, id: string, status?: string) => {
+    await pullBotMemoryFromVm(String(id || '')).catch((e) => logger.warn('[ipc] pullBotMemoryFromVm failed:', e));
     const opts = status && VALID_KANBAN_STATUSES.has(String(status)) ? { status: String(status) as any } : {};
     return { ok: true, cards: botMemoryService.listCards(String(id || ''), opts) };
   });
@@ -1330,20 +1349,24 @@ export function setupIpc() {
     const card = botMemoryService.createCard(String(id || ''), input || { title: '' }, 'user');
     if (!card) return { ok: false, error: 'invalid_input' };
     broadcastBotMemoryChanged(String(id || ''));
+    pushBotMemoryToVm(String(id || '')).catch((e) => logger.warn('[ipc] pushBotMemoryToVm failed:', e));
     return { ok: true, card };
   });
   ipcMain.handle('bots:memoryUpdateCard', (_e, id: string, cardId: string, patch: any) => {
     const card = botMemoryService.updateCard(String(id || ''), String(cardId || ''), patch || {}, 'user');
     if (!card) return { ok: false, error: 'not_found' };
     broadcastBotMemoryChanged(String(id || ''));
+    pushBotMemoryToVm(String(id || '')).catch((e) => logger.warn('[ipc] pushBotMemoryToVm failed:', e));
     return { ok: true, card };
   });
   ipcMain.handle('bots:memoryDeleteCard', (_e, id: string, cardId: string) => {
     const ok = botMemoryService.deleteCard(String(id || ''), String(cardId || ''));
     if (ok) broadcastBotMemoryChanged(String(id || ''));
+    if (ok) pushBotMemoryToVm(String(id || '')).catch((e) => logger.warn('[ipc] pushBotMemoryToVm failed:', e));
     return ok ? { ok: true } : { ok: false, error: 'not_found' };
   });
-  ipcMain.handle('bots:memoryListRunLog', (_e, id: string, limit?: number) => {
+  ipcMain.handle('bots:memoryListRunLog', async (_e, id: string, limit?: number) => {
+    await pullBotMemoryFromVm(String(id || '')).catch((e) => logger.warn('[ipc] pullBotMemoryFromVm failed:', e));
     return { ok: true, runLog: botMemoryService.listRunLog(String(id || ''), typeof limit === 'number' ? limit : 20) };
   });
 
@@ -1931,23 +1954,23 @@ export function setupIpc() {
         try { globalShortcut.unregister(v); } catch { }
       }
 
-      // Register the new shortcut
-      const success = globalShortcut.register(accelerator, () => {
-        const { handleOverlayHotkey } = require('../windows');
-        handleOverlayHotkey();
-      });
+      // Save first, then reuse the startup registration path. That keeps
+      // globalShortcut as a no-op consumer while uiohook owns tap-vs-hold on
+      // key release. Registering handleOverlayHotkey here causes keydown plus
+      // keyup double toggles when uiohook is active.
+      saveGlobalHotkey(accelerator);
+      const { registerGlobalShortcuts } = require('../windows');
+      registerGlobalShortcuts();
 
-      if (success) {
-        // Save to settings
-        saveGlobalHotkey(accelerator);
+      if (globalShortcut.isRegistered(accelerator)) {
         logger.info(`Global hotkey changed to: ${accelerator}`);
         return { ok: true };
-      } else {
-        // Re-register the default
-        const { registerGlobalShortcuts } = require('../windows');
-        registerGlobalShortcuts();
-        return { ok: false, error: 'Failed to register new shortcut' };
       }
+
+      // Restore the previous value if registration raced with another app.
+      saveGlobalHotkey(oldHotkey);
+      registerGlobalShortcuts();
+      return { ok: false, error: 'Failed to register new shortcut' };
     } catch (e: any) {
       logger.error('Error setting global hotkey:', e);
       return { ok: false, error: String(e?.message || 'Unknown error') };

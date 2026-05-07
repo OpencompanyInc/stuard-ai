@@ -96,12 +96,13 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('search_tools');
     expect(result).toHaveProperty('get_tool_schema');
     expect(result).toHaveProperty('get_skill_info');
+    // Cross-run memory tools are part of the default toolkit
+    expect(result).toHaveProperty('search_past_conversations');
+    expect(result).toHaveProperty('get_conversation_context');
     // Explicitly allowed tool is kept
     expect(result).toHaveProperty('some_random_tool');
     expect(result).not.toHaveProperty('web_search');
     expect(result).not.toHaveProperty('deploy_headless_agent');
-    expect(result).not.toHaveProperty('search_past_conversations');
-    expect(result).not.toHaveProperty('get_conversation_context');
   });
 
   it('filters out non-core tools not in the allow-list', () => {
@@ -132,7 +133,7 @@ describe('filterProactiveTools', () => {
     expect(result).toHaveProperty('browser_use_navigate');
   });
 
-  it('keeps conversation memory tools only when allowed', () => {
+  it('keeps both conversation memory tools by default — they are part of the bot toolkit', () => {
     const tools = {
       proactive_task_list: 1,
       web_search: 2,
@@ -141,11 +142,12 @@ describe('filterProactiveTools', () => {
       some_other_tool: 5,
     };
 
-    const result = filterProactiveTools(tools, ['web_search', 'get_conversation_context']);
+    const result = filterProactiveTools(tools, ['web_search']);
     expect(result).toHaveProperty('proactive_task_list');
     expect(result).toHaveProperty('web_search');
+    // Cross-run memory recall is always available — bots need to remember.
     expect(result).toHaveProperty('get_conversation_context');
-    expect(result).not.toHaveProperty('search_past_conversations');
+    expect(result).toHaveProperty('search_past_conversations');
     expect(result).not.toHaveProperty('some_other_tool');
   });
 

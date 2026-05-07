@@ -291,6 +291,19 @@ function applyOverlayChrome(mode: OverlayMode) {
   } catch { }
 }
 
+function forceOverlayChrome() {
+  if (!win) return;
+  try {
+    if (currentMode === 'window') {
+      win.setAlwaysOnTop(false);
+      win.setSkipTaskbar(false);
+    } else {
+      win.setAlwaysOnTop(true, 'screen-saver');
+      win.setSkipTaskbar(true);
+    }
+  } catch { }
+}
+
 // Current user-preferred sizes (loaded from store on init)
 let userModeSizes: ModeSizePrefs = { ...DEFAULT_MODE_SIZES };
 
@@ -603,6 +616,9 @@ export function createWindow() {
     wasHidden = true;
     unregisterMoveShortcuts();
     clearMoveTimer();
+    // Fires synchronously with the OS hide so the renderer can park its entrance
+    // animation in the hidden state before the next show flips visibility.
+    try { win?.webContents.send("overlay:hidden"); } catch { }
   });
   win.on('show', () => {
     if (win?.isFocused()) unregisterMoveShortcuts();
@@ -1211,6 +1227,9 @@ let overlayHotkeyLatched = false;
 let overlayHotkeyLatchTimer: any = null;
 let lastToggleAt = 0;
 let lastShowAt = 0;
+const OVERLAY_HOTKEY_LATCH_MS = 220;
+const OVERLAY_TOGGLE_DEBOUNCE_MS = 150;
+const OVERLAY_HIDE_AFTER_SHOW_GUARD_MS = 120;
 
 export function handleOverlayHotkey() {
   try {
@@ -1221,11 +1240,21 @@ export function handleOverlayHotkey() {
 
   overlayHotkeyLatchTimer = setTimeout(() => {
     overlayHotkeyLatched = false;
-  }, 900);
+  }, OVERLAY_HOTKEY_LATCH_MS);
 
   if (overlayHotkeyLatched) return;
   overlayHotkeyLatched = true;
   toggleWindow();
+}
+
+let overlaySoftHideTimer: NodeJS.Timeout | null = null;
+const OVERLAY_RENDERER_HIDE_ANIMATION_MS = 190;
+
+function cancelOverlaySoftHideTimer() {
+  if (overlaySoftHideTimer) {
+    clearTimeout(overlaySoftHideTimer);
+    overlaySoftHideTimer = null;
+  }
 }
 
 export function showWindow() {
@@ -1234,9 +1263,10 @@ export function showWindow() {
     return;
   }
 
-  const wasVisible = win.isVisible();
+  const wasNativeVisible = win.isVisible();
+  const wasLogicallyVisible = wasNativeVisible && !wasHidden;
 
-  if (currentMode === 'compact' && wasHidden && !wasVisible) {
+  if (currentMode === 'compact' && wasHidden && !wasLogicallyVisible) {
     repositionTopCenter(win);
   }
 
@@ -1246,24 +1276,43 @@ export function showWindow() {
     }
   } catch { }
 
-  // Use show() + focus() rather than showInactive() + focus(). The
-  // showInactive -> focus pair causes Windows to do an extra activation
-  // pass which on transparent windows produces a brief flicker. A direct
-  // show() activates once and is visibly smoother.
-  try {
-    win.show();
-  } catch {
-    try { win.showInactive(); } catch { }
+  if (wasLogicallyVisible) {
+    // Calling show() on an already-visible transparent frameless window still
+    // performs an activation pass on Windows, which can look like a blink.
+    forceOverlayChrome();
+    try {
+      if (!win.isFocused()) win.focus();
+    } catch { }
+    wasHidden = false;
+    return;
+  }
+
+  try { win.setFocusable(true); } catch { }
+  forceOverlayChrome();
+  try { win.setIgnoreMouseEvents(false); } catch { }
+  cancelOverlaySoftHideTimer();
+  try { win.setOpacity(1); } catch { }
+
+  if (!wasNativeVisible) {
+    // Use show() rather than showInactive() + focus(). The showInactive -> focus
+    // pair causes Windows to do an extra activation pass which on transparent
+    // windows produces a brief flicker. A direct show() activates once.
+    try {
+      win.show();
+    } catch {
+      try { win.showInactive(); } catch { }
+    }
+  } else {
+    try {
+      if (!win.isFocused()) win.focus();
+    } catch { }
   }
 
   lastShowAt = Date.now();
 
-  // moveTop is only needed when we expect another window to be on top of
-  // ours. Skipping the call when we already had focus avoids one more
-  // synchronous Windows API hop on every show.
-  if (!wasVisible) {
-    try { win.moveTop(); } catch { }
-  }
+  // moveTop is only needed when we expect another window to be on top of ours.
+  try { win.moveTop(); } catch { }
+  forceOverlayChrome();
 
   wasHidden = false;
 
@@ -1272,12 +1321,26 @@ export function showWindow() {
 
 export function hideWindow() {
   const now = Date.now();
-  if (now - lastShowAt < 250) return;
+  if (now - lastShowAt < OVERLAY_HIDE_AFTER_SHOW_GUARD_MS) return;
   wasHidden = true;
-  // Hide first so any subsequent native resize from the mode reset isn't
-  // visible to the user. We then reset to compact while hidden so the
-  // next show is instant and pre-rendered.
-  win?.hide();
+  // Soft-hide instead of win.hide(). Transparent frameless windows can visibly
+  // recompose on Windows when repeatedly hidden/shown, so keep the native
+  // surface alive. Let the renderer finish its slide/fade before setting native
+  // opacity to 0.
+  if (win && !win.isDestroyed()) {
+    unregisterMoveShortcuts();
+    clearMoveTimer();
+    cancelOverlaySoftHideTimer();
+    try { win.webContents.send("overlay:hidden"); } catch { }
+    forceOverlayChrome();
+    try { win.setIgnoreMouseEvents(true, { forward: true }); } catch { }
+    overlaySoftHideTimer = setTimeout(() => {
+      overlaySoftHideTimer = null;
+      try { win?.setOpacity(0); } catch { }
+      try { win?.setFocusable(false); } catch { }
+      try { win?.blur(); } catch { }
+    }, OVERLAY_RENDERER_HIDE_ANIMATION_MS);
+  }
   if (currentMode !== 'compact') {
     setImmediate(() => {
       try { setOverlayMode('compact'); } catch { }
@@ -1287,20 +1350,16 @@ export function hideWindow() {
 
 export function toggleWindow() {
   const now = Date.now();
-  if (now - lastToggleAt < 350) return;
+  if (now - lastToggleAt < OVERLAY_TOGGLE_DEBOUNCE_MS) return;
   lastToggleAt = now;
 
   logger.info("toggleWindow called, win exists:", !!win);
   if (!win) return;
   logger.info("toggleWindow: currently visible=", win.isVisible());
 
-  if (win.isVisible()) {
-    if (win.isFocused()) {
-      if (now - lastShowAt < 600) return;
-      hideWindow();
-    } else {
-      showWindow();
-    }
+  if (win.isVisible() && !wasHidden) {
+    if (now - lastShowAt < OVERLAY_HIDE_AFTER_SHOW_GUARD_MS) return;
+    hideWindow();
   } else {
     if (currentMode !== 'compact') {
       // We have to switch from window/sidebar to compact AND show the

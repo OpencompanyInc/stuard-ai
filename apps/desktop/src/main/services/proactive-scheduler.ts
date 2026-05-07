@@ -439,7 +439,7 @@ ${contextToUse}
 Continue the conversation naturally. Be brief, warm, and helpful. This is a follow-up reply, not a new check-in. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.`;
 
     const allowedToolsNote = Array.isArray(config.allowedTools) && config.allowedTools.length > 0
-      ? `\n\nAllowed non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are blocked. Task-board and private kanban tools remain available by default.`
+      ? `\n\nAllowed non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are blocked. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context) remains available regardless.`
       : '';
 
     const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.${allowedToolsNote}
@@ -994,6 +994,10 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       botId: typeof payload.botId === 'string' ? payload.botId : undefined,
       tasks: payload.tasks || [],
       instructions: payload.config?.instructions || '',
+      // The bot's private kanban gets its own field so the cloud can render
+      // it under a clear header (rather than mashed into "user instructions")
+      // and reinforce the bot_memory_* tool guidance separately.
+      kanbanContext: typeof payload.kanbanContext === 'string' ? payload.kanbanContext : undefined,
       prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,
       allowedTools: Array.isArray(payload.config?.allowedTools) ? payload.config.allowedTools : [],
       modelMode: normalizeProactiveModelMode(payload.config?.modelMode),
@@ -1262,16 +1266,16 @@ async function executeWakeUp(opts: {
       ? allActiveSkills
       : allActiveSkills.filter(s => botSkillIds.includes(s.id));
 
-    // Compose the instructions sent to the agent from the bot's identity
-    // (systemPrompt = personality/objective, storedFacts = user-curated memory),
-    // its private kanban + run log (bot-curated memory across runs), and the
-    // on-the-fly focus brief. This is what makes a bot actually behave like
-    // its UI says it should.
+    // Compose what the agent sees as its system context:
+    //   - focusInstructions = identity + user-curated facts + today's focus
+    //   - kanbanSection     = the bot's private kanban + recent run log
+    // We keep them in separate fields so each path can render them under
+    // clear headings (`## USER INSTRUCTIONS` vs `## YOUR PRIVATE KANBAN`)
+    // instead of dumping everything into one undifferentiated blob.
     const kanbanSection = config.memoryEnabled ? botMemoryService.formatForPrompt(botId) : '';
-    const composedInstructions = [
+    const focusInstructions = [
       bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
       config.memoryEnabled && bot.storedFacts?.trim() ? `# Things to remember\n${bot.storedFacts.trim()}` : '',
-      kanbanSection,
       config.instructions?.trim() ? `# Today's focus\n${config.instructions.trim()}` : '',
     ].filter(Boolean).join('\n\n');
 
@@ -1279,11 +1283,12 @@ async function executeWakeUp(opts: {
       botId,
       botName: bot.name,
       config: {
-        instructions: composedInstructions,
+        instructions: focusInstructions,
         allowedTools: config.allowedTools,
         modelMode: normalizeProactiveModelMode((config as any).modelMode),
         modelId: String((config as any).modelId || '').trim(),
       },
+      kanbanContext: kanbanSection || undefined,
       context: {
         screenshot: screenshotData,
         systemAudio: systemAudioData,

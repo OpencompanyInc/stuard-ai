@@ -688,7 +688,7 @@ async function handleToolRequest(msg: any, socket: WebSocket): Promise<void> {
         : (typeof args?.proactiveBotId === 'string' && args.proactiveBotId.trim() ? args.proactiveBotId.trim() : undefined);
     const toolArgs = (() => {
         if (!args || typeof args !== 'object') return args || {};
-        const { __proactiveBotId, proactiveBotId: _proactiveBotId, ...rest } = args;
+        const { __proactiveBotId, proactiveBotId: _proactiveBotId, __userId: _userId, ...rest } = args;
         return rest;
     })();
 

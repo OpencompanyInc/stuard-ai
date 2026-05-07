@@ -268,6 +268,49 @@ export const botMemoryService = {
     return [...rec.runLog].reverse().slice(0, Math.max(1, Math.min(limit, RUN_LOG_LIMIT)));
   },
 
+  /** Export a compact snapshot for VM sync. Run log is chronological. */
+  exportSnapshot(botId: string, limit: number = RUN_LOG_LIMIT): BotMemoryRecord {
+    if (!botId) return { cards: [], runLog: [] };
+    const rec = loadFile().bots[botId];
+    if (!rec) return { cards: [], runLog: [] };
+    return {
+      cards: [...rec.cards],
+      runLog: [...rec.runLog].slice(-Math.max(1, Math.min(limit, RUN_LOG_LIMIT))),
+    };
+  },
+
+  /** Merge a VM snapshot into the local file, keeping the newest card edits. */
+  mergeSnapshot(botId: string, snapshot: Partial<BotMemoryRecord>): BotMemoryRecord {
+    if (!botId) return { cards: [], runLog: [] };
+    const incoming = normalizeRecord(snapshot);
+    const file = loadFile();
+    const current = ensureRecord(file, botId);
+
+    const cardsById = new Map<string, BotKanbanCard>();
+    for (const card of current.cards) cardsById.set(card.id, card);
+    for (const card of incoming.cards) {
+      const existing = cardsById.get(card.id);
+      if (!existing || card.updatedAt.localeCompare(existing.updatedAt) >= 0) {
+        cardsById.set(card.id, card);
+      }
+    }
+
+    const logsById = new Map<string, BotRunLogEntry>();
+    for (const entry of current.runLog) logsById.set(entry.id, entry);
+    for (const entry of incoming.runLog) logsById.set(entry.id, entry);
+
+    const merged = normalizeRecord({
+      cards: Array.from(cardsById.values()),
+      runLog: Array.from(logsById.values()),
+    });
+    file.bots[botId] = {
+      cards: merged.cards,
+      runLog: merged.runLog.slice(-RUN_LOG_LIMIT),
+    };
+    saveFile(file);
+    return file.bots[botId];
+  },
+
   /** Drop everything for this bot. Called when a bot is deleted. */
   clearForBot(botId: string): void {
     if (!botId) return;
@@ -285,8 +328,7 @@ export const botMemoryService = {
    */
   formatForPrompt(botId: string, opts: { runLogLimit?: number; cardLimitPerColumn?: number } = {}): string {
     if (!botId) return '';
-    const rec = loadFile().bots[botId];
-    if (!rec || (rec.cards.length === 0 && rec.runLog.length === 0)) return '';
+    const rec = loadFile().bots[botId] || { cards: [], runLog: [] };
 
     const cardLimit = Math.max(3, opts.cardLimitPerColumn ?? 8);
     const runLimit = Math.max(1, opts.runLogLimit ?? 5);
@@ -302,7 +344,16 @@ export const botMemoryService = {
       for (const k of Object.keys(byStatus) as BotKanbanStatus[]) {
         byStatus[k].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       }
-      const lines: string[] = ['# Your kanban (private to you, persists across runs)'];
+      const lines: string[] = [
+        '# YOUR PRIVATE KANBAN (persists across runs — this is YOUR working memory)',
+        'Manage cards with the bot_memory_* tools (always available to you):',
+        '  • bot_memory_list — see every card; filter by status when you need to.',
+        '  • bot_memory_create — capture a new intent, plan, or finding (defaults to "queued").',
+        '  • bot_memory_update — move a card between columns or edit its notes.',
+        '  • bot_memory_delete — drop a card (prefer marking "completed" so history sticks).',
+        '  • bot_memory_log — append a one-line wrap-up of this run for your future self.',
+        'The user can edit these cards too; lastEditedBy distinguishes their edits from yours.',
+      ];
       const labelMap: Record<BotKanbanStatus, string> = {
         in_progress: 'In progress',
         queued: 'Queued',
@@ -319,10 +370,21 @@ export const botMemoryService = {
           lines.push(`- [${c.id}] ${c.title}${noteSuffix}`);
         }
         if (list.length > cardLimit) {
-          lines.push(`- …and ${list.length - cardLimit} more (use bot_memory.list to see all)`);
+          lines.push(`- …and ${list.length - cardLimit} more (call bot_memory_list to see all)`);
         }
       }
       sections.push(lines.join('\n'));
+    } else {
+      // No cards yet — still tell the bot the tools exist so it can start
+      // building memory on its very first run instead of running blind.
+      sections.push([
+        '# YOUR PRIVATE KANBAN (empty — start populating it as you work)',
+        'You have a private kanban that persists across runs. Use it as your working memory:',
+        '  • bot_memory_create({ title, notes?, status? }) — log a plan or finding now so future runs see it.',
+        '  • bot_memory_list / bot_memory_update / bot_memory_delete — manage existing cards.',
+        '  • bot_memory_log({ summary, outcome }) — wrap up each run with a single line.',
+        'The user can also seed cards from the Kanban tab — check it first before duplicating their intent.',
+      ].join('\n'));
     }
 
     if (rec.runLog.length > 0) {

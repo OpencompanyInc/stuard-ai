@@ -41,6 +41,7 @@ import { DeployExecutor } from './deploy-executor';
 import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
 import { getVMProactiveScheduler } from './vm-proactive';
 import { getVMBotScheduler, type VMBot } from './vm-bots';
+import { handleVMBotMemoryCommand } from './vm-bot-memory';
 import { saveSkills as saveVMSkills, loadSkills as loadVMSkills, getStats as getVMSkillsStats, type Skill as VMSkill } from './vm-skills';
 import * as fileManager from './file-manager';
 import { getAgentWs, sendToAgent, sendToAgentStreaming, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
@@ -348,6 +349,15 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return await handleBotsRun(args);
     case 'bots_list':
       return handleBotsList();
+    case 'bot_memory_list':
+    case 'bot_memory_create':
+    case 'bot_memory_update':
+    case 'bot_memory_delete':
+    case 'bot_memory_log':
+    case 'bot_memory_export':
+    case 'bot_memory_replace':
+    case 'bot_memory_merge':
+      return handleVMBotMemoryCommand(command, args);
 
     // ── Skills Sync (desktop is source of truth) ─────────────────────
     case 'skills_sync':

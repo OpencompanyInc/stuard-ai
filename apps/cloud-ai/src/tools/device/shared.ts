@@ -244,16 +244,34 @@ export async function execLocalToolWithCapturedBridge(
  */
 async function execViaVM(toolId: string, args: any, timeoutMs: number): Promise<any> {
   const secrets = getBridgeSecrets() || getResolvedBridgeContext()?.secrets;
-  const userId = secrets?.userId;
+  const explicitUserId = typeof args?.__userId === 'string' ? args.__userId : '';
+  const userId = secrets?.userId || explicitUserId;
   if (!userId) return null; // no user context — can't route to VM
 
   try {
     const { sendVMCommand, resolveVMAddress } = await import('../../services/vm-command');
+    const cleanArgs = args && typeof args === 'object'
+      ? (() => {
+          const { __userId, ...rest } = args as any;
+          return rest;
+        })()
+      : args;
+    const effectiveArgs = injectLocalToolInput(toolId, cleanArgs, secrets || {
+      userId,
+      proactiveBotId: typeof args?.__proactiveBotId === 'string' ? args.__proactiveBotId : undefined,
+    });
+    if (toolId.startsWith('bot_memory_')) {
+      const result = await sendVMCommand(userId, toolId, effectiveArgs, timeoutMs);
+      if (result.ok && result.result) return result.result;
+      if (!result.ok && result.error === 'vm_not_reachable') return null;
+      return result.result || { ok: false, error: result.error || 'vm_bot_memory_failed' };
+    }
+
     const vmIp = await resolveVMAddress(userId);
     if (!vmIp) return null; // no VM running
 
     // Forward as a tool_exec command to the VM's Python agent via the Node.js relay
-    const result = await sendVMCommand(userId, 'tool_exec', { tool: toolId, args }, timeoutMs);
+    const result = await sendVMCommand(userId, 'tool_exec', { tool: toolId, args: effectiveArgs }, timeoutMs);
     if (result.ok && result.result) return result.result;
     if (!result.ok && result.error === 'vm_not_reachable') return null;
     return result.result || { ok: false, error: result.error || 'vm_tool_failed' };
@@ -451,7 +469,11 @@ export function makeLocalTool(
     outputSchema: outputSchema || z.any(),
     execute: async (inputData, { writer }) => {
       const bridgeContext = getResolvedBridgeContext();
-      const effectiveInput = injectLocalToolInput(id, inputData, bridgeContext?.secrets);
+      const effectiveInput = injectLocalToolInput(
+        id,
+        inputData,
+        bridgeContext?.secrets || getResolvedBridgeSecretsFallbackOnly(),
+      );
 
       // Desktop bridge available — use it (fastest path)
       // Check both ALS-based bridge and module-level fallback (for subagent context where ALS is broken)
@@ -475,6 +497,14 @@ export function makeLocalTool(
       }
 
       // No desktop bridge — try routing to VM, then local browser server
+      if (noFallback && id.startsWith('bot_memory_')) {
+        const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
+        const effectiveTimeout = typeof t === 'number' ? t : 15000;
+        const vmResult = await execViaVM(id, effectiveInput, effectiveTimeout);
+        if (vmResult !== null) return stripNulls(vmResult);
+        return { ok: false, error: `No desktop bridge or VM available. ${id} requires a running Stuard desktop app or deployed VM bot memory store.` };
+      }
+
       if (noFallback && id.startsWith('browser_use_')) {
         const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
         const effectiveTimeout = typeof t === 'number' ? t : 60000;

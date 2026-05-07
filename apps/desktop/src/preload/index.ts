@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
       try { ipcRenderer.off("overlay:showed", handler); } catch { }
     };
   },
+  onHide: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("overlay:hidden", handler);
+    return () => {
+      try { ipcRenderer.off("overlay:hidden", handler); } catch { }
+    };
+  },
   onWakewordDetected: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('wakeword:detected', handler);

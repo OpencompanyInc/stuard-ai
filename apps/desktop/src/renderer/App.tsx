@@ -145,6 +145,7 @@ export default function App() {
   const [approvalQueue, setApprovalQueue] = useState<Array<{ id: string; tool: string; args?: Record<string, any>; description?: string }>>([]);
   const [askUserPrompt, setAskUserPrompt] = useState<{ id: string; args: any } | null>(null);
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
+  const [overlayVisible, setOverlayVisible] = useState(true);
 
   // Track whether the main window is focused/active
   const windowFocusedRef = useRef(document.hasFocus());
@@ -386,8 +387,12 @@ export default function App() {
     if (!window.desktopAPI) return;
 
     const unsubShow = window.desktopAPI.onShow(() => {
+      setOverlayVisible(true);
       setShowMiniOutput(false);
       setTimeout(() => inputRef.current?.focus(), 0);
+    });
+    const unsubHide = window.desktopAPI.onHide?.(() => {
+      setOverlayVisible(false);
     });
 
     // Listen for open-chat requests (e.g. from Dashboard)
@@ -400,6 +405,7 @@ export default function App() {
     });
     return () => {
       try { unsubShow?.(); } catch { }
+      try { unsubHide?.(); } catch { }
       try { unsubOpen && unsubOpen(); } catch { }
     };
   }, []);
@@ -1535,7 +1541,7 @@ export default function App() {
   return (
     <NotificationProvider>
       <NotificationController subscribeProgress={subscribeProgress} />
-      <div className="w-full h-full text-sans overflow-hidden relative">
+      <div className={`overlay-window-shell ${overlayVisible ? 'overlay-window-shell-visible' : 'overlay-window-shell-hidden'} w-full h-full text-sans overflow-hidden relative`}>
         {/* Resize handles for user-resizable window - invisible but draggable edges */}
         {showResizeGrips && (
           <>

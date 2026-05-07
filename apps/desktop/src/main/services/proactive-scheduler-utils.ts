@@ -300,6 +300,9 @@ export interface AgentToolRequest {
   args: any;
 }
 
+// Tools that stay available to bots regardless of the per-bot allowedTools
+// filter. These are the bot's "default kit": user task board, private kanban,
+// cross-run memory recall, plus the bookkeeping tools the scheduler relies on.
 const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
   'proactive_task_list',
   'proactive_task_update',
@@ -311,6 +314,8 @@ const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
   'bot_memory_delete',
   'bot_memory_log',
   'write_session_summary',
+  'search_past_conversations',
+  'get_conversation_context',
 ]);
 
 export function extractAgentToolRequest(msg: any): AgentToolRequest | null {
@@ -419,10 +424,21 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     'This is a proactive wake-up. Your job: DO things, not remind about things. Act first, notify with results.',
     'Return a normal plain markdown/text reply only. Do NOT use GenUI, interactive UI blocks, JSON UI payloads, or code fences.',
     '',
+    '## YOUR DEFAULT TOOLKIT (always available, regardless of allowedTools)',
+    '- proactive_task_* — manage the USER\'s task board (tasks they see).',
+    '- bot_memory_* — manage YOUR PRIVATE kanban. This is your working memory across runs:',
+    '  • bot_memory_list — see your cards.',
+    '  • bot_memory_create({ title, notes?, status? }) — capture a plan or finding.',
+    '  • bot_memory_update({ id, ... }) — move cards between columns or edit notes.',
+    '  • bot_memory_delete({ id }) — drop a card (prefer "completed" to preserve history).',
+    '  • bot_memory_log({ summary, outcome }) — append a one-line run wrap-up.',
+    '- search_past_conversations / get_conversation_context — recall prior runs and chats.',
+    'Use bot_memory_* aggressively. Without it every run starts blind. The user can also edit these cards from the Bots → Kanban tab; lastEditedBy distinguishes their edits from yours.',
+    '',
     '## HOW TO THINK',
-    '1. Read the context below (windows, calendar, session history). What is the user doing? What can you DO for them?',
+    '1. Read the context below (windows, calendar, session history) and your kanban (in the user message). What is the user doing, and what does your past self want you to pick up?',
     '2. Check your notification digest in the user message. DO NOT repeat yourself. If you said it before, skip it.',
-    '3. If you have tasks, DO THE WORK — use tools, produce output, complete things. Then tell the user what you accomplished.',
+    '3. If you have tasks or kanban cards, DO THE WORK — use tools, produce output, complete things. Update your kanban as you go. Then tell the user what you accomplished.',
     '4. If you spot a conflict (distraction + deadline), you can mention it — but only if you haven\'t already AND you\'re also offering help (e.g., "I prepped your meeting notes").',
     '5. If you have nothing to act on or report, skip the notification. Don\'t manufacture check-ins.',
     '',
@@ -474,12 +490,19 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     }
   }
 
+  // Kanban first — the bot's private working memory is the most load-bearing
+  // piece of context for any non-first run. Render it under its own header
+  // before the user-configured focus brief so the model sees its own state
+  // before it sees any directives.
+  const kanbanContext = String(payload?.kanbanContext || '').trim();
+  if (kanbanContext) lines.push(`\n${kanbanContext}`);
+
   const instructions = String(payload?.config?.instructions || '').trim();
   if (instructions) lines.push(`\nUser-configured proactive instructions: ${instructions}`);
 
   if (Array.isArray(payload?.config?.allowedTools) && payload.config.allowedTools.length > 0) {
     lines.push(`Allowed non-internal tools for this bot: ${payload.config.allowedTools.join(', ')}.`);
-    lines.push('All other non-internal tools are blocked. Your task-board and private kanban tools remain available by default.');
+    lines.push('All other non-internal tools are blocked. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool) remains available regardless.');
   }
 
   // Inject previous session summaries for pattern awareness

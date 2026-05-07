@@ -30,6 +30,7 @@ import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
 import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
+import { bot_memory_list, bot_memory_create, bot_memory_update, bot_memory_delete, bot_memory_log } from '../tools/bot-memory-tools';
 import { upsertSmsUserState } from '../supabase';
 import { buildKnowledgeContext } from '../knowledge/retrieval';
 import { getOrCreateQueryEmbedding } from '../utils/shared-embedding';
@@ -85,6 +86,7 @@ function normalizeBotWakeupBody(raw: any): Record<string, any> {
     botId: typeof raw?.botId === 'string' ? raw.botId : undefined,
     tasks: [],
     instructions: typeof cfg.instructions === 'string' ? cfg.instructions : (raw?.instructions || ''),
+    kanbanContext: typeof raw?.kanbanContext === 'string' ? raw.kanbanContext : undefined,
     prompt: '',
     allowedTools: Array.isArray(cfg.allowedTools) ? cfg.allowedTools : (Array.isArray(raw?.allowedTools) ? raw.allowedTools : []),
     modelMode: typeof cfg.modelMode === 'string' ? cfg.modelMode : (raw?.modelMode || 'balanced'),
@@ -219,6 +221,25 @@ function wrapProactiveTool(name: string, tool: any): any {
   }
 
   return tool;
+}
+
+function wrapBotScopedTool(name: string, tool: any, scope: { botId?: string; userId?: string }): any {
+  const botId = String(scope.botId || '').trim();
+  if (!botId || !tool || typeof tool.execute !== 'function') return tool;
+  return createTool({
+    id: name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    outputSchema: tool.outputSchema,
+    execute: async (inputData: any, runCtx: any) => {
+      const scopedInput = {
+        ...(inputData && typeof inputData === 'object' ? inputData : {}),
+        __proactiveBotId: botId,
+        __userId: scope.userId,
+      };
+      return await tool.execute(scopedInput, runCtx);
+    },
+  });
 }
 
 // ─── In-Memory Kanban Tools Factory ──────────────────────────────────────────
@@ -444,6 +465,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       botId = '',
       tasks: incomingTasks = [],
       instructions = '',
+      kanbanContext = '',
       prompt = '',
       allowedTools = [],
       modelMode = 'balanced',
@@ -551,9 +573,21 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       },
     });
 
-    // Build tool set — include kanban, discovery, web search, skills, and headless agents
+    // Build tool set — every bot gets these by default:
+    //   - kanban.tools = the user's task board (proactive_task_*)
+    //   - bot_memory_* = the bot's private kanban (working memory across runs)
+    //   - search_past_conversations / get_conversation_context = recall memory
+    //   - choose_notification_channel + write_session_summary = bookkeeping
+    //   - search_tools / get_tool_schema / execute_tool = lazy-load the rest of the surface
+    // Additional tools come from the bot's per-bot allowedTools setting; the
+    // loop below pulls them out of the global registry and wraps them.
     const availableTools: Record<string, any> = {
       ...kanban.tools,
+      bot_memory_list: wrapBotScopedTool('bot_memory_list', bot_memory_list, { botId, userId: auth.userId }),
+      bot_memory_create: wrapBotScopedTool('bot_memory_create', bot_memory_create, { botId, userId: auth.userId }),
+      bot_memory_update: wrapBotScopedTool('bot_memory_update', bot_memory_update, { botId, userId: auth.userId }),
+      bot_memory_delete: wrapBotScopedTool('bot_memory_delete', bot_memory_delete, { botId, userId: auth.userId }),
+      bot_memory_log: wrapBotScopedTool('bot_memory_log', bot_memory_log, { botId, userId: auth.userId }),
       choose_notification_channel: channelSelector.tool,
       write_session_summary: sessionSummaryTool.tool,
       web_search,
@@ -600,6 +634,32 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     // Build system prompt with user instructions and skill awareness
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
+
+    // Always remind the bot which tools belong to it by default. The actual
+    // kanban contents arrive separately via `kanbanContext` (or are embedded
+    // inside `instructions` for legacy callers); this section is the
+    // tool-usage contract — it stays in the prompt even when the kanban is
+    // empty so the bot knows the surface exists.
+    systemPrompt += `\n\n## YOUR DEFAULT TOOLKIT (always available, regardless of allowedTools)
+- **proactive_task_*** — manage the USER's task board (tasks they see). Use list/create/update/delete to keep it tidy.
+- **bot_memory_*** — manage YOUR PRIVATE kanban. This is your working memory across runs:
+  * bot_memory_list — see your cards (filter by status when needed).
+  * bot_memory_create({ title, notes?, status? }) — capture a plan, finding, or in-flight work.
+  * bot_memory_update({ id, ... }) — move cards between columns or edit notes.
+  * bot_memory_delete({ id }) — drop a card (prefer "completed" so history sticks).
+  * bot_memory_log({ summary, outcome }) — append a one-line wrap-up after each run.
+- **search_past_conversations / get_conversation_context** — recall what happened in prior runs / chats.
+- **choose_notification_channel / write_session_summary** — pick how to reach the user, and journal the run.
+
+Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Bots → Kanban tab.`;
+
+    // Render the bot's actual kanban (cards + recent run log) as its own
+    // section. This is the *content* — the section above is the *contract*.
+    const kanbanText = String(kanbanContext || '').trim();
+    if (kanbanText) {
+      systemPrompt += `\n\n${kanbanText}`;
+    }
+
     if (instructions.trim()) {
       systemPrompt += `\n\n## USER INSTRUCTIONS\n${instructions.trim()}`;
     }
@@ -884,6 +944,82 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     try {
       const result = await sendVMCommand(auth.userId, 'skills_sync', { skills }, 15_000);
       writeJson(res, 200, { ok: result.ok, count: result.result?.count, error: result.error });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // Sync deployed bot configs to the VM's multi-bot scheduler. The desktop is
+  // the source of truth for bot identity/config; the VM owns runtime state.
+  if (req.method === 'POST' && path === '/v1/bot/sync') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const bots = Array.isArray(body?.bots) ? body.bots : [];
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'bots_sync', { bots }, 15_000);
+      writeJson(res, 200, {
+        ok: result.ok,
+        count: result.result?.count,
+        error: result.error || result.result?.error,
+      });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // Pull the VM-local private kanban/run-log for a bot so the desktop UI can
+  // show memory written while the laptop was offline.
+  if (req.method === 'POST' && path === '/v1/bot/memory/export') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const botId = String(body?.botId || body?.id || '').trim();
+    if (!botId) {
+      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      return true;
+    }
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'bot_memory_export', { botId }, 15_000);
+      writeJson(res, 200, {
+        ok: result.ok,
+        ...(result.result || {}),
+        error: result.error || result.result?.error,
+      });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // Push the desktop's latest bot memory snapshot to the VM after user edits.
+  if (req.method === 'POST' && path === '/v1/bot/memory/replace') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const botId = String(body?.botId || body?.id || '').trim();
+    if (!botId) {
+      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      return true;
+    }
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'bot_memory_replace', {
+        botId,
+        memory: body?.memory || {},
+      }, 15_000);
+      writeJson(res, 200, {
+        ok: result.ok,
+        ...(result.result || {}),
+        error: result.error || result.result?.error,
+      });
     } catch (e: any) {
       writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
     }

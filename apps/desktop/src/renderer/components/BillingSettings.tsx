@@ -139,6 +139,9 @@ const SectionHeader = ({ title, description }: { title: string; description: str
 const formatCurrency = (amount: number, currency: string) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amount / 100);
 
+const DETAIL_LOAD_DELAY_MS = 350;
+const COMPUTE_BILLING_ROW_LIMIT = 1500;
+
 const formatModel = (model: string): string => {
   if (!model || model === "unknown") return "Unknown";
   if (model.startsWith("voice:")) return "-";
@@ -299,7 +302,9 @@ async function loadComputeBillingRows(uid: string, sinceIso: string, limit?: num
     .gte("billing_hour", sinceIso)
     .order("billing_hour", { ascending: false });
 
-  if (limit && limit > 0) query = query.limit(limit);
+  query = query.limit(limit && limit > 0
+    ? Math.min(limit, COMPUTE_BILLING_ROW_LIMIT)
+    : COMPUTE_BILLING_ROW_LIMIT);
 
   const { data, error } = await query;
   if (error || !Array.isArray(data)) return { rows: [], total: 0 };
@@ -321,12 +326,14 @@ export const BillingSettings: React.FC = () => {
   const [logsPage, setLogsPage] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsLoaded, setLogsLoaded] = useState(false);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsLoaded, setProductsLoaded] = useState(false);
 
   const LOGS_PER_PAGE = 20;
   const mountedRef = useRef(true);
   const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailLoadTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const convTitleCacheRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -334,6 +341,8 @@ export const BillingSettings: React.FC = () => {
     return () => {
       mountedRef.current = false;
       if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
+      for (const timer of detailLoadTimersRef.current) clearTimeout(timer);
+      detailLoadTimersRef.current = [];
     };
   }, []);
 
@@ -441,6 +450,7 @@ export const BillingSettings: React.FC = () => {
       setUsageLogs(normalizedLogs);
       setLogsTotal(usageResult.total + computeBilling.total);
       setLogsPage(page);
+      setLogsLoaded(true);
 
       const missingIds = Array.from(new Set(
         pageSlice.map((g) => g.conversationId).filter((id): id is string => !!id && !convTitleCacheRef.current[id])
@@ -484,9 +494,12 @@ export const BillingSettings: React.FC = () => {
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    for (const timer of detailLoadTimersRef.current) clearTimeout(timer);
+    detailLoadTimersRef.current = [];
     setCreditSummary(null);
     setUsageBreakdown([]);
     setUsageLogs([]);
+    setLogsLoaded(false);
     convTitleCacheRef.current = {};
     setLogsTotal(0);
     setLogsPage(0);
@@ -509,15 +522,16 @@ export const BillingSettings: React.FC = () => {
       setUserEmail(user.email || null);
       setCreditSummary(summary);
       if (mountedRef.current) setLoading(false);
-      window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        // Detail sections are useful, but they should never block opening Billing.
-        void Promise.all([
-          loadUsageBreakdown(user.id, summary.currentPeriodStart || null),
-          loadLogs(user.id, summary.currentPeriodStart || null, 0),
-          loadProducts(),
-        ]);
-      }, 0);
+      const scheduleDetailLoad = (delay: number, run: () => void) => {
+        const timer = setTimeout(() => {
+          if (!mountedRef.current) return;
+          run();
+        }, delay);
+        detailLoadTimersRef.current.push(timer);
+      };
+      const periodStart = summary.currentPeriodStart || null;
+      // Detail sections are useful, but they should never block opening Billing.
+      scheduleDetailLoad(DETAIL_LOAD_DELAY_MS, () => void loadUsageBreakdown(user.id, periodStart));
     } catch (e: any) {
       if (!mountedRef.current) return;
       setError(e?.message || "Failed to load billing information");
@@ -541,7 +555,7 @@ export const BillingSettings: React.FC = () => {
         setCreditSummary(result.summary);
         const since = result.summary.currentPeriodStart || null;
         void loadUsageBreakdown(result.user.id, since);
-        void loadLogs(result.user.id, since, logsPage);
+        if (logsLoaded) void loadLogs(result.user.id, since, logsPage);
       }, 400);
     };
 
@@ -556,7 +570,7 @@ export const BillingSettings: React.FC = () => {
       if (liveRefreshTimerRef.current) clearTimeout(liveRefreshTimerRef.current);
       void supabase.removeChannel(channel);
     };
-  }, [userId, logsPage, loadCredits, loadUsageBreakdown, loadLogs]);
+  }, [userId, logsLoaded, logsPage, loadCredits, loadUsageBreakdown, loadLogs]);
 
   const creditPacks = products.filter((p) => !p.isRecurring);
   const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
@@ -619,16 +633,15 @@ export const BillingSettings: React.FC = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm mb-8">
-        <SectionHeader title="Billing & Credits" description="Manage your plan, credit balance, and add-ons." />
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-        </div>
-      </div>
-    );
-  }
+  const handleLoadLogs = () => {
+    if (!userId || logsLoading) return;
+    void loadLogs(userId, billingPeriodStart, logsPage);
+  };
+
+  const handleLoadProducts = () => {
+    if (productsLoading || productsLoaded) return;
+    void loadProducts();
+  };
 
   return (
     <div className="space-y-6">
@@ -649,6 +662,13 @@ export const BillingSettings: React.FC = () => {
               <RefreshCw className="w-3 h-3" />
               Retry
             </button>
+          </div>
+        )}
+
+        {loading && !creditSummary && (
+          <div className="flex items-center justify-center gap-3 py-10 text-sm text-theme-muted font-medium">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+            <span>Loading billing balance...</span>
           </div>
         )}
 
@@ -873,12 +893,26 @@ export const BillingSettings: React.FC = () => {
       )}
 
       {/* ── Billing Logs Table ── */}
+      {(creditSummary || !loading) && (
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
         <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
           Credit Usage Logs
         </label>
 
-        {logsLoading && usageLogs.length === 0 ? (
+        {!logsLoaded && !logsLoading ? (
+          <div className="text-center py-8">
+            <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
+            <p className="text-xs text-theme-muted font-medium mb-3">Usage logs load separately so Billing stays responsive.</p>
+            <button
+              onClick={handleLoadLogs}
+              disabled={!userId}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Load usage logs
+            </button>
+          </div>
+        ) : logsLoading && usageLogs.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
           </div>
@@ -972,8 +1006,10 @@ export const BillingSettings: React.FC = () => {
           </>
         )}
       </div>
+      )}
 
       {/* ── Auto-Refill + Add-Ons Card ── */}
+      {(creditSummary || !loading) && (
       <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
         <div className="mb-6">
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
@@ -1004,7 +1040,19 @@ export const BillingSettings: React.FC = () => {
           <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
             Purchase Add-On Credits
           </label>
-          {!productsLoaded || productsLoading ? (
+          {!productsLoaded && !productsLoading ? (
+            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
+              <Coins className="w-5 h-5 text-theme-muted mx-auto mb-2" />
+              <p className="text-xs text-theme-muted font-medium mb-3">Credit packs load separately from the main billing view.</p>
+              <button
+                onClick={handleLoadProducts}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Load credit packs
+              </button>
+            </div>
+          ) : productsLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
             </div>
@@ -1075,6 +1123,7 @@ export const BillingSettings: React.FC = () => {
           </p>
         </div>
       </div>
+      )}
     </div>
   );
 };

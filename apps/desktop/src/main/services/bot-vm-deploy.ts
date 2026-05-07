@@ -6,14 +6,14 @@
  * additive — local execution continues regardless. The user thinks of it
  * as "also run this in the cloud", not "switch to cloud".
  *
- * Architecture: we reuse the existing `/v1/proactive/vm-config` endpoint
- * (cloud-ai → VM via `proactive_config` command). The VM today supports a
- * single proactive config; in v1 the deployed bot becomes the active VM
- * config. Multi-bot VM scheduling is a follow-up.
+ * Architecture: desktop sends deployed bots to cloud-ai's `/v1/bot/sync`;
+ * cloud-ai relays them to the VM's `bots_sync` command. The VM owns runtime
+ * state and VM-written kanban memory; desktop owns config and user edits.
  */
 import { BrowserWindow, net } from 'electron';
 import logger from '../utils/logger';
 import { botService, type Bot, type BotConfig } from './bot-service';
+import { botMemoryService } from './bot-memory-service';
 import { loadSkills } from '../skills';
 
 function getCloudAiHttp(): string {
@@ -43,6 +43,7 @@ interface DeployResult {
   ok: boolean;
   error?: string;
   config?: any;
+  count?: number;
 }
 
 function intervalFromBotTriggers(bot: Bot, fallback: string): string {
@@ -71,6 +72,70 @@ async function callVmConfig(payload: Record<string, any>): Promise<DeployResult>
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'vm_unreachable') };
   }
+}
+
+async function callBotEndpoint(path: string, payload: Record<string, any>): Promise<DeployResult & Record<string, any>> {
+  const token = await getAuthToken();
+  if (!token) return { ok: false, error: 'not_authenticated' };
+  const cloud = getCloudAiHttp();
+  try {
+    const resp = await net.fetch(`${cloud}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json() as any;
+    if (!resp.ok || data?.ok === false) {
+      return { ...(data || {}), ok: false, error: String(data?.error || `http_${resp.status}`) };
+    }
+    return { ...(data || {}), ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'vm_unreachable') };
+  }
+}
+
+function composeInstructions(bot: Bot, config: BotConfig): string {
+  return [
+    bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
+    config.memoryEnabled && bot.storedFacts?.trim() ? `# Things to remember\n${bot.storedFacts.trim()}` : '',
+    config.instructions?.trim() ? `# Today's focus\n${config.instructions.trim()}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+function toVmBotPayload(bot: Bot, config: BotConfig): Record<string, any> {
+  return {
+    id: bot.id,
+    name: bot.name,
+    emoji: bot.emoji,
+    status: 'running',
+    triggers: Array.isArray(bot.triggers) ? bot.triggers : [],
+    lastRunAt: bot.lastRunAt ?? null,
+    nextRunAt: bot.nextRunAt ?? null,
+    config: {
+      interval: intervalFromBotTriggers(bot, config.interval),
+      modelMode: config.modelMode,
+      modelId: config.modelId,
+      instructions: composeInstructions(bot, config),
+      allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [],
+      notificationChannels: Array.isArray(config.notificationChannels) ? config.notificationChannels : ['app'],
+      memoryEnabled: config.memoryEnabled !== false,
+      skillIds: config.skillIds,
+    },
+    memory: botMemoryService.exportSnapshot(bot.id),
+  };
+}
+
+async function syncDeployedBotsToVm(opts: { includeBotId?: string; excludeBotId?: string } = {}): Promise<DeployResult> {
+  const bots: Record<string, any>[] = [];
+  for (const bot of botService.list()) {
+    if (opts.excludeBotId && bot.id === opts.excludeBotId) continue;
+    const shouldInclude = !!bot.vmDeployedAt || bot.id === opts.includeBotId;
+    if (!shouldInclude) continue;
+    const config = botService.resolveConfig(bot.id);
+    if (!config) continue;
+    bots.push(toVmBotPayload(bot, config));
+  }
+  return callBotEndpoint('/v1/bot/sync', { bots });
 }
 
 /**
@@ -105,27 +170,12 @@ export async function deployBotToVm(botId: string): Promise<DeployResult & { bot
   const config: BotConfig | null = botService.resolveConfig(botId);
   if (!config) return { ok: false, error: 'config_not_found' };
 
-  const interval = intervalFromBotTriggers(bot, config.interval);
-
-  // Compose the same identity-aware instructions the local scheduler builds
-  // so the VM behaves like the bot, not generic Stuard.
-  const composedInstructions = [
-    bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
-    config.memoryEnabled && bot.storedFacts?.trim() ? `# Things to remember\n${bot.storedFacts.trim()}` : '',
-    config.instructions?.trim() ? `# Today's focus\n${config.instructions.trim()}` : '',
-  ].filter(Boolean).join('\n\n');
-
-  const result = await callVmConfig({
-    enabled: true,
-    interval,
-    modelMode: config.modelMode,
-    instructions: composedInstructions,
-    notificationChannels: config.notificationChannels,
-  });
+  const result = await syncDeployedBotsToVm({ includeBotId: botId });
   if (!result.ok) {
     logger.warn(`[bot-vm-deploy] Deploy failed for ${botId}: ${result.error}`);
     return result;
   }
+  callVmConfig({ enabled: false }).catch(() => {});
 
   // Push the user's active skills alongside the config so the VM bot scheduler
   // can include the right subset on each wakeup. Non-fatal if it fails — the
@@ -138,22 +188,54 @@ export async function deployBotToVm(botId: string): Promise<DeployResult & { bot
   }
 
   const updated = botService.update(botId, { vmDeployedAt: new Date().toISOString() });
-  logger.info(`[bot-vm-deploy] Deployed bot ${botId} to VM (interval=${interval})`);
+  logger.info(`[bot-vm-deploy] Deployed bot ${botId} to VM (${result.count ?? '?'} synced)`);
   return { ...result, bot: updated || undefined };
 }
 
 export async function stopBotOnVm(botId: string): Promise<DeployResult & { bot?: Bot }> {
   const bot = botService.get(botId);
   if (!bot) return { ok: false, error: 'bot_not_found' };
-  // We can only "disable the active VM proactive" — the VM doesn't yet
-  // distinguish between bots. Sending `enabled: false` stops the loop;
-  // the bot's stored config stays available for redeploy.
-  const result = await callVmConfig({ enabled: false });
+  // Re-sync the deployed bot set without this bot; an empty set stops the VM
+  // multi-bot loop. The legacy proactive scheduler is disabled below as a
+  // best-effort cleanup for older VM configs.
+  const result = await syncDeployedBotsToVm({ excludeBotId: botId });
   if (!result.ok) {
     logger.warn(`[bot-vm-deploy] Stop-on-VM failed for ${botId}: ${result.error}`);
     return result;
   }
+  callVmConfig({ enabled: false }).catch(() => {});
   const updated = botService.update(botId, { vmDeployedAt: null });
   logger.info(`[bot-vm-deploy] Stopped bot ${botId} on VM`);
   return { ...result, bot: updated || undefined };
+}
+
+export async function pullBotMemoryFromVm(botId: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  const bot = botService.get(botId);
+  if (!bot || !bot.vmDeployedAt) return { ok: true, skipped: true };
+  const result = await callBotEndpoint('/v1/bot/memory/export', { botId });
+  if (!result.ok) return { ok: false, error: result.error };
+  botMemoryService.mergeSnapshot(botId, {
+    cards: Array.isArray(result.cards) ? result.cards : [],
+    runLog: Array.isArray(result.runLog) ? result.runLog : [],
+  });
+  return { ok: true };
+}
+
+export async function pushBotMemoryToVm(botId: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  const bot = botService.get(botId);
+  if (!bot || !bot.vmDeployedAt) return { ok: true, skipped: true };
+  const result = await callBotEndpoint('/v1/bot/memory/replace', {
+    botId,
+    memory: botMemoryService.exportSnapshot(botId),
+  });
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+export async function syncBotDeploymentToVm(botId: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  const bot = botService.get(botId);
+  if (!bot || !bot.vmDeployedAt) return { ok: true, skipped: true };
+  const result = await syncDeployedBotsToVm();
+  if (!result.ok) return { ok: false, error: result.error };
+  pushSkillsToVm().catch((e) => logger.warn(`[bot-vm-deploy] Skills sync failed during config sync for ${botId}: ${e?.message || e}`));
+  return { ok: true };
 }

@@ -22,6 +22,7 @@ import os from 'os';
 import { mintVMToken } from './lib/vm-token-mint';
 import { buildVMMemoryContext } from './vm-agent-ws';
 import { getActiveSkillsForBot } from './vm-skills';
+import { appendVMBotRunLog, formatVMBotMemoryForPrompt, mergeVMBotMemory } from './vm-bot-memory';
 
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { /* optional — interval triggers still work */ }
@@ -209,6 +210,9 @@ export class VMBotScheduler {
         next.lastError = existing.lastError ?? next.lastError;
       }
       next.nextRunAt = computeNextIntervalRunAt(next, next.lastRunAt);
+      if ((raw as any).memory && typeof (raw as any).memory === 'object') {
+        mergeVMBotMemory(id, (raw as any).memory);
+      }
       incomingById.set(id, next);
     }
 
@@ -359,9 +363,13 @@ export class VMBotScheduler {
       // Memory context from the VM's local Python agent — keeps responses
       // personalised even though the run originates here.
       let memoryContext: string | undefined;
-      try {
-        memoryContext = await buildVMMemoryContext(bot.config.instructions || `${bot.name} check-in`);
-      } catch { /* non-fatal */ }
+      let kanbanContext: string | undefined;
+      if (bot.config.memoryEnabled !== false) {
+        try {
+          memoryContext = await buildVMMemoryContext(bot.config.instructions || `${bot.name} check-in`);
+        } catch { /* non-fatal */ }
+        kanbanContext = formatVMBotMemoryForPrompt(bot.id);
+      }
 
       const token = mintVMToken(vmSecret, userId, 'vm-bots');
       const controller = new AbortController();
@@ -391,6 +399,7 @@ export class VMBotScheduler {
               memoryEnabled: bot.config.memoryEnabled !== false,
             },
             memoryContext,
+            kanbanContext,
             skills: getActiveSkillsForBot(bot.config.skillIds),
             context: {
               isVM: true,
@@ -446,6 +455,10 @@ export class VMBotScheduler {
     const summary = info.ok
       ? `ok${info.partial ? ' (partial)' : ''}: ${(info.text || '').slice(0, 120)}`
       : `failed: ${info.error || 'unknown'}`;
+    appendVMBotRunLog(bot.id, {
+      summary,
+      outcome: info.ok ? (info.partial ? 'partial' : 'success') : 'failed',
+    });
     this.log(`Ran ${bot.id} (${bot.name}) → ${summary}`);
   }
 

@@ -1381,6 +1381,64 @@ body {
   will-change: opacity;
 }
 
+.overlay-window-shell {
+  transform-origin: top center;
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 160ms ease;
+  will-change: opacity, transform, filter;
+}
+
+.overlay-window-shell-visible {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+  animation: overlaySlideDownIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.overlay-window-shell-hidden {
+  opacity: 0;
+  transform: translateY(-18px);
+  filter: blur(2px);
+  pointer-events: none;
+  animation: overlaySlideUpOut 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes overlaySlideDownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.99);
+    filter: blur(3px);
+  }
+
+  65% {
+    opacity: 1;
+    transform: translateY(1px) scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes overlaySlideUpOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.99);
+    filter: blur(3px);
+  }
+}
+
 /* Smooth size transitions for inner UI elements only.
    Keep this short so it doesn't fight the native window resize, and
    transition only properties that the GPU can composite cheaply. */

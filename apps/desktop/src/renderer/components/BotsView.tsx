@@ -2170,7 +2170,7 @@ function VmDeploySection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
         </div>
       )}
       <p className="mt-2 text-[11px] text-theme-muted/80">
-        Note: in this release the VM runs one bot config at a time. Deploying a second bot to VM replaces the first.
+        Deployed bots run on the VM alongside local runs, with their private kanban synced back into this tab.
       </p>
     </section>
   );
