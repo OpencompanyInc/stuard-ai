@@ -20,6 +20,7 @@ import { getNotificationWindow, openNotificationWindow } from '../windows/window
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
 import { loadSkills } from '../skills';
+import { getChatModelsSettings, type ChatModelsSettings } from '../settings';
 
 function getCloudAiHttpForTelnyx(): string {
   return String(
@@ -169,12 +170,15 @@ function normalizeProactiveModelMode(value: any): ProactiveModelMode {
   return 'balanced';
 }
 
-function buildModelSelection(config: any): { model?: ProactiveModelMode; modelId?: string } {
+function buildModelSelection(config: any): { model?: ProactiveModelMode; modelId?: string; modelConfig?: ChatModelsSettings } {
   const model = normalizeProactiveModelMode(config?.modelMode);
-  const modelId = String(config?.modelId || '').trim();
+  const explicitModelId = String(config?.modelId || '').trim();
+  const modelConfig = getChatModelsSettings();
+  const tierDefault = model === 'auto' ? '' : modelConfig[model]?.default || '';
   return {
     model,
-    modelId: modelId || undefined,
+    modelId: explicitModelId || tierDefault || undefined,
+    modelConfig,
   };
 }
 
@@ -463,6 +467,7 @@ ${contextToUse}
           allowedTools: config.allowedTools,
           modelMode: modelSelection.model,
           modelId: modelSelection.modelId || '',
+          modelConfig: modelSelection.modelConfig,
         },
         prompt: cloudPrompt,
         context: {},
@@ -534,6 +539,7 @@ ${contextToUse}
           reasoningLevel: 'none',
           ...(modelSelection.model ? { model: modelSelection.model } : {}),
           ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
+          ...(modelSelection.modelConfig ? { modelConfig: modelSelection.modelConfig } : {}),
           ...(token ? { auth: { accessToken: token } } : {}),
           context: {
             mode: 'bot',
@@ -929,6 +935,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
       reasoningLevel: 'none',
       ...(modelSelection.model ? { model: modelSelection.model } : {}),
       ...(modelSelection.modelId ? { modelId: modelSelection.modelId } : {}),
+      ...(modelSelection.modelConfig ? { modelConfig: modelSelection.modelConfig } : {}),
       ...(token ? { auth: { accessToken: token } } : {}),
       context: {
         ...(payload.context?.screenshot ? { screenshots: [payload.context.screenshot] } : {}),
@@ -1018,6 +1025,9 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       allowedTools: Array.isArray(payload.config?.allowedTools) ? payload.config.allowedTools : [],
       modelMode: normalizeProactiveModelMode(payload.config?.modelMode),
       modelId: String(payload.config?.modelId || '').trim() || undefined,
+      modelConfig: payload.config?.modelConfig && typeof payload.config.modelConfig === 'object'
+        ? payload.config.modelConfig
+        : undefined,
       context: {
         screenshot: payload.context?.screenshot || null,
         systemAudio: payload.context?.systemAudio || false,
@@ -1304,6 +1314,7 @@ async function executeWakeUp(opts: {
         allowedTools: config.allowedTools,
         modelMode: normalizeProactiveModelMode((config as any).modelMode),
         modelId: String((config as any).modelId || '').trim(),
+        modelConfig: modelSelection.modelConfig,
       },
       kanbanContext: kanbanSection || undefined,
       context: {

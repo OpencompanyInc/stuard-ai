@@ -15,6 +15,7 @@ import logger from '../utils/logger';
 import { botService, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
 import { loadSkills } from '../skills';
+import { getChatModelsSettings } from '../settings';
 
 function getCloudAiHttp(): string {
   return String(
@@ -115,6 +116,7 @@ function toVmBotPayload(bot: Bot, config: BotConfig): Record<string, any> {
       interval: intervalFromBotTriggers(bot, config.interval),
       modelMode: config.modelMode,
       modelId: config.modelId,
+      modelConfig: getChatModelsSettings(),
       instructions: composeInstructions(bot, config),
       allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [],
       notificationChannels: Array.isArray(config.notificationChannels) ? config.notificationChannels : ['app'],

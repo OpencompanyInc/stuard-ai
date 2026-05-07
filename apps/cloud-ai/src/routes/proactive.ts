@@ -70,6 +70,17 @@ function writeJson(res: ServerResponse, status: number, obj: any) {
   }
 }
 
+function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undefined {
+  try {
+    const cfg = modelConfig && typeof modelConfig === 'object' ? modelConfig : null;
+    const entry = cfg && (cfg as any)[tier];
+    const fallback = entry && typeof entry.default === 'string' ? String(entry.default).trim() : '';
+    return fallback || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Reshape the VM bot scheduler's wakeup payload into the proactive runner's
  * shape. The VM nests bot config under `config`, has no kanban tasks, and
@@ -90,6 +101,7 @@ function normalizeBotWakeupBody(raw: any): Record<string, any> {
     allowedTools: Array.isArray(cfg.allowedTools) ? cfg.allowedTools : (Array.isArray(raw?.allowedTools) ? raw.allowedTools : []),
     modelMode: typeof cfg.modelMode === 'string' ? cfg.modelMode : (raw?.modelMode || 'balanced'),
     modelId: cfg.modelId || raw?.modelId,
+    modelConfig: (cfg.modelConfig && typeof cfg.modelConfig === 'object') ? cfg.modelConfig : raw?.modelConfig,
     context: {
       ...((raw && typeof raw.context === 'object' && raw.context) || {}),
       ...((raw?.triggerPayload || raw?.context?.triggerPayload) ? { triggerPayload: raw?.triggerPayload || raw?.context?.triggerPayload } : {}),
@@ -493,6 +505,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       allowedTools = [],
       modelMode = 'balanced',
       modelId,
+      modelConfig,
       context = {},
       memoryContext: preBuiltMemoryContext,
       skills: incomingSkills = [],
@@ -799,7 +812,8 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
       const resolvedModelId =
         typeof modelId === 'string' && modelId.trim()
           ? modelId.trim()
-          : getDefaultModelForCategory(resolvedModelChoice as any);
+          : pickDefaultModelId(modelConfig, resolvedModelChoice)
+            || getDefaultModelForCategory(resolvedModelChoice as any);
       const model = getModel(resolvedModelChoice, resolvedModelId);
       const safeBotId = String(botId || 'default').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 80) || 'default';
       const displayBotName = String(botName || safeBotId).trim().slice(0, 80);

@@ -406,6 +406,8 @@ Object.values(deviceTools).forEach(t => {
         // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
     } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
         registerTool(t, 'AI');
+    } else if (['bot_list', 'bot_get_status', 'bot_create', 'bot_deploy', 'bot_pause', 'ask_bot', 'bot_ask'].includes(name)) {
+        registerTool(t, 'Bots');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {

@@ -304,6 +304,7 @@ export {
   bot_create,
   bot_deploy,
   bot_pause,
+  ask_bot,
   bot_ask,
 } from './bot-tools';
 

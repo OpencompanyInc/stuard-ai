@@ -291,6 +291,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'bot_create') return execBotCreate(args, ctx);
       if (toolName === 'bot_deploy') return execBotDeploy(args, ctx);
       if (toolName === 'bot_pause') return execBotPause(args, ctx);
+      if (toolName === 'ask_bot') return execBotAsk(args, ctx);
       if (toolName === 'bot_ask') return execBotAsk(args, ctx);
       if (toolName === 'bot_memory_list') return execBotMemoryList(args, ctx);
       if (toolName === 'bot_memory_create') return execBotMemoryCreate(args, ctx);

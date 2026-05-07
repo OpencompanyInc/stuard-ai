@@ -32,6 +32,13 @@ import {
   agent_todo,
   search_local_workflows,
   run_workflow,
+  bot_list,
+  bot_get_status,
+  bot_create,
+  bot_deploy,
+  bot_pause,
+  ask_bot,
+  bot_ask,
 } from '../tools/device-tools';
 import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
 
@@ -47,7 +54,46 @@ const DEFAULT_USER_HOME_DIR = (() => {
   return envHome.replace(/\\/g, '/');
 })();
 
-function buildOrchestratorPrompt(enabledIntegrations: string[] = [], skills: SkillSummary[] = []): string {
+export interface BotPromptSummary {
+  id?: string;
+  name?: string;
+  status?: string;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  vmDeployedAt?: string | null;
+}
+
+function formatBotRosterSection(bots: BotPromptSummary[] = []): string {
+  const lines = bots
+    .map((bot) => {
+      const name = String(bot?.name || '').trim();
+      const id = String(bot?.id || '').trim();
+      if (!name && !id) return '';
+      const details = [
+        id ? `id=${id}` : '',
+        bot?.status ? `status=${bot.status}` : '',
+        bot?.lastRunAt ? `lastRunAt=${bot.lastRunAt}` : '',
+        bot?.nextRunAt ? `nextRunAt=${bot.nextRunAt}` : '',
+        bot?.vmDeployedAt ? 'vm=deployed' : '',
+      ].filter(Boolean).join(', ');
+      return `- @${name || id}${details ? ` (${details})` : ''}`;
+    })
+    .filter(Boolean);
+
+  const roster = lines.length > 0
+    ? `\n\nCurrently known/running bots from context:\n${lines.join('\n')}`
+    : '';
+
+  return `\n\n## Bots — ask_bot / bot Delegation
+
+Use \`ask_bot\` to ask a configured bot for status/details, memory, recent runs, or to optionally trigger a manual wake-up. Use \`bot_list\` first when the user asks what bots exist or you do not know the target bot id/name. Use \`delegate\` with subagent \`bot\` for multi-step bot work or when you need a focused bot specialist.${roster}`;
+}
+
+function buildOrchestratorPrompt(
+  enabledIntegrations: string[] = [],
+  skills: SkillSummary[] = [],
+  bots: BotPromptSummary[] = [],
+): string {
   const now = new Date().toLocaleString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
@@ -58,6 +104,7 @@ function buildOrchestratorPrompt(enabledIntegrations: string[] = [], skills: Ski
 
   const skillsSection = buildAvailableSkillsPromptSection(skills);
   const skillLine = skillsSection ? `\n\n${skillsSection}` : '';
+  const botSection = formatBotRosterSection(bots);
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
@@ -76,6 +123,7 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
 | ffmpeg      | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames |
 | vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
+| bot         | Proactive bot lookup/status/ask workflows, including bot ids/names and manual wake-ups |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
 | outlook     | Outlook mail & calendar |
 | github      | Repos, issues, PRs, branches, actions |
@@ -126,6 +174,7 @@ User-authored Stuard workflows act as custom tools. When a request matches somet
 - \`search_local_workflows({ query?, limit? })\` — list/filter local workflows. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
 - \`run_workflow({ id | name, args?, timeoutMs? })\` — execute a workflow synchronously. Match \`args\` keys to the workflow's \`inputSchema\` names.
 - Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+${botSection}
 
 ## Rules
 
@@ -190,6 +239,13 @@ function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<
     tools.chat_ui = chatUiTool;
     tools.search_local_workflows = search_local_workflows;
     tools.run_workflow = run_workflow;
+    tools.bot_list = bot_list;
+    tools.bot_get_status = bot_get_status;
+    tools.bot_create = bot_create;
+    tools.bot_deploy = bot_deploy;
+    tools.bot_pause = bot_pause;
+    tools.ask_bot = ask_bot;
+    tools.bot_ask = bot_ask;
   }
 
   return tools;
@@ -203,6 +259,7 @@ export function getOrchestratorAgent(
   mcpTools: Record<string, any> = {},
   modelId?: string,
   skills: SkillSummary[] = [],
+  bots: BotPromptSummary[] = [],
 ): Agent {
   const activeTools = getOrchestratorActiveTools(mcpTools);
   // Full execution universe so meta-tools (execute_tool) still work
@@ -225,7 +282,7 @@ export function getOrchestratorAgent(
   const instructions = [
     {
       role: 'system',
-      content: buildOrchestratorPrompt(enabledIntegrations, skills),
+      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots),
       providerOptions: {
         anthropic: { cacheControl: { type: 'ephemeral' } },
       },

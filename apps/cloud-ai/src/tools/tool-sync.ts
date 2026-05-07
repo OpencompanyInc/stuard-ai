@@ -115,6 +115,7 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   bot_create: ['bot', 'agent', 'proactive', 'background task', 'automation'],
   bot_deploy: ['bot', 'agent', 'proactive', 'background task', 'cloud vm'],
   bot_pause: ['bot', 'agent', 'proactive', 'background task'],
+  ask_bot: ['bot', 'agent', 'proactive', 'status', '@mention'],
   bot_ask: ['bot', 'agent', 'proactive', 'status', '@mention'],
 
   // MediaPipe
@@ -380,6 +381,7 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   bot_create: ['create bot', 'make a bot', 'new proactive agent', 'background bot', 'monitoring bot'],
   bot_deploy: ['deploy bot', 'start bot', 'run bot', 'deploy to vm', 'always on bot'],
   bot_pause: ['pause bot', 'stop bot', 'turn off bot', 'stop vm bot'],
+  ask_bot: ['ask bot', '@tag bot', 'mention bot', 'ask bot for update', 'bot status update'],
   bot_ask: ['ask bot', '@tag bot', 'mention bot', 'ask bot for update', 'bot status update'],
 
   // UI

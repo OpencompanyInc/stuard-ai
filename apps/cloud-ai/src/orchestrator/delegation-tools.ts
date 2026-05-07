@@ -106,6 +106,8 @@ interface DelegateTaskInput {
   instruction: string;
   context?: string;
   skill?: string;
+  bot_id?: string;
+  bot_name?: string;
 }
 
 interface PreparedDelegateTask extends DelegateTaskInput {
@@ -145,6 +147,17 @@ function prepareDelegateTask(task: DelegateTaskInput): { preparedTask?: Prepared
   };
 }
 
+function buildBotTargetContext(task: DelegateTaskInput): string | undefined {
+  const botId = task.bot_id?.trim();
+  const botName = task.bot_name?.trim();
+  if (!botId && !botName) return undefined;
+
+  return [
+    botId ? `Target bot id: ${botId}` : undefined,
+    botName ? `Target bot name: ${botName}` : undefined,
+  ].filter(Boolean).join('\n');
+}
+
 // ─── The one delegation tool ─────────────────────────────────────────────────
 
 /** Shared logic: spin up one subagent task, race completion vs question */
@@ -158,11 +171,11 @@ async function runDelegateTask(
   chatWs: any,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm';
+    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm' | 'bot';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   writeLog('delegate_start', {
@@ -242,6 +255,7 @@ async function runDelegateTask(
       instruction: task.instruction,
       context: joinContextSections(
         isIntegration ? `Integration group: ${name}` : undefined,
+        name === 'bot' ? buildBotTargetContext(task) : undefined,
         task.skillContext,
         task.context,
       ),
@@ -299,6 +313,7 @@ export const delegate = createTool({
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
     '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
     '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
+    '  bot         — proactive bot lookup/status/ask workflows by bot id or name\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +
@@ -314,7 +329,7 @@ export const delegate = createTool({
     tasks: z.array(z.object({
       subagent: z
         .string()
-        .describe('Name of the subagent (e.g. "browser", "file_ops", "google").'),
+        .describe('Name of the subagent (e.g. "browser", "file_ops", "bot", "google").'),
       instruction: z
         .string()
         .describe('Detailed instruction describing what the subagent should do.'),
@@ -326,6 +341,14 @@ export const delegate = createTool({
         .string()
         .optional()
         .describe('Optional user-defined skill name to inject into the delegated subagent context automatically.'),
+      bot_id: z
+        .string()
+        .optional()
+        .describe('Optional target bot id when subagent is "bot" (for example "bot_default" or "bot_...").'),
+      bot_name: z
+        .string()
+        .optional()
+        .describe('Optional target bot display name when subagent is "bot".'),
     })).min(1).max(10).describe('Array of tasks to delegate. Use 1 for a single task, or multiple for parallel execution.'),
   }),
   execute: async ({ tasks }) => {

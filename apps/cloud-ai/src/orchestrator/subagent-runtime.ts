@@ -489,6 +489,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     media: 'Media Agent',
     ffmpeg: 'FFmpeg Agent',
     vm: 'VM Agent',
+    bot: 'Bot Agent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
   const parentConversationId =

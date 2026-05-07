@@ -336,8 +336,14 @@ export function usePreferences() {
   useEffect(() => { setLS("terminal_enabled", terminalEnabled); }, [terminalEnabled]);
   useEffect(() => { setLS("browser_enabled", browserEnabled); }, [browserEnabled]);
   useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
-  useEffect(() => { setLS('chat_mode', chatMode); }, [chatMode]);
-  useEffect(() => { setLS('chat_models', chatModels); }, [chatModels]);
+  useEffect(() => {
+    setLS('chat_mode', chatMode);
+    try { (window as any).desktopAPI?.setPrefs?.({ chatMode }); } catch { }
+  }, [chatMode]);
+  useEffect(() => {
+    setLS('chat_models', chatModels);
+    try { (window as any).desktopAPI?.setPrefs?.({ chatModels }); } catch { }
+  }, [chatModels]);
   useEffect(() => { setLS('timezone', timezone); }, [timezone]);
   useEffect(() => { setLS('timezone_override', timezoneOverride); }, [timezoneOverride]);
   // Sync timezone to main process (for cron scheduling) whenever it changes

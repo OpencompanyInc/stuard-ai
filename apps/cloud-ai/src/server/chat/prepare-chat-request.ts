@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 import { getBotAgent } from '../../agents/bot-agent';
 import { getWorkflowAgent } from '../../agents/workflow-agent';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
-import { getOrchestratorAgent } from '../../orchestrator';
+import { getOrchestratorAgent, type BotPromptSummary } from '../../orchestrator';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
 import {
@@ -35,6 +35,48 @@ interface PrepareChatRequestArgs {
   msg: any;
   requestId?: string;
   secretBag: Record<string, any>;
+}
+
+function extractBotPromptSummaries(context: any): BotPromptSummary[] {
+  const fromArrays = [
+    context?.runningBots,
+    context?.bots,
+    context?.availableBots,
+    context?.botSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value : []);
+
+  const fromPaths = (Array.isArray(context?.paths) ? context.paths : [])
+    .filter((path: any) => path?.type === 'bot' || String(path?.path || '').startsWith('bot://'))
+    .map((path: any) => {
+      const metadata = path?.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+      return {
+        id: String(metadata.id || path.path || '').replace(/^bot:\/\//, ''),
+        name: String(path.name || metadata.name || '').trim(),
+        status: metadata.status,
+        lastRunAt: metadata.lastRunAt,
+        nextRunAt: metadata.nextRunAt,
+        vmDeployedAt: metadata.vmDeployedAt,
+      };
+    });
+
+  const seen = new Set<string>();
+  return [...fromArrays, ...fromPaths]
+    .map((bot: any) => ({
+      id: String(bot?.id || bot?.botId || '').trim(),
+      name: String(bot?.name || bot?.botName || '').trim(),
+      status: bot?.status ? String(bot.status) : undefined,
+      lastRunAt: bot?.lastRunAt ?? null,
+      nextRunAt: bot?.nextRunAt ?? null,
+      vmDeployedAt: bot?.vmDeployedAt ?? null,
+    }))
+    .filter((bot) => {
+      if (!bot.id && !bot.name) return false;
+      const key = bot.id || bot.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
 }
 
 export async function prepareChatRequest({
@@ -463,12 +505,14 @@ async function resolveAgent({
 
   await ensureExecutionToolsRegistered();
   const skills = getSkillsFromContext();
+  const bots = extractBotPromptSummaries(msg?.context || {});
   return getOrchestratorAgent(
     routedTier,
     enabledIntegrations,
     mcpTools,
     chosenModelId,
     skills,
+    bots,
   );
 }
 

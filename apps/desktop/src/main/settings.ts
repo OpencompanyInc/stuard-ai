@@ -38,6 +38,42 @@ export interface UserSettings {
   chromeSyncUserDataDir?: string | null;
 }
 
+type ChatModelTier = 'fast' | 'balanced' | 'smart';
+
+export interface ChatTierModelSettings {
+  allowed: string[];
+  default: string;
+}
+
+export type ChatModelsSettings = Record<ChatModelTier, ChatTierModelSettings>;
+
+export const DEFAULT_CHAT_MODELS_SETTINGS: ChatModelsSettings = {
+  fast: { allowed: [], default: 'deepseek/deepseek-chat' },
+  balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
+  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+};
+
+function normalizeChatTierSettings(raw: any, fallback: ChatTierModelSettings): ChatTierModelSettings {
+  return {
+    allowed: Array.isArray(raw?.allowed) ? raw.allowed.map((id: any) => String(id || '').trim()).filter(Boolean) : [],
+    default: typeof raw?.default === 'string' && raw.default.trim() ? raw.default.trim() : fallback.default,
+  };
+}
+
+export function getChatModelsSettings(): ChatModelsSettings {
+  const raw = loadSettings().chatModels;
+  return {
+    fast: normalizeChatTierSettings(raw?.fast, DEFAULT_CHAT_MODELS_SETTINGS.fast),
+    balanced: normalizeChatTierSettings(raw?.balanced, DEFAULT_CHAT_MODELS_SETTINGS.balanced),
+    smart: normalizeChatTierSettings(raw?.smart, DEFAULT_CHAT_MODELS_SETTINGS.smart),
+  };
+}
+
+export function getChatModelDefaultForTier(tier: ChatModelTier): string | undefined {
+  const modelId = getChatModelsSettings()[tier]?.default;
+  return typeof modelId === 'string' && modelId.trim() ? modelId.trim() : undefined;
+}
+
 export function getSettingsPath(): string {
   return path.join(app.getPath('userData'), SETTINGS_FILE);
 }

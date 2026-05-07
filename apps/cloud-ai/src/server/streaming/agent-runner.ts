@@ -18,7 +18,7 @@ import {
   pruneToolOutputs,
 } from '../../memory/context-compactor';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
-import { getOrchestratorAgent } from '../../orchestrator';
+import { getOrchestratorAgent, type BotPromptSummary } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../../tools/proactive-task-tools';
@@ -168,6 +168,48 @@ function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undef
 
 function send(ws: WebSocket, data: unknown) {
   try { ws.send(JSON.stringify(data)); } catch { }
+}
+
+function extractBotPromptSummaries(context: any): BotPromptSummary[] {
+  const fromArrays = [
+    context?.runningBots,
+    context?.bots,
+    context?.availableBots,
+    context?.botSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value : []);
+
+  const fromPaths = (Array.isArray(context?.paths) ? context.paths : [])
+    .filter((path: any) => path?.type === 'bot' || String(path?.path || '').startsWith('bot://'))
+    .map((path: any) => {
+      const metadata = path?.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+      return {
+        id: String(metadata.id || path.path || '').replace(/^bot:\/\//, ''),
+        name: String(path.name || metadata.name || '').trim(),
+        status: metadata.status,
+        lastRunAt: metadata.lastRunAt,
+        nextRunAt: metadata.nextRunAt,
+        vmDeployedAt: metadata.vmDeployedAt,
+      };
+    });
+
+  const seen = new Set<string>();
+  return [...fromArrays, ...fromPaths]
+    .map((bot: any) => ({
+      id: String(bot?.id || bot?.botId || '').trim(),
+      name: String(bot?.name || bot?.botName || '').trim(),
+      status: bot?.status ? String(bot.status) : undefined,
+      lastRunAt: bot?.lastRunAt ?? null,
+      nextRunAt: bot?.nextRunAt ?? null,
+      vmDeployedAt: bot?.vmDeployedAt ?? null,
+    }))
+    .filter((bot) => {
+      if (!bot.id && !bot.name) return false;
+      const key = bot.id || bot.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
 }
 
 function buildBotScopedActiveTools(agent: any, allowedTools: unknown): string[] | undefined {
@@ -346,6 +388,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
       const _agentStart = Date.now();
       const skills = getSkillsFromContext();
+      const bots = extractBotPromptSummaries(context);
       if (agentType === 'stuard') {
         await ensureExecutionToolsRegistered();
       }
@@ -361,7 +404,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 modelId: chosenModelId,
                 allowedTools: Array.isArray(context?.allowedTools) ? context.allowedTools : [],
               })
-            : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills);
+            : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills, bots);
       console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
 
       // Build context prefix for paths
@@ -382,7 +425,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             const id = String(metadata.id || p.path || '').replace(/^bot:\/\//, '');
             return `- [BOT] @${p.name} id=${id}${metadata.status ? ` status=${metadata.status}` : ''}${metadata.vmDeployedAt ? ' vm=deployed' : ''}`;
           }).join('\n');
-          parts.push(`User added this as context (bots — use bot_ask or bot_get_status before answering status/detail questions):\n${botList}`);
+          parts.push(`User added this as context (bots — use ask_bot or bot_get_status before answering status/detail questions):\n${botList}`);
         }
         contextPrefix = parts.length > 0 ? `${parts.join('\n\n')}\n\n` : '';
       }

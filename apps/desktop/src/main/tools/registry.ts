@@ -44,6 +44,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'bot_create': { kind: 'electron' },
   'bot_deploy': { kind: 'electron' },
   'bot_pause': { kind: 'electron' },
+  'ask_bot': { kind: 'electron' },
   'bot_ask': { kind: 'electron' },
   // Bot's private kanban + run log (scoped by ctx.proactiveBotId)
   'bot_memory_list': { kind: 'electron' },

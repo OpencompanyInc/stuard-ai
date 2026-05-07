@@ -7,6 +7,7 @@ export const BOT_TOOL_NAMES = [
   'bot_create',
   'bot_deploy',
   'bot_pause',
+  'ask_bot',
   'bot_ask',
 ] as const;
 
@@ -26,6 +27,15 @@ const scheduleSchema = z.object({
   cron: z.string().optional().describe('Cron expression for cron schedules.'),
   tz: z.string().optional().describe('IANA timezone for cron schedules.'),
 }).passthrough();
+
+const botAskSchema = botIdentifierSchema.extend({
+  question: z.string().optional().describe('The user question addressed to the bot.'),
+  run_now: z.boolean().optional().default(false).describe('Start a manual wake-up for the bot in addition to returning its current status snapshot.'),
+  task_limit: z.number().int().min(1).max(50).optional().default(12),
+  wake_limit: z.number().int().min(1).max(20).optional().default(8),
+  memory_limit: z.number().int().min(1).max(50).optional().default(20),
+  pull_vm_memory: z.boolean().optional().default(true),
+});
 
 export const bot_list = makeLocalTool(
   'bot_list',
@@ -100,14 +110,16 @@ export const bot_pause = makeLocalTool(
 export const bot_ask = makeLocalTool(
   'bot_ask',
   'Ask an @mentioned bot for status/details by returning its current tasks, recent runs, and memory. Optionally trigger a manual run now.',
-  botIdentifierSchema.extend({
-    question: z.string().optional().describe('The user question addressed to the bot.'),
-    run_now: z.boolean().optional().default(false).describe('Start a manual wake-up for the bot in addition to returning its current status snapshot.'),
-    task_limit: z.number().int().min(1).max(50).optional().default(12),
-    wake_limit: z.number().int().min(1).max(20).optional().default(8),
-    memory_limit: z.number().int().min(1).max(50).optional().default(20),
-    pull_vm_memory: z.boolean().optional().default(true),
-  }),
+  botAskSchema,
+  genericBotOutput,
+  30000,
+  { noFallback: true },
+);
+
+export const ask_bot = makeLocalTool(
+  'ask_bot',
+  'Ask a configured bot by id or name for status/details by returning its current tasks, recent runs, and memory. Optionally trigger a manual run now.',
+  botAskSchema,
   genericBotOutput,
   30000,
   { noFallback: true },

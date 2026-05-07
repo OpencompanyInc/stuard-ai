@@ -48,8 +48,9 @@ export interface VMBotTrigger {
 
 export interface VMBotConfig {
   interval: string;            // '10m' | '15m' | '30m' | '1h' | '2h' | 'random' | 'manual'
-  modelMode: 'fast' | 'balanced' | 'smart';
+  modelMode: 'auto' | 'fast' | 'balanced' | 'smart';
   modelId?: string;
+  modelConfig?: any;
   instructions: string;        // composed: identity + facts + focus, built on desktop
   allowedTools: string[];
   notificationChannels: string[];
@@ -395,6 +396,7 @@ export class VMBotScheduler {
               allowedTools: bot.config.allowedTools || [],
               modelMode: bot.config.modelMode || 'balanced',
               modelId: bot.config.modelId,
+              modelConfig: bot.config.modelConfig,
               notificationChannels: bot.config.notificationChannels || ['app'],
               memoryEnabled: bot.config.memoryEnabled !== false,
             },
@@ -501,8 +503,9 @@ function normalizeBot(raw: any): VMBot {
   const cfgRaw = raw?.config || {};
   const config: VMBotConfig = {
     interval: typeof cfgRaw.interval === 'string' ? cfgRaw.interval : '30m',
-    modelMode: (cfgRaw.modelMode === 'fast' || cfgRaw.modelMode === 'smart') ? cfgRaw.modelMode : 'balanced',
+    modelMode: (cfgRaw.modelMode === 'auto' || cfgRaw.modelMode === 'fast' || cfgRaw.modelMode === 'smart') ? cfgRaw.modelMode : 'balanced',
     modelId: typeof cfgRaw.modelId === 'string' ? cfgRaw.modelId : undefined,
+    modelConfig: cfgRaw.modelConfig && typeof cfgRaw.modelConfig === 'object' ? cfgRaw.modelConfig : undefined,
     instructions: typeof cfgRaw.instructions === 'string' ? cfgRaw.instructions : '',
     allowedTools: Array.isArray(cfgRaw.allowedTools) ? cfgRaw.allowedTools.map((x: any) => String(x)) : [],
     notificationChannels: Array.isArray(cfgRaw.notificationChannels) && cfgRaw.notificationChannels.length

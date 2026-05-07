@@ -139,7 +139,7 @@ function prependCompactContextMessage(msg: any, inputMessages: any[], enabledInt
         })
         .join(', ');
       contextParts.push(`Mentioned bots: ${botText}`);
-      contextParts.push('When the user addresses one of these @mentioned bots or asks for bot status/details, use bot_ask or bot_get_status before answering. Use bot_create and bot_deploy when the user asks to create or deploy bots from chat.');
+      contextParts.push('When the user addresses one of these @mentioned bots or asks for bot status/details, use ask_bot or bot_get_status before answering. Use bot_create and bot_deploy when the user asks to create or deploy bots from chat.');
     }
 
     const personaRaw = typeof incomingContext?.persona === 'string' ? incomingContext.persona.trim() : '';

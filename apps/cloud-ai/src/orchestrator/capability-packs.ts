@@ -454,6 +454,48 @@ export const VM_PACK: CapabilityPack = {
   maxSteps: 45,
 };
 
+// ─── Proactive Bots ─────────────────────────────────────────────────────────
+
+const BOT_TOOLS = [
+  'bot_list',
+  'bot_get_status',
+  'ask_bot',
+  'bot_ask',
+  'bot_create',
+  'bot_deploy',
+  'bot_pause',
+] as const;
+
+const BOT_SYSTEM_PROMPT = `You are the Bot Subagent for StuardAI.
+You handle configured proactive bots: listing them, checking status, asking a bot for details, creating/deploying bots when requested, and starting manual bot wake-ups.
+
+## Core Tools
+
+| Tool | When to Use |
+|------|-------------|
+| bot_list | List configured bots and get ids/names/statuses when no exact target is known |
+| bot_get_status | Get a status snapshot for one bot: active tasks, recent wake-ups, and memory |
+| ask_bot | Ask a bot by id or name for status/details; set run_now=true only when the user wants a manual wake-up |
+| bot_create | Create a new proactive bot |
+| bot_deploy | Start/deploy an existing bot locally or to VM |
+| bot_pause | Pause/stop an existing bot |
+
+## Rules
+
+1. If the task context includes Target bot id/name, use it directly.
+2. If the target is unclear, call bot_list before guessing.
+3. Prefer ask_bot for user-facing "ask @bot", "what is this bot doing?", or "get an update from the bot" requests.
+4. Only set run_now=true when the user asks to run, wake, trigger, or ask the bot to do fresh work now.
+5. When done, call return_control with a concise answer and include the bot id/name used.`;
+
+export const BOT_PACK: CapabilityPack = {
+  kind: 'bot',
+  label: 'Bot',
+  toolNames: [...BOT_TOOLS],
+  systemPrompt: BOT_SYSTEM_PROMPT,
+  maxSteps: 25,
+};
+
 // ─── Integration Groups ─────────────────────────────────────────────────────
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
@@ -518,6 +560,7 @@ const PACKS: Record<string, CapabilityPack> = {
   reminders: REMINDERS_PACK,
   ffmpeg: FFMPEG_PACK,
   vm: VM_PACK,
+  bot: BOT_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -530,7 +573,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [
