@@ -1681,7 +1681,57 @@ export function triggerManualWakeUp(botId?: string) {
     return { ok: false, error: 'Bot not found' };
   }
   executeWakeUp({ botId: targetBotId, manual: true });
-  return { ok: true, botId: targetBotId };
+  return { ok: true, botId: targetBotId, target: 'local' as const };
+}
+
+/**
+ * Forward a manual run to the VM via `/v1/bot/run` instead of executing
+ * locally. Used by the Cloud Engine Run buttons so clicks inside the VM
+ * workspace fire the VM (which is what the user sees in the VM logs and
+ * the kanban memory the VM writes), not the desktop's proactive-scheduler.
+ */
+export async function triggerVmWakeUp(botId: string): Promise<{ ok: boolean; error?: string; target: 'vm' }> {
+  const id = String(botId || '').trim();
+  if (!id) return { ok: false, error: 'bot_id_required', target: 'vm' };
+  const bot = botService.get(id);
+  if (!bot) return { ok: false, error: 'Bot not found', target: 'vm' };
+  if (!bot.vmDeployedAt) {
+    // Caller should not be exposing the VM-run path for a bot that hasn't
+    // been deployed; surface that explicitly so the UI can fall back.
+    return { ok: false, error: 'bot_not_deployed_to_vm', target: 'vm' };
+  }
+  const token = await getAuthToken();
+  if (!token) return { ok: false, error: 'not_authenticated', target: 'vm' };
+  const cloudUrl = getCloudAiUrl();
+  try {
+    const url = `${cloudUrl}/v1/bot/run`;
+    const resp = await net.fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ botId: id }),
+    });
+    // 404 happens when cloud-ai hasn't been redeployed with the new
+    // /v1/bot/run route yet. Surface that distinctly so the UI can hint at
+    // a redeploy instead of just saying "VM unreachable".
+    if (resp.status === 404) {
+      logger.warn(`[proactive-scheduler] VM run for ${id}: ${url} returned 404 — cloud-ai needs a redeploy with the /v1/bot/run route`);
+      return { ok: false, error: 'http_404', target: 'vm' };
+    }
+    const data = await resp.json().catch(() => ({})) as any;
+    if (!resp.ok || data?.ok === false) {
+      const err = String(data?.error || `http_${resp.status}`);
+      logger.warn(`[proactive-scheduler] VM run for ${id} failed: ${err}`);
+      return { ok: false, error: err, target: 'vm' };
+    }
+    logger.info(`[proactive-scheduler] VM run for ${id} accepted`);
+    return { ok: true, target: 'vm' };
+  } catch (e: any) {
+    logger.warn(`[proactive-scheduler] VM run for ${id} error:`, e?.message || e);
+    return { ok: false, error: String(e?.message || 'vm_unreachable'), target: 'vm' };
+  }
 }
 
 export function isProactiveSchedulerRunning() {

@@ -13,13 +13,15 @@ import {
   INTEGRATION_STATE_SECRET,
 } from '../../utils/config';
 
-// Scopes cover all four capability groups: read, post, DMs, users/followers.
+// Scopes cover read, post, like, DMs, and users/followers capability groups.
 // offline.access is required to receive a refresh_token.
 const X_SCOPES = [
   'tweet.read',
   'tweet.write',
   'users.read',
   'follows.read',
+  'like.read',
+  'like.write',
   'dm.read',
   'dm.write',
   'offline.access',

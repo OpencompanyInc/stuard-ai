@@ -23,6 +23,9 @@ const profileField = z.string().optional().describe(
   'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
 );
 
+const tweetFields = 'author_id,created_at,public_metrics,lang,referenced_tweets,conversation_id,in_reply_to_user_id';
+const userFields = 'username,name,verified,profile_image_url';
+
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
   try {
@@ -171,6 +174,52 @@ async function xFetch(path: string, profileLabel?: string, init?: RequestInit) {
   return { body, userId };
 }
 
+function cleanUsername(username?: string): string | undefined {
+  const cleaned = String(username || '').trim().replace(/^@+/, '');
+  return cleaned || undefined;
+}
+
+function firstRepliedToId(tweet: any): string | null {
+  const ref = (tweet?.referenced_tweets || []).find((r: any) => r?.type === 'replied_to');
+  return ref?.id || null;
+}
+
+function buildUsersById(body: any): Map<string, any> {
+  const usersById = new Map<string, any>();
+  for (const u of (body?.includes?.users || [])) usersById.set(u.id, u);
+  return usersById;
+}
+
+function formatTweet(t: any, usersById: Map<string, any>) {
+  const author = usersById.get(t.author_id);
+  return {
+    id: t.id,
+    text: t.text,
+    author_id: t.author_id,
+    author: author ? {
+      username: author.username,
+      name: author.name,
+      verified: author.verified,
+      profile_image_url: author.profile_image_url,
+    } : null,
+    created_at: t.created_at,
+    metrics: t.public_metrics,
+    lang: t.lang,
+    conversation_id: t.conversation_id,
+    in_reply_to_user_id: t.in_reply_to_user_id,
+    in_reply_to_tweet_id: firstRepliedToId(t),
+    referenced: t.referenced_tweets || [],
+    url: author ? `https://twitter.com/${author.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
+  };
+}
+
+async function getAuthenticatedXUser(profile?: string): Promise<{ id: string; username?: string; name?: string }> {
+  const { body } = await xFetch(`/users/me?user.fields=username,name`, profile);
+  const me = body?.data;
+  if (!me?.id) throw new Error('x_user_not_found: could not resolve authenticated X user');
+  return { id: me.id, username: me.username, name: me.name };
+}
+
 // ── Read: search recent tweets ──
 
 export const x_search_tweets = createTool({
@@ -210,6 +259,169 @@ export const x_search_tweets = createTool({
     });
     await meterX(userId, 'search_tweets', X_PRICE_USD_READ);
     return { items, count: items.length, next_token: body?.meta?.next_token || null };
+  },
+});
+
+// ── Read: comments / replies ──
+
+export const x_get_comments = createTool({
+  id: 'x_get_comments',
+  description: 'Get X/Twitter comments/replies with filters. For a post, pass post_id. For account mentions, pass username or user_id. Supports filters like from_username, to_username, mentioned_username, lang, since_id, date range, and minimum engagement.',
+  inputSchema: z.object({
+    post_id: z.string().optional().describe('Post/comment id whose reply thread should be searched. With only_direct_replies=true, returns direct replies to this id.'),
+    conversation_id: z.string().optional().describe('Conversation/root post id. Use this when you already know the conversation id.'),
+    username: z.string().optional().describe('Account username whose mentions/comments should be fetched when post_id/conversation_id/query are omitted.'),
+    user_id: z.string().optional().describe('Account user id whose mentions/comments should be fetched when post_id/conversation_id/query are omitted.'),
+    query: z.string().optional().describe('Additional X search query terms/operators to AND with the filters.'),
+    from_username: z.string().optional().describe('Only comments authored by this username.'),
+    to_username: z.string().optional().describe('Only replies addressed to this username.'),
+    mentioned_username: z.string().optional().describe('Only posts mentioning this username.'),
+    lang: z.string().optional().describe('Language operator, e.g. en, es.'),
+    contains_text: z.string().optional().describe('Local case-insensitive text filter applied after X returns results.'),
+    min_likes: z.number().int().min(0).optional(),
+    min_replies: z.number().int().min(0).optional(),
+    min_retweets: z.number().int().min(0).optional(),
+    only_direct_replies: z.boolean().default(false).describe('When post_id is set, only keep comments whose replied-to tweet id equals post_id.'),
+    exclude_retweets: z.boolean().default(true),
+    exclude_quotes: z.boolean().default(false),
+    start_time: z.string().optional().describe('Oldest timestamp, ISO 8601.'),
+    end_time: z.string().optional().describe('Newest timestamp, ISO 8601.'),
+    since_id: z.string().optional().describe('Return posts newer than this id. Useful for polling.'),
+    until_id: z.string().optional().describe('Return posts older than this id.'),
+    next_token: z.string().optional().describe('Pagination token from a previous call.'),
+    max_results: z.number().int().min(5).max(100).default(20),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const {
+      post_id,
+      conversation_id,
+      username,
+      user_id,
+      query,
+      from_username,
+      to_username,
+      mentioned_username,
+      lang,
+      contains_text,
+      min_likes,
+      min_replies,
+      min_retweets,
+      only_direct_replies,
+      exclude_retweets,
+      exclude_quotes,
+      start_time,
+      end_time,
+      since_id,
+      until_id,
+      next_token,
+      max_results,
+      profile,
+    } = inputData as any;
+
+    const userId = requireUserId();
+    await gateCredits(userId);
+
+    const useSearch = !!(post_id || conversation_id || query || from_username || to_username || mentioned_username || lang);
+    let body: any;
+    let mode: 'search' | 'mentions' = 'search';
+
+    if (useSearch) {
+      const searchParts: string[] = [];
+      let threadId = conversation_id || post_id;
+      if (post_id && only_direct_replies && !conversation_id) {
+        const context = await xFetch(`/tweets/${encodeURIComponent(post_id)}?tweet.fields=conversation_id`, profile);
+        threadId = context.body?.data?.conversation_id || post_id;
+        await meterX(userId, 'get_comment_context', X_PRICE_USD_READ);
+      }
+      if (threadId) searchParts.push(`conversation_id:${threadId}`);
+      if (query) searchParts.push(String(query));
+      const from = cleanUsername(from_username);
+      const to = cleanUsername(to_username);
+      const mention = cleanUsername(mentioned_username);
+      if (from) searchParts.push(`from:${from}`);
+      if (to) searchParts.push(`to:${to}`);
+      if (mention) searchParts.push(`@${mention}`);
+      if (lang) searchParts.push(`lang:${lang}`);
+      if (threadId || only_direct_replies) searchParts.push('is:reply');
+      if (exclude_retweets !== false) searchParts.push('-is:retweet');
+      if (exclude_quotes) searchParts.push('-is:quote');
+      if (!searchParts.length) throw new Error('x_comments_filter_required');
+
+      const params = new URLSearchParams({
+        query: searchParts.join(' '),
+        max_results: String(Math.max(10, Number(max_results || 20))),
+        'tweet.fields': tweetFields,
+        'expansions': 'author_id',
+        'user.fields': userFields,
+      });
+      if (start_time) params.set('start_time', start_time);
+      if (end_time) params.set('end_time', end_time);
+      if (since_id) params.set('since_id', since_id);
+      if (until_id) params.set('until_id', until_id);
+      if (next_token) params.set('next_token', next_token);
+      const result = await xFetch(`/tweets/search/recent?${params}`, profile);
+      body = result.body;
+      await meterX(userId, 'get_comments_search', X_PRICE_USD_READ);
+    } else {
+      mode = 'mentions';
+      let targetId = user_id as string | undefined;
+      if (!targetId) {
+        const clean = cleanUsername(username);
+        if (!clean) {
+          const me = await getAuthenticatedXUser(profile);
+          targetId = me.id;
+          await meterX(userId, 'lookup_authenticated_user', X_PRICE_USD_USER);
+        } else {
+          const lookup = await xFetch(`/users/by/username/${encodeURIComponent(clean)}`, profile);
+          targetId = lookup.body?.data?.id;
+          if (!targetId) throw new Error(`x_user_not_found: ${clean}`);
+          await meterX(userId, 'lookup_user', X_PRICE_USD_USER);
+        }
+      }
+
+      const params = new URLSearchParams({
+        max_results: String(max_results || 20),
+        'tweet.fields': tweetFields,
+        'expansions': 'author_id',
+        'user.fields': userFields,
+      });
+      if (start_time) params.set('start_time', start_time);
+      if (end_time) params.set('end_time', end_time);
+      if (since_id) params.set('since_id', since_id);
+      if (until_id) params.set('until_id', until_id);
+      if (next_token) params.set('pagination_token', next_token);
+      const result = await xFetch(`/users/${targetId}/mentions?${params}`, profile);
+      body = result.body;
+      await meterX(userId, 'get_comments_mentions', X_PRICE_USD_READ);
+    }
+
+    const usersById = buildUsersById(body);
+    let items = (body?.data || []).map((t: any) => formatTweet(t, usersById));
+    if (post_id && only_direct_replies) {
+      items = items.filter((t: any) => t.in_reply_to_tweet_id === String(post_id));
+    }
+    if (contains_text) {
+      const needle = String(contains_text).toLowerCase();
+      items = items.filter((t: any) => String(t.text || '').toLowerCase().includes(needle));
+    }
+    if (typeof min_likes === 'number') {
+      items = items.filter((t: any) => Number(t.metrics?.like_count || 0) >= min_likes);
+    }
+    if (typeof min_replies === 'number') {
+      items = items.filter((t: any) => Number(t.metrics?.reply_count || 0) >= min_replies);
+    }
+    if (typeof min_retweets === 'number') {
+      items = items.filter((t: any) => Number(t.metrics?.retweet_count || 0) >= min_retweets);
+    }
+
+    return {
+      mode,
+      items,
+      count: items.length,
+      next_token: body?.meta?.next_token || null,
+      result_count: body?.meta?.result_count ?? items.length,
+    };
   },
 });
 
@@ -326,6 +538,99 @@ export const x_post_tweet = createTool({
       id: body?.data?.id || null,
       text: body?.data?.text || text,
       url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+    };
+  },
+});
+
+// ── Post: comment on a post ──
+
+export const x_comment_on_post = createTool({
+  id: 'x_comment_on_post',
+  description: 'Comment on an X/Twitter post by posting a reply to the post id.',
+  inputSchema: z.object({
+    post_id: z.string().min(1).describe('The post id to comment on.'),
+    text: z.string().min(1).max(280).describe('Comment text (max 280 characters).'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { post_id, text, profile } = inputData as any;
+    const userId = requireUserId();
+    await gateCredits(userId);
+    const { body } = await xFetch(`/tweets`, profile, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        reply: { in_reply_to_tweet_id: String(post_id) },
+      }),
+    });
+    await meterX(userId, 'comment_on_post', X_PRICE_USD_POST);
+    return {
+      id: body?.data?.id || null,
+      text: body?.data?.text || text,
+      in_reply_to_tweet_id: String(post_id),
+      url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+    };
+  },
+});
+
+// ── Post: reply to a comment ──
+
+export const x_reply_to_comment = createTool({
+  id: 'x_reply_to_comment',
+  description: 'Reply to an X/Twitter comment/reply by comment id.',
+  inputSchema: z.object({
+    comment_id: z.string().min(1).describe('The comment/reply post id to reply to.'),
+    text: z.string().min(1).max(280).describe('Reply text (max 280 characters).'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { comment_id, text, profile } = inputData as any;
+    const userId = requireUserId();
+    await gateCredits(userId);
+    const { body } = await xFetch(`/tweets`, profile, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        reply: { in_reply_to_tweet_id: String(comment_id) },
+      }),
+    });
+    await meterX(userId, 'reply_comment', X_PRICE_USD_POST);
+    return {
+      id: body?.data?.id || null,
+      text: body?.data?.text || text,
+      in_reply_to_tweet_id: String(comment_id),
+      url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+    };
+  },
+});
+
+// ── Like: like a comment/post ──
+
+export const x_like_comment = createTool({
+  id: 'x_like_comment',
+  description: 'Like an X/Twitter comment/reply by id. This works for any Post id, including top-level posts.',
+  inputSchema: z.object({
+    comment_id: z.string().min(1).describe('The comment/reply post id to like.'),
+    profile: profileField,
+  }),
+  execute: async (inputData) => {
+    const { comment_id, profile } = inputData as any;
+    const userId = requireUserId();
+    await gateCredits(userId);
+    const me = await getAuthenticatedXUser(profile);
+    await meterX(userId, 'lookup_authenticated_user', X_PRICE_USD_USER);
+    const { body } = await xFetch(`/users/${encodeURIComponent(me.id)}/likes`, profile, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tweet_id: String(comment_id) }),
+    });
+    await meterX(userId, 'like_comment', X_PRICE_USD_POST);
+    return {
+      liked: !!body?.data?.liked,
+      comment_id: String(comment_id),
+      user_id: me.id,
     };
   },
 });

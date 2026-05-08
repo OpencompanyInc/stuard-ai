@@ -3,7 +3,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
 import {
+  Activity,
   AlertCircle,
+  Bot as BotIcon,
   Brain,
   Check,
   ChevronDown,
@@ -11,10 +13,12 @@ import {
   ChevronUp,
   Clock,
   Cpu,
+  CreditCard,
   File as FileLucide,
   FolderOpen,
   FolderPlus,
   Globe,
+  Link2,
   Loader2,
   MessageCircle,
   MessageSquare,
@@ -22,11 +26,13 @@ import {
   Plus,
   PowerOff,
   RefreshCw,
+  Rocket,
   RotateCcw,
   Scale,
   Search,
   Send,
   Server,
+  Shield,
   Sparkles,
   Square,
   Terminal,
@@ -37,12 +43,14 @@ import {
 } from 'lucide-react';
 import {
   createDirectory,
+  deleteCloudEngine,
   deleteFile,
   getCloudConversationMessages,
   getCloudConversations,
   listFiles,
   openVMAgentChatStream,
   sendVmToolResult,
+  stopCloudEngine,
   uploadFileToVm,
 } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
@@ -54,23 +62,54 @@ import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMe
 import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';
 import { AskUserPrompt } from '../../../../../../../shared/chat-ui/AskUserPrompt';
 import { ChatUiBlock } from './ChatUiBlock';
+import { CloudMonitoring } from './CloudMonitoring';
+import { CloudBilling } from './CloudBilling';
 
 interface CloudIDELayoutProps {
   engine: any;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }
 
-type ActivityView = 'chat' | 'overview';
+type ActivityView =
+  | 'chat'
+  | 'overview'
+  | 'monitoring'
+  | 'billing'
+  | 'deploys'
+  | 'integrations'
+  | 'permissions'
+  | 'bots'
+  | 'automations';
 
-const VIEW_ITEMS: Array<{
+type CloudRuntimeMode = 'normal' | 'developer';
+
+type ViewItem = {
   id: ActivityView | 'files' | 'terminal';
   icon: any;
   label: string;
   toggle?: 'explorer' | 'terminal';
-}> = [
+};
+
+const MODE_STORAGE_KEY = 'cloud:runtime-mode';
+
+const NORMAL_VIEW_ITEMS: ViewItem[] = [
+  { id: 'chat', icon: MessageCircle, label: 'Chat' },
+  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'files', icon: FolderOpen, label: 'Files' },
+  { id: 'automations', icon: Zap, label: 'Automations' },
+];
+
+const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'files', icon: FolderOpen, label: 'Files', toggle: 'explorer' },
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
+  { id: 'monitoring', icon: Activity, label: 'Monitoring' },
+  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'automations', icon: Zap, label: 'Automations' },
+  { id: 'integrations', icon: Link2, label: 'Integrations' },
+  { id: 'deploys', icon: Rocket, label: 'Deploys' },
+  { id: 'billing', icon: CreditCard, label: 'Billing' },
+  { id: 'permissions', icon: Shield, label: 'Permissions' },
   { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal' },
 ];
 
@@ -140,10 +179,65 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const { user, userData } = useAuthContext();
   const { models, modelById } = useModelRegistry();
 
+  const [mode, setModeState] = useState<CloudRuntimeMode>(() => {
+    if (typeof window === 'undefined') return 'normal';
+    const stored = window.localStorage?.getItem(MODE_STORAGE_KEY);
+    return stored === 'developer' ? 'developer' : 'normal';
+  });
+  const setMode = useCallback((next: CloudRuntimeMode) => {
+    setModeState(next);
+    try { window.localStorage?.setItem(MODE_STORAGE_KEY, next); } catch { /* noop */ }
+  }, []);
+
   const [activeView, setActiveView] = useState<ActivityView>('chat');
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
+  const [pauseLoading, setPauseLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const items = useMemo(
+    () => (mode === 'normal' ? NORMAL_VIEW_ITEMS : DEVELOPER_VIEW_ITEMS),
+    [mode],
+  );
+
+  useEffect(() => {
+    const allowed = items.filter((i) => !i.toggle).map((i) => i.id);
+    if (!allowed.includes(activeView)) setActiveView('chat');
+  }, [items, activeView]);
+
+  useEffect(() => {
+    if (mode === 'normal') {
+      setFilePanelOpen(false);
+      setTerminalOpen(false);
+    }
+  }, [mode]);
+
+  const handlePause = useCallback(async () => {
+    setPauseLoading(true);
+    try {
+      await stopCloudEngine();
+      await onRefresh();
+    } catch (e) {
+      console.error('Failed to pause engine:', e);
+    } finally {
+      setPauseLoading(false);
+    }
+  }, [onRefresh]);
+
+  const handleDelete = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    if (!window.confirm('Permanently delete your cloud engine and all its data? This cannot be undone.')) return;
+    setDeleteLoading(true);
+    try {
+      await deleteCloudEngine();
+      await onRefresh();
+    } catch (e) {
+      console.error('Failed to delete engine:', e);
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [onRefresh]);
 
   const handleTerminalResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -162,8 +256,8 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   }, [terminalHeight]);
 
   const activeLabel = useMemo(
-    () => VIEW_ITEMS.find((item) => item.id === activeView)?.label ?? 'Chat',
-    [activeView],
+    () => items.find((item) => item.id === activeView)?.label ?? 'Chat',
+    [items, activeView],
   );
 
   const planLabel = String(engine?.tier || 'cloud').replace(/^\w/, (c: string) => c.toUpperCase());
@@ -1537,52 +1631,169 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   );
 
   const overviewView = (
-    <div className="h-full overflow-y-auto px-8 py-8">
-      <div className="mx-auto max-w-3xl">
-        <h2 className="text-xl font-semibold text-theme-fg">Engine overview</h2>
-        <p className="mt-1 text-sm text-theme-muted">Live status and resource summary.</p>
-
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {[
-            { label: 'Status', value: engine?.status || '—' },
-            { label: 'Plan', value: planLabel },
-            { label: 'Resources', value: machineLabel },
-            { label: 'Disk', value: engine?.disk_gb ? `${engine.disk_gb} GB` : '—' },
-            { label: 'Region', value: engine?.region || '—' },
-            { label: 'Public IP', value: engine?.externalIp || '—' },
-          ].map((item) => (
-            <div key={item.label} className="rounded-2xl border border-theme bg-theme-card p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted">{item.label}</div>
-              <div className="mt-1 truncate font-mono text-[13px] text-theme-fg" title={String(item.value)}>{item.value}</div>
-            </div>
-          ))}
+    <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6">
+      <div className="mx-auto max-w-4xl space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Engine overview</h2>
+          <p className="mt-1 text-sm text-theme-muted">Live status, machine specs, and connectivity.</p>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-theme bg-theme-card p-5">
-          <div className="text-sm font-semibold text-theme-fg">Engine controls</div>
-          <p className="mt-1 text-[12px] text-theme-muted">
-            Manage your cloud engine from the top bar. Use the activity bar on the left to switch
-            between chat, the file explorer, and the terminal.
-          </p>
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-12 md:col-span-5 rounded-2xl border border-theme bg-theme-card p-5">
+            <h3 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-theme-muted">Machine</h3>
+            <dl className="space-y-3 text-[13px]">
+              <OverviewRow icon={Server} label="Name" value={engine?.instance_name || '—'} mono />
+              <OverviewRow icon={Globe} label="Region" value={engine?.zone || '—'} />
+              <OverviewRow icon={Cpu} label="Plan" value={planLabel} />
+              <OverviewRow icon={Cpu} label="Machine" value={machineLabel} />
+              <OverviewRow icon={Server} label="Storage" value={engine?.disk_size_gb ? `${engine.disk_size_gb} GB` : '—'} />
+              {engine?.external_ip && <OverviewRow icon={Globe} label="Address" value={engine.external_ip} mono />}
+              {engine?.created_at && <OverviewRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />}
+            </dl>
+          </div>
+
+          <div className="col-span-12 md:col-span-7 rounded-2xl border border-theme bg-theme-card p-5">
+            <h3 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-theme-muted">Status</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <StatusPillSmall
+                label="AI Agent"
+                connected={engine?.health_status === 'healthy'}
+                detail={engine?.health_status === 'healthy' ? 'Connected and ready' : 'Not connected'}
+              />
+              <StatusPillSmall
+                label="Heartbeat"
+                connected={!!engine?.last_heartbeat_at}
+                detail={engine?.last_heartbeat_at ? `Last: ${new Date(engine.last_heartbeat_at).toLocaleTimeString()}` : 'Waiting...'}
+              />
+              <StatusPillSmall
+                label="Network"
+                connected={!!engine?.external_ip}
+                detail={engine?.external_ip || 'Assigning...'}
+              />
+              <StatusPillSmall
+                label="Engine"
+                connected={engine?.status === 'running'}
+                detail={engine?.status || 'unknown'}
+              />
+            </div>
+            <div className="mt-5 rounded-xl bg-theme-hover/40 p-3 text-[11px] text-theme-muted">
+              Manage your engine from the top bar. Use the activity bar on the left to switch between chat,
+              files, monitoring, and more. Some panels (deployments, integrations, permissions) are managed
+              from the Stuard desktop app.
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 
+  const monitoringView = <CloudMonitoring engine={engine} />;
+  const billingView = <CloudBilling />;
+  const botsView = (
+    <DesktopOnlyView
+      icon={BotIcon}
+      title="Bots"
+      description="Configure background agents that run on your cloud VM 24/7. Bots are configured from the Stuard desktop app."
+    />
+  );
+  const automationsView = (
+    <DesktopOnlyView
+      icon={Zap}
+      title="Automations on VM"
+      description="Workflows, scripts, and projects deployed to this cloud VM. Push new automations from the Stuard desktop app — they'll run here independently of your laptop."
+    />
+  );
+  const integrationsView = (
+    <DesktopOnlyView
+      icon={Link2}
+      title="VM Integrations"
+      description="Connect this cloud VM to GitHub, Notion, Slack, Google, and more. Manage integrations from the Stuard desktop app."
+    />
+  );
+  const deploysView = (
+    <DesktopOnlyView
+      icon={Rocket}
+      title="Deployments"
+      description="Push and manage workflow / project deployments running on this cloud VM. Deploy and monitor from the Stuard desktop app."
+    />
+  );
+  const permissionsView = (
+    <DesktopOnlyView
+      icon={Shield}
+      title="VM Permissions"
+      description="Control what tools and resources the cloud agent can access. Permissions are configured from the Stuard desktop app."
+    />
+  );
+
+  const viewMap: Record<ActivityView, React.ReactNode> = {
+    chat: chatView,
+    overview: overviewView,
+    monitoring: <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6">{monitoringView}</div>,
+    billing: <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6">{billingView}</div>,
+    deploys: deploysView,
+    integrations: integrationsView,
+    permissions: permissionsView,
+    bots: botsView,
+    automations: automationsView,
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  const explorerPanel = (
+    <>
+      <div className="ide-file-panel-header">
+        <span className="ide-panel-title">Workspace</span>
+        <div className="flex items-center gap-1">
+          <button onClick={() => triggerUploadInto('.')} className="ide-panel-action" title="Upload files to workspace">
+            <Upload className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => void handleCreateDir('.')} className="ide-panel-action" title="New folder">
+            <FolderPlus className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => void loadDir('.')} className="ide-panel-action" title="Refresh files">
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      {(fileActionError || uploadingFileName) && (
+        <div className="px-3 py-1.5 text-[10px] border-b border-theme/10 space-y-0.5">
+          {uploadingFileName && (
+            <div className="flex items-center gap-1.5 text-theme-muted">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span className="truncate">Uploading {uploadingFileName}…</span>
+            </div>
+          )}
+          {fileActionError && (
+            <div className="flex items-start gap-1.5 text-red-400">
+              <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+              <span className="truncate">{fileActionError}</span>
+              <button className="ml-auto text-theme-muted hover:text-theme-fg" onClick={() => setFileActionError(null)}>
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="ide-file-tree">
+        {dirContents['.'] ? renderTree(dirContents['.']) : (
+          <div className="ide-tree-loading" style={{ paddingLeft: '16px' }}>Loading files...</div>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className="cloud-ide">
       {/* Activity Bar */}
       <aside className="ide-activity-bar">
-        {VIEW_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           const isActive =
             item.toggle === 'explorer'
               ? filePanelOpen
               : item.toggle === 'terminal'
                 ? terminalOpen
-                : activeView === item.id;
+                : activeView === (item.id as ActivityView);
           return (
             <button
               key={item.id}
@@ -1605,47 +1816,10 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         </div>
       </aside>
 
-      {/* Explorer */}
-      {filePanelOpen && (
+      {/* Explorer (developer mode only — Normal mode renders Files in main pane) */}
+      {mode === 'developer' && filePanelOpen && (
         <aside className="ide-file-panel">
-          <div className="ide-file-panel-header">
-            <span className="ide-panel-title">Workspace</span>
-            <div className="flex items-center gap-1">
-              <button onClick={() => triggerUploadInto('.')} className="ide-panel-action" title="Upload files to workspace">
-                <Upload className="h-3.5 w-3.5" />
-              </button>
-              <button onClick={() => void handleCreateDir('.')} className="ide-panel-action" title="New folder">
-                <FolderPlus className="h-3.5 w-3.5" />
-              </button>
-              <button onClick={() => void loadDir('.')} className="ide-panel-action" title="Refresh files">
-                <RotateCcw className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-          {(fileActionError || uploadingFileName) && (
-            <div className="px-3 py-1.5 text-[10px] border-b border-theme/10 space-y-0.5">
-              {uploadingFileName && (
-                <div className="flex items-center gap-1.5 text-theme-muted">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="truncate">Uploading {uploadingFileName}…</span>
-                </div>
-              )}
-              {fileActionError && (
-                <div className="flex items-start gap-1.5 text-red-400">
-                  <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
-                  <span className="truncate">{fileActionError}</span>
-                  <button className="ml-auto text-theme-muted hover:text-theme-fg" onClick={() => setFileActionError(null)}>
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          <div className="ide-file-tree">
-            {dirContents['.'] ? renderTree(dirContents['.']) : (
-              <div className="ide-tree-loading" style={{ paddingLeft: '16px' }}>Loading files...</div>
-            )}
-          </div>
+          {explorerPanel}
           <input
             ref={fileUploadInputRef}
             type="file"
@@ -1664,14 +1838,49 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             <span className="truncate text-theme-muted">{engine?.instance_name || 'Cloud Engine'}</span>
             <span className="text-theme-muted/40">/</span>
             <strong className="truncate">{activeLabel}</strong>
-            <span className="hidden text-theme-muted/40 sm:inline">·</span>
-            <span className="hidden truncate text-theme-muted sm:inline">{planLabel} · {machineLabel}</span>
+            {mode === 'developer' && (
+              <>
+                <span className="hidden text-theme-muted/40 sm:inline">·</span>
+                <span className="hidden truncate text-theme-muted sm:inline">{planLabel} · {machineLabel}</span>
+              </>
+            )}
           </div>
           <div className="ide-topbar-actions">
-            <div className="ide-topbar-pill">
-              <span className="dot" />
-              Running
+            {/* Mode toggle pill */}
+            <div className="mr-2 inline-flex items-center rounded-full bg-theme-hover/40 p-0.5 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => setMode('normal')}
+                className={clsx(
+                  'px-2.5 py-1 rounded-full transition-colors',
+                  mode === 'normal'
+                    ? 'bg-theme-card text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg',
+                )}
+              >
+                Normal
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('developer')}
+                className={clsx(
+                  'px-2.5 py-1 rounded-full transition-colors',
+                  mode === 'developer'
+                    ? 'bg-theme-card text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg',
+                )}
+              >
+                Developer
+              </button>
             </div>
+
+            {mode === 'developer' && (
+              <div className="ide-topbar-pill">
+                <span className="dot" />
+                {engine?.status === 'running' ? 'Running' : (engine?.status || 'Unknown')}
+              </div>
+            )}
+
             <button
               type="button"
               className="ide-topbar-btn"
@@ -1683,28 +1892,46 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             <button
               type="button"
               className="ide-topbar-btn"
-              onClick={onRefresh}
-              title="Pause"
+              onClick={() => void handlePause()}
+              disabled={pauseLoading}
+              title={mode === 'normal' ? 'Pause your cloud' : 'Pause engine'}
             >
-              <PowerOff className="h-3.5 w-3.5" />
+              {pauseLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />}
             </button>
-            <button
-              type="button"
-              className="ide-topbar-btn ide-topbar-btn-danger"
-              title="Delete"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {mode === 'developer' && (
+              <button
+                type="button"
+                className="ide-topbar-btn ide-topbar-btn-danger"
+                onClick={() => void handleDelete()}
+                disabled={deleteLoading}
+                title="Delete engine"
+              >
+                {deleteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              </button>
+            )}
           </div>
         </header>
 
         {/* Active view */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {activeView === 'chat' ? chatView : overviewView}
+          {(activeView as string) === 'files' ? (
+            <div className="flex h-full flex-col bg-theme-card">
+              {explorerPanel}
+              <input
+                ref={fileUploadInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileUploadSelected}
+              />
+            </div>
+          ) : (
+            viewMap[activeView]
+          )}
         </div>
 
-        {/* Terminal dock */}
-        {terminalOpen && (
+        {/* Terminal dock — developer mode only */}
+        {mode === 'developer' && terminalOpen && (
           <div className="ide-terminal-panel" style={{ height: terminalHeight }}>
             <div
               className="h-[3px] cursor-ns-resize bg-transparent transition-colors hover:bg-primary/30"
@@ -1734,6 +1961,92 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function OverviewRow({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 text-theme-muted">
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="text-[12px]">{label}</span>
+      </div>
+      <span
+        className={clsx(
+          'truncate text-right text-theme-fg',
+          mono ? 'font-mono text-[12px]' : 'text-[12px] font-medium',
+        )}
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function StatusPillSmall({
+  label,
+  connected,
+  detail,
+}: {
+  label: string;
+  connected: boolean;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-theme bg-theme-hover/30 p-3">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-theme-muted">
+        <span
+          className={clsx(
+            'h-1.5 w-1.5 rounded-full',
+            connected ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]' : 'bg-theme-muted/40',
+          )}
+        />
+        {label}
+      </div>
+      <div className="mt-1 truncate text-[12px] font-medium text-theme-fg" title={detail}>
+        {detail || (connected ? 'Connected' : 'Disconnected')}
+      </div>
+    </div>
+  );
+}
+
+function DesktopOnlyView({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: any;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center px-6 py-10">
+      <div className="w-full max-w-md text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Icon className="h-5 w-5" />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold text-theme-fg">{title}</h2>
+        <p className="mt-2 text-[13px] leading-6 text-theme-muted">{description}</p>
+        <a
+          href="/download"
+          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-theme-fg px-4 py-2 text-[12px] font-semibold text-theme-bg transition hover:opacity-90"
+          style={{ background: 'var(--ide-text)', color: 'var(--ide-bg)' }}
+        >
+          Open in Stuard Desktop
+        </a>
+      </div>
     </div>
   );
 }

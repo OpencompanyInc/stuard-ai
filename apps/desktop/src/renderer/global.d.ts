@@ -162,6 +162,7 @@ declare global {
       updatesDownload: () => Promise<{ ok: boolean; error?: string }>;
       updatesInstall: () => Promise<{ ok: boolean; error?: string }>;
       onUpdatesState: (cb: (data: { status: string; info?: any }) => void) => void | (() => void);
+      dismissNotification: (id: string) => Promise<{ ok: boolean; error?: string }>;
       onShowNotification: (cb: (data: any) => void) => void | (() => void);
       onDismissNotification: (cb: (data: { id: string }) => void) => void | (() => void);
       respondToNotification: (payload: { responseId: string; type: 'submit' | 'cancel' | 'dismiss'; value?: string }) => Promise<{ ok: boolean; error?: string }>;
@@ -247,7 +248,8 @@ declare global {
       botsSetStatus: (id: string, status: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
       botsDeploy: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
       botsPause: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
-      botsTriggerNow: (id: string) => Promise<{ ok: boolean; botId?: string; error?: string }>;
+      botsTriggerNow: (id: string) => Promise<{ ok: boolean; botId?: string; target?: 'local' | 'vm'; error?: string }>;
+      botsTriggerOnVm: (id: string) => Promise<{ ok: boolean; target: 'vm'; error?: string }>;
       botsListTasks: (id: string) => Promise<{ ok: boolean; tasks?: any[]; total?: number; hasMore?: boolean; error?: string }>;
       botsGetWakeUpLog: (id: string, limit?: number) => Promise<{ ok: boolean; logs?: any[]; error?: string }>;
       botsAddTrigger: (id: string, input: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;

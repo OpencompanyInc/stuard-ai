@@ -40,6 +40,8 @@ You can now write custom Python and JavaScript code directly in your workflows w
 
 ### With Virtual Environment and Dependencies
 
+Python scripts and package installs use a persistent managed `default` virtual environment when `envId` is omitted. Provide `envId` only when you want a separate named environment.
+
 ```json
 {
   "name": "data-processor",
@@ -49,7 +51,6 @@ You can now write custom Python and JavaScript code directly in your workflows w
       "id": "setup_env",
       "uses": "local.python_install",
       "with": {
-        "envId": "data-tools",
         "packages": ["pandas==2.1.0", "numpy==1.26.0"]
       }
     },
@@ -57,7 +58,6 @@ You can now write custom Python and JavaScript code directly in your workflows w
       "id": "process_data",
       "uses": "local.run_python_script",
       "with": {
-        "envId": "data-tools",
         "code": "import pandas as pd\nimport numpy as np\n\ndata = {'A': [1, 2, 3], 'B': [4, 5, 6]}\ndf = pd.DataFrame(data)\nprint('Mean:', df.mean().to_dict())\nprint('Sum:', df.sum().to_dict())",
         "timeoutMs": 30000
       }
@@ -205,14 +205,14 @@ You can now write custom Python and JavaScript code directly in your workflows w
 2. **Use template variables**: Access webhook data with `{{webhook.field}}`
 3. **Capture output**: Use `stdout` and `stderr` fields in next steps
 4. **Set timeouts**: Default is 30s, increase for long-running scripts
-5. **Virtual envs**: Use `envId` for Python scripts with dependencies
+5. **Virtual envs**: Omit `envId` to use the persistent default venv; use `envId` only for isolated dependency sets
 6. **Error handling**: Check `exitCode` - 0 means success
 
 ## Troubleshooting
 
-### Python script fails with "env_not_found"
-- Run `python_install` step first to create the environment
-- Or omit `envId` to use system Python
+### Python script fails with a package import error
+- Run `python_install` or pass `packages` to `run_python_script`; both use the default venv unless `envId` is provided
+- If you intentionally use a named `envId`, install packages into that same `envId`
 
 ### Node script fails with "node_not_found"
 - Install Node.js on your system

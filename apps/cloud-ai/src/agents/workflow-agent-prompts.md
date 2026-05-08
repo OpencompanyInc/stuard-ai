@@ -260,7 +260,7 @@ These are created dynamically during execution and are NOT defined in the workfl
 PYTHON SCRIPTS WITH DEPENDENCIES
 ═══════════════════════════════════════════════════════════════════════════════
 
-Use **run_python_script** for inline Python with automatic package installation:
+Use **run_python_script** for inline Python with automatic package installation. Python runs in a persistent managed `default` venv unless `envId` is provided for isolation:
 
 ```json
 {

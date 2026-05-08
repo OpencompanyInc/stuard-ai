@@ -9,6 +9,10 @@
  * Architecture: desktop sends deployed bots to cloud-ai's `/v1/bot/sync`;
  * cloud-ai relays them to the VM's `bots_sync` command. The VM owns runtime
  * state and VM-written kanban memory; desktop owns config and user edits.
+ *
+ * Manual runs initiated from the Cloud Engine UI go to the VM explicitly
+ * via `/v1/bot/run` (see proactive-scheduler.triggerVmWakeUp). Manual runs
+ * from the desktop UI continue to fire the local proactive-scheduler.
  */
 import { BrowserWindow, net } from 'electron';
 import logger from '../utils/logger';

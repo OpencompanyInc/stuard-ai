@@ -200,6 +200,7 @@ const CLOUD_TOOLS = new Set([
 
   // X / Twitter
   'x_search_tweets', 'x_get_user_timeline', 'x_get_tweet',
+  'x_get_comments', 'x_comment_on_post', 'x_reply_to_comment', 'x_like_comment',
   'x_post_tweet', 'x_delete_tweet',
   'x_send_dm', 'x_list_dms',
   'x_get_user', 'x_list_followers', 'x_list_following',

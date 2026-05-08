@@ -320,7 +320,12 @@ function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
 function isDelegatedToolCall(tool: ToolCall): boolean {
   if (tool.nested) return true;
   if (typeof tool.subagentId === 'string' && tool.subagentId.trim().length > 0) return true;
-  return typeof tool.id === 'string' && tool.id.startsWith('subagent:');
+  if (typeof tool.id !== 'string') return false;
+  return (
+    tool.id.startsWith('subagent:') ||
+    tool.id.startsWith('subagent-') ||
+    tool.id.startsWith('sub-tc-')
+  );
 }
 
 function buildTraceSteps(

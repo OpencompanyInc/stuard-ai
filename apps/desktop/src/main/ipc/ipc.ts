@@ -6,9 +6,9 @@ import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openV
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
-import { settleNotificationResponse } from "../tools/handlers/electron";
+import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, botMemoryService } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, botMemoryService } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -666,6 +666,18 @@ export function setupIpc() {
     }
   });
 
+  ipcMain.handle("system:dismissNotification", (_e, id: string) => {
+    try {
+      const notificationId = String(id || '').trim();
+      if (notificationId) {
+        dismissNotificationById(notificationId);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e || 'failed') };
+    }
+  });
+
   ipcMain.on('window:ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.setIgnoreMouseEvents(ignore, options);
@@ -674,6 +686,9 @@ export function setupIpc() {
   // Notification overlay â†’ main process â†’ forward permission response to main app window
   ipcMain.handle('notification:respondToPermission', (_e, payload: { id: string; allow: boolean }) => {
     try {
+      if (payload?.id) {
+        dismissNotificationById(String(payload.id));
+      }
       const mainWin = getMainWindow();
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send('approval:response', { id: payload.id, allow: payload.allow });
@@ -1292,6 +1307,12 @@ export function setupIpc() {
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:triggerNow', (_e, id: string) => triggerManualWakeUp(String(id || '')));
+  // Cloud-Engine UIs use this so a "Run" click inside the VM workspace fires
+  // the VM (via `/v1/bot/run`) instead of the local proactive-scheduler.
+  // Without this, `bots:triggerNow` would always run on the desktop and the
+  // user would only see logs in the local app — even though the click came
+  // from the VM tab.
+  ipcMain.handle('bots:triggerOnVm', (_e, id: string) => triggerVmWakeUp(String(id || '')));
   ipcMain.handle('bots:listTasks', (_e, id: string) => proactiveService.listTasks({ botId: String(id || ''), limit: 500 }));
   ipcMain.handle('bots:getWakeUpLog', (_e, id: string, limit?: number) =>
     proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 50, { botId: String(id || '') })

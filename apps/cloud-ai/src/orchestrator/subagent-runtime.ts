@@ -415,12 +415,17 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // Resolve bridge context for wrapping tools (ALS is lost inside agent.generate)
   const bridgeWs = explicitBridgeWs || getBridgeWs();
   const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
+  const subagentBridgeSecrets: Record<string, any> = {
+    ...(bridgeSecrets || {}),
+    __subagentId: subagentId,
+    __subagentKind: request.kind,
+  };
   // Chat WS is the user-facing stream channel — prefer explicit opt, then the
   // __chatWs stashed on bridgeSecrets by runAgent. Falls back to bridgeWs so
   // the desktop flow (where chat and bridge are the same) keeps working.
   const chatWs = explicitChatWs || (bridgeSecrets as any)?.__chatWs || undefined;
 
-  const agent = buildSubagent(pack, correlation, model, modelId, bridgeWs, bridgeSecrets, onQuestion);
+  const agent = buildSubagent(pack, correlation, model, modelId, bridgeWs, subagentBridgeSecrets, onQuestion);
   const timeoutMs = request.timeoutMs ?? pack.timeoutMs ?? 0;
 
   let prompt = request.instruction;
@@ -435,12 +440,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // Always push secrets to module-level stack so tools can find userId
   // even when ALS propagation is broken by Mastra's agent.stream().
   const runtimeBridgeScope = (bridgeWs && bridgeOpen)
-    ? setActiveBridge(bridgeWs, bridgeSecrets)
-    : (bridgeSecrets ? setActiveBridge(null, bridgeSecrets) : undefined);
+    ? setActiveBridge(bridgeWs, subagentBridgeSecrets)
+    : setActiveBridge(null, subagentBridgeSecrets);
 
   const requestId =
-    typeof (bridgeSecrets as any)?.__requestId === 'string' && (bridgeSecrets as any).__requestId
-      ? (bridgeSecrets as any).__requestId
+    typeof (subagentBridgeSecrets as any)?.__requestId === 'string' && (subagentBridgeSecrets as any).__requestId
+      ? (subagentBridgeSecrets as any).__requestId
       : undefined;
   let suppressClientEvents = false;
 
@@ -913,12 +918,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         const runPromise: Promise<any> = bridgeWs && bridgeOpen
           ? withActiveBridgeContext(
               bridgeWs as any,
-              bridgeSecrets,
-              () => withClientBridge(bridgeWs as any, streamAgent, bridgeSecrets),
+              subagentBridgeSecrets,
+              () => withClientBridge(bridgeWs as any, streamAgent, subagentBridgeSecrets),
             ) as Promise<any>
-          : bridgeSecrets
-            ? runWithSecrets(bridgeSecrets, streamAgent) as Promise<any>
-            : streamAgent();
+          : runWithSecrets(subagentBridgeSecrets, streamAgent) as Promise<any>;
 
         const racers = [runPromise, abortPromise] as Promise<any>[];
         if (timeoutPromise) racers.push(timeoutPromise as Promise<any>);

@@ -13,7 +13,15 @@ type BridgeStore = { ws: WebSocket; secrets?: Record<string, any>; state: Map<st
 const bridgeALS = new AsyncLocalStorage<BridgeStore>();
 
 // Pending tool requests per client WS
-type Pending = { resolve: (v: any) => void; reject: (e: any) => void; writer?: WritableStreamDefaultWriter<any>; timeout?: NodeJS.Timeout; tool: string; silent?: boolean };
+type Pending = {
+  resolve: (v: any) => void;
+  reject: (e: any) => void;
+  writer?: WritableStreamDefaultWriter<any>;
+  timeout?: NodeJS.Timeout;
+  tool: string;
+  silent?: boolean;
+  subagentMeta?: Record<string, any>;
+};
 const pendingByWs = new WeakMap<WebSocket, Map<string, Pending>>();
 
 function getPending(ws: WebSocket) {
@@ -57,6 +65,18 @@ export function getBridgeWs(): WebSocket | undefined {
 
 export function getBridgeSecrets(): Record<string, any> | undefined {
   try { return bridgeALS.getStore()?.secrets; } catch { return undefined; }
+}
+
+function getSubagentBridgeMeta(secrets?: Record<string, any>): Record<string, any> | undefined {
+  const subagentId = typeof secrets?.__subagentId === 'string' ? secrets.__subagentId.trim() : '';
+  if (!subagentId) return undefined;
+
+  const subagentKind = typeof secrets?.__subagentKind === 'string' ? secrets.__subagentKind.trim() : '';
+  return {
+    subagentId,
+    nested: true,
+    ...(subagentKind ? { subagentKind } : {}),
+  };
 }
 
 // Per-request mutable state (prevents cross-tab bleeding for sessionWorkflow, sessionSkill, etc.)
@@ -121,7 +141,15 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
     try {
       const safe: any = sanitizeToolEvent(msg);
       (async () => {
-        try { await __queueWriterWrite(pend.writer, { type: 'tool_event', tool: pend.tool, status: msg.status, ...safe }); } catch {}
+        try {
+          await __queueWriterWrite(pend.writer, {
+            type: 'tool_event',
+            tool: pend.tool,
+            status: msg.status,
+            ...pend.subagentMeta,
+            ...safe,
+          });
+        } catch {}
       })();
     } catch {}
     return;
@@ -176,6 +204,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
     }
   })();
   const eventArgs = redactSensitiveData(sendArgs);
+  const subagentMeta = getSubagentBridgeMeta(store?.secrets);
   // In-band bridge if we are inside an active client WS context
   const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
   // If we entered with a bridge context but the WS has since closed (e.g. async
@@ -188,11 +217,11 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   if (useBridge) {
     const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<any>((resolve, reject) => {
-      const pend: Pending = { resolve, reject, writer, tool, silent };
+      const pend: Pending = { resolve, reject, writer, tool, silent, subagentMeta };
       const timer = setTimeout(() => {
         getPending(store.ws).delete(id);
         try {
-          (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id }); } catch {} })();
+          (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id, ...subagentMeta }); } catch {} })();
         } catch {}
         resolve({ ok: false, error: 'timeout', timedOut: true });
       }, timeoutMs);
@@ -202,12 +231,12 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
       if (!silent) {
         try {
           (async () => {
-            try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'called', id, args: eventArgs }); } catch {}
+            try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'called', id, args: eventArgs, ...subagentMeta }); } catch {}
           })();
         } catch {}
       }
       // Ask the client to execute locally
-      send(store.ws, { type: 'tool_request', id, tool, args: sendArgs, silent });
+      send(store.ws, { type: 'tool_request', id, tool, args: sendArgs, silent, ...subagentMeta });
     });
   }
 
@@ -225,7 +254,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
       const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const timer = setTimeout(() => {
         try { ws.close(); } catch {}
-        try { (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id }); } catch {} })(); } catch {}
+        try { (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id, ...subagentMeta }); } catch {} })(); } catch {}
         settle(() => resolve({ ok: false, error: 'timeout', timedOut: true }));
       }, timeoutMs);
 
@@ -246,7 +275,7 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
         if (mtype === 'tool_event' && msg.id === id) {
           try {
             const safeMsg: any = sanitizeToolEvent(msg);
-            await __queueWriterWrite(writer, { type: 'tool_event', tool, status: msg.status, ...safeMsg });
+            await __queueWriterWrite(writer, { type: 'tool_event', tool, status: msg.status, ...subagentMeta, ...safeMsg });
           } catch {}
         }
 

@@ -1269,12 +1269,25 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
       let vmStatus: any = null;
       let deploys: any[] = [];
+      // VM-local OAuth tokens — what the VM ACTUALLY has on disk (vs. the
+      // cloud-DB list above, which is desktop-shared). The settings UI uses
+      // this to show "on VM" state separately so users can tell whether
+      // they need to push a sync.
+      let vmOauthTokens: any[] = [];
       if (engine && engine.status === 'running') {
         // vm_status — services + browser reachability
         try {
           const result = await sendVMCommand(user.userId, 'tool_exec', { tool: 'vm_status', args: {} }, 8_000);
           if (result.ok && result.result) vmStatus = result.result?.result || result.result;
         } catch { /* non-fatal */ }
+
+        // VM-local OAuth list (no secrets, metadata only)
+        try {
+          const result = await sendVMCommand(user.userId, 'oauth_list', {}, 8_000);
+          const inner = result.ok ? (result.result?.tokens ?? result.result) : null;
+          if (Array.isArray(inner)) vmOauthTokens = inner;
+          else if (Array.isArray(inner?.tokens)) vmOauthTokens = inner.tokens;
+        } catch { /* non-fatal — older VM agents won't have oauth_list */ }
 
         // Active deploys — read directly from the VM's deploy executor
         try {
@@ -1299,6 +1312,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
         engineStatus: engine?.status || null,
         integrations,
         vm: vmStatus,
+        vmIntegrations: vmOauthTokens,
         deploys,
       });
     } catch (e: any) {

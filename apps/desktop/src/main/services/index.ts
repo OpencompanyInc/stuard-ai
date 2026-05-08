@@ -13,6 +13,7 @@ export {
   startProactiveScheduler,
   stopProactiveScheduler,
   triggerManualWakeUp,
+  triggerVmWakeUp,
   isProactiveSchedulerRunning,
   handleProactiveReply,
   executeWakeUpForBot,

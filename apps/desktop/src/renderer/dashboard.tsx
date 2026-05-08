@@ -1353,7 +1353,6 @@ function DashboardApp() {
     history: { title: 'History', subtitle: 'Review recent activity, conversations, and usage.' },
     planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
-    proactive: { title: 'Proactive', subtitle: 'Discover suggestions and actions Stuard can take for you.' },
     bots: { title: 'Bots', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
     memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },

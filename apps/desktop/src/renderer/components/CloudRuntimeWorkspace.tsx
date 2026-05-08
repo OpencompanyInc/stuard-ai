@@ -11,10 +11,10 @@ import {
   RefreshCw,
   Rocket,
   Server,
+  Settings,
   Shield,
   Terminal,
   Trash2,
-  Sparkles,
   X,
   Zap,
   Loader2,
@@ -28,12 +28,12 @@ export type CloudRuntimeView =
   | 'overview'
   | 'monitoring'
   | 'billing'
-  | 'proactive'
   | 'deploys'
   | 'integrations'
   | 'permissions'
   | 'bots'
-  | 'automations';
+  | 'automations'
+  | 'settings';
 
 export type CloudRuntimeMode = 'normal' | 'developer';
 
@@ -72,6 +72,7 @@ const NORMAL_VIEW_ITEMS: ViewItem[] = [
   { id: 'bots', icon: BotIcon, label: 'Bots' },
   { id: 'files', icon: FolderOpen, label: 'Files' },
   { id: 'automations', icon: Zap, label: 'Automations' },
+  { id: 'settings', icon: Settings, label: 'Settings' },
 ];
 
 const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
@@ -79,11 +80,13 @@ const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
   { id: 'monitoring', icon: Activity, label: 'Monitoring' },
+  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'automations', icon: Zap, label: 'Automations' },
   { id: 'integrations', icon: Link2, label: 'Integrations' },
   { id: 'deploys', icon: Rocket, label: 'Deploys' },
-  { id: 'proactive', icon: Sparkles, label: 'Proactive' },
   { id: 'billing', icon: CreditCard, label: 'Billing' },
   { id: 'permissions', icon: Shield, label: 'Permissions' },
+  { id: 'settings', icon: Settings, label: 'Settings' },
   { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal' },
 ];
 
@@ -136,6 +139,12 @@ function CloudRuntimeWorkspaceInner({
   const [viewerWidth, setViewerWidth] = useState(DEFAULT_VIEWER_W);
 
   const items = mode === 'normal' ? NORMAL_VIEW_ITEMS : DEVELOPER_VIEW_ITEMS;
+  // Show Settings (and the Terminal toggle in developer mode) pinned at the
+  // bottom of the activity bar — keeps the primary nav focused on workspace
+  // surfaces and matches conventions in editors like VS Code / Cursor.
+  const isFooterItem = (item: ViewItem) => item.id === 'settings' || item.toggle === 'terminal';
+  const topItems = items.filter(i => !isFooterItem(i));
+  const bottomItems = items.filter(isFooterItem);
 
   // If the active view doesn't exist in the current mode's nav, snap to chat.
   useEffect(() => {
@@ -202,47 +211,44 @@ function CloudRuntimeWorkspaceInner({
       {/* Activity Bar */}
       <aside className="w-[48px] shrink-0 flex flex-col items-center py-2 gap-0.5 border-r border-theme bg-theme-card/20">
         <nav className="flex flex-col items-center gap-0.5 w-full px-1.5">
-          {items.map(item => {
-            const Icon = item.icon;
-            const isActive =
-              item.toggle === 'explorer'
-                ? explorerOpen
-                : item.toggle === 'terminal'
-                  ? terminalOpen
-                  : activeView === item.id;
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                title={item.label}
-                onClick={() => {
-                  if (item.toggle === 'explorer') {
-                    setExplorerOpen(v => !v);
-                    return;
-                  }
-                  if (item.toggle === 'terminal') {
-                    setTerminalOpen(v => !v);
-                    return;
-                  }
-                  setActiveView(item.id as CloudRuntimeView);
-                }}
-                className={clsx(
-                  'w-full h-8 flex items-center justify-center rounded-lg transition-all',
-                  isActive
-                    ? 'bg-primary/15 text-primary'
-                    : 'text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60',
-                )}
-              >
-                <Icon className="w-4 h-4" />
-              </button>
-            );
-          })}
+          {topItems.map(item => (
+            <ActivityBarButton
+              key={item.id}
+              item={item}
+              activeView={activeView}
+              explorerOpen={explorerOpen}
+              terminalOpen={terminalOpen}
+              onActivate={() => {
+                if (item.toggle === 'explorer') { setExplorerOpen(v => !v); return; }
+                if (item.toggle === 'terminal') { setTerminalOpen(v => !v); return; }
+                setActiveView(item.id as CloudRuntimeView);
+              }}
+            />
+          ))}
         </nav>
 
         <div className="flex-1" />
 
-        <div className="flex flex-col items-center gap-1 px-1.5 pb-1">
+        {bottomItems.length > 0 && (
+          <nav className="flex flex-col items-center gap-0.5 w-full px-1.5 pt-1 mt-1 border-t border-theme/40">
+            {bottomItems.map(item => (
+              <ActivityBarButton
+                key={item.id}
+                item={item}
+                activeView={activeView}
+                explorerOpen={explorerOpen}
+                terminalOpen={terminalOpen}
+                onActivate={() => {
+                  if (item.toggle === 'explorer') { setExplorerOpen(v => !v); return; }
+                  if (item.toggle === 'terminal') { setTerminalOpen(v => !v); return; }
+                  setActiveView(item.id as CloudRuntimeView);
+                }}
+              />
+            ))}
+          </nav>
+        )}
+
+        <div className="flex flex-col items-center gap-1 px-1.5 pb-1 pt-1">
           <div className="w-8 h-8 flex items-center justify-center" title={`Engine: ${engine.status}`}>
             <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]" />
           </div>
@@ -423,5 +429,43 @@ function CloudRuntimeWorkspaceInner({
         </>
       )}
     </div>
+  );
+}
+
+function ActivityBarButton({
+  item,
+  activeView,
+  explorerOpen,
+  terminalOpen,
+  onActivate,
+}: {
+  item: ViewItem;
+  activeView: CloudRuntimeView;
+  explorerOpen: boolean;
+  terminalOpen: boolean;
+  onActivate: () => void;
+}) {
+  const Icon = item.icon;
+  const isActive =
+    item.toggle === 'explorer'
+      ? explorerOpen
+      : item.toggle === 'terminal'
+        ? terminalOpen
+        : activeView === item.id;
+
+  return (
+    <button
+      type="button"
+      title={item.label}
+      onClick={onActivate}
+      className={clsx(
+        'w-full h-8 flex items-center justify-center rounded-lg transition-all',
+        isActive
+          ? 'bg-primary/15 text-primary'
+          : 'text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60',
+      )}
+    >
+      <Icon className="w-4 h-4" />
+    </button>
   );
 }

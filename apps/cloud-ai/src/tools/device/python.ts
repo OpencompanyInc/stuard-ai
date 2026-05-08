@@ -4,22 +4,26 @@ import { makeLocalTool } from './shared';
 export const python_status = makeLocalTool(
   'python_status',
   'Get Python runtime availability and managed envs list',
-  z.object({}),
+  z.object({
+    envId: z.string().optional().describe('Optional managed env ID to inspect. Defaults to the shared "default" env.'),
+  }),
   z.any(),
 );
 
 export const python_setup = makeLocalTool(
   'python_setup',
-  'Setup Python runtime (no-op if already available)',
-  z.object({}),
+  'Setup the managed Python runtime. Uses the shared default venv unless envId is provided.',
+  z.object({
+    envId: z.string().optional().describe('Optional managed env ID to create/use. Defaults to "default".'),
+  }),
   z.any(),
 );
 
 export const python_install = makeLocalTool(
   'python_install',
-  'Install Python packages into a managed env (offline wheelhouse supported).',
+  'Install Python packages into a managed venv. Uses the shared default venv unless envId is provided.',
   z.object({
-    envId: z.string(),
+    envId: z.string().optional().describe('Optional managed env ID. Omit to install into the persistent default venv.'),
     packages: z.array(z.string()).optional(),
     requirementsTxt: z.string().optional(),
     offlineOnly: z.boolean().optional(),
@@ -32,12 +36,12 @@ export const python_install = makeLocalTool(
 
 export const run_python_script = makeLocalTool(
   'run_python_script',
-  'Run a Python script with automatic dependency management. Specify packages to auto-install them before running. Use "code" for inline scripts or "path" for external files.',
+  'Run a Python script in a managed venv with automatic dependency management. Uses the shared default venv unless envId is provided. Specify packages to auto-install them before running. Use "code" for inline scripts or "path" for external files.',
   z.object({
     code: z.string().optional().describe('Inline Python code to execute'),
     path: z.string().optional().describe('Path to Python script file'),
     args: z.array(z.string()).optional().describe('Command-line arguments'),
-    envId: z.string().optional().describe('Virtual environment ID (auto-generated if packages specified without envId)'),
+    envId: z.string().optional().describe('Managed venv ID. Omit to use the persistent default venv; provide a name for an isolated env.'),
     packages: z
       .array(z.string())
       .optional()
@@ -60,6 +64,7 @@ export const run_python_script = makeLocalTool(
     exitCode: z.number().int().optional(),
     python: z.string().optional(),
     envId: z.string().optional().describe('Environment ID used'),
+    envPath: z.string().optional().describe('Managed venv path used'),
     packagesInstalled: z.array(z.string()).optional().describe('List of packages that were installed'),
     streamId: z.string().optional().describe('Stream ID when stream=true'),
   }),

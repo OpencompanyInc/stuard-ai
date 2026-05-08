@@ -16,6 +16,7 @@ import {
   setConversationTitle,
 } from '../../supabase';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
+import { getDesktopWs } from '../../services/vm-bridge';
 import {
   addPendingApproval,
   registerRun,
@@ -37,6 +38,14 @@ interface RuntimeState {
   aggregatedText: string;
   sawAnyTextDelta: boolean;
   sawToolCall: boolean;
+}
+
+type BridgeWebSocket = import('ws').WebSocket;
+
+function isOpenBridge(ws: BridgeWebSocket | undefined): ws is BridgeWebSocket {
+  if (!ws) return false;
+  const openState = typeof ws.OPEN === 'number' ? ws.OPEN : 1;
+  return ws.readyState === openState;
 }
 
 export async function runPreparedChatStream(prepared: PreparedChatRequest) {
@@ -346,8 +355,14 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           } catch { }
         }
 
-        startKnowledgeIngestion(history, conversationId, finalUsage?.totalTokens, bridgeWs);
+        startKnowledgeIngestion(history, conversationId, finalUsage?.totalTokens, {
+          bridgeWs,
+          userId: authUser?.userId,
+        });
         startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
+          bridgeWs,
+          // SMS/mobile turns have their own local ingest path after `final`.
+          userId: msg?.mobileSource ? undefined : authUser?.userId,
           userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
           userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
           assistantMetadata: buildMetadata(),
@@ -735,11 +750,43 @@ function fireAndForgetConversationTitle(
   })();
 }
 
-function startKnowledgeIngestion(history: any[], conversationId: string | null, totalTokens: number | undefined, bridgeWs?: import('ws').WebSocket) {
+function resolvePostRunBridge(
+  bridgeWs: BridgeWebSocket | undefined,
+  userId: string | undefined,
+): BridgeWebSocket | undefined {
+  const desktopWs = userId ? getDesktopWs(userId) : undefined;
+  if (isOpenBridge(desktopWs)) {
+    return desktopWs;
+  }
+  if (isOpenBridge(bridgeWs)) {
+    return bridgeWs;
+  }
+  return undefined;
+}
+
+function startWithPostRunBridge(
+  bridgeWs: BridgeWebSocket | undefined,
+  userId: string | undefined,
+  run: () => Promise<void> | void,
+) {
+  // Prefer the persistent desktop bridge for background work. The per-chat
+  // stream socket may close as soon as `final` is delivered.
+  const postRunBridge = resolvePostRunBridge(bridgeWs, userId);
+  if (postRunBridge) {
+    void withClientBridge(postRunBridge, run);
+  } else {
+    void run();
+  }
+}
+
+function startKnowledgeIngestion(
+  history: any[],
+  conversationId: string | null,
+  totalTokens: number | undefined,
+  bridge: { bridgeWs?: BridgeWebSocket; userId?: string },
+) {
   // Re-establish the bridge context so execLocalTool can reach the desktop.
-  // The onFinish callback from the AI SDK may lose the AsyncLocalStorage context,
-  // so we use the captured bridgeWs to restore it for knowledge_add_fact and auto_skill_store.
-  const hasBridge = bridgeWs && bridgeWs.readyState === bridgeWs.OPEN;
+  // The onFinish callback from the AI SDK may lose the AsyncLocalStorage context.
 
   const run = async () => {
     try {
@@ -777,11 +824,7 @@ function startKnowledgeIngestion(history: any[], conversationId: string | null, 
     }
   };
 
-  if (hasBridge) {
-    void withClientBridge(bridgeWs, run);
-  } else {
-    void run();
-  }
+  startWithPostRunBridge(bridge.bridgeWs, bridge.userId, run);
 }
 
 function startLocalMemoryPersistence(
@@ -790,36 +833,40 @@ function startLocalMemoryPersistence(
   prompt: string,
   finalText: string,
   options?: {
+    bridgeWs?: BridgeWebSocket;
+    userId?: string;
     userAttachments?: any[];
     userMetadata?: Record<string, any>;
     assistantMetadata?: Record<string, any>;
   },
 ) {
-  try {
-    if (prompt) {
-      memoryService.storeMessageLocally(localConversationId, 'user', prompt, {
-        attachments: options?.userAttachments,
-        metadata: options?.userMetadata,
-      }).catch((error) => {
-        console.error('[cloud-ai] Failed to store user message locally:', error);
-      });
-    }
+  startWithPostRunBridge(options?.bridgeWs, options?.userId, () => {
+    try {
+      if (prompt) {
+        memoryService.storeMessageLocally(localConversationId, 'user', prompt, {
+          attachments: options?.userAttachments,
+          metadata: options?.userMetadata,
+        }).catch((error) => {
+          console.error('[cloud-ai] Failed to store user message locally:', error);
+        });
+      }
 
-    if (finalText) {
-      memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
-        metadata: options?.assistantMetadata,
-      }).catch((error) => {
-        console.error('[cloud-ai] Failed to store assistant message locally:', error);
-      });
-    }
+      if (finalText) {
+        memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
+          metadata: options?.assistantMetadata,
+        }).catch((error) => {
+          console.error('[cloud-ai] Failed to store assistant message locally:', error);
+        });
+      }
 
-    const fullHistory = [...history];
-    memoryService.processConversationTurn(localConversationId, fullHistory).catch((error) => {
-      console.error('[cloud-ai] Local memory processing failed:', error);
-    });
-  } catch (error) {
-    console.error('[cloud-ai] Local memory storage import failed:', error);
-  }
+      const fullHistory = [...history];
+      memoryService.processConversationTurn(localConversationId, fullHistory).catch((error) => {
+        console.error('[cloud-ai] Local memory processing failed:', error);
+      });
+    } catch (error) {
+      console.error('[cloud-ai] Local memory storage import failed:', error);
+    }
+  });
 }
 
 function appendTextChunk(text: string, runtime: RuntimeState, streamChunks: StreamChunkRecord[]) {

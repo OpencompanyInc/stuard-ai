@@ -1033,6 +1033,34 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
     return true;
   }
 
+  // Manually run a single deployed bot on the VM right now. Used by the
+  // desktop's "Run Once" action when the bot has been deployed to VM —
+  // routes the wake-up there instead of executing locally so behavior is
+  // consistent with scheduled runs.
+  if (req.method === 'POST' && path === '/v1/bot/run') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const botId = String(body?.botId || body?.id || '').trim();
+    if (!botId) {
+      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      return true;
+    }
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'bots_run', { id: botId }, 30_000);
+      writeJson(res, 200, {
+        ok: result.ok,
+        ...(result.result || {}),
+        error: result.error || result.result?.error,
+      });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
   // Push the desktop's latest bot memory snapshot to the VM after user edits.
   if (req.method === 'POST' && path === '/v1/bot/memory/replace') {
     const auth = await requireProactiveAuth(req, res);

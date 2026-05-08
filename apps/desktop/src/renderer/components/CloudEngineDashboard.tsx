@@ -4,21 +4,20 @@ import {
   Cloud, Server, Activity, Power, Trash2,
   RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
   Download, Upload, Sparkles, Zap, Shield,
-  CreditCard, Plus, X, Rocket, Play, Square,
+  CreditCard, Plus, X, Rocket, Play, Square, Pause,
   ScrollText, AlertCircle, CheckCircle2, Circle,
   Workflow, FileText, CalendarDays, Timer, ListChecks, Radio, History, Bug,
 } from 'lucide-react';
-import { useCloudEngine } from '../hooks/useCloudEngine';
+import { useCloudEngine, type CloudDeployment } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
 import { CloudVmPermissions } from './CloudVmPermissions';
 import { CloudVmIntegrations } from './CloudVmIntegrations';
+import { CloudVmSettings } from './CloudVmSettings';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
-import { ProactiveView } from './ProactiveView';
 import { BotsView } from './BotsView';
-import { AutomationsView } from './AutomationsView';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -792,11 +791,6 @@ export function CloudEngineDashboard() {
               <BillingTab billing={billing} engine={engine} />
             </div>
           ),
-          proactive: (
-            <div className="custom-scrollbar h-full overflow-y-auto">
-              <ProactiveView />
-            </div>
-          ),
           deploys: (
             <div className="custom-scrollbar h-full overflow-y-auto p-6">
               <DeploysTab
@@ -821,13 +815,21 @@ export function CloudEngineDashboard() {
           ),
           bots: (
             <div className="custom-scrollbar h-full overflow-y-auto p-6">
-              <BotsView />
+              <BotsView scope="vm" />
             </div>
           ),
           automations: (
             <div className="custom-scrollbar h-full overflow-y-auto p-6">
-              <CloudAutomationsTab />
+              <VmAutomationsTab
+                deployments={deployments}
+                stopDeployment={stopDeployment}
+                restartDeployment={restartDeployment}
+                refreshDeployments={fetchDeployments}
+              />
             </div>
+          ),
+          settings: (
+            <CloudVmSettings engine={engine} className="h-full" />
           ),
         }}
       />
@@ -909,28 +911,236 @@ export function CloudEngineDashboard() {
   );
 }
 
-/* ─── Automations Tab (Normal mode) ──────────────────────────────── */
+/* ─── Automations Tab (VM-deployed automations) ──────────────────── */
 
-function CloudAutomationsTab() {
-  const [stuards, setStuards] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+function formatRelativeAgo(value?: string | null): string {
+  if (!value) return 'Never';
+  const t = new Date(value).getTime();
+  if (!Number.isFinite(t)) return 'Never';
+  const seconds = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await (window as any).desktopAPI?.stuardsList?.();
-      if (res?.ok && Array.isArray(res.items)) setStuards(res.items);
-      else setStuards([]);
-    } catch {
-      setStuards([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+function deployKindMeta(kind: CloudDeployment['kind']) {
+  if (kind === 'workflow') return { label: 'Workflow', icon: Workflow, tone: 'text-blue-400 bg-blue-500/10' };
+  if (kind === 'script') return { label: 'Script', icon: FileText, tone: 'text-violet-400 bg-violet-500/10' };
+  return { label: 'Project', icon: Rocket, tone: 'text-amber-400 bg-amber-500/10' };
+}
 
-  React.useEffect(() => { void load(); }, [load]);
+function deployStatusMeta(status: CloudDeployment['status']) {
+  switch (status) {
+    case 'running':   return { label: 'Running',   tone: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', dot: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse' };
+    case 'completed': return { label: 'Completed', tone: 'bg-sky-500/10 text-sky-400 border-sky-500/20',           dot: 'bg-sky-500' };
+    case 'stopped':   return { label: 'Stopped',   tone: 'bg-zinc-500/10 text-theme-muted border-theme/20',         dot: 'bg-zinc-400' };
+    case 'failed':    return { label: 'Failed',    tone: 'bg-red-500/10 text-red-400 border-red-500/20',           dot: 'bg-red-500' };
+    case 'pending':   return { label: 'Pending',   tone: 'bg-amber-500/10 text-amber-400 border-amber-500/20',     dot: 'bg-amber-500 animate-pulse' };
+    case 'deploying': return { label: 'Deploying', tone: 'bg-blue-500/10 text-blue-400 border-blue-500/20',        dot: 'bg-blue-500 animate-pulse' };
+    case 'uploading': return { label: 'Uploading', tone: 'bg-blue-500/10 text-blue-400 border-blue-500/20',        dot: 'bg-blue-500 animate-pulse' };
+    default:          return { label: status,      tone: 'bg-zinc-500/10 text-theme-muted border-theme/20',         dot: 'bg-zinc-400' };
+  }
+}
 
-  return <AutomationsView stuards={stuards} stuardsLoading={loading} loadStuards={load} />;
+interface VmAutomationsTabProps {
+  deployments: CloudDeployment[];
+  stopDeployment: (id: string) => Promise<any>;
+  restartDeployment: (id: string) => Promise<any>;
+  refreshDeployments: () => Promise<void>;
+}
+
+function VmAutomationsTab({ deployments, stopDeployment, restartDeployment, refreshDeployments }: VmAutomationsTabProps) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try { await refreshDeployments(); } finally { setRefreshing(false); }
+  };
+
+  const handleStop = async (id: string) => {
+    setActionId(id);
+    try { await stopDeployment(id); } finally { setActionId(null); }
+  };
+
+  const handleRestart = async (id: string) => {
+    setActionId(id);
+    try { await restartDeployment(id); } finally { setActionId(null); }
+  };
+
+  const runningCount = deployments.filter(d => d.status === 'running').length;
+  const scheduledCount = deployments.filter(d => !!d.schedule || (d.trigger_bindings || []).some(t => t.type === 'schedule.cron')).length;
+  const attentionCount = deployments.filter(d => d.status === 'failed' || !!d.error_message).length;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Header */}
+      <div className="mb-6 flex flex-shrink-0 items-start justify-between gap-4 px-1">
+        <div className="min-w-0">
+          <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">Automations on VM</h1>
+          <p className="mt-2 flex items-center gap-2 text-[13px] text-theme-muted">
+            <Cloud className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            <span>Workflows, scripts, and projects running on this cloud VM — independent of your laptop.</span>
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-full border border-theme/30 bg-theme-card/50 px-3.5 py-2 text-[12px] font-semibold text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:opacity-60"
+          title="Refresh deployments"
+        >
+          <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 custom-scrollbar">
+        <div className="space-y-7">
+          {/* Stats */}
+          <section>
+            <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Overview</h2>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <AutomationStat value={String(deployments.length).padStart(2, '0')} label="Total" />
+              <AutomationStat value={String(runningCount).padStart(2, '0')} label="Running" />
+              <AutomationStat value={String(scheduledCount).padStart(2, '0')} label="Scheduled" />
+              <AutomationStat value={String(attentionCount).padStart(2, '0')} label="Attention" />
+            </div>
+          </section>
+
+          {/* Grid */}
+          <section>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-[15px] font-semibold text-theme-fg">Deployed automations</h2>
+              <span className="text-[12px] text-theme-muted">{deployments.length} on VM</span>
+            </div>
+
+            {deployments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 px-6 py-14 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-[15px] font-semibold text-theme-fg">No automations on this VM yet</h3>
+                  <p className="max-w-sm text-[12px] text-theme-muted">
+                    Use the <span className="font-medium text-theme-fg">Deploys</span> tab to push a workflow,
+                    script, or project to the VM. It will keep running 24/7.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {deployments.map(dep => {
+                  const kind = deployKindMeta(dep.kind);
+                  const status = deployStatusMeta(dep.status);
+                  const KindIcon = kind.icon;
+                  const triggers = (dep.trigger_bindings || []).map(t => t.type).filter(Boolean);
+                  const hasSchedule = !!dep.schedule || triggers.some(t => t === 'schedule.cron');
+                  const isRunning = dep.status === 'running';
+                  const isBusy = actionId === dep.id;
+
+                  return (
+                    <div
+                      key={dep.id}
+                      className="group relative flex flex-col gap-3 rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-5 transition hover:bg-theme-hover/30"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={clsx('flex h-11 w-11 items-center justify-center rounded-xl', kind.tone)}>
+                            <KindIcon className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[15px] font-semibold text-theme-fg">{dep.name}</div>
+                            <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+                              <span className={clsx('h-1.5 w-1.5 rounded-full', status.dot)} />
+                              <span className="font-medium text-theme-muted">{status.label} · {kind.label}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <span className={clsx('shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider', status.tone)}>
+                          {status.label}
+                        </span>
+                      </div>
+
+                      {dep.description && (
+                        <p className="line-clamp-2 text-[12px] text-theme-muted">{dep.description}</p>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
+                          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Last run</div>
+                          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
+                            {formatRelativeAgo(dep.last_run_at || dep.started_at)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
+                          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Schedule</div>
+                          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
+                            {hasSchedule ? (dep.schedule || 'Cron') : '—'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {dep.error_message && (
+                        <div className="flex items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-1.5 text-[11px] text-red-300">
+                          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span className="line-clamp-2">{dep.error_message}</span>
+                        </div>
+                      )}
+
+                      <div className="mt-auto flex items-center gap-2 pt-1">
+                        {isRunning ? (
+                          <button
+                            onClick={() => handleStop(dep.id)}
+                            disabled={isBusy}
+                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full border border-theme/30 bg-theme-card px-3 py-1.5 text-[12px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60"
+                          >
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
+                            Stop
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleRestart(dep.id)}
+                            disabled={isBusy}
+                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:opacity-60"
+                          >
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                            Start
+                          </button>
+                        )}
+                        {isRunning && (
+                          <button
+                            onClick={() => handleRestart(dep.id)}
+                            disabled={isBusy}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-theme/30 bg-theme-card px-3 py-1.5 text-[12px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60"
+                            title="Restart"
+                          >
+                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AutomationStat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="rounded-2xl border border-theme/30 bg-zinc-500/10 px-4 py-3.5 dark:border-transparent">
+      <div className="text-[22px] font-semibold leading-none tracking-tight text-theme-fg">{value}</div>
+      <div className="mt-2 text-[12px] text-theme-muted">{label}</div>
+    </div>
+  );
 }
 
 /* ─── Billing Tab ─────────────────────────────────────────────────── */

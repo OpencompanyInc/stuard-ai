@@ -378,6 +378,8 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return storeOAuthTokens(args);
     case 'get_oauth_token':
       return getOAuthToken(args);
+    case 'oauth_list':
+      return listOAuthTokensSafe();
 
     // ── Chat Sync (desktop→VM) ──────────────────────────────────────────
     case 'chat_sync':
@@ -1855,6 +1857,34 @@ function getOAuthToken(args: any): any {
 
   if (!match) return { ok: false, error: `no_token_for_${provider}` };
   return { ok: true, token: match };
+}
+
+/**
+ * Return the VM-local OAuth token list with secrets stripped — used by the
+ * VM Settings panel so users can see which integrations are *actually* on
+ * the VM (vs. just connected on the desktop). Never returns access/refresh
+ * tokens; only the metadata needed to render UI.
+ */
+function listOAuthTokensSafe(): any {
+  if (_oauthTokens.length === 0) loadOAuthTokens();
+  const now = Date.now();
+  const tokens = _oauthTokens.map(t => {
+    const expiresAtMs = t.expiresAt ? new Date(t.expiresAt).getTime() : null;
+    const expired = expiresAtMs !== null && !isNaN(expiresAtMs) && expiresAtMs < now;
+    return {
+      provider: t.provider,
+      profileLabel: t.profileLabel || 'default',
+      isDefault: !!t.isDefault,
+      accountEmail: t.accountEmail || null,
+      scopes: Array.isArray(t.scopes) ? t.scopes : [],
+      hasAccessToken: !!t.accessToken,
+      hasRefreshToken: !!t.refreshToken,
+      expiresAt: t.expiresAt || null,
+      expired,
+      syncedAt: t.syncedAt || null,
+    };
+  });
+  return { ok: true, tokens, count: tokens.length };
 }
 
 // Load tokens on startup

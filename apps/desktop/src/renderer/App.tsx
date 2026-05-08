@@ -57,6 +57,12 @@ import {
 import { useWorkflows } from './workflows/hooks/useWorkflows';
 import { getMarketplaceApi } from './utils/cloud';
 
+function dismissApprovalNotification(id: string) {
+  try {
+    (window as any).desktopAPI?.dismissNotification?.(id);
+  } catch { }
+}
+
 export default function App() {
   // Refs
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -223,6 +229,7 @@ export default function App() {
   useEffect(() => {
     const cleanup = (window as any).desktopAPI?.onApprovalResponse?.((data: { id: string; allow: boolean }) => {
       if (data?.id) {
+        dismissApprovalNotification(data.id);
         respondToApproval(data.id, data.allow);
         setApprovalQueue((q) => q.filter((p) => p.id !== data.id));
       }
@@ -245,6 +252,7 @@ export default function App() {
               try {
                 const toolLabel = sa.tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
                 (window as any).desktopAPI?.notify?.({
+                  id: sa.id,
                   title: 'Permission Required',
                   message: sa.description || `Stuard wants to use ${toolLabel}`,
                   variant: 'warning',
@@ -700,6 +708,7 @@ export default function App() {
               const toolLabel = tool.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
               try {
                 (window as any).desktopAPI?.notify?.({
+                  id,
                   title: 'Permission Required',
                   message: description || `Stuard wants to use ${toolLabel}`,
                   variant: 'warning',
@@ -712,6 +721,7 @@ export default function App() {
           }
           if (status === 'completed') {
             const id = String(d.id || '');
+            if (id) dismissApprovalNotification(id);
             setApprovalQueue((q) => q.filter((p) => p.id !== id));
           }
 
@@ -1584,10 +1594,12 @@ export default function App() {
                       args={ap.args}
                       description={approvalQueue.length > 1 ? `${ap.description || ''} (${approvalQueue.length} pending)`.trim() : ap.description}
                       onAllow={() => {
+                        dismissApprovalNotification(ap.id);
                         respondToApproval(ap.id, true);
                         setApprovalQueue((q) => q.filter((p) => p.id !== ap.id));
                       }}
                       onDeny={() => {
+                        dismissApprovalNotification(ap.id);
                         respondToApproval(ap.id, false);
                         setApprovalQueue((q) => q.filter((p) => p.id !== ap.id));
                       }}

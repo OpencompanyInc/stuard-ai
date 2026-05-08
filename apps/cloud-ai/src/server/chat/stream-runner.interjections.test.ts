@@ -6,9 +6,11 @@ const {
   deleteAbortControllerMock,
   finishRunMock,
   getBridgeWsMock,
+  getDesktopWsMock,
   sendMock,
   setAbortControllerMock,
   setTerminalResultMock,
+  withClientBridgeMock,
   writeLogMock,
 } = vi.hoisted(() => {
   return {
@@ -17,9 +19,11 @@ const {
     deleteAbortControllerMock: vi.fn(),
     finishRunMock: vi.fn(),
     getBridgeWsMock: vi.fn(() => undefined),
+    getDesktopWsMock: vi.fn(() => undefined),
     sendMock: vi.fn(),
     setAbortControllerMock: vi.fn(),
     setTerminalResultMock: vi.fn(),
+    withClientBridgeMock: vi.fn((_ws: any, fn: any) => fn()),
     writeLogMock: vi.fn(),
   };
 });
@@ -83,8 +87,14 @@ vi.mock('../../memory/conversations', () => {
 
 vi.mock('../../tools/bridge', () => {
   return {
-    withClientBridge: vi.fn((_ws: any, fn: any) => fn()),
+    withClientBridge: withClientBridgeMock,
     getBridgeWs: getBridgeWsMock,
+  };
+});
+
+vi.mock('../../services/vm-bridge', () => {
+  return {
+    getDesktopWs: getDesktopWsMock,
   };
 });
 
@@ -144,9 +154,12 @@ describe('runPreparedChatStream interjections', () => {
     deleteAbortControllerMock.mockClear();
     finishRunMock.mockClear();
     getBridgeWsMock.mockClear();
+    getDesktopWsMock.mockClear();
     sendMock.mockClear();
     setAbortControllerMock.mockClear();
     setTerminalResultMock.mockClear();
+    withClientBridgeMock.mockClear();
+    withClientBridgeMock.mockImplementation((_ws: any, fn: any) => fn());
     writeLogMock.mockClear();
   });
 
@@ -277,5 +290,56 @@ describe('runPreparedChatStream interjections', () => {
       }),
       'req-steer-finish',
     );
+  });
+
+  it('uses the persistent desktop bridge for post-final background persistence', async () => {
+    const ws = { send: vi.fn(), readyState: 1, OPEN: 1 } as any;
+    const desktopWs = { send: vi.fn(), readyState: 1, OPEN: 1 } as any;
+    const history: any[] = [{ role: 'user', content: 'Original request' }];
+    getBridgeWsMock.mockReturnValue(ws);
+    getDesktopWsMock.mockReturnValue(desktopWs);
+
+    const agent = {
+      stream: vi.fn(async (_messages: any[], options: any) => {
+        await options.onFinish({
+          text: 'Done',
+          steps: [],
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 3000 },
+        });
+
+        return {
+          fullStream: (async function* emptyStream() {})(),
+        };
+      }),
+    };
+
+    const { runPreparedChatStream } = await import('./stream-runner');
+
+    await runPreparedChatStream({
+      ws,
+      msg: {},
+      requestId: 'req-post-final',
+      messages: [{ role: 'user', content: 'Original request' }],
+      history,
+      prompt: 'Original request',
+      inputMessages: [{ role: 'user', content: 'Original request' }],
+      agent,
+      agentType: 'stuard',
+      authUser: { userId: 'user-1' },
+      requestedMode: 'balanced',
+      routedTier: 'balanced',
+      chosenModelId: 'openai/test-model',
+      conversationId: 'conv-1',
+      conversationCreatedNow: false,
+      modelLabel: 'openai/test-model',
+      resource: 'resource-1',
+      thread: 'thread-1',
+      maxSteps: 3,
+      providerOptions: {},
+    } as any);
+
+    expect(getDesktopWsMock).toHaveBeenCalledWith('user-1');
+    expect(withClientBridgeMock.mock.calls.some(([bridge]) => bridge === desktopWs)).toBe(true);
   });
 });

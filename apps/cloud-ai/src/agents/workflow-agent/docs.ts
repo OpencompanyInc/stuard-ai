@@ -951,7 +951,7 @@ WORKSPACE TOOLS (prefer these — flowId auto-injected, relative paths):
   workspace_get_info      {}
 
 SCRIPT TOOLS:
-  run_python_script { filePath: "{{$workspace.scripts}}/do.py", packages: ["pandas"] }
+  run_python_script { filePath: "{{$workspace.scripts}}/do.py", packages: ["pandas"] } // uses persistent default venv unless envId is set
   run_node_script   { filePath: "{{$workspace.scripts}}/do.js" }
 
 TIP: Prefer workspace tools over absolute paths — the workflow becomes portable
@@ -1013,7 +1013,7 @@ PYTHON (run_python_script):
         code: "import numpy as np\\nprint(np.arange(5))",
         packages: ["numpy"],
         timeoutMs: 60000,
-        envId: "my-env"   // optional: named venv; auto-creates if missing
+        envId: "my-env"   // optional: named isolated venv; omit for persistent default
     }}
   File:
     { tool: "run_python_script", args: {
@@ -1037,7 +1037,7 @@ TIPS:
 • Pass values via args: [] and read sys.argv / process.argv.slice(2).
 • PRINT JSON to stdout, then parse in the next node with json_parse.
 • For simple arithmetic/string ops, math_eval / regex_match beat spawning Python.
-• envId groups scripts into a shared venv (install once, reuse).
+• Omit envId for the persistent default venv; set envId to group scripts into an isolated shared venv.
 
 RETURNING JSON TO NEXT NODE:
   Python prints:  print(json.dumps({ "result": 42 }))

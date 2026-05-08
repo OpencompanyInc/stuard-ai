@@ -50,6 +50,7 @@ const NotificationListener = () => {
 
                 show({
                     ...config,
+                    id: config.id || id,
                     message,
                     actions: [
                         {

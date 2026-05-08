@@ -187,7 +187,7 @@ Use run_command only for one-shot commands that the dedicated file/search tools 
 | Tool | When to Use | Key Parameters |
 |------|-------------|----------------|
 | run_command | One-shot shell command | command, shell?, timeoutMs?, cwd?, background? |
-| run_python_script | Execute Python code or a .py file | code OR path, packages?, timeoutMs?, cwd? |
+| run_python_script | Execute Python code or a .py file in the persistent default venv unless envId is set | code OR path, packages?, envId?, timeoutMs?, cwd? |
 | terminal_create | Start a persistent PTY shell | shell?, cwd?, env? |
 | terminal_send_input | Send a command or line of text | sessionId, input, enter? |
 | terminal_read | Read new PTY output | sessionId, sinceSeq?, maxChars?, stripAnsi? |

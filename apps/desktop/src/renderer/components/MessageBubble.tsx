@@ -2375,7 +2375,12 @@ function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
 function isDelegatedToolCall(tool: ToolCall): boolean {
   if (tool.nested) return true;
   if (typeof tool.subagentId === 'string' && tool.subagentId.trim().length > 0) return true;
-  return typeof tool.id === 'string' && tool.id.startsWith('subagent:');
+  if (typeof tool.id !== 'string') return false;
+  return (
+    tool.id.startsWith('subagent:') ||
+    tool.id.startsWith('subagent-') ||
+    tool.id.startsWith('sub-tc-')
+  );
 }
 
 const AssistantTracePanel: React.FC<{
@@ -3179,7 +3184,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
   const hasTraceSteps = role === 'assistant' && (
     hasReasoning ||
     hasToolCalls ||
-    Boolean(streamChunks?.some((chunk) => chunk.type === 'reasoning' || chunk.type === 'tool'))
+    Boolean(streamChunks?.some((chunk) => (
+      chunk.type === 'reasoning' ||
+      chunk.type === 'tool' ||
+      chunk.type === 'status' ||
+      (chunk.type === 'text' && chunk.nested)
+    )))
   );
   const shouldRenderTextBubble = compact || role !== 'user' || isEditing || Boolean(text.trim()) || segments.length > 0;
   const inlineChatUiBubbleClass = "w-full max-w-[85%] mr-auto";

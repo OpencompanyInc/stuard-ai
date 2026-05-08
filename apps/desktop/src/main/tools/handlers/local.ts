@@ -118,7 +118,9 @@ const resetTimeout = (ms: number) => {
           }
           
           // Log progress events for visibility
-          if (status === 'creating_env') {
+          if (status === 'using_env') {
+            ctx.logFn(`Python environment: ${data.envId || 'default'}`);
+          } else if (status === 'creating_env') {
             ctx.logFn(`🔧 Creating Python environment: ${data.envId || 'unknown'}`);
           } else if (status === 'env_created') {
             ctx.logFn(`✓ Environment created: ${data.envId || 'unknown'}`);

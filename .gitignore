@@ -261,6 +261,7 @@ dist/
 release/
 build/
 out/
+apps/desktop/whisper_models/
 *.asar
 *.exe
 *.dmg

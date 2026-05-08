@@ -144,6 +144,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     }
     return ipcRenderer.invoke('system:notify', titleOrConfig);
   },
+  dismissNotification: (id: string) => ipcRenderer.invoke('system:dismissNotification', id),
   // Chat UI secure helpers
   chatUiPickFile: (options?: { title?: string; filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }) =>
     ipcRenderer.invoke('stuard:pickFile', options || {}),
@@ -566,6 +567,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsDeploy: (id: string) => ipcRenderer.invoke('bots:deploy', id),
   botsPause: (id: string) => ipcRenderer.invoke('bots:pause', id),
   botsTriggerNow: (id: string) => ipcRenderer.invoke('bots:triggerNow', id),
+  botsTriggerOnVm: (id: string) => ipcRenderer.invoke('bots:triggerOnVm', id),
   botsListTasks: (id: string) => ipcRenderer.invoke('bots:listTasks', id),
   botsGetWakeUpLog: (id: string, limit?: number) => ipcRenderer.invoke('bots:getWakeUpLog', id, limit),
   botsAddTrigger: (id: string, input: any) => ipcRenderer.invoke('bots:addTrigger', id, input),

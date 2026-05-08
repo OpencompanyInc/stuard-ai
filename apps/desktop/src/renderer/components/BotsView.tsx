@@ -548,7 +548,19 @@ function TaskDetailModal({
 
 // ─── Top-level component (bot list) ────────────────────────────────────────
 
-export function BotsView() {
+export type BotsViewScope = 'all' | 'vm';
+
+interface BotsViewProps {
+  /**
+   * Filter the visible bots:
+   * - `'all'` (default): every bot the user has, regardless of where it runs.
+   * - `'vm'`: only bots that have been deployed to the cloud VM (used inside
+   *   the Cloud Engine workspace where local-only desktop bots are hidden).
+   */
+  scope?: BotsViewScope;
+}
+
+export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
   const [bots, setBots] = useState<Bot[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
@@ -573,11 +585,23 @@ export function BotsView() {
     return () => clearInterval(id);
   }, [refresh]);
 
+  const visibleBots = useMemo(
+    () => (scope === 'vm' ? bots.filter(b => !!b.vmDeployedAt) : bots),
+    [bots, scope],
+  );
+
   const selectedBot = useMemo(() => bots.find(b => b.id === selectedBotId) || null, [bots, selectedBotId]);
 
-  const runningCount = bots.filter(b => b.status === 'running').length;
-  const erroredCount = bots.filter(b => b.status === 'errored').length;
+  const runningCount = visibleBots.filter(b => b.status === 'running').length;
+  const erroredCount = visibleBots.filter(b => b.status === 'errored').length;
   const onVmCount = bots.filter(b => !!b.vmDeployedAt).length;
+  const localOnlyCount = bots.filter(b => !b.vmDeployedAt).length;
+
+  const isVmScope = scope === 'vm';
+  const headerTitle = isVmScope ? 'Bots on VM' : 'Bots';
+  const headerSubtitle = isVmScope
+    ? 'Bots running 24/7 on your cloud VM — independent of whether your laptop is open.'
+    : 'Build and deploy 24/7 agents — each with its own personality, tools, and memory.';
 
   if (loading) {
     return (
@@ -594,6 +618,7 @@ export function BotsView() {
         bot={selectedBot}
         onBack={() => setSelectedBotId(null)}
         onChange={refresh}
+        scope={scope}
       />
     );
   }
@@ -603,10 +628,14 @@ export function BotsView() {
       {/* ─── Header ───────────────────────────────────────────────── */}
       <div className="mb-6 flex flex-shrink-0 items-start justify-between gap-4 px-1">
         <div className="min-w-0">
-          <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">Bots</h1>
+          <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">{headerTitle}</h1>
           <p className="mt-2 flex items-center gap-2 text-[13px] text-theme-muted">
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-            <span>Build and deploy 24/7 agents — each with its own personality, tools, and memory.</span>
+            {isVmScope ? (
+              <Cloud className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            )}
+            <span>{headerSubtitle}</span>
           </p>
         </div>
         <button
@@ -624,9 +653,12 @@ export function BotsView() {
           <section>
             <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Overview</h2>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <StatCard value={padCount(bots.length)} label="Total Bots" />
+              <StatCard value={padCount(visibleBots.length)} label={isVmScope ? 'On VM' : 'Total Bots'} />
               <StatCard value={padCount(runningCount)} label="Running" />
-              <StatCard value={padCount(onVmCount)} label="On VM" />
+              <StatCard
+                value={padCount(isVmScope ? localOnlyCount : onVmCount)}
+                label={isVmScope ? 'Local only' : 'On VM'}
+              />
               <StatCard value={padCount(erroredCount)} label="Errored" />
             </div>
           </section>
@@ -634,21 +666,52 @@ export function BotsView() {
           {/* Bots grid */}
           <section>
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-[15px] font-semibold text-theme-fg">Bots</h2>
-              <span className="text-[12px] text-theme-muted">{bots.length} total</span>
+              <h2 className="text-[15px] font-semibold text-theme-fg">{isVmScope ? 'Deployed to VM' : 'Bots'}</h2>
+              <span className="text-[12px] text-theme-muted">
+                {visibleBots.length} {isVmScope ? 'on VM' : 'total'}
+              </span>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {bots.map(bot => (
-                <BotCard key={bot.id} bot={bot} onClick={() => setSelectedBotId(bot.id)} />
-              ))}
-              <button
-                onClick={() => setCreateOpen(true)}
-                className="flex min-h-[140px] items-center justify-center gap-2 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 text-[13px] text-theme-muted transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-              >
-                <Plus className="h-4 w-4" />
-                New Bot
-              </button>
-            </div>
+            {visibleBots.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 px-6 py-14 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <Cloud className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-[15px] font-semibold text-theme-fg">
+                    {isVmScope ? 'No bots on this VM yet' : 'No bots yet'}
+                  </h3>
+                  <p className="max-w-sm text-[12px] text-theme-muted">
+                    {isVmScope
+                      ? 'Open any bot and choose “Deploy to VM” so it keeps running even when your laptop is closed.'
+                      : 'Create your first bot to put it to work in the background.'}
+                  </p>
+                </div>
+                {!isVmScope && (
+                  <button
+                    onClick={() => setCreateOpen(true)}
+                    className="mt-1 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[12px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    New Bot
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleBots.map(bot => (
+                  <BotCard key={bot.id} bot={bot} onClick={() => setSelectedBotId(bot.id)} />
+                ))}
+                {!isVmScope && (
+                  <button
+                    onClick={() => setCreateOpen(true)}
+                    className="flex min-h-[140px] items-center justify-center gap-2 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 text-[13px] text-theme-muted transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New Bot
+                  </button>
+                )}
+              </div>
+            )}
           </section>
         </div>
       </div>
@@ -842,7 +905,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
 type DetailTab = 'activity' | 'kanban' | 'memory' | 'settings';
 
-function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void; onChange: () => Promise<void> | void }) {
+function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onBack: () => void; onChange: () => Promise<void> | void; scope?: BotsViewScope }) {
   const [tab, setTab] = useState<DetailTab>('activity');
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -850,6 +913,7 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
   const [kanbanCards, setKanbanCards] = useState<any[]>([]);
   const [runLog, setRunLog] = useState<any[]>([]);
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const status = statusInfo(bot.status);
@@ -900,11 +964,32 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
 
   const handleRunNow = async () => {
     setRunning(true);
+    setRunError(null);
     try {
-      await window.desktopAPI.botsTriggerNow(bot.id);
+      // Inside the Cloud Engine workspace (`scope === 'vm'`) we want a Run
+      // click to fire the VM, not the desktop's local proactive-scheduler —
+      // otherwise the user sees the run in their desktop logs even though
+      // they're sitting in the VM tab. Fall back to local if the bot isn't
+      // actually deployed (e.g. something was opened from a stale list).
+      if (scope === 'vm' && bot.vmDeployedAt) {
+        const res = await window.desktopAPI.botsTriggerOnVm(bot.id);
+        if (!res?.ok) {
+          if (res?.error === 'bot_not_deployed_to_vm') {
+            // Stale UI — bot was undeployed underneath us. Fall back to local.
+            await window.desktopAPI.botsTriggerNow(bot.id);
+          } else {
+            const reason = humanizeVmError(res?.error);
+            console.warn('[bots] VM run failed:', res?.error);
+            setRunError(reason);
+          }
+        }
+      } else {
+        await window.desktopAPI.botsTriggerNow(bot.id);
+      }
       // Logs/tasks repopulate as the run progresses; refresh after a beat.
       setTimeout(() => { reload(); setRunning(false); }, 1500);
-    } catch {
+    } catch (e: any) {
+      setRunError(String(e?.message || e || 'Run failed'));
       setRunning(false);
     }
   };
@@ -1032,6 +1117,16 @@ function BotDetailView({ bot, onBack, onChange }: { bot: Bot; onBack: () => void
           </button>
         </div>
       </div>
+
+      {runError && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-[12px] text-red-300">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="min-w-0">
+            <div className="font-medium">Couldn’t run on your VM.</div>
+            <div className="mt-0.5 text-red-300/80">{runError}</div>
+          </div>
+        </div>
+      )}
 
       {/* ─── Body: two-column for most tabs, full-width for kanban ───── */}
       {/*
@@ -2177,10 +2272,14 @@ function VmDeploySection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
 }
 
 function humanizeVmError(err?: string): string {
-  if (!err) return 'Deploy failed.';
-  if (err === 'not_authenticated') return 'Sign in to deploy to VM.';
-  if (err === 'vm_unreachable') return 'Could not reach your VM. Make sure it’s provisioned.';
+  if (!err) return 'Action failed.';
+  if (err === 'not_authenticated') return 'Sign in to use the VM.';
+  if (err === 'vm_unreachable' || err === 'engine_not_running' || err === 'no_engine_for_user') return 'Could not reach your VM. Make sure it’s running.';
   if (err === 'config_not_found' || err === 'bot_not_found') return 'Bot config not found.';
+  if (err === 'bot_id_required') return 'Missing bot id.';
+  if (err === 'bot_not_deployed_to_vm') return 'This bot isn’t deployed to the VM yet.';
+  if (err === 'http_404') return 'Your cloud-ai service is missing the /v1/bot/run route. Redeploy cloud-ai to pick it up.';
+  if (err.startsWith('http_')) return `Cloud-ai responded ${err.replace('http_', '')}.`;
   return err;
 }
 

@@ -198,7 +198,7 @@ function deliverNotification(config: Record<string, any>): boolean {
   return false;
 }
 
-function dismissNotificationById(id: string): void {
+export function dismissNotificationById(id: string): void {
   const notificationWin = getNotificationWindow();
   if (!notificationWin || notificationWin.isDestroyed()) return;
   try {

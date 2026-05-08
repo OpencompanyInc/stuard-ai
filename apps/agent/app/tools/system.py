@@ -25,6 +25,7 @@ COMMAND_CHECKPOINT_MAX_ENTRIES = int(os.getenv("COMMAND_CHECKPOINT_MAX_ENTRIES",
 _cached_python_bin: str | None = None
 _cached_node_bin: str | None = None
 _cached_pip_ok: set[str] = set()  # env dirs where pip is known to be available
+DEFAULT_PYTHON_ENV_ID = "default"
 
 
 def _normalize_cwd(cwd: Any) -> Optional[str]:
@@ -584,10 +585,92 @@ def _envs_base_dir() -> str:
     return os.path.join(base, "StuardAI", "python", "envs")
 
 
+def _resolve_python_env_id(env_id: Any) -> str:
+    resolved = str(env_id or "").strip() or DEFAULT_PYTHON_ENV_ID
+    if resolved in {".", ".."} or os.path.isabs(resolved):
+        raise ValueError("invalid_envId")
+    separators = [os.sep, "/", "\\"]
+    if os.altsep:
+        separators.append(os.altsep)
+    if any(sep and sep in resolved for sep in separators):
+        raise ValueError("invalid_envId")
+    return resolved
+
+
+def _python_env_dir(env_id: str) -> str:
+    return os.path.join(_envs_base_dir(), _resolve_python_env_id(env_id))
+
+
+def _python_env_bin(env_dir: str) -> str:
+    if sys.platform.startswith("win"):
+        return os.path.join(env_dir, "Scripts", "python.exe")
+    preferred = os.path.join(env_dir, "bin", "python3")
+    fallback = os.path.join(env_dir, "bin", "python")
+    return preferred if os.path.exists(preferred) or not os.path.exists(fallback) else fallback
+
+
+async def _ensure_python_env(
+    env_id: str,
+    emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
+) -> tuple[str, str]:
+    resolved_env_id = _resolve_python_env_id(env_id)
+    envs_root = _envs_base_dir()
+    os.makedirs(envs_root, exist_ok=True)
+    env_dir = os.path.join(envs_root, resolved_env_id)
+    py_bin = _python_env_bin(env_dir)
+
+    if not os.path.exists(py_bin):
+        if emit:
+            await emit("creating_env", {"envId": resolved_env_id, "path": env_dir})
+        system_python = await asyncio.to_thread(_get_system_python)
+        create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
+        proc = await asyncio.to_thread(subprocess.run, create_cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"venv_create_failed: {proc.stderr or proc.stdout}")
+        py_bin = _python_env_bin(env_dir)
+        if emit:
+            await emit("env_created", {"envId": resolved_env_id})
+
+    if env_dir not in _cached_pip_ok:
+        pip_check = await asyncio.to_thread(
+            subprocess.run,
+            [py_bin, "-m", "pip", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if pip_check.returncode != 0:
+            if emit:
+                await emit("installing_pip", {"envId": resolved_env_id})
+            await asyncio.to_thread(
+                subprocess.run,
+                [py_bin, "-m", "ensurepip", "--upgrade"],
+                capture_output=True,
+                check=False,
+            )
+        pip_check = await asyncio.to_thread(
+            subprocess.run,
+            [py_bin, "-m", "pip", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if pip_check.returncode != 0:
+            raise RuntimeError(f"pip_unavailable: {pip_check.stderr or pip_check.stdout}")
+        _cached_pip_ok.add(env_dir)
+
+    return env_dir, py_bin
+
+
 async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
+        args = args or {}
         exe = sys.executable or ""
         envs_root = _envs_base_dir()
+        default_env_id = DEFAULT_PYTHON_ENV_ID
+        active_env_id = _resolve_python_env_id(args.get("envId") if isinstance(args, dict) and args.get("envId") else None)
+        default_env_dir = os.path.join(envs_root, default_env_id)
+        active_env_dir = os.path.join(envs_root, active_env_id)
+        default_python = _python_env_bin(default_env_dir)
+        active_python = _python_env_bin(active_env_dir)
         envs = []
         try:
             if os.path.isdir(envs_root):
@@ -604,6 +687,14 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
             "version": sys.version.split("\n")[0],
             "envsRoot": envs_root,
             "envs": envs,
+            "defaultEnvId": DEFAULT_PYTHON_ENV_ID,
+            "activeEnvId": active_env_id,
+            "defaultEnvPath": default_env_dir,
+            "defaultPython": default_python,
+            "defaultReady": os.path.exists(default_python),
+            "activeEnvPath": active_env_dir,
+            "activePython": active_python,
+            "activeReady": os.path.exists(active_python),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -611,46 +702,36 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def python_setup(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        st = await python_status({})
-        return {"ok": bool(st.get("available")), "python": st.get("python"), "envsRoot": st.get("envsRoot")}
+        args = args or {}
+        env_id = _resolve_python_env_id(args.get("envId") if isinstance(args, dict) else None)
+        env_dir, py_bin = await _ensure_python_env(env_id)
+        st = await python_status(args or {})
+        return {
+            "ok": bool(st.get("available")),
+            "python": py_bin,
+            "envId": env_id,
+            "envPath": env_dir,
+            "envsRoot": st.get("envsRoot"),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 async def python_install(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     try:
-        env_id = str(args.get("envId") or "").strip()
-        if not env_id:
-            return {"ok": False, "error": "missing_envId"}
+        args = args or {}
+        env_id = _resolve_python_env_id(args.get("envId"))
         packages = args.get("packages") or []
         req_txt = str(args.get("requirementsTxt") or "")
         offline_only = bool(args.get("offlineOnly", False))
         allow_net = bool(args.get("allowNetworkInstall", False))
 
-        envs_root = _envs_base_dir()
-        os.makedirs(envs_root, exist_ok=True)
-        env_dir = os.path.join(envs_root, env_id)
-        py_bin = os.path.join(env_dir, "Scripts", "python.exe") if sys.platform.startswith("win") else os.path.join(env_dir, "bin", "python3")
-
         if emit:
-            await emit("creating_env", {"envId": env_id})
-
-        if not os.path.exists(py_bin):
-            # Use --without-pip to avoid venvlauncher.exe copy issues on Python 3.13+
-            system_python = await asyncio.to_thread(_get_system_python)
-            create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
-            try:
-                await asyncio.to_thread(subprocess.run, create_cmd, check=True, capture_output=True, text=True)
-            except Exception as e:
-                return {"ok": False, "error": f"venv_create_failed: {e}"}
-
-        if emit:
-            await emit("ensuring_pip", {"envId": env_id})
+            await emit("using_env", {"envId": env_id})
         try:
-            await asyncio.to_thread(subprocess.run, [py_bin, "-m", "ensurepip", "--upgrade"], check=True)
-            await asyncio.to_thread(subprocess.run, [py_bin, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], check=True)
-        except Exception:
-            pass
+            env_dir, py_bin = await _ensure_python_env(env_id, emit)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
         install_args: list[str] = [py_bin, "-m", "pip", "install"]
         wheelhouse = str(args.get("wheelhouse") or os.environ.get("AGENT_WHEELHOUSE") or "").strip()
@@ -689,7 +770,7 @@ async def python_install(args: Dict[str, Any], emit: Callable[[str, Dict[str, An
             except Exception:
                 pass
 
-        return {"ok": True, "envId": env_id, "python": py_bin}
+        return {"ok": True, "envId": env_id, "envPath": env_dir, "python": py_bin}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -702,7 +783,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         code: Inline Python code to execute
         path: Path to Python script file
         args: Command-line arguments to pass to the script
-        envId: Virtual environment ID (auto-created if doesn't exist)
+        envId: Virtual environment ID (uses the shared default env when omitted)
         packages: List of packages to install (e.g., ["numpy", "pandas>=2.0"])
         requirementsTxt: Requirements.txt content as string
         timeoutMs: Script execution timeout (default: 30000)
@@ -714,10 +795,11 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         { ok, exitCode, stdout, stderr, python, envId, packagesInstalled? }
     """
     try:
+        args = args or {}
         code = str(args.get("code") or "")
         path = str(args.get("path") or args.get("filePath") or "")
         arg_list = [str(a) for a in (args.get("args") or [])]
-        env_id = str(args.get("envId") or "").strip()
+        env_id = _resolve_python_env_id(args.get("envId"))
         packages = args.get("packages") or []
         req_txt = str(args.get("requirementsTxt") or "")
         timeout_ms = int(args.get("timeoutMs") or 30000)
@@ -736,113 +818,66 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         if not path and not code:
             return {"ok": False, "error": "missing_code_or_path"}
 
-        envs_root = _envs_base_dir()
         packages_installed: list[str] = []
-
-        # If packages are specified but no envId, auto-generate one
-        if (packages or req_txt) and not env_id:
-            import hashlib
-            content_hash = hashlib.md5((code + path + ",".join(sorted(packages)) + req_txt).encode()).hexdigest()[:8]
-            env_id = f"script_{content_hash}"
-            if emit:
-                await emit("auto_env", {"envId": env_id, "reason": "packages_specified"})
-
-        env_dir = os.path.join(envs_root, env_id) if env_id else ""
         py_bin = ""
 
-        if env_id:
-            py_bin = os.path.join(env_dir, "Scripts", "python.exe") if sys.platform.startswith("win") else os.path.join(env_dir, "bin", "python3")
-            
-            # Create environment if it doesn't exist
-            if not os.path.exists(py_bin):
-                if emit:
-                    await emit("creating_env", {"envId": env_id, "path": env_dir})
-                
-                try:
-                    os.makedirs(envs_root, exist_ok=True)
-                    # Use --without-pip to avoid venvlauncher.exe copy issues on Python 3.13+
-                    system_python = await asyncio.to_thread(_get_system_python)
-                    create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
-                    proc = await asyncio.to_thread(subprocess.run, create_cmd, capture_output=True, text=True)
-                    if proc.returncode != 0:
-                        return {"ok": False, "error": f"venv_create_failed: {proc.stderr}", "stdout": proc.stdout}
-                    
-                    if emit:
-                        await emit("env_created", {"envId": env_id})
-                except Exception as e:
-                    return {"ok": False, "error": f"venv_create_failed: {e}"}
+        try:
+            env_dir, py_bin = await _ensure_python_env(env_id, emit)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
-            # Ensure pip is available (cached per env_dir after first successful check)
-            if env_dir not in _cached_pip_ok:
-                pip_check = await asyncio.to_thread(
-                    subprocess.run, [py_bin, "-m", "pip", "--version"],
-                    capture_output=True, text=True
-                )
-                if pip_check.returncode != 0:
-                    if emit:
-                        await emit("installing_pip", {"envId": env_id})
+        # Install packages if specified
+        if auto_install and (packages or req_txt):
+            install_args = [py_bin, "-m", "pip", "install", "--quiet"]
+            
+            # Install from requirements.txt content
+            if req_txt.strip():
+                if emit:
+                    await emit("installing_requirements", {"envId": env_id, "content": req_txt[:200]})
+                fd, tmp_req = tempfile.mkstemp(prefix="req-", suffix=".txt")
+                try:
+                    os.write(fd, req_txt.encode("utf-8"))
+                    os.close(fd)
+                    proc = await asyncio.to_thread(
+                        subprocess.run,
+                        install_args + ["-r", tmp_req],
+                        capture_output=True, text=True
+                    )
+                    if proc.returncode != 0:
+                        if emit:
+                            await emit("install_error", {"error": proc.stderr[:500], "stdout": proc.stdout[:500]})
+                        return {"ok": False, "error": f"pip_install_failed: {proc.stderr[:500]}", "stdout": proc.stdout}
+                    packages_installed.append("requirements.txt")
+                finally:
                     try:
-                        await asyncio.to_thread(subprocess.run, [py_bin, "-m", "ensurepip", "--upgrade"], capture_output=True, check=False)
-                        await asyncio.to_thread(subprocess.run, [py_bin, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], capture_output=True, check=False)
+                        os.remove(tmp_req)
                     except Exception:
                         pass
-                _cached_pip_ok.add(env_dir)
 
-            # Install packages if specified
-            if auto_install and (packages or req_txt):
-                install_args = [py_bin, "-m", "pip", "install", "--quiet"]
+            # Install individual packages
+            if packages:
+                if emit:
+                    await emit("installing_packages", {"envId": env_id, "packages": packages, "count": len(packages)})
                 
-                # Install from requirements.txt content
-                if req_txt.strip():
+                for pkg in packages:
                     if emit:
-                        await emit("installing_requirements", {"envId": env_id, "content": req_txt[:200]})
-                    fd, tmp_req = tempfile.mkstemp(prefix="req-", suffix=".txt")
-                    try:
-                        os.write(fd, req_txt.encode("utf-8"))
-                        os.close(fd)
-                        proc = await asyncio.to_thread(
-                            subprocess.run,
-                            install_args + ["-r", tmp_req],
-                            capture_output=True, text=True
-                        )
-                        if proc.returncode != 0:
-                            if emit:
-                                await emit("install_error", {"error": proc.stderr[:500], "stdout": proc.stdout[:500]})
-                            return {"ok": False, "error": f"pip_install_failed: {proc.stderr[:500]}", "stdout": proc.stdout}
-                        packages_installed.append("requirements.txt")
-                    finally:
-                        try:
-                            os.remove(tmp_req)
-                        except Exception:
-                            pass
-
-                # Install individual packages
-                if packages:
-                    if emit:
-                        await emit("installing_packages", {"envId": env_id, "packages": packages, "count": len(packages)})
-                    
-                    for pkg in packages:
+                        await emit("installing_package", {"package": pkg})
+                    proc = await asyncio.to_thread(
+                        subprocess.run,
+                        install_args + [pkg],
+                        capture_output=True, text=True
+                    )
+                    if proc.returncode != 0:
+                        # Try to continue with other packages
                         if emit:
-                            await emit("installing_package", {"package": pkg})
-                        proc = await asyncio.to_thread(
-                            subprocess.run,
-                            install_args + [pkg],
-                            capture_output=True, text=True
-                        )
-                        if proc.returncode != 0:
-                            # Try to continue with other packages
-                            if emit:
-                                await emit("package_install_warning", {"package": pkg, "error": proc.stderr[:200]})
-                        else:
-                            packages_installed.append(pkg)
-                            if emit:
-                                await emit("package_installed", {"package": pkg})
-                    
-                    if emit:
-                        await emit("packages_ready", {"installed": packages_installed, "count": len(packages_installed)})
-        else:
-            # Use cached system Python (avoids repeated slow PATH traversal on Windows)
-            py_bin = _get_system_python()
+                            await emit("package_install_warning", {"package": pkg, "error": proc.stderr[:200]})
+                    else:
+                        packages_installed.append(pkg)
+                        if emit:
+                            await emit("package_installed", {"package": pkg})
+                
+                if emit:
+                    await emit("packages_ready", {"installed": packages_installed, "count": len(packages_installed)})
 
         # Prepare cleanup list
         cleanup: list[str] = []
@@ -908,10 +943,10 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
                 "python": py_bin,
+                "envId": env_id,
+                "envPath": env_dir,
             }
             _finish_command_checkpoint(checkpoint)
-            if env_id:
-                result["envId"] = env_id
             if packages_installed:
                 result["packagesInstalled"] = packages_installed
             
@@ -926,7 +961,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             _finish_command_checkpoint(checkpoint)
             if emit:
                 await emit("timeout", {"timeoutMs": timeout_ms})
-            return {"ok": False, "error": "timeout", "python": py_bin, "envId": env_id or None}
+            return {"ok": False, "error": "timeout", "python": py_bin, "envId": env_id, "envPath": env_dir}
         finally:
             for p in cleanup:
                 try:
