@@ -217,6 +217,7 @@ describe('prepareChatRequest', () => {
       {},
       'openai/gpt-5.4',
       getSkillsFromContextMock.mock.results[0]?.value,
+      [],
     );
     expect(buildInputMessagesMock).toHaveBeenCalledWith(expect.objectContaining({ agent }));
     expect(secretBag.__modelTier).toBe('balanced');
