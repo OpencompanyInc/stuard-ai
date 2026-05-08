@@ -1099,11 +1099,10 @@ function handleBotsSync(args: any): any {
   return { ok: true, count: bots.length };
 }
 
-async function handleBotsRun(args: any): Promise<any> {
+function handleBotsRun(args: any): any {
   const id = String(args?.id || '');
   if (!id) return { ok: false, error: 'missing id' };
-  const result = await getVMBotScheduler().runBotManual(id);
-  return result;
+  return getVMBotScheduler().triggerBotManual(id);
 }
 
 function handleBotsList(): any {

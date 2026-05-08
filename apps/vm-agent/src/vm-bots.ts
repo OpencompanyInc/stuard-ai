@@ -282,6 +282,23 @@ export class VMBotScheduler {
     return this.runBot(bot, { manual: true });
   }
 
+  /**
+   * Start a manual bot run and return as soon as the VM accepted it.
+   * Cloud-ai's command relay has a short HTTP timeout, while wakeups can take
+   * minutes; the final outcome is recorded by recordRun when the wakeup ends.
+   */
+  triggerBotManual(id: string): { ok: boolean; accepted?: boolean; error?: string } {
+    const bot = this.bots.get(id);
+    if (!bot) return { ok: false, error: 'bot_not_found' };
+    if (this.inFlight.has(id)) return { ok: false, error: 'already_running' };
+
+    this.runBot(bot, { manual: true }).catch(err =>
+      this.log(`manual bot ${id} run failed: ${err?.message || err}`),
+    );
+
+    return { ok: true, accepted: true };
+  }
+
   // ── Tick loop ───────────────────────────────────────────────────────────────
 
   private async tick(): Promise<void> {
