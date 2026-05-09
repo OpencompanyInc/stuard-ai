@@ -8,7 +8,7 @@ import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop,
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -877,7 +877,24 @@ export function setupIpc() {
   ipcMain.handle('prefs:setTimezone', (_e, tz: string | null) => {
     try {
       setTimezone(typeof tz === 'string' && tz.trim() ? tz.trim() : null);
+      // Push the new effective tz (override or auto-detected) to the VM.
+      // Fire-and-forget — the renderer doesn't need to wait, and this should
+      // never fail the local preference save.
+      syncTimezoneToVm({ force: true }).catch((e) =>
+        logger.warn('[ipc] syncTimezoneToVm after prefs:setTimezone failed:', e),
+      );
       return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  // Push the desktop's current timezone to the VM. Renderer calls this when
+  // the cloud engine flips to "running" so the VM picks up the user's zone
+  // without needing a bot redeploy. Throttled inside the service.
+  ipcMain.handle('vm:syncTimezone', async (_e, opts?: { force?: boolean }) => {
+    try {
+      return await syncTimezoneToVm({ force: !!opts?.force });
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }

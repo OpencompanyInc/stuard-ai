@@ -11,6 +11,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
 import { detectRetryableToolError } from '../routes/proactive-utils';
+import { getWorkflowAgent } from '../agents/workflow-agent';
 import { getModel } from '../agents/stuard/models';
 import { writeLog } from '../utils/logger';
 import { getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
@@ -270,6 +271,37 @@ function buildSubagent(
   const askTool = makeAskOrchestratorTool(correlation, onQuestion);
   const returnTool = makeReturnControlTool(correlation);
   const progressTool = makeReportProgressTool(correlation);
+
+  if (pack.kind === 'workflow') {
+    const workflowAgent = getWorkflowAgent({
+      modelId,
+      includeCreateWorkflow: true,
+      extraTools: {
+        ask_orchestrator: askTool,
+        return_control: returnTool,
+        report_progress: progressTool,
+      },
+      id: `subagent-workflow-${correlation.subagentId.slice(0, 8)}`,
+      name: `${pack.label} Subagent`,
+      bridgeWs,
+      bridgeSecrets,
+    });
+    const toolNames = (workflowAgent as any).__activeToolNames || Object.keys((workflowAgent as any).tools || {});
+
+    writeLog('subagent_build', {
+      subagentId: correlation.subagentId,
+      kind: pack.kind,
+      model: 'workflow-studio-agent',
+      modelId: modelId || process.env.WORKFLOW_MODEL_ID || '(workflow default)',
+      toolCount: toolNames.length,
+      packToolCount: pack.toolNames.length,
+      resolvedTools: toolNames,
+      hasBridgeWrap: !!bridgeWs,
+      usesStudioWorkflowAgent: true,
+    });
+
+    return workflowAgent;
+  }
 
   // Build tool set: capability pack tools from the full universe + control tools
   const tools: Record<string, any> = {};

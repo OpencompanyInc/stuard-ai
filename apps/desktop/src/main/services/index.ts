@@ -27,5 +27,7 @@ export {
 export { botService, DEFAULT_BOT_ID } from "./bot-service";
 export type { Bot, BotStatus, BotConfig, BotTrigger, BotTriggerType, DeployTarget } from "./bot-service";
 export { deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm } from "./bot-vm-deploy";
+export { syncTimezoneToVm, resetTimezoneSyncCache } from "./vm-settings";
+export type { VmTimezoneSyncResult } from "./vm-settings";
 export { botMemoryService } from "./bot-memory-service";
 export type { BotKanbanCard, BotKanbanStatus, BotRunLogEntry, BotMemoryActor } from "./bot-memory-service";

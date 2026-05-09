@@ -9,16 +9,26 @@
  */
 
 import { Agent } from '@mastra/core/agent';
+import { createTool } from '@mastra/core/tools';
+import { z } from 'zod';
 import { buildProviderModel } from '../../utils/models';
 import { writeLog } from '../../utils/logger';
 
 // Core tools
 import { search_tools, search_workflow_nodes } from '../../tools/meta-tools';
-import { retrieveToolFormat } from '../../tools/workflow-system';
+import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
 import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
+import { getBridgeSecrets, getBridgeWs, runWithSecrets, withClientBridge } from '../../tools/bridge';
+import {
+  clearActiveBridge,
+  execLocalToolWithCapturedBridge,
+  getLocalToolSpec,
+  setActiveBridge,
+  withActiveBridgeContext,
+} from '../../tools/device/shared';
 import { executeStep, listWorkflows, inspectWorkflow } from './tools';
 import { searchWorkflowDocs } from './docs';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
@@ -31,6 +41,19 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 
 export { WORKFLOW_SYSTEM_PROMPT };
 
+const DEFAULT_WORKFLOW_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
+
+export interface WorkflowAgentOptions {
+  modelId?: string;
+  includeCreateWorkflow?: boolean;
+  extraTools?: Record<string, any>;
+  instructionsSuffix?: string;
+  id?: string;
+  name?: string;
+  bridgeWs?: any;
+  bridgeSecrets?: Record<string, any>;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKFLOW AGENT FACTORY
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -41,13 +64,141 @@ export function workflowAgentLog(event: string, data?: Record<string, any>) {
   writeLog(`wf_agent_${event}`, data);
 }
 
+function normalizeWorkflowAgentOptions(modelIdOrOptions?: string | WorkflowAgentOptions): WorkflowAgentOptions {
+  if (typeof modelIdOrOptions === 'string') return { modelId: modelIdOrOptions };
+  return modelIdOrOptions || {};
+}
+
+function createLoggedTool(tool: any, name: string) {
+  return {
+    ...tool,
+    execute: async (args: any, runCtx?: any) => {
+      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(args, null, 2));
+      try {
+        const result = await tool.execute(args, runCtx);
+        console.log(`[workflow-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
+        return result;
+      } catch (error) {
+        console.error(`[workflow-agent] Tool error: ${name}`, error);
+        throw error;
+      }
+    },
+  };
+}
+
+function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Record<string, any>): any {
+  if (!tool || typeof tool.execute !== 'function') return tool;
+
+  const originalExecute = tool.execute.bind(tool);
+  const toolId = tool.id || tool.name || 'unknown';
+  const inputSchema = tool.inputSchema || tool.parameters || z.any();
+  const outputSchema = tool.outputSchema || z.any();
+  const localToolSpec = getLocalToolSpec(tool);
+
+  return createTool({
+    id: toolId,
+    description: tool.description || '',
+    inputSchema,
+    outputSchema,
+    execute: async (args: any, ctx: any) => {
+      if (bridgeWs && bridgeWs.readyState === 1) {
+        const activeBridgeScope = setActiveBridge(bridgeWs, bridgeSecrets);
+        try {
+          if (localToolSpec) {
+            const workflowToolSpec = typeof localToolSpec.timeoutMs === 'undefined'
+              ? { ...localToolSpec, timeoutMs: DEFAULT_WORKFLOW_LOCAL_TOOL_TIMEOUT_MS }
+              : localToolSpec;
+            return await execLocalToolWithCapturedBridge(
+              toolId,
+              args,
+              ctx?.writer,
+              workflowToolSpec,
+              { ws: bridgeWs, secrets: bridgeSecrets },
+            );
+          }
+          return await withActiveBridgeContext(
+            bridgeWs,
+            bridgeSecrets,
+            () => withClientBridge(bridgeWs, () => originalExecute(args, ctx), bridgeSecrets),
+          );
+        } finally {
+          clearActiveBridge(activeBridgeScope);
+        }
+      }
+
+      if (bridgeSecrets) {
+        const secretsScope = setActiveBridge(null, bridgeSecrets);
+        try {
+          return await runWithSecrets(bridgeSecrets, () => originalExecute(args, ctx));
+        } finally {
+          clearActiveBridge(secretsScope);
+        }
+      }
+
+      return originalExecute(args, ctx);
+    },
+  });
+}
+
+function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> {
+  const baseTools: Record<string, any> = {};
+
+  if (options.includeCreateWorkflow) {
+    baseTools.create_workflow = createLoggedTool(createWorkflowTool, 'create_workflow');
+  }
+
+  Object.assign(baseTools, {
+    // 1. Search workflow documentation on demand
+    search_workflow_docs: createLoggedTool(searchWorkflowDocs, 'search_workflow_docs'),
+    // 2. Search workflow nodes with schema metadata
+    search_workflow_nodes: createLoggedTool(search_workflow_nodes, 'search_workflow_nodes'),
+    // 3. Search tools (sis search)
+    search_tools: createLoggedTool(search_tools, 'search_tools'),
+    // 4. Get tool schema
+    get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
+    // 5. Inspect workflow topology
+    inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
+    // 6. Modify workflow
+    modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
+    // 7. Execute step (sis execute)
+    execute_step: createLoggedTool(executeStep, 'execute_step'),
+    // 8. List workflows
+    list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
+    // 9. Stop workflow (canonical name - matches the delegate pack)
+    stop_automation: createLoggedTool(stop_automation, 'stop_automation'),
+    // 10. Web search
+    web_search: createLoggedTool(web_search, 'web_search'),
+    // 11. Create/write files in the workspace or on disk
+    write_file: createLoggedTool(write_file, 'write_file'),
+    // 12. Create directories
+    create_directory: createLoggedTool(create_directory, 'create_directory'),
+    // 13. Edit non-stuard files (string-based find/replace)
+    file_edit: createLoggedTool(file_edit, 'file_edit'),
+  });
+
+  for (const [name, tool] of Object.entries(options.extraTools || {})) {
+    baseTools[name] = createLoggedTool(tool, name);
+  }
+
+  const bridgeWs = options.bridgeWs || getBridgeWs();
+  const bridgeSecrets = options.bridgeSecrets || getBridgeSecrets();
+  if (!bridgeWs && !bridgeSecrets) return baseTools;
+
+  const wrapped: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(baseTools)) {
+    wrapped[name] = wrapWorkflowToolWithBridge(tool, bridgeWs, bridgeSecrets);
+  }
+  return wrapped;
+}
+
 /**
  * Get the Workflow Agent configured with Gemini 3 Pro Preview.
  */
-export function getWorkflowAgent(modelIdOverride?: string): Agent {
+export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOptions): Agent {
+  const options = normalizeWorkflowAgentOptions(modelIdOrOptions);
   const modelId =
-    (typeof modelIdOverride === 'string' && modelIdOverride.trim())
-      ? modelIdOverride.trim()
+    (typeof options.modelId === 'string' && options.modelId.trim())
+      ? options.modelId.trim()
       : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
 
   const provider = String(modelId.split('/')[0] || '').toLowerCase();
@@ -81,63 +232,25 @@ export function getWorkflowAgent(modelIdOverride?: string): Agent {
 
   workflowAgentLog('init', { model: modelId });
 
-  // Create logging wrappers for tools
-  const createLoggedTool = (tool: any, name: string) => ({
-    ...tool,
-    execute: async (args: any, runCtx?: any) => {
-      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(args, null, 2));
-      try {
-        const result = await tool.execute(args, runCtx);
-        console.log(`[workflow-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
-        return result;
-      } catch (error) {
-        console.error(`[workflow-agent] Tool error: ${name}`, error);
-        throw error;
-      }
-    }
-  });
-
-  // Core workflow tools
-  const tools = {
-    // 1. Search workflow documentation on demand
-    search_workflow_docs: createLoggedTool(searchWorkflowDocs, 'search_workflow_docs'),
-    // 2. Search workflow nodes with schema metadata
-    search_workflow_nodes: createLoggedTool(search_workflow_nodes, 'search_workflow_nodes'),
-    // 3. Search tools (sis search)
-    search_tools: createLoggedTool(search_tools, 'search_tools'),
-    // 4. Get tool schema
-    get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
-    // 5. Inspect workflow topology
-    inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
-    // 6. Modify workflow
-    modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
-    // 7. Execute step (sis execute)
-    execute_step: createLoggedTool(executeStep, 'execute_step'),
-    // 8. List workflows
-    list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
-    // 9. Stop workflow (canonical name — matches the delegate pack)
-    stop_automation: createLoggedTool(stop_automation, 'stop_automation'),
-    // 10. Web search
-    web_search: createLoggedTool(web_search, 'web_search'),
-    // 11. Create/write files in the workspace or on disk
-    write_file: createLoggedTool(write_file, 'write_file'),
-    // 12. Create directories
-    create_directory: createLoggedTool(create_directory, 'create_directory'),
-    // 13. Edit non-stuard files (string-based find/replace)
-    file_edit: createLoggedTool(file_edit, 'file_edit'),
-  };
+  const tools = buildWorkflowTools(options);
+  const toolNames = Object.keys(tools);
+  const instructions = options.instructionsSuffix
+    ? `${WORKFLOW_SYSTEM_PROMPT}\n\n${options.instructionsSuffix}`
+    : WORKFLOW_SYSTEM_PROMPT;
 
   // Determine if we should use thinking mode
   const useThinking = provider === 'google' && modelId.includes('gemini-3');
 
   // Create agent with enhanced logging
   const agent = new Agent({
-    id: 'workflow-architect',
-    name: 'workflow-architect',
-    instructions: WORKFLOW_SYSTEM_PROMPT,
+    id: options.id || 'workflow-architect',
+    name: options.name || 'workflow-architect',
+    instructions,
     model: model as any,
     tools,
   });
+
+  (agent as any).__activeToolNames = toolNames;
 
   // Add message logging and inject providerOptions for thinking at stream level
   const originalStream = agent.stream.bind(agent);

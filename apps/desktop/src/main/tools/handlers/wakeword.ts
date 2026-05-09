@@ -37,13 +37,10 @@ function getBundledWakewordExecutable(): string | null {
   const override = String(process.env.STUARD_WAKEWORD_BIN || '').trim();
   if (override && fs.existsSync(override)) return override;
 
+  if (!app.isPackaged) return null;
+
   const exeName = process.platform === 'win32' ? 'stuard-wakeword.exe' : 'stuard-wakeword';
-  const candidates = app.isPackaged
-    ? [path.join(process.resourcesPath, 'agent', exeName)]
-    : [
-        path.resolve(__dirname, '..', '..', '..', '..', 'dist', exeName),
-        path.resolve(__dirname, '..', '..', 'build', 'agent', exeName),
-      ];
+  const candidates = [path.join(process.resourcesPath, 'agent', exeName)];
 
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
@@ -54,9 +51,9 @@ function buildConfig(args: any): WakewordConfig {
     || path.join(wakewordDir, 'models', 'kws_weights.npz');
 
   return {
-    sensitivity: clampNumber(args?.sensitivity, 0.95, 0.3, 0.99),
-    cooldown: clampNumber(args?.cooldown, 1.0, 0.25, 30),
-    triggerCount: Math.round(clampNumber(args?.triggerCount ?? args?.trigger_count ?? args?.['trigger-count'], 5, 1, 25)),
+    sensitivity: clampNumber(args?.sensitivity, 0.88, 0.3, 0.99),
+    cooldown: clampNumber(args?.cooldown, 1.5, 0.25, 30),
+    triggerCount: Math.round(clampNumber(args?.triggerCount ?? args?.trigger_count ?? args?.['trigger-count'], 6, 1, 25)),
     weightsPath,
     wakewordDir,
   };
@@ -108,7 +105,9 @@ export async function execWakewordStart(args: any): Promise<any> {
     stopWakewordProcess();
   }
 
-  const scriptPath = path.join(config.wakewordDir, 'listen_numpy.py');
+  const commandScriptPath = path.join(config.wakewordDir, 'listen.py');
+  const legacyScriptPath = path.join(config.wakewordDir, 'listen_numpy.py');
+  const hasCommandListener = fs.existsSync(commandScriptPath);
   if (!fs.existsSync(config.weightsPath)) {
     return { ok: false, error: `wakeword weights not found: ${config.weightsPath}` };
   }
@@ -117,19 +116,31 @@ export async function execWakewordStart(args: any): Promise<any> {
   const command = bundledExe || (process.platform === 'win32' ? 'python' : 'python3');
   const spawnArgs = bundledExe
     ? []
-    : [scriptPath];
+    : hasCommandListener
+      ? [commandScriptPath, 'listen']
+      : [legacyScriptPath];
 
-  if (!bundledExe && !fs.existsSync(scriptPath)) {
-    return { ok: false, error: `wakeword listener not found: ${scriptPath}` };
+  if (!bundledExe && !hasCommandListener && !fs.existsSync(legacyScriptPath)) {
+    return { ok: false, error: `wakeword listener not found: ${commandScriptPath}` };
   }
 
-  spawnArgs.push(
-    '--weights', config.weightsPath,
-    '--sensitivity', String(config.sensitivity),
-    '--cooldown', String(config.cooldown),
-    '--trigger-count', String(config.triggerCount),
-    '--no-status',
-  );
+  if (hasCommandListener && !bundledExe) {
+    spawnArgs.push(
+      '--weights', config.weightsPath,
+      '--threshold', String(config.sensitivity),
+      '--cooldown', String(config.cooldown),
+      '--trigger-count', String(config.triggerCount),
+      '--no-status',
+    );
+  } else {
+    spawnArgs.push(
+      '--weights', config.weightsPath,
+      '--sensitivity', String(config.sensitivity),
+      '--cooldown', String(config.cooldown),
+      '--trigger-count', String(config.triggerCount),
+      '--no-status',
+    );
+  }
 
   logger.info(`[wakeword] Starting listener: ${command} ${spawnArgs.join(' ')}`);
 

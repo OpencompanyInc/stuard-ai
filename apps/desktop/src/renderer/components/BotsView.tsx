@@ -81,6 +81,117 @@ const COMMON_EMOJIS = ['🤖', '✨', '📊', '📰', '🐦', '📸', '🛒', '�
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
+interface BotBlueprint {
+  name: string;
+  emoji: string;
+  systemPrompt: string;
+  instructions: string;
+  allowedTools: string[];
+  interval: ScheduleInterval;
+}
+
+const BOT_TOOL_RULES: Array<{ keywords: string[]; tools: string[]; emojiIndex?: number }> = [
+  { keywords: ['twitter', 'tweet', 'tweets', 'x post', 'x/twitter'], tools: ['x_post_tweet', 'x_search_tweets', 'x_get_user_timeline', 'x_get_user', 'web_search'], emojiIndex: 4 },
+  { keywords: ['email', 'gmail', 'inbox', 'newsletter'], tools: ['gmail_list_messages', 'gmail_get_message_full', 'gmail_send_message', 'gmail_search_messages'], emojiIndex: 12 },
+  { keywords: ['calendar', 'meeting', 'schedule', 'appointment'], tools: ['calendar_list_events', 'calendar_create_event', 'calendar_update_event', 'get_datetime'], emojiIndex: 12 },
+  { keywords: ['github', 'issue', 'pull request', 'pr ', 'repo', 'repository'], tools: ['github_search_issues', 'github_create_issue', 'github_list_pull_requests', 'github_get_pull_request', 'github_comment_on_issue'], emojiIndex: 7 },
+  { keywords: ['file', 'folder', 'document', 'docs', 'workspace', 'notes'], tools: ['file_search', 'semantic_file_search', 'read_file', 'write_file', 'file_edit', 'list_directory'], emojiIndex: 15 },
+  { keywords: ['browser', 'website', 'web page', 'scrape', 'page', 'site'], tools: ['browser_use_navigate', 'browser_use_content', 'browser_use_get_interactive_elements', 'browser_use_click', 'scrape_url', 'web_search'], emojiIndex: 10 },
+  { keywords: ['research', 'monitor', 'news', 'market', 'competitor', 'price'], tools: ['web_search', 'scrape_url', 'search_past_conversations'], emojiIndex: 3 },
+  { keywords: ['sheet', 'spreadsheet', 'csv', 'data'], tools: ['sheets_read_sheet', 'sheets_update_values', 'sheets_append_values', 'read_file', 'write_file'], emojiIndex: 2 },
+  { keywords: ['discord'], tools: ['discord_send_message', 'discord_list_channels', 'discord_get_messages'], emojiIndex: 10 },
+  { keywords: ['reddit', 'subreddit'], tools: ['reddit_search_posts', 'reddit_get_subreddit_posts', 'reddit_create_post', 'reddit_comment_on_post'], emojiIndex: 3 },
+  { keywords: ['sms', 'text message', 'phone'], tools: ['telnyx_send_sms', 'telnyx_list_messages'], emojiIndex: 11 },
+];
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some(keyword => {
+    const key = keyword.trim().toLowerCase();
+    if (!key) return false;
+    if (key.length <= 2) return new RegExp(`(^|\\W)${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\W|$)`).test(text);
+    return text.includes(key);
+  });
+}
+
+function titleFromGoal(goal: string): string {
+  const cleaned = compactWhitespace(goal)
+    .replace(/^(create|make|build|set up|setup|add)\s+(a|an)?\s*/i, '')
+    .replace(/\b(bot|agent)\b/gi, '')
+    .trim();
+  const words = (cleaned || 'Assistant').split(/\s+/).slice(0, 4);
+  const title = words
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+  return title.endsWith('Bot') ? title : `${title} Bot`;
+}
+
+function inferInterval(goal: string): ScheduleInterval {
+  const text = goal.toLowerCase();
+  if (hasAnyKeyword(text, ['manual', 'on demand', 'when i ask'])) return 'manual';
+  if (hasAnyKeyword(text, ['urgent', 'live', 'asap', 'realtime', 'real-time'])) return '10m';
+  if (hasAnyKeyword(text, ['often', 'frequent', 'watch', 'monitor'])) return '15m';
+  if (hasAnyKeyword(text, ['daily', 'morning', 'evening', 'weekly'])) return '2h';
+  return '30m';
+}
+
+function pickBlueprintTools(goal: string, availableTools: string[]): { tools: string[]; emoji: string } {
+  const text = goal.toLowerCase();
+  const available = new Set(availableTools);
+  const picked = new Set<string>();
+  let emoji = COMMON_EMOJIS[0];
+
+  for (const rule of BOT_TOOL_RULES) {
+    if (!hasAnyKeyword(text, rule.keywords)) continue;
+    if (typeof rule.emojiIndex === 'number') emoji = COMMON_EMOJIS[rule.emojiIndex] || emoji;
+    for (const tool of rule.tools) {
+      if (available.has(tool)) picked.add(tool);
+    }
+  }
+
+  if (picked.size === 0) {
+    for (const tool of ['web_search', 'scrape_url', 'search_past_conversations']) {
+      if (available.has(tool)) picked.add(tool);
+    }
+  }
+
+  return { tools: Array.from(picked).slice(0, 10), emoji };
+}
+
+function buildBotBlueprint(goal: string, availableTools: string[], preferredName?: string): BotBlueprint {
+  const objective = compactWhitespace(goal) || 'Help with recurring work and notify me when action is useful.';
+  const name = compactWhitespace(preferredName || '') || titleFromGoal(objective);
+  const { tools, emoji } = pickBlueprintTools(objective, availableTools);
+  const interval = inferInterval(objective);
+  const systemPrompt = [
+    `You are ${name}, a proactive background agent.`,
+    '',
+    'Objective:',
+    `- ${objective}`,
+    '',
+    'Operating rules:',
+    '- Review the trigger context and recent bot memory before acting.',
+    '- Use granted tools to verify facts or complete actions before guessing.',
+    '- Keep actions focused on the objective and avoid unrelated work.',
+    '- Record useful durable findings in bot memory.',
+    '- Notify the user only for completed work, decisions, risks, or useful findings.',
+    '',
+    'Success criteria:',
+    '- The user can trust the bot to run with minimal babysitting.',
+    '- Each run produces either a concrete result, a concise status update, or no notification when nothing changed.',
+  ].join('\n');
+  const instructions = [
+    'At each wake-up, inspect the trigger payload, recent bot memory, and open tasks.',
+    'Decide whether action is needed for the objective.',
+    'Use the allowed tools to complete the next useful step, update memory/tasks when relevant, and send a concise app notification when there is something worth interrupting the user for.',
+  ].join(' ');
+
+  return { name, emoji, systemPrompt, instructions, allowedTools: tools, interval };
+}
+
 function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return 'Never';
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -792,24 +903,60 @@ function BotCard({ bot, onClick }: { bot: Bot; onClick: () => void }) {
 function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated: (bot: Bot) => void }) {
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🤖');
+  const [goal, setGoal] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const [interval, setInterval] = useState<ScheduleInterval>('30m');
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await window.desktopAPI.botsGetAvailableTools();
+        if (!cancelled && res?.ok && Array.isArray(res.tools)) setAvailableTools(res.tools);
+      } catch { /* keep creation usable without the tool registry */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const applyAutomaticSetup = useCallback(() => {
+    const blueprint = buildBotBlueprint(goal || systemPrompt || name, availableTools, name);
+    setName(blueprint.name);
+    setEmoji(blueprint.emoji);
+    setSystemPrompt(blueprint.systemPrompt);
+    setInstructions(blueprint.instructions);
+    setSelectedTools(blueprint.allowedTools);
+    setInterval(blueprint.interval);
+  }, [availableTools, goal, name, systemPrompt]);
+
   const handleCreate = async () => {
-    if (!name.trim()) return;
+    const fallbackBlueprint = (!systemPrompt.trim() || !name.trim()) && compactWhitespace(goal || systemPrompt)
+      ? buildBotBlueprint(goal || systemPrompt, availableTools, name)
+      : null;
+    const finalName = compactWhitespace(name || fallbackBlueprint?.name || '');
+    if (!finalName) return;
+    const finalPrompt = systemPrompt.trim() || fallbackBlueprint?.systemPrompt || '';
+    const finalInstructions = instructions.trim() || fallbackBlueprint?.instructions || '';
+    const finalTools = selectedTools.length > 0 ? selectedTools : (fallbackBlueprint?.allowedTools || []);
+    const finalInterval = fallbackBlueprint && selectedTools.length === 0 ? fallbackBlueprint.interval : interval;
     setSubmitting(true);
     try {
       // New bots default to local. "Deploy to VM" is an explicit action in
       // the bot's Settings → Deployment section after creation.
       const res = await window.desktopAPI.botsCreate({
-        name: name.trim(),
+        name: finalName,
         emoji,
-        systemPrompt,
+        systemPrompt: finalPrompt,
         config: {
-          interval,
+          interval: finalInterval,
           executionTarget: 'local',
           modelMode: 'balanced',
+          instructions: finalInstructions,
+          allowedTools: finalTools,
           notificationChannels: ['app'],
           memoryEnabled: true,
         },
@@ -827,15 +974,63 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
       style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
     >
       <div
-        className="w-full max-w-md rounded-3xl border border-theme/50 dark:border-transparent bg-theme-card p-6 shadow-2xl animate-in zoom-in-95 duration-150"
+        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-theme/50 dark:border-transparent bg-theme-card p-6 shadow-2xl animate-in zoom-in-95 duration-150 scrollbar-minimal"
         onClick={e => e.stopPropagation()}
       >
         <div className="mb-5">
           <h2 className="font-stuard text-lg font-semibold text-theme-fg">New Bot</h2>
-          <p className="mt-1 text-[12px] text-theme-muted">Give your bot a name and a job. You can tune tools, triggers, and VM deploy later.</p>
+          <p className="mt-1 text-[12px] text-theme-muted">Describe the outcome, then generate a ready-to-run setup or tune it by hand.</p>
         </div>
 
         <div className="space-y-4">
+          <section className="rounded-2xl border border-primary/20 bg-primary/5 p-3.5">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Automatic setup
+              </label>
+              <button
+                type="button"
+                onClick={applyAutomaticSetup}
+                disabled={!compactWhitespace(goal || systemPrompt || name)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Sparkles className="h-3 w-3" />
+                Generate
+              </button>
+            </div>
+            <textarea
+              rows={3}
+              value={goal}
+              onChange={e => setGoal(e.target.value)}
+              placeholder="Watch GitHub issues for billing bugs, summarize what changed, and notify me when something needs a reply."
+              className="w-full resize-none rounded-xl border border-theme/30 dark:border-transparent bg-theme-card/70 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+            />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setToolPickerOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-theme bg-theme-card px-3 py-1.5 text-[12px] font-medium text-theme-fg transition hover:bg-theme-hover"
+              >
+                <Wrench className="h-3 w-3" />
+                Tools
+              </button>
+              <span className="text-[11px] text-theme-muted">
+                {selectedTools.length === 0 ? 'Default bot tools only' : `${selectedTools.length} tool${selectedTools.length === 1 ? '' : 's'} selected`}
+              </span>
+              {selectedTools.slice(0, 4).map(tool => (
+                <span key={tool} className="rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[10px] font-mono text-primary">
+                  {tool}
+                </span>
+              ))}
+              {selectedTools.length > 4 && (
+                <span className="rounded-full bg-theme-hover px-2 py-1 text-[10px] text-theme-muted">
+                  +{selectedTools.length - 4}
+                </span>
+              )}
+            </div>
+          </section>
+
           {/* Emoji + Name */}
           <div className="flex items-center gap-3">
             <button
@@ -861,12 +1056,23 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
           {/* System prompt */}
           <div>
-            <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">What should this bot do?</label>
+            <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">Structured objective</label>
             <textarea
-              rows={3}
+              rows={6}
               value={systemPrompt}
               onChange={e => setSystemPrompt(e.target.value)}
               placeholder="Posts a weekly product update to X every Tuesday at 9am. Keeps tone friendly and concise."
+              className="w-full resize-none rounded-xl border border-theme/30 dark:border-transparent bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">Run instructions</label>
+            <textarea
+              rows={3}
+              value={instructions}
+              onChange={e => setInstructions(e.target.value)}
+              placeholder="At each wake-up, check the latest context, use tools to complete the next useful step, update memory, and notify only when useful."
               className="w-full resize-none rounded-xl border border-theme/30 dark:border-transparent bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
             />
           </div>
@@ -899,13 +1105,22 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <button
             type="button"
             onClick={handleCreate}
-            disabled={!name.trim() || submitting}
+            disabled={!compactWhitespace(name || goal || systemPrompt) || submitting}
             className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
             Create Bot
           </button>
         </div>
+
+        {toolPickerOpen && (
+          <ToolsPickerModal
+            available={availableTools}
+            selected={selectedTools}
+            onClose={() => setToolPickerOpen(false)}
+            onApply={(next) => { setSelectedTools(next); setToolPickerOpen(false); }}
+          />
+        )}
       </div>
     </div>,
     document.body,
@@ -972,11 +1187,19 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
 
   useEffect(() => {
     if (scope !== 'vm' || !bot.vmDeployedAt) return;
+    let lastSeenRunAt: string | null = null;
     const id = window.setInterval(async () => {
       const runtime = await loadVmRuntime();
-      if (runtime?.isRunning || running) {
+      const isRunning = !!runtime?.isRunning;
+      // Detect a freshly-completed run (lastRunAt changed since the previous
+      // tick) so the activity tab picks up its run-log entry even when the
+      // run finished between two polls.
+      const runAt = runtime?.lastRunAt || null;
+      const runChanged = !!runAt && runAt !== lastSeenRunAt;
+      if (isRunning || running || runChanged) {
         await reloadKanban();
       }
+      if (runAt) lastSeenRunAt = runAt;
     }, 2500);
     return () => window.clearInterval(id);
   }, [bot.vmDeployedAt, loadVmRuntime, reloadKanban, running, scope]);
@@ -1113,13 +1336,46 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
     return formatClockTime(bot.nextRunAt);
   })();
 
-  const selectedLogIndex = selectedLogId ? logs.findIndex(l => l.id === selectedLogId) : -1;
-  const selectedLog = selectedLogIndex >= 0 ? logs[selectedLogIndex] : null;
+  // VM bots don't write to the local proactive-data.json — their wake-ups land
+  // in the bot-memory runLog and their working kanban. Surface that data in
+  // the Activity tab so VM runs are visible there, not just in Kanban.
+  const isVmActivity = scope === 'vm' && !!bot.vmDeployedAt;
+  const vmActivityLogs = useMemo(() => {
+    if (!isVmActivity) return null;
+    return runLog.map((entry: any) => ({
+      id: entry.id,
+      botId: bot.id,
+      startedAt: entry.at,
+      completedAt: entry.at,
+      status: entry.outcome === 'failed' ? 'failed' : 'completed',
+      agentMessage: entry.summary || '',
+      failureReason: entry.outcome === 'failed' ? entry.notes : undefined,
+      executionTarget: 'cloud' as const,
+      contextUsed: [] as string[],
+      tasksProcessed: Array.isArray(entry.cardIds) ? entry.cardIds : [],
+    }));
+  }, [isVmActivity, runLog, bot.id]);
+  const vmActivityTasks = useMemo(() => {
+    if (!isVmActivity) return null;
+    return kanbanCards
+      .filter((c: any) => c.status === 'queued' || c.status === 'in_progress')
+      .map((c: any) => ({
+        id: c.id,
+        title: c.title,
+        instructions: c.notes || '',
+        status: c.status,
+      }));
+  }, [isVmActivity, kanbanCards]);
+  const displayedTasks = vmActivityTasks ?? tasks;
+  const displayedLogs = vmActivityLogs ?? logs;
+
+  const selectedLogIndex = selectedLogId ? displayedLogs.findIndex((l: any) => l.id === selectedLogId) : -1;
+  const selectedLog = selectedLogIndex >= 0 ? displayedLogs[selectedLogIndex] : null;
   const selectedLogTrigger = selectedLog?.triggerId ? triggersById.get(selectedLog.triggerId) || null : null;
 
   const activeKanbanCount = kanbanCards.filter(c => c.status === 'in_progress' || c.status === 'queued').length;
   const tabs: { id: DetailTab; label: string; icon: any; showCount?: boolean; count?: number }[] = [
-    { id: 'activity', label: 'Activity', icon: Activity, showCount: true, count: tasks.length },
+    { id: 'activity', label: 'Activity', icon: Activity, showCount: true, count: displayedTasks.length },
     { id: 'kanban', label: 'Kanban', icon: LayoutGrid, showCount: true, count: activeKanbanCount },
     { id: 'memory', label: 'Memory', icon: Brain },
     { id: 'settings', label: 'Settings', icon: Settings2 },
@@ -1195,8 +1451,8 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
         <KanbanSummaryStrip
           status={status}
           nextRunValue={nextRunValue}
-          activeTaskCount={tasks.length}
-          totalRuns={logs.length}
+          activeTaskCount={displayedTasks.length}
+          totalRuns={displayedLogs.length}
           executionLabel={executionTargetMeta.label}
           modelLabel={modelModeMeta.label}
           triggerLabel={triggerSummary}
@@ -1224,8 +1480,8 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
                     value={(nextRunValue || '').includes(':') ? nextRunValue.replace(':', ' : ') : nextRunValue}
                     label="Next Check-in"
                   />
-                  <StatCard value={padCount(tasks.length)} label="Active Tasks" />
-                  <StatCard value={padCount(logs.length)} label="Total Runs" className="col-span-2 sm:col-span-1" />
+                  <StatCard value={padCount(displayedTasks.length)} label="Active Tasks" />
+                  <StatCard value={padCount(displayedLogs.length)} label="Total Runs" className="col-span-2 sm:col-span-1" />
                 </div>
               </section>
 
@@ -1301,10 +1557,11 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
             {tab === 'activity' && (
               <div className="animate-in fade-in duration-200">
                 <ActivityTab
-                  tasks={tasks}
-                  logs={logs}
+                  tasks={displayedTasks}
+                  logs={displayedLogs}
                   triggersById={triggersById}
                   onSelectLog={(id) => setSelectedLogId(id)}
+                  vmActivity={isVmActivity}
                 />
               </div>
             )}
@@ -1350,10 +1607,10 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
           log={selectedLog}
           firedBy={selectedLogTrigger}
           onClose={() => setSelectedLogId(null)}
-          onPrev={selectedLogIndex > 0 ? () => setSelectedLogId(logs[selectedLogIndex - 1].id) : undefined}
-          onNext={selectedLogIndex >= 0 && selectedLogIndex < logs.length - 1 ? () => setSelectedLogId(logs[selectedLogIndex + 1].id) : undefined}
+          onPrev={selectedLogIndex > 0 ? () => setSelectedLogId(displayedLogs[selectedLogIndex - 1].id) : undefined}
+          onNext={selectedLogIndex >= 0 && selectedLogIndex < displayedLogs.length - 1 ? () => setSelectedLogId(displayedLogs[selectedLogIndex + 1].id) : undefined}
           hasPrev={selectedLogIndex > 0}
-          hasNext={selectedLogIndex >= 0 && selectedLogIndex < logs.length - 1}
+          hasNext={selectedLogIndex >= 0 && selectedLogIndex < displayedLogs.length - 1}
         />
       )}
     </div>
@@ -1367,11 +1624,15 @@ function ActivityTab({
   logs,
   triggersById,
   onSelectLog,
+  vmActivity = false,
 }: {
   tasks: any[];
   logs: any[];
   triggersById: Map<string, BotTrigger>;
   onSelectLog: (id: string) => void;
+  /** True when this bot lives on the VM and we're surfacing kanban + run-log
+   *  data here instead of the desktop's local proactive tasks/wake-up logs. */
+  vmActivity?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10">
@@ -1379,14 +1640,16 @@ function ActivityTab({
       <section className="p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
-            <ListTodo className="h-4 w-4" /> Tasks
+            <ListTodo className="h-4 w-4" /> {vmActivity ? 'Active Cards' : 'Tasks'}
             <span className="text-[12px] font-normal text-theme-muted">({tasks.length})</span>
           </h3>
         </div>
         {tasks.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              No tasks yet — the bot will create some when it runs.
+              {vmActivity
+                ? 'No active kanban cards — the bot will add some as it works. See the Kanban tab for the full board.'
+                : 'No tasks yet — the bot will create some when it runs.'}
             </div>
           </div>
         ) : (

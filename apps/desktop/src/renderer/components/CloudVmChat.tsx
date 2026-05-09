@@ -24,6 +24,11 @@ interface ConversationEntry {
   message_count: number;
 }
 
+function isMainChatConversation(raw: any): boolean {
+  const source = String(raw?.source || '').trim().toLowerCase();
+  return !['workflow', 'skill', 'proactive', 'bot'].includes(source);
+}
+
 interface VmChatAttachment {
   id: string;
   name: string;
@@ -245,7 +250,7 @@ export function CloudVmChat({
             return await supabase
               .from('conversations')
               .select('id, title, created_at, updated_at, message_count, source')
-              .neq('source', 'workflow')
+              .not('source', 'in', '("workflow","skill","proactive","bot")')
               .order('updated_at', { ascending: false })
               .limit(30);
           } catch {
@@ -267,7 +272,7 @@ export function CloudVmChat({
       const byId = new Map<string, ConversationEntry>();
       for (const list of sources) {
         for (const c of list) {
-          if (!c || c.source === 'workflow') continue;
+          if (!c || !isMainChatConversation(c)) continue;
           const id = c.id || c.conversation_id;
           if (!id) continue;
           const entry: ConversationEntry = {

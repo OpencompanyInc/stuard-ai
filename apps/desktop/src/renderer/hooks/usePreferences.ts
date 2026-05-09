@@ -286,6 +286,16 @@ function setLS<T>(key: string, value: T) {
   } catch { }
 }
 
+const DEFAULT_WAKEWORD_SENSITIVITY = 0.88;
+
+function normalizeWakewordSensitivity(v: any): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_WAKEWORD_SENSITIVITY;
+  // Migrate the previous hardcoded default to the calibrated general-model default.
+  if (Math.abs(n - 0.95) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  return Math.max(0.3, Math.min(0.99, n));
+}
+
 export type TonePreset = "concise" | "friendly" | "formal" | "technical" | "custom";
 export type ThemeMode = "light" | "dark" | "custom";
 
@@ -310,7 +320,7 @@ export function usePreferences() {
   const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));
   const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
-  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => getLS<number>("wakeword_sensitivity", 0.95));
+  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => normalizeWakewordSensitivity(getLS<any>("wakeword_sensitivity", DEFAULT_WAKEWORD_SENSITIVITY)));
   const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
@@ -394,7 +404,7 @@ export function usePreferences() {
           if (key === 'theme_text') setThemeTextState(val ?? 'white');
           if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
-          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(val ?? 0.95);
+          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(normalizeWakewordSensitivity(val));
           if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
@@ -420,7 +430,7 @@ export function usePreferences() {
   const setThemeText = useCallback((v: "white" | "black") => { setThemeTextState(v); }, []);
   const setTranslucentMode = useCallback((v: boolean) => { setTranslucentModeState(v); }, []);
   const setWakewordEnabled = useCallback((v: boolean) => { setWakewordEnabledState(v); }, []);
-  const setWakewordSensitivity = useCallback((v: number) => { setWakewordSensitivityState(Math.max(0.3, Math.min(0.95, v))); }, []);
+  const setWakewordSensitivity = useCallback((v: number) => { setWakewordSensitivityState(normalizeWakewordSensitivity(v)); }, []);
   const setTerminalEnabled = useCallback((v: boolean) => { setTerminalEnabledState(v); }, []);
   const setBrowserEnabled = useCallback((v: boolean) => { setBrowserEnabledState(v); }, []);
   const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);

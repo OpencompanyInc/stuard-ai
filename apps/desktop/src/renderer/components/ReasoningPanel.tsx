@@ -2,6 +2,24 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import SimpleBar from 'simplebar-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
+
+function normalizeMarkdownSpacing(input: string): string {
+  const raw = String(input || '').replace(/\r\n/g, '\n');
+  const parts = raw.split('```');
+  const normalized = parts.map((part, idx) => {
+    if (idx % 2 === 1) return part;
+    return part
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
+  });
+  return normalized.join('```');
+}
 
 interface ReasoningEntry {
   id: string;
@@ -135,9 +153,13 @@ export const ReasoningPanel: React.FC<ReasoningPanelProps> = ({
             <SimpleBar className="flex-1 min-h-0">
               <div ref={scrollRef} className="p-4">
                 {displayText ? (
-                  <div className="text-[12px] text-white/40 leading-relaxed whitespace-pre-wrap font-light">
-                    {displayText}
-                    {/* Blinking cursor while streaming */}
+                  <div className="text-[12px] text-white/40 leading-relaxed font-light prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:font-semibold prose-headings:text-xs prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px] prose-strong:text-white/60 prose-em:text-white/50">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkMath, remarkGfm]}
+                      rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                    >
+                      {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(displayText)))}
+                    </ReactMarkdown>
                     {isCurrentlyThinking && (
                       <span className="inline-block w-[2px] h-3.5 bg-white/40 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle" />
                     )}

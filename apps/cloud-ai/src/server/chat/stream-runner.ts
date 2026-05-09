@@ -366,6 +366,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
           userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
           assistantMetadata: buildMetadata(),
+          source: agentType === 'workflow' ? 'workflow' : agentType === 'bot' ? 'proactive' : 'stuard',
         });
       },
     };
@@ -838,6 +839,7 @@ function startLocalMemoryPersistence(
     userAttachments?: any[];
     userMetadata?: Record<string, any>;
     assistantMetadata?: Record<string, any>;
+    source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
   },
 ) {
   startWithPostRunBridge(options?.bridgeWs, options?.userId, () => {
@@ -846,6 +848,7 @@ function startLocalMemoryPersistence(
         memoryService.storeMessageLocally(localConversationId, 'user', prompt, {
           attachments: options?.userAttachments,
           metadata: options?.userMetadata,
+          source: options?.source,
         }).catch((error) => {
           console.error('[cloud-ai] Failed to store user message locally:', error);
         });
@@ -854,6 +857,7 @@ function startLocalMemoryPersistence(
       if (finalText) {
         memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
           metadata: options?.assistantMetadata,
+          source: options?.source,
         }).catch((error) => {
           console.error('[cloud-ai] Failed to store assistant message locally:', error);
         });

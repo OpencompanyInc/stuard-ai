@@ -4,7 +4,8 @@
  * Allows any agent (e.g. Stuard) to delegate workflow creation/modification
  * tasks to the specialized Workflow Architect agent mid-conversation.
  *
- * Uses the generic orchestrator subagent runtime.
+ * Uses the orchestrator subagent runtime, which routes workflow work through
+ * the same Workflow Architect agent factory used by Workflow Studio.
  */
 
 import { createTool } from '@mastra/core/tools';
@@ -18,7 +19,7 @@ export const routeToWorkflowAgent = createTool({
     'Delegates a task to the Workflow Architect subagent, which specialises in creating and modifying StuardAI workflows. ' +
     'Use this when the user wants to build, edit, or manage an automation workflow. ' +
     'Provide a clear instruction describing what the workflow should do. ' +
-    'The subagent has access to workflow tools (modify_workflow, execute_step, list_workflows, etc.).',
+    'The subagent uses the same Workflow Studio toolset, with create_workflow added for new workflow bootstrapping.',
   inputSchema: z.object({
     instruction: z
       .string()

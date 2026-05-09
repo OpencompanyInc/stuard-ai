@@ -673,6 +673,12 @@ async function resolveConversation({
     return { conversationId, conversationCreatedNow };
   }
 
+  const conversationSource = agentType === 'workflow'
+    ? 'workflow'
+    : agentType === 'bot'
+      ? 'proactive'
+      : 'stuard';
+
   conversationId = await createConversation(
     authUser.userId,
     prompt,
@@ -684,7 +690,7 @@ async function resolveConversation({
       contextPaths: contextPathsForMeta,
       attachments: attachmentDescriptorsForMeta,
     },
-    agentType === 'workflow' ? 'workflow' : 'stuard',
+    conversationSource,
     !!msg?.forcePersist,
   ) as any;
 

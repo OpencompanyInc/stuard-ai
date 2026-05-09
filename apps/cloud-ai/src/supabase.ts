@@ -528,7 +528,7 @@ export async function createConversation(
   firstMessage: string,
   model: string,
   firstMessageMetadata?: MessageMetadata,
-  source: 'stuard' | 'workflow' = 'stuard',
+  source: 'stuard' | 'workflow' | 'proactive' = 'stuard',
   forcePersist = false,
 ): Promise<string | null> {
   if (!supabaseService) return null;

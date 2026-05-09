@@ -345,6 +345,10 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return handleBotsStatus();
     case 'bots_sync':
       return handleBotsSync(args);
+    case 'set_user_timezone':
+      return handleSetUserTimezone(args);
+    case 'get_user_timezone':
+      return handleGetUserTimezone();
     case 'bots_run':
       return await handleBotsRun(args);
     case 'bots_list':
@@ -935,19 +939,27 @@ function handleMemoryPreferencesSet(args: any): any {
 
 async function handleMemoryConversationsList(args: any): Promise<any> {
   const limit = Number(args.limit) || 50;
+  const source = typeof args.source === 'string' && args.source.trim() ? args.source.trim() : '';
+  const isMainChatConversation = (c: any) => {
+    const rowSource = String(c?.source || '').trim().toLowerCase();
+    return !['workflow', 'skill', 'proactive', 'bot'].includes(rowSource);
+  };
 
   // Always query both sources: VM in-memory (current boot) and Python SQLite (persisted history)
-  const vmConvs = getVMMemoryStore().listConversations(limit) || [];
+  const vmConvs = (getVMMemoryStore().listConversations(limit) || [])
+    .filter((c: any) => source ? String(c?.source || '') === source : isMainChatConversation(c));
 
   let sqliteConvs: any[] = [];
   try {
     const result = await sendToAgent({
       type: 'tool_exec',
       tool: 'conversation_list',
-      args: { limit, status: 'active' },
+      args: { limit, status: 'active', ...(source ? { source } : {}) },
     }, 10_000);
     const raw = result?.result?.conversations || result?.conversations || [];
-    if (Array.isArray(raw)) sqliteConvs = raw;
+    if (Array.isArray(raw)) {
+      sqliteConvs = raw.filter((c: any) => source ? String(c?.source || '') === source : isMainChatConversation(c));
+    }
   } catch { /* silent */ }
 
   // Merge by id. Python SQLite is canonical (has persisted counts/titles);
@@ -1088,6 +1100,75 @@ function handleProactiveTaskDelete(args: any): any {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// User timezone — synced from the desktop on bot deploys so VM cron schedules
+// and any process.env.TZ-aware code (vm-proactive quiet hours, vm-engine time
+// tools, …) follow the user's *current* zone, not whatever was baked in at
+// VM-provision time. Persisted so it survives agent restarts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const USER_CONFIG_PATH = process.env.STUARD_USER_CONFIG_PATH
+  || `${process.env.AGENT_DATA_DIR || '/home/stuard/agent-data'}/user-config.json`;
+
+function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadUserConfig(): { timezone?: string } {
+  try {
+    if (!fs.existsSync(USER_CONFIG_PATH)) return {};
+    const raw = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, 'utf-8'));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveUserConfig(cfg: { timezone?: string }): void {
+  try {
+    const dir = USER_CONFIG_PATH.replace(/[/\\][^/\\]+$/, '');
+    if (dir) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  } catch (e: any) {
+    console.warn('[vm-agent] Failed to save user-config.json:', e?.message || e);
+  }
+}
+
+/**
+ * Apply a user-supplied IANA timezone to the running agent process and
+ * persist it. Returns the applied tz, or null if the input was invalid.
+ *
+ * Note: process.env.TZ updates affect node-cron registrations made *after*
+ * this call (vm-bots re-registers on every bots_sync). They don't reach
+ * already-armed cron jobs.
+ */
+function applyUserTimezone(tz: string): string | null {
+  const trimmed = String(tz || '').trim();
+  if (!trimmed || !isValidTimezone(trimmed)) return null;
+  if (process.env.TZ === trimmed && process.env.STUARD_USER_TIMEZONE === trimmed) {
+    return trimmed;
+  }
+  process.env.TZ = trimmed;
+  process.env.STUARD_USER_TIMEZONE = trimmed;
+  saveUserConfig({ ...loadUserConfig(), timezone: trimmed });
+  console.log(`[vm-agent] Applied user timezone: ${trimmed}`);
+  return trimmed;
+}
+
+function restoreUserTimezone(): void {
+  const tz = loadUserConfig().timezone;
+  if (typeof tz === 'string' && tz.trim() && isValidTimezone(tz.trim())) {
+    process.env.TZ = tz.trim();
+    process.env.STUARD_USER_TIMEZONE = tz.trim();
+    console.log(`[vm-agent] Restored user timezone from disk: ${tz.trim()}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Bot Handlers (multi-bot scheduler)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1096,9 +1177,50 @@ function handleBotsStatus(): any {
 }
 
 function handleBotsSync(args: any): any {
+  // Apply caller-supplied timezone *before* syncing so re-registered cron
+  // jobs pick up the user's current zone instead of whatever was baked in
+  // at provision time.
+  if (typeof args?.timezone === 'string' && args.timezone.trim()) {
+    applyUserTimezone(args.timezone.trim());
+  }
   const incoming = Array.isArray(args?.bots) ? (args.bots as VMBot[]) : [];
   const bots = getVMBotScheduler().syncBots(incoming);
-  return { ok: true, count: bots.length };
+  return { ok: true, count: bots.length, timezone: process.env.TZ || null };
+}
+
+/**
+ * VM-wide timezone setter. Updates process.env.TZ + persists to disk and
+ * forces the bot scheduler to re-register every schedule.cron job so the
+ * new zone is live immediately (without waiting for the next bot sync).
+ *
+ * Safe to call repeatedly — applyUserTimezone short-circuits when the tz
+ * is already current.
+ */
+function handleSetUserTimezone(args: any): any {
+  const tz = String(args?.timezone || '').trim();
+  if (!tz) return { ok: false, error: 'missing_timezone' };
+  const before = process.env.TZ || null;
+  const applied = applyUserTimezone(tz);
+  if (!applied) return { ok: false, error: 'invalid_timezone' };
+
+  // If the zone actually changed, force cron jobs to pick it up now.
+  if (before !== applied) {
+    try {
+      const scheduler = getVMBotScheduler();
+      scheduler.syncBots(scheduler.listBots());
+    } catch (e: any) {
+      console.warn('[vm-agent] Cron re-register after tz change failed:', e?.message || e);
+    }
+  }
+  return { ok: true, timezone: applied, changed: before !== applied };
+}
+
+function handleGetUserTimezone(): any {
+  return {
+    ok: true,
+    timezone: process.env.TZ || null,
+    persisted: loadUserConfig().timezone || null,
+  };
 }
 
 function handleBotsRun(args: any): any {
@@ -2652,6 +2774,10 @@ export function startAgent(): void {
   console.log(`[vm-agent] User: ${USER_ID}`);
   console.log(`[vm-agent] HTTP server on port ${PORT}`);
   console.log(`[vm-agent] Python agent WS: ${LOCAL_AGENT_WS_URL}`);
+
+  // Restore the last desktop-pushed timezone before any scheduler boots — the
+  // bot scheduler reads process.env.TZ when registering cron jobs in start().
+  restoreUserTimezone();
 
   initMetrics();
 

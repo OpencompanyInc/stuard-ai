@@ -44,6 +44,11 @@ import { computeBillingCredits, isNonBillableUsageEvent, type ComputeBillingEven
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
+function isMainChatConversation(raw: any): boolean {
+  const source = String(raw?.source || '').trim().toLowerCase();
+  return !['workflow', 'skill', 'proactive', 'bot'].includes(source);
+}
+
 function parseLocalDateOrIso(value: string): Date {
   const s = String(value || '').trim();
   const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
@@ -589,7 +594,7 @@ function DashboardApp() {
           ? supabase
               .from('conversations')
               .select('id, title, created_at, updated_at, message_count, source')
-              .neq('source', 'workflow')
+              .not('source', 'in', '("workflow","skill","proactive","bot")')
               .order('updated_at', { ascending: false })
               .limit(requestedLimit)
               .then(r => r.data ?? null, () => null)
@@ -600,7 +605,7 @@ function DashboardApp() {
       const ingest = (list: any[], defaultOrigin: 'desktop' | 'cloud_vm') => {
         for (const raw of list) {
           if (!raw) continue;
-          if (raw.source === 'workflow') continue;
+          if (!isMainChatConversation(raw)) continue;
           const id = raw.id || raw.conversation_id;
           if (!id) continue;
           const incoming = {
@@ -1395,7 +1400,7 @@ function DashboardApp() {
 
   return (
     <ErrorBoundary>
-      <div className="dashboard-root w-screen h-screen overflow-hidden text-theme-fg font-sans selection:bg-primary selection:text-white">
+      <div className="dashboard-root w-screen h-screen overflow-hidden text-theme-fg font-sans">
         <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
         <div className="flex h-full gap-3 p-3 pt-5">
         {/* Sidebar */}

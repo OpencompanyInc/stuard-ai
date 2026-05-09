@@ -1002,12 +1002,22 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
 
     const body = await readJsonBody(req);
     const bots = Array.isArray(body?.bots) ? body.bots : [];
+    // Pass through the desktop-supplied IANA timezone so the VM can keep
+    // process.env.TZ in sync with the user's *current* zone (cron triggers
+    // and quiet-hour math read from it). Validated VM-side too.
+    const timezone = typeof body?.timezone === 'string' ? body.timezone.trim() : '';
 
     try {
-      const result = await sendVMCommand(auth.userId, 'bots_sync', { bots }, 15_000);
+      const result = await sendVMCommand(
+        auth.userId,
+        'bots_sync',
+        { bots, timezone: timezone || undefined },
+        15_000,
+      );
       writeJson(res, 200, {
         ok: result.ok,
         count: result.result?.count,
+        timezone: result.result?.timezone,
         error: result.error || result.result?.error,
       });
     } catch (e: any) {

@@ -86,6 +86,7 @@ function formatBotRosterSection(bots: BotPromptSummary[] = []): string {
 
   return `\n\n## Bots — ask_bot / bot Delegation
 
+Use \`bot_create\` when the user asks for a new bot/background agent. Give it a clear objective, structured instructions, a focused \`allowed_tools\` list, notification channels, schedule, memory setting, and deploy target when requested.
 Use \`ask_bot\` to ask a configured bot for status/details, memory, recent runs, or to optionally trigger a manual wake-up. Use \`bot_list\` first when the user asks what bots exist or you do not know the target bot id/name. Use \`delegate\` with subagent \`bot\` for multi-step bot work or when you need a focused bot specialist.${roster}`;
 }
 

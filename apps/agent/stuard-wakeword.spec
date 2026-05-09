@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for the Stuard wake word listener.
 #
-# The model weights are bundled with the desktop app under resources/wakeword,
-# so this executable stays generic and accepts --weights at runtime.
+# The model weights are bundled with the desktop app under resources/wakeword.
+# The executable uses the command-style listen.py entry point and remains
+# compatible with legacy flag-only invocation.
 
 import os
 import sys
@@ -18,7 +19,7 @@ else:
 
 root_dir = os.path.abspath(os.path.join(os.getcwd(), '..', '..'))
 wakeword_dir = os.path.join(root_dir, 'apps', 'desktop', 'resources', 'wakeword')
-wakeword_script = os.path.join(wakeword_dir, 'listen_numpy.py')
+wakeword_script = os.path.join(wakeword_dir, 'listen.py')
 
 hidden_imports = [
     'numpy',

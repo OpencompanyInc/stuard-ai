@@ -290,6 +290,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
   getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
   setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
+  /** Sync the desktop's current effective timezone to the running VM
+   *  (and persist it in supabase for future provisions). Called by the
+   *  cloud-engine hooks when the VM becomes reachable. */
+  vmSyncTimezone: (opts?: { force?: boolean }) => ipcRenderer.invoke('vm:syncTimezone', opts || {}),
   getPrefs: () => ipcRenderer.invoke('prefs:getAll'),
   setPrefs: (prefs: Record<string, any>) => ipcRenderer.invoke('prefs:setMany', prefs),
   themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),

@@ -19,7 +19,7 @@ import logger from '../utils/logger';
 import { botService, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
 import { loadSkills } from '../skills';
-import { getChatModelsSettings } from '../settings';
+import { getChatModelsSettings, getTimezone } from '../settings';
 
 function getCloudAiHttp(): string {
   return String(
@@ -141,7 +141,12 @@ async function syncDeployedBotsToVm(opts: { includeBotId?: string; excludeBotId?
     if (!config) continue;
     bots.push(toVmBotPayload(bot, config));
   }
-  return callBotEndpoint('/v1/bot/sync', { bots });
+  // Push the user's *current* IANA timezone so the VM keeps process.env.TZ
+  // (and any cron registrations) in sync with the desktop. Without this the
+  // VM stays on whatever was baked in at provision time, which silently
+  // misfires schedule.cron triggers when the user moves zones or never set
+  // a profile timezone.
+  return callBotEndpoint('/v1/bot/sync', { bots, timezone: getTimezone() });
 }
 
 /**

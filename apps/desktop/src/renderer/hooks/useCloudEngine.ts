@@ -207,6 +207,10 @@ export function useCloudEngine() {
   const [deployments, setDeployments] = useState<CloudDeployment[]>(_cache?.deployments ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible');
+  // Track the last status we synced timezone for so we only fire on a real
+  // transition into 'running' (not on every poll). The main-process service
+  // also throttles, but skipping IPC roundtrips here keeps the polling cheap.
+  const lastTzSyncedStatusRef = useRef<string | null>(null);
 
   useEffect(() => {
     const onVisibilityChange = () => setDocumentVisible(document.visibilityState === 'visible');
@@ -260,10 +264,20 @@ export function useCloudEngine() {
         // Update module cache
         _cache = { ...(_cache || { snapshots: [], deployments: [], syncStatus: null }), engine: mapped, billing: mappedBilling ?? _cache?.billing ?? null, syncStatus: mappedSync ?? _cache?.syncStatus ?? null, metrics: _cache?.metrics ?? null, snapshots: _cache?.snapshots ?? [], deployments: _cache?.deployments ?? [], ts: Date.now() };
         setError(null);
+
+        // Push the desktop's timezone whenever the VM is reachable. Fires
+        // once per status transition into 'running' — the main-process
+        // service additionally throttles same-tz repeats, so the cost is
+        // basically a no-op when nothing has changed.
+        if (mapped.status === 'running' && lastTzSyncedStatusRef.current !== 'running') {
+          (window as any).desktopAPI?.vmSyncTimezone?.().catch(() => { /* best-effort */ });
+        }
+        lastTzSyncedStatusRef.current = mapped.status;
       } else if (data.ok && !data.engine) {
         setEngine(null);
         setBilling(null);
         _cache = null;
+        lastTzSyncedStatusRef.current = null;
         setError(null);
       } else {
         setError(data.message || data.error || 'Could not load cloud engine status');

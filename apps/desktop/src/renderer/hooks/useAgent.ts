@@ -616,6 +616,18 @@ export function useAgent(options?: string | UseAgentOptions) {
   const activeSubagentsByTabRef = useRef<Map<string, Set<string>>>(new Map());
   const deferredDelegatedFinalsRef = useRef<Map<string, DeferredDelegatedFinal>>(new Map());
 
+  // Last model selection used by sendMessage per tab, so fallback resends
+  // (e.g. unhandled steers reposted after a turn ends) inherit the same model
+  // instead of letting the server fall back to its default tier.
+  type LastSendModelOptions = {
+    mode?: string;
+    modelId?: string;
+    modelConfig?: any;
+    reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+    context?: Record<string, any>;
+  };
+  const lastSendOptionsRef = useRef<Map<string, LastSendModelOptions>>(new Map());
+
   // File-modifying tool names
   const FILE_MODIFYING_TOOLS = new Set([
     'write_file', 'write_file_base64', 'delete_file', 'move_file', 'copy_file',
@@ -682,6 +694,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     runningTabsRef.current.delete(id);
     activeSubagentsByTabRef.current.delete(id);
     deferredDelegatedFinalsRef.current.delete(id);
+    lastSendOptionsRef.current.delete(id);
     // Remove any requestId -> tabId mappings pointing to this tab
     for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
       if (tabId === id) {
@@ -1147,11 +1160,17 @@ export function useAgent(options?: string | UseAgentOptions) {
         .join('\n\n');
       syncQueuedMessages((prev) => prev.filter((item) => !fallbackIds.has(item.id)));
       if (fallbackText) {
+        const lastOpts = lastSendOptionsRef.current.get(completedTabId);
         setTimeout(() => {
           void sendMessageRef.current({
             text: fallbackText,
             targetTabId: completedTabId,
             queueFront: true,
+            mode: lastOpts?.mode,
+            modelId: lastOpts?.modelId,
+            modelConfig: lastOpts?.modelConfig,
+            reasoningLevel: lastOpts?.reasoningLevel,
+            context: lastOpts?.context,
           });
         }, 0);
       } else {
@@ -2900,6 +2919,25 @@ export function useAgent(options?: string | UseAgentOptions) {
       const targetTabId = options.targetTabId || activeTabIdRef.current;
       const isTabRunning = runningTabsRef.current.has(targetTabId);
 
+      // Remember the model selection used for this tab so any later fallback
+      // resend (e.g. unhandled steers reposted via sendMessageRef in
+      // finishCompletedTurn) reuses the same model instead of letting the
+      // server fall back to its default tier.
+      const hasModelHint =
+        (typeof options.mode === 'string' && options.mode) ||
+        (typeof options.modelId === 'string' && options.modelId) ||
+        (options.modelConfig && typeof options.modelConfig === 'object') ||
+        (typeof options.reasoningLevel === 'string' && options.reasoningLevel);
+      if (hasModelHint) {
+        lastSendOptionsRef.current.set(targetTabId, {
+          mode: options.mode,
+          modelId: options.modelId,
+          modelConfig: options.modelConfig,
+          reasoningLevel: options.reasoningLevel,
+          context: options.context,
+        });
+      }
+
       // Get active tab history BEFORE adding the new message
       const currentTab = tabsRef.current.find(t => t.id === targetTabId);
       const currentMsgs = currentTab?.messages || [];
@@ -3031,7 +3069,17 @@ export function useAgent(options?: string | UseAgentOptions) {
   }, [addTab]);
 
   // Edit a previously sent user message: truncate history at that point & resend with new text
-  const editMessage = useCallback(async (messageId: string, newText: string) => {
+  const editMessage = useCallback(async (
+    messageId: string,
+    newText: string,
+    options?: {
+      mode?: string;
+      modelId?: string;
+      modelConfig?: any;
+      reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+      context?: Record<string, any>;
+    }
+  ) => {
     const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
     if (!tab) return;
 
@@ -3074,11 +3122,18 @@ export function useAgent(options?: string | UseAgentOptions) {
       t.id === tab.id ? { ...t, messages: truncated } : t
     ));
 
-    // Resend with the new text, preserving original context
+    // Resend with the new text, preserving original context and forwarding the
+    // current model selection (mode/modelId/modelConfig/reasoningLevel) so the
+    // edit doesn't fall back to the server's default tier.
     await sendMessage({
       text: newText,
       attachments: originalMsg.attachments,
       contextPaths: originalMsg.contextPaths,
+      context: options?.context,
+      mode: options?.mode,
+      modelId: options?.modelId,
+      modelConfig: options?.modelConfig,
+      reasoningLevel: options?.reasoningLevel,
     });
   }, [sendMessage]);
 

@@ -203,6 +203,16 @@
   background-color: var(--primary);
 }
 
+::selection {
+  background-color: color-mix(in srgb, var(--primary) 65%, transparent);
+  color: var(--primary-foreground);
+}
+
+::-moz-selection {
+  background-color: color-mix(in srgb, var(--primary) 65%, transparent);
+  color: var(--primary-foreground);
+}
+
 /* Memories: dark-mode collection cards should read deeper than default card surfaces */
 [data-theme='dark'] .memory-collection-card,
 [data-theme='dark'] .memory-collection-folder {

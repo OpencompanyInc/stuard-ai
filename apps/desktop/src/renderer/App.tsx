@@ -753,7 +753,7 @@ export default function App() {
         try {
           if ((window as any).desktopAPI?.execTool) {
             if (wakewordEnabled) {
-              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.0, triggerCount: 5 });
+              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.5, triggerCount: 6 });
             } else {
               await (window as any).desktopAPI.execTool('wakeword_stop', {});
             }
@@ -829,7 +829,7 @@ export default function App() {
       const json = await resp.json();
       if (json.ok && Array.isArray(json.conversations)) {
         const convs = json.conversations
-          .filter((c: any) => c.source !== 'workflow')
+          .filter((c: any) => !['workflow', 'skill', 'proactive', 'bot'].includes(String(c.source || '').toLowerCase()))
           .map((c: any) => ({ id: c.id || c.conversation_id, title: c.title, created_at: c.created_at || c.updated_at }))
           .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
           .slice(0, 20);
@@ -846,7 +846,7 @@ export default function App() {
         const { data, error } = await supabase
           .from('conversations')
           .select('id, title, created_at')
-          .neq('source', 'workflow')
+          .not('source', 'in', '("workflow","skill","proactive","bot")')
           .order('created_at', { ascending: false })
           .limit(20);
         if (!error) { setConvList(Array.isArray(data) ? data : []); }
@@ -998,6 +998,33 @@ export default function App() {
   const handleSend = useCallback((overrideText?: string) => {
     handleSendRef.current(overrideText);
   }, []);
+
+  // Wrap editMessage so resends use the currently-selected model (matches handleSend),
+  // instead of letting the server fall back to its default tier (e.g. "balanced").
+  const handleEditMessage = useCallback((messageId: string, newText: string) => {
+    const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
+    const isAuto = selected === 'auto';
+    const meta = !isAuto ? modelById.get(selected) : undefined;
+    const mode = isAuto ? 'auto' : ((meta?.category as any) || (meta?.isReasoning ? 'smart' : 'balanced'));
+    const modelId = !isAuto ? selected : undefined;
+    const modelConfig = chatModels ? {
+      fast: { default: chatModels.fast?.default },
+      balanced: { default: chatModels.balanced?.default },
+      smart: { default: chatModels.smart?.default },
+    } : undefined;
+    const context: Record<string, any> = {
+      tone: (tone === 'custom' ? customTone : tone),
+      tonePreset: tone,
+      persona,
+    };
+    return editMessage(messageId, newText, {
+      mode,
+      modelId,
+      modelConfig,
+      reasoningLevel,
+      context,
+    });
+  }, [chatMode, chatModels, modelById, tone, customTone, persona, reasoningLevel, editMessage]);
 
   const handleSteer = useCallback(() => {
     if (!signedIn) { handleSignIn(); return; }
@@ -1697,7 +1724,7 @@ export default function App() {
                     translucentMode={translucentMode}
                     onSubmitToolOutput={submitToolOutput}
                     onGenUIResponse={handleGenUIResponse}
-                    onEditMessage={editMessage}
+                    onEditMessage={handleEditMessage}
                     onRevertFiles={revertFiles}
                     onRedoFiles={redoFiles}
                     pendingMemories={pendingMemories}

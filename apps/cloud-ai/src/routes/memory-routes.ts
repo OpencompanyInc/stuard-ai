@@ -49,7 +49,12 @@ function requireBridge(res: ServerResponse): true {
   return true;
 }
 
-async function listCloudConversations(userId: string, limit: number, offset: number): Promise<any[] | null> {
+function isMainChatConversation(row: any): boolean {
+  const source = String(row?.source || '').trim().toLowerCase();
+  return !['workflow', 'skill', 'proactive', 'bot'].includes(source);
+}
+
+async function listCloudConversations(userId: string, limit: number, offset: number, source?: string | null): Promise<any[] | null> {
   const supabase = getSupabaseService();
   if (!supabase) return null;
 
@@ -58,13 +63,19 @@ async function listCloudConversations(userId: string, limit: number, offset: num
     const start = Math.max(0, offset);
     const end = start + safeLimit - 1;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('conversations')
       .select('id, title, model, source, status, created_at, updated_at, message_count')
       .eq('user_id', userId)
-      .neq('source', 'workflow')
-      .order('updated_at', { ascending: false })
-      .range(start, end);
+      .order('updated_at', { ascending: false });
+
+    if (source) {
+      query = query.eq('source', source);
+    } else {
+      query = query.not('source', 'in', '("workflow","skill","proactive","bot")');
+    }
+
+    const { data, error } = await query.range(start, end);
 
     if (error || !Array.isArray(data)) return [];
     return data;
@@ -83,7 +94,7 @@ async function getCloudConversation(userId: string, conversationId: string): Pro
       .select('id, title, model, source, status, created_at, updated_at, message_count')
       .eq('user_id', userId)
       .eq('id', conversationId)
-      .neq('source', 'workflow')
+      .not('source', 'in', '("workflow","skill","proactive","bot")')
       .single();
 
     if (error) return null;
@@ -118,6 +129,7 @@ export async function handleMemoryRoutes(
     const status = url.searchParams.get('status') as 'active' | 'archived' | null;
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+    const source = (url.searchParams.get('source') || '').trim();
 
     const user = await requireAuth(req, res);
     if (!user) return true;
@@ -125,7 +137,7 @@ export async function handleMemoryRoutes(
     // Always fetch from Supabase when available (central mirror)
     let cloudConversations: any[] = [];
     if (status !== 'archived') {
-      const cloud = await listCloudConversations(user.userId, limit + offset, 0);
+      const cloud = await listCloudConversations(user.userId, limit + offset, 0, source || null);
       cloudConversations = Array.isArray(cloud) ? cloud : [];
     }
 
@@ -138,6 +150,7 @@ export async function handleMemoryRoutes(
           status: status || undefined,
           limit,
           offset,
+          source: (source || undefined) as any,
         });
         bridgeConversations = Array.isArray(result) ? result : [];
       } catch (error) {
@@ -155,6 +168,7 @@ export async function handleMemoryRoutes(
     const byId = new Map<string, any>();
     const ingest = (row: any, prefer: 'bridge' | 'cloud') => {
       if (!row?.id) return;
+      if (!source && !isMainChatConversation(row)) return;
       const existing = byId.get(row.id);
       if (!existing) {
         byId.set(row.id, { ...row, _origin: prefer });

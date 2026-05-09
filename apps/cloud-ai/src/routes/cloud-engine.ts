@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts, getSyncPreferences } from '../supabase';
+import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts, getSyncPreferences, updateSyncPreferences } from '../supabase';
 import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
@@ -1049,6 +1049,50 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     } catch (e: any) {
       console.error('[cloud-engine] sync-oauth error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_oauth_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── POST /v1/cloud-engine/timezone ──────────────────────────────────────
+  // Sync the desktop's IANA timezone to the user's profile (so future VM
+  // provisions / restarts inherit it) AND push it to the live VM agent so
+  // cron triggers, quiet-hour math, and time-tool output follow the user's
+  // current zone instead of whatever was baked in at provision time.
+  //
+  // Best-effort against a running VM — if the VM is offline we still persist
+  // the preference so the next start picks it up.
+  if (method === 'POST' && path === '/v1/cloud-engine/timezone') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const body = await readBody(req, 1024).catch(() => ({}));
+      const tz = sanitizeTimezone((body as any)?.timezone);
+      if (!tz) {
+        json(res, 400, { ok: false, error: 'invalid_timezone' });
+        return true;
+      }
+
+      // Persist for future provisions / cold starts.
+      const persisted = await updateSyncPreferences(user.userId, { timezone: tz });
+
+      // Push to running VM (non-fatal if it can't be reached).
+      let vm: any = null;
+      try {
+        const engine = await getCloudEngine(user.userId);
+        if (engine && VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) {
+          const result = await sendVMCommand(user.userId, 'set_user_timezone', { timezone: tz }, 8_000);
+          vm = { ok: result.ok, ...(result.result || {}), error: result.error || result.result?.error };
+        } else {
+          vm = { ok: false, skipped: true, error: 'engine_not_running' };
+        }
+      } catch (e: any) {
+        vm = { ok: false, error: e?.message || 'vm_unreachable' };
+      }
+
+      json(res, 200, { ok: true, timezone: tz, persisted, vm });
+    } catch (e: any) {
+      console.error('[cloud-engine] timezone sync error:', e?.message);
+      json(res, 500, { ok: false, error: 'timezone_sync_failed', message: e?.message || 'failed' });
     }
     return true;
   }

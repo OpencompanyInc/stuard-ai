@@ -189,6 +189,13 @@ declare global {
       // Preferences
       getPrefs: () => Promise<{ ok: boolean; prefs?: Record<string, any>; error?: string }>;
       setPrefs: (prefs: Record<string, any>) => Promise<{ ok: boolean; error?: string }>;
+      vmSyncTimezone: (opts?: { force?: boolean }) => Promise<{
+        ok: boolean;
+        timezone?: string;
+        persisted?: boolean;
+        vm?: { ok: boolean; skipped?: boolean; changed?: boolean; timezone?: string | null; error?: string };
+        error?: string;
+      }>;
 
       // Billing (Polar)
       billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
