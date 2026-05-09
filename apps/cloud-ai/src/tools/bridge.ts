@@ -79,6 +79,11 @@ function getSubagentBridgeMeta(secrets?: Record<string, any>): Record<string, an
   };
 }
 
+function isVMExecutionTarget(secrets?: Record<string, any>): boolean {
+  const target = String(secrets?.executionTarget || secrets?.__executionTarget || '').trim().toLowerCase();
+  return target === 'vm' || secrets?.__vmOrigin === true;
+}
+
 // Per-request mutable state (prevents cross-tab bleeding for sessionWorkflow, sessionSkill, etc.)
 export function getBridgeState<T = any>(key: string): T | undefined {
   try { return bridgeALS.getStore()?.state?.get(key) as T | undefined; } catch { return undefined; }
@@ -197,7 +202,14 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   const sendArgs = (() => {
     try {
       if (!args || typeof args !== 'object') return args;
-      const { _forceDirect: _omit, ...rest } = args as any;
+      const {
+        _forceDirect: _omit,
+        __userId: _userId,
+        executionTarget: _executionTarget,
+        __executionTarget: _internalExecutionTarget,
+        __vmOrigin: _vmOrigin,
+        ...rest
+      } = args as any;
       return rest;
     } catch {
       return args;
@@ -205,6 +217,38 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   })();
   const eventArgs = redactSensitiveData(sendArgs);
   const subagentMeta = getSubagentBridgeMeta(store?.secrets);
+  if (isVMExecutionTarget(store?.secrets)) {
+    const userId = String(store?.secrets?.userId || (args && typeof args.__userId === 'string' ? args.__userId : '') || '').trim();
+    if (!userId) {
+      return { ok: false, error: 'vm_user_context_missing' };
+    }
+    const id = `vm-tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!silent) {
+      await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'called', id, args: eventArgs, target: 'vm', ...subagentMeta });
+    }
+    try {
+      const { sendVMCommand } = await import('../services/vm-command');
+      const result = await sendVMCommand(userId, 'tool_exec', { tool, args: sendArgs }, timeoutMs);
+      if (!silent) {
+        await __queueWriterWrite(writer, {
+          type: 'tool_event',
+          tool,
+          status: result.ok ? 'completed' : 'error',
+          id,
+          target: 'vm',
+          ...(result.ok ? {} : { error: result.error || result.result?.error || 'vm_tool_failed' }),
+          ...subagentMeta,
+        });
+      }
+      if (result.ok) return result.result || { ok: true };
+      return result.result || { ok: false, error: result.error || 'vm_tool_failed' };
+    } catch (e: any) {
+      if (!silent) {
+        await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'error', id, target: 'vm', error: e?.message || 'vm_tool_failed', ...subagentMeta });
+      }
+      return { ok: false, error: e?.message || 'vm_tool_failed' };
+    }
+  }
   // In-band bridge if we are inside an active client WS context
   const useBridge = !forceDirect && store?.ws && store.ws.readyState === WebSocket.OPEN;
   // If we entered with a bridge context but the WS has since closed (e.g. async

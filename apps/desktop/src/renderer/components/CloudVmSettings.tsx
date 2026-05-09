@@ -96,9 +96,9 @@ type CloudProviderEntry = {
 };
 
 const CLOUD_PROVIDERS: CloudProviderEntry[] = [
-  { slug: 'gmail',           provider: 'google',    name: 'Gmail',           description: 'Send and read email.',                       category: 'Communication', icon: Mail },
-  { slug: 'google-calendar', provider: 'google',    name: 'Google Calendar', description: 'Manage events and reminders.',              category: 'Productivity',  icon: Globe },
-  { slug: 'google-drive',    provider: 'google',    name: 'Google Drive',    description: 'Browse and search files.',                  category: 'Files',         icon: HardDrive },
+  { slug: 'gmail',           provider: 'google',    name: 'Gmail',           description: 'Send and read email.',                       category: 'Communication', icon: Mail, connectPath: '/integrations/google/connect?target=gmail' },
+  { slug: 'google-calendar', provider: 'google',    name: 'Google Calendar', description: 'Manage events and reminders.',              category: 'Productivity',  icon: Globe, connectPath: '/integrations/google/connect?target=calendar' },
+  { slug: 'google-drive',    provider: 'google',    name: 'Google Drive',    description: 'Browse and search files.',                  category: 'Files',         icon: HardDrive, connectPath: '/integrations/google/connect?target=drive' },
   { slug: 'github',          provider: 'github',    name: 'GitHub',          description: 'Read repositories and issues.',             category: 'Development',   icon: Github },
   { slug: 'outlook',         provider: 'outlook',   name: 'Outlook',         description: 'Microsoft Outlook for mail.',               category: 'Communication', icon: Mail },
   { slug: 'discord',         provider: 'discord',   name: 'Discord',         description: 'Read and send messages, list servers.',     category: 'Communication', icon: Users },
@@ -222,6 +222,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [connectingSince, setConnectingSince] = useState<Record<string, number>>({});
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
 
   const isRunning = engine?.status === 'running';
@@ -261,10 +262,9 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const services = data?.vm?.services || {};
   const browserReachable = !!data?.vm?.browserReachable;
 
-  // VM is the source of truth for "is this integration installed on the VM".
-  // We keep the cloud-DB list (`integrations`) only as a fallback for older
-  // VM agents that don't ship `oauth_list` yet — when present, prefer VM data.
-  const useVmAsSource = vmIntegrations.length > 0 || isRunning;
+  // VM Settings is VM-local by design: cloud DB accounts are legacy sync input,
+  // not the source of truth for whether an integration is available in the VM.
+  const useVmAsSource = true;
 
   const connectedMap = useMemo(() => {
     const m: Record<string, Array<IntegrationEntry | VmIntegrationEntry>> = {};
@@ -279,6 +279,31 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
     }
     return m;
   }, [integrations, vmIntegrations, useVmAsSource]);
+
+  useEffect(() => {
+    const pending = Object.keys(connectingSince);
+    if (pending.length === 0) return;
+    const id = setInterval(() => { void refresh(); }, 2500);
+    return () => clearInterval(id);
+  }, [connectingSince, refresh]);
+
+  useEffect(() => {
+    const now = Date.now();
+    setConnectingSince((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const entry of CLOUD_PROVIDERS) {
+        const started = next[entry.slug];
+        if (!started) continue;
+        const connected = (connectedMap[entry.provider] || []).length > 0;
+        if (connected || now - started > 120_000) {
+          delete next[entry.slug];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [connectedMap]);
 
   /* ── Sync actions ──────────────────────────────────────────────────── */
 
@@ -338,15 +363,25 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   /* ── Connect actions (cloud OAuth) ─────────────────────────────────── */
 
   const connectProvider = async (entry: CloudProviderEntry) => {
+    if (!isRunning) {
+      showToast('Resume your VM first so it can store the token locally.', 'err');
+      return;
+    }
     const token = await getAuthToken();
     if (!token) {
       showToast('Please sign in first.', 'err');
       return;
     }
     const path = entry.connectPath ?? `/integrations/${entry.slug}/connect`;
-    const url = `${CLOUD_AI_HTTP}${path}?token=${encodeURIComponent(token)}`;
-    openExternalUrl(url);
-    showToast(`Opening ${entry.name} authorization…`, 'ok');
+    const url = new URL(path, CLOUD_AI_HTTP);
+    url.searchParams.set('token', token);
+    url.searchParams.set('store', 'vm');
+    setConnectingSince((prev) => ({ ...prev, [entry.slug]: Date.now() }));
+    openExternalUrl(url.toString());
+    showToast(`Opening ${entry.name} authorization. Token will be stored on this VM only.`, 'ok');
+    window.setTimeout(() => { void refresh(); }, 5000);
+    window.setTimeout(() => { void refresh(); }, 12_000);
+    window.setTimeout(() => { void refresh(); }, 25_000);
   };
 
   const disconnectProvider = async (entry: CloudProviderEntry) => {
@@ -358,12 +393,16 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
     if (!confirm(`Disconnect ${entry.name}? Stuard will lose access to this account.`)) return;
     setBusyKey(`disc:${entry.slug}`);
     try {
-      const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/${entry.slug}/disconnect`, {
+      const resp = await fetch(`${CLOUD_AI_HTTP}/v1/cloud-engine/remove-oauth-from-vm`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ provider: entry.provider }),
       });
-      if (resp.ok) showToast(`${entry.name} disconnected.`, 'ok');
-      else showToast(`Could not disconnect ${entry.name}.`, 'err');
+      if (resp.ok) showToast(`${entry.name} removed from this VM.`, 'ok');
+      else showToast(`Could not remove ${entry.name} from this VM.`, 'err');
     } catch (e: any) {
       showToast(`Disconnect failed: ${e?.message || 'network error'}`, 'err');
     } finally {
@@ -477,8 +516,8 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
         <Section
           title="Cloud integrations"
           subtitle={useVmAsSource
-            ? 'OAuth providers actually installed on this VM. Connect new ones here, or use “Sync from this device” above to push your desktop’s tokens.'
-            : 'OAuth providers that connect straight to the VM — no desktop required. Tokens are stored encrypted and pushed to the VM automatically.'}
+            ? 'OAuth providers actually installed on this VM. New connects from here are stored in the VM token store only.'
+            : 'OAuth providers that connect straight to the VM. Tokens are stored locally in the VM token store.'}
           icon={Link2}
           accent="primary"
           right={
@@ -501,6 +540,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
               const syncedAt = first && 'syncedAt' in (first as any) ? (first as VmIntegrationEntry).syncedAt : null;
               const Icon = entry.icon;
               const busy = busyKey === `disc:${entry.slug}`;
+              const connecting = !!connectingSince[entry.slug];
 
               return (
                 <div
@@ -529,6 +569,12 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
                           Expired
                         </span>
                       )}
+                      {!isLinked && connecting && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Connecting
+                        </span>
+                      )}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-[11.5px] text-theme-muted">
                       {account || entry.description}
@@ -544,10 +590,11 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
                           <button
                             type="button"
                             onClick={() => connectProvider(entry)}
+                            disabled={connecting}
                             className="inline-flex items-center gap-1.5 rounded-full border border-theme/30 bg-theme-card px-2.5 py-1 text-[11px] font-medium text-theme-fg transition hover:bg-theme-hover"
                           >
-                            <RefreshCw className="h-3 w-3" />
-                            Reconnect
+                            {connecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                            {connecting ? 'Connecting' : 'Reconnect'}
                           </button>
                           <button
                             type="button"
@@ -563,10 +610,11 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
                         <button
                           type="button"
                           onClick={() => connectProvider(entry)}
-                          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90"
+                          disabled={connecting}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:opacity-60"
                         >
-                          <ExternalLink className="h-3 w-3" />
-                          Connect
+                          {connecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+                          {connecting ? 'Connecting' : 'Connect'}
                         </button>
                       )}
                     </div>

@@ -1,10 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM } from '../cloud-engine';
+import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
+
+type OAuthStorageTarget = 'cloud' | 'vm';
+
+function resolveStorageTarget(parsedUrl: URL): OAuthStorageTarget {
+  const value = String(parsedUrl.searchParams.get('target') || parsedUrl.searchParams.get('store') || '').toLowerCase();
+  return value === 'vm' ? 'vm' : 'cloud';
+}
 
 export async function handleGithubRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (req.method === 'GET' && parsedUrl.pathname === '/integrations/github/status') {
@@ -75,9 +82,10 @@ export async function handleGithubRoutes(req: IncomingMessage, res: ServerRespon
       const profileLabel = parsedUrl.searchParams.get('profile') || 'default';
       const redirectUri = `${PUBLIC_BASE_URL}${GITHUB_REDIRECT_PATH}`;
 
-      // State: github:{userId}:{nonce}:{profileLabel}:{sig}
+      // State: github:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig}
       const nonce = randomUUID();
-      const payload = `github:${userId}:${nonce}:${profileLabel}`;
+      const storageTarget = resolveStorageTarget(parsedUrl);
+      const payload = `github:${userId}:${nonce}:${profileLabel}:${storageTarget}`;
       const sig = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
       const state = Buffer.from(`${payload}:${sig}`).toString('base64url');
 
@@ -121,10 +129,14 @@ export async function handleGithubRoutes(req: IncomingMessage, res: ServerRespon
       try { decoded = Buffer.from(stateRaw, 'base64url').toString('utf8'); } catch {}
       const parts = decoded.split(':');
 
+      // VM-settings format: github:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig} (6)
       // New format: github:{userId}:{nonce}:{profileLabel}:{sig} (5)
       // Old format: github:{userId}:{nonce}:{sig} (4)
       let provider: string, userId: string, nonce: string, profileLabel: string, sig: string;
-      if (parts.length >= 5) {
+      let storageTarget: OAuthStorageTarget = 'cloud';
+      if (parts.length >= 6) {
+        provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; storageTarget = parts[4] === 'vm' ? 'vm' : 'cloud'; sig = parts[5];
+      } else if (parts.length >= 5) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; sig = parts[4];
       } else if (parts.length === 4) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = 'default'; sig = parts[3];
@@ -134,7 +146,9 @@ export async function handleGithubRoutes(req: IncomingMessage, res: ServerRespon
         return true;
       }
 
-      const newPayload = `${provider}:${userId}:${nonce}:${profileLabel}`;
+      const newPayload = parts.length >= 6
+        ? `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`
+        : `${provider}:${userId}:${nonce}:${profileLabel}`;
       const expectNew = createHmac('sha256', INTEGRATION_STATE_SECRET).update(newPayload).digest('hex');
       const oldPayload = `${provider}:${userId}:${nonce}`;
       const expectOld = createHmac('sha256', INTEGRATION_STATE_SECRET).update(oldPayload).digest('hex');
@@ -171,6 +185,30 @@ export async function handleGithubRoutes(req: IncomingMessage, res: ServerRespon
         const user: any = await (async () => { try { return await userRes.json(); } catch { return null; } })();
         accountEmail = String(user?.email || user?.login || '') || null;
       } catch {}
+
+      if (storageTarget === 'vm') {
+        const vmResult = await storeOAuthTokensOnVM(userId, [{
+          provider: 'github',
+          profileLabel,
+          isDefault: true,
+          accessToken: access_token,
+          refreshToken: null,
+          expiresAt: null,
+          scopes,
+          accountEmail,
+        }], { timeoutMs: 30_000, retry: true, replace: false });
+        if (!vmResult.ok) {
+          const message = vmResult.error === 'engine_not_running'
+            ? 'Start the cloud engine, then connect GitHub again so the VM can store the token.'
+            : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=github&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=github&profile=${encodeURIComponent(profileLabel)}&target=vm`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
 
       try { await upsertExternalAccount({ userId, provider: 'github', access_token, scopes, refresh_token: null, expires_at: null, meta: { token_type: tokenBody.token_type || 'bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
         console.error('[github] Failed to save token:', saveErr?.message || saveErr);

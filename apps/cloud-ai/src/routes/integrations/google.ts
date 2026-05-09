@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM } from '../cloud-engine';
+import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
 import { authenticateHttpLegacy, requireAuth, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
@@ -25,6 +25,12 @@ function scopesForTarget(target: string): string[] {
 }
 
 const normalize = (str: string) => str.split(/[ ,]+/).map(s => s.trim()).filter(Boolean);
+type OAuthStorageTarget = 'cloud' | 'vm';
+
+function resolveStorageTarget(parsedUrl: URL): OAuthStorageTarget {
+  const value = String(parsedUrl.searchParams.get('store') || parsedUrl.searchParams.get('storage') || '').toLowerCase();
+  return value === 'vm' ? 'vm' : 'cloud';
+}
 
 export async function handleGoogleRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   // Status - prefer header auth, but allow legacy query param for migration
@@ -117,9 +123,10 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       const rawScopes = parsedUrl.searchParams.get('scopes') || '';
       const profileLabel = parsedUrl.searchParams.get('profile') || 'default';
 
-      // Build state: google:{userId}:{nonce}:{profileLabel}:{sig}
+      // Build state: google:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig}
       const nonce = randomUUID();
-      const payload = `google:${userId}:${nonce}:${profileLabel}`;
+      const storageTarget = resolveStorageTarget(parsedUrl);
+      const payload = `google:${userId}:${nonce}:${profileLabel}:${storageTarget}`;
       const sig = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
       const state = Buffer.from(`${payload}:${sig}`).toString('base64url');
 
@@ -187,7 +194,10 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       // New format: google:{userId}:{nonce}:{profileLabel}:{sig} (5 parts)
       // Old format: google:{userId}:{nonce}:{sig} (4 parts) — backward compat
       let provider: string, userId: string, nonce: string, profileLabel: string, sig: string;
-      if (parts.length >= 5) {
+      let storageTarget: OAuthStorageTarget = 'cloud';
+      if (parts.length >= 6) {
+        provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; storageTarget = parts[4] === 'vm' ? 'vm' : 'cloud'; sig = parts[5];
+      } else if (parts.length >= 5) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; sig = parts[4];
       } else if (parts.length === 4) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = 'default'; sig = parts[3];
@@ -198,7 +208,9 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       }
 
       // Verify HMAC against new format first, then old for backward compat
-      const newPayload = `${provider}:${userId}:${nonce}:${profileLabel}`;
+      const newPayload = parts.length >= 6
+        ? `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`
+        : `${provider}:${userId}:${nonce}:${profileLabel}`;
       const expectNew = createHmac('sha256', INTEGRATION_STATE_SECRET).update(newPayload).digest('hex');
       const oldPayload = `${provider}:${userId}:${nonce}`;
       const expectOld = createHmac('sha256', INTEGRATION_STATE_SECRET).update(oldPayload).digest('hex');
@@ -269,6 +281,30 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
           }
         }
       } catch {}
+
+      if (storageTarget === 'vm') {
+        const vmResult = await storeOAuthTokensOnVM(userId, [{
+          provider: 'google',
+          profileLabel,
+          isDefault: true,
+          accessToken: access_token,
+          refreshToken: finalRefreshToken,
+          expiresAt: expires_at,
+          scopes: mergedScopes,
+          accountEmail,
+        }], { timeoutMs: 30_000, retry: true, replace: false });
+        if (!vmResult.ok) {
+          const message = vmResult.error === 'engine_not_running'
+            ? 'Start the cloud engine, then connect Google again so the VM can store the token.'
+            : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=google&profile=${encodeURIComponent(profileLabel)}&target=vm`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
 
       try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes: mergedScopes, refresh_token: finalRefreshToken, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
         console.error('[google] Failed to save token:', saveErr?.message || saveErr);

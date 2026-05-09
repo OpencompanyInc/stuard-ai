@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac, createHash, randomBytes } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM } from '../cloud-engine';
+import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -31,6 +31,12 @@ const X_SCOPES = [
 // callback can finish the exchange. State HMAC ties them to the original user.
 const _pkceVerifiers = new Map<string, { verifier: string; createdAt: number }>();
 const PKCE_TTL_MS = 10 * 60 * 1000;
+type OAuthStorageTarget = 'cloud' | 'vm';
+
+function resolveStorageTarget(parsedUrl: URL): OAuthStorageTarget {
+  const value = String(parsedUrl.searchParams.get('target') || parsedUrl.searchParams.get('store') || '').toLowerCase();
+  return value === 'vm' ? 'vm' : 'cloud';
+}
 
 function rememberVerifier(nonce: string, verifier: string) {
   // Sweep expired entries opportunistically
@@ -130,9 +136,10 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       // PKCE
       const { verifier, challenge } = generatePkcePair();
 
-      // State: x:{userId}:{nonce}:{profileLabel}:{sig}
+      // State: x:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig}
       const nonce = randomUUID();
-      const payload = `x:${userId}:${nonce}:${profileLabel}`;
+      const storageTarget = resolveStorageTarget(parsedUrl);
+      const payload = `x:${userId}:${nonce}:${profileLabel}:${storageTarget}`;
       const sig = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
       const state = Buffer.from(`${payload}:${sig}`).toString('base64url');
 
@@ -188,9 +195,24 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
         res.end();
         return true;
       }
-      const [provider, userId, nonce, profileLabel, sig] = parts;
+      let provider: string;
+      let userId: string;
+      let nonce: string;
+      let profileLabel: string;
+      let storageTarget: OAuthStorageTarget = 'cloud';
+      let sig: string;
+      if (parts.length >= 6) {
+        [provider, userId, nonce, profileLabel] = parts;
+        storageTarget = parts[4] === 'vm' ? 'vm' : 'cloud';
+        sig = parts[5];
+      } else {
+        [provider, userId, nonce, profileLabel, sig] = parts;
+      }
+      const signedPayload = parts.length >= 6
+        ? `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`
+        : `${provider}:${userId}:${nonce}:${profileLabel}`;
       const expectSig = createHmac('sha256', INTEGRATION_STATE_SECRET)
-        .update(`${provider}:${userId}:${nonce}:${profileLabel}`)
+        .update(signedPayload)
         .digest('hex');
       if (provider !== 'x' || sig !== expectSig) {
         res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=x&message=State verification failed`, 'Cache-Control': 'no-store' });
@@ -240,6 +262,7 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       const expires_in = tBody.expires_in ? Number(tBody.expires_in) : null;
       const scopeStr = String(tBody.scope || '');
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : [];
+      const expiresAt = expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null;
 
       // Fetch X user profile for the connected handle
       let accountEmail: string | null = null;
@@ -252,6 +275,30 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
         accountEmail = handle ? `@${handle}` : null;
       } catch {}
 
+      if (storageTarget === 'vm') {
+        const vmResult = await storeOAuthTokensOnVM(userId, [{
+          provider: 'x',
+          profileLabel,
+          isDefault: true,
+          accessToken: access_token,
+          refreshToken: refresh_token || null,
+          expiresAt,
+          scopes,
+          accountEmail,
+        }], { timeoutMs: 30_000, retry: true, replace: false });
+        if (!vmResult.ok) {
+          const message = vmResult.error === 'engine_not_running'
+            ? 'Start the cloud engine, then connect X again so the VM can store the token.'
+            : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=x&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=x&profile=${encodeURIComponent(profileLabel)}&target=vm`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
+
       try {
         await upsertExternalAccount({
           userId,
@@ -259,7 +306,7 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
           access_token,
           scopes,
           refresh_token,
-          expires_at: expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null,
+          expires_at: expiresAt,
           meta: { token_type: tBody.token_type || 'bearer' },
           profileLabel,
           accountEmail,

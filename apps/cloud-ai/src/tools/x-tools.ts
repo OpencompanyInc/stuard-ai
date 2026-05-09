@@ -16,6 +16,7 @@ import {
   X_PRICE_USD_DM,
   X_PRICE_USD_USER,
 } from '../utils/config';
+import { getVMOAuthAccount, storeVMOAuthAccount } from './vm-oauth';
 
 const X_API = 'https://api.twitter.com/2';
 
@@ -73,17 +74,27 @@ async function refreshXToken(userId: string, acc: any): Promise<string | null> {
       const scopeStr = String(tBody.scope || '');
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(acc.scopes) ? acc.scopes : []);
       try {
-        await upsertExternalAccount({
-          userId,
-          provider: 'x',
-          access_token: newAccess,
-          scopes,
-          refresh_token: refresh_token || null,
-          expires_at,
-          meta: { token_type: tBody.token_type || 'bearer' },
-          profileLabel: acc.profile_label || 'default',
-          accountEmail: acc.account_email || null,
-        });
+        if (acc.meta?.source === 'vm') {
+          await storeVMOAuthAccount('x', {
+            ...acc,
+            access_token: newAccess,
+            refresh_token: refresh_token || null,
+            expires_at,
+            scopes,
+          });
+        } else {
+          await upsertExternalAccount({
+            userId,
+            provider: 'x',
+            access_token: newAccess,
+            scopes,
+            refresh_token: refresh_token || null,
+            expires_at,
+            meta: { token_type: tBody.token_type || 'bearer' },
+            profileLabel: acc.profile_label || 'default',
+            accountEmail: acc.account_email || null,
+          });
+        }
       } catch {}
       return newAccess;
     }
@@ -122,7 +133,7 @@ async function meterX(userId: string, opLabel: string, costUsd: number): Promise
 async function xFetch(path: string, profileLabel?: string, init?: RequestInit) {
   const userId = requireUserId();
   const profile = resolveProfile(profileLabel);
-  let acc = await getExternalAccount(userId, 'x', profile);
+  let acc = await getVMOAuthAccount('x', profile) || await getExternalAccount(userId, 'x', profile);
   if (!acc?.access_token) throw new Error('x_not_connected');
 
   let accessToken = acc.access_token;

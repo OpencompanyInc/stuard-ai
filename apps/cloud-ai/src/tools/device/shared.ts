@@ -71,6 +71,11 @@ function getResolvedBridgeSecretsFallbackOnly(): Record<string, any> | undefined
   return undefined;
 }
 
+export function isVMExecutionTarget(secrets?: Record<string, any>): boolean {
+  const target = String(secrets?.executionTarget || secrets?.__executionTarget || '').trim().toLowerCase();
+  return target === 'vm' || secrets?.__vmOrigin === true;
+}
+
 function getResolvedBridgeContext(): ActiveBridgeContext | undefined {
   const bridgeWs = getBridgeWs();
   if (bridgeWs?.readyState === 1) {
@@ -243,7 +248,7 @@ export async function execLocalToolWithCapturedBridge(
  * This allows browser_use_* and other device tools to run headlessly on the VM.
  */
 async function execViaVM(toolId: string, args: any, timeoutMs: number): Promise<any> {
-  const secrets = getBridgeSecrets() || getResolvedBridgeContext()?.secrets;
+  const secrets = getBridgeSecrets() || getResolvedBridgeSecretsFallbackOnly();
   const explicitUserId = typeof args?.__userId === 'string' ? args.__userId : '';
   const userId = secrets?.userId || explicitUserId;
   if (!userId) return null; // no user context — can't route to VM
@@ -468,26 +473,30 @@ export function makeLocalTool(
     inputSchema,
     outputSchema: outputSchema || z.any(),
     execute: async (inputData, { writer }) => {
-      const bridgeContext = getResolvedBridgeContext();
+      const fallbackSecrets = getResolvedBridgeSecretsFallbackOnly();
+      const vmTarget = isVMExecutionTarget(fallbackSecrets);
+      const bridgeContext = vmTarget ? undefined : getResolvedBridgeContext();
       const effectiveInput = injectLocalToolInput(
         id,
         inputData,
-        bridgeContext?.secrets || getResolvedBridgeSecretsFallbackOnly(),
+        bridgeContext?.secrets || fallbackSecrets,
       );
 
       // Desktop bridge available — use it (fastest path)
       // Check both ALS-based bridge and module-level fallback (for subagent context where ALS is broken)
       const hasBridge = !!bridgeContext;
       if (id.startsWith('browser_use_')) {
-        const scopedBridge = getScopedBridgeContext();
-        const fallbackBridge = getFallbackBridgeScope();
-        const source = hasClientBridge()
-          ? 'als'
-          : scopedBridge?.ws?.readyState === 1
-            ? 'scoped'
-            : fallbackBridge?.ws?.readyState === 1
-              ? 'fallback'
-              : 'none';
+        const scopedBridge = vmTarget ? undefined : getScopedBridgeContext();
+        const fallbackBridge = vmTarget ? undefined : getFallbackBridgeScope();
+        const source = vmTarget
+          ? 'vm'
+          : hasClientBridge()
+            ? 'als'
+            : scopedBridge?.ws?.readyState === 1
+              ? 'scoped'
+              : fallbackBridge?.ws?.readyState === 1
+                ? 'fallback'
+                : 'none';
         console.log(
           `[makeLocalTool:${id}] hasBridge=${hasBridge} source=${source} ws=${!!bridgeContext?.ws} readyState=${bridgeContext?.ws?.readyState ?? 'N/A'}`,
         );
@@ -497,6 +506,14 @@ export function makeLocalTool(
       }
 
       // No desktop bridge — try routing to VM, then local browser server
+      if (vmTarget) {
+        const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
+        const effectiveTimeout = typeof t === 'number' ? t : (id.startsWith('browser_use_') ? 60000 : 300000);
+        const vmResult = await execViaVM(id, effectiveInput, effectiveTimeout);
+        if (vmResult !== null) return stripNulls(vmResult);
+        return { ok: false, error: `VM execution requested but the VM agent is not reachable for ${id}.` };
+      }
+
       if (noFallback && id.startsWith('bot_memory_')) {
         const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
         const effectiveTimeout = typeof t === 'number' ? t : 15000;

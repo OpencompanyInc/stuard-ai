@@ -21,38 +21,130 @@ const PROVISION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 // Prevent double-click / rapid-fire provision requests per user
 const _activeProvisions = new Set<string>();
 
+export interface OAuthVmTokenPayload {
+  provider: string;
+  profileLabel?: string | null;
+  isDefault?: boolean | null;
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  expiresAt?: string | null;
+  scopes?: string[] | string | null;
+  accountEmail?: string | null;
+}
+
+function toOAuthVmTokens(accounts: any[]): OAuthVmTokenPayload[] {
+  return (accounts || [])
+    .filter((a: any) => a?.access_token && a.access_token !== 'verified')
+    .map((a: any) => ({
+      provider: a.provider,
+      profileLabel: a.profile_label,
+      isDefault: a.is_default,
+      accessToken: a.access_token,
+      refreshToken: a.refresh_token || null,
+      expiresAt: a.expires_at || null,
+      scopes: a.scopes || [],
+      accountEmail: a.account_email || null,
+    }));
+}
+
+function normalizeOAuthVmTokens(tokens: OAuthVmTokenPayload[]): OAuthVmTokenPayload[] {
+  return (tokens || [])
+    .filter((t) => t?.provider && t?.accessToken && t.accessToken !== 'verified')
+    .map((t) => ({
+      provider: String(t.provider),
+      profileLabel: t.profileLabel || 'default',
+      isDefault: t.isDefault !== false,
+      accessToken: String(t.accessToken),
+      refreshToken: t.refreshToken || null,
+      expiresAt: t.expiresAt || null,
+      scopes: Array.isArray(t.scopes)
+        ? t.scopes
+        : String(t.scopes || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean),
+      accountEmail: t.accountEmail || null,
+    }));
+}
+
+export async function storeOAuthTokensOnVM(
+  userId: string,
+  tokens: OAuthVmTokenPayload[],
+  opts: { timeoutMs?: number; retry?: boolean; replace?: boolean } = {},
+): Promise<{ ok: boolean; synced: number; vmResult?: boolean; error?: string }> {
+  const normalized = normalizeOAuthVmTokens(tokens);
+  const replace = opts.replace !== false;
+  if (normalized.length === 0 && !replace) return { ok: true, synced: 0, vmResult: true };
+
+  const engine = await getCloudEngine(userId);
+  if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) {
+    return { ok: false, synced: 0, vmResult: false, error: 'engine_not_running' };
+  }
+
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const payload = { tokens: normalized, replace };
+  let result = await sendVMCommand(userId, 'store_oauth_tokens', payload, timeoutMs);
+  if (!result.ok && opts.retry) {
+    console.warn('[oauth-sync] First push attempt failed, retrying:', result.error);
+    await new Promise(r => setTimeout(r, 2000));
+    result = await sendVMCommand(userId, 'store_oauth_tokens', payload, timeoutMs);
+  }
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      synced: 0,
+      vmResult: false,
+      error: result.error || result.result?.error || 'store_oauth_tokens_failed',
+    };
+  }
+
+  return { ok: true, synced: normalized.length, vmResult: true };
+}
+
+export async function removeOAuthTokensFromVM(
+  userId: string,
+  provider: string,
+  profileLabel?: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ ok: boolean; removed?: number; count?: number; error?: string }> {
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+  const normalizedProfile = String(profileLabel || '').trim();
+  if (!normalizedProvider) return { ok: false, error: 'provider_required' };
+
+  const engine = await getCloudEngine(userId);
+  if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) {
+    return { ok: false, error: 'engine_not_running' };
+  }
+
+  const result = await sendVMCommand(userId, 'remove_oauth_tokens', {
+    provider: normalizedProvider,
+    ...(normalizedProfile ? { profileLabel: normalizedProfile } : {}),
+  }, opts.timeoutMs ?? 15_000);
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error || result.result?.error || 'remove_oauth_tokens_failed',
+    };
+  }
+  return {
+    ok: true,
+    removed: Number(result.result?.removed || 0),
+    count: Number(result.result?.count || 0),
+  };
+}
+
 /**
  * Push all OAuth tokens to a user's reachable VM.
  * Fire-and-forget — safe to call even if the VM isn't running.
  */
 export async function pushOAuthTokensToVM(userId: string): Promise<void> {
   try {
-    const engine = await getCloudEngine(userId);
-    if (!engine || !VM_COMMANDABLE_STATUSES.has(String(engine.status || ''))) return;
     const accounts = await listExternalAccounts(userId);
-    const tokens = accounts
-      .filter((a: any) => a.access_token && a.access_token !== 'verified')
-      .map((a: any) => ({
-        provider: a.provider,
-        profileLabel: a.profile_label,
-        isDefault: a.is_default,
-        accessToken: a.access_token,
-        refreshToken: a.refresh_token || null,
-        expiresAt: a.expires_at || null,
-        scopes: a.scopes || [],
-        accountEmail: a.account_email || null,
-      }));
+    const tokens = toOAuthVmTokens(accounts);
     if (tokens.length > 0) {
       // Retry once with increased timeout — token payloads are small but
       // the VM may be under load during provisioning
-      let result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 30_000);
+      const result = await storeOAuthTokensOnVM(userId, tokens, { timeoutMs: 30_000, retry: true });
       if (!result.ok) {
-        console.warn('[oauth-sync] First push attempt failed, retrying:', result.error);
-        await new Promise(r => setTimeout(r, 2000));
-        result = await sendVMCommand(userId, 'store_oauth_tokens', { tokens }, 30_000);
-        if (!result.ok) {
-          console.warn('[oauth-sync] Auto-push to VM failed after retry:', result.error || 'store_oauth_tokens_failed');
-        }
+        console.warn('[oauth-sync] Auto-push to VM failed:', result.error || 'store_oauth_tokens_failed');
       }
     }
   } catch (e: any) {
@@ -924,18 +1016,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     try {
       const accounts = await listExternalAccounts(user.userId);
       // Strip sensitive fields, keep what the VM needs
-      const tokens = accounts
-        .filter((a: any) => a.access_token && a.access_token !== 'verified')
-        .map((a: any) => ({
-          provider: a.provider,
-          profileLabel: a.profile_label,
-          isDefault: a.is_default,
-          accessToken: a.access_token,
-          refreshToken: a.refresh_token || null,
-          expiresAt: a.expires_at || null,
-          scopes: a.scopes || [],
-          accountEmail: a.account_email || null,
-        }));
+      const tokens = toOAuthVmTokens(accounts);
       json(res, 200, { ok: true, tokens });
     } catch (e: any) {
       console.error('[cloud-engine] oauth-tokens error:', e?.message);
@@ -957,22 +1038,14 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
 
       const accounts = await listExternalAccounts(user.userId);
-      const tokens = accounts
-        .filter((a: any) => a.access_token && a.access_token !== 'verified')
-        .map((a: any) => ({
-          provider: a.provider,
-          profileLabel: a.profile_label,
-          isDefault: a.is_default,
-          accessToken: a.access_token,
-          refreshToken: a.refresh_token || null,
-          expiresAt: a.expires_at || null,
-          scopes: a.scopes || [],
-          accountEmail: a.account_email || null,
-        }));
-
-      // Send tokens to VM agent
-      const result = await sendVMCommand(user.userId, 'store_oauth_tokens', { tokens }, 15_000);
-      json(res, 200, { ok: true, synced: tokens.length, vmResult: result.ok });
+      const tokens = toOAuthVmTokens(accounts);
+      const result = await storeOAuthTokensOnVM(user.userId, tokens, { timeoutMs: 15_000 });
+      json(res, result.ok ? 200 : 502, {
+        ok: result.ok,
+        synced: result.synced,
+        vmResult: result.vmResult,
+        error: result.error,
+      });
     } catch (e: any) {
       console.error('[cloud-engine] sync-oauth error:', e?.message);
       json(res, 500, { ok: false, error: 'sync_oauth_failed', message: e?.message || 'failed' });
@@ -982,6 +1055,30 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
 
   // ── POST /v1/cloud-engine/sync-browser-profile-to-vm ────────────────────
   // Pushes the desktop browser cookie backup to the running VM browser profile
+  // Removes a provider from the VM-local OAuth registry without touching the
+  // desktop/cloud shared integration registry.
+  if (method === 'POST' && path === '/v1/cloud-engine/remove-oauth-from-vm') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const body = await readBody(req, 4096).catch(() => ({}));
+      const provider = String(body?.provider || '').trim().toLowerCase();
+      const profileLabel = typeof body?.profileLabel === 'string' ? body.profileLabel.trim() : '';
+      if (!provider) {
+        json(res, 400, { ok: false, error: 'provider_required' });
+        return true;
+      }
+
+      const result = await removeOAuthTokensFromVM(user.userId, provider, profileLabel || undefined, { timeoutMs: 15_000 });
+      json(res, result.ok ? 200 : 502, result);
+    } catch (e: any) {
+      console.error('[cloud-engine] remove-oauth error:', e?.message);
+      json(res, 500, { ok: false, error: 'remove_oauth_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // Pushes the desktop browser cookie backup to the running VM browser profile.
   if (method === 'POST' && path === '/v1/cloud-engine/sync-browser-profile-to-vm') {
     const user = await authenticate(req, res);
     if (!user) return true;
@@ -1238,8 +1335,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
     const user = await authenticate(req, res);
     if (!user) return true;
     try {
-      await pushOAuthTokensToVM(user.userId);
-      json(res, 200, { ok: true });
+      const accounts = await listExternalAccounts(user.userId);
+      const result = await storeOAuthTokensOnVM(user.userId, toOAuthVmTokens(accounts), { timeoutMs: 30_000, retry: true });
+      json(res, result.ok ? 200 : 502, result);
     } catch (e: any) {
       json(res, 500, { ok: false, error: e?.message || 'push_failed' });
     }

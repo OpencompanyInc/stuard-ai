@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getExternalAccount } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
+import { getVMOAuthAccount } from './vm-oauth';
 
 const FACEBOOK_API = 'https://graph.facebook.com/v22.0';
 const INSTAGRAM_API = 'https://graph.instagram.com/v22.0';
@@ -32,7 +33,7 @@ function requireUserId(): string {
 async function requireConnectedAccount(provider: 'facebook' | 'instagram' | 'threads', profileLabel?: string) {
   const userId = requireUserId();
   const profile = resolveProfile(profileLabel);
-  const acc = await getExternalAccount(userId, provider, profile);
+  const acc = await getVMOAuthAccount(provider, profile) || await getExternalAccount(userId, provider, profile);
   if (!acc?.access_token) throw new Error(`${provider}_not_connected`);
   return acc;
 }

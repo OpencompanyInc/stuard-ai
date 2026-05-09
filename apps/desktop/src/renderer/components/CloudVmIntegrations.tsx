@@ -22,13 +22,16 @@ const CLOUD_AI_HTTP =
 
 interface IntegrationEntry {
   provider: string;
-  profileLabel: string;
-  accountEmail: string | null;
-  isDefault: boolean;
-  connectedAt: string | null;
-  scopes: string[];
-  hasRefreshToken: boolean;
-  expiresAt: string | null;
+  profileLabel?: string;
+  accountEmail?: string | null;
+  isDefault?: boolean;
+  connectedAt?: string | null;
+  syncedAt?: string | null;
+  scopes?: string[];
+  hasAccessToken?: boolean;
+  hasRefreshToken?: boolean;
+  expiresAt?: string | null;
+  expired?: boolean;
 }
 
 interface VmServiceStatus {
@@ -53,6 +56,7 @@ interface IntegrationsResponse {
   engineRunning?: boolean;
   engineStatus?: string | null;
   integrations?: IntegrationEntry[];
+  vmIntegrations?: IntegrationEntry[];
   vm?: VmServiceStatus | null;
   deploys?: DeployEntry[];
   error?: string;
@@ -137,7 +141,8 @@ export function CloudVmIntegrations({
     );
   }
 
-  const integrations = data?.integrations || [];
+  const vmIntegrations = data?.vmIntegrations || [];
+  const integrations = vmIntegrations;
   const services = data?.vm?.services || {};
   const browserReachable = !!data?.vm?.browserReachable;
   const chrome = data?.vm?.chrome || '';
@@ -269,14 +274,13 @@ export function CloudVmIntegrations({
       <section className="rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card/30 p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-[10px] font-black text-theme-muted uppercase tracking-wider">
-            Connected accounts
+            VM accounts
           </h3>
           <span className="text-[10px] text-theme-muted">{integrations.length} total</span>
         </div>
         {integrations.length === 0 ? (
           <div className="text-xs text-theme-muted">
-            No integrations connected. Add accounts from the Tools view, then resume your
-            engine to push tokens to the VM.
+            No VM-local integrations connected. Add accounts from VM Settings while the engine is running.
           </div>
         ) : (
           <ul className="space-y-2">
@@ -347,7 +351,9 @@ function DeployStatusPill({ status }: { status: string }) {
 }
 
 function IntegrationRow({ it }: { it: IntegrationEntry }) {
-  const expired = it.expiresAt ? new Date(it.expiresAt).getTime() < Date.now() : false;
+  const expired = typeof it.expired === 'boolean'
+    ? it.expired
+    : it.expiresAt ? new Date(it.expiresAt).getTime() < Date.now() : false;
   return (
     <li className="flex items-center justify-between rounded-lg bg-theme-hover/40 px-3 py-2">
       <div className="flex items-center gap-2 min-w-0">
@@ -362,7 +368,7 @@ function IntegrationRow({ it }: { it: IntegrationEntry }) {
             )}
           </div>
           <div className="text-[10px] text-theme-muted truncate">
-            {it.accountEmail || it.profileLabel}
+            {it.accountEmail || it.profileLabel || 'default'}
           </div>
         </div>
       </div>
@@ -373,7 +379,7 @@ function IntegrationRow({ it }: { it: IntegrationEntry }) {
           </span>
         ) : (
           <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-green-500">
-            <Link2 className="w-3 h-3" /> Linked
+            <Link2 className="w-3 h-3" /> On VM
           </span>
         )}
       </div>

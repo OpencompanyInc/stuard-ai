@@ -250,6 +250,7 @@ declare global {
       botsPause: (id: string) => Promise<{ ok: boolean; bot?: any; error?: string }>;
       botsTriggerNow: (id: string) => Promise<{ ok: boolean; botId?: string; target?: 'local' | 'vm'; error?: string }>;
       botsTriggerOnVm: (id: string) => Promise<{ ok: boolean; target: 'vm'; error?: string }>;
+      botsGetVmStatus: (id: string) => Promise<{ ok: boolean; skipped?: boolean; bot?: any; bots?: any[]; error?: string }>;
       botsListTasks: (id: string) => Promise<{ ok: boolean; tasks?: any[]; total?: number; hasMore?: boolean; error?: string }>;
       botsGetWakeUpLog: (id: string, limit?: number) => Promise<{ ok: boolean; logs?: any[]; error?: string }>;
       botsAddTrigger: (id: string, input: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;

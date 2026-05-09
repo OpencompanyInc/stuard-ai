@@ -514,6 +514,10 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       sendNotifications = false,
       notificationDigest = [],
     } = body;
+    const isVMOrigin = path === '/v1/bot/wakeup'
+      || !!req.headers['x-vm-user-id']
+      || context?.isVM === true
+      || String(context?.executionTarget || '').toLowerCase() === 'vm';
 
     // Build in-memory kanban
     const taskStates: TaskState[] = (incomingTasks as any[]).map((t: any) => ({
@@ -709,7 +713,7 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
         const queryEmbedding = await getOrCreateQueryEmbedding(proactiveQuery).catch(() => undefined as number[] | undefined);
         const KNOWLEDGE_MAX_CHARS = 2000;
 
-        const desktopWs = getDesktopWs(auth.userId);
+        const desktopWs = isVMOrigin ? undefined : getDesktopWs(auth.userId);
 
         const fetchMemoryCtx = async (): Promise<string[]> => {
           const [knowledgeCtx, segmentMatches] = await Promise.all([
@@ -792,6 +796,11 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
     // Set up secrets context so get_skill_info can access skills
     const secretBag: Record<string, any> = {};
     secretBag.userId = auth.userId;
+    if (isVMOrigin) {
+      secretBag.executionTarget = 'vm';
+      secretBag.__executionTarget = 'vm';
+      secretBag.__vmOrigin = true;
+    }
     if (typeof botId === 'string' && botId.trim()) {
       secretBag.proactiveBotId = botId.trim();
     }
@@ -1000,6 +1009,32 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
         ok: result.ok,
         count: result.result?.count,
         error: result.error || result.result?.error,
+      });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // Runtime snapshot for the VM-owned bot scheduler. The desktop uses this
+  // after manual triggers so the UI can show "running" immediately instead of
+  // waiting for a completed run-log entry.
+  if (req.method === 'POST' && path === '/v1/bot/status') {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const botId = String(body?.botId || body?.id || '').trim();
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'bots_status', {}, 10_000);
+      const status = result.result || {};
+      const bots = Array.isArray(status?.bots) ? status.bots : [];
+      writeJson(res, 200, {
+        ok: result.ok,
+        ...status,
+        bot: botId ? (bots.find((b: any) => String(b?.id || '') === botId) || null) : undefined,
+        error: result.error || status?.error,
       });
     } catch (e: any) {
       writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });

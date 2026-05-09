@@ -112,7 +112,7 @@ function toVmBotPayload(bot: Bot, config: BotConfig): Record<string, any> {
     id: bot.id,
     name: bot.name,
     emoji: bot.emoji,
-    status: 'running',
+    status: bot.status === 'running' ? 'running' : bot.status === 'errored' ? 'errored' : 'paused',
     triggers: Array.isArray(bot.triggers) ? bot.triggers : [],
     lastRunAt: bot.lastRunAt ?? null,
     nextRunAt: bot.nextRunAt ?? null,
@@ -225,6 +225,18 @@ export async function pullBotMemoryFromVm(botId: string): Promise<{ ok: boolean;
     runLog: Array.isArray(result.runLog) ? result.runLog : [],
   });
   return { ok: true };
+}
+
+export async function getBotStatusFromVm(botId: string): Promise<{ ok: boolean; skipped?: boolean; bot?: any; bots?: any[]; error?: string }> {
+  const bot = botService.get(botId);
+  if (!bot || !bot.vmDeployedAt) return { ok: true, skipped: true, bot: null };
+  const result = await callBotEndpoint('/v1/bot/status', { botId });
+  if (!result.ok) return { ok: false, error: result.error };
+  return {
+    ok: true,
+    bot: result.bot || null,
+    bots: Array.isArray(result.bots) ? result.bots : undefined,
+  };
 }
 
 export async function pushBotMemoryToVm(botId: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {

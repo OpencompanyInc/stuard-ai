@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getExternalAccessToken } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
+import { getVMOAuthAccessToken } from './vm-oauth';
 
 const GH_API = 'https://api.github.com';
 
@@ -42,6 +43,8 @@ async function requireGithubToken(profileLabel?: string): Promise<string> {
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   const profile = resolveProfile(profileLabel);
+  const vmToken = await getVMOAuthAccessToken('github', profile, secrets as any);
+  if (vmToken) return vmToken;
   const token = await getExternalAccessToken(userId, 'github', profile);
   if (!token) throw new Error('github_not_connected');
   return token;

@@ -367,6 +367,9 @@ export class VMBotScheduler {
     if (this.inFlight.has(bot.id)) return { ok: false, error: 'already_running' };
     this.inFlight.add(bot.id);
     const startedAt = new Date().toISOString();
+    bot.lastRunAt = startedAt;
+    bot.nextRunAt = computeNextIntervalRunAt(bot, startedAt);
+    this.save();
 
     try {
       const cloudUrl = (process.env.CLOUD_AI_URL || process.env.CLOUD_PUBLIC_URL || 'http://localhost:8082').replace(/\/+$/, '');

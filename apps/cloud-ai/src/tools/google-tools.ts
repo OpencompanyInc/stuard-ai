@@ -5,6 +5,7 @@ import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
 import { PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL, GOOGLE_CLIENT_ID as CFG_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET as CFG_GOOGLE_CLIENT_SECRET } from '../utils/config';
 import { refreshGoogleTokenIfNeeded } from '../routes/integrations/google-shared';
+import { getVMOAuthAccount, listVMOAuthAccounts, shouldUseVMOAuth, storeVMOAuthAccount } from './vm-oauth';
 
 const GOOGLE_API = 'https://www.googleapis.com';
 const GOOGLE_CLIENT_ID = CFG_GOOGLE_CLIENT_ID || '';
@@ -44,7 +45,7 @@ function resolveProfile(explicit?: string): string | undefined {
 }
 
 async function getGoogleAccountOrThrow(userId: string, profileLabel?: string) {
-  const acc = await getExternalAccount(userId, 'google', profileLabel);
+  const acc = await getVMOAuthAccount('google', profileLabel) || await getExternalAccount(userId, 'google', profileLabel);
   if (!acc) throw new Error('google_not_connected');
   return acc;
 }
@@ -63,9 +64,10 @@ function targetForScopes(required: string[]): string | '' {
 
 function buildConnectPath(required: string[]): string {
   const target = targetForScopes(required);
-  if (target) return `/integrations/google/connect?target=${encodeURIComponent(target)}`;
+  const vmStore = shouldUseVMOAuth();
+  if (target) return `/integrations/google/connect?target=${encodeURIComponent(target)}${vmStore ? '&store=vm' : ''}`;
   const scopes = encodeURIComponent(required.join(' '));
-  return `/integrations/google/connect?scopes=${scopes}`;
+  return `/integrations/google/connect?scopes=${scopes}${vmStore ? '&store=vm' : ''}`;
 }
 
 const SCOPE_HIERARCHY: Record<string, string[]> = {
@@ -87,7 +89,7 @@ async function ensureConnectedAndScopes(required: string[], profileLabel?: strin
     throw error;
   }
   const profile = resolveProfile(profileLabel);
-  const acc = await getExternalAccount(userId, 'google', profile);
+  const acc = await getVMOAuthAccount('google', profile) || await getExternalAccount(userId, 'google', profile);
   if (!acc) {
     const connectPath = buildConnectPath(required);
     return { ok: false, error: 'google_not_connected', connectPath, url: `${PUBLIC_BASE}${connectPath}` } as const;
@@ -114,7 +116,9 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
   const userId = await requireUserId();
   const profile = resolveProfile(profileLabel);
   let acc = await getGoogleAccountOrThrow(userId, profile);
-  let accessToken = await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
+  let accessToken = acc.meta?.source === 'vm'
+    ? acc.access_token
+    : await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
 
   async function doFetch(token: string) {
     const headers: Record<string, string> = {
@@ -149,17 +153,26 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
         const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
         const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
         try {
-          await upsertExternalAccount({
-            userId,
-            provider: 'google',
-            access_token: newAccess,
-            scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
-            refresh_token: refresh_token || null,
-            expires_at,
-            meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
-            profileLabel: acc.profile_label || 'default',
-            accountEmail: acc.account_email || null,
-          });
+          if (acc.meta?.source === 'vm') {
+            await storeVMOAuthAccount('google', {
+              ...acc,
+              access_token: newAccess,
+              refresh_token: refresh_token || null,
+              expires_at,
+            });
+          } else {
+            await upsertExternalAccount({
+              userId,
+              provider: 'google',
+              access_token: newAccess,
+              scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
+              refresh_token: refresh_token || null,
+              expires_at,
+              meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
+              profileLabel: acc.profile_label || 'default',
+              accountEmail: acc.account_email || null,
+            });
+          }
         } catch { }
         acc = { ...acc, access_token: newAccess, expires_at, refresh_token };
         accessToken = newAccess;
@@ -194,7 +207,9 @@ export const google_list_profiles = createTool({
   inputSchema: z.object({}),
   execute: async () => {
     const userId = await requireUserId();
-    const accounts = await listExternalAccounts(userId, 'google');
+    const accounts = shouldUseVMOAuth()
+      ? await listVMOAuthAccounts('google')
+      : await listExternalAccounts(userId, 'google');
     const profiles = accounts.map(a => ({
       profile: a.profile_label,
       isDefault: a.is_default,
@@ -801,7 +816,9 @@ async function googleAuthorizedBinaryFetch(url: string, profileLabel?: string): 
   const userId = await requireUserId();
   const profile = resolveProfile(profileLabel);
   let acc = await getGoogleAccountOrThrow(userId, profile);
-  let accessToken = await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
+  let accessToken = acc.meta?.source === 'vm'
+    ? acc.access_token
+    : await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
 
   async function doFetch(token: string) {
     return fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -827,14 +844,23 @@ async function googleAuthorizedBinaryFetch(url: string, profileLabel?: string): 
         const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
         const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
         try {
-          await upsertExternalAccount({
-            userId, provider: 'google', access_token: newAccess,
-            scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
-            refresh_token: refresh_token || null, expires_at,
-            meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
-            profileLabel: acc.profile_label || 'default',
-            accountEmail: acc.account_email || null,
-          });
+          if (acc.meta?.source === 'vm') {
+            await storeVMOAuthAccount('google', {
+              ...acc,
+              access_token: newAccess,
+              refresh_token: refresh_token || null,
+              expires_at,
+            });
+          } else {
+            await upsertExternalAccount({
+              userId, provider: 'google', access_token: newAccess,
+              scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
+              refresh_token: refresh_token || null, expires_at,
+              meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
+              profileLabel: acc.profile_label || 'default',
+              accountEmail: acc.account_email || null,
+            });
+          }
         } catch { }
         accessToken = newAccess;
         res = await doFetch(accessToken);

@@ -568,6 +568,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsPause: (id: string) => ipcRenderer.invoke('bots:pause', id),
   botsTriggerNow: (id: string) => ipcRenderer.invoke('bots:triggerNow', id),
   botsTriggerOnVm: (id: string) => ipcRenderer.invoke('bots:triggerOnVm', id),
+  botsGetVmStatus: (id: string) => ipcRenderer.invoke('bots:getVmStatus', id),
   botsListTasks: (id: string) => ipcRenderer.invoke('bots:listTasks', id),
   botsGetWakeUpLog: (id: string, limit?: number) => ipcRenderer.invoke('bots:getWakeUpLog', id, limit),
   botsAddTrigger: (id: string, input: any) => ipcRenderer.invoke('bots:addTrigger', id, input),

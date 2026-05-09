@@ -4,6 +4,7 @@ import { getExternalAccount, getExternalAccessToken, upsertExternalAccount } fro
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
 import { DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET } from '../utils/config';
+import { getVMOAuthAccount, storeVMOAuthAccount } from './vm-oauth';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 
@@ -52,17 +53,27 @@ async function refreshDiscordToken(userId: string, acc: any): Promise<string | n
       const scopeStr = String(tBody.scope || '');
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(acc.scopes) ? acc.scopes : []);
       try {
-        await upsertExternalAccount({
-          userId,
-          provider: 'discord',
-          access_token: newAccess,
-          scopes,
-          refresh_token: refresh_token || null,
-          expires_at,
-          meta: { token_type: tBody.token_type || 'Bearer' },
-          profileLabel: acc.profile_label || 'default',
-          accountEmail: acc.account_email || null,
-        });
+        if (acc.meta?.source === 'vm') {
+          await storeVMOAuthAccount('discord', {
+            ...acc,
+            access_token: newAccess,
+            refresh_token: refresh_token || null,
+            expires_at,
+            scopes,
+          });
+        } else {
+          await upsertExternalAccount({
+            userId,
+            provider: 'discord',
+            access_token: newAccess,
+            scopes,
+            refresh_token: refresh_token || null,
+            expires_at,
+            meta: { token_type: tBody.token_type || 'Bearer' },
+            profileLabel: acc.profile_label || 'default',
+            accountEmail: acc.account_email || null,
+          });
+        }
       } catch {}
       return newAccess;
     }
@@ -77,7 +88,7 @@ async function refreshDiscordToken(userId: string, acc: any): Promise<string | n
 async function discordFetch(path: string, profileLabel?: string, init?: RequestInit) {
   const userId = requireUserId();
   const profile = resolveProfile(profileLabel);
-  let acc = await getExternalAccount(userId, 'discord', profile);
+  let acc = await getVMOAuthAccount('discord', profile) || await getExternalAccount(userId, 'discord', profile);
   if (!acc?.access_token) throw new Error('discord_not_connected');
 
   let accessToken = acc.access_token;

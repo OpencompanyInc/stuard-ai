@@ -8,7 +8,7 @@ import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop,
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, botMemoryService } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import logger from "../utils/logger";
@@ -1294,16 +1294,19 @@ export function setupIpc() {
   ipcMain.handle('bots:setStatus', (_e, id: string, status: any) => {
     const bot = botService.setStatus(String(id || ''), status);
     if (bot) syncBotTriggers(bot.id);
+    if (bot?.vmDeployedAt) syncVmBotIfDeployed(bot.id);
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:deploy', (_e, id: string) => {
     const bot = botService.setStatus(String(id || ''), 'running');
     if (bot) syncBotTriggers(bot.id);
+    if (bot?.vmDeployedAt) syncVmBotIfDeployed(bot.id);
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:pause', (_e, id: string) => {
     const bot = botService.setStatus(String(id || ''), 'paused');
     if (bot) syncBotTriggers(bot.id);
+    if (bot?.vmDeployedAt) syncVmBotIfDeployed(bot.id);
     return bot ? { ok: true, bot } : { ok: false, error: 'not_found' };
   });
   ipcMain.handle('bots:triggerNow', (_e, id: string) => triggerManualWakeUp(String(id || '')));
@@ -1313,6 +1316,7 @@ export function setupIpc() {
   // user would only see logs in the local app — even though the click came
   // from the VM tab.
   ipcMain.handle('bots:triggerOnVm', (_e, id: string) => triggerVmWakeUp(String(id || '')));
+  ipcMain.handle('bots:getVmStatus', (_e, id: string) => getBotStatusFromVm(String(id || '')));
   ipcMain.handle('bots:listTasks', (_e, id: string) => proactiveService.listTasks({ botId: String(id || ''), limit: 500 }));
   ipcMain.handle('bots:getWakeUpLog', (_e, id: string, limit?: number) =>
     proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 50, { botId: String(id || '') })

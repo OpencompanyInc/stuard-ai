@@ -376,6 +376,8 @@ async function handleCommand(command: string, args: any): Promise<any> {
     // ── OAuth Token Storage ──────────────────────────────────────────────
     case 'store_oauth_tokens':
       return storeOAuthTokens(args);
+    case 'remove_oauth_tokens':
+      return removeOAuthTokens(args);
     case 'get_oauth_token':
       return getOAuthToken(args);
     case 'oauth_list':
@@ -1827,7 +1829,7 @@ function storeOAuthTokens(args: any): any {
   if (!Array.isArray(tokens)) return { ok: false, error: 'tokens must be an array' };
 
   const now = new Date().toISOString();
-  _oauthTokens = tokens.map((t: any) => ({
+  const incoming: StoredOAuthToken[] = tokens.map((t: any) => ({
     provider: String(t.provider || ''),
     profileLabel: String(t.profileLabel || 'default'),
     isDefault: !!t.isDefault,
@@ -1838,9 +1840,51 @@ function storeOAuthTokens(args: any): any {
     accountEmail: t.accountEmail || null,
     syncedAt: now,
   }));
+  if (args.replace === false) {
+    if (_oauthTokens.length === 0) loadOAuthTokens();
+    for (const next of incoming) {
+      const previous = _oauthTokens.find((saved) =>
+        next.provider.toLowerCase() === saved.provider.toLowerCase() &&
+        next.profileLabel === saved.profileLabel
+      );
+      if (!previous) continue;
+      if (!next.refreshToken && previous.refreshToken) next.refreshToken = previous.refreshToken;
+      next.scopes = Array.from(new Set([
+        ...(Array.isArray(previous.scopes) ? previous.scopes : []),
+        ...(Array.isArray(next.scopes) ? next.scopes : []),
+      ]));
+    }
+    const existing = _oauthTokens.filter((saved) => !incoming.some((next: StoredOAuthToken) =>
+      next.provider.toLowerCase() === saved.provider.toLowerCase() &&
+      next.profileLabel === saved.profileLabel
+    ));
+    _oauthTokens = [...existing, ...incoming];
+  } else {
+    _oauthTokens = incoming;
+  }
   saveOAuthTokens();
   console.log(`[vm-agent] Stored ${_oauthTokens.length} OAuth tokens`);
   return { ok: true, count: _oauthTokens.length };
+}
+
+function removeOAuthTokens(args: any): any {
+  const provider = String(args?.provider || '').trim().toLowerCase();
+  const profileLabel = typeof args?.profileLabel === 'string' && args.profileLabel.trim()
+    ? args.profileLabel.trim()
+    : '';
+  if (!provider) return { ok: false, error: 'provider_required' };
+
+  loadOAuthTokens();
+  const before = _oauthTokens.length;
+  _oauthTokens = _oauthTokens.filter((token) => {
+    const providerMatches = token.provider.toLowerCase() === provider;
+    const profileMatches = !profileLabel || token.profileLabel === profileLabel;
+    return !(providerMatches && profileMatches);
+  });
+  const removed = before - _oauthTokens.length;
+  saveOAuthTokens();
+  console.log(`[vm-agent] Removed ${removed} OAuth token(s) for ${provider}${profileLabel ? `/${profileLabel}` : ''}`);
+  return { ok: true, removed, count: _oauthTokens.length };
 }
 
 function getOAuthToken(args: any): any {

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM } from '../cloud-engine';
+import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -16,6 +16,12 @@ import {
 // Valid Discord OAuth2 scopes
 // See https://discord.com/developers/docs/topics/oauth2#shared-resources-oauth2-scopes
 const DISCORD_SCOPES = 'identify guilds guilds.members.read';
+type OAuthStorageTarget = 'cloud' | 'vm';
+
+function resolveStorageTarget(parsedUrl: URL): OAuthStorageTarget {
+  const value = String(parsedUrl.searchParams.get('target') || parsedUrl.searchParams.get('store') || '').toLowerCase();
+  return value === 'vm' ? 'vm' : 'cloud';
+}
 
 async function getDiscordBotClientSafe(): Promise<any | null> {
   try {
@@ -104,9 +110,10 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
       const profileLabel = parsedUrl.searchParams.get('profile') || 'default';
       const redirectUri = `${PUBLIC_BASE_URL}${DISCORD_REDIRECT_PATH}`;
 
-      // State: discord:{userId}:{nonce}:{profileLabel}:{sig}
+      // State: discord:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig}
       const nonce = randomUUID();
-      const payload = `discord:${userId}:${nonce}:${profileLabel}`;
+      const storageTarget = resolveStorageTarget(parsedUrl);
+      const payload = `discord:${userId}:${nonce}:${profileLabel}:${storageTarget}`;
       const sig = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
       const state = Buffer.from(`${payload}:${sig}`).toString('base64url');
 
@@ -151,10 +158,14 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
       try { decoded = Buffer.from(stateRaw, 'base64url').toString('utf8'); } catch { }
       const parts = decoded.split(':');
 
+      // VM-settings format: discord:{userId}:{nonce}:{profileLabel}:{storageTarget}:{sig} (6 parts)
       // Format: discord:{userId}:{nonce}:{profileLabel}:{sig} (5 parts)
       // Legacy: discord:{userId}:{nonce}:{sig} (4 parts)
       let provider: string, userId: string, nonce: string, profileLabel: string, sig: string;
-      if (parts.length >= 5) {
+      let storageTarget: OAuthStorageTarget = 'cloud';
+      if (parts.length >= 6) {
+        provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; storageTarget = parts[4] === 'vm' ? 'vm' : 'cloud'; sig = parts[5];
+      } else if (parts.length >= 5) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = parts[3]; sig = parts[4];
       } else if (parts.length === 4) {
         provider = parts[0]; userId = parts[1]; nonce = parts[2]; profileLabel = 'default'; sig = parts[3];
@@ -164,7 +175,9 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         return true;
       }
 
-      const newPayload = `${provider}:${userId}:${nonce}:${profileLabel}`;
+      const newPayload = parts.length >= 6
+        ? `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`
+        : `${provider}:${userId}:${nonce}:${profileLabel}`;
       const expectNew = createHmac('sha256', INTEGRATION_STATE_SECRET).update(newPayload).digest('hex');
       const oldPayload = `${provider}:${userId}:${nonce}`;
       const expectOld = createHmac('sha256', INTEGRATION_STATE_SECRET).update(oldPayload).digest('hex');
@@ -202,6 +215,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
       const expires_in = tokenBody.expires_in ? Number(tokenBody.expires_in) : null;
       const scopeStr = String(tokenBody.scope || '');
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : [];
+      const expiresAt = expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null;
 
       // Fetch Discord user profile
       let accountEmail: string | null = null;
@@ -219,6 +233,38 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
         discordAvatar = user?.avatar ? String(user.avatar) : null;
       } catch { }
 
+      if (storageTarget === 'vm') {
+        const vmResult = await storeOAuthTokensOnVM(userId, [{
+          provider: 'discord',
+          profileLabel,
+          isDefault: true,
+          accessToken: access_token,
+          refreshToken: refresh_token || null,
+          expiresAt,
+          scopes,
+          accountEmail,
+        }], { timeoutMs: 30_000, retry: true, replace: false });
+        if (!vmResult.ok) {
+          const message = vmResult.error === 'engine_not_running'
+            ? 'Start the cloud engine, then connect Discord again so the VM can store the token.'
+            : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=discord&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        const botClient = await getDiscordBotClientSafe();
+        const botUserId = botClient?.user?.id || DISCORD_CLIENT_ID || '';
+        const successParams = new URLSearchParams({
+          provider: 'discord',
+          profile: profileLabel,
+          target: 'vm',
+          ...(botUserId ? { bot_id: botUserId } : {}),
+        });
+        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?${successParams.toString()}`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
+
       try {
         await upsertExternalAccount({
           userId,
@@ -226,7 +272,7 @@ export async function handleDiscordRoutes(req: IncomingMessage, res: ServerRespo
           access_token,
           scopes,
           refresh_token,
-          expires_at: expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null,
+          expires_at: expiresAt,
           meta: {
             token_type: tokenBody.token_type || 'Bearer',
             ...(discordUserId ? { discord_user_id: discordUserId } : {}),

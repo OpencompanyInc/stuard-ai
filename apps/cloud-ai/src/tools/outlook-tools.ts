@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getExternalAccessToken } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
+import { getVMOAuthAccessToken } from './vm-oauth';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -54,6 +55,8 @@ async function requireOutlookToken(profileLabel?: string): Promise<string> {
   const userId = String((secrets as any)?.userId || '');
   if (!userId) throw new Error('missing_user_context');
   const profile = resolveProfile(profileLabel);
+  const vmToken = await getVMOAuthAccessToken('outlook', profile, secrets as any);
+  if (vmToken) return vmToken;
   const token = await getExternalAccessToken(userId, 'outlook', profile);
   if (!token) throw new Error('outlook_not_connected');
   return token;

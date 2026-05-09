@@ -66,6 +66,17 @@ interface Bot {
   config?: BotConfig;
 }
 
+interface VmBotRuntime {
+  id: string;
+  name?: string;
+  status?: BotStatus;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  lastOutcome?: 'success' | 'partial' | 'failed';
+  lastError?: string;
+  isRunning?: boolean;
+}
+
 const COMMON_EMOJIS = ['🤖', '✨', '📊', '📰', '🐦', '📸', '🛒', '💼', '🎯', '🧠', '⚡', '🔔', '📅', '💡', '🎨', '📝'];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -914,9 +925,13 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
   const [runLog, setRunLog] = useState<any[]>([]);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [vmRuntime, setVmRuntime] = useState<VmBotRuntime | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-  const status = statusInfo(bot.status);
+  const vmRunActive = scope === 'vm' && !!vmRuntime?.isRunning;
+  const status = vmRunActive
+    ? { dot: 'bg-amber-400', label: 'Running now', textColor: 'text-amber-300', badgeTone: 'warning' as BadgeTone }
+    : statusInfo(bot.status);
 
   const reloadKanban = useCallback(async () => {
     const [cardsRes, logRes] = await Promise.all([
@@ -926,6 +941,19 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
     if (cardsRes?.ok && Array.isArray(cardsRes.cards)) setKanbanCards(cardsRes.cards);
     if (logRes?.ok && Array.isArray(logRes.runLog)) setRunLog(logRes.runLog);
   }, [bot.id]);
+
+  const loadVmRuntime = useCallback(async () => {
+    if (scope !== 'vm' || !bot.vmDeployedAt) {
+      setVmRuntime(null);
+      return null;
+    }
+    const res = await window.desktopAPI.botsGetVmStatus?.(bot.id);
+    if (res?.ok && res.bot) {
+      setVmRuntime(res.bot as VmBotRuntime);
+      return res.bot as VmBotRuntime;
+    }
+    return null;
+  }, [bot.id, bot.vmDeployedAt, scope]);
 
   const reload = useCallback(async () => {
     const [cfgRes, tasksRes, logsRes] = await Promise.all([
@@ -937,9 +965,21 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
     if (tasksRes?.ok && Array.isArray(tasksRes.tasks)) setTasks(tasksRes.tasks);
     if (logsRes?.ok && Array.isArray(logsRes.logs)) setLogs(logsRes.logs);
     await reloadKanban();
-  }, [bot.id, reloadKanban]);
+    await loadVmRuntime();
+  }, [bot.id, reloadKanban, loadVmRuntime]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    if (scope !== 'vm' || !bot.vmDeployedAt) return;
+    const id = window.setInterval(async () => {
+      const runtime = await loadVmRuntime();
+      if (runtime?.isRunning || running) {
+        await reloadKanban();
+      }
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [bot.vmDeployedAt, loadVmRuntime, reloadKanban, running, scope]);
 
   // Live-refresh the kanban when the bot (or the user) edits it from another
   // surface — e.g. a wake-up just appended a run-log entry, or another window
@@ -982,6 +1022,19 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
             console.warn('[bots] VM run failed:', res?.error);
             setRunError(reason);
           }
+        } else {
+          const now = new Date().toISOString();
+          setVmRuntime((prev) => ({
+            ...(prev || {}),
+            id: bot.id,
+            name: bot.name,
+            status: 'running',
+            isRunning: true,
+            lastRunAt: now,
+            nextRunAt: prev?.nextRunAt ?? bot.nextRunAt ?? null,
+          }));
+          window.setTimeout(() => { void loadVmRuntime(); }, 500);
+          window.setTimeout(() => { void loadVmRuntime(); void reloadKanban(); }, 2500);
         }
       } else {
         await window.desktopAPI.botsTriggerNow(bot.id);
@@ -1052,6 +1105,8 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
     return 'Manual';
   })();
   const nextRunValue = (() => {
+    if (vmRunActive) return 'Running now';
+    if (scope === 'vm' && vmRuntime?.nextRunAt) return formatClockTime(vmRuntime.nextRunAt);
     if (bot.status === 'errored') return 'Errored';
     if (bot.status !== 'running') return 'Paused';
     if (!bot.nextRunAt) return 'Waiting';
@@ -1101,11 +1156,11 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
           <button
             onClick={handleRunNow}
-            disabled={running}
+            disabled={running || vmRunActive}
             className="inline-flex items-center gap-2 rounded-full border border-theme bg-theme-card px-4 py-2 text-[13px] font-medium text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />}
-            {running ? 'Running' : 'Run Now'}
+            {running || vmRunActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />}
+            {running || vmRunActive ? 'Running' : 'Run Now'}
           </button>
           <button
             onClick={handleToggleStatus}

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
 import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM } from '../cloud-engine';
+import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -20,6 +20,7 @@ import {
 } from '../../utils/config';
 
 type MetaProvider = 'facebook' | 'instagram' | 'threads';
+type OAuthStorageTarget = 'cloud' | 'vm';
 
 type TokenResult = {
   access_token: string;
@@ -256,14 +257,19 @@ function parseScopes(value?: string | null): string[] {
     .filter(Boolean);
 }
 
-function buildState(provider: MetaProvider, userId: string, profileLabel: string): string {
+function resolveStorageTarget(parsedUrl: URL): OAuthStorageTarget {
+  const value = String(parsedUrl.searchParams.get('target') || parsedUrl.searchParams.get('store') || '').toLowerCase();
+  return value === 'vm' ? 'vm' : 'cloud';
+}
+
+function buildState(provider: MetaProvider, userId: string, profileLabel: string, storageTarget: OAuthStorageTarget): string {
   const nonce = randomUUID();
-  const payload = `${provider}:${userId}:${nonce}:${profileLabel}`;
+  const payload = `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`;
   const sig = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
   return Buffer.from(`${payload}:${sig}`).toString('base64url');
 }
 
-function verifyState(stateRaw: string): { provider: MetaProvider; userId: string; profileLabel: string } | null {
+function verifyState(stateRaw: string): { provider: MetaProvider; userId: string; profileLabel: string; storageTarget: OAuthStorageTarget } | null {
   let decoded = '';
   try {
     decoded = Buffer.from(stateRaw, 'base64url').toString('utf8');
@@ -272,12 +278,19 @@ function verifyState(stateRaw: string): { provider: MetaProvider; userId: string
   }
   const parts = decoded.split(':');
   if (parts.length < 5) return null;
-  const [provider, userId, nonce, profileLabel, sig] = parts;
+  const provider = parts[0];
+  const userId = parts[1];
+  const nonce = parts[2];
+  const profileLabel = parts[3];
+  const storageTarget: OAuthStorageTarget = parts.length >= 6 && parts[4] === 'vm' ? 'vm' : 'cloud';
+  const sig = parts.length >= 6 ? parts[5] : parts[4];
   if (provider !== 'facebook' && provider !== 'instagram' && provider !== 'threads') return null;
-  const payload = `${provider}:${userId}:${nonce}:${profileLabel}`;
+  const payload = parts.length >= 6
+    ? `${provider}:${userId}:${nonce}:${profileLabel}:${storageTarget}`
+    : `${provider}:${userId}:${nonce}:${profileLabel}`;
   const expected = createHmac('sha256', INTEGRATION_STATE_SECRET).update(payload).digest('hex');
   if (sig !== expected) return null;
-  return { provider, userId, profileLabel };
+  return { provider: provider as MetaProvider, userId, profileLabel, storageTarget };
 }
 
 function getProviderByRoute(pathname: string): ProviderConfig | null {
@@ -350,7 +363,7 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
 
       const profileLabel = parsedUrl.searchParams.get('profile') || 'default';
       const redirectUri = `${PUBLIC_BASE_URL}${cfg.redirectPath}`;
-      const state = buildState(cfg.provider, authResult.userId, profileLabel);
+      const state = buildState(cfg.provider, authResult.userId, profileLabel, resolveStorageTarget(parsedUrl));
       const authorize = new URL(cfg.authorizeUrl);
       authorize.searchParams.set('client_id', cfg.clientId);
       authorize.searchParams.set('redirect_uri', redirectUri);
@@ -399,6 +412,29 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
       const profile = await cfg.fetchProfile(token.access_token);
       const scopes = parseScopes(token.scope).length > 0 ? parseScopes(token.scope) : parseScopes(cfg.requestedScopes());
       const expiresAt = token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : null;
+      const accountEmail = cfg.formatAccountLabel(profile);
+
+      if (verified.storageTarget === 'vm') {
+        const vmResult = await storeOAuthTokensOnVM(verified.userId, [{
+          provider: cfg.provider,
+          profileLabel: verified.profileLabel,
+          isDefault: true,
+          accessToken: token.access_token,
+          refreshToken: token.refresh_token ?? null,
+          expiresAt,
+          scopes,
+          accountEmail,
+        }], { timeoutMs: 30_000, retry: true, replace: false });
+        if (!vmResult.ok) {
+          const message = vmResult.error === 'engine_not_running'
+            ? `Start the cloud engine, then connect ${cfg.provider} again so the VM can store the token.`
+            : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
+          redirect(res, `${WEBSITE_BASE_URL}/integrations/error?provider=${encodeURIComponent(cfg.provider)}&message=${encodeURIComponent(message)}`);
+          return true;
+        }
+        redirect(res, `${WEBSITE_BASE_URL}/integrations/success?provider=${encodeURIComponent(cfg.provider)}&profile=${encodeURIComponent(verified.profileLabel)}&target=vm`);
+        return true;
+      }
 
       await upsertExternalAccount({
         userId: verified.userId,
@@ -414,7 +450,7 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
           provider: cfg.provider,
         },
         profileLabel: verified.profileLabel,
-        accountEmail: cfg.formatAccountLabel(profile),
+        accountEmail,
       });
 
       // Auto-sync OAuth tokens to running VM (fire-and-forget)
