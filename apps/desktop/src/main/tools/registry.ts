@@ -30,6 +30,8 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'workspace_get_info': { kind: 'electron' },
   'test_run_steps': { kind: 'electron' },  // Test run workflow steps
   'list_local_workflows': { kind: 'electron' },  // List saved workflows
+  'read_local_workflow': { kind: 'electron' },  // Read a saved workflow's JSON
+  'deploy_local_workflow': { kind: 'electron' },  // Deploy/undeploy a saved workflow locally
   'list_local_stuards': { kind: 'electron' },  // List saved stuards
   'play_audio': { kind: 'electron' },
   'get_clipboard_content': { kind: 'electron' },

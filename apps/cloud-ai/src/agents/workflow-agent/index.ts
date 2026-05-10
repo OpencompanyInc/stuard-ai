@@ -31,6 +31,7 @@ import {
 } from '../../tools/device/shared';
 import { executeStep, listWorkflows, inspectWorkflow } from './tools';
 import { searchWorkflowDocs } from './docs';
+import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
@@ -174,6 +175,8 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
     create_directory: createLoggedTool(create_directory, 'create_directory'),
     // 13. Edit non-stuard files (string-based find/replace)
     file_edit: createLoggedTool(file_edit, 'file_edit'),
+    // 14. Deploy workflow to desktop and/or VM targets
+    deploy_workflow: createLoggedTool(deployWorkflow, 'deploy_workflow'),
   });
 
   for (const [name, tool] of Object.entries(options.extraTools || {})) {
@@ -284,4 +287,5 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
 // Re-export tools for external use
 export { executeStep, listWorkflows, inspectWorkflow } from './tools';
 export { searchWorkflowDocs } from './docs';
+export { deployWorkflow } from './deploy';
 export { workflowModifyTool } from '../../tools/workflow';

@@ -7,7 +7,7 @@ import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execAskUserInApp } from './handlers/ask-user-inapp';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
-import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execListLocalStuards } from './handlers/workflow';
+import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execReadLocalWorkflow, execDeployLocalWorkflow, execListLocalStuards } from './handlers/workflow';
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
@@ -216,6 +216,8 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'workspace_get_info') return execWorkspaceGetInfo(args, ctx);
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
       if (toolName === 'list_local_workflows') return execListLocalWorkflows(args, ctx);
+      if (toolName === 'read_local_workflow') return execReadLocalWorkflow(args, ctx);
+      if (toolName === 'deploy_local_workflow') return execDeployLocalWorkflow(args, ctx);
       if (toolName === 'list_local_stuards') return execListLocalStuards(args, ctx);
       if (toolName === 'get_clipboard_content') return execGetClipboardContent(args, ctx);
       if (toolName === 'set_clipboard_content') return execSetClipboardContent(args, ctx);

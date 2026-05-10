@@ -242,6 +242,7 @@ const WORKFLOW_TOOLS = [
   'write_file',
   'create_directory',
   'file_edit',
+  'deploy_workflow',
 ] as const;
 
 export const WORKFLOW_PACK: CapabilityPack = {

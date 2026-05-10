@@ -187,6 +187,12 @@ YOUR TOOLS
 11. write_file({ path, content }) — Write files
 12. create_directory({ path }) — Create directories
 13. file_edit({ path, mode, ... }) — Edit files
+14. deploy_workflow({ workflowId, targets, undeploy? }) — Deploy a saved workflow.
+    targets is an array — pass ["desktop"] for local autostart, ["vm"] for the
+    user's Cloud VM, or ["desktop", "vm"] for both. VM target requires the
+    workflow to avoid desktop-only tools (mouse/keyboard/screen capture/custom
+    UI/etc.). Set undeploy:true to disable autostart locally (desktop only).
+    Always inspect_workflow first to confirm topology and validation are clean.
 
 CRITICAL: BEFORE calling modify_workflow, call inspect_workflow in the same turn.
 Never modify from memory; inspect the live workflow first.

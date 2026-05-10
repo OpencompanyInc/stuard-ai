@@ -1,6 +1,15 @@
 import * as path from 'path';
 import { app } from 'electron';
-import { readWorkflowModel, designerModelToStuardSpec, workflows_list } from '../../workflows/workflows';
+import {
+  readWorkflowModel,
+  designerModelToStuardSpec,
+  workflows_list,
+  workflows_read,
+  workflows_save,
+  workflows_deploy,
+  workflows_undeploy,
+  workflows_getDeployStatus,
+} from '../../workflows/workflows';
 import { runStuardEngine, EngineContext } from '../../engine';
 import { stuards_save, stuards_list } from '../../stuards';
 import { RouterContext } from '../types';
@@ -244,6 +253,76 @@ export async function execListLocalWorkflows(args: any, ctx: RouterContext): Pro
   } catch (e: any) {
     ctx.logFn(`list_local_workflows error: ${e?.message}`);
     return { ok: false, workflows: [], error: e?.message || 'failed' };
+  }
+}
+
+/**
+ * Read a saved workflow's JSON content from disk.
+ */
+export async function execReadLocalWorkflow(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const id = String(args?.workflowId || args?.id || '').trim();
+    if (!id) return { ok: false, error: 'missing_workflowId' };
+    const result: any = workflows_read(id);
+    if (!result?.ok) return { ok: false, error: result?.error || 'read_failed' };
+    const content = String(result.content || '');
+    let model: any = null;
+    try { model = content ? JSON.parse(content) : null; } catch { model = null; }
+    return {
+      ok: true,
+      id: result.id,
+      content,
+      model,
+      isWorkspace: result.isWorkspace,
+      workspacePath: result.workspacePath,
+    };
+  } catch (e: any) {
+    ctx.logFn(`read_local_workflow error: ${e?.message}`);
+    return { ok: false, error: e?.message || 'read_failed' };
+  }
+}
+
+/**
+ * Deploy or undeploy a saved workflow on the local desktop.
+ *
+ * If `definition` is provided, it is saved first (overwriting any existing
+ * file). Otherwise the workflow on disk is deployed as-is. Set `undeploy:true`
+ * to disable autostart and stop the runtime.
+ */
+export async function execDeployLocalWorkflow(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const workflowId = String(args?.workflowId || args?.id || '').trim();
+    if (!workflowId) return { ok: false, error: 'missing_workflowId' };
+
+    const definition = args?.definition;
+    if (definition && typeof definition === 'object') {
+      const content = JSON.stringify(definition, null, 2);
+      const saveRes = workflows_save({ id: workflowId, content });
+      if (!saveRes?.ok) return { ok: false, error: saveRes?.error || 'save_failed' };
+    }
+
+    if (args?.undeploy === true) {
+      const undeployRes = workflows_undeploy(workflowId);
+      return undeployRes;
+    }
+
+    const deployRes = workflows_deploy(workflowId);
+    if (!deployRes?.ok) return deployRes;
+
+    let status: any = null;
+    try { status = workflows_getDeployStatus(workflowId); } catch { /* best-effort */ }
+
+    return {
+      ok: true,
+      workflowId,
+      deployed: deployRes.deployed ?? true,
+      autostart: deployRes.autostart ?? true,
+      running: status?.running ?? true,
+      triggers: status?.triggers || [],
+    };
+  } catch (e: any) {
+    ctx.logFn(`deploy_local_workflow error: ${e?.message}`);
+    return { ok: false, error: e?.message || 'deploy_failed' };
   }
 }
 
