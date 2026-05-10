@@ -3,16 +3,18 @@ import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Image, File, X, Plus, Mic, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo, Folder, Sparkles, AtSign } from 'lucide-react';
+import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
 import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
 import { ContextItem, FileNavRef } from '../FileNavigator';
-import { FolderPermissionsPopover } from './FolderPermissionsPopover';
 import type { ReasoningLevel } from '../../hooks/usePreferences';
 import type { ContextUsageMetrics } from '../../utils/contextUsage';
 import { ContextUsageIndicator } from '../ContextUsageIndicator';
 import { supabase } from '../../lib/supabaseClient';
+import { VoiceOrb, type VoiceState } from '../voice/VoiceOrb';
+import { describeTool, friendlyVoiceState } from '../voice/voiceLabels';
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../hooks/useVoiceMode';
 
 // ── Realtime Voice Conversation Test Helpers ──
 
@@ -107,8 +109,6 @@ interface ChatInputAreaProps {
   onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
-  isRecording?: boolean;
-  onMicClick?: () => void;
   attachments?: Array<{ type: 'image' | 'file'; name: string }>;
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
@@ -130,7 +130,6 @@ interface ChatInputAreaProps {
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
   fileNavRef?: React.RefObject<FileNavRef>;
-  /** Current tab ID — passed to FolderPermissionsPopover for session scoping. */
   activeTabId?: string;
   /** Attached context items (files, folders, spaces, bots) — rendered as pills above the textarea. */
   contextPaths?: ContextItem[];
@@ -139,6 +138,15 @@ interface ChatInputAreaProps {
   onOpenFileNav?: () => void;
   /** Close the @ file navigator and strip leftover @&lt;filter&gt; from the textarea. */
   onCloseFileNav?: () => void;
+  // Voice mode
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
+  voiceState?: VoiceModeState;
+  voiceAudioLevel?: number;
+  voiceMuted?: boolean;
+  onVoiceMuteToggle?: () => void;
+  voiceTranscripts?: TranscriptLine[];
+  voiceActiveTools?: VoiceToolEvent[];
 }
 
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -148,8 +156,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onSteer,
   onStop,
   isStreaming = false,
-  isRecording,
-  onMicClick,
   attachments = [],
   onRemoveAttachment,
   onAttachFiles,
@@ -176,6 +182,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onRemoveContext,
   onOpenFileNav,
   onCloseFileNav,
+  voiceActive = false,
+  onToggleVoice,
+  voiceState = 'idle',
+  voiceAudioLevel = 0,
+  voiceMuted = false,
+  onVoiceMuteToggle,
+  voiceTranscripts = [],
+  voiceActiveTools = [],
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
@@ -692,172 +706,275 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Input Row */}
-      <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              type="button"
-              className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-theme-card transition-colors text-theme-muted hover:text-theme-fg"
-              title="Attach"
+      {/* Input Row — voice strip or text input */}
+      {voiceActive ? (
+        <motion.div layout className="flex flex-col gap-1.5 relative">
+          <motion.div
+            layout
+            className="flex items-center gap-2 bg-theme-hover/55 rounded-[24px] p-1.5 pr-2 border border-theme/10 backdrop-blur-xl"
+          >
+            <motion.div
+              layout
+              initial={{ scale: 0.85 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+              className="flex-shrink-0 flex items-center justify-center"
+              style={{ width: 40, height: 40 }}
             >
-              <Plus className="w-5 h-5" />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="DropdownContent z-[10005] min-w-[200px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" sideOffset={8} align="start" collisionPadding={10}>
-              {onOpenFileNav && (
-                <DropdownMenu.Item
-                  onSelect={() => onOpenFileNav()}
-                  className="group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-theme-hover cursor-pointer"
-                >
-                  <AtSign className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" strokeWidth={2.2} />
-                  <span className="flex-1">Add context</span>
-                  <span className="text-[10px] font-mono text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">@</span>
-                </DropdownMenu.Item>
+              <VoiceOrb
+                state={(voiceState === 'connecting' ? 'thinking' : voiceState) as VoiceState}
+                audioLevel={voiceAudioLevel}
+                size={40}
+              />
+            </motion.div>
+            <div className="flex-1 min-w-0 px-1 flex flex-col justify-center">
+              <AnimatePresence mode="wait">
+                {voiceTranscripts[voiceTranscripts.length - 1]?.text ? (
+                  <motion.p
+                    key={`t-${voiceTranscripts[voiceTranscripts.length - 1].id}`}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -3 }}
+                    transition={{ duration: 0.18 }}
+                    className={clsx(
+                      'text-[13px] leading-snug truncate',
+                      voiceTranscripts[voiceTranscripts.length - 1].role === 'user'
+                        ? 'text-theme-fg font-medium'
+                        : 'text-theme-fg/70 italic',
+                      !voiceTranscripts[voiceTranscripts.length - 1].isFinal && 'opacity-70',
+                    )}
+                  >
+                    {voiceTranscripts[voiceTranscripts.length - 1].text}
+                  </motion.p>
+                ) : (
+                  <motion.div
+                    key={`s-${voiceState}`}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -3 }}
+                    transition={{ duration: 0.22 }}
+                    className="flex items-center gap-1.5 min-w-0"
+                  >
+                    {voiceActiveTools.length > 0 && (
+                      <Loader2 size={11} className="animate-spin text-theme-muted flex-shrink-0" />
+                    )}
+                    <span className="text-[13px] text-theme-fg/85 font-medium tracking-wide truncate">
+                      {friendlyVoiceState(voiceState as any)}
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            <button
+              onClick={onVoiceMuteToggle}
+              title={voiceMuted ? 'Unmute' : 'Mute'}
+              className={clsx(
+                'h-9 w-9 rounded-[16px] flex items-center justify-center transition-all flex-shrink-0',
+                voiceMuted
+                  ? 'bg-red-500/15 text-red-500'
+                  : 'text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60',
               )}
-              <DropdownMenu.Item
-                onSelect={() => onAttachFiles?.()}
-                className={clsx(
-                  "group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
-                  onAttachFiles ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
-                )}
-              >
-                <File className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
-                <span>Attach files</span>
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                onSelect={() => onAttachImages?.()}
-                className={clsx(
-                  "group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
-                  onAttachImages ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
-                )}
-              >
-                <Image className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
-                <span>Attach images</span>
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+            >
+              {voiceMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={onToggleVoice}
+              title="Exit voice mode"
+              className="h-9 w-9 rounded-[16px] flex items-center justify-center text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-all flex-shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </motion.div>
 
-        <div className="flex-1 relative rounded-xl transition-all flex items-center">
-          <TextareaAutosize
-            ref={textareaRef}
-            data-onboarding="chat-input"
-            className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2"
-            placeholder={isStreaming
-              ? "Ask next or steer current step"
-              : "Just ask Stuard"}
-            value={query}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
-            onPaste={onPaste}
-            onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-              if ((e.nativeEvent as any)?.isComposing) return;
+          <AnimatePresence>
+            {voiceActiveTools.length > 0 && (
+              <motion.div
+                key="cv-tool-rail"
+                initial={{ opacity: 0, y: -4, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: 'auto' }}
+                exit={{ opacity: 0, y: -4, height: 0 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-wrap gap-1.5 px-1">
+                  {voiceActiveTools.map((t) => (
+                    <motion.div
+                      key={t.callId}
+                      layout
+                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: -4 }}
+                      transition={{ duration: 0.2 }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-theme/15 bg-theme-hover/60 backdrop-blur-md px-2.5 py-1 shadow-sm"
+                    >
+                      {t.name === 'delegate' ? (
+                        <Sparkles size={10} className="text-violet-500/80" />
+                      ) : (
+                        <Loader2 size={10} className="animate-spin text-theme-muted" />
+                      )}
+                      <span className="text-[11px] text-theme-fg/85 font-medium tracking-wide">{t.label}</span>
+                      {t.detail && (
+                        <span className="text-[10.5px] text-theme-muted truncate max-w-[160px]">{t.detail}</span>
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      ) : (
+        <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-theme-card transition-colors text-theme-muted hover:text-theme-fg"
+                title="Attach"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="DropdownContent z-[10005] min-w-[200px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" sideOffset={8} align="start" collisionPadding={10}>
+                {onOpenFileNav && (
+                  <DropdownMenu.Item
+                    onSelect={() => onOpenFileNav()}
+                    className="group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-theme-hover cursor-pointer"
+                  >
+                    <AtSign className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" strokeWidth={2.2} />
+                    <span className="flex-1">Add context</span>
+                    <span className="text-[10px] font-mono text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">@</span>
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item
+                  onSelect={() => onAttachFiles?.()}
+                  className={clsx(
+                    "group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                    onAttachFiles ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
+                  )}
+                >
+                  <File className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
+                  <span>Attach files</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => onAttachImages?.()}
+                  className={clsx(
+                    "group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                    onAttachImages ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
+                  )}
+                >
+                  <Image className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
+                  <span>Attach images</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
 
-              if (showFileNav && fileNavRef?.current) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  fileNavRef.current.moveSelection(1);
-                  return;
-                }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  fileNavRef.current.moveSelection(-1);
-                  return;
-                }
-                if (e.key === 'Enter' || e.key === 'Tab') {
-                  e.preventDefault();
-                  fileNavRef.current.selectCurrent();
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  onCloseFileNav?.();
-                  return;
-                }
-                // Space while the navigator is open:
-                //   - If the typed token resolves to a real entry, add it.
-                //   - If nothing matches, let the space fall through so the
-                //     "@<typed>" stays in the textarea and the popup closes
-                //     (the picker's auto-dismiss-on-whitespace handles it).
-                if (e.key === ' ') {
-                  const added = fileNavRef.current.addCurrent();
-                  if (added) {
+          <div className="flex-1 relative rounded-xl transition-all flex items-center">
+            <TextareaAutosize
+              ref={textareaRef}
+              data-onboarding="chat-input"
+              className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2"
+              placeholder={isStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
+              value={query}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+              onPaste={onPaste}
+              onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                if ((e.nativeEvent as any)?.isComposing) return;
+
+                if (showFileNav && fileNavRef?.current) {
+                  if (e.key === 'ArrowDown') {
                     e.preventDefault();
+                    fileNavRef.current.moveSelection(1);
+                    return;
                   }
-                  return;
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    fileNavRef.current.moveSelection(-1);
+                    return;
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    fileNavRef.current.selectCurrent();
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    onCloseFileNav?.();
+                    return;
+                  }
+                  if (e.key === ' ') {
+                    const added = fileNavRef.current.addCurrent();
+                    if (added) e.preventDefault();
+                    return;
+                  }
                 }
-              }
 
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                // Cmd/Ctrl+Enter: quick override → opposite of the active mode
-                if (canSteer && (e.metaKey || e.ctrlKey) && query.trim()) {
-                  if (interjectMode === 'steer') onSend();
-                  else onSteer?.();
-                } else {
-                  sendInActiveMode();
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (canSteer && (e.metaKey || e.ctrlKey) && query.trim()) {
+                    if (interjectMode === 'steer') onSend();
+                    else onSteer?.();
+                  } else {
+                    sendInActiveMode();
+                  }
                 }
-              }
+              }}
+              minRows={1}
+              maxRows={3}
+              autoFocus
+            />
+          </div>
+
+          <ModelSelector
+            selectedModelId={selectedModelId}
+            onSelectModel={(id) => {
+              try { onChatModeChange?.(id as any); } catch { }
             }}
-            minRows={1}
-            maxRows={3}
-            autoFocus
+            reasoningLevel={reasoningLevel}
+            onReasoningLevelChange={onReasoningLevelChange}
+            side="top"
+            align="end"
           />
+
+          {isStreaming && !query.trim() ? (
+            <button
+              onClick={onStop}
+              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-red-500 text-white hover:bg-red-600 flex-shrink-0"
+              title="Stop generation"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          ) : query.trim() ? (
+            <button
+              onClick={sendInActiveMode}
+              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
+              title={
+                canSteer
+                  ? interjectMode === 'steer'
+                    ? "Steer current step (Cmd/Ctrl+Enter to queue instead)"
+                    : "Queue after this turn (Cmd/Ctrl+Enter to steer instead)"
+                  : "Send message"
+              }
+            >
+              {canSteer && interjectMode === 'steer' ? (
+                <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
+              ) : (
+                <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={onToggleVoice}
+              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
+              title="Voice mode"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+          )}
         </div>
-
-        <ModelSelector
-          selectedModelId={selectedModelId}
-          onSelectModel={(id) => {
-            try { onChatModeChange?.(id as any); } catch { }
-          }}
-          reasoningLevel={reasoningLevel}
-          onReasoningLevelChange={onReasoningLevelChange}
-          side="top"
-          align="end"
-        />
-
-        <FolderPermissionsPopover sessionId={activeTabId} />
-
-        {isStreaming && !query.trim() ? (
-          <button
-            onClick={onStop}
-            className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-red-500 text-white hover:bg-red-600 flex-shrink-0"
-            title="Stop generation"
-          >
-            <Square className="w-4 h-4 fill-current" />
-          </button>
-        ) : query.trim() ? (
-          <button
-            onClick={sendInActiveMode}
-            className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
-            title={
-              canSteer
-                ? interjectMode === 'steer'
-                  ? "Steer current step (Cmd/Ctrl+Enter to queue instead)"
-                  : "Queue after this turn (Cmd/Ctrl+Enter to steer instead)"
-                : "Send message"
-            }
-          >
-            {canSteer && interjectMode === 'steer' ? (
-              <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
-            ) : (
-              <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
-            )}
-          </button>
-        ) : (
-          <button
-            onClick={onMicClick}
-            className={clsx(
-              "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
-              isRecording ? "bg-red-500 text-white animate-pulse" : "bg-primary text-primary-fg hover:opacity-90"
-            )}
-            title={isRecording ? "Stop recording" : "Voice input"}
-          >
-            <Mic className="w-5 h-5" />
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 };

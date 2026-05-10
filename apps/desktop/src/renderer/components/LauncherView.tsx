@@ -29,7 +29,6 @@ import {
   Sparkles,
   Zap,
   MessageCircle,
-  Grid3X3,
   FolderSearch,
   MessageSquare,
   ListTodo,
@@ -224,15 +223,6 @@ const quickActions = [
     bgLight: "bg-emerald-500/10",
     textColor: "text-emerald-500",
     description: "Search your files",
-  },
-  {
-    id: "spaces",
-    label: "Spaces",
-    icon: Grid3X3,
-    color: "from-blue-500 to-cyan-600",
-    bgLight: "bg-blue-500/10",
-    textColor: "text-blue-500",
-    description: "Organize projects",
   },
   {
     id: "sidebar",
@@ -849,9 +839,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       switch (actionId) {
         case "workflows":
           (window as any).desktopAPI?.openWorkflows?.();
-          break;
-        case "spaces":
-          onToggleSidebar?.();
           break;
         case "files":
           setQuery("@");

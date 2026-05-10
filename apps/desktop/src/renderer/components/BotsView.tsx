@@ -9,6 +9,8 @@ import {
   Maximize2, LayoutGrid,
 } from 'lucide-react';
 import { KanbanTab } from './bots/KanbanTab';
+import { supabase } from '../lib/supabaseClient';
+import { getCloudAiHttp } from '../utils/cloud';
 import {
   SCHEDULE_LABELS,
   NOTIFICATION_CHANNEL_LABELS,
@@ -84,10 +86,12 @@ const COMMON_EMOJIS = ['🤖', '✨', '📊', '📰', '🐦', '📸', '🛒', '�
 interface BotBlueprint {
   name: string;
   emoji: string;
+  description?: string;
   systemPrompt: string;
   instructions: string;
   allowedTools: string[];
   interval: ScheduleInterval;
+  toolRationale?: Array<{ tool: string; reason: string }>;
 }
 
 const BOT_TOOL_RULES: Array<{ keywords: string[]; tools: string[]; emojiIndex?: number }> = [
@@ -190,6 +194,86 @@ function buildBotBlueprint(goal: string, availableTools: string[], preferredName
   ].join(' ');
 
   return { name, emoji, systemPrompt, instructions, allowedTools: tools, interval };
+}
+
+const INTERNAL_BOT_TOOLS = new Set([
+  'search_tools',
+  'get_tool_schema',
+  'execute_tool',
+  'get_skill_info',
+  'choose_notification_channel',
+  'write_session_summary',
+  'search_past_conversations',
+  'get_conversation_context',
+]);
+
+function isInternalBotTool(tool: string): boolean {
+  return INTERNAL_BOT_TOOLS.has(tool)
+    || tool.startsWith('proactive_task_')
+    || tool.startsWith('bot_memory_');
+}
+
+function normalizeAiBlueprint(raw: any, goal: string, availableTools: string[], preferredName?: string): BotBlueprint {
+  const fallback = buildBotBlueprint(goal, availableTools, preferredName);
+  const available = new Set(availableTools);
+  const canUseTool = (tool: string) => {
+    if (!tool || isInternalBotTool(tool)) return false;
+    if (tool.startsWith('browser_') && !tool.startsWith('browser_use_')) return false;
+    return available.size === 0 || available.has(tool);
+  };
+
+  const tools: string[] = Array.isArray(raw?.allowedTools)
+    ? Array.from(new Set<string>(raw.allowedTools.map((tool: any) => String(tool || '').trim()).filter(canUseTool))).slice(0, 12)
+    : fallback.allowedTools;
+
+  const interval = ['10m', '15m', '30m', '1h', '2h', 'random', 'manual'].includes(String(raw?.interval || ''))
+    ? String(raw.interval) as ScheduleInterval
+    : fallback.interval;
+
+  const toolRationale = Array.isArray(raw?.toolRationale)
+    ? raw.toolRationale
+        .map((entry: any) => ({
+          tool: String(entry?.tool || '').trim(),
+          reason: compactWhitespace(String(entry?.reason || '')),
+        }))
+        .filter((entry: { tool: string; reason: string }) => canUseTool(entry.tool) && entry.reason)
+        .slice(0, 12)
+    : undefined;
+
+  return {
+    name: compactWhitespace(String(raw?.name || '')) || fallback.name,
+    emoji: compactWhitespace(String(raw?.emoji || '')) || fallback.emoji,
+    description: compactWhitespace(String(raw?.description || '')) || fallback.description,
+    systemPrompt: String(raw?.systemPrompt || '').trim() || fallback.systemPrompt,
+    instructions: compactWhitespace(String(raw?.instructions || '')) || fallback.instructions,
+    allowedTools: tools.length > 0 ? tools : fallback.allowedTools,
+    interval,
+    toolRationale,
+  };
+}
+
+async function generateBotBlueprintWithAi(goal: string, availableTools: string[], preferredName?: string): Promise<BotBlueprint> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token || '';
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${getCloudAiHttp()}/inference/ai/bot-blueprint`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      goal,
+      preferredName,
+      availableTools,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok || !payload?.blueprint) {
+    throw new Error(String(payload?.error || `bot_blueprint_failed_${response.status}`));
+  }
+
+  return normalizeAiBlueprint(payload.blueprint, goal, availableTools, preferredName);
 }
 
 function timeAgo(dateStr: string | null | undefined): string {
@@ -910,6 +994,8 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [availableTools, setAvailableTools] = useState<string[]>([]);
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const [interval, setInterval] = useState<ScheduleInterval>('30m');
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -923,28 +1009,53 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
     return () => { cancelled = true; };
   }, []);
 
-  const applyAutomaticSetup = useCallback(() => {
-    const blueprint = buildBotBlueprint(goal || systemPrompt || name, availableTools, name);
-    setName(blueprint.name);
-    setEmoji(blueprint.emoji);
-    setSystemPrompt(blueprint.systemPrompt);
-    setInstructions(blueprint.instructions);
-    setSelectedTools(blueprint.allowedTools);
-    setInterval(blueprint.interval);
+  const applyAutomaticSetup = useCallback(async () => {
+    const seed = compactWhitespace(goal || systemPrompt || name);
+    if (!seed) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      let blueprint: BotBlueprint;
+      try {
+        blueprint = await generateBotBlueprintWithAi(seed, availableTools, name);
+      } catch (e) {
+        console.warn('AI bot blueprint generation failed; using local fallback', e);
+        blueprint = buildBotBlueprint(seed, availableTools, name);
+        setGenerateError('AI setup was unavailable, so a local setup was generated.');
+      }
+      setName(blueprint.name);
+      setEmoji(blueprint.emoji);
+      setSystemPrompt(blueprint.systemPrompt);
+      setInstructions(blueprint.instructions);
+      setSelectedTools(blueprint.allowedTools);
+      setInterval(blueprint.interval);
+    } finally {
+      setGenerating(false);
+    }
   }, [availableTools, goal, name, systemPrompt]);
 
   const handleCreate = async () => {
-    const fallbackBlueprint = (!systemPrompt.trim() || !name.trim()) && compactWhitespace(goal || systemPrompt)
-      ? buildBotBlueprint(goal || systemPrompt, availableTools, name)
-      : null;
-    const finalName = compactWhitespace(name || fallbackBlueprint?.name || '');
-    if (!finalName) return;
-    const finalPrompt = systemPrompt.trim() || fallbackBlueprint?.systemPrompt || '';
-    const finalInstructions = instructions.trim() || fallbackBlueprint?.instructions || '';
-    const finalTools = selectedTools.length > 0 ? selectedTools : (fallbackBlueprint?.allowedTools || []);
-    const finalInterval = fallbackBlueprint && selectedTools.length === 0 ? fallbackBlueprint.interval : interval;
     setSubmitting(true);
     try {
+      const needsBlueprint = (!systemPrompt.trim() || !name.trim()) && compactWhitespace(goal || systemPrompt);
+      let fallbackBlueprint: BotBlueprint | null = null;
+      if (needsBlueprint) {
+        const seed = compactWhitespace(goal || systemPrompt);
+        try {
+          fallbackBlueprint = await generateBotBlueprintWithAi(seed, availableTools, name);
+        } catch (e) {
+          console.warn('AI bot blueprint generation failed during create; using local fallback', e);
+          fallbackBlueprint = buildBotBlueprint(seed, availableTools, name);
+        }
+      }
+
+      const finalName = compactWhitespace(name || fallbackBlueprint?.name || '');
+      if (!finalName) return;
+      const finalPrompt = systemPrompt.trim() || fallbackBlueprint?.systemPrompt || '';
+      const finalInstructions = instructions.trim() || fallbackBlueprint?.instructions || '';
+      const finalTools = selectedTools.length > 0 ? selectedTools : (fallbackBlueprint?.allowedTools || []);
+      const finalInterval = fallbackBlueprint && selectedTools.length === 0 ? fallbackBlueprint.interval : interval;
+
       // New bots default to local. "Deploy to VM" is an explicit action in
       // the bot's Settings → Deployment section after creation.
       const res = await window.desktopAPI.botsCreate({
@@ -992,11 +1103,11 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
               <button
                 type="button"
                 onClick={applyAutomaticSetup}
-                disabled={!compactWhitespace(goal || systemPrompt || name)}
+                disabled={generating || !compactWhitespace(goal || systemPrompt || name)}
                 className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Sparkles className="h-3 w-3" />
-                Generate
+                {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                {generating ? 'Generating' : 'Generate'}
               </button>
             </div>
             <textarea
@@ -1029,6 +1140,9 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 </span>
               )}
             </div>
+            {generateError && (
+              <p className="mt-2 text-[11px] text-amber-400">{generateError}</p>
+            )}
           </section>
 
           {/* Emoji + Name */}

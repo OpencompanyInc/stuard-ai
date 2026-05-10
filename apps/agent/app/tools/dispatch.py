@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
+from . import gui, system, windows, desktop_control, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
 
 
 # Tool metadata for discovery (category and description)
@@ -66,6 +66,19 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "python_install": ("system", "Install Python packages in an environment"),
     "run_python_script": ("system", "Run Python code inline or from file"),
     "run_node_script": ("system", "Run Node.js code inline or from file"),
+
+    # Desktop controls
+    "describe_desktop_control_capabilities": ("desktop", "Describe available desktop software-control backends"),
+    "get_desktop_wallpaper": ("desktop", "Get the current desktop wallpaper path"),
+    "set_desktop_wallpaper": ("desktop", "Set the desktop wallpaper from a local image path"),
+    "get_system_volume": ("desktop", "Get current system output volume and mute state"),
+    "set_system_volume": ("desktop", "Set or adjust system output volume and mute state"),
+    "list_bluetooth_devices": ("desktop", "List known Bluetooth devices"),
+    "connect_bluetooth_device": ("desktop", "Connect a Bluetooth device when the platform backend supports it"),
+    "disconnect_bluetooth_device": ("desktop", "Disconnect a Bluetooth device when the platform backend supports it"),
+    "get_display_brightness": ("desktop", "Get laptop or display brightness when available"),
+    "set_display_brightness": ("desktop", "Set laptop or display brightness when available"),
+    "get_power_status": ("desktop", "Get battery and charging status"),
 
     # Utilities (no scripts needed)
     "get_datetime": ("utils", "Get current date and time with formatting"),
@@ -427,6 +440,19 @@ _HANDLERS = {
     "python_install": system.python_install,
     "run_python_script": system.run_python_script,
     "run_node_script": system.run_node_script,
+
+    # Desktop controls
+    "describe_desktop_control_capabilities": desktop_control.describe_desktop_control_capabilities,
+    "get_desktop_wallpaper": desktop_control.get_desktop_wallpaper,
+    "set_desktop_wallpaper": desktop_control.set_desktop_wallpaper,
+    "get_system_volume": desktop_control.get_system_volume,
+    "set_system_volume": desktop_control.set_system_volume,
+    "list_bluetooth_devices": desktop_control.list_bluetooth_devices,
+    "connect_bluetooth_device": desktop_control.connect_bluetooth_device,
+    "disconnect_bluetooth_device": desktop_control.disconnect_bluetooth_device,
+    "get_display_brightness": desktop_control.get_display_brightness,
+    "set_display_brightness": desktop_control.set_display_brightness,
+    "get_power_status": desktop_control.get_power_status,
 
     # Utilities
     "get_datetime": utils.get_datetime,

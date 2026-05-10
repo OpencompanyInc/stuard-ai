@@ -115,6 +115,21 @@ export {
   set_window_bounds,
 } from './device/windows';
 
+// Desktop software controls
+export {
+  describe_desktop_control_capabilities,
+  get_desktop_wallpaper,
+  set_desktop_wallpaper,
+  get_system_volume,
+  set_system_volume,
+  list_bluetooth_devices,
+  connect_bluetooth_device,
+  disconnect_bluetooth_device,
+  get_display_brightness,
+  set_display_brightness,
+  get_power_status,
+} from './device/desktop-control';
+
 // Workflows metadata (desktop-side JSON files)
 // These tools require a client bridge to the desktop app. If no bridge is available,
 // they return an empty list gracefully instead of timing out.

@@ -8,6 +8,7 @@ import { google_get_userinfo, gmail_send_message, gmail_list_messages, gmail_get
 import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop, bot_list, bot_get_status, bot_create, bot_deploy, bot_pause, ask_bot, bot_ask, bot_memory_list, bot_memory_create, bot_memory_update, bot_memory_delete, bot_memory_log } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_analyze_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for, browser_use_execute_script } from '../../tools/device-tools';
+import { describe_desktop_control_capabilities, get_desktop_wallpaper, set_desktop_wallpaper, get_system_volume, set_system_volume, list_bluetooth_devices, connect_bluetooth_device, disconnect_bluetooth_device, get_display_brightness, set_display_brightness, get_power_status } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
 import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
@@ -181,6 +182,18 @@ export const ALL_TOOLS = {
   get_window_info,
   smart_bring_window_to_foreground,
   set_window_bounds,
+  // Desktop software controls
+  describe_desktop_control_capabilities,
+  get_desktop_wallpaper,
+  set_desktop_wallpaper,
+  get_system_volume,
+  set_system_volume,
+  list_bluetooth_devices,
+  connect_bluetooth_device,
+  disconnect_bluetooth_device,
+  get_display_brightness,
+  set_display_brightness,
+  get_power_status,
   // Local workflows metadata (consolidated - no more stuards distinction)
   list_local_stuards,  // Deprecated, kept for backwards compat
   show_json_workflow_code,
@@ -599,4 +612,3 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
     ...mcpTools,
   };
 }
-

@@ -390,6 +390,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'FileSearch');
     } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         registerTool(t, 'System');
+    } else if (['describe_desktop_control_capabilities', 'get_desktop_wallpaper', 'set_desktop_wallpaper', 'get_system_volume', 'set_system_volume', 'list_bluetooth_devices', 'connect_bluetooth_device', 'disconnect_bluetooth_device', 'get_display_brightness', 'set_display_brightness', 'get_power_status'].includes(name)) {
+        registerTool(t, 'Desktop');
     } else if (['get_datetime', 'math_eval', 'generate_uuid', 'random_number', 'random_choice', 'get_env_var', 'get_system_info', 'hash_string', 'base64_encode', 'base64_decode', 'json_parse', 'json_stringify', 'sleep', 'regex_match', 'regex_replace'].includes(name)) {
         registerTool(t, 'Utils');
     } else if (['computer_use', 'computer_use_agent', 'click_at_coordinates', 'double_click_at_coordinates', 'type_text', 'send_hotkey', 'scroll', 'drag_and_drop', 'take_screenshot', 'capture_screen_to_file', 'find_and_click_text', 'get_screen_text', 'read_image_optimized', 'find_text_on_screen', 'move_cursor', 'get_mouse_position'].includes(name)) {

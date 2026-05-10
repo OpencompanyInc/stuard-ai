@@ -5,6 +5,7 @@ import MessageList from '../MessageList';
 import { ContextItem } from '../FileNavigator';
 import type { ChatMode, ChatModelsConfig } from '../../hooks/usePreferences';
 import { useModelRegistry } from '../../hooks/useModelRegistry';
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../hooks/useVoiceMode';
 import { ChatTabs } from './ChatTabs';
 import { ChatHeaderActions } from './ChatHeaderActions';
 import { ChatInputArea } from './ChatInputArea';
@@ -36,8 +37,15 @@ interface ChatViewProps {
   setQuery: (q: string) => void;
   onSend: () => void;
   onSteer?: () => void;
-  isRecording?: boolean;
-  onMicClick?: () => void;
+  // Voice mode
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
+  voiceState?: VoiceModeState;
+  voiceAudioLevel?: number;
+  voiceMuted?: boolean;
+  onVoiceMuteToggle?: () => void;
+  voiceTranscripts?: TranscriptLine[];
+  voiceActiveTools?: VoiceToolEvent[];
 
   // Attachments
   attachments?: Array<{ type: 'image' | 'file'; name: string }>;
@@ -103,8 +111,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   setQuery,
   onSend,
   onSteer,
-  isRecording,
-  onMicClick,
+  voiceActive,
+  onToggleVoice,
+  voiceState,
+  voiceAudioLevel,
+  voiceMuted,
+  onVoiceMuteToggle,
+  voiceTranscripts,
+  voiceActiveTools,
   conversations,
   loadingConversations,
   onSelectConversation,
@@ -358,8 +372,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           setQuery={setQuery}
           onSend={onSend}
           onSteer={onSteer}
-          isRecording={isRecording}
-          onMicClick={onMicClick}
           attachments={attachments}
           onRemoveAttachment={onRemoveAttachment}
           onAttachFiles={onAttachFiles}
@@ -376,6 +388,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           selectedModelId={selectedModelId}
           onChatModeChange={onChatModeChange}
           activeTabId={activeTabId}
+          voiceActive={voiceActive}
+          onToggleVoice={onToggleVoice}
+          voiceState={voiceState}
+          voiceAudioLevel={voiceAudioLevel}
+          voiceMuted={voiceMuted}
+          onVoiceMuteToggle={onVoiceMuteToggle}
+          voiceTranscripts={voiceTranscripts}
+          voiceActiveTools={voiceActiveTools}
         />
       </div>
     </>

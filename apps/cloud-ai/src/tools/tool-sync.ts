@@ -94,6 +94,19 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   set_window_bounds: ['window', 'resize', 'move window'],
   launch_application_or_uri: ['launch', 'open app', 'window'],
 
+  // Desktop software controls
+  describe_desktop_control_capabilities: ['desktop control', 'laptop settings', 'system settings'],
+  get_desktop_wallpaper: ['wallpaper', 'desktop background', 'desktop control'],
+  set_desktop_wallpaper: ['wallpaper', 'desktop background', 'set wallpaper', 'desktop control'],
+  get_system_volume: ['volume', 'sound', 'audio', 'mute', 'desktop control'],
+  set_system_volume: ['volume', 'sound', 'audio', 'mute', 'desktop control'],
+  list_bluetooth_devices: ['bluetooth', 'devices', 'headphones', 'speaker', 'desktop control'],
+  connect_bluetooth_device: ['bluetooth', 'connect device', 'headphones', 'speaker'],
+  disconnect_bluetooth_device: ['bluetooth', 'disconnect device', 'headphones', 'speaker'],
+  get_display_brightness: ['brightness', 'display', 'screen brightness', 'laptop settings'],
+  set_display_brightness: ['brightness', 'display', 'screen brightness', 'laptop settings'],
+  get_power_status: ['battery', 'charging', 'power status', 'laptop settings'],
+
   // Streaming / capture
   capture_media: ['record', 'screen record', 'capture', 'audio record'],
   stop_capture: ['record', 'screen record', 'capture'],
@@ -410,6 +423,19 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   list_open_windows: ['windows', 'active apps', 'running programs'],
   bring_window_to_foreground: ['focus window', 'switch window', 'activate window'],
   smart_bring_window_to_foreground: ['find window', 'open app', 'launch'],
+
+  // Desktop Controls
+  describe_desktop_control_capabilities: ['available laptop controls', 'desktop capabilities', 'what system controls can you use'],
+  get_desktop_wallpaper: ['current wallpaper', 'desktop background path'],
+  set_desktop_wallpaper: ['set wallpaper', 'change desktop background', 'make this my wallpaper'],
+  get_system_volume: ['current volume', 'sound level', 'is muted'],
+  set_system_volume: ['turn volume up', 'lower volume', 'mute sound', 'set volume'],
+  list_bluetooth_devices: ['list bluetooth devices', 'paired headphones', 'available bluetooth'],
+  connect_bluetooth_device: ['connect bluetooth headphones', 'connect speaker', 'pair bluetooth device'],
+  disconnect_bluetooth_device: ['disconnect bluetooth', 'disconnect headphones', 'turn off speaker connection'],
+  get_display_brightness: ['current brightness', 'screen brightness'],
+  set_display_brightness: ['dim screen', 'raise brightness', 'set brightness'],
+  get_power_status: ['battery level', 'charging status', 'power status'],
 
   // Input
   send_hotkey: ['keyboard shortcut', 'hotkey', 'key combo'],

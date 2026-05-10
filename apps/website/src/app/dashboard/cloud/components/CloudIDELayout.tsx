@@ -32,6 +32,7 @@ import {
   Search,
   Send,
   Server,
+  Settings as SettingsIcon,
   Shield,
   Sparkles,
   Square,
@@ -64,6 +65,12 @@ import { AskUserPrompt } from '../../../../../../../shared/chat-ui/AskUserPrompt
 import { ChatUiBlock } from './ChatUiBlock';
 import { CloudMonitoring } from './CloudMonitoring';
 import { CloudBilling } from './CloudBilling';
+import { CloudVmIntegrations } from './CloudVmIntegrations';
+import { CloudVmDeploys, CloudVmAutomations } from './CloudVmDeploys';
+import { CloudVmPermissions } from './CloudVmPermissions';
+import { CloudVmBots } from './CloudVmBots';
+import { CloudVmSettings } from './CloudVmSettings';
+import { FileViewerPane, type FileViewerEntry } from './FileViewerPane';
 
 interface CloudIDELayoutProps {
   engine: any;
@@ -79,7 +86,8 @@ type ActivityView =
   | 'integrations'
   | 'permissions'
   | 'bots'
-  | 'automations';
+  | 'automations'
+  | 'settings';
 
 type CloudRuntimeMode = 'normal' | 'developer';
 
@@ -88,6 +96,8 @@ type ViewItem = {
   icon: any;
   label: string;
   toggle?: 'explorer' | 'terminal';
+  /** Pin to bottom of activity bar (e.g. settings, terminal toggle). */
+  footer?: boolean;
 };
 
 const MODE_STORAGE_KEY = 'cloud:runtime-mode';
@@ -97,6 +107,7 @@ const NORMAL_VIEW_ITEMS: ViewItem[] = [
   { id: 'bots', icon: BotIcon, label: 'Bots' },
   { id: 'files', icon: FolderOpen, label: 'Files' },
   { id: 'automations', icon: Zap, label: 'Automations' },
+  { id: 'settings', icon: SettingsIcon, label: 'Settings', footer: true },
 ];
 
 const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
@@ -110,7 +121,8 @@ const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'deploys', icon: Rocket, label: 'Deploys' },
   { id: 'billing', icon: CreditCard, label: 'Billing' },
   { id: 'permissions', icon: Shield, label: 'Permissions' },
-  { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal' },
+  { id: 'settings', icon: SettingsIcon, label: 'Settings', footer: true },
+  { id: 'terminal', icon: Terminal, label: 'Terminal', toggle: 'terminal', footer: true },
 ];
 
 const MIN_TERMINAL_H = 140;
@@ -193,6 +205,8 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
+  const [viewerEntry, setViewerEntry] = useState<FileViewerEntry | null>(null);
+  const [viewerWidth, setViewerWidth] = useState(420);
   const [pauseLoading, setPauseLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -488,6 +502,30 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     });
     setActiveView('chat');
   }, []);
+
+  const openFileInViewer = useCallback((entry: { name: string; path: string; size?: number }) => {
+    setViewerEntry({ name: entry.name, path: entry.path, size: entry.size });
+  }, []);
+
+  const closeFileViewer = useCallback(() => {
+    setViewerEntry(null);
+  }, []);
+
+  const handleViewerResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = viewerWidth;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      setViewerWidth(Math.max(280, Math.min(900, startW + delta)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [viewerWidth]);
 
   const removePendingAttachment = useCallback((id: string) => {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -1469,10 +1507,10 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
               <button
                 onClick={() => {
                   if (isDir) toggleDir(entry.path);
-                  else addExistingFileAttachment({ name: entry.name, path: entry.path, size: entry.size });
+                  else openFileInViewer({ name: entry.name, path: entry.path, size: entry.size });
                 }}
                 className="flex flex-1 items-center gap-1 min-w-0 bg-transparent border-none p-0 text-left cursor-pointer"
-                title={isDir ? 'Expand/collapse' : 'Attach file to chat'}
+                title={isDir ? 'Expand/collapse' : 'Open file'}
               >
                 {isDir ? (
                   <svg className={`ide-tree-chevron ${isExpanded ? 'ide-tree-chevron-open' : ''}`} viewBox="0 0 24 24" fill="currentColor">
@@ -1689,41 +1727,12 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
   const monitoringView = <CloudMonitoring engine={engine} />;
   const billingView = <CloudBilling />;
-  const botsView = (
-    <DesktopOnlyView
-      icon={BotIcon}
-      title="Bots"
-      description="Configure background agents that run on your cloud VM 24/7. Bots are configured from the Stuard desktop app."
-    />
-  );
-  const automationsView = (
-    <DesktopOnlyView
-      icon={Zap}
-      title="Automations on VM"
-      description="Workflows, scripts, and projects deployed to this cloud VM. Push new automations from the Stuard desktop app — they'll run here independently of your laptop."
-    />
-  );
-  const integrationsView = (
-    <DesktopOnlyView
-      icon={Link2}
-      title="VM Integrations"
-      description="Connect this cloud VM to GitHub, Notion, Slack, Google, and more. Manage integrations from the Stuard desktop app."
-    />
-  );
-  const deploysView = (
-    <DesktopOnlyView
-      icon={Rocket}
-      title="Deployments"
-      description="Push and manage workflow / project deployments running on this cloud VM. Deploy and monitor from the Stuard desktop app."
-    />
-  );
-  const permissionsView = (
-    <DesktopOnlyView
-      icon={Shield}
-      title="VM Permissions"
-      description="Control what tools and resources the cloud agent can access. Permissions are configured from the Stuard desktop app."
-    />
-  );
+  const botsView = <CloudVmBots engine={engine} />;
+  const automationsView = <CloudVmAutomations engine={engine} />;
+  const integrationsView = <CloudVmIntegrations engine={engine} />;
+  const deploysView = <CloudVmDeploys engine={engine} />;
+  const permissionsView = <CloudVmPermissions engine={engine} />;
+  const settingsView = <CloudVmSettings engine={engine} onRefresh={onRefresh} />;
 
   const viewMap: Record<ActivityView, React.ReactNode> = {
     chat: chatView,
@@ -1735,6 +1744,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     permissions: permissionsView,
     bots: botsView,
     automations: automationsView,
+    settings: settingsView,
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -1782,35 +1792,45 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     </>
   );
 
+  const topItems = items.filter((i) => !i.footer);
+  const footerItems = items.filter((i) => i.footer);
+
+  const renderActivityBtn = (item: ViewItem) => {
+    const Icon = item.icon;
+    const isActive =
+      item.toggle === 'explorer'
+        ? filePanelOpen
+        : item.toggle === 'terminal'
+          ? terminalOpen
+          : activeView === (item.id as ActivityView);
+    return (
+      <button
+        key={item.id}
+        type="button"
+        title={item.label}
+        onClick={() => {
+          if (item.toggle === 'explorer') { setFilePanelOpen((v) => !v); return; }
+          if (item.toggle === 'terminal') { setTerminalOpen((v) => !v); return; }
+          setActiveView(item.id as ActivityView);
+        }}
+        className={clsx('ide-activity-btn', isActive && 'ide-activity-btn-active')}
+      >
+        <Icon className="h-4 w-4" />
+      </button>
+    );
+  };
+
   return (
     <div className="cloud-ide">
       {/* Activity Bar */}
       <aside className="ide-activity-bar">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const isActive =
-            item.toggle === 'explorer'
-              ? filePanelOpen
-              : item.toggle === 'terminal'
-                ? terminalOpen
-                : activeView === (item.id as ActivityView);
-          return (
-            <button
-              key={item.id}
-              type="button"
-              title={item.label}
-              onClick={() => {
-                if (item.toggle === 'explorer') { setFilePanelOpen((v) => !v); return; }
-                if (item.toggle === 'terminal') { setTerminalOpen((v) => !v); return; }
-                setActiveView(item.id as ActivityView);
-              }}
-              className={clsx('ide-activity-btn', isActive && 'ide-activity-btn-active')}
-            >
-              <Icon className="h-4 w-4" />
-            </button>
-          );
-        })}
+        {topItems.map(renderActivityBtn)}
         <div className="flex-1" />
+        {footerItems.length > 0 && (
+          <div className="flex w-full flex-col items-center gap-0.5 border-t border-theme/40 pt-1 mt-1">
+            {footerItems.map(renderActivityBtn)}
+          </div>
+        )}
         <div title={`Engine: ${engine?.status || 'unknown'}`} className="flex h-8 w-8 items-center justify-center">
           <span className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]" />
         </div>
@@ -1961,6 +1981,25 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
           </div>
         )}
       </section>
+
+      {/* Right-side File Viewer pane */}
+      {viewerEntry && (
+        <>
+          <div
+            className="w-[3px] cursor-ew-resize bg-transparent hover:bg-primary/30 transition-colors shrink-0"
+            onMouseDown={handleViewerResize}
+            title="Drag to resize viewer"
+          />
+          <div className="shrink-0" style={{ width: viewerWidth }}>
+            <FileViewerPane
+              entry={viewerEntry}
+              onClose={closeFileViewer}
+              onAttach={(e) => addExistingFileAttachment({ name: e.name, path: e.path, size: e.size })}
+              className="h-full"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2017,35 +2056,6 @@ function StatusPillSmall({
       </div>
       <div className="mt-1 truncate text-[12px] font-medium text-theme-fg" title={detail}>
         {detail || (connected ? 'Connected' : 'Disconnected')}
-      </div>
-    </div>
-  );
-}
-
-function DesktopOnlyView({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: any;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex h-full items-center justify-center px-6 py-10">
-      <div className="w-full max-w-md text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <Icon className="h-5 w-5" />
-        </div>
-        <h2 className="mt-4 text-lg font-semibold text-theme-fg">{title}</h2>
-        <p className="mt-2 text-[13px] leading-6 text-theme-muted">{description}</p>
-        <a
-          href="/download"
-          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-theme-fg px-4 py-2 text-[12px] font-semibold text-theme-bg transition hover:opacity-90"
-          style={{ background: 'var(--ide-text)', color: 'var(--ide-bg)' }}
-        >
-          Open in Stuard Desktop
-        </a>
       </div>
     </div>
   );

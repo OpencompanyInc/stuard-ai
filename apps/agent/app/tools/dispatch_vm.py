@@ -46,6 +46,19 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "run_python_script": ("system", "Run Python code inline or from file"),
     "run_node_script": ("system", "Run Node.js code inline or from file"),
 
+    # Desktop controls (stubbed on VM)
+    "describe_desktop_control_capabilities": ("desktop", "Describe desktop-control availability"),
+    "get_desktop_wallpaper": ("desktop", "Get the current desktop wallpaper path"),
+    "set_desktop_wallpaper": ("desktop", "Set the desktop wallpaper from a local image path"),
+    "get_system_volume": ("desktop", "Get current system output volume and mute state"),
+    "set_system_volume": ("desktop", "Set or adjust system output volume and mute state"),
+    "list_bluetooth_devices": ("desktop", "List known Bluetooth devices"),
+    "connect_bluetooth_device": ("desktop", "Connect a Bluetooth device when supported"),
+    "disconnect_bluetooth_device": ("desktop", "Disconnect a Bluetooth device when supported"),
+    "get_display_brightness": ("desktop", "Get laptop or display brightness when available"),
+    "set_display_brightness": ("desktop", "Set laptop or display brightness when available"),
+    "get_power_status": ("desktop", "Get battery and charging status"),
+
     # ── Filesystem ───────────────────────────────────────────────────────────
     "list_directory": ("system", "List directory contents"),
     "read_file": ("system", "Read text file contents"),
@@ -832,6 +845,11 @@ _DESKTOP_ONLY_STUBS = [
     "send_notification",
     # Desktop file open (no GUI to open with)
     "open_file",
+    # Desktop OS controls
+    "describe_desktop_control_capabilities", "get_desktop_wallpaper",
+    "set_desktop_wallpaper", "get_system_volume", "set_system_volume",
+    "list_bluetooth_devices", "connect_bluetooth_device", "disconnect_bluetooth_device",
+    "get_display_brightness", "set_display_brightness", "get_power_status",
 ]
 
 

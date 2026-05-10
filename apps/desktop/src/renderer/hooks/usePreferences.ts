@@ -252,7 +252,7 @@ const DEFAULT_CHAT_MODE: ChatMode = 'auto';
 export const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
   fast: { allowed: [], default: 'deepseek/deepseek-chat' },
   balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
-  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  smart: { allowed: [], default: 'openai/gpt-5.1' },
 };
 
 function normalizeChatMode(v: any, chatModels: ChatModelsConfig): ChatMode {
@@ -286,13 +286,13 @@ function setLS<T>(key: string, value: T) {
   } catch { }
 }
 
-const DEFAULT_WAKEWORD_SENSITIVITY = 0.88;
+const DEFAULT_WAKEWORD_SENSITIVITY = 0.95;
 
 function normalizeWakewordSensitivity(v: any): number {
   const n = Number(v);
   if (!Number.isFinite(n)) return DEFAULT_WAKEWORD_SENSITIVITY;
-  // Migrate the previous hardcoded default to the calibrated general-model default.
-  if (Math.abs(n - 0.95) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  // Migrate the previous default to the stricter wake-word cutoff.
+  if (Math.abs(n - 0.88) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
   return Math.max(0.3, Math.min(0.99, n));
 }
 

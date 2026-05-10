@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { generateText, generateObject, embed, embedMany } from 'ai';
+import { generateText, generateObject, embed, embedMany, stepCountIs, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google, buildProviderEmbeddingModel, buildProviderModel } from '../utils/models';
 import { z } from 'zod';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
+import { search_tools } from '../tools/meta-tools';
 
 /**
  * Extracts and validates Supabase auth token from request.
@@ -247,6 +248,155 @@ function pickModelProvider() {
   return { kind: 'openai' as const, model: 'gpt-4.1-mini' };
 }
 
+const BOT_BLUEPRINT_INTERVALS = ['10m', '15m', '30m', '1h', '2h', 'random', 'manual'] as const;
+const BOT_BLUEPRINT_INTERNAL_TOOLS = new Set([
+  'search_tools',
+  'get_tool_schema',
+  'execute_tool',
+  'get_skill_info',
+  'choose_notification_channel',
+  'write_session_summary',
+  'search_past_conversations',
+  'get_conversation_context',
+]);
+
+const BotBlueprintResponseSchema = z.object({
+  name: z.string().min(1).max(80),
+  emoji: z.string().min(1).max(16).optional(),
+  description: z.string().min(1).max(320),
+  systemPrompt: z.string().min(1).max(6000),
+  instructions: z.string().min(1).max(2000),
+  allowedTools: z.array(z.string()).max(12).default([]),
+  interval: z.enum(BOT_BLUEPRINT_INTERVALS).default('30m'),
+  toolRationale: z.array(z.object({
+    tool: z.string(),
+    reason: z.string(),
+  })).max(12).default([]),
+});
+
+type BotBlueprintResponse = z.infer<typeof BotBlueprintResponseSchema>;
+
+function compactText(value: unknown): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isInternalBotBlueprintTool(name: string): boolean {
+  return BOT_BLUEPRINT_INTERNAL_TOOLS.has(name)
+    || name.startsWith('proactive_task_')
+    || name.startsWith('bot_memory_');
+}
+
+function isBlockedBotBlueprintTool(name: string): boolean {
+  return !name || isInternalBotBlueprintTool(name) || (name.startsWith('browser_') && !name.startsWith('browser_use_'));
+}
+
+function normalizeAvailableToolNames(value: unknown): string[] {
+  return Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((toolName) => String(toolName || '').trim())
+      .filter(Boolean)
+  )).slice(0, 500);
+}
+
+function parseJsonObjectFromText(text: string): any | null {
+  const normalized = tryNormalizeJsonLikeText(text);
+  try {
+    const parsed = JSON.parse(normalized);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeBotBlueprint(raw: unknown, args: {
+  goal: string;
+  preferredName?: string;
+  availableTools: string[];
+  discoveredTools: Array<{ name: string; description: string; category: string }>;
+}): BotBlueprintResponse {
+  const cleanedGoal = compactText(args.goal);
+  const fallbackName = compactText(args.preferredName)
+    || cleanedGoal
+      .replace(/^(create|make|build|set up|setup|add)\s+(a|an)?\s*/i, '')
+      .replace(/\b(bot|agent)\b/gi, '')
+      .split(/\s+/)
+      .slice(0, 4)
+      .map((word) => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : '')
+      .filter(Boolean)
+      .join(' ')
+    || 'Proactive Bot';
+
+  const available = new Set(args.availableTools);
+  const discovered = new Set(args.discoveredTools.map((entry) => entry.name));
+  const hasAvailableFilter = available.size > 0;
+  const canUseTool = (toolName: string) => {
+    if (isBlockedBotBlueprintTool(toolName)) return false;
+    if (hasAvailableFilter && !available.has(toolName)) return false;
+    if (discovered.size > 0 && !discovered.has(toolName)) return false;
+    return true;
+  };
+
+  const candidate = raw && typeof raw === 'object' ? raw as any : {};
+  const pickedTools = Array.from(new Set(
+    (Array.isArray(candidate.allowedTools) ? candidate.allowedTools : [])
+      .map((toolName: any) => String(toolName || '').trim())
+      .filter(canUseTool)
+  )).slice(0, 12);
+
+  const fallbackTools = args.discoveredTools
+    .map((entry) => entry.name)
+    .filter(canUseTool)
+    .slice(0, 8);
+
+  const allowedTools = pickedTools.length > 0 ? pickedTools : fallbackTools;
+  const description = compactText(candidate.description) || cleanedGoal;
+  const name = compactText(candidate.name) || (fallbackName.endsWith('Bot') ? fallbackName : `${fallbackName} Bot`);
+  let systemPrompt = String(candidate.systemPrompt || '').trim();
+  if (systemPrompt && description) {
+    const descNeedle = description.toLowerCase().slice(0, 80);
+    if (descNeedle && !systemPrompt.toLowerCase().includes(descNeedle)) {
+      systemPrompt = `${systemPrompt}\n\nDescription:\n- ${description}`;
+    }
+  }
+  systemPrompt = systemPrompt || [
+    `You are ${name}, a proactive background bot running inside Stuard.`,
+    '',
+    `Description: ${description}`,
+    '',
+    `Objective: ${cleanedGoal}`,
+    '',
+    'Operating rules:',
+    '- Check trigger context, bot memory, and relevant tools before acting.',
+    '- Use granted tools to verify facts or complete actions before notifying the user.',
+    '- Keep work tightly scoped to the objective.',
+    '- Record durable findings or next steps in bot memory when useful.',
+    '- Notify only for completed work, meaningful changes, risks, or decisions the user should see.',
+  ].join('\n');
+  const instructions = compactText(candidate.instructions) || 'At each wake-up, inspect the trigger payload and recent bot memory, use the allowed tools for the next useful step, update memory when relevant, and notify only when there is something worth the user seeing.';
+  const interval = (BOT_BLUEPRINT_INTERVALS as readonly string[]).includes(String(candidate.interval || ''))
+    ? candidate.interval
+    : '30m';
+
+  const toolRationale = (Array.isArray(candidate.toolRationale) ? candidate.toolRationale : [])
+    .map((entry: any) => ({
+      tool: String(entry?.tool || '').trim(),
+      reason: compactText(entry?.reason),
+    }))
+    .filter((entry: { tool: string; reason: string }) => allowedTools.includes(entry.tool) && entry.reason)
+    .slice(0, 12);
+
+  return BotBlueprintResponseSchema.parse({
+    name,
+    emoji: compactText(candidate.emoji) || '🤖',
+    description,
+    systemPrompt,
+    instructions,
+    allowedTools,
+    interval,
+    toolRationale,
+  });
+}
+
 export async function handleInferenceRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
 
@@ -266,6 +416,165 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
     res.writeHead(204, headers);
     res.end();
     return true;
+  }
+
+  if (req.method === 'POST' && path === '/inference/ai/bot-blueprint') {
+    try {
+      const { userId: blueprintUserId, isAuthed } = await validateAuth(req);
+      if (!isAuthed) {
+        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
+        return true;
+      }
+      const creditErr = await requireCredits(blueprintUserId);
+      if (creditErr) {
+        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
+        return true;
+      }
+
+      const body = await readJsonBody(req);
+      const goal = compactText(body?.goal);
+      const preferredName = compactText(body?.preferredName);
+      const availableTools = normalizeAvailableToolNames(body?.availableTools);
+      if (!goal) {
+        writeJson(res, 400, { ok: false, error: 'goal_required' }, corsOrigin);
+        return true;
+      }
+
+      const availableSet = new Set(availableTools);
+      const discovered = new Map<string, { name: string; description: string; category: string }>();
+      const hasAvailableFilter = availableSet.size > 0;
+      const filterTool = (entry: any) => {
+        const name = String(entry?.name || '').trim();
+        if (isBlockedBotBlueprintTool(name)) return false;
+        return !hasAvailableFilter || availableSet.has(name);
+      };
+
+      const semanticToolSearch = tool({
+        description: 'Semantic search over the Stuard tool catalog. Use this to find real tool names for the bot, such as search, browser, email, calendar, GitHub, files, sheets, messaging, or social tools.',
+        inputSchema: z.object({
+          query: z.string().min(1).describe('Natural-language description of the capability needed.'),
+          category: z.string().optional().describe('Optional tool category filter when known.'),
+          limit: z.number().int().min(1).max(20).optional().default(10),
+        }),
+        execute: async ({ query, category, limit }) => {
+          const result = await (search_tools as any).execute({
+            query,
+            category,
+            limit: limit ?? 10,
+          });
+          const tools = (Array.isArray((result as any)?.tools) ? (result as any).tools : [])
+            .filter(filterTool)
+            .slice(0, limit ?? 10)
+            .map((entry: any) => ({
+              name: String(entry?.name || ''),
+              description: String(entry?.description || '').slice(0, 300),
+              category: String(entry?.category || ''),
+            }));
+          for (const entry of tools) discovered.set(entry.name, entry);
+          return { tools };
+        },
+      });
+
+      const prov = pickModelProvider();
+      const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
+      const modelId = `${prov.kind}/${prov.model}`;
+      const availableToolsBrief = availableTools.length > 0
+        ? `The desktop says these non-internal tools may be added to bots. Choose only from this set after semantic search confirms relevance:\n${availableTools.slice(0, 260).join(', ')}`
+        : 'No desktop allow-list was supplied; choose only real tools returned by semantic search.';
+
+      const schemaExample = {
+        name: 'string',
+        emoji: 'short emoji',
+        description: 'one sentence',
+        systemPrompt: 'multi-paragraph bot identity, objective, scope, operating rules, and success criteria',
+        instructions: '2-4 concrete run instructions',
+        allowedTools: ['tool_name'],
+        interval: '10m | 15m | 30m | 1h | 2h | random | manual',
+        toolRationale: [{ tool: 'tool_name', reason: 'why it belongs' }],
+      };
+
+      const prompt = [
+        'Create a ready-to-run proactive bot blueprint for Stuard.',
+        '',
+        'You have exactly one discovery tool: bot_tool_search. Use it for semantic tool search before choosing allowedTools. Search for observation/research tools and action/integration tools as separate needs when relevant.',
+        'Do not invent tool names. Do not include internal bot plumbing tools in allowedTools: search_tools, get_tool_schema, execute_tool, get_skill_info, choose_notification_channel, write_session_summary, search_past_conversations, get_conversation_context, proactive_task_*, bot_memory_*.',
+        'The bot will always have internal memory, kanban, notification-channel, and tool-discovery tools. allowedTools should contain only extra non-internal tools the bot truly needs.',
+        '',
+        availableToolsBrief,
+        '',
+        `User goal: ${goal}`,
+        preferredName ? `Preferred name: ${preferredName}` : '',
+        '',
+        'Return only a valid JSON object matching this shape:',
+        JSON.stringify(schemaExample),
+        '',
+        'Write the systemPrompt as the durable bot identity and description. It should be specific enough that the bot knows what to watch, what to do, which boundaries to keep, and when to notify.',
+        'Choose a sensible interval: manual for on-demand only, 10m/15m for urgent monitors, 30m for regular watches, 1h/2h for slower checks.',
+      ].filter(Boolean).join('\n');
+
+      const out = await generateText({
+        model: model as any,
+        tools: { bot_tool_search: semanticToolSearch },
+        stopWhen: stepCountIs(4),
+        prompt,
+        temperature: 0.2,
+      });
+      await logInferenceUsage(blueprintUserId, modelId, out.totalUsage || out.usage, 'Bot Blueprint Generator');
+
+      let parsed = parseJsonObjectFromText(out.text);
+      if (!parsed) {
+        const repair = await generateText({
+          model: model as any,
+          prompt: [
+            'Repair this model output into only a valid JSON object for a Stuard bot blueprint.',
+            'Do not add tools that are not present in the original output.',
+            `Schema shape: ${JSON.stringify(schemaExample)}`,
+            '',
+            out.text,
+          ].join('\n'),
+          temperature: 0,
+        });
+        await logInferenceUsage(blueprintUserId, modelId, repair.usage, 'Bot Blueprint JSON Repair');
+        parsed = parseJsonObjectFromText(repair.text);
+      }
+
+      if (!parsed) {
+        writeJson(res, 500, { ok: false, error: 'invalid_blueprint_json' }, corsOrigin);
+        return true;
+      }
+
+      if (discovered.size === 0) {
+        try {
+          const result = await (search_tools as any).execute({ query: goal, limit: 12 });
+          for (const entry of (Array.isArray((result as any)?.tools) ? (result as any).tools : []).filter(filterTool)) {
+            const toolEntry = {
+              name: String(entry?.name || ''),
+              description: String(entry?.description || '').slice(0, 300),
+              category: String(entry?.category || ''),
+            };
+            if (toolEntry.name) discovered.set(toolEntry.name, toolEntry);
+          }
+        } catch {}
+      }
+
+      const blueprint = sanitizeBotBlueprint(parsed, {
+        goal,
+        preferredName,
+        availableTools,
+        discoveredTools: Array.from(discovered.values()),
+      });
+
+      writeJson(res, 200, {
+        ok: true,
+        blueprint,
+        discoveredTools: Array.from(discovered.values()).slice(0, 30),
+      }, corsOrigin);
+      return true;
+    } catch (e: any) {
+      console.error(`[inference] bot-blueprint error: ${summarizeModelError(e)}`);
+      writeJson(res, 500, { ok: false, error: e?.message || 'bot_blueprint_failed' }, corsOrigin);
+      return true;
+    }
   }
 
   if (req.method === 'POST' && path === '/inference/workflow/next') {

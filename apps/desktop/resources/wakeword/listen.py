@@ -19,7 +19,7 @@ from listen_numpy import list_input_devices, listen as listen_numpy
 
 THRESHOLDS = {
     "strict": 0.985,
-    "default": 0.88,
+    "default": 0.95,
     "relaxed": 0.80,
 }
 DEFAULT_WAKE_TEXT = "Hey Stuard"

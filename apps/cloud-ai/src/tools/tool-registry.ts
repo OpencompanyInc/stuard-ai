@@ -18,6 +18,7 @@ const CATEGORY_LOCATION: Record<string, ToolLocation> = {
   Canvas: 'device',
   Streaming: 'device',
   Workspace: 'device',
+  Desktop: 'device',
 
   // Cloud — API-based, runs on server
   Google: 'cloud',

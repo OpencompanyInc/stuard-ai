@@ -317,3 +317,275 @@ export async function sendVmToolResult(toolId: string, result: any) {
     return { ok: false, error: e?.message || 'relay_failed' };
   }
 }
+
+// ── VM Relay (generic on-demand HTTP proxy → user's VM agent) ──────────────
+
+export interface VmRelayOptions {
+  path: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  body?: any;
+  timeoutMs?: number;
+}
+
+/**
+ * Send a one-shot HTTP request to the user's VM agent through the cloud-ai
+ * `/v1/vm/relay` endpoint. Mirrors the desktop's WebSocket-based commands
+ * (permissions, terminal, memory, proactive, …) but stays inside the
+ * browser-friendly HTTPS proxy.
+ */
+export async function vmRelay(options: VmRelayOptions) {
+  return apiFetch<any>('/v1/vm/relay', {
+    method: 'POST',
+    body: JSON.stringify({
+      path: options.path,
+      method: options.method || 'POST',
+      body: options.body || {},
+      timeoutMs: options.timeoutMs || 15_000,
+    }),
+    timeoutMs: (options.timeoutMs || 15_000) + 5_000,
+  });
+}
+
+/** Send a single VM `command` (the desktop equivalent of `sendVMCommand`). */
+export async function sendVmCommand(command: string, args?: any, timeoutMs?: number) {
+  return vmRelay({
+    path: '/command',
+    method: 'POST',
+    body: { command, args: args || {} },
+    timeoutMs: timeoutMs || 15_000,
+  });
+}
+
+// ── Cloud Engine Integrations / Service status ─────────────────────────────
+
+export async function getCloudVmIntegrations() {
+  return apiFetch('/v1/cloud-engine/integrations');
+}
+
+// ── Cloud Engine Deployments ───────────────────────────────────────────────
+//
+// IMPORTANT: the cloud-ai backend (`apps/cloud-ai/src/routes/cloud-deploys.ts`)
+// returns deployments under the `deployments` key (not `deploys`) and uses
+// snake_case fields that mirror the desktop's CloudDeployment shape in
+// `apps/desktop/src/renderer/hooks/useCloudEngine.ts`. Keep this in sync.
+
+export type CloudDeployKind = 'workflow' | 'script' | 'project';
+export type CloudDeployStatus =
+  | 'pending'
+  | 'uploading'
+  | 'deploying'
+  | 'running'
+  | 'stopped'
+  | 'failed'
+  | 'completed';
+
+export interface CloudDeploymentTriggerBinding {
+  triggerId: string;
+  type: string;
+  mode?: string | null;
+  args?: Record<string, any>;
+}
+
+export interface CloudDeployment {
+  id: string;
+  name: string;
+  kind: CloudDeployKind;
+  description: string | null;
+  status: CloudDeployStatus | string;
+  auto_restart: boolean;
+  schedule: string | null;
+  pid: number | null;
+  logs_tail?: string | null;
+  source_workflow_id?: string | null;
+  trigger_bindings?: CloudDeploymentTriggerBinding[];
+  timezone?: string | null;
+  run_count?: number;
+  last_run_at?: string | null;
+  last_completed_at?: string | null;
+  last_trigger_source?: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  stopped_at: string | null;
+  created_at: string;
+}
+
+export async function listCloudDeployments() {
+  return apiFetch<{ deployments?: CloudDeployment[] }>(
+    '/v1/cloud-engine/deploys',
+  );
+}
+
+export async function createCloudDeployment(payload: {
+  name: string;
+  kind: CloudDeployKind;
+  description?: string;
+  payload: any;
+  envVars?: Record<string, string>;
+  autoRestart?: boolean;
+  schedule?: string;
+}) {
+  return apiFetch<{ deployment?: CloudDeployment }>(
+    '/v1/cloud-engine/deploys',
+    { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 },
+  );
+}
+
+export async function getCloudDeployment(id: string) {
+  return apiFetch<{ deployment?: CloudDeployment }>(
+    `/v1/cloud-engine/deploys/${encodeURIComponent(id)}`,
+  );
+}
+
+export async function getCloudDeploymentLogs(id: string, lines = 200) {
+  return apiFetch<{ logs?: string; lines?: number }>(
+    `/v1/cloud-engine/deploys/${encodeURIComponent(id)}/logs?lines=${lines}`,
+  );
+}
+
+export async function stopCloudDeployment(id: string) {
+  return apiFetch(
+    `/v1/cloud-engine/deploys/${encodeURIComponent(id)}/stop`,
+    { method: 'POST' },
+  );
+}
+
+export async function restartCloudDeployment(id: string) {
+  return apiFetch(
+    `/v1/cloud-engine/deploys/${encodeURIComponent(id)}/restart`,
+    { method: 'POST' },
+  );
+}
+
+export async function deleteCloudDeployment(id: string) {
+  return apiFetch(
+    `/v1/cloud-engine/deploys/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+}
+
+// ── Permissions (lives on the VM agent, accessed through relay) ────────────
+
+export interface VmPermissionsConfig {
+  mode: 'auto' | 'manual' | 'selective';
+  auto_approve: string[];
+  always_require: string[];
+}
+
+export async function getVmPermissions() {
+  return vmRelay({
+    path: '/command',
+    method: 'POST',
+    body: { command: 'permissions_get', args: {} },
+    timeoutMs: 10_000,
+  });
+}
+
+export async function setVmPermissions(config: VmPermissionsConfig) {
+  return vmRelay({
+    path: '/command',
+    method: 'POST',
+    body: { command: 'permissions_set', args: { config } },
+    timeoutMs: 10_000,
+  });
+}
+
+// ── Bots (proactive agents — runtime status from the VM scheduler) ─────────
+
+export interface VmBotTrigger {
+  id: string;
+  type: 'schedule.interval' | 'schedule.cron' | 'webhook' | 'gmail.new_email' | 'manual' | string;
+  args?: Record<string, any>;
+  enabled?: boolean;
+}
+
+export interface VmBotConfig {
+  interval?: string;
+  modelMode?: 'auto' | 'fast' | 'balanced' | 'smart';
+  modelId?: string;
+  instructions?: string;
+  allowedTools?: string[];
+  notificationChannels?: string[];
+  memoryEnabled?: boolean;
+  skillIds?: string[];
+  skills?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    trigger?: string;
+    icon?: string;
+    color?: string;
+    isActive?: boolean;
+  }>;
+}
+
+export interface VmBot {
+  id: string;
+  name?: string;
+  emoji?: string;
+  status?: 'paused' | 'running' | 'errored' | string;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  lastOutcome?: 'success' | 'partial' | 'failed' | string;
+  lastError?: string | null;
+  isRunning?: boolean;
+  triggers?: VmBotTrigger[];
+  config?: VmBotConfig;
+}
+
+export async function getVmBotsStatus() {
+  // POST /v1/bot/status -> { ok, bots: [...] } (no botId returns the full list).
+  // The status endpoint returns runtime info only; for full bot config use
+  // `listVmBots()` below.
+  return apiFetch<{ bots?: VmBot[] }>('/v1/bot/status', {
+    method: 'POST',
+    body: JSON.stringify({}),
+    timeoutMs: 15_000,
+  });
+}
+
+/**
+ * Pull the full deployed-bot list (including instructions, triggers, config)
+ * directly from the VM scheduler via the relay. The `/v1/bot/status` endpoint
+ * only returns a runtime snapshot — this command returns the configured bots.
+ */
+export async function listVmBots() {
+  return sendVmCommand('bots_list', {}, 15_000);
+}
+
+export async function runVmBot(botId: string) {
+  return apiFetch('/v1/bot/run', {
+    method: 'POST',
+    body: JSON.stringify({ botId }),
+    timeoutMs: 30_000,
+  });
+}
+
+export interface VmBotMemoryEntry {
+  id?: string;
+  text?: string;
+  content?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  origin?: string;
+  [key: string]: any;
+}
+
+/** Pull the VM-local kanban / memory snapshot for a single bot. */
+export async function exportVmBotMemory(botId: string) {
+  return apiFetch<{
+    memory?: { facts?: VmBotMemoryEntry[]; runs?: VmBotMemoryEntry[]; tasks?: VmBotMemoryEntry[] };
+    facts?: VmBotMemoryEntry[];
+    runs?: VmBotMemoryEntry[];
+    tasks?: VmBotMemoryEntry[];
+  }>('/v1/bot/memory/export', {
+    method: 'POST',
+    body: JSON.stringify({ botId }),
+    timeoutMs: 20_000,
+  });
+}
+
+// ── Sync prefs (cloud → VM data sync settings) ─────────────────────────────
+
+export async function getCloudSyncPreferences() {
+  return apiFetch('/v1/cloud-engine/status'); // sync prefs are bundled into engine status
+}

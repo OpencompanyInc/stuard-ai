@@ -1699,8 +1699,14 @@ export default function App() {
                     onCollapse={handleShowCompact}
                     onOpenDashboard={handleOpenDashboard}
                     onNewChat={handleNewChat}
-                    isRecording={isRecording}
-                    onMicClick={handleMicClick}
+                    voiceActive={voiceActive}
+                    onToggleVoice={handleToggleVoice}
+                    voiceState={voice.state}
+                    voiceAudioLevel={voice.audioLevel}
+                    voiceMuted={voice.muted}
+                    onVoiceMuteToggle={voice.toggleMute}
+                    voiceTranscripts={voice.transcripts}
+                    voiceActiveTools={voice.activeTools}
                     conversations={convList}
                     loadingConversations={loadingConvs}
                     onSelectConversation={handleSelectConversation}
