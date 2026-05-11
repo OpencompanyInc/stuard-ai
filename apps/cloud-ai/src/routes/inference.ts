@@ -476,9 +476,15 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         return !hasAvailableFilter || availableSet.has(name);
       };
 
-      const prov = pickModelProvider();
-      const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
-      const modelId = `${prov.kind}/${prov.model}`;
+      const BOT_BLUEPRINT_MODEL_ID = 'openrouter/minimax/minimax-m2.5:nitro';
+      let model: any = buildProviderModel(BOT_BLUEPRINT_MODEL_ID);
+      let modelId = BOT_BLUEPRINT_MODEL_ID;
+      let prov: ReturnType<typeof pickModelProvider> | null = null;
+      if (!model) {
+        prov = pickModelProvider();
+        model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
+        modelId = `${prov.kind}/${prov.model}`;
+      }
 
       send({ type: 'start', goal, model: modelId, availableToolCount: availableTools.length });
 
@@ -549,7 +555,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
       // Gemini 3.x defaults thinkingLevel to 'high', which makes a structured
       // blueprint task take 30–60s+. 'low' keeps quality fine here and cuts
       // latency dramatically. Only applies when the chosen provider is Google.
-      const googleProviderOptions = prov.kind === 'google'
+      const googleProviderOptions = prov?.kind === 'google'
         ? { google: { thinkingConfig: { thinkingLevel: 'low' as const } } }
         : undefined;
 
