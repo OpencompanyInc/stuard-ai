@@ -511,9 +511,31 @@ export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
   x: ['x_'],
 };
 
-function buildIntegrationSystemPrompt(groupName: string): string {
+export interface IntegrationUserIdentity {
+  userId?: string;
+  email?: string;
+  username?: string;
+}
+
+function buildIntegrationSystemPrompt(
+  groupName: string,
+  identity?: IntegrationUserIdentity,
+): string {
+  const userId = identity?.userId?.trim();
+  const email = identity?.email?.trim();
+  const username = identity?.username?.trim();
+
+  const identityLines: string[] = [];
+  if (userId) identityLines.push(`- User ID: ${userId}`);
+  if (email) identityLines.push(`- Email: ${email}`);
+  if (username) identityLines.push(`- Username: ${username}`);
+
+  const identityBlock = identityLines.length
+    ? `\n\n## Acting On Behalf Of\n\nAll integration tool calls authenticate as this user via their stored OAuth tokens:\n${identityLines.join('\n')}\n\nUse these identifiers when an API requires "me" / "self" / current-user references, when filtering for the user's own resources, or when the user asks "what's my…" style questions. Never expose the raw User ID to the end user in your final summary.`
+    : '';
+
   return `You are the ${groupName} Integration Subagent for StuardAI.
-You handle API operations for the ${groupName} platform on behalf of the orchestrator.
+You handle API operations for the ${groupName} platform on behalf of the orchestrator.${identityBlock}
 
 RULES:
 1. Use get_tool_schema to discover exact parameters before calling any tool.
@@ -526,16 +548,19 @@ RULES:
 /**
  * Build a capability pack for a specific integration group at runtime.
  * Tool names are resolved from the registry by prefix matching.
+ * `identity` is optionally surfaced in the system prompt so the model knows
+ * which user it is acting on behalf of for OAuth-bound calls.
  */
 export function buildIntegrationPack(
   groupName: string,
   toolNames: string[],
+  identity?: IntegrationUserIdentity,
 ): CapabilityPack {
   return {
     kind: 'integration',
     label: `${groupName.charAt(0).toUpperCase() + groupName.slice(1)} Integration`,
     toolNames: ['search_tools', 'get_tool_schema', 'execute_tool', ...toolNames],
-    systemPrompt: buildIntegrationSystemPrompt(groupName),
+    systemPrompt: buildIntegrationSystemPrompt(groupName, identity),
     maxSteps: 30,
   };
 }

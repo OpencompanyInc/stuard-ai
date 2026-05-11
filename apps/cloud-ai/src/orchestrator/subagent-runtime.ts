@@ -414,6 +414,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // NOTE: the `started` event is emitted via emitToClient further below,
   // after bridgeWs is resolved, so it reaches the desktop client.
 
+  // Resolve bridge context up-front so integration packs can include the
+  // acting user's identity in their system prompt (the integration tools
+  // already authenticate as this user via their stored OAuth tokens).
+  const bridgeWs = explicitBridgeWs || getBridgeWs();
+  const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
+
   // Resolve capability pack
   let pack: CapabilityPack | undefined;
   if (request.kind === 'integration') {
@@ -424,7 +430,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     const groupName = detectIntegrationGroup(contextHint);
     if (groupName) {
       const toolNames = resolveIntegrationTools(groupName, allToolNames);
-      pack = buildIntegrationPack(groupName, toolNames);
+      const identity = {
+        userId: typeof bridgeSecrets?.userId === 'string' ? bridgeSecrets.userId : undefined,
+        email: typeof bridgeSecrets?.email === 'string' ? bridgeSecrets.email : undefined,
+        username: typeof bridgeSecrets?.username === 'string' ? bridgeSecrets.username : undefined,
+      };
+      pack = buildIntegrationPack(groupName, toolNames, identity);
     }
   } else {
     pack = getCapabilityPack(request.kind);
@@ -444,9 +455,6 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     pack = { ...pack, toolNames: [...pack.toolNames, ...request.extraToolNames] };
   }
 
-  // Resolve bridge context for wrapping tools (ALS is lost inside agent.generate)
-  const bridgeWs = explicitBridgeWs || getBridgeWs();
-  const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
   const subagentBridgeSecrets: Record<string, any> = {
     ...(bridgeSecrets || {}),
     __subagentId: subagentId,

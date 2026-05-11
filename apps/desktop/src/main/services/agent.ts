@@ -42,7 +42,7 @@ function setAgentProcessEnv(port: number) {
 
 function getAgentBinaryPath() {
   const base = process.resourcesPath;
-  const name = process.platform === "win32" ? "Stuard AI Agent.exe" : "stuard-agent";
+  const name = process.platform === "win32" ? "Stuard AI.exe" : "stuard-agent";
   return path.join(base, "agent", name);
 }
 
@@ -273,9 +273,21 @@ export async function stopAgent(id: string = 'default'): Promise<void> {
 }
 
 async function stopAgentLegacy() {
-    // Try to kill any stray processes from previous runs just in case
+    // Try to kill any stray agent processes from previous runs.
+    // The agent exe is now named "Stuard AI.exe" — same as the main Electron
+    // exe — so taskkill /IM alone would also kill the main app. We use
+    // PowerShell to filter by ExecutablePath ending in
+    // resources\agent\Stuard AI.exe so we only target the agent.
     if (process.platform === "win32") {
-      try { 
+      try {
+        const psScript = (
+          "Get-CimInstance Win32_Process -Filter \"Name='Stuard AI.exe'\" | " +
+          "Where-Object { $_.ExecutablePath -like '*\\resources\\agent\\Stuard AI.exe' } | " +
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        );
+        spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psScript], { stdio: "ignore" });
+        // Legacy name (pre-rename) — keep these in case the user upgraded
+        // from an older install with a leftover process.
         spawn("taskkill", ["/IM", "Stuard AI Agent.exe", "/T", "/F"], { stdio: "ignore" });
         spawn("taskkill", ["/IM", "stuard-agent.exe", "/T", "/F"], { stdio: "ignore" });
         await new Promise(r => setTimeout(r, 500));

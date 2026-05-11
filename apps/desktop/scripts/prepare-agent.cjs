@@ -5,7 +5,7 @@
 //
 //   Service     | Windows                   | macOS / Linux
 //   ------------|---------------------------|------------------
-//   Agent       | "Stuard AI Agent.exe"     | "stuard-agent"
+//   Agent       | "Stuard AI.exe"           | "stuard-agent"
 //   Browser     | "stuard-browser.exe"      | "stuard-browser"
 //   MediaPipe   | "stuard-mediapipe.exe"    | "stuard-mediapipe"
 //   Wakeword    | "stuard-wakeword.exe"     | "stuard-wakeword"
@@ -124,7 +124,7 @@ function main() {
     winName: "stuard-agent.exe",
     macName: "stuard-agent-macos",
     linuxName: "stuard-agent-linux",
-    destName: process.platform === "win32" ? "Stuard AI Agent.exe" : "stuard-agent",
+    destName: process.platform === "win32" ? "Stuard AI.exe" : "stuard-agent",
   });
   if (agentCopied) {
     console.log(`[prepare-agent] Agent binary: OK`);

@@ -168,4 +168,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Embed the same brand icon used by the Electron exe. On Windows this
+    # ends up in the PE icon resource (visible in Task Manager). On macOS
+    # PyInstaller ignores .ico, so we leave it as-is there.
+    icon='icon.ico' if sys.platform == 'win32' else None,
 )

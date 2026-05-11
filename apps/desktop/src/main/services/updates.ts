@@ -265,37 +265,55 @@ async function downloadWindowsUpdate(): Promise<{ ok: boolean; error?: string }>
 // Kill stray child processes that hold file handles on the install dir.
 // Inno's /CLOSEAPPLICATIONS only closes the main exe; if these survive,
 // extraction silently fails on the 2nd+ update in a session.
+//
+// IMPORTANT: the agent exe is also called "Stuard AI.exe" (same as the
+// main Electron exe), so we can't use plain `taskkill /IM` to kill the
+// agent — that would also kill the running Electron process. Instead we
+// use a PowerShell CIM query that filters by ExecutablePath ending in
+// `\resources\agent\Stuard AI.exe`. For the other sidecars (uniquely
+// named) we keep the simple taskkill path.
 async function killStrayChildProcessesWindows(): Promise<void> {
+  const tasks: Promise<void>[] = [];
+
+  // Path-disambiguated kill for the agent (shared "Stuard AI.exe" name)
+  const psScript = (
+    "Get-CimInstance Win32_Process -Filter \"Name='Stuard AI.exe'\" | " +
+    "Where-Object { $_.ExecutablePath -like '*\\resources\\agent\\Stuard AI.exe' } | " +
+    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+  );
+  tasks.push(new Promise<void>((resolve) => {
+    try {
+      const p = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psScript], { stdio: "ignore" });
+      const t = setTimeout(() => resolve(), 4000);
+      p.on("exit", () => { clearTimeout(t); resolve(); });
+      p.on("error", () => { clearTimeout(t); resolve(); });
+    } catch { resolve(); }
+  }));
+
+  // Other sidecars + legacy agent names (no ambiguity)
   const imageNames = [
-    "Stuard AI Agent.exe",
+    "Stuard AI Agent.exe", // legacy name (pre-rename)
     "stuard-agent.exe",
     "stuard-wakeword.exe",
     "stuard-file-indexer.exe",
     "browser_use_server.exe",
     "browser_server.exe",
     "mediapipe_service.exe",
+    "stuard-mediapipe.exe",
+    "stuard-browser.exe",
   ];
-  await Promise.allSettled(
-    imageNames.map(
-      (name) =>
-        new Promise<void>((resolve) => {
-          try {
-            const p = spawn("taskkill", ["/IM", name, "/T", "/F"], { stdio: "ignore" });
-            const t = setTimeout(() => resolve(), 3000);
-            p.on("exit", () => {
-              clearTimeout(t);
-              resolve();
-            });
-            p.on("error", () => {
-              clearTimeout(t);
-              resolve();
-            });
-          } catch {
-            resolve();
-          }
-        }),
-    ),
-  );
+  for (const name of imageNames) {
+    tasks.push(new Promise<void>((resolve) => {
+      try {
+        const p = spawn("taskkill", ["/IM", name, "/T", "/F"], { stdio: "ignore" });
+        const t = setTimeout(() => resolve(), 3000);
+        p.on("exit", () => { clearTimeout(t); resolve(); });
+        p.on("error", () => { clearTimeout(t); resolve(); });
+      } catch { resolve(); }
+    }));
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 async function installWindowsUpdate(): Promise<{ ok: boolean; error?: string }> {
