@@ -243,7 +243,7 @@ function pickModelProvider() {
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
   const hasGemini = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY || !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY;
   if ((prefer === 'openai' && hasOpenAI) || (hasOpenAI && !hasGemini)) return { kind: 'openai' as const, model: 'gpt-4.1-mini' };
-  if (hasGemini) return { kind: 'google' as const, model: 'gemini-1.5-flash' };
+  if (hasGemini) return { kind: 'google' as const, model: 'gemini-3.1-flash-lite' };
   // default to openai id (may fail; handled by try/catch in callers)
   return { kind: 'openai' as const, model: 'gpt-4.1-mini' };
 }
