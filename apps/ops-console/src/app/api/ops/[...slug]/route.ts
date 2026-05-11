@@ -263,6 +263,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       'webhooks', 'webhook_events', 'webhook_providers', 'webhook_queue',
       'marketplace_workflows', 'marketplace_workflow_versions', 'marketplace_ratings', 'marketplace_downloads',
       'beta_users', 'waitlist', 'feedback', 'feedback_comments',
+      'support_tickets', 'support_ticket_messages',
       'deployments', 'cloud_engines', 'storage_usage', 'compute_billing_events', 'vm_snapshots',
       'vm_metrics_history', 'terminal_sessions', 'vm_deployments',
     ];
@@ -456,7 +457,145 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     return ok({ item: normalizeFeedbackItem(item as FeedbackRow), comments: (comments || []).map(normalizeFeedbackComment) });
   }
 
+  // ── support (list tickets with stats) ──
+  if (route === 'support') {
+    const status = sp.get('status') || undefined;
+    const priority = sp.get('priority') || undefined;
+    const category = sp.get('category') || undefined;
+    const q = (sp.get('q') || '').trim();
+    const limit = Math.max(1, Math.min(200, Number(sp.get('limit') || 50)));
+    const offset = Math.max(0, Number(sp.get('offset') || 0));
+
+    let query = supabase
+      .from('support_tickets')
+      .select('*', { count: 'exact' })
+      .order('last_message_at', { ascending: false });
+
+    if (status) query = query.eq('status', status);
+    if (priority) query = query.eq('priority', priority);
+    if (category) query = query.eq('category', category);
+    if (q) {
+      const esc = q.replace(/%/g, '\\%').replace(/,/g, ' ');
+      query = query.or(`subject.ilike.%${esc}%,email.ilike.%${esc}%,name.ilike.%${esc}%`);
+    }
+
+    const { data, error, count } = await query.range(offset, offset + limit - 1);
+    if (error) return err(500, error.message);
+
+    const { data: allTickets } = await supabase.from('support_tickets').select('status, priority, last_message_by');
+    const stats = {
+      total: allTickets?.length || 0,
+      open: allTickets?.filter(t => t.status === 'open').length || 0,
+      pending: allTickets?.filter(t => t.status === 'pending').length || 0,
+      awaitingUser: allTickets?.filter(t => t.status === 'awaiting_user').length || 0,
+      resolved: allTickets?.filter(t => t.status === 'resolved' || t.status === 'closed').length || 0,
+      needsReply: allTickets?.filter(t => (t.status === 'open' || t.status === 'pending') && t.last_message_by === 'user').length || 0,
+      urgent: allTickets?.filter(t => t.priority === 'urgent' && t.status !== 'closed' && t.status !== 'resolved').length || 0,
+    };
+
+    // message counts per ticket
+    const ids = (data || []).map(d => d.id);
+    const messageCounts: Record<string, number> = {};
+    if (ids.length > 0) {
+      const { data: msgs } = await supabase.from('support_ticket_messages').select('ticket_id').in('ticket_id', ids);
+      for (const m of msgs || []) messageCounts[m.ticket_id] = (messageCounts[m.ticket_id] || 0) + 1;
+    }
+
+    return ok({
+      tickets: (data || []).map(t => ({ ...t, messageCount: messageCounts[String(t.id)] || 0 })),
+      total: count || 0,
+      limit,
+      offset,
+      stats,
+    });
+  }
+
+  // ── support/:id (single ticket with all messages including internal notes) ──
+  if (slug[0] === 'support' && slug[1]) {
+    const ticketId = slug[1];
+    const { data: ticket, error } = await supabase
+      .from('support_tickets')
+      .select('*')
+      .eq('id', ticketId)
+      .maybeSingle();
+    if (error) return err(500, error.message);
+    if (!ticket) return err(404, 'Ticket not found');
+
+    const { data: messages } = await supabase
+      .from('support_ticket_messages')
+      .select('*')
+      .eq('ticket_id', ticketId)
+      .order('created_at', { ascending: true });
+
+    const messagesWithUrls = await signSupportAttachmentUrls(supabase, messages || []);
+    return ok({ ticket, messages: messagesWithUrls });
+  }
+
   return err(404, 'Unknown ops route');
+}
+
+// ── Support attachment helpers ─────────────────────────────────────────────
+const SUPPORT_BUCKET = 'support-attachments';
+const SUPPORT_MAX_BYTES = 5 * 1024 * 1024;
+const SUPPORT_MAX_ATTACHMENTS = 5;
+const SUPPORT_ALLOWED_MIME = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf',
+]);
+const SUPPORT_SIGNED_TTL = 3600;
+
+type AttachmentRecord = { path: string; name: string; mime: string; size: number };
+
+function validateSupportAttachments(raw: unknown): { ok: true; value: AttachmentRecord[] } | { ok: false; error: string } {
+  if (raw == null) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) return { ok: false, error: 'attachments_must_be_array' };
+  if (raw.length > SUPPORT_MAX_ATTACHMENTS) return { ok: false, error: 'too_many_attachments' };
+  const out: AttachmentRecord[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') return { ok: false, error: 'invalid_attachment' };
+    const a = item as Record<string, unknown>;
+    const path = typeof a.path === 'string' ? a.path : '';
+    const name = typeof a.name === 'string' ? a.name : '';
+    const mime = typeof a.mime === 'string' ? a.mime : '';
+    const size = typeof a.size === 'number' ? a.size : -1;
+    if (!path || path.includes('..')) return { ok: false, error: 'invalid_attachment_path' };
+    if (!name) return { ok: false, error: 'attachment_name_required' };
+    if (!SUPPORT_ALLOWED_MIME.has(mime)) return { ok: false, error: 'unsupported_attachment_type' };
+    if (!Number.isFinite(size) || size < 0 || size > SUPPORT_MAX_BYTES) return { ok: false, error: 'attachment_too_large' };
+    out.push({ path, name, mime, size });
+  }
+  return { ok: true, value: out };
+}
+
+async function signSupportAttachmentUrls<T extends { attachments?: unknown }>(
+  db: import('@supabase/supabase-js').SupabaseClient,
+  rows: T[]
+): Promise<T[]> {
+  const paths = new Set<string>();
+  for (const row of rows) {
+    if (Array.isArray(row.attachments)) {
+      for (const a of row.attachments) {
+        if (a && typeof a === 'object' && typeof (a as { path?: unknown }).path === 'string') {
+          paths.add((a as { path: string }).path);
+        }
+      }
+    }
+  }
+  if (paths.size === 0) return rows;
+
+  const urlMap = new Map<string, string>();
+  const { data } = await db.storage.from(SUPPORT_BUCKET).createSignedUrls([...paths], SUPPORT_SIGNED_TTL);
+  for (const entry of data || []) {
+    if (entry.path && entry.signedUrl) urlMap.set(entry.path, entry.signedUrl);
+  }
+
+  return rows.map(row => {
+    if (!Array.isArray(row.attachments)) return row;
+    const next = (row.attachments as Array<Record<string, unknown>>).map(a => ({
+      ...a,
+      url: typeof a.path === 'string' ? urlMap.get(a.path) || null : null,
+    }));
+    return { ...row, attachments: next };
+  });
 }
 
 // ── POST handler ─────────────────────────────────────────────────────────
@@ -574,6 +713,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     return ok({ comment: normalizeFeedbackComment(legacyInsert.data as FeedbackCommentRow) }, 201);
   }
 
+  // ── support/:id/messages (staff reply or internal note) ──
+  if (slug[0] === 'support' && slug[1] && slug[2] === 'messages') {
+    const ticketId = slug[1];
+    const content = String(body.content || '').trim();
+    const internal = body.internal === true || body.internal_note === true;
+    const authorName = body.author_name ? String(body.author_name).trim() : 'Stuard Support';
+    if (!content) return err(400, 'content_required');
+    if (content.length > 10000) return err(400, 'content_too_long');
+
+    const attachmentsValidation = validateSupportAttachments(body.attachments);
+    if (!attachmentsValidation.ok) return err(400, attachmentsValidation.error);
+
+    const { data: message, error } = await supabase
+      .from('support_ticket_messages')
+      .insert({
+        ticket_id: ticketId,
+        author_type: 'staff',
+        author_name: authorName,
+        content,
+        internal_note: internal,
+        attachments: attachmentsValidation.value,
+      })
+      .select()
+      .single();
+    if (error) return err(500, error.message);
+    const [signed] = await signSupportAttachmentUrls(supabase, [message]);
+    return ok({ message: signed }, 201);
+  }
+
   // ── deployments (record) ──
   if (route === 'deployments') {
     const { channel, version, git_branch, git_commit_sha, git_tag, targets, workflow_run_url, workflow_run_id, metadata } = body;
@@ -665,6 +833,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
     const legacyUpdate = await supabase.from('feedback').update(legacyUpdates).eq('id', feedbackId).select().single();
     if (legacyUpdate.error) return err(500, modernUpdate.error.message);
     return ok({ item: normalizeFeedbackItem(legacyUpdate.data as FeedbackRow) });
+  }
+
+  // ── support/:id (update status / priority / assignment) ──
+  if (slug[0] === 'support' && slug[1]) {
+    const ticketId = slug[1];
+    const updates: Record<string, unknown> = {};
+    const VALID_STATUS = ['open', 'pending', 'awaiting_user', 'resolved', 'closed'];
+    const VALID_PRIORITY = ['low', 'medium', 'high', 'urgent'];
+    if (body.status) {
+      if (!VALID_STATUS.includes(body.status)) return err(400, 'invalid_status');
+      updates.status = body.status;
+      if (['resolved', 'closed'].includes(body.status)) updates.resolved_at = new Date().toISOString();
+      if (body.status === 'open') updates.resolved_at = null;
+    }
+    if (body.priority) {
+      if (!VALID_PRIORITY.includes(body.priority)) return err(400, 'invalid_priority');
+      updates.priority = body.priority;
+    }
+    if (body.assigned_to !== undefined) updates.assigned_to = body.assigned_to || null;
+    if (body.category) updates.category = body.category;
+
+    if (Object.keys(updates).length === 0) return err(400, 'no_fields');
+
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .update(updates)
+      .eq('id', ticketId)
+      .select()
+      .single();
+    if (error) return err(500, error.message);
+    return ok({ ticket: data });
   }
 
   // ── deployments/:id ──

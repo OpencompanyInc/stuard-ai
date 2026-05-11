@@ -4,17 +4,19 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, BarChart3, Users, Rocket, Server, Shield, LogOut,
   GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock, Bug,
-  ChevronsLeft, ChevronsRight
+  ChevronsLeft, ChevronsRight, LifeBuoy
 } from 'lucide-react';
 import {
   StatusData, AnalyticsData, UserEntry, Activity as ActivityItem,
   SyncSystemData, ServerStatusData, BetaUser, WaitlistEntry, Deployment,
   FeedbackEntry, FeedbackComment, FeedbackStats,
+  SupportTicket, SupportTicketMessage, SupportStats, SupportTicketStatus, SupportTicketPriority, SupportAttachment,
   fetchAnalytics, fetchUsers, fetchRecentActivity, fetchServerStatus,
   fetchSyncSystems as apiFetchSyncSystems, fetchDatabaseStats, fetchBetaUsers as apiFetchBetaUsers,
   fetchWaitlist as apiFetchWaitlist, upsertBetaUser, deleteBetaUser as apiDeleteBeta,
   promoteWaitlistUser, fetchDeployments, recordDeployment, formatTimeAgo,
-  fetchFeedback, fetchFeedbackItem, createFeedback, updateFeedback, addFeedbackComment
+  fetchFeedback, fetchFeedbackItem, createFeedback, updateFeedback, addFeedbackComment,
+  fetchSupportTickets, fetchSupportTicket, updateSupportTicket, replyToSupportTicket,
 } from './lib/api';
 
 import OverviewTab from './components/OverviewTab';
@@ -24,9 +26,10 @@ import DeployTab from './components/DeployTab';
 import InfraTab from './components/InfraTab';
 import AccessTab from './components/AccessTab';
 import FeedbackTab from './components/FeedbackTab';
+import SupportTab from './components/SupportTab';
 import VersionTab from './components/VersionTab';
 
-type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'versions' | 'infra' | 'access' | 'feedback';
+type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'versions' | 'infra' | 'access' | 'feedback' | 'support';
 
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -34,6 +37,7 @@ const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'users', label: 'Users', icon: Users },
   { id: 'deploy', label: 'Deployments', icon: Rocket },
   { id: 'versions', label: 'Versions', icon: GitBranch },
+  { id: 'support', label: 'Support Tickets', icon: LifeBuoy },
   { id: 'feedback', label: 'Feedback & Bugs', icon: Bug },
   { id: 'infra', label: 'Infrastructure', icon: Server },
   { id: 'access', label: 'Access Control', icon: Shield },
@@ -197,6 +201,17 @@ export default function OpsConsole() {
   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackEntry | null>(null);
   const [selectedFeedbackComments, setSelectedFeedbackComments] = useState<FeedbackComment[]>([]);
 
+  // Support tickets state
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [supportTotal, setSupportTotal] = useState(0);
+  const [supportStats, setSupportStats] = useState<SupportStats | null>(null);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportFilterStatus, setSupportFilterStatus] = useState('');
+  const [supportFilterPriority, setSupportFilterPriority] = useState('');
+  const [supportSearch, setSupportSearch] = useState('');
+  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
+  const [selectedTicketMessages, setSelectedTicketMessages] = useState<SupportTicketMessage[]>([]);
+
   const PAGE_SIZE = 50;
 
   // ─── Fetch functions ─────────────────────────────────────────────────────
@@ -279,6 +294,25 @@ export default function OpsConsole() {
     setFeedbackLoading(false);
   }, [feedbackFilterType, feedbackFilterStatus]);
 
+  const loadSupportData = useCallback(async (status?: string, priority?: string, q?: string) => {
+    setSupportLoading(true);
+    const s = status ?? supportFilterStatus;
+    const p = priority ?? supportFilterPriority;
+    const query = q ?? supportSearch;
+    const data = await fetchSupportTickets({
+      status: s || undefined,
+      priority: p || undefined,
+      q: query || undefined,
+      limit: 100,
+    });
+    if (data) {
+      setSupportTickets(data.tickets || []);
+      setSupportTotal(data.total || 0);
+      setSupportStats(data.stats || null);
+    }
+    setSupportLoading(false);
+  }, [supportFilterStatus, supportFilterPriority, supportSearch]);
+
   // ─── Initial load + refresh intervals ────────────────────────────────────
   useEffect(() => {
     loadStatus();
@@ -292,11 +326,13 @@ export default function OpsConsole() {
     loadUsers();
     loadDeployments();
     loadFeedbackData();
+    loadSupportData();
 
     const fast = setInterval(loadStatus, 8000);
     const slow = setInterval(() => {
       loadAnalytics(); loadActivities(); loadSyncSystems(); loadDbStats();
-      loadServerStatus(); loadBetaUsers(); loadWaitlist(); loadDeployments(); loadFeedbackData();
+      loadServerStatus(); loadBetaUsers(); loadWaitlist(); loadDeployments();
+      loadFeedbackData(); loadSupportData();
     }, 60000);
 
     return () => { clearInterval(fast); clearInterval(slow); };
@@ -397,6 +433,40 @@ export default function OpsConsole() {
     else setMessage('Error: Failed to add comment');
   };
 
+  // ─── Support ticket handlers ──────────────────────────────────────────────
+  const handleSupportFilterStatus = (s: string) => { setSupportFilterStatus(s); loadSupportData(s, supportFilterPriority, supportSearch); };
+  const handleSupportFilterPriority = (p: string) => { setSupportFilterPriority(p); loadSupportData(supportFilterStatus, p, supportSearch); };
+  const handleSupportSearch = () => { loadSupportData(supportFilterStatus, supportFilterPriority, supportSearch); };
+
+  const handleSelectTicket = async (id: string) => {
+    const data = await fetchSupportTicket(id);
+    if (data) {
+      setSelectedTicket(data.ticket);
+      setSelectedTicketMessages(data.messages || []);
+    }
+  };
+
+  const handleUpdateTicketStatus = async (id: string, status: SupportTicketStatus) => {
+    const result = await updateSupportTicket(id, { status });
+    if (result) { setMessage(`Status → ${status}`); await loadSupportData(); if (selectedTicket?.id === id) handleSelectTicket(id); }
+    else setMessage('Error: Failed to update status');
+  };
+
+  const handleUpdateTicketPriority = async (id: string, priority: SupportTicketPriority) => {
+    const result = await updateSupportTicket(id, { priority });
+    if (result) { await loadSupportData(); if (selectedTicket?.id === id) handleSelectTicket(id); }
+    else setMessage('Error: Failed to update priority');
+  };
+
+  const handleReplyToTicket = async (ticketId: string, content: string, internal: boolean, attachments: SupportAttachment[]) => {
+    const result = await replyToSupportTicket(ticketId, content, { internal, attachments });
+    if (result) {
+      setMessage(internal ? 'Internal note added' : 'Reply sent');
+      handleSelectTicket(ticketId);
+      await loadSupportData();
+    } else setMessage('Error: Failed to send reply');
+  };
+
   const handleCreateFeedback = async (fb: { type: 'bug' | 'feature'; title: string; description?: string; priority?: string }) => {
     setLoading(true);
     const result = await createFeedback(fb);
@@ -483,6 +553,19 @@ export default function OpsConsole() {
             )}
             {activeTab === 'versions' && (
               <VersionTab status={status} onAction={doAction} loading={loading} />
+            )}
+            {activeTab === 'support' && (
+              <SupportTab
+                tickets={supportTickets} stats={supportStats} total={supportTotal} loading={supportLoading}
+                filterStatus={supportFilterStatus} filterPriority={supportFilterPriority} searchQuery={supportSearch}
+                onFilterStatusChange={handleSupportFilterStatus} onFilterPriorityChange={handleSupportFilterPriority}
+                onSearchChange={setSupportSearch} onSearch={handleSupportSearch}
+                onUpdateStatus={handleUpdateTicketStatus} onUpdatePriority={handleUpdateTicketPriority}
+                selectedTicket={selectedTicket} selectedMessages={selectedTicketMessages}
+                onSelectTicket={handleSelectTicket}
+                onCloseDetail={() => { setSelectedTicket(null); setSelectedTicketMessages([]); }}
+                onReply={handleReplyToTicket}
+              />
             )}
             {activeTab === 'feedback' && (
               <FeedbackTab

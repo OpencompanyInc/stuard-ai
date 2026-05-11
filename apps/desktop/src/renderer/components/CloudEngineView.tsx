@@ -7,6 +7,7 @@ import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
 import { CloudVmChat } from './CloudVmChat';
 import { ProactiveView } from './ProactiveView';
+import { useConfirm } from './ConfirmDialog';
 
 type CloudTab = 'overview' | 'chat' | 'terminal' | 'files' | 'monitoring' | 'billing' | 'proactive';
 
@@ -40,6 +41,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
   const [selectedPlan, setSelectedPlan] = useState('basic');
   const [provDisk, setProvDisk] = useState(20);
   const [provisioning, setProvisioning] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   // ─── No Engine: Provision Flow ───────────────────────────────────────
   if (!engine && !loading) {
@@ -155,6 +157,7 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
   // ─── Main View ───────────────────────────────────────────────────────
   return (
     <div className={clsx('flex flex-col h-full', className)}>
+      {confirmDialog}
       {/* Tab bar */}
       <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-theme/10 shrink-0 bg-theme-hover/20">
         {tabs.map(t => (
@@ -238,7 +241,15 @@ export const CloudEngineView: React.FC<CloudEngineViewProps> = ({ className }) =
                 </span>
               )}
               <button
-                onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Delete cloud engine?',
+                    message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
+                    confirmLabel: 'Delete engine',
+                    destructive: true,
+                  });
+                  if (ok) destroy();
+                }}
                 disabled={isTransitional}
                 className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-bold hover:bg-red-600/20 transition-all disabled:opacity-30"
               >

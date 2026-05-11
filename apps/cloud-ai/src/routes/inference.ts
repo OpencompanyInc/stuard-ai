@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { generateText, generateObject, embed, embedMany, stepCountIs, tool } from 'ai';
+import { generateText, generateObject, streamText, embed, embedMany, stepCountIs, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google, buildProviderEmbeddingModel, buildProviderModel } from '../utils/models';
 import { z } from 'zod';
@@ -419,26 +419,53 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
   }
 
   if (req.method === 'POST' && path === '/inference/ai/bot-blueprint') {
+    let sseStarted = false;
+    const sseHeaders = (): Record<string, string | number> => {
+      const h: Record<string, string | number> = {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Accel-Buffering': 'no',
+      };
+      if (corsOrigin) { h['Access-Control-Allow-Origin'] = corsOrigin; h['Vary'] = 'Origin'; }
+      return h;
+    };
+    const send = (obj: any) => {
+      try {
+        if (!sseStarted) { res.writeHead(200, sseHeaders()); sseStarted = true; }
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      } catch {}
+    };
+    const heartbeat = setInterval(() => {
+      try { if (sseStarted && !res.writableEnded) res.write(`: ping ${Date.now()}\n\n`); } catch {}
+    }, 15_000);
+    // Abort only on real response-side disconnect, NOT on req's 'close' (which
+    // can fire after the request body is fully consumed even if the client is
+    // still listening for SSE events). res.on('close') before res.end() is the
+    // reliable disconnect signal.
+    const controller = new AbortController();
+    let finished = false;
+    const onResClose = () => { if (!finished) { try { controller.abort(); } catch {} } };
+    try { res.on('close', onResClose); } catch {}
+    const finish = () => {
+      finished = true;
+      try { clearInterval(heartbeat); } catch {}
+      try { res.off('close', onResClose); } catch {}
+      try { if (!res.writableEnded) res.end(); } catch {}
+    };
+
     try {
       const { userId: blueprintUserId, isAuthed } = await validateAuth(req);
-      if (!isAuthed) {
-        writeJson(res, 401, { ok: false, error: 'unauthorized' }, corsOrigin);
-        return true;
-      }
+      if (!isAuthed) { send({ type: 'error', error: 'unauthorized' }); finish(); return true; }
       const creditErr = await requireCredits(blueprintUserId);
-      if (creditErr) {
-        writeJson(res, 403, { ok: false, error: creditErr }, corsOrigin);
-        return true;
-      }
+      if (creditErr) { send({ type: 'error', error: creditErr }); finish(); return true; }
 
       const body = await readJsonBody(req);
       const goal = compactText(body?.goal);
       const preferredName = compactText(body?.preferredName);
       const availableTools = normalizeAvailableToolNames(body?.availableTools);
-      if (!goal) {
-        writeJson(res, 400, { ok: false, error: 'goal_required' }, corsOrigin);
-        return true;
-      }
+      if (!goal) { send({ type: 'error', error: 'goal_required' }); finish(); return true; }
 
       const availableSet = new Set(availableTools);
       const discovered = new Map<string, { name: string; description: string; category: string }>();
@@ -449,6 +476,12 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         return !hasAvailableFilter || availableSet.has(name);
       };
 
+      const prov = pickModelProvider();
+      const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
+      const modelId = `${prov.kind}/${prov.model}`;
+
+      send({ type: 'start', goal, model: modelId, availableToolCount: availableTools.length });
+
       const semanticToolSearch = tool({
         description: 'Semantic search over the Stuard tool catalog. Use this to find real tool names for the bot, such as search, browser, email, calendar, GitHub, files, sheets, messaging, or social tools.',
         inputSchema: z.object({
@@ -457,6 +490,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
           limit: z.number().int().min(1).max(20).optional().default(10),
         }),
         execute: async ({ query, category, limit }) => {
+          send({ type: 'tool_search.start', query, category: category || null, limit: limit ?? 10 });
           const result = await (search_tools as any).execute({
             query,
             category,
@@ -471,13 +505,11 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
               category: String(entry?.category || ''),
             }));
           for (const entry of tools) discovered.set(entry.name, entry);
+          send({ type: 'tool_search.results', query, tools });
           return { tools };
         },
       });
 
-      const prov = pickModelProvider();
-      const model = prov.kind === 'openai' ? openai(prov.model) : google(prov.model);
-      const modelId = `${prov.kind}/${prov.model}`;
       const availableToolsBrief = availableTools.length > 0
         ? `The desktop says these non-internal tools may be added to bots. Choose only from this set after semantic search confirms relevance:\n${availableTools.slice(0, 260).join(', ')}`
         : 'No desktop allow-list was supplied; choose only real tools returned by semantic search.';
@@ -512,17 +544,50 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         'Choose a sensible interval: manual for on-demand only, 10m/15m for urgent monitors, 30m for regular watches, 1h/2h for slower checks.',
       ].filter(Boolean).join('\n');
 
-      const out = await generateText({
+      send({ type: 'phase', phase: 'generate' });
+
+      // Gemini 3.x defaults thinkingLevel to 'high', which makes a structured
+      // blueprint task take 30–60s+. 'low' keeps quality fine here and cuts
+      // latency dramatically. Only applies when the chosen provider is Google.
+      const googleProviderOptions = prov.kind === 'google'
+        ? { google: { thinkingConfig: { thinkingLevel: 'low' as const } } }
+        : undefined;
+
+      const stream = streamText({
         model: model as any,
         tools: { bot_tool_search: semanticToolSearch },
         stopWhen: stepCountIs(4),
         prompt,
         temperature: 0.2,
+        abortSignal: controller.signal,
+        ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
+        onStepFinish: (step: any) => {
+          try {
+            const toolCalls = Array.isArray(step?.toolCalls)
+              ? step.toolCalls.map((c: any) => ({ tool: String(c?.toolName || ''), input: c?.input ?? c?.args ?? null }))
+              : [];
+            const textPreview = typeof step?.text === 'string' ? step.text.slice(0, 280) : '';
+            send({
+              type: 'step',
+              finishReason: step?.finishReason ?? null,
+              toolCalls,
+              textPreview,
+            });
+          } catch {}
+        },
       });
-      await logInferenceUsage(blueprintUserId, modelId, out.totalUsage || out.usage, 'Bot Blueprint Generator');
 
-      let parsed = parseJsonObjectFromText(out.text);
+      // Drain the full stream to drive tool calls + onStepFinish to completion.
+      // Awaiting `.text` alone isn't sufficient with a tools loop in AI SDK v6.
+      await stream.consumeStream();
+      const fullText = await stream.text;
+      let usage: any = undefined;
+      try { usage = await stream.totalUsage; } catch { try { usage = await stream.usage; } catch {} }
+      await logInferenceUsage(blueprintUserId, modelId, usage, 'Bot Blueprint Generator');
+
+      let parsed = parseJsonObjectFromText(fullText);
       if (!parsed) {
+        send({ type: 'phase', phase: 'repair' });
         const repair = await generateText({
           model: model as any,
           prompt: [
@@ -530,21 +595,21 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             'Do not add tools that are not present in the original output.',
             `Schema shape: ${JSON.stringify(schemaExample)}`,
             '',
-            out.text,
+            fullText,
           ].join('\n'),
           temperature: 0,
+          abortSignal: controller.signal,
+          ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
         });
         await logInferenceUsage(blueprintUserId, modelId, repair.usage, 'Bot Blueprint JSON Repair');
         parsed = parseJsonObjectFromText(repair.text);
       }
 
-      if (!parsed) {
-        writeJson(res, 500, { ok: false, error: 'invalid_blueprint_json' }, corsOrigin);
-        return true;
-      }
+      if (!parsed) { send({ type: 'error', error: 'invalid_blueprint_json' }); finish(); return true; }
 
       if (discovered.size === 0) {
         try {
+          send({ type: 'tool_search.start', query: goal, category: null, limit: 12, fallback: true });
           const result = await (search_tools as any).execute({ query: goal, limit: 12 });
           for (const entry of (Array.isArray((result as any)?.tools) ? (result as any).tools : []).filter(filterTool)) {
             const toolEntry = {
@@ -554,6 +619,7 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
             };
             if (toolEntry.name) discovered.set(toolEntry.name, toolEntry);
           }
+          send({ type: 'tool_search.results', query: goal, tools: Array.from(discovered.values()), fallback: true });
         } catch {}
       }
 
@@ -564,15 +630,19 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         discoveredTools: Array.from(discovered.values()),
       });
 
-      writeJson(res, 200, {
-        ok: true,
+      send({
+        type: 'blueprint',
         blueprint,
         discoveredTools: Array.from(discovered.values()).slice(0, 30),
-      }, corsOrigin);
+      });
+      send({ type: 'done' });
+      finish();
       return true;
     } catch (e: any) {
-      console.error(`[inference] bot-blueprint error: ${summarizeModelError(e)}`);
-      writeJson(res, 500, { ok: false, error: e?.message || 'bot_blueprint_failed' }, corsOrigin);
+      const summary = summarizeModelError(e);
+      console.error(`[inference] bot-blueprint error: ${summary}`);
+      try { send({ type: 'error', error: e?.message || 'bot_blueprint_failed', detail: summary }); } catch {}
+      finish();
       return true;
     }
   }

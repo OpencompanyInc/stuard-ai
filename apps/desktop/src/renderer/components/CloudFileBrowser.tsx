@@ -13,6 +13,7 @@ import {
   Upload,
 } from 'lucide-react';
 import type { CloudFileEntry } from '../hooks/useCloudEngine';
+import { useConfirm } from './ConfirmDialog';
 
 interface CloudFileBrowserProps {
   engine: { status: string };
@@ -55,6 +56,7 @@ export const CloudFileBrowser: React.FC<CloudFileBrowserProps> = ({
   const [uploading, setUploading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   const joinPath = (base: string, name: string) => (base === '.' || base === '' ? name : `${base}/${name}`);
 
@@ -152,7 +154,12 @@ export const CloudFileBrowser: React.FC<CloudFileBrowserProps> = ({
 
   const handleDeleteEntry = async (entry: CloudFileEntry) => {
     if (!deleteFile) return;
-    const confirmed = window.confirm(`Delete ${entry.name}?`);
+    const confirmed = await confirm({
+      title: entry.type === 'directory' ? 'Delete this folder?' : 'Delete this file?',
+      message: `"${entry.name}" will be removed from the cloud VM. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
     if (!confirmed) return;
     setActionError(null);
     const res = await deleteFile(entry.path);
@@ -412,6 +419,7 @@ export const CloudFileBrowser: React.FC<CloudFileBrowserProps> = ({
 
   return (
     <div className={clsx('flex flex-col h-full', className)}>
+      {confirmDialog}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-theme/10 shrink-0">
         <button
           type="button"

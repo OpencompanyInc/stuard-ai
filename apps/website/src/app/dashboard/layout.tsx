@@ -23,10 +23,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         { name: 'Overview', href: '/dashboard', icon: HomeIcon },
         { name: 'Cloud Engine', href: '/dashboard/cloud', icon: CloudIcon },
         { name: 'Billing', href: '/dashboard/billing', icon: CreditCardIcon },
+        { name: 'Support', href: '/dashboard/support', icon: SupportIcon },
         { name: 'Settings', href: '/dashboard/settings', icon: SettingsIcon },
     ];
 
-    const active = (href: string) => pathname === href;
+    const active = (href: string) => pathname === href || pathname.startsWith(href + '/');
 
     const handleLogout = async () => {
         await logout();
@@ -150,6 +151,9 @@ function SettingsIcon({ className }: { className?: string }) {
 }
 function CloudIcon({ className }: { className?: string }) {
     return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>;
+}
+function SupportIcon({ className }: { className?: string }) {
+    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>;
 }
 function DesktopIcon({ className }: { className?: string }) {
     return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" /></svg>;

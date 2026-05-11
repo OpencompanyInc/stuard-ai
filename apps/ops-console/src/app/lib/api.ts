@@ -128,6 +128,82 @@ export async function addFeedbackComment(feedbackId: string, content: string, au
   });
 }
 
+// ── Support tickets ──
+export async function fetchSupportTickets(opts?: { status?: string; priority?: string; category?: string; q?: string; limit?: number; offset?: number }) {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set('status', opts.status);
+  if (opts?.priority) params.set('priority', opts.priority);
+  if (opts?.category) params.set('category', opts.category);
+  if (opts?.q) params.set('q', opts.q);
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.offset) params.set('offset', String(opts.offset));
+  return apiFetch<SupportListResponse>(`support?${params}`);
+}
+
+export async function fetchSupportTicket(id: string) {
+  return apiFetch<{ ticket: SupportTicket; messages: SupportTicketMessage[] }>(`support/${id}`);
+}
+
+export async function updateSupportTicket(id: string, updates: { status?: string; priority?: string; assigned_to?: string | null; category?: string }) {
+  return apiFetch<{ ticket: SupportTicket }>(`support/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function replyToSupportTicket(
+  id: string,
+  content: string,
+  opts?: { internal?: boolean; author_name?: string; attachments?: SupportAttachment[] }
+) {
+  return apiFetch<{ message: SupportTicketMessage }>(`support/${id}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content,
+      internal: opts?.internal === true,
+      author_name: opts?.author_name,
+      attachments: opts?.attachments,
+    }),
+  });
+}
+
+export const SUPPORT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+export const SUPPORT_MAX_ATTACHMENTS_PER_MESSAGE = 5;
+export const SUPPORT_ALLOWED_ATTACHMENT_MIME = [
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf',
+] as const;
+export const SUPPORT_ALLOWED_ATTACHMENT_ACCEPT = SUPPORT_ALLOWED_ATTACHMENT_MIME.join(',');
+
+export async function uploadSupportAttachment(file: File, ticketId: string): Promise<SupportAttachment> {
+  if (file.size > SUPPORT_MAX_ATTACHMENT_BYTES) {
+    throw new Error(`File too large (max ${Math.floor(SUPPORT_MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB)`);
+  }
+  if (!(SUPPORT_ALLOWED_ATTACHMENT_MIME as readonly string[]).includes(file.type)) {
+    throw new Error('Unsupported file type. Use PNG, JPG, GIF, WebP, or PDF.');
+  }
+  const form = new FormData();
+  form.append('file', file);
+  form.append('ticket_id', ticketId);
+
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch('/api/ops/support-upload', { method: 'POST', body: form, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+  return data.attachment as SupportAttachment;
+}
+
+export function formatSupportBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // Interfaces
 export interface AnalyticsData {
   period: { days: number; since: string };
@@ -214,6 +290,68 @@ export interface FeedbackStats {
 
 export interface FeedbackListResponse {
   items: FeedbackEntry[]; total: number; limit: number; offset: number; stats: FeedbackStats;
+}
+
+// ── Support tickets ──
+export type SupportTicketStatus = 'open' | 'pending' | 'awaiting_user' | 'resolved' | 'closed';
+export type SupportTicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type SupportTicketCategory = 'general' | 'billing' | 'technical' | 'account' | 'feature_request' | 'bug_report' | 'other';
+
+export interface SupportTicket {
+  id: string;
+  user_id: string | null;
+  email: string;
+  name: string | null;
+  subject: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  assigned_to: string | null;
+  metadata: Record<string, unknown>;
+  last_message_at: string;
+  last_message_by: 'user' | 'staff';
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  messageCount?: number;
+}
+
+export interface SupportAttachment {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  url?: string | null;
+}
+
+export interface SupportTicketMessage {
+  id: string;
+  ticket_id: string;
+  user_id: string | null;
+  author_type: 'user' | 'staff';
+  author_name: string | null;
+  content: string;
+  attachments: SupportAttachment[];
+  internal_note: boolean;
+  created_at: string;
+}
+
+export interface SupportStats {
+  total: number;
+  open: number;
+  pending: number;
+  awaitingUser: number;
+  resolved: number;
+  needsReply: number;
+  urgent: number;
+}
+
+export interface SupportListResponse {
+  tickets: SupportTicket[];
+  total: number;
+  limit: number;
+  offset: number;
+  stats: SupportStats;
 }
 
 // Utility functions

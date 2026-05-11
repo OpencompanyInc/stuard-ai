@@ -112,6 +112,28 @@ function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function humanizeToolName(name: string): string {
+  if (!name) return '';
+  const stripped = name.replace(/^(gmail|google|github|slack|notion|linear|discord|twitter|reddit|browser)[._]/i, (m) => `${m.replace(/[._]$/, '')} `);
+  return stripped
+    .replace(/[._-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function humanizeModelName(id: string): string {
+  if (!id) return '';
+  const slash = id.lastIndexOf('/');
+  const raw = slash >= 0 ? id.slice(slash + 1) : id;
+  return raw
+    .split('-')
+    .filter(Boolean)
+    .map(part => /^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function hasAnyKeyword(text: string, keywords: string[]): boolean {
   return keywords.some(keyword => {
     const key = keyword.trim().toLowerCase();
@@ -252,28 +274,76 @@ function normalizeAiBlueprint(raw: any, goal: string, availableTools: string[], 
   };
 }
 
-async function generateBotBlueprintWithAi(goal: string, availableTools: string[], preferredName?: string): Promise<BotBlueprint> {
+export type BlueprintStreamEvent =
+  | { type: 'start'; goal: string; model: string; availableToolCount: number }
+  | { type: 'phase'; phase: 'generate' | 'repair' }
+  | { type: 'tool_search.start'; query: string; category: string | null; limit: number; fallback?: boolean }
+  | { type: 'tool_search.results'; query: string; tools: Array<{ name: string; description: string; category: string }>; fallback?: boolean }
+  | { type: 'step'; finishReason: string | null; toolCalls: Array<{ tool: string; input: any }>; textPreview: string }
+  | { type: 'blueprint'; blueprint: any; discoveredTools: Array<{ name: string; description: string; category: string }> }
+  | { type: 'done' }
+  | { type: 'error'; error: string; detail?: string };
+
+async function streamBotBlueprintWithAi(
+  goal: string,
+  availableTools: string[],
+  preferredName: string | undefined,
+  onEvent: (event: BlueprintStreamEvent) => void,
+): Promise<BotBlueprint> {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token || '';
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const hasToken = Boolean(token);
 
-  const response = await fetch(`${getCloudAiHttp()}/inference/ai/bot-blueprint`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      goal,
-      preferredName,
-      availableTools,
-    }),
-  });
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.ok || !payload?.blueprint) {
-    throw new Error(String(payload?.error || `bot_blueprint_failed_${response.status}`));
+  let response: Response;
+  try {
+    response = await fetch(`${getCloudAiHttp()}/inference/ai/bot-blueprint`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ goal, preferredName, availableTools }),
+    });
+  } catch (e: any) {
+    const reason = e?.message || String(e || 'network_error');
+    throw new Error(`network: ${reason}${hasToken ? '' : ' (no auth token)'}`);
   }
 
-  return normalizeAiBlueprint(payload.blueprint, goal, availableTools, preferredName);
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`http ${response.status}: ${detail.slice(0, 200) || 'no_body'}${hasToken ? '' : ' (no auth token)'}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let blueprintEvent: Extract<BlueprintStreamEvent, { type: 'blueprint' }> | null = null;
+  let errorEvent: Extract<BlueprintStreamEvent, { type: 'error' }> | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(':')) continue;
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload) continue;
+      let event: BlueprintStreamEvent | null = null;
+      try { event = JSON.parse(payload) as BlueprintStreamEvent; } catch { continue; }
+      if (!event) continue;
+      onEvent(event);
+      if (event.type === 'blueprint') blueprintEvent = event;
+      else if (event.type === 'error') errorEvent = event;
+    }
+  }
+
+  if (errorEvent) throw new Error(errorEvent.error || 'bot_blueprint_failed');
+  if (!blueprintEvent) throw new Error('stream_ended_without_blueprint');
+
+  return normalizeAiBlueprint(blueprintEvent.blueprint, goal, availableTools, preferredName);
 }
 
 function timeAgo(dateStr: string | null | undefined): string {
@@ -996,7 +1066,84 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [interval, setInterval] = useState<ScheduleInterval>('30m');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateElapsed, setGenerateElapsed] = useState(0);
+  const [generateStage, setGenerateStage] = useState('');
+  const [progressEvents, setProgressEvents] = useState<Array<{ id: number; icon: 'search' | 'results' | 'step' | 'phase' | 'start' | 'done'; title: string; detail?: string; tools?: Array<{ name: string; category: string }>; at: number }>>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!generating) {
+      setGenerateElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const tick = () => setGenerateElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [generating]);
+
+  const pushProgress = useCallback((entry: { icon: 'search' | 'results' | 'step' | 'phase' | 'start' | 'done'; title: string; detail?: string; tools?: Array<{ name: string; category: string }> }) => {
+    setProgressEvents(prev => [...prev, { id: prev.length, ...entry, at: Date.now() }]);
+  }, []);
+
+  const handleStreamEvent = useCallback((event: BlueprintStreamEvent) => {
+    if (event.type === 'start') {
+      setGenerateStage('Connecting');
+      pushProgress({
+        icon: 'start',
+        title: 'Connected',
+        detail: humanizeModelName(event.model),
+      });
+    } else if (event.type === 'phase') {
+      if (event.phase === 'generate') {
+        setGenerateStage('Designing the bot');
+        pushProgress({ icon: 'phase', title: 'Designing the bot' });
+      } else {
+        setGenerateStage('Refining the output');
+        pushProgress({ icon: 'phase', title: 'Refining the output' });
+      }
+    } else if (event.type === 'tool_search.start') {
+      const label = event.fallback ? 'Backup search' : 'Searching the catalog';
+      setGenerateStage(label);
+      pushProgress({
+        icon: 'search',
+        title: label,
+        detail: event.query,
+      });
+    } else if (event.type === 'tool_search.results') {
+      const count = event.tools.length;
+      pushProgress({
+        icon: 'results',
+        title: count === 0 ? 'No matches' : `${count} match${count === 1 ? '' : 'es'}`,
+        detail: event.query,
+        tools: event.tools.map(t => ({ name: t.name, category: t.category })),
+      });
+    } else if (event.type === 'step') {
+      const toolNames = event.toolCalls.map(c => c.tool).filter(Boolean);
+      if (toolNames.length > 0) {
+        pushProgress({
+          icon: 'step',
+          title: 'Looked up tools',
+          detail: toolNames.map(humanizeToolName).join(', '),
+        });
+      } else {
+        pushProgress({
+          icon: 'step',
+          title: 'Thinking',
+          detail: event.textPreview || undefined,
+        });
+      }
+    } else if (event.type === 'blueprint') {
+      setGenerateStage('Finalizing');
+      const count = event.blueprint?.allowedTools?.length || 0;
+      pushProgress({
+        icon: 'done',
+        title: 'Setup ready',
+        detail: count === 0 ? 'No extra tools needed' : `${count} tool${count === 1 ? '' : 's'} selected`,
+      });
+    }
+  }, [pushProgress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1014,14 +1161,25 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
     if (!seed) return;
     setGenerating(true);
     setGenerateError(null);
+    setProgressEvents([]);
+    setGenerateStage('Connecting');
+    const startedAt = Date.now();
+    console.info('[bot-blueprint] requesting', { seedLength: seed.length, tools: availableTools.length, name });
     try {
       let blueprint: BotBlueprint;
       try {
-        blueprint = await generateBotBlueprintWithAi(seed, availableTools, name);
-      } catch (e) {
-        console.warn('AI bot blueprint generation failed; using local fallback', e);
+        blueprint = await streamBotBlueprintWithAi(seed, availableTools, name, handleStreamEvent);
+        console.info(`[bot-blueprint] done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`, {
+          name: blueprint.name,
+          allowedTools: blueprint.allowedTools.length,
+          interval: blueprint.interval,
+        });
+      } catch (e: any) {
+        const took = ((Date.now() - startedAt) / 1000).toFixed(1);
+        const reason = e?.message || String(e || 'unknown error');
+        console.warn(`[bot-blueprint] failed after ${took}s — using local fallback`, e);
         blueprint = buildBotBlueprint(seed, availableTools, name);
-        setGenerateError('AI setup was unavailable, so a local setup was generated.');
+        setGenerateError(`Couldn't reach the AI (${reason}). Used a local setup after ${took}s instead.`);
       }
       setName(blueprint.name);
       setEmoji(blueprint.emoji);
@@ -1032,7 +1190,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
     } finally {
       setGenerating(false);
     }
-  }, [availableTools, goal, name, systemPrompt]);
+  }, [availableTools, goal, name, systemPrompt, handleStreamEvent]);
 
   const handleCreate = async () => {
     setSubmitting(true);
@@ -1042,7 +1200,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
       if (needsBlueprint) {
         const seed = compactWhitespace(goal || systemPrompt);
         try {
-          fallbackBlueprint = await generateBotBlueprintWithAi(seed, availableTools, name);
+          fallbackBlueprint = await streamBotBlueprintWithAi(seed, availableTools, name, handleStreamEvent);
         } catch (e) {
           console.warn('AI bot blueprint generation failed during create; using local fallback', e);
           fallbackBlueprint = buildBotBlueprint(seed, availableTools, name);
@@ -1107,7 +1265,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                {generating ? 'Generating' : 'Generate'}
+                {generating ? `Generating · ${generateElapsed}s` : 'Generate'}
               </button>
             </div>
             <textarea
@@ -1130,18 +1288,99 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 {selectedTools.length === 0 ? 'Default bot tools only' : `${selectedTools.length} tool${selectedTools.length === 1 ? '' : 's'} selected`}
               </span>
               {selectedTools.slice(0, 4).map(tool => (
-                <span key={tool} className="rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[10px] font-mono text-primary">
-                  {tool}
+                <span
+                  key={tool}
+                  title={tool}
+                  className="rounded-md border border-primary/20 bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary"
+                >
+                  {humanizeToolName(tool)}
                 </span>
               ))}
               {selectedTools.length > 4 && (
-                <span className="rounded-full bg-theme-hover px-2 py-1 text-[10px] text-theme-muted">
-                  +{selectedTools.length - 4}
+                <span className="rounded-md bg-theme-hover px-2 py-1 text-[10px] text-theme-muted">
+                  +{selectedTools.length - 4} more
                 </span>
               )}
             </div>
+            {generating && progressEvents.length === 0 && (
+              <p className="mt-3 flex items-center gap-2 text-[11px] text-theme-muted">
+                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                <span>{generateStage || 'Working'}</span>
+                <span className="text-theme-muted/60">· {generateElapsed}s</span>
+              </p>
+            )}
+            {progressEvents.length > 0 && (
+              <div className="mt-3 overflow-hidden rounded-xl border border-theme/40 bg-theme-card/60">
+                <div className="flex items-center justify-between border-b border-theme/30 px-3 py-2">
+                  <div className="flex items-center gap-2 text-[11px] font-medium text-theme-fg">
+                    {generating ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                    ) : (
+                      <Check className="h-3 w-3 text-primary" />
+                    )}
+                    <span>{generating ? (generateStage || 'Working') : 'Setup ready'}</span>
+                  </div>
+                  <span className="text-[10px] tabular-nums text-theme-muted/70">{generateElapsed}s</span>
+                </div>
+                <ul className="max-h-56 space-y-0 overflow-y-auto scrollbar-minimal">
+                  {progressEvents.map((event, idx) => {
+                    const IconCmp =
+                      event.icon === 'search' ? Search :
+                      event.icon === 'results' ? Check :
+                      event.icon === 'step' ? Brain :
+                      event.icon === 'phase' ? Sparkles :
+                      event.icon === 'done' ? Check :
+                      Activity;
+                    const iconTone =
+                      event.icon === 'done' || event.icon === 'results'
+                        ? 'text-emerald-400'
+                        : 'text-primary';
+                    return (
+                      <li
+                        key={event.id}
+                        className={clsx(
+                          'flex items-start gap-2.5 px-3 py-2 text-[11px]',
+                          idx !== progressEvents.length - 1 && 'border-b border-theme/20',
+                        )}
+                      >
+                        <span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center', iconTone)}>
+                          <IconCmp className="h-3 w-3" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-theme-fg">{event.title}</div>
+                          {event.detail && (
+                            <div className="mt-0.5 truncate text-theme-muted">{event.detail}</div>
+                          )}
+                          {event.tools && event.tools.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {event.tools.slice(0, 10).map(t => (
+                                <span
+                                  key={t.name}
+                                  title={t.name}
+                                  className="rounded-md border border-theme/40 bg-theme-card px-1.5 py-0.5 text-[10px] text-theme-fg"
+                                >
+                                  {humanizeToolName(t.name)}
+                                </span>
+                              ))}
+                              {event.tools.length > 10 && (
+                                <span className="rounded-md bg-theme-hover px-1.5 py-0.5 text-[10px] text-theme-muted">
+                                  +{event.tools.length - 10} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {generateError && (
-              <p className="mt-2 text-[11px] text-amber-400">{generateError}</p>
+              <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[11px] text-amber-300">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="flex-1">{generateError}</span>
+              </div>
             )}
           </section>
 

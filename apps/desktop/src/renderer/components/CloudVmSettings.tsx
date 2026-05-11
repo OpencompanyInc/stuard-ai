@@ -26,6 +26,7 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { useConfirm } from './ConfirmDialog';
 
 const CLOUD_AI_HTTP =
   (window as any).__CLOUD_AI_HTTP__ ||
@@ -224,6 +225,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [connectingSince, setConnectingSince] = useState<Record<string, number>>({});
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   const isRunning = engine?.status === 'running';
   const isDesktop = useMemo(() => {
@@ -390,7 +392,13 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
       showToast('Please sign in first.', 'err');
       return;
     }
-    if (!confirm(`Disconnect ${entry.name}? Stuard will lose access to this account.`)) return;
+    const ok = await confirm({
+      title: `Disconnect ${entry.name}?`,
+      message: 'Stuard will lose access to this account on the cloud VM until you reconnect.',
+      confirmLabel: 'Disconnect',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusyKey(`disc:${entry.slug}`);
     try {
       const resp = await fetch(`${CLOUD_AI_HTTP}/v1/cloud-engine/remove-oauth-from-vm`, {
@@ -423,6 +431,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
 
   return (
     <div className={clsx('relative h-full overflow-y-auto custom-scrollbar', className)}>
+      {confirmDialog}
       <div className="mx-auto max-w-3xl space-y-7 px-6 py-7">
         {/* Header */}
         <header className="flex items-start justify-between gap-4">

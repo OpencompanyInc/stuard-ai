@@ -18,6 +18,7 @@ import { CloudVmIntegrations } from './CloudVmIntegrations';
 import { CloudVmSettings } from './CloudVmSettings';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
 import { BotsView } from './BotsView';
+import { useConfirm } from './ConfirmDialog';
 
 const CREDITS_PER_USD = 33;
 const STORAGE_USD_PER_GB_MONTH = 0.10;
@@ -156,6 +157,7 @@ export function CloudEngineDashboard() {
   const [customRam, setCustomRam] = useState(4);
   const [customDisk, setCustomDisk] = useState(20);
   const [provisioning, setProvisioning] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // ─── Provision Flow ────────────────────────────────────────────────
@@ -512,6 +514,7 @@ export function CloudEngineDashboard() {
     const isStarting = engine.status === 'starting';
     return (
       <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      {confirmDialog}
       <div className="animate-in fade-in duration-500">
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -557,6 +560,7 @@ export function CloudEngineDashboard() {
   if (isBooting) {
     return (
       <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      {confirmDialog}
       <div className="animate-in fade-in duration-500">
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
           <div className="w-full max-w-md text-center">
@@ -592,7 +596,15 @@ export function CloudEngineDashboard() {
               This page will refresh automatically once the agent comes online.
             </p>
             <button
-              onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Delete cloud engine?',
+                  message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
+                  confirmLabel: 'Delete engine',
+                  destructive: true,
+                });
+                if (ok) destroy();
+              }}
               className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-black hover:bg-red-600/20 transition-all mx-auto"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete Engine
@@ -610,8 +622,14 @@ export function CloudEngineDashboard() {
     setActionLoading(null);
   };
 
-  const handleDelete = () => {
-    if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) {
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: 'Delete cloud engine?',
+      message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
+      confirmLabel: 'Delete engine',
+      destructive: true,
+    });
+    if (ok) {
       destroy();
     }
   };
@@ -740,6 +758,7 @@ export function CloudEngineDashboard() {
   if (engine.status === 'running') {
     return (
       <div className="cloud-engine-dashboard h-full">
+      {confirmDialog}
       <CloudRuntimeWorkspace
         engine={engine}
         pauseLoading={actionLoading === 'stop'}
@@ -844,6 +863,7 @@ export function CloudEngineDashboard() {
 
   return (
     <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+    {confirmDialog}
     <div className="animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -870,7 +890,15 @@ export function CloudEngineDashboard() {
             Resume
           </button>
           <button
-            onClick={() => { if (confirm('This will permanently delete your cloud engine and all its data. Continue?')) destroy(); }}
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Delete cloud engine?',
+                message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
+                confirmLabel: 'Delete engine',
+                destructive: true,
+              });
+              if (ok) destroy();
+            }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600/10 text-red-500 text-xs font-black hover:bg-red-600/20 transition-all"
           >
             <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -1387,6 +1415,7 @@ function DeploysTab({
   const [logsId, setLogsId] = useState<string | null>(null);
   const [logs, setLogs] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   // ── Create form state ──
   const [newName, setNewName] = useState('');
@@ -1453,7 +1482,13 @@ function DeploysTab({
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this deployment? This action cannot be undone.')) return;
+    const ok = await confirm({
+      title: 'Delete this deployment?',
+      message: 'This action cannot be undone.',
+      confirmLabel: 'Delete deployment',
+      destructive: true,
+    });
+    if (!ok) return;
     setActionId(id);
     await deleteDeployment(id);
     setActionId(null);
@@ -1495,6 +1530,7 @@ function DeploysTab({
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-black text-theme-fg">Deployments</h3>

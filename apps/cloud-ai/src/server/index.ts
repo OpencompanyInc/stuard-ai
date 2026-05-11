@@ -10,6 +10,7 @@ import { startVMHealthMonitor } from '../services/vm-health';
 import { initVoiceProviders } from '../voice';
 import { telnyxBridgeWss } from '../routes/integrations/telnyx-bridge';
 import { verifyTelnyxConfig } from '../routes/integrations/telnyx';
+import { startReminderCron } from '../services/cloud-reminders';
 
 export function startCloudAiServer() {
   initVoiceProviders();
@@ -72,6 +73,11 @@ export function startCloudAiServer() {
       console.log('[cloud-ai] VM health monitor started');
     } catch (error) {
       console.warn('[cloud-ai] VM health monitor failed to start:', error);
+    }
+    try {
+      startReminderCron();
+    } catch (error) {
+      console.warn('[cloud-ai] Reminder cron failed to start:', error);
     }
     void verifyTelnyxConfig().catch((error) => {
       console.warn('[cloud-ai] Telnyx config verification failed:', error);

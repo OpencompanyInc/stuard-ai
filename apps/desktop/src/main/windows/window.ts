@@ -38,6 +38,24 @@ let resizingProgrammatically = false;
 type OverlayMode = "compact" | "sidebar" | "window";
 let currentMode: OverlayMode = "compact";
 
+const APP_ICON_FILENAME = "icon2.png";
+
+function getAppIconPath(): string | undefined {
+  const candidates = [
+    path.join(__dirname, "..", "..", "build", APP_ICON_FILENAME),
+    path.join(process.resourcesPath || "", APP_ICON_FILENAME),
+    path.join(app.getAppPath(), "build", APP_ICON_FILENAME),
+  ];
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return undefined;
+}
+
+const APP_ICON_PATH = getAppIconPath();
+
 // Track the last active window handle (for split-screen in sidebar mode)
 let lastActiveWindowHandle: string | null = null;
 
@@ -448,6 +466,7 @@ export function createWindow() {
     height: HEIGHT,
     show: false,
     frame: false,
+    icon: APP_ICON_PATH,
     transparent: true,
     hasShadow: false,
     resizable: true, // Enable user resizing
@@ -697,6 +716,7 @@ export function openOnboardingWindow() {
     height: bounds.height,
     show: false, // Show after ready-to-show for smoother appearance
     frame: false,
+    icon: APP_ICON_PATH,
     transparent: true,
     hasShadow: false,
     resizable: false,
@@ -772,6 +792,7 @@ export function openVoiceTestWindow() {
     minHeight: 550,
     show: false,
     frame: false,
+    icon: APP_ICON_PATH,
     transparent: true,
     hasShadow: true,
     resizable: true,
@@ -853,6 +874,7 @@ export function openDashboardWindow(options?: { tab?: string }) {
     frame: false,
     transparent: false,
     resizable: true,
+    icon: APP_ICON_PATH,
     movable: true,
     minimizable: true,
     maximizable: false,
@@ -929,6 +951,7 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
     frame: false,
     transparent: false,
     resizable: true,
+    icon: APP_ICON_PATH,
     movable: true,
     minimizable: true,
     maximizable: false,
@@ -1029,6 +1052,7 @@ export function openSidebarWindow(options?: { tab?: 'terminal' | 'todo'; expande
     frame: false,
     transparent: true,
     hasShadow: false,
+    icon: APP_ICON_PATH,
     resizable: true,
     movable: true,
     minimizable: false,
@@ -1161,6 +1185,7 @@ export function openHudWindow() {
     frame: false,
     transparent: true,
     hasShadow: false,
+    icon: APP_ICON_PATH,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -2036,6 +2061,7 @@ export function createBoardWindow(item: any) {
     resizable: true,
     movable: true,
     minimizable: false,
+    icon: APP_ICON_PATH,
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
@@ -2206,6 +2232,7 @@ export function openNotificationWindow() {
     frame: false,
     transparent: true,
     hasShadow: false,
+    icon: APP_ICON_PATH,
     resizable: false,
     movable: false,
     minimizable: false,
