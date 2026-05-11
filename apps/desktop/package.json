@@ -1,6 +1,6 @@
 {
   "name": "@stuardai/desktop",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "main": "dist/main/index.js",
   "type": "commonjs",
@@ -135,6 +135,18 @@
       {
         "from": "build/.env",
         "to": ".env"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "build/icon2.png",
+        "to": "icon2.png"
+      },
+      {
+        "from": "build/icon3.png",
+        "to": "icon3.png"
       }
     ],
     "beforeBuild": "scripts/electron-before-build.cjs",
@@ -160,6 +172,7 @@
       "gatekeeperAssess": false
     },
     "win": {
+      "icon": "build/icon2.png",
       "target": [
         "dir"
       ]
