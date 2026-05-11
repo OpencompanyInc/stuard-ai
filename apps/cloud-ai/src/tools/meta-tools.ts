@@ -48,7 +48,7 @@ const MEMORY_AI_TOOL_IDS = new Set([
 
 const MEMORY_AI_ALLOWLIST = new Set(['search_past_conversations', 'get_conversation_context']);
 
-let _initialized = false;
+var _initialized = false;
 
 /** Initialize tool registry if not already done */
 export function initToolRegistry(): void {

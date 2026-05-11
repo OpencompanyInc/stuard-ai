@@ -25,6 +25,7 @@ import { AskUserPrompt } from "./chat-view/AskUserPrompt";
 import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
 import { buildContextUsageMetrics } from "../utils/contextUsage";
 import { useFileNavigator } from "../hooks/useFileNavigator";
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
 
 interface ChatViewProps {
   messages: any[];
@@ -53,6 +54,14 @@ interface ChatViewProps {
   isStreaming?: boolean;
   isRecording?: boolean;
   onMicClick?: () => void;
+  voiceActive?: boolean;
+  onToggleVoice?: () => void;
+  voiceState?: VoiceModeState;
+  voiceAudioLevel?: number;
+  voiceMuted?: boolean;
+  onVoiceMuteToggle?: () => void;
+  voiceTranscripts?: TranscriptLine[];
+  voiceActiveTools?: VoiceToolEvent[];
 
   // Attachments
   attachments?: Array<{ type: "image" | "file"; name: string }>;
@@ -164,8 +173,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onSteer,
   onStop,
   isStreaming,
-  isRecording,
-  onMicClick,
+  voiceActive,
+  onToggleVoice,
+  voiceState,
+  voiceAudioLevel,
+  voiceMuted,
+  onVoiceMuteToggle,
+  voiceTranscripts,
+  voiceActiveTools,
   conversations,
   loadingConversations,
   onSelectConversation,
@@ -494,8 +509,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onSteer={onSteer}
               onStop={onStop}
               isStreaming={isStreaming}
-              isRecording={isRecording}
-              onMicClick={onMicClick}
+              voiceActive={voiceActive}
+              onToggleVoice={onToggleVoice}
+              voiceState={voiceState}
+              voiceAudioLevel={voiceAudioLevel}
+              voiceMuted={voiceMuted}
+              onVoiceMuteToggle={onVoiceMuteToggle}
+              voiceTranscripts={voiceTranscripts}
+              voiceActiveTools={voiceActiveTools}
               attachments={attachments}
               onRemoveAttachment={onRemoveAttachment}
               onAttachFiles={onAttachFiles}
@@ -685,8 +706,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onSteer={onSteer}
               onStop={onStop}
               isStreaming={isStreaming}
-              isRecording={isRecording}
-              onMicClick={onMicClick}
+              voiceActive={voiceActive}
+              onToggleVoice={onToggleVoice}
+              voiceState={voiceState}
+              voiceAudioLevel={voiceAudioLevel}
+              voiceMuted={voiceMuted}
+              onVoiceMuteToggle={onVoiceMuteToggle}
+              voiceTranscripts={voiceTranscripts}
+              voiceActiveTools={voiceActiveTools}
               attachments={attachments}
               onRemoveAttachment={onRemoveAttachment}
               onAttachFiles={onAttachFiles}

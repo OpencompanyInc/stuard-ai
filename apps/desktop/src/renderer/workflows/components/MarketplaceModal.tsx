@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate, MarketplaceCreatorProfile, MarketplaceWorkflowMedia } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
-import { Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight, Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package, Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users, Shield, ShieldAlert, ShieldCheck, ChevronDown } from "lucide-react";
+import {
+  Search, Download, Star, Tag, User, Calendar, X, AlertCircle, Loader2, Globe, Check, ChevronRight,
+  Hash, Sparkles, Rocket, Plus, CheckCircle2, Pencil, Trash2, Clock, History, ArrowUpCircle, Package,
+  Lock, Unlock, RefreshCw, ExternalLink, Info, Eye, EyeOff, Upload, ImagePlus, PlayCircle, Users,
+  Shield, ShieldAlert, ShieldCheck, ChevronDown, Layers, Box, Zap, Brain, Database, Mail, Code,
+  Wand2, Terminal, FileText, MessageSquare, Image as ImageIcon, Cloud, ArrowRight, ArrowDown
+} from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import "../../scrollbar.css";
 
@@ -587,6 +593,12 @@ export function PublishModal({
   const [category, setCategory] = useState("general");
   const [tags, setTags] = useState<string[]>([]);
   const [locked, setLocked] = useState(false);
+  const initialPublishAs = React.useMemo<'workflow' | 'function'>(() => detectIsFunction(model) ? 'function' : 'workflow', [model]);
+  const [publishAs] = useState<'workflow' | 'function'>(initialPublishAs);
+  const [functionNode, setFunctionNode] = useState<FunctionNodeSpec>(() => deriveDefaultFunctionNode(model));
+  const [autoDetectFlash, setAutoDetectFlash] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [maxReachedStep, setMaxReachedStep] = useState(0);
   const [thumbnailUrl, setThumbnailUrl] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>([]);
@@ -723,6 +735,67 @@ export function PublishModal({
     setMedia(prev => prev.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, sort_order: itemIndex })));
   }, []);
 
+  // ─── Wizard steps & navigation ───────────────────────────────────────────
+  const wizardSteps = React.useMemo(() => {
+    const base: Array<{ id: 'type' | 'details' | 'node' | 'showcase' | 'review'; label: string; icon: any }> = [
+      { id: 'type',     label: 'Type',     icon: Layers },
+      { id: 'details',  label: 'Details',  icon: FileText },
+    ];
+    if (publishAs === 'function') base.push({ id: 'node', label: 'Function Node', icon: Box });
+    base.push({ id: 'showcase', label: 'Showcase', icon: ImagePlus });
+    base.push({ id: 'review', label: 'Review', icon: CheckCircle2 });
+    return base;
+  }, [publishAs]);
+
+  // Clamp current step if the steps array shrinks
+  React.useEffect(() => {
+    if (wizardStep > wizardSteps.length - 1) {
+      setWizardStep(wizardSteps.length - 1);
+    }
+  }, [wizardSteps.length, wizardStep]);
+
+  // When the modal opens having auto-detected the workflow as a function,
+  // pre-fill the function node designer so the user lands on a sensible default.
+  React.useEffect(() => {
+    if (initialPublishAs === 'function') {
+      setFunctionNode((prev) => autoDetectFunctionNode(model, prev));
+    }
+    // intentionally only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const currentStepId = wizardSteps[wizardStep]?.id || 'type';
+
+  const canProceed = React.useMemo(() => {
+    switch (currentStepId) {
+      case 'type':    return !!publishAs;
+      case 'details': return name.trim().length > 0 && description.trim().length > 0;
+      case 'node':    return functionNode.label.trim().length > 0 && functionNode.inputs.length + functionNode.outputs.length > 0;
+      case 'showcase':return true;
+      case 'review':  return true;
+      default:        return false;
+    }
+  }, [currentStepId, publishAs, name, description, functionNode.label, functionNode.inputs.length, functionNode.outputs.length]);
+
+  const goNext = () => {
+    if (!canProceed) return;
+    const next = Math.min(wizardStep + 1, wizardSteps.length - 1);
+    setWizardStep(next);
+    setMaxReachedStep((m) => Math.max(m, next));
+  };
+  const goBack = () => setWizardStep((s) => Math.max(0, s - 1));
+  const goToStep = (idx: number) => {
+    if (idx <= maxReachedStep) setWizardStep(idx);
+  };
+
+  // ─── Auto-detect ────────────────────────────────────────────────────────
+  const runAutoDetect = useCallback(() => {
+    const detected = autoDetectFunctionNode(model, functionNode);
+    setFunctionNode(detected);
+    setAutoDetectFlash(true);
+    window.setTimeout(() => setAutoDetectFlash(false), 1500);
+  }, [model, functionNode]);
+
   const handlePublish = async () => {
     if (!name.trim() || !description.trim()) {
       setError("Name and description are required.");
@@ -740,14 +813,18 @@ export function PublishModal({
 
       const api = getMarketplaceApi(() => token);
 
+      const spec = publishAs === 'function'
+        ? { type: 'function', workflow: model, node: functionNode }
+        : model;
+
       const res = await api.publish({
         name,
         description,
         shortDescription: shortDescription.trim() || undefined,
-        spec: model,
-        category,
-        tags,
-        icon: undefined,
+        spec,
+        category: publishAs === 'function' && category === 'general' ? 'functions' : category,
+        tags: publishAs === 'function' && !tags.includes('function') ? [...tags, 'function'] : tags,
+        icon: publishAs === 'function' ? functionNode.icon : undefined,
         thumbnailUrl: thumbnailUrl || undefined,
         coverImageUrl: coverImageUrl || undefined,
         media,
@@ -930,46 +1007,45 @@ export function PublishModal({
     );
   }
 
-  // STANDARD PUBLISH FORM (for new workflows or "Publish as new")
+  // STANDARD PUBLISH FORM (for new workflows or "Publish as new") — wizard mode
   return (
-    <ModalShell title="Publish to Marketplace" onClose={onClose} maxWidth="max-w-5xl">
-      <div className="p-6 space-y-6">
-        <input
-          ref={thumbnailInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => void handleUploadFiles(e.target.files, 'thumbnail')}
-        />
-        <input
-          ref={coverInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => void handleUploadFiles(e.target.files, 'cover')}
-        />
-        <input
-          ref={mediaInputRef}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          className="hidden"
-          onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
-        />
-        <div className="rounded-2xl p-5 border" style={{ background: d ? "rgba(96,165,250,0.08)" : "#eff6ff", borderColor: d ? "rgba(96,165,250,0.18)" : "#bfdbfe" }}>
-          <h3 className="text-sm font-semibold mb-1" style={{ color: d ? "#dbeafe" : "#1d4ed8" }}>Share your workflow</h3>
-          <p className="text-xs leading-relaxed" style={{ color: d ? "rgba(219,234,254,0.78)" : "rgba(29,78,216,0.78)" }}>
-            Publishing makes your workflow available to other users in the Stuard Marketplace.
-            Make sure to remove any sensitive API keys or personal data before publishing.
-          </p>
-        </div>
+    <ModalShell title={publishAs === 'function' ? 'Publish Function' : 'Publish to Marketplace'} onClose={onClose} maxWidth="max-w-5xl">
+      {/* Hidden file inputs (kept at root so refs survive step changes) */}
+      <input
+        ref={thumbnailInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void handleUploadFiles(e.target.files, 'thumbnail')}
+      />
+      <input
+        ref={coverInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void handleUploadFiles(e.target.files, 'cover')}
+      />
+      <input
+        ref={mediaInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => void handleUploadFiles(e.target.files, 'media')}
+      />
 
-        {/* Publishing progress */}
-        {loading && (
-          <PublishingProgress phase={publishPhase} isDark={d} />
-        )}
+      {/* Wizard Stepper */}
+      <WizardStepper
+        d={d}
+        steps={wizardSteps}
+        currentIndex={wizardStep}
+        maxReached={maxReachedStep}
+        onStepClick={goToStep}
+      />
 
-        {/* Security review results */}
+      <div className="px-6 pt-5 pb-2 space-y-5 min-h-[440px]">
+        {/* Publishing progress / security / error — always visible */}
+        {loading && <PublishingProgress phase={publishPhase} isDark={d} />}
         {securityResult && !loading && (
           <SecurityReviewPanel
             analysis={securityResult.analysis}
@@ -978,8 +1054,6 @@ export function PublishModal({
             isDark={d}
           />
         )}
-
-        {/* Generic error (non-security) */}
         {error && !securityResult && !loading && (
           <div
             className="p-4 rounded-2xl border flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
@@ -994,6 +1068,39 @@ export function PublishModal({
             </div>
           </div>
         )}
+
+        {/* ─── STEP: Type ────────────────────────────────────────── */}
+        {currentStepId === 'type' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={publishAs === 'function' ? Box : Layers}
+              title="What you're publishing"
+              subtitle="Stuard inspected your workflow and picked the listing type automatically."
+            />
+
+            <DetectionPanel d={d} detectedAs={publishAs} model={model} />
+
+            <div className="rounded-2xl p-4 border text-xs leading-relaxed" style={{
+              background: d ? "rgba(96,165,250,0.05)" : "#eff6ff",
+              borderColor: d ? "rgba(96,165,250,0.15)" : "#bfdbfe",
+              color: d ? "rgba(219,234,254,0.78)" : "rgba(29,78,216,0.78)",
+            }}>
+              {publishAs === 'function'
+                ? 'Functions are compacted single-node building blocks. Other users install your function and drop it into their workflows as a reusable node.'
+                : 'Publishing makes your workflow available to other users in the Stuard Marketplace.'}
+              {' '}Make sure to remove any sensitive API keys or personal data before publishing.
+            </div>
+          </div>
+        )}
+
+        {/* ─── STEP: Details ─────────────────────────────────────── */}
+        {currentStepId === 'details' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={FileText}
+              title="Describe it"
+              subtitle="A clear name and description help users decide whether to install."
+            />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -1065,6 +1172,52 @@ export function PublishModal({
             <TagInput tags={tags} onChange={setTags} />
           </div>
         </div>
+          </div>
+        )}
+
+        {/* ─── STEP: Function Node ────────────────────────────────── */}
+        {currentStepId === 'node' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={Box}
+              title="Design the compacted node"
+              subtitle="Customize how your function appears on another user's canvas after install."
+              actionRight={
+                <button
+                  type="button"
+                  onClick={runAutoDetect}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    autoDetectFlash
+                      ? d ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : d ? 'bg-gradient-to-r from-violet-500/15 to-fuchsia-500/15 text-violet-200 border border-violet-500/30 hover:from-violet-500/25 hover:to-fuchsia-500/25'
+                          : 'bg-gradient-to-r from-violet-50 to-fuchsia-50 text-violet-700 border border-violet-200 hover:from-violet-100 hover:to-fuchsia-100'
+                  }`}
+                  title="Detect inputs, outputs, icon and color from your workflow"
+                >
+                  {autoDetectFlash ? <Check className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {autoDetectFlash ? 'Detected!' : 'Auto-detect'}
+                </button>
+              }
+            />
+            <FunctionNodeDesigner
+              d={d}
+              workflowName={name || (model.name as string) || 'Untitled'}
+              node={functionNode}
+              onChange={setFunctionNode}
+              inputStyle={inputStyle}
+              cardStyle={cardStyle}
+            />
+          </div>
+        )}
+
+        {/* ─── STEP: Showcase ─────────────────────────────────────── */}
+        {currentStepId === 'showcase' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={ImagePlus}
+              title="Showcase yourself"
+              subtitle="Your creator profile and store artwork. All optional, but a polished listing gets more installs."
+            />
 
         <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
           <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
@@ -1232,67 +1385,134 @@ export function PublishModal({
             )}
           </div>
         </div>
+          </div>
+        )}
 
-        {/* Lock workflow toggle */}
-        <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => setLocked(!locked)}
-              className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'
-                }`}
-            >
-              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
-            </button>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
-                <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
-                  {locked ? 'Locked Workflow' : 'Open Workflow'}
-                </span>
+        {/* ─── STEP: Review ───────────────────────────────────────── */}
+        {currentStepId === 'review' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={CheckCircle2}
+              title="Review & publish"
+              subtitle="Double-check the listing, then ship it to the marketplace."
+            />
+
+            <ReviewSummary
+              d={d}
+              publishAs={publishAs}
+              name={name}
+              shortDescription={shortDescription}
+              description={description}
+              category={category}
+              tags={tags}
+              functionNode={functionNode}
+              thumbnailUrl={thumbnailUrl}
+              coverImageUrl={coverImageUrl}
+              mediaCount={media.length}
+              creatorProfile={creatorProfile}
+              onJumpTo={(stepId) => {
+                const idx = wizardSteps.findIndex(s => s.id === stepId);
+                if (idx >= 0) goToStep(idx);
+              }}
+            />
+
+            {/* Lock toggle (kept here as the final pre-publish decision) */}
+            <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  onClick={() => setLocked(!locked)}
+                  className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
+                >
+                  <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
+                    <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
+                      {locked ? (publishAs === 'function' ? 'Locked Function' : 'Locked Workflow') : (publishAs === 'function' ? 'Open Function' : 'Open Workflow')}
+                    </span>
+                  </div>
+                  <p className={`text-xs mt-1 leading-relaxed ${locked ? '' : 'wf-fg-muted'}`} style={locked ? { color: d ? "rgba(253,230,138,0.82)" : "rgba(146,64,14,0.82)" } : undefined}>
+                    {locked
+                      ? 'Users who download this will not be able to view the code, use AI to modify it, or manually edit it. They can only run it and wait for your updates.'
+                      : 'Users can view, modify, and customize this after downloading.'}
+                  </p>
+                </div>
               </div>
-              <p className={`text-xs mt-1 leading-relaxed ${locked ? '' : 'wf-fg-muted'}`} style={locked ? { color: d ? "rgba(253,230,138,0.82)" : "rgba(146,64,14,0.82)" } : undefined}>
-                {locked
-                  ? 'Users who download this workflow will not be able to view the code, use AI to modify it, or manually edit it. They can only run the workflow and wait for your updates.'
-                  : 'Users can view, modify, and customize this workflow after downloading.'}
-              </p>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="p-5 border-t rounded-b-[28px] flex justify-end gap-3" style={footerStyle}>
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-4 py-2 rounded-xl text-sm border font-medium transition-all"
-          style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handlePublish}
-          disabled={loading}
-          className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {publishPhase === 'reviewing' ? 'Reviewing...' : 'Publishing...'}
-            </>
-          ) : securityResult ? (
-            <>
-              <RefreshCw className="w-4 h-4" />
-              Fix & Retry
-            </>
-          ) : (
-            <>
-              <Globe className="w-4 h-4" />
-              Publish Workflow
-            </>
+      {/* Wizard footer */}
+      <div className="p-5 border-t rounded-b-[28px] flex items-center justify-between gap-3" style={footerStyle}>
+        <div className="flex items-center gap-2 text-[11px] font-medium wf-fg-faint">
+          <span className="px-2 py-0.5 rounded-md" style={{ background: d ? "rgba(255,255,255,0.04)" : "#f1f5f9" }}>
+            Step {wizardStep + 1} of {wizardSteps.length}
+          </span>
+          {!canProceed && currentStepId !== 'review' && (
+            <span className="hidden sm:inline">· {currentStepId === 'details' ? 'Name and description required' : currentStepId === 'node' ? 'Label and at least one port required' : ''}</span>
           )}
-        </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-sm border font-medium transition-all"
+            style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
+          >
+            Cancel
+          </button>
+          {wizardStep > 0 && (
+            <button
+              type="button"
+              onClick={goBack}
+              disabled={loading}
+              className="px-4 py-2 rounded-xl text-sm border font-medium transition-all flex items-center gap-1.5 disabled:opacity-50"
+              style={{ background: d ? "rgba(255,255,255,0.03)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
+            >
+              <ChevronRight className="w-4 h-4 rotate-180" />
+              Back
+            </button>
+          )}
+          {currentStepId !== 'review' ? (
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={!canProceed}
+              className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+            >
+              Next
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handlePublish}
+              disabled={loading}
+              className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {publishPhase === 'reviewing' ? 'Reviewing...' : 'Publishing...'}
+                </>
+              ) : securityResult ? (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  Fix & Retry
+                </>
+              ) : (
+                <>
+                  {publishAs === 'function' ? <Box className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                  {publishAs === 'function' ? 'Publish Function' : 'Publish Workflow'}
+                </>
+              )}
+            </button>
+          )}
+        </div>
       </div>
     </ModalShell>
   );
@@ -3244,5 +3464,804 @@ export function MarketplaceBrowser({
         />
       )}
     </>
+  );
+}
+
+// ============================================================================
+// FUNCTION NODE DESIGNER
+// ============================================================================
+
+interface FunctionPort {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'any';
+}
+
+interface FunctionNodeSpec {
+  label: string;
+  tagline: string;
+  icon: string;
+  color: string;
+  inputs: FunctionPort[];
+  outputs: FunctionPort[];
+}
+
+const FUNCTION_NODE_ICONS: Array<{ id: string; icon: any }> = [
+  { id: 'Box',           icon: Box },
+  { id: 'Zap',           icon: Zap },
+  { id: 'Brain',         icon: Brain },
+  { id: 'Database',      icon: Database },
+  { id: 'Mail',          icon: Mail },
+  { id: 'Code',          icon: Code },
+  { id: 'Globe',         icon: Globe },
+  { id: 'Wand2',         icon: Wand2 },
+  { id: 'Terminal',      icon: Terminal },
+  { id: 'FileText',      icon: FileText },
+  { id: 'MessageSquare', icon: MessageSquare },
+  { id: 'Image',         icon: ImageIcon },
+  { id: 'Cloud',         icon: Cloud },
+  { id: 'Sparkles',      icon: Sparkles },
+];
+
+const FUNCTION_NODE_COLORS: Array<{ id: string; bg: string; border: string; fg: string; ring: string }> = [
+  { id: 'indigo',  bg: '#6366f1', border: '#a5b4fc', fg: '#eef2ff', ring: 'ring-indigo-300' },
+  { id: 'blue',    bg: '#3b82f6', border: '#93c5fd', fg: '#eff6ff', ring: 'ring-blue-300' },
+  { id: 'violet',  bg: '#8b5cf6', border: '#c4b5fd', fg: '#f5f3ff', ring: 'ring-violet-300' },
+  { id: 'emerald', bg: '#10b981', border: '#6ee7b7', fg: '#ecfdf5', ring: 'ring-emerald-300' },
+  { id: 'amber',   bg: '#f59e0b', border: '#fcd34d', fg: '#fffbeb', ring: 'ring-amber-300' },
+  { id: 'rose',    bg: '#f43f5e', border: '#fda4af', fg: '#fff1f2', ring: 'ring-rose-300' },
+  { id: 'cyan',    bg: '#06b6d4', border: '#67e8f9', fg: '#ecfeff', ring: 'ring-cyan-300' },
+  { id: 'slate',   bg: '#475569', border: '#94a3b8', fg: '#f8fafc', ring: 'ring-slate-400' },
+];
+
+function deriveDefaultFunctionNode(model: any): FunctionNodeSpec {
+  return autoDetectFunctionNode(model, {
+    label: '',
+    tagline: '',
+    icon: 'Box',
+    color: 'indigo',
+    inputs: [],
+    outputs: [],
+  });
+}
+
+// Smarter detection used by the "Auto-detect" button. Falls back to the
+// current values when the workflow doesn't yield a strong signal.
+const TOOL_TO_ICON: Record<string, string> = {
+  gmail_send_message: 'Mail', gmail_search: 'Mail',
+  http_request: 'Globe', web_search: 'Globe',
+  run_python_script: 'Code', run_node_script: 'Code', run_command: 'Terminal',
+  ai_inference: 'Brain', ollama_chat: 'Brain', ollama_generate: 'Brain', ollama_agent: 'Brain', agent_node: 'Brain',
+  db_query: 'Database', db_store: 'Database',
+  take_screenshot: 'Image', capture_screen: 'Image', analyze_image: 'Image', analyze_current_screen: 'Image',
+  send_notification: 'MessageSquare', custom_ui: 'Sparkles', text_to_speech: 'MessageSquare',
+  read_file: 'FileText', write_file: 'FileText',
+};
+
+const TOOL_TO_COLOR: Record<string, string> = {
+  gmail_send_message: 'rose', gmail_search: 'rose',
+  http_request: 'cyan', web_search: 'cyan',
+  run_python_script: 'amber', run_node_script: 'amber', run_command: 'slate',
+  ai_inference: 'violet', ollama_chat: 'violet', ollama_generate: 'violet', ollama_agent: 'violet', agent_node: 'violet',
+  db_query: 'emerald', db_store: 'emerald',
+  take_screenshot: 'blue', capture_screen: 'blue', analyze_image: 'blue', analyze_current_screen: 'blue',
+};
+
+function mapDesignerType(t: string | undefined): FunctionPort['type'] {
+  if (t === 'string' || t === 'number' || t === 'boolean' || t === 'object' || t === 'array') return t;
+  if (t === 'json') return 'object';
+  if (t === 'list') return 'array';
+  return 'any';
+}
+
+function autoDetectFunctionNode(model: any, current: FunctionNodeSpec): FunctionNodeSpec {
+  // ── Inputs ─────────────────────────────────────────────────────────────
+  const inputs: FunctionPort[] = [];
+  try {
+    for (const t of model?.triggers || []) {
+      if (Array.isArray(t?.inputParams) && t.inputParams.length > 0) {
+        for (const p of t.inputParams) {
+          if (!p?.name) continue;
+          inputs.push({ id: `in_${inputs.length + 1}`, name: String(p.name), type: mapDesignerType(p.type) });
+        }
+      }
+    }
+    if (inputs.length === 0) {
+      for (const t of (model?.triggers || []).slice(0, 3)) {
+        const fallback = (t?.label || t?.type || `input_${inputs.length + 1}`).toString().toLowerCase().replace(/\s+/g, '_');
+        inputs.push({ id: `in_${inputs.length + 1}`, name: fallback, type: 'any' });
+      }
+    }
+  } catch {}
+
+  // ── Outputs ────────────────────────────────────────────────────────────
+  const outputs: FunctionPort[] = [];
+  try {
+    if (Array.isArray(model?.outputSchema) && model.outputSchema.length > 0) {
+      for (const o of model.outputSchema) {
+        if (!o?.name) continue;
+        outputs.push({ id: `out_${outputs.length + 1}`, name: String(o.name), type: mapDesignerType(o.type) });
+      }
+    } else {
+      const nodes = Array.isArray(model?.nodes) ? model.nodes : [];
+      const last = nodes[nodes.length - 1];
+      if (last) outputs.push({ id: 'out_1', name: (last?.label || 'result').toString().toLowerCase().replace(/\s+/g, '_'), type: 'any' });
+    }
+  } catch {}
+
+  if (inputs.length === 0) inputs.push({ id: 'in_1', name: 'input', type: 'any' });
+  if (outputs.length === 0) outputs.push({ id: 'out_1', name: 'output', type: 'any' });
+
+  // ── Icon + color from the dominant tool ────────────────────────────────
+  let dominantTool: string | undefined;
+  try {
+    const counts: Record<string, number> = {};
+    for (const n of model?.nodes || []) {
+      const tool = n?.tool || n?.type;
+      if (typeof tool === 'string' && tool) counts[tool] = (counts[tool] || 0) + 1;
+    }
+    dominantTool = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  } catch {}
+
+  const icon = dominantTool && TOOL_TO_ICON[dominantTool] ? TOOL_TO_ICON[dominantTool] : (current.icon || 'Box');
+  const color = dominantTool && TOOL_TO_COLOR[dominantTool] ? TOOL_TO_COLOR[dominantTool] : (current.color || 'indigo');
+
+  // ── Label + tagline ────────────────────────────────────────────────────
+  const rawName = (model?.name || 'My Function').toString();
+  const label = rawName.length <= 32 ? rawName : rawName.slice(0, 30) + '…';
+
+  const stepCount = Array.isArray(model?.nodes) ? model.nodes.length : 0;
+  const tagline = model?.description
+    ? String(model.description).slice(0, 70)
+    : stepCount > 0
+      ? `Compacted ${stepCount}-step workflow as a single node`
+      : 'Reusable workflow node';
+
+  return { label, tagline, icon, color, inputs, outputs };
+}
+
+function DetectionPanel({
+  d, detectedAs, model,
+}: { d: boolean; detectedAs: 'workflow' | 'function'; model: any }) {
+  const isFn = detectedAs === 'function';
+  const Icon = isFn ? Box : Layers;
+
+  const tintBg = isFn
+    ? d ? 'rgba(139,92,246,0.08)' : '#f5f3ff'
+    : d ? 'rgba(59,130,246,0.08)' : '#eff6ff';
+  const tintBorder = isFn
+    ? d ? 'rgba(139,92,246,0.25)' : '#ddd6fe'
+    : d ? 'rgba(59,130,246,0.25)' : '#bfdbfe';
+  const iconBg = isFn ? 'linear-gradient(135deg, #8b5cf6, #ec4899)' : 'linear-gradient(135deg, #3b82f6, #06b6d4)';
+  const labelColor = isFn ? (d ? '#ddd6fe' : '#6d28d9') : (d ? '#dbeafe' : '#1d4ed8');
+
+  // Compute signals (used for the check list).
+  const triggers = Array.isArray(model?.triggers) ? model.triggers : [];
+  const nodes = Array.isArray(model?.nodes) ? model.nodes : [];
+  const hasInputParams = triggers.some((t: any) => Array.isArray(t?.inputParams) && t.inputParams.length > 0);
+  const hasOutputSchema = Array.isArray(model?.outputSchema) && model.outputSchema.length > 0;
+  const nameLower = (model?.name || '').toString().toLowerCase();
+  const nameTaggedFunction = /^(fn[:\-_ ]|function[:\-_ ])/i.test(nameLower)
+    || nameLower.endsWith(' fn') || nameLower.endsWith(' function');
+  const hasEventTrigger = triggers.some((t: any) => {
+    const ty = (t?.type || '').toString();
+    return ty.startsWith('schedule.') || ty.startsWith('fs.') || ty.startsWith('gmail.') || ty.startsWith('drive.') || ty === 'hotkey';
+  });
+  const stepCount = nodes.length;
+
+  const checks: Array<{ id: string; label: string; passed: boolean }> = isFn
+    ? [
+        { id: 'inputs',  label: 'Trigger declares input parameters',  passed: hasInputParams },
+        { id: 'outputs', label: 'Workflow declares an output schema', passed: hasOutputSchema },
+        { id: 'naming',  label: 'Name is tagged as a function',       passed: nameTaggedFunction },
+        { id: 'callable',label: 'Designed to be called from a flow',  passed: hasInputParams || hasOutputSchema },
+      ]
+    : [
+        { id: 'eventDriven', label: 'Event-driven trigger (schedule, file, email, hotkey)', passed: hasEventTrigger },
+        { id: 'multiStep',   label: `Multi-step automation (${stepCount} step${stepCount === 1 ? '' : 's'})`, passed: stepCount > 1 },
+        { id: 'noInputs',    label: 'No explicit input parameters',   passed: !hasInputParams },
+        { id: 'noOutputs',   label: 'No explicit output schema',      passed: !hasOutputSchema },
+      ];
+
+  const passedCount = checks.filter(c => c.passed).length;
+
+  return (
+    <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={{ background: tintBg, borderColor: tintBorder }}>
+      {/* Hero */}
+      <div className="flex items-center gap-4">
+        <div className="relative w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg shrink-0" style={{ background: iconBg, color: '#ffffff' }}>
+          <Icon className="w-7 h-7" />
+          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center bg-emerald-500 ring-2 ring-white">
+            <Check className="w-3 h-3 text-white" />
+          </span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint flex items-center gap-1.5">
+            <Sparkles className="w-3 h-3" />
+            Auto-detected as
+          </div>
+          <div className="text-xl font-bold mt-0.5" style={{ color: labelColor }}>
+            {isFn ? 'Function' : 'Workflow'}
+          </div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[10px] uppercase tracking-wider wf-fg-faint">Signals</div>
+          <div className="text-sm font-bold" style={{ color: labelColor }}>{passedCount} / {checks.length}</div>
+        </div>
+      </div>
+
+      {/* Check list */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+        {checks.map((c) => (
+          <DetectionCheck key={c.id} d={d} label={c.label} passed={c.passed} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DetectionCheck({ d, label, passed }: { d: boolean; label: string; passed: boolean }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 rounded-lg border"
+      style={{
+        background: passed
+          ? d ? 'rgba(16,185,129,0.08)' : '#ecfdf5'
+          : d ? 'rgba(255,255,255,0.02)' : '#ffffff',
+        borderColor: passed
+          ? d ? 'rgba(16,185,129,0.22)' : '#a7f3d0'
+          : 'var(--wf-border)',
+      }}
+    >
+      <div
+        className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
+        style={{
+          background: passed ? '#10b981' : 'transparent',
+          border: passed ? 'none' : `1.5px solid ${d ? 'rgba(255,255,255,0.18)' : '#cbd5e1'}`,
+        }}
+      >
+        {passed && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
+      </div>
+      <span className={`text-xs leading-tight ${passed ? 'wf-fg font-medium' : 'wf-fg-muted'}`}>{label}</span>
+    </div>
+  );
+}
+
+// Heuristic — decide whether the workflow model looks like a "function" (a
+// reusable building block with explicit inputs/outputs) rather than a full
+// event-driven workflow. We only return true on strong signals so we don't
+// surprise users with a wrong default.
+function detectIsFunction(model: any): boolean {
+  try {
+    const triggers = Array.isArray(model?.triggers) ? model.triggers : [];
+    // Strong signal #1: any trigger declares inputParams.
+    const hasInputParams = triggers.some((t: any) => Array.isArray(t?.inputParams) && t.inputParams.length > 0);
+    if (hasInputParams) return true;
+
+    // Strong signal #2: workflow declares an outputSchema.
+    const hasOutputSchema = Array.isArray(model?.outputSchema) && model.outputSchema.length > 0;
+    if (hasOutputSchema) return true;
+
+    // Soft signal: workflow name explicitly tagged as a function.
+    const nameLower = (model?.name || '').toString().toLowerCase();
+    if (/^(fn[:\-_ ]|function[:\-_ ])/i.test(nameLower) || nameLower.endsWith(' fn') || nameLower.endsWith(' function')) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+
+function FunctionNodeDesigner({
+  d, workflowName, node, onChange, inputStyle, cardStyle,
+}: {
+  d: boolean;
+  workflowName: string;
+  node: FunctionNodeSpec;
+  onChange: (next: FunctionNodeSpec) => void;
+  inputStyle: React.CSSProperties;
+  cardStyle: React.CSSProperties;
+}) {
+  const update = (patch: Partial<FunctionNodeSpec>) => onChange({ ...node, ...patch });
+  const updatePort = (kind: 'inputs' | 'outputs', idx: number, patch: Partial<FunctionPort>) => {
+    const list = node[kind].map((p, i) => i === idx ? { ...p, ...patch } : p);
+    onChange({ ...node, [kind]: list });
+  };
+  const addPort = (kind: 'inputs' | 'outputs') => {
+    const list = node[kind];
+    const next: FunctionPort = { id: `${kind === 'inputs' ? 'in' : 'out'}_${Date.now()}`, name: kind === 'inputs' ? `input_${list.length + 1}` : `output_${list.length + 1}`, type: 'any' };
+    onChange({ ...node, [kind]: [...list, next] });
+  };
+  const removePort = (kind: 'inputs' | 'outputs', idx: number) => {
+    const list = node[kind].filter((_, i) => i !== idx);
+    onChange({ ...node, [kind]: list });
+  };
+
+  return (
+    <div className="rounded-2xl border p-5 space-y-5 shadow-sm" style={cardStyle}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
+          <Box className="w-4 h-4 text-violet-400" />
+          Function Node Designer
+        </div>
+        <span className="text-[11px] wf-fg-faint">This is what other users will see when they install your function.</span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        {/* LEFT: Form */}
+        <div className="lg:col-span-3 space-y-4">
+          {/* Label + Tagline */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium wf-fg">Compact Label</label>
+              <input
+                type="text"
+                maxLength={32}
+                value={node.label}
+                onChange={(e) => update({ label: e.target.value })}
+                placeholder={workflowName.slice(0, 32)}
+                className="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+                style={inputStyle}
+              />
+              <span className="text-[10px] wf-fg-faint">{node.label.length}/32 · shown on the node header</span>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium wf-fg">Tagline</label>
+              <input
+                type="text"
+                maxLength={70}
+                value={node.tagline}
+                onChange={(e) => update({ tagline: e.target.value })}
+                placeholder="What this node does in one line"
+                className="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+                style={inputStyle}
+              />
+              <span className="text-[10px] wf-fg-faint">{node.tagline.length}/70 · one-line subtitle</span>
+            </div>
+          </div>
+
+          {/* Icon picker */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium wf-fg">Icon</label>
+            <div className="flex flex-wrap gap-1.5">
+              {FUNCTION_NODE_ICONS.map(({ id, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => update({ icon: id })}
+                  className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-all ${
+                    node.icon === id
+                      ? d ? 'bg-violet-500/15 border-violet-500/40 text-violet-200 shadow-sm'
+                          : 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
+                      : d ? 'bg-white/[0.02] border-white/[0.08] text-white/55 hover:bg-white/[0.05]'
+                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                  }`}
+                  title={id}
+                >
+                  <Icon className="w-4 h-4" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Color picker */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium wf-fg">Accent Color</label>
+            <div className="flex flex-wrap gap-2">
+              {FUNCTION_NODE_COLORS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => update({ color: c.id })}
+                  className={`w-7 h-7 rounded-full transition-transform ${node.color === c.id ? `ring-2 ring-offset-2 ${c.ring} ${d ? 'ring-offset-slate-900' : 'ring-offset-white'} scale-110` : 'hover:scale-110'}`}
+                  style={{ background: c.bg }}
+                  title={c.id}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Inputs */}
+          <PortListEditor
+            d={d}
+            label="Inputs"
+            kind="inputs"
+            ports={node.inputs}
+            onAdd={() => addPort('inputs')}
+            onRemove={(i) => removePort('inputs', i)}
+            onUpdate={(i, patch) => updatePort('inputs', i, patch)}
+            inputStyle={inputStyle}
+          />
+
+          {/* Outputs */}
+          <PortListEditor
+            d={d}
+            label="Outputs"
+            kind="outputs"
+            ports={node.outputs}
+            onAdd={() => addPort('outputs')}
+            onRemove={(i) => removePort('outputs', i)}
+            onUpdate={(i, patch) => updatePort('outputs', i, patch)}
+            inputStyle={inputStyle}
+          />
+        </div>
+
+        {/* RIGHT: Preview */}
+        <div className="lg:col-span-2">
+          <div className="sticky top-0 space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider wf-fg-faint flex items-center gap-1.5">
+              <Eye className="w-3 h-3" />
+              Live Preview
+            </div>
+            <FunctionNodePreview d={d} node={node} />
+            <p className="text-[11px] wf-fg-muted leading-relaxed">
+              This is how your function will appear on another user's canvas after install. Inputs flow in from the left, outputs flow out to the right.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PortListEditor({
+  d, label, kind, ports, onAdd, onRemove, onUpdate, inputStyle,
+}: {
+  d: boolean;
+  label: string;
+  kind: 'inputs' | 'outputs';
+  ports: FunctionPort[];
+  onAdd: () => void;
+  onRemove: (i: number) => void;
+  onUpdate: (i: number, patch: Partial<FunctionPort>) => void;
+  inputStyle: React.CSSProperties;
+}) {
+  const Icon = kind === 'inputs' ? ArrowRight : ArrowDown;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium wf-fg flex items-center gap-1.5">
+          <Icon className={`w-3.5 h-3.5 ${kind === 'inputs' ? 'text-emerald-500' : 'text-blue-500'}`} />
+          {label}
+          <span className="text-[10px] wf-fg-faint font-normal">({ports.length})</span>
+        </label>
+        <button
+          type="button"
+          onClick={onAdd}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
+            d ? 'text-white/70 hover:bg-white/[0.06]' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Plus className="w-3 h-3" />
+          Add {kind === 'inputs' ? 'Input' : 'Output'}
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {ports.map((p, i) => (
+          <div key={p.id} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={p.name}
+              onChange={(e) => onUpdate(i, { name: e.target.value.replace(/\s+/g, '_') })}
+              className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none focus:ring-1 font-mono"
+              style={inputStyle}
+              placeholder="port_name"
+            />
+            <select
+              value={p.type}
+              onChange={(e) => onUpdate(i, { type: e.target.value as FunctionPort['type'] })}
+              className="px-2 py-1.5 border rounded-lg text-xs focus:outline-none"
+              style={inputStyle}
+            >
+              <option value="any">any</option>
+              <option value="string">string</option>
+              <option value="number">number</option>
+              <option value="boolean">boolean</option>
+              <option value="object">object</option>
+              <option value="array">array</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => onRemove(i)}
+              className={`p-1.5 rounded-md transition-colors ${
+                d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
+              }`}
+              title="Remove port"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+        {ports.length === 0 && (
+          <div className={`text-[11px] italic px-2.5 py-2 rounded-lg border border-dashed ${d ? 'border-white/[0.08] text-white/40' : 'border-slate-200 text-slate-400'}`}>
+            No {label.toLowerCase()} defined.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FunctionNodePreview({ d, node }: { d: boolean; node: FunctionNodeSpec }) {
+  const IconDef = FUNCTION_NODE_ICONS.find(i => i.id === node.icon) || FUNCTION_NODE_ICONS[0];
+  const Icon = IconDef.icon;
+  const color = FUNCTION_NODE_COLORS.find(c => c.id === node.color) || FUNCTION_NODE_COLORS[0];
+  const previewBg = d ? '#0c0f14' : '#f8fafc';
+  return (
+    <div
+      className="relative rounded-2xl border p-5 overflow-hidden"
+      style={{ background: previewBg, borderColor: 'var(--wf-border)' }}
+    >
+      {/* Faux grid backdrop */}
+      <div
+        className="absolute inset-0 opacity-[0.35] pointer-events-none"
+        style={{
+          backgroundImage: d
+            ? 'radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)'
+            : 'radial-gradient(circle, rgba(15,23,42,0.10) 1px, transparent 1px)',
+          backgroundSize: '14px 14px',
+        }}
+      />
+
+      <div className="relative flex items-center justify-center min-h-[170px]">
+        {/* Input port stubs */}
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 flex flex-col gap-2 -translate-x-1">
+          {node.inputs.slice(0, 4).map((p) => (
+            <div key={p.id} className="flex items-center gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full border-2" style={{ background: previewBg, borderColor: color.bg }} />
+              <span className="text-[9px] font-mono wf-fg-faint">{p.name}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* The Node */}
+        <div
+          className="relative rounded-xl shadow-lg overflow-hidden min-w-[200px] max-w-[240px]"
+          style={{
+            background: d ? 'rgba(255,255,255,0.04)' : '#ffffff',
+            border: `1px solid ${color.border}`,
+            boxShadow: `0 4px 20px -8px ${color.bg}55, 0 0 0 3px ${color.bg}18`,
+          }}
+        >
+          {/* Header */}
+          <div
+            className="px-3 py-2 flex items-center gap-2"
+            style={{ background: color.bg, color: color.fg }}
+          >
+            <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.20)' }}>
+              <Icon className="w-3.5 h-3.5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] font-semibold leading-tight truncate">{node.label || 'My Function'}</div>
+              <div className="text-[9px] uppercase tracking-wider opacity-80 font-semibold">Function</div>
+            </div>
+          </div>
+          {/* Body */}
+          <div className="px-3 py-2.5 space-y-1.5">
+            <p className="text-[11px] wf-fg-muted line-clamp-2 leading-snug">{node.tagline || 'Reusable workflow node'}</p>
+            <div className="flex items-center justify-between text-[9px] wf-fg-faint pt-1 border-t" style={{ borderColor: d ? 'rgba(255,255,255,0.06)' : '#e2e8f0' }}>
+              <span className="inline-flex items-center gap-1"><ArrowRight className="w-2.5 h-2.5" /> {node.inputs.length} in</span>
+              <span className="inline-flex items-center gap-1">{node.outputs.length} out <ArrowRight className="w-2.5 h-2.5" /></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Output port stubs */}
+        <div className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col gap-2 translate-x-1 items-end">
+          {node.outputs.slice(0, 4).map((p) => (
+            <div key={p.id} className="flex items-center gap-1.5">
+              <span className="text-[9px] font-mono wf-fg-faint">{p.name}</span>
+              <div className="w-2.5 h-2.5 rounded-full border-2" style={{ background: previewBg, borderColor: color.bg }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// WIZARD HELPERS
+// ============================================================================
+
+function WizardStepper({
+  d, steps, currentIndex, maxReached, onStepClick,
+}: {
+  d: boolean;
+  steps: Array<{ id: string; label: string; icon: any }>;
+  currentIndex: number;
+  maxReached: number;
+  onStepClick: (idx: number) => void;
+}) {
+  return (
+    <div className="px-6 pt-5 pb-3 border-b" style={{ borderColor: 'var(--wf-border)' }}>
+      <div className="flex items-center justify-between gap-2">
+        {steps.map((step, i) => {
+          const Icon = step.icon;
+          const isCurrent = i === currentIndex;
+          const isCompleted = i < currentIndex;
+          const isReachable = i <= maxReached;
+          return (
+            <React.Fragment key={step.id}>
+              <button
+                type="button"
+                onClick={() => onStepClick(i)}
+                disabled={!isReachable}
+                className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all ${
+                  isReachable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+                }`}
+              >
+                <div className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all border-2 ${
+                  isCurrent
+                    ? d ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30' : 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-300'
+                    : isCompleted
+                      ? d ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-600'
+                      : d ? 'bg-white/[0.03] border-white/[0.10] text-white/40' : 'bg-slate-50 border-slate-200 text-slate-400'
+                }`}>
+                  {isCompleted ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
+                </div>
+                <div className="flex flex-col items-start leading-tight">
+                  <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+                    isCurrent ? d ? 'text-indigo-300' : 'text-indigo-600' : 'wf-fg-faint'
+                  }`}>
+                    Step {i + 1}
+                  </span>
+                  <span className={`text-xs font-medium ${
+                    isCurrent ? 'wf-fg' : isCompleted ? d ? 'text-white/65' : 'text-slate-600' : 'wf-fg-faint'
+                  }`}>
+                    {step.label}
+                  </span>
+                </div>
+              </button>
+              {i < steps.length - 1 && (
+                <div className={`flex-1 h-px transition-colors ${
+                  i < currentIndex
+                    ? d ? 'bg-emerald-500/40' : 'bg-emerald-300'
+                    : d ? 'bg-white/[0.06]' : 'bg-slate-200'
+                }`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StepHeader({
+  icon: Icon, title, subtitle, actionRight,
+}: {
+  icon: any;
+  title: string;
+  subtitle?: string;
+  actionRight?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 flex-wrap">
+      <div className="flex items-start gap-3 min-w-0">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500/15 to-violet-500/15 border border-indigo-500/20 shrink-0">
+          <Icon className="w-5 h-5 text-indigo-500" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-base font-bold wf-fg leading-tight">{title}</h2>
+          {subtitle && <p className="text-xs wf-fg-muted mt-0.5 leading-relaxed">{subtitle}</p>}
+        </div>
+      </div>
+      {actionRight && <div className="shrink-0">{actionRight}</div>}
+    </div>
+  );
+}
+
+function ReviewSummary({
+  d, publishAs, name, shortDescription, description, category, tags, functionNode,
+  thumbnailUrl, coverImageUrl, mediaCount, creatorProfile, onJumpTo,
+}: {
+  d: boolean;
+  publishAs: 'workflow' | 'function';
+  name: string;
+  shortDescription: string;
+  description: string;
+  category: string;
+  tags: string[];
+  functionNode: FunctionNodeSpec;
+  thumbnailUrl: string;
+  coverImageUrl: string;
+  mediaCount: number;
+  creatorProfile: Partial<MarketplaceCreatorProfile>;
+  onJumpTo: (stepId: 'type' | 'details' | 'node' | 'showcase') => void;
+}) {
+  const cardBg = d ? 'rgba(255,255,255,0.03)' : '#ffffff';
+  const cardBorder = 'var(--wf-border)' as any;
+  const IconDef = FUNCTION_NODE_ICONS.find(i => i.id === functionNode.icon) || FUNCTION_NODE_ICONS[0];
+  const FnIcon = IconDef.icon;
+  const fnColor = FUNCTION_NODE_COLORS.find(c => c.id === functionNode.color) || FUNCTION_NODE_COLORS[0];
+
+  return (
+    <div className="space-y-3">
+      {/* Hero summary */}
+      <div className="rounded-2xl border p-5 flex items-start gap-4" style={{ background: cardBg, borderColor: cardBorder }}>
+        <div
+          className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${publishAs === 'function' ? '' : 'bg-indigo-500/15'}`}
+          style={publishAs === 'function' ? { background: fnColor.bg, color: fnColor.fg } : undefined}
+        >
+          {publishAs === 'function' ? <FnIcon className="w-6 h-6" /> : <Globe className="w-6 h-6 text-indigo-500" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-lg font-bold wf-fg truncate">{name || 'Untitled'}</h3>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+              publishAs === 'function'
+                ? d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/25' : 'bg-violet-100 text-violet-700 border border-violet-200'
+                : d ? 'bg-blue-500/15 text-blue-300 border border-blue-500/25' : 'bg-blue-100 text-blue-700 border border-blue-200'
+            }`}>
+              {publishAs === 'function' ? <Box className="w-2.5 h-2.5" /> : <Layers className="w-2.5 h-2.5" />}
+              {publishAs}
+            </span>
+          </div>
+          {shortDescription && <p className="text-sm wf-fg-muted mt-1 line-clamp-2">{shortDescription}</p>}
+        </div>
+      </div>
+
+      {/* Grid of section cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <ReviewCard d={d} label="Details" onEdit={() => onJumpTo('details')}>
+          <ReviewRow label="Name" value={name || '—'} />
+          <ReviewRow label="Category" value={category || 'general'} />
+          <ReviewRow label="Tags" value={tags.length ? tags.map(t => `#${t}`).join(' ') : '—'} />
+          <ReviewRow label="Description" value={description ? description.slice(0, 100) + (description.length > 100 ? '…' : '') : '—'} />
+        </ReviewCard>
+
+        {publishAs === 'function' && (
+          <ReviewCard d={d} label="Function Node" onEdit={() => onJumpTo('node')}>
+            <ReviewRow label="Label" value={functionNode.label || '—'} />
+            <ReviewRow label="Tagline" value={functionNode.tagline || '—'} />
+            <ReviewRow label="Inputs" value={functionNode.inputs.map(p => `${p.name}:${p.type}`).join(', ') || '—'} />
+            <ReviewRow label="Outputs" value={functionNode.outputs.map(p => `${p.name}:${p.type}`).join(', ') || '—'} />
+          </ReviewCard>
+        )}
+
+        <ReviewCard d={d} label="Showcase" onEdit={() => onJumpTo('showcase')}>
+          <ReviewRow label="Creator" value={creatorProfile.display_name || '—'} />
+          <ReviewRow label="Handle" value={creatorProfile.handle ? `@${creatorProfile.handle}` : '—'} />
+          <ReviewRow label="Thumbnail" value={thumbnailUrl ? 'Uploaded' : '—'} />
+          <ReviewRow label="Cover" value={coverImageUrl ? 'Uploaded' : '—'} />
+          <ReviewRow label="Media" value={mediaCount > 0 ? `${mediaCount} item${mediaCount === 1 ? '' : 's'}` : '—'} />
+        </ReviewCard>
+
+        {publishAs === 'workflow' && <div />}
+      </div>
+    </div>
+  );
+}
+
+function ReviewCard({
+  d, label, onEdit, children,
+}: { d: boolean; label: string; onEdit: () => void; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border p-4 space-y-2" style={{ background: d ? 'rgba(255,255,255,0.02)' : '#ffffff', borderColor: 'var(--wf-border)' }}>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider wf-fg-faint">{label}</span>
+        <button
+          type="button"
+          onClick={onEdit}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+            d ? 'text-indigo-300 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'
+          }`}
+        >
+          <Pencil className="w-2.5 h-2.5" />
+          Edit
+        </button>
+      </div>
+      <div className="space-y-1">{children}</div>
+    </div>
+  );
+}
+
+function ReviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2 text-xs">
+      <span className="wf-fg-faint shrink-0 w-[72px]">{label}</span>
+      <span className="wf-fg flex-1 truncate" title={value}>{value}</span>
+    </div>
   );
 }

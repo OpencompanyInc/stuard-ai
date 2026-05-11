@@ -14,6 +14,7 @@ import {
   Send, User, Activity, Radio, Bot, Phone, PhoneCall,
   Table2, HardDrive, Scan, Binary,
   Film, Upload, Share2, Copy, Scissors, SortAsc, Settings2,
+  Bluetooth, BluetoothOff, Sun, Battery, VolumeX, Image as ImageIcon,
   type LucideIcon
 } from "lucide-react";
 
@@ -245,6 +246,29 @@ label: 'ElevenLabs Voice',
       { k: 'local.tool', t: 'smart_bring_window_to_foreground', label: 'Smart Focus', icon: Wand2, args: { hint: '' } },
       { k: 'local.tool', t: 'get_window_info', label: 'Get Window Info', icon: AppWindow, args: { title: '' } },
       { k: 'local.tool', t: 'set_window_bounds', label: 'Resize / Move', icon: AppWindow, args: { title: '', bounds: { x: 0, y: 0, width: 900, height: 700 }, bringToTop: true } },
+    ],
+  },
+  {
+    id: 'desktop_controls',
+    label: 'Desktop Controls',
+    icon: Settings2,
+    color: 'slate',
+    items: [
+      { k: 'local.tool', t: 'describe_desktop_control_capabilities', label: 'Check Capabilities', icon: Activity, args: {} },
+      { k: 'local.tool', t: 'get_system_volume', label: 'Get Volume', icon: Volume2, args: {} },
+      { k: 'local.tool', t: 'set_system_volume', label: 'Set Volume', icon: Volume2, args: { level: 50 } },
+      { k: 'local.tool', t: 'set_system_volume', label: 'Volume Up (+10)', icon: Volume2, args: { delta: 10 } },
+      { k: 'local.tool', t: 'set_system_volume', label: 'Volume Down (-10)', icon: Volume2, args: { delta: -10 } },
+      { k: 'local.tool', t: 'set_system_volume', label: 'Mute', icon: VolumeX, args: { muted: true } },
+      { k: 'local.tool', t: 'set_system_volume', label: 'Unmute', icon: Volume2, args: { muted: false } },
+      { k: 'local.tool', t: 'get_display_brightness', label: 'Get Brightness', icon: Sun, args: {} },
+      { k: 'local.tool', t: 'set_display_brightness', label: 'Set Brightness', icon: Sun, args: { percent: 75 } },
+      { k: 'local.tool', t: 'list_bluetooth_devices', label: 'List Bluetooth Devices', icon: Bluetooth, args: {} },
+      { k: 'local.tool', t: 'connect_bluetooth_device', label: 'Connect Bluetooth Device', icon: Bluetooth, args: { address: '' } },
+      { k: 'local.tool', t: 'disconnect_bluetooth_device', label: 'Disconnect Bluetooth Device', icon: BluetoothOff, args: { address: '' } },
+      { k: 'local.tool', t: 'get_power_status', label: 'Battery / Power Status', icon: Battery, args: {} },
+      { k: 'local.tool', t: 'get_desktop_wallpaper', label: 'Get Wallpaper', icon: ImageIcon, args: {} },
+      { k: 'local.tool', t: 'set_desktop_wallpaper', label: 'Set Wallpaper', icon: ImageIcon, args: { path: '', style: 'fill' } },
     ],
   },
   {

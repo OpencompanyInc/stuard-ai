@@ -9,7 +9,8 @@ import {
   Zap, FileText, Settings, ChevronDown, Sparkles,
   Code, MousePointer, Image, Mail, Globe, Database, Mic, Video,
   FolderOpen, Play, Clock, ArrowRight, Cpu, Box, Layers, Send,
-  BarChart, HardDrive, Cloud, Webhook, Type, ListChecks, Bot
+  BarChart, HardDrive, Cloud, Webhook, Type, ListChecks, Bot,
+  CheckCheck, XCircle, Upload, Inbox, PowerOff, LayoutGrid
 } from "lucide-react";
 import { TOOL_SCHEMAS, getCategories } from "../constants/tool-schemas";
 import { ChatHistory } from "./chat/ChatHistory";
@@ -290,6 +291,12 @@ export function formatRelativeTime(dateStr: string): string {
 // SKILLS LIBRARY VIEW
 // ============================================================================
 
+export type SkillsTab = 'all' | 'suggested' | 'inactive';
+
+export function isSkillPending(skill: Skill): boolean {
+  return skill.source === 'auto' && !skill.metadata?.approvedAt;
+}
+
 interface SkillsLibraryProps {
   skills: Skill[];
   search: string;
@@ -298,6 +305,8 @@ interface SkillsLibraryProps {
   onEditSkill: (skill: Skill) => void;
   onDeleteSkill: (id: string) => void;
   onToggleSkill: (id: string) => void;
+  onApproveSkill?: (skill: Skill) => void;
+  onPublishSkill?: (skill: Skill) => void;
 }
 
 export function SkillsLibrary({
@@ -308,18 +317,93 @@ export function SkillsLibrary({
   onEditSkill,
   onDeleteSkill,
   onToggleSkill,
+  onApproveSkill,
+  onPublishSkill,
 }: SkillsLibraryProps) {
   const { isDark: d } = useWorkflowTheme();
+  const [tab, setTab] = useState<SkillsTab>('all');
+
+  const buckets = useMemo(() => {
+    const pending: Skill[] = [];
+    const inactive: Skill[] = [];
+    const all: Skill[] = [];
+    for (const s of skills) {
+      if (isSkillPending(s)) {
+        pending.push(s);
+      } else if (!s.isActive) {
+        inactive.push(s);
+        all.push(s);
+      } else {
+        all.push(s);
+      }
+    }
+    return { all, pending, inactive };
+  }, [skills]);
+
+  const visibleSource = tab === 'suggested' ? buckets.pending : tab === 'inactive' ? buckets.inactive : buckets.all;
+
   const filteredSkills = useMemo(() => {
-    if (!search.trim()) return skills;
+    if (!search.trim()) return visibleSource;
     const q = search.toLowerCase();
-    return skills.filter(s => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
-  }, [skills, search]);
+    return visibleSource.filter(s => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
+  }, [visibleSource, search]);
+
+  const tabs: { id: SkillsTab; label: string; count: number; icon: any; description: string }[] = [
+    { id: 'all',       label: 'All Skills',  count: buckets.all.length,      icon: LayoutGrid, description: 'Approved skills ready to use' },
+    { id: 'suggested', label: 'Suggested',   count: buckets.pending.length,  icon: Sparkles,   description: 'Auto-detected skills awaiting your approval' },
+    { id: 'inactive',  label: 'Inactive',    count: buckets.inactive.length, icon: PowerOff,   description: 'Skills you have toggled off' },
+  ];
 
   return (
     <>
+      {/* Tabs */}
+      <div className="px-8 pb-3 shrink-0">
+        <div className={`inline-flex p-1 rounded-xl border ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-100/70 border-slate-200'}`}>
+          {tabs.map(t => {
+            const Icon = t.icon;
+            const isActive = tab === t.id;
+            const isPendingTab = t.id === 'suggested';
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  isActive
+                    ? d
+                      ? 'bg-white/[0.08] text-white shadow-sm'
+                      : 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                    : d
+                      ? 'text-white/55 hover:text-white/80'
+                      : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title={t.description}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? (isPendingTab ? 'text-violet-500' : '') : ''}`} />
+                <span>{t.label}</span>
+                {t.count > 0 && (
+                  <span
+                    className={`ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-semibold ${
+                      isPendingTab
+                        ? d ? 'bg-violet-500/20 text-violet-300' : 'bg-violet-100 text-violet-700'
+                        : isActive
+                          ? d ? 'bg-white/[0.12] text-white' : 'bg-slate-200 text-slate-700'
+                          : d ? 'bg-white/[0.06] text-white/60' : 'bg-slate-200/80 text-slate-500'
+                    }`}
+                  >
+                    {t.count}
+                  </span>
+                )}
+                {isPendingTab && t.count > 0 && !isActive && (
+                  <span className={`w-1.5 h-1.5 rounded-full ${d ? 'bg-violet-400' : 'bg-violet-500'} animate-pulse`} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Skills Info Bar */}
-      <div className="px-8 pb-6 flex items-center gap-4 flex-wrap">
+      <div className="px-8 pb-5 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-3 px-4 py-2 rounded-lg border shadow-sm wf-bg-elevated wf-border">
           <Brain className="w-4 h-4 wf-fg-muted" />
           <div className="flex items-baseline gap-1.5">
@@ -327,18 +411,26 @@ export function SkillsLibrary({
             <span className="text-xs wf-fg-muted">of {skills.length} skills</span>
           </div>
         </div>
-        {skills.some(s => s.source === 'auto') && (
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
-            d ? 'bg-violet-500/10 border-violet-500/20' : 'bg-violet-50 border-violet-200'
-          }`}>
+        {buckets.pending.length > 0 && tab !== 'suggested' && (
+          <button
+            onClick={() => setTab('suggested')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+              d ? 'bg-violet-500/10 border-violet-500/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'
+            }`}
+          >
             <Sparkles className={`w-3.5 h-3.5 ${d ? 'text-violet-400' : 'text-violet-500'}`} />
-            <span className={`text-xs font-medium ${d ? 'text-violet-300' : 'text-violet-600'}`}>
-              {skills.filter(s => s.source === 'auto').length} auto-generated
+            <span className={`text-xs font-medium ${d ? 'text-violet-300' : 'text-violet-700'}`}>
+              {buckets.pending.length} pending review
             </span>
-          </div>
+            <ArrowRight className={`w-3 h-3 ${d ? 'text-violet-300' : 'text-violet-600'}`} />
+          </button>
         )}
         <p className="text-sm wf-fg-muted">
-          Skills define how Stuard responds to specific requests with structured steps.
+          {tab === 'suggested'
+            ? 'Review auto-detected skills and approve to add them to your library.'
+            : tab === 'inactive'
+              ? 'Skills currently disabled. Toggle them back on to use them again.'
+              : 'Skills define how Stuard responds to specific requests with structured steps.'}
         </p>
       </div>
 
@@ -346,11 +438,11 @@ export function SkillsLibrary({
       <div className="flex-1 px-8 pb-8 overflow-y-auto scrollbar-minimal">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12">
 
-          {/* Create Skill Card */}
-          {!search && (
+          {/* Create Skill Card — only in All tab */}
+          {tab === 'all' && !search && (
             <div
               onClick={onCreateSkill}
-              className={`group relative h-[200px] rounded-xl cursor-pointer flex flex-col items-center justify-center transition-all border border-dashed ${
+              className={`group relative h-[220px] rounded-xl cursor-pointer flex flex-col items-center justify-center transition-all border border-dashed ${
                 d ? 'border-white/[0.12] hover:border-white/[0.2] bg-white/[0.02] hover:bg-white/[0.04]'
                   : 'border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50'
               }`}
@@ -366,103 +458,223 @@ export function SkillsLibrary({
           )}
 
           {/* Skill Cards */}
-          {filteredSkills.map((skill) => {
-            const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
-            const colorClasses = getSkillColorClasses(skill.color);
+          {filteredSkills.map((skill) => (
+            <SkillCard
+              key={skill.id}
+              skill={skill}
+              tab={tab}
+              d={d}
+              onEdit={onEditSkill}
+              onDelete={onDeleteSkill}
+              onToggle={onToggleSkill}
+              onApprove={onApproveSkill}
+              onPublish={onPublishSkill}
+            />
+          ))}
 
-            return (
-              <div
-                key={skill.id}
-                onClick={() => onEditSkill(skill)}
-                className={`group relative rounded-xl border shadow-sm hover:shadow transition-all flex flex-col h-[200px] cursor-pointer overflow-hidden ${
-                  d ? 'bg-white/[0.04] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <div className={`absolute top-0 left-0 right-0 h-1 ${skill.isActive ? colorClasses.bg : (d ? 'bg-white/[0.06]' : 'bg-slate-200')}`} />
-
-                <div className="p-4 flex flex-col flex-1 mt-1">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClasses.bgSoft} border ${colorClasses.border} relative`}>
-                        <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
-                        {skill.source === 'auto' && (
-                          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center ring-2 ring-white dark:ring-slate-900" title="Auto-generated">
-                            <Sparkles className="w-2.5 h-2.5 text-white" />
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-sm wf-fg">{skill.name}</h3>
-                          {skill.source === 'auto' && (
-                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                              d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/20' : 'bg-violet-50 text-violet-600 border border-violet-200'
-                            }`}>
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Auto
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-xs wf-fg-muted">
-                          {skill.steps.length} steps
-                          {skill.source === 'auto' && skill.metadata?.confidence != null && (
-                            <> · {Math.round(skill.metadata.confidence * 100)}% confidence</>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onToggleSkill(skill.id); }}
-                      className={`p-1 rounded-md transition-colors ${skill.isActive ? 'text-emerald-500 hover:bg-emerald-500/10' : 'wf-fg-faint hover:bg-white/10'}`}
-                      title={skill.isActive ? 'Active' : 'Inactive'}
-                    >
-                      {skill.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-                    </button>
-                  </div>
-
-                  <p className="text-xs line-clamp-2 leading-relaxed mb-3 flex-1 wf-fg-muted">{skill.description}</p>
-
-                  <div className={`px-3 py-2 rounded-lg border mb-3 ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-100'}`}>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <Zap className="w-3 h-3 wf-fg-faint" />
-                      <span className="text-[10px] font-medium uppercase tracking-wider wf-fg-faint">Trigger</span>
-                    </div>
-                    <p className="text-xs line-clamp-1 wf-fg-muted">{skill.trigger}</p>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] wf-fg-faint">
-                      {skill.source === 'auto' ? (
-                        <>Learned {skill.metadata?.generatedAt ? formatRelativeTime(skill.metadata.generatedAt) : formatRelativeTime(skill.createdAt)}</>
-                      ) : (
-                        skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}` : ''
-                      )}
-                    </span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onDeleteSkill(skill.id); }}
-                      className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
-                      title="Delete Skill"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {filteredSkills.length === 0 && search && (
+          {/* Empty States per tab */}
+          {filteredSkills.length === 0 && (
             <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
-              <div className="w-12 h-12 shadow-sm rounded-lg flex items-center justify-center mb-4 border wf-bg-elevated wf-border">
-                <Search className="w-5 h-5 wf-fg-faint" />
+              <div className={`w-14 h-14 shadow-sm rounded-full flex items-center justify-center mb-4 border ${
+                tab === 'suggested'
+                  ? d ? 'bg-violet-500/10 border-violet-500/20' : 'bg-violet-50 border-violet-200'
+                  : 'wf-bg-elevated wf-border'
+              }`}>
+                {search ? (
+                  <Search className="w-5 h-5 wf-fg-faint" />
+                ) : tab === 'suggested' ? (
+                  <Sparkles className={`w-5 h-5 ${d ? 'text-violet-400' : 'text-violet-500'}`} />
+                ) : tab === 'inactive' ? (
+                  <PowerOff className="w-5 h-5 wf-fg-faint" />
+                ) : (
+                  <Inbox className="w-5 h-5 wf-fg-faint" />
+                )}
               </div>
-              <h3 className="text-sm font-semibold wf-fg">No skills found</h3>
-              <p className="text-xs mt-1 wf-fg-muted">Try adjusting your search query</p>
+              <h3 className="text-sm font-semibold wf-fg">
+                {search
+                  ? 'No skills found'
+                  : tab === 'suggested' ? 'No suggestions yet'
+                  : tab === 'inactive' ? 'No inactive skills'
+                  : 'No skills yet'}
+              </h3>
+              <p className="text-xs mt-1 max-w-sm wf-fg-muted">
+                {search
+                  ? 'Try adjusting your search query.'
+                  : tab === 'suggested' ? 'Stuard will surface skills here as it learns patterns from your conversations.'
+                  : tab === 'inactive' ? 'Skills toggled off will appear here for easy re-enabling.'
+                  : 'Create your first skill to define a reusable behavior for Stuard.'}
+              </p>
+              {!search && tab === 'all' && (
+                <button
+                  onClick={onCreateSkill}
+                  className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Create skill
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
     </>
+  );
+}
+
+interface SkillCardProps {
+  skill: Skill;
+  tab: SkillsTab;
+  d: boolean;
+  onEdit: (skill: Skill) => void;
+  onDelete: (id: string) => void;
+  onToggle: (id: string) => void;
+  onApprove?: (skill: Skill) => void;
+  onPublish?: (skill: Skill) => void;
+}
+
+function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPublish }: SkillCardProps) {
+  const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
+  const colorClasses = getSkillColorClasses(skill.color);
+  const isPending = tab === 'suggested';
+
+  return (
+    <div
+      onClick={() => onEdit(skill)}
+      className={`group relative rounded-xl border shadow-sm hover:shadow transition-all flex flex-col h-[220px] cursor-pointer overflow-hidden ${
+        isPending
+          ? d ? 'bg-violet-500/[0.04] border-violet-500/[0.18] hover:border-violet-500/30' : 'bg-violet-50/40 border-violet-200 hover:border-violet-300'
+          : d ? 'bg-white/[0.04] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-slate-200 hover:border-slate-300'
+      }`}
+    >
+      <div className={`absolute top-0 left-0 right-0 h-1 ${
+        isPending ? 'bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500'
+          : skill.isActive ? colorClasses.bg : (d ? 'bg-white/[0.06]' : 'bg-slate-200')
+      }`} />
+
+      <div className="p-4 flex flex-col flex-1 mt-1">
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClasses.bgSoft} border ${colorClasses.border} relative shrink-0`}>
+              <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
+              {skill.source === 'auto' && (
+                <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center ring-2 ring-white dark:ring-slate-900" title="Auto-generated">
+                  <Sparkles className="w-2.5 h-2.5 text-white" />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm wf-fg truncate">{skill.name}</h3>
+                {isPending ? (
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                    d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/25' : 'bg-violet-100 text-violet-700 border border-violet-200'
+                  }`}>
+                    <Sparkles className="w-2.5 h-2.5" />
+                    Pending
+                  </span>
+                ) : skill.source === 'auto' ? (
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                    d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/20' : 'bg-violet-50 text-violet-600 border border-violet-200'
+                  }`}>
+                    <Sparkles className="w-2.5 h-2.5" />
+                    Auto
+                  </span>
+                ) : null}
+              </div>
+              <span className="text-xs wf-fg-muted truncate block">
+                {skill.steps.length} steps
+                {skill.source === 'auto' && skill.metadata?.confidence != null && (
+                  <> · {Math.round(skill.metadata.confidence * 100)}% confidence</>
+                )}
+              </span>
+            </div>
+          </div>
+          {!isPending && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggle(skill.id); }}
+              className={`p-1 rounded-md transition-colors shrink-0 ${skill.isActive ? 'text-emerald-500 hover:bg-emerald-500/10' : 'wf-fg-faint hover:bg-white/10'}`}
+              title={skill.isActive ? 'Active' : 'Inactive'}
+            >
+              {skill.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+            </button>
+          )}
+        </div>
+
+        <p className="text-xs line-clamp-2 leading-relaxed mb-3 flex-1 wf-fg-muted">{skill.description}</p>
+
+        <div className={`px-3 py-2 rounded-lg border mb-3 ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-100'}`}>
+          <div className="flex items-center gap-1.5 mb-1">
+            <Zap className="w-3 h-3 wf-fg-faint" />
+            <span className="text-[10px] font-medium uppercase tracking-wider wf-fg-faint">Trigger</span>
+          </div>
+          <p className="text-xs line-clamp-1 wf-fg-muted">{skill.trigger}</p>
+        </div>
+
+        {/* Footer / Actions */}
+        {isPending ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); onApprove?.(skill); }}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors shadow-sm"
+              title="Approve and add to library"
+            >
+              <CheckCheck className="w-3.5 h-3.5" />
+              Approve
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(skill); }}
+              className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
+                d ? 'bg-white/[0.05] text-white/75 hover:bg-white/[0.08]' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+              }`}
+              title="Edit before approving"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Review
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(skill.id); }}
+              className={`inline-flex items-center justify-center p-1.5 rounded-md transition-colors ${
+                d ? 'text-white/45 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
+              }`}
+              title="Dismiss"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] wf-fg-faint truncate">
+              {skill.source === 'auto' ? (
+                <>Learned {skill.metadata?.generatedAt ? formatRelativeTime(skill.metadata.generatedAt) : formatRelativeTime(skill.createdAt)}</>
+              ) : (
+                skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}` : ''
+              )}
+            </span>
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              {onPublish && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onPublish(skill); }}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
+                    d ? 'text-blue-300 hover:text-blue-200 hover:bg-blue-500/10' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
+                  }`}
+                  title="Publish to Marketplace"
+                >
+                  <Upload className="w-3 h-3" />
+                  Publish
+                </button>
+              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(skill.id); }}
+                className={`p-1 rounded transition-colors ${d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
+                title="Delete Skill"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -475,9 +687,10 @@ interface SkillEditorProps {
   onSave: (skill: Skill) => void;
   onCancel: () => void;
   cloudAiHttp?: string;
+  onPublish?: (skill: Skill) => void;
 }
 
-export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEditorProps) {
+export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }: SkillEditorProps) {
   const [editedSkill, setEditedSkill] = useState<Skill>(skill);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [toolSearchOpen, setToolSearchOpen] = useState<string | null>(null);
@@ -567,13 +780,25 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
               {skill.id.startsWith('skill_') && skill.name === 'New Skill' ? 'Create Skill' : skill.source === 'auto' ? 'Auto-Skill Settings' : 'Skill Settings'}
             </h2>
           </div>
-          <button
-            onClick={() => onSave(editedSkill)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors text-xs font-medium"
-          >
-            <Save className="w-3.5 h-3.5" />
-            Save
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onPublish && (
+              <button
+                onClick={() => onPublish(editedSkill)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition-colors text-xs font-medium"
+                title="Publish to Marketplace"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Publish
+              </button>
+            )}
+            <button
+              onClick={() => onSave(editedSkill)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors text-xs font-medium"
+            >
+              <Save className="w-3.5 h-3.5" />
+              Save
+            </button>
+          </div>
         </div>
 
         {/* Settings Form */}
@@ -971,6 +1196,198 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp }: SkillEdito
 
     </div>
   </div>
+  );
+}
+
+// ============================================================================
+// PUBLISH SKILL MODAL
+// ============================================================================
+
+interface PublishSkillModalProps {
+  skill: Skill;
+  onClose: () => void;
+  onConfirm: (data: { name: string; shortDescription: string; description: string; category: string; tags: string[] }) => Promise<{ ok: boolean; error?: string } | void>;
+}
+
+export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillModalProps) {
+  const { isDark: d } = useWorkflowTheme();
+  const [name, setName] = useState(skill.name);
+  const [shortDescription, setShortDescription] = useState(skill.description.slice(0, 120));
+  const [description, setDescription] = useState(skill.description);
+  const [category, setCategory] = useState('skills');
+  const [tagsRaw, setTagsRaw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
+  const colorClasses = getSkillColorClasses(skill.color);
+
+  const handlePublish = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+      const result = await onConfirm({ name: name.trim(), shortDescription: shortDescription.trim(), description: description.trim(), category, tags });
+      if (result && result.ok === false) {
+        setError(result.error || 'Failed to publish');
+      } else {
+        setDone(true);
+        setTimeout(onClose, 1200);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to publish');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 backdrop-blur-md flex items-center justify-center z-50 p-4"
+      style={{ background: d ? 'rgba(2, 6, 23, 0.78)' : 'rgba(15, 23, 42, 0.18)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-2xl border shadow-2xl w-[560px] max-w-[92vw] overflow-hidden"
+        style={{ background: d ? '#0f1117' : '#ffffff', borderColor: 'var(--wf-border)', color: 'var(--wf-fg)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--wf-border)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <Upload className="w-4.5 h-4.5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-semibold wf-fg">Publish Skill to Marketplace</h3>
+              <p className="text-xs wf-fg-muted">Share this skill with the community</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg transition-colors wf-fg-faint hover:wf-fg">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4">
+          {/* Skill preview card */}
+          <div className={`flex items-center gap-3 p-3 rounded-xl border ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-200'}`}>
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClasses.bgSoft} border ${colorClasses.border}`}>
+              <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold wf-fg truncate">{skill.name}</div>
+              <div className="text-xs wf-fg-muted">{skill.steps.length} steps · {skill.source === 'auto' ? 'Auto-generated' : 'Custom'}</div>
+            </div>
+          </div>
+
+          {done ? (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-50 border border-emerald-200">
+              <Check className="w-5 h-5 text-emerald-600" />
+              <div>
+                <div className="text-sm font-semibold text-emerald-700">Published successfully!</div>
+                <p className="text-xs text-emerald-600">Your skill is now live in the marketplace.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Form */}
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium wf-fg">Public Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 border"
+                    style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium wf-fg">Short Description</label>
+                  <input
+                    type="text"
+                    value={shortDescription}
+                    onChange={(e) => setShortDescription(e.target.value.slice(0, 140))}
+                    placeholder="One-line summary shown in marketplace cards"
+                    className="w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 border"
+                    style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                  />
+                  <span className="text-[10px] wf-fg-faint">{shortDescription.length}/140</span>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium wf-fg">Full Description</label>
+                  <textarea
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md text-sm resize-none focus:outline-none focus:ring-1 border"
+                    style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium wf-fg">Category</label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 border"
+                      style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                    >
+                      <option value="skills">Skills</option>
+                      <option value="productivity">Productivity</option>
+                      <option value="research">Research</option>
+                      <option value="writing">Writing</option>
+                      <option value="coding">Coding</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium wf-fg">Tags (comma-separated)</label>
+                    <input
+                      type="text"
+                      value={tagsRaw}
+                      onChange={(e) => setTagsRaw(e.target.value)}
+                      placeholder="e.g. summary, gmail"
+                      className="w-full px-3 py-2 rounded-md text-sm focus:outline-none focus:ring-1 border"
+                      style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!done && (
+          <div className="px-6 py-4 border-t flex items-center justify-end gap-3" style={{ borderColor: 'var(--wf-border)' }}>
+            <button
+              onClick={onClose}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${d ? 'text-white/70 hover:bg-white/[0.06]' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handlePublish}
+              disabled={busy || !name.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+            >
+              {busy ? <Wand2 className="w-4 h-4 animate-pulse" /> : <Upload className="w-4 h-4" />}
+              {busy ? 'Publishing...' : 'Publish'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

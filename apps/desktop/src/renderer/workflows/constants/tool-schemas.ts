@@ -129,6 +129,19 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'get_window_info', category: 'system', kind: 'local', description: 'Get details about a specific window', argsTemplate: { title: '' }, outputSchema: { ok: 'boolean', bounds: 'object' } },
   { id: 'set_window_bounds', category: 'system', kind: 'local', description: 'Move and/or resize a window', argsTemplate: { title: '', bounds: { x: 0, y: 0, width: 800, height: 600 }, bringToTop: true }, outputSchema: { ok: 'boolean', bounds: 'object' } },
 
+  // --- DESKTOP CONTROLS (volume / brightness / bluetooth / wallpaper / power) ---
+  { id: 'describe_desktop_control_capabilities', category: 'system', kind: 'local', description: 'Describe which desktop software controls (wallpaper, volume, Bluetooth, brightness, battery) are available on this machine.', argsTemplate: {}, outputSchema: { ok: 'boolean', platform: 'string', capabilities: 'object', tools: 'string[]' } },
+  { id: 'get_desktop_wallpaper', category: 'system', kind: 'local', description: 'Get the current desktop wallpaper path(s) when the platform exposes them.', argsTemplate: {}, outputSchema: { ok: 'boolean', path: 'string', paths: 'string[]', backend: 'string' } },
+  { id: 'set_desktop_wallpaper', category: 'system', kind: 'local', description: 'Set the desktop wallpaper from a local image path. Cross-platform: Windows native API, macOS System Events, Linux desktop-environment CLIs when available.', argsTemplate: { path: '', style: 'fill' }, outputSchema: { ok: 'boolean', backend: 'string' } },
+  { id: 'get_system_volume', category: 'system', kind: 'local', description: 'Get current system output volume (0-100) and mute state.', argsTemplate: {}, outputSchema: { ok: 'boolean', volume: 'number', muted: 'boolean', backend: 'string' } },
+  { id: 'set_system_volume', category: 'system', kind: 'local', description: 'Set or adjust system output volume and mute state. Use level for absolute (0-100), delta for relative change, or muted to toggle mute.', argsTemplate: { level: 50 }, outputSchema: { ok: 'boolean', volume: 'number', muted: 'boolean', backend: 'string' } },
+  { id: 'list_bluetooth_devices', category: 'system', kind: 'local', description: 'List known or paired Bluetooth devices using the best available platform backend.', argsTemplate: {}, outputSchema: { ok: 'boolean', devices: 'any[]', backend: 'string' } },
+  { id: 'connect_bluetooth_device', category: 'system', kind: 'local', description: 'Connect a Bluetooth device by MAC address. Linux requires bluetoothctl; macOS requires blueutil. Windows can open Bluetooth settings.', argsTemplate: { address: '', openSettings: false }, outputSchema: { ok: 'boolean', backend: 'string', error: 'string' } },
+  { id: 'disconnect_bluetooth_device', category: 'system', kind: 'local', description: 'Disconnect a Bluetooth device by MAC address. Linux requires bluetoothctl; macOS requires blueutil.', argsTemplate: { address: '' }, outputSchema: { ok: 'boolean', backend: 'string', error: 'string' } },
+  { id: 'get_display_brightness', category: 'system', kind: 'local', description: 'Get laptop or display brightness (0-100) when the OS/backend exposes it.', argsTemplate: {}, outputSchema: { ok: 'boolean', percent: 'number', backend: 'string' } },
+  { id: 'set_display_brightness', category: 'system', kind: 'local', description: 'Set laptop or display brightness (0-100). Windows uses WMI; Linux uses brightnessctl/sysfs; macOS requires the brightness CLI.', argsTemplate: { percent: 75 }, outputSchema: { ok: 'boolean', percent: 'number', backend: 'string' } },
+  { id: 'get_power_status', category: 'system', kind: 'local', description: 'Get battery percentage and charging status for laptops when available.', argsTemplate: {}, outputSchema: { ok: 'boolean', percent: 'number', charging: 'boolean', onBattery: 'boolean', batteries: 'any[]', backend: 'string' } },
+
   // --- INPUT ---
   { id: 'send_hotkey', category: 'input', kind: 'local', description: 'Send keyboard hotkey combinations', argsTemplate: { keys: ['ctrl', 'c'], count: 1, delay: 0 }, outputSchema: { ok: 'boolean', count: 'number' } },
   { id: 'type_text', category: 'input', kind: 'local', description: 'Type text at cursor position', argsTemplate: { text: '', useClipboardFallback: false }, outputSchema: { ok: 'boolean' } },
@@ -913,6 +926,103 @@ if (TOOL_SCHEMAS['workspace_write_file']) {
       description: 'A short, non-technical explanation shown in the workflow chat approval bar.',
       required: false,
       placeholder: 'Example: Save the generated report to data/report.md',
+    },
+  };
+}
+
+// Desktop Controls - friendlier editors for volume / brightness / wallpaper
+if (TOOL_SCHEMAS['set_system_volume']) {
+  TOOL_SCHEMAS['set_system_volume'].args = {
+    level: {
+      type: 'number',
+      label: 'Volume Level (0-100)',
+      description: 'Absolute output volume. Leave empty to only change mute or apply a delta.',
+      required: false,
+      default: 50,
+    },
+    delta: {
+      type: 'number',
+      label: 'Volume Delta',
+      description: 'Relative change (e.g. 10 to raise by 10, -10 to lower). Ignored when Level is set.',
+      required: false,
+      advanced: true,
+    },
+    muted: {
+      type: 'boolean',
+      label: 'Mute',
+      description: 'Set to true to mute output, false to unmute. Leave empty to keep current state.',
+      required: false,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['set_display_brightness']) {
+  TOOL_SCHEMAS['set_display_brightness'].args = {
+    percent: {
+      type: 'number',
+      label: 'Brightness (0-100)',
+      description: 'Display brightness percentage.',
+      required: true,
+      default: 75,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['set_desktop_wallpaper']) {
+  TOOL_SCHEMAS['set_desktop_wallpaper'].args = {
+    path: {
+      type: 'path',
+      label: 'Image Path',
+      description: 'Local image file to use as wallpaper (PNG, JPG, etc.).',
+      required: true,
+      placeholder: 'C:/Pictures/wallpaper.jpg',
+    },
+    style: {
+      type: 'select',
+      label: 'Display Style',
+      description: 'How the image is laid out (where supported by the OS).',
+      required: false,
+      default: 'fill',
+      options: [
+        { value: 'fill', label: 'Fill' },
+        { value: 'fit', label: 'Fit' },
+        { value: 'stretch', label: 'Stretch' },
+        { value: 'center', label: 'Center' },
+        { value: 'tile', label: 'Tile' },
+        { value: 'span', label: 'Span (multi-monitor)' },
+      ],
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['connect_bluetooth_device']) {
+  TOOL_SCHEMAS['connect_bluetooth_device'].args = {
+    address: {
+      type: 'string',
+      label: 'MAC Address',
+      description: 'Bluetooth device MAC address (e.g. AA:BB:CC:11:22:33). Use List Bluetooth Devices to discover.',
+      required: true,
+      placeholder: 'AA:BB:CC:11:22:33',
+    },
+    openSettings: {
+      type: 'boolean',
+      label: 'Open Settings (Windows)',
+      description: 'Windows only: open Bluetooth settings when no direct connect backend is available.',
+      required: false,
+      default: false,
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['disconnect_bluetooth_device']) {
+  TOOL_SCHEMAS['disconnect_bluetooth_device'].args = {
+    address: {
+      type: 'string',
+      label: 'MAC Address',
+      description: 'Bluetooth device MAC address (e.g. AA:BB:CC:11:22:33).',
+      required: true,
+      placeholder: 'AA:BB:CC:11:22:33',
     },
   };
 }

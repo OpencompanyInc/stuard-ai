@@ -25,6 +25,7 @@ export function useCloudTerminal() {
   const reconnectAttemptsRef = useRef(0);
   const optsRef = useRef<TerminalConnectOptions | undefined>(undefined);
   const stoppedRef = useRef(false);
+  const openSocketRef = useRef<((opts?: TerminalConnectOptions) => Promise<void>) | null>(null);
 
   const clearReconnectTimer = () => {
     if (reconnectTimerRef.current !== null) {
@@ -110,7 +111,7 @@ export function useCloudTerminal() {
       clearReconnectTimer();
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
-        void openSocket(optsRef.current);
+        void openSocketRef.current?.(optsRef.current);
       }, delay);
     };
 
@@ -127,6 +128,9 @@ export function useCloudTerminal() {
       setConnected(false);
     };
   }, []);
+  useEffect(() => {
+    openSocketRef.current = openSocket;
+  }, [openSocket]);
 
   const connect = useCallback((opts?: TerminalConnectOptions) => {
     stoppedRef.current = false;

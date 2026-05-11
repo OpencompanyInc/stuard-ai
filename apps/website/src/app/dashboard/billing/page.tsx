@@ -1369,7 +1369,7 @@ export default function BillingPage() {
               <div>
                 <p className="text-[13px] font-medium text-gray-900">Automatically top up when low</p>
                 <p className="text-[12px] text-gray-500 mt-0.5">
-                  When your balance drops below the threshold, we'll charge your saved payment method for an add-on pack so you never run out mid-conversation.
+                  When your balance drops below the threshold, we&apos;ll charge your saved payment method for an add-on pack so you never run out mid-conversation.
                 </p>
               </div>
             </label>

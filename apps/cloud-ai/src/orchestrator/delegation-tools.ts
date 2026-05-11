@@ -13,7 +13,6 @@
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { runSubagent } from './subagent-runtime';
 import { writeLog } from '../utils/logger';
 import { KNOWN_SUBAGENT_NAMES, type SubagentName } from './capability-packs';
 import type { DelegationResult, SubagentQuestion, SubagentAnswer } from './types';
@@ -249,26 +248,29 @@ async function runDelegateTask(
     });
   };
 
-  const startSubagent = () => runSubagent({
-    request: {
-      kind,
-      instruction: task.instruction,
-      context: joinContextSections(
-        isIntegration ? `Integration group: ${name}` : undefined,
-        name === 'bot' ? buildBotTargetContext(task) : undefined,
-        task.skillContext,
-        task.context,
-      ),
-    },
-    runId,
-    parentRunId: runId,
-    model: (parentModelTier as any) || 'balanced',
-    modelId: parentModelId,
-    bridgeWs: bridgeWs as any,
-    bridgeSecrets,
-    chatWs,
-    onQuestion,
-  });
+  const startSubagent = async () => {
+    const { runSubagent } = await import('./subagent-runtime');
+    return runSubagent({
+      request: {
+        kind,
+        instruction: task.instruction,
+        context: joinContextSections(
+          isIntegration ? `Integration group: ${name}` : undefined,
+          name === 'bot' ? buildBotTargetContext(task) : undefined,
+          task.skillContext,
+          task.context,
+        ),
+      },
+      runId,
+      parentRunId: runId,
+      model: (parentModelTier as any) || 'balanced',
+      modelId: parentModelId,
+      bridgeWs: bridgeWs as any,
+      bridgeSecrets,
+      chatWs,
+      onQuestion,
+    });
+  };
 
   coordinator.resultPromise = bridgeWs && (bridgeWs as any).readyState === 1
     ? withClientBridge(bridgeWs as any, startSubagent, bridgeSecrets) as Promise<DelegationResult>

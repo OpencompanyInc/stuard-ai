@@ -14,7 +14,10 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/renderer/*"],
-      "@website-assets/*": ["../website/assets/*"]
+      "@website-assets/*": ["../website/assets/*"],
+      "react": ["node_modules/@types/react"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["node_modules/@types/react-dom"]
     }
   },
   "include": [

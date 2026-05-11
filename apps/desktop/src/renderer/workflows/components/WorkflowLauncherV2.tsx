@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowDownCircle,
   Activity,
+  Box,
   Calendar,
   ChevronsUpDown,
   Download,
@@ -31,6 +32,7 @@ import {
   SkillsLibrary,
   SkillEditor,
   SKILL_COLORS,
+  PublishSkillModal,
   type Skill,
 } from "./Skills";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
@@ -53,6 +55,14 @@ import {
 
 type ActiveView = "workflows" | "deployed" | "shared" | "marketplace" | "skills";
 type DeployStatus = WorkflowDeployStatus;
+type MarketplaceContentType = "all" | "workflows" | "skills" | "functions";
+
+const MARKETPLACE_CONTENT_TYPES: Array<{ id: MarketplaceContentType; label: string; icon: any; description: string; tint: string; tintDark: string }> = [
+  { id: "all",       label: "All",        icon: LayoutGrid, description: "Everything across the community", tint: "text-slate-700",  tintDark: "text-white/80" },
+  { id: "workflows", label: "Workflows",  icon: Layers,     description: "Multi-step automations & flows",  tint: "text-blue-700",   tintDark: "text-blue-300" },
+  { id: "skills",    label: "Skills",     icon: Wand2,      description: "Reusable agent behaviors",         tint: "text-violet-700", tintDark: "text-violet-300" },
+  { id: "functions", label: "Functions",  icon: Box,        description: "Single-node building blocks",      tint: "text-amber-700",  tintDark: "text-amber-300" },
+];
 
 interface WorkflowLauncherV2Props {
   items: WorkflowItem[];
@@ -104,6 +114,8 @@ export function WorkflowLauncherV2({
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillSearch, setSkillSearch] = useState("");
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+  const [publishingSkill, setPublishingSkill] = useState<Skill | null>(null);
+  const [marketplaceContentType, setMarketplaceContentType] = useState<MarketplaceContentType>("all");
 
   const reloadSkills = useCallback(() => {
     window.desktopAPI?.skillsList?.().then((res: any) => {
@@ -356,6 +368,47 @@ export function WorkflowLauncherV2({
     setSkills(skills.map(s => s.id === id ? { ...s, isActive: !s.isActive } : s));
   };
 
+  const handleApproveSkill = (skill: Skill) => {
+    const approved: Skill = {
+      ...skill,
+      isActive: true,
+      updatedAt: new Date().toISOString(),
+      metadata: {
+        ...(skill.metadata || {}),
+        approvedAt: new Date().toISOString(),
+      },
+    };
+    window.desktopAPI?.skillsSave?.(approved).catch(() => {});
+    setSkills(prev => prev.map(s => s.id === skill.id ? approved : s));
+  };
+
+  const handlePublishSkill = (skill: Skill) => {
+    setPublishingSkill(skill);
+  };
+
+  const handleConfirmPublishSkill = useCallback(
+    async (data: { name: string; shortDescription: string; description: string; category: string; tags: string[] }) => {
+      if (!publishingSkill) return { ok: false, error: "no_skill" };
+      try {
+        const token = await getValidAccessToken().catch(() => null);
+        const api = getMarketplaceApi(() => token || null);
+        const res = await api.publish({
+          name: data.name,
+          description: data.description,
+          shortDescription: data.shortDescription,
+          spec: { type: "skill", skill: publishingSkill },
+          category: data.category,
+          tags: data.tags,
+          icon: publishingSkill.icon,
+        });
+        return res;
+      } catch (e: any) {
+        return { ok: false, error: e?.message || "publish_failed" };
+      }
+    },
+    [publishingSkill]
+  );
+
   const executeAction = useCallback(
     async (key: string, action?: () => Promise<void>) => {
       if (!action) return;
@@ -455,7 +508,23 @@ export function WorkflowLauncherV2({
   };
 
   if (editingSkill) {
-    return <SkillEditor skill={editingSkill} onSave={handleSaveSkill} onCancel={() => setEditingSkill(null)} />;
+    return (
+      <>
+        <SkillEditor
+          skill={editingSkill}
+          onSave={handleSaveSkill}
+          onCancel={() => setEditingSkill(null)}
+          onPublish={handlePublishSkill}
+        />
+        {publishingSkill && (
+          <PublishSkillModal
+            skill={publishingSkill}
+            onClose={() => setPublishingSkill(null)}
+            onConfirm={handleConfirmPublishSkill}
+          />
+        )}
+      </>
+    );
   }
 
   return (
@@ -508,7 +577,16 @@ export function WorkflowLauncherV2({
                 value={currentSearchValue}
                 onChange={(e) => setCurrentSearchValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={activeView === "skills" ? "Search skills..." : activeView === "marketplace" ? "Search marketplace..." : "Search workflows, descriptions, or triggers..."}
+                placeholder={
+                  activeView === "skills"
+                    ? "Search skills..."
+                    : activeView === "marketplace"
+                      ? marketplaceContentType === "skills" ? "Search community skills..."
+                        : marketplaceContentType === "functions" ? "Search functions & nodes..."
+                        : marketplaceContentType === "workflows" ? "Search workflows..."
+                        : "Search marketplace..."
+                      : "Search workflows, descriptions, or triggers..."
+                }
                 className="w-full rounded-full pl-11 pr-11 py-3 text-[14px] focus:outline-none focus:border-blue-500/60 focus:ring-4 focus:ring-blue-500/15 transition-all border shadow-sm"
                 style={{ background: "var(--wf-input-bg)", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
               />
@@ -537,10 +615,20 @@ export function WorkflowLauncherV2({
           </div>
         </div>
 
+        {activeView === "marketplace" && (
+          <div className="px-10 shrink-0 pb-3">
+            <MarketplaceTypeSegmentedControl
+              d={d}
+              value={marketplaceContentType}
+              onChange={setMarketplaceContentType}
+            />
+          </div>
+        )}
+
         {activeView !== "skills" && <div className="px-10 flex gap-3 overflow-x-auto shrink-0 pb-8 scrollbar-minimal">
           {activeView === "marketplace" ? (
             <>
-              <FilterChip d={d} active={marketplaceCategory === "all"} label="All" icon={LayoutGrid} onClick={() => setMarketplaceCategory("all")} />
+              <FilterChip d={d} active={marketplaceCategory === "all"} label="All Categories" icon={LayoutGrid} onClick={() => setMarketplaceCategory("all")} />
               {categories.map((category) => (
                 <FilterChip key={category.id} d={d} active={marketplaceCategory === category.id} label={category.name} onClick={() => setMarketplaceCategory(category.id)} />
               ))}
@@ -572,6 +660,8 @@ export function WorkflowLauncherV2({
               onEditSkill={setEditingSkill}
               onDeleteSkill={handleDeleteSkill}
               onToggleSkill={handleToggleSkill}
+              onApproveSkill={handleApproveSkill}
+              onPublishSkill={handlePublishSkill}
             />
           ) : activeView !== "marketplace" && loading ? (
             <div className="py-12 max-w-2xl mx-auto flex flex-col items-center gap-5">
@@ -593,9 +683,29 @@ export function WorkflowLauncherV2({
                 <EmptyState d={d} icon={RefreshCw} title="Loading marketplace" description="Pulling featured workflows and community categories." spin />
               ) : marketplaceError ? (
                 <EmptyState d={d} icon={Square} title="Marketplace unavailable" description={marketplaceError} />
+              ) : marketplaceContentType === "skills" ? (
+                <MarketplaceComingSoon
+                  d={d}
+                  icon={Wand2}
+                  title="Skill Marketplace"
+                  description="Reusable agent behaviors are coming to the marketplace. Publish your own skills with the Publish button on any skill card."
+                  accent="violet"
+                  ctaLabel="Browse your Skills"
+                  onCta={() => setActiveView("skills")}
+                />
+              ) : marketplaceContentType === "functions" ? (
+                <MarketplaceComingSoon
+                  d={d}
+                  icon={Box}
+                  title="Function Marketplace"
+                  description="Functions are single-node building blocks — designed once, installed as a node into any workflow. The library opens soon."
+                  accent="amber"
+                  ctaLabel="Create a workflow"
+                  onCta={onCreate}
+                />
               ) : (
                 <>
-                  <LauncherSection title="Featured Workflows">
+                  <LauncherSection title={marketplaceContentType === "workflows" ? "Featured Workflows" : "Featured"}>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {featuredRows.map((workflow) => (
                         <MarketplaceCard key={workflow.id} d={d} workflow={workflow} onClick={() => onMarketplace(workflow.slug)} />
@@ -667,6 +777,14 @@ export function WorkflowLauncherV2({
           )}
         </div>
       </main>
+
+      {publishingSkill && !editingSkill && (
+        <PublishSkillModal
+          skill={publishingSkill}
+          onClose={() => setPublishingSkill(null)}
+          onConfirm={handleConfirmPublishSkill}
+        />
+      )}
     </div>
   );
 }
@@ -841,6 +959,107 @@ function EmptyState({ d, icon: Icon, title, description, spin }: { d: boolean; i
       </div>
       <h3 className={`text-[16px] font-semibold ${d ? "text-white" : "text-slate-900"}`}>{title}</h3>
       <p className={`text-[14px] mt-1 max-w-md ${d ? "text-white/55" : "text-slate-500"}`}>{description}</p>
+    </div>
+  );
+}
+
+function MarketplaceTypeSegmentedControl({
+  d,
+  value,
+  onChange,
+}: {
+  d: boolean;
+  value: MarketplaceContentType;
+  onChange: (type: MarketplaceContentType) => void;
+}) {
+  return (
+    <div className={`inline-flex p-1 rounded-2xl border shadow-sm ${d ? "bg-white/[0.03] border-white/[0.08]" : "bg-slate-100/80 border-slate-200"}`}>
+      {MARKETPLACE_CONTENT_TYPES.map((type) => {
+        const Icon = type.icon;
+        const isActive = value === type.id;
+        return (
+          <button
+            key={type.id}
+            type="button"
+            onClick={() => onChange(type.id)}
+            className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-medium transition-all ${
+              isActive
+                ? d
+                  ? "bg-white/[0.10] text-white shadow-sm"
+                  : "bg-white text-slate-900 shadow-sm border border-slate-200"
+                : d
+                  ? "text-white/55 hover:text-white/85"
+                  : "text-slate-500 hover:text-slate-800"
+            }`}
+            title={type.description}
+          >
+            <Icon className={`w-4 h-4 ${isActive ? (d ? type.tintDark : type.tint) : ""}`} />
+            <span>{type.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MarketplaceComingSoon({
+  d,
+  icon: Icon,
+  title,
+  description,
+  accent,
+  ctaLabel,
+  onCta,
+}: {
+  d: boolean;
+  icon: any;
+  title: string;
+  description: string;
+  accent: "violet" | "amber";
+  ctaLabel?: string;
+  onCta?: () => void;
+}) {
+  const gradient = accent === "violet"
+    ? "from-violet-500 via-fuchsia-500 to-pink-500"
+    : "from-amber-400 via-orange-500 to-rose-500";
+  const ring = accent === "violet"
+    ? d ? "bg-violet-500/15 border-violet-500/25" : "bg-violet-50 border-violet-200"
+    : d ? "bg-amber-500/15 border-amber-500/25" : "bg-amber-50 border-amber-200";
+  const textTint = accent === "violet"
+    ? d ? "text-violet-300" : "text-violet-700"
+    : d ? "text-amber-300" : "text-amber-700";
+
+  return (
+    <div className={`relative overflow-hidden rounded-3xl border ${d ? "bg-white/[0.02] border-white/[0.06]" : "bg-white border-slate-200"} shadow-sm`}>
+      <div className={`absolute -top-12 -right-12 w-64 h-64 rounded-full blur-3xl opacity-30 bg-gradient-to-br ${gradient}`} />
+      <div className="relative p-10 flex flex-col items-center text-center max-w-2xl mx-auto gap-4">
+        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border shadow-sm ${ring}`}>
+          <Icon className={`w-7 h-7 ${textTint}`} />
+        </div>
+        <div>
+          <h3 className={`text-[20px] font-bold tracking-tight ${d ? "text-white" : "text-slate-900"}`}>{title}</h3>
+          <p className={`mt-1.5 text-[14px] leading-relaxed ${d ? "text-white/60" : "text-slate-500"}`}>{description}</p>
+        </div>
+        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wider ${
+          d ? "bg-white/[0.06] text-white/70 border border-white/[0.08]" : "bg-slate-100 text-slate-600 border border-slate-200"
+        }`}>
+          <Sparkles className={`w-3 h-3 ${textTint}`} />
+          Coming Soon
+        </div>
+        {ctaLabel && onCta && (
+          <button
+            onClick={onCta}
+            className={`mt-2 inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-[13px] font-semibold transition-all ${
+              d
+                ? "bg-white/[0.08] text-white hover:bg-white/[0.12] border border-white/[0.08]"
+                : "bg-slate-900 text-white hover:bg-slate-800 shadow-md"
+            }`}
+          >
+            {ctaLabel}
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

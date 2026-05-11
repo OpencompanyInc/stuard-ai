@@ -119,10 +119,14 @@ const DelegationCard: React.FC<{ tool: ToolCall; childSteps: ToolCall[] }> = ({ 
   const [expanded, setExpanded] = useState(isRunning || isError);
   const prevRunningRef = useRef(isRunning);
   useEffect(() => {
+    let collapseTimer: number | undefined;
     if (prevRunningRef.current && !isRunning && !isError) {
-      setExpanded(false);
+      collapseTimer = window.setTimeout(() => setExpanded(false), 0);
     }
     prevRunningRef.current = isRunning;
+    return () => {
+      if (collapseTimer !== undefined) window.clearTimeout(collapseTimer);
+    };
   }, [isRunning, isError]);
 
   const [now, setNow] = useState(() => Date.now());

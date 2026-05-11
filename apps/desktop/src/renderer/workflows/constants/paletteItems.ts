@@ -155,6 +155,19 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'custom_ui', label: 'Show Custom UI', args: { title: 'My UI', component: 'function App() {\n  return html`<div class="p-6"><h2 class="text-white">Hello</h2></div>`;\n}', window: { width: 300, height: 200 } } },
   { k: 'local.tool', t: 'update_custom_ui', label: 'Update Custom UI', args: { id: '', data: {}, html: '' } },
   { k: 'local.tool', t: 'close_custom_ui', label: 'Close Custom UI', args: { id: '' } },
+
+  // Desktop Controls (volume, brightness, bluetooth, wallpaper, power)
+  { k: 'local.tool', t: 'describe_desktop_control_capabilities', label: 'Desktop: Check Capabilities', args: {} },
+  { k: 'local.tool', t: 'get_system_volume', label: 'Desktop: Get Volume', args: {} },
+  { k: 'local.tool', t: 'set_system_volume', label: 'Desktop: Set Volume', args: { level: 50 } },
+  { k: 'local.tool', t: 'get_display_brightness', label: 'Desktop: Get Brightness', args: {} },
+  { k: 'local.tool', t: 'set_display_brightness', label: 'Desktop: Set Brightness', args: { percent: 75 } },
+  { k: 'local.tool', t: 'list_bluetooth_devices', label: 'Desktop: List Bluetooth Devices', args: {} },
+  { k: 'local.tool', t: 'connect_bluetooth_device', label: 'Desktop: Connect Bluetooth', args: { address: '' } },
+  { k: 'local.tool', t: 'disconnect_bluetooth_device', label: 'Desktop: Disconnect Bluetooth', args: { address: '' } },
+  { k: 'local.tool', t: 'get_power_status', label: 'Desktop: Battery / Power Status', args: {} },
+  { k: 'local.tool', t: 'get_desktop_wallpaper', label: 'Desktop: Get Wallpaper', args: {} },
+  { k: 'local.tool', t: 'set_desktop_wallpaper', label: 'Desktop: Set Wallpaper', args: { path: '', style: 'fill' } },
 ];
 
 export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
