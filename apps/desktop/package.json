@@ -137,16 +137,12 @@
         "to": ".env"
       },
       {
-        "from": "build/icon.png",
-        "to": "icon.png"
-      },
-      {
-        "from": "build/icon2.png",
+        "from": "icons/icon2.png",
         "to": "icon2.png"
       },
       {
-        "from": "build/icon3.png",
-        "to": "icon3.png"
+        "from": "icons/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "beforeBuild": "scripts/electron-before-build.cjs",
@@ -172,7 +168,7 @@
       "gatekeeperAssess": false
     },
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "icons/icon.ico",
       "target": [
         "dir"
       ]
