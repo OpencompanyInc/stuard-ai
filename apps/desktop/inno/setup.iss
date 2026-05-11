@@ -4,7 +4,10 @@
 ;
 ; UPDATE MODE: Pass /UPDATE flag to switch UI to "Updating Stuard AI"
 ;   and auto-relaunch the app after installation.
-;   Example: StuardAI-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /UPDATE
+;   Example: StuardAI-Setup.exe /SILENT /SUPPRESSMSGBOXES /UPDATE
+;
+; In-app updater uses /SILENT (not /VERYSILENT) so Inno's compact progress
+; bar is visible — the user gets real feedback while files are extracted.
 
 #define MyAppName "Stuard AI"
 #define MyAppPublisher "StuardAI"
@@ -32,7 +35,7 @@ DisableProgramGroupPage=yes
 LicenseFile=
 OutputDir=..\release
 OutputBaseFilename=StuardAI-Setup-{#MY_APP_VERSION}
-; SetupIconFile=..\build\icon.ico  ; Add icon.ico to build/ folder to enable
+SetupIconFile=..\build\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -40,7 +43,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 WizardStyle=modern
-; Silent updates: /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /UPDATE
+; Silent updates: /SILENT /NORESTART /SUPPRESSMSGBOXES /UPDATE
+; The in-app updater runs its own taskkill sweep before launching the
+; installer; /CLOSEAPPLICATIONS is a safety net for the main exe.
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -61,9 +66,9 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: st
 [Run]
 ; Normal fresh install: show "Launch" checkbox, skip if silent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: not IsUpdateMode
-; Update mode (non-silent): launch after the wizard finishes
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifnotsilent; Check: IsUpdateMode
-; Update mode (silent/verysilent): always relaunch the app automatically
+; Update mode (non-silent): launch after the user clicks Finish
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: IsUpdateMode
+; Update mode (silent / /SILENT / /VERYSILENT): always relaunch automatically
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall; Check: IsUpdateModeSilent
 
 [UninstallDelete]

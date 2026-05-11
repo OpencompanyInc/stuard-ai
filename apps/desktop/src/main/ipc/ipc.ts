@@ -35,7 +35,21 @@ import {
   browserMirrorScreenshot,
   browserMirrorScroll,
   browserMirrorType,
+  getBrowserUseLocalStatus,
+  checkBrowserUseForUpdate,
+  installBrowserUse,
+  uninstallBrowserUse,
+  updateBrowserUse,
 } from "../tools/handlers/browser-use";
+import {
+  getMediapipeLocalStatus,
+  checkMediapipeForUpdate,
+  installMediapipe,
+  uninstallMediapipe,
+  updateMediapipe,
+  startMediaPipeService,
+  stopMediaPipeService,
+} from "../services/mediapipe-service";
 
 let nodeNotifier: any = null;
 try { nodeNotifier = require('node-notifier'); } catch { }
@@ -1104,6 +1118,47 @@ export function setupIpc() {
   ipcMain.handle('updates:getApiEndpoint', () => {
     const { getCurrentApiEndpoint } = require('../services/updates');
     return { ok: true, endpoint: getCurrentApiEndpoint() };
+  });
+
+  // Connected-Apps service management (mediapipe + browser-use)
+  // These hit the desktop main process directly (NOT the agent) so the UI
+  // can see installed/running state and check R2 for newer binaries.
+  ipcMain.handle('service:mediapipe:getLocalStatus', () => {
+    try { return getMediapipeLocalStatus(); } catch (e: any) { return { error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:checkForUpdate', async () => {
+    try { return await checkMediapipeForUpdate(); } catch (e: any) { return { ok: false, updateAvailable: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:install', async () => {
+    try { return await installMediapipe(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:update', async () => {
+    try { return await updateMediapipe(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:uninstall', async () => {
+    try { return await uninstallMediapipe(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:start', async () => {
+    try { return await startMediaPipeService(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:mediapipe:stop', async () => {
+    try { await stopMediaPipeService(); return { ok: true }; } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+
+  ipcMain.handle('service:browserUse:getLocalStatus', () => {
+    try { return getBrowserUseLocalStatus(); } catch (e: any) { return { error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:browserUse:checkForUpdate', async () => {
+    try { return await checkBrowserUseForUpdate(); } catch (e: any) { return { ok: false, updateAvailable: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:browserUse:install', async () => {
+    try { return await installBrowserUse(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:browserUse:update', async () => {
+    try { return await updateBrowserUse(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:browserUse:uninstall', async () => {
+    try { return await uninstallBrowserUse(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
   });
 
   // Tools execution (Renderer -> Main -> Local Agent/System)

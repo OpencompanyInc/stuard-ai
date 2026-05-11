@@ -15,7 +15,7 @@ import { spawn } from "child_process";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type UpdateChannel = "stable" | "beta" | "staging";
-export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error" | "up-to-date";
+export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "error" | "up-to-date";
 
 // API endpoints for each channel
 const CHANNEL_API_ENDPOINTS: Record<UpdateChannel, string> = {
@@ -262,9 +262,45 @@ async function downloadWindowsUpdate(): Promise<{ ok: boolean; error?: string }>
   }
 }
 
+// Kill stray child processes that hold file handles on the install dir.
+// Inno's /CLOSEAPPLICATIONS only closes the main exe; if these survive,
+// extraction silently fails on the 2nd+ update in a session.
+async function killStrayChildProcessesWindows(): Promise<void> {
+  const imageNames = [
+    "Stuard AI Agent.exe",
+    "stuard-agent.exe",
+    "stuard-wakeword.exe",
+    "stuard-file-indexer.exe",
+    "browser_use_server.exe",
+    "browser_server.exe",
+    "mediapipe_service.exe",
+  ];
+  await Promise.allSettled(
+    imageNames.map(
+      (name) =>
+        new Promise<void>((resolve) => {
+          try {
+            const p = spawn("taskkill", ["/IM", name, "/T", "/F"], { stdio: "ignore" });
+            const t = setTimeout(() => resolve(), 3000);
+            p.on("exit", () => {
+              clearTimeout(t);
+              resolve();
+            });
+            p.on("error", () => {
+              clearTimeout(t);
+              resolve();
+            });
+          } catch {
+            resolve();
+          }
+        }),
+    ),
+  );
+}
+
 async function installWindowsUpdate(): Promise<{ ok: boolean; error?: string }> {
   let installerPath = winInstallerPath;
-  
+
   // If installer not downloaded yet, download it
   if (!installerPath || !fs.existsSync(installerPath)) {
     if (state.downloadUrl && state.latestVersion) {
@@ -275,52 +311,88 @@ async function installWindowsUpdate(): Promise<{ ok: boolean; error?: string }> 
       return { ok: false, error: "No update available" };
     }
   }
-  
+
   if (!installerPath || !fs.existsSync(installerPath)) {
     return { ok: false, error: "Installer not found" };
   }
-  
-  // Stop agents gracefully
+
+  // Flip UI to "installing" so the renderer can show its overlay before we
+  // start tearing things down.
+  setState({ status: "installing" });
+
+  // Tear down every long-lived child process that holds file handles on the
+  // install dir. Order: graceful per-service shutdowns first, then a hard
+  // taskkill sweep by image name for stragglers (e.g. python procs the agent
+  // spawned that we don't track directly).
   try {
     const { stopAllAgents } = require("./agent");
     await stopAllAgents();
-  } catch {}
-  
-  // Wait for file handles to release
-  await new Promise((r) => setTimeout(r, 1000));
-  
+  } catch (e) {
+    console.warn("[Updates] stopAllAgents failed:", e);
+  }
+  try {
+    const { shutdownAllBrowserUseServers } = require("../tools/handlers/browser-use");
+    await shutdownAllBrowserUseServers();
+  } catch (e) {
+    console.warn("[Updates] shutdownAllBrowserUseServers failed:", e);
+  }
+  try {
+    const { shutdownWakewordListener } = require("../tools/handlers/wakeword");
+    shutdownWakewordListener();
+  } catch (e) {
+    console.warn("[Updates] shutdownWakewordListener failed:", e);
+  }
+  try {
+    const { shutdownRustFileIndexer } = require("./rust-file-indexer");
+    shutdownRustFileIndexer?.();
+  } catch (e) {
+    console.warn("[Updates] shutdownRustFileIndexer failed:", e);
+  }
+
+  // Hard sweep: kill anything still running by exe name (covers stragglers,
+  // python helpers, and processes spawned outside our tracked maps).
+  await killStrayChildProcessesWindows();
+
+  // Give Windows a moment to release file handles after process termination.
+  await new Promise((r) => setTimeout(r, 1500));
+
   // Launch installer in update mode:
-  //   /VERYSILENT = no UI at all (mini-updater feel)
+  //   /SILENT = compact progress dialog (NOT /VERYSILENT — user wants visual feedback)
   //   /SUPPRESSMSGBOXES = suppress any confirmation dialogs
   //   /NORESTART = don't reboot the machine
-  //   /CLOSEAPPLICATIONS = close running instances
+  //   /CLOSEAPPLICATIONS = close running instances of MyAppExeName
+  //   /CURRENTUSER = per-user install
   //   /UPDATE = custom flag that tells setup.iss to show "Updating" UI
   //             and auto-relaunch the app after install
   const args = [
-    "/VERYSILENT",
+    "/SILENT",
     "/SUPPRESSMSGBOXES",
     "/NORESTART",
     "/CLOSEAPPLICATIONS",
     "/CURRENTUSER",
     "/UPDATE",
   ];
-  
+
   console.log(`[Updates] Launching installer: ${installerPath} ${args.join(" ")}`);
-  
+
   try {
     const child = spawn(installerPath, args, { detached: true, stdio: "ignore" });
     child.unref();
   } catch (e: any) {
+    setState({ status: "error", error: e.message });
     return { ok: false, error: e.message };
   }
-  
-  // Quit app after short delay to let the installer take over
+
+  // Give the installer time to start and grab the foreground before we exit,
+  // so the user sees Inno's progress dialog instead of staring at the desktop.
+  // Inno will then close our main exe via /CLOSEAPPLICATIONS once it's ready
+  // to write to the install dir.
   setTimeout(() => {
     try {
       app.quit();
     } catch {}
-  }, 500);
-  
+  }, 1500);
+
   return { ok: true };
 }
 
@@ -480,12 +552,13 @@ export async function updates_install(): Promise<{ ok: boolean; error?: string }
     if (process.platform === "win32") {
       return await installWindowsUpdate();
     } else {
+      setState({ status: "installing" });
       // Stop agents before installing
       try {
         const { stopAllAgents } = require("./agent");
         await stopAllAgents();
       } catch {}
-      
+
       setImmediate(() => {
         autoUpdater.quitAndInstall(false, true);
       });

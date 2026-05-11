@@ -281,6 +281,12 @@ function DashboardApp() {
     ffInstalling,
     mpStatus,
     mpInstalling,
+    mpLocalStatus,
+    mpUpdateInfo,
+    mpUpdating,
+    browserUseLocalStatus,
+    browserUseUpdateInfo,
+    browserUseUpdating,
     pyRunning,
     pyRunCode,
     setPyRunCode,
@@ -306,9 +312,11 @@ function DashboardApp() {
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    updateBrowserUse,
     setupPython,
     installPython,
     runPython,
+    updateMediapipe,
     // profiles
     profiles,
     profilesLoading,
@@ -1696,6 +1704,14 @@ function DashboardApp() {
                                 setupBrowserUse={setupBrowserUse}
                                 stopBrowserUse={stopBrowserUse}
                                 uninstallBrowserUse={uninstallBrowserUse}
+                                browserUseLocalStatus={browserUseLocalStatus}
+                                browserUseUpdateInfo={browserUseUpdateInfo}
+                                browserUseUpdating={browserUseUpdating}
+                                updateBrowserUse={updateBrowserUse}
+                                mpLocalStatus={mpLocalStatus}
+                                mpUpdateInfo={mpUpdateInfo}
+                                mpUpdating={mpUpdating}
+                                updateMediapipe={updateMediapipe}
                               />
                             </>
                           )}

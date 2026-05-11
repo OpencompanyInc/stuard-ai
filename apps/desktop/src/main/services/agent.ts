@@ -134,6 +134,22 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   if (!env.AGENT_HOST) env.AGENT_HOST = "127.0.0.1";
   env.AGENT_PORT = targetPort.toString();
 
+  // Point the agent at sidecar binaries living in userData/integrations/.
+  // These are downloaded on demand by desktop main (mediapipe-service.ts,
+  // browser-use.ts) and live outside the install dir so they survive
+  // updates and aren't bundled in the release.
+  try {
+    const integrationsBase = path.join(app.getPath("userData"), "integrations");
+    const mediapipeBin = path.join(
+      integrationsBase,
+      "mediapipe",
+      process.platform === "win32" ? "stuard-mediapipe.exe" : "stuard-mediapipe",
+    );
+    if (!env.STUARD_MEDIAPIPE_BINARY && fs.existsSync(mediapipeBin)) {
+      env.STUARD_MEDIAPIPE_BINARY = mediapipeBin;
+    }
+  } catch {}
+
   setAgentProcessEnv(targetPort);
 
   const cwd = path.join(process.resourcesPath, "agent");

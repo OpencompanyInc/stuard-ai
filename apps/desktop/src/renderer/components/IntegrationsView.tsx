@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle2, AlertCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
+import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
 import { clsx } from 'clsx';
 import { getCloudAiHttp } from '../utils/cloud';
 
@@ -79,6 +79,14 @@ interface IntegrationsViewProps {
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
+  browserUseLocalStatus?: any;
+  browserUseUpdateInfo?: any;
+  browserUseUpdating?: boolean;
+  updateBrowserUse?: () => Promise<void> | void;
+  mpLocalStatus?: any;
+  mpUpdateInfo?: any;
+  mpUpdating?: boolean;
+  updateMediapipe?: () => Promise<void> | void;
 }
 
 /** Map integration slug → backend provider name */
@@ -1107,6 +1115,10 @@ interface StandardCardProps {
   mpStatus?: any;
   mpInstalling?: boolean;
   refreshMediapipeStatus?: () => Promise<void> | void;
+  mpLocalStatus?: any;
+  mpUpdateInfo?: any;
+  mpUpdating?: boolean;
+  updateMediapipe?: () => Promise<void> | void;
   ollamaStatus?: any;
   ollamaChecking?: boolean;
   refreshOllamaStatus?: () => Promise<void> | void;
@@ -1118,6 +1130,10 @@ interface StandardCardProps {
   setupBrowserUse?: () => Promise<void> | void;
   stopBrowserUse?: () => Promise<void> | void;
   uninstallBrowserUse?: () => Promise<void> | void;
+  browserUseLocalStatus?: any;
+  browserUseUpdateInfo?: any;
+  browserUseUpdating?: boolean;
+  updateBrowserUse?: () => Promise<void> | void;
 }
 
 const StandardCard: React.FC<StandardCardProps> = ({
@@ -1134,8 +1150,10 @@ const StandardCard: React.FC<StandardCardProps> = ({
   pyStatus, pyEnvId, setPyEnvId, pyInstalling, installPython,
   ffStatus, ffInstalling, refreshFfmpegStatus,
   mpStatus, mpInstalling, refreshMediapipeStatus,
+  mpLocalStatus, mpUpdateInfo, mpUpdating, updateMediapipe,
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
   browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
+  browserUseLocalStatus, browserUseUpdateInfo, browserUseUpdating, updateBrowserUse,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -1343,31 +1361,73 @@ const StandardCard: React.FC<StandardCardProps> = ({
       {/* MediaPipe details */}
       {isMediapipe && (
         <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-2">
-          <div className="flex items-center gap-2 text-[11px]">
-            {mpInstalling ? (
+          {(() => {
+            const local = mpLocalStatus as any;
+            const installed = !!(local && local.installed);
+            const running = !!(local && local.running);
+            const upd = mpUpdateInfo as any;
+            const updateAvailable = !!(upd && upd.updateAvailable);
+            const installSource = local?.installSource;
+            const sourceLabel = installSource === 'integrations'
+              ? 'Connected Apps'
+              : installSource === 'bundled'
+                ? 'Bundled'
+                : installSource === 'dev-script'
+                  ? 'Dev script'
+                  : null;
+            return (
               <>
-                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
-                <span className="font-semibold text-theme-fg">Installing...</span>
+                <div className="flex items-center gap-2 text-[11px]">
+                  {mpInstalling || mpUpdating ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                      <span className="font-semibold text-theme-fg">{mpUpdating ? 'Updating...' : 'Installing...'}</span>
+                    </>
+                  ) : running ? (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="font-semibold text-emerald-400">Running</span>
+                      {(mpStatus as any)?.version && <span className="text-theme-muted ml-auto font-mono text-[10px]">v{String((mpStatus as any).version)}</span>}
+                    </>
+                  ) : installed ? (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="font-semibold text-theme-fg">Installed</span>
+                      <span className="text-theme-muted text-[10px] ml-auto">Not running</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-3.5 h-3.5 text-theme-muted" />
+                      <span className="font-semibold text-theme-fg">Not installed</span>
+                      <span className="text-theme-muted text-[10px] ml-auto">Click Install to set up</span>
+                    </>
+                  )}
+                </div>
+                {installed && (sourceLabel || local?.binaryPath) && (
+                  <div className="text-[10px] text-theme-muted font-mono truncate" title={String(local?.binaryPath || '')}>
+                    {sourceLabel ? `${sourceLabel} · ` : ''}{String(local?.binaryPath || '')}
+                  </div>
+                )}
+                {!mpUpdating && updateAvailable && (
+                  <div className="flex items-center gap-2 p-2 bg-amber-500/5 border border-amber-500/30 rounded-md">
+                    <ArrowUpCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0 text-[10px] text-amber-300 font-semibold">A newer build is available on the update channel.</div>
+                    <button
+                      onClick={updateMediapipe}
+                      className="h-6 px-2 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/40 transition-all active:scale-95"
+                    >
+                      Update
+                    </button>
+                  </div>
+                )}
+                {!mpInstalling && !running && !installed && (mpStatus as any)?.error && (
+                  <div className="text-[10px] text-red-400 break-all">
+                    {String((mpStatus as any).error).slice(0, 200)}
+                  </div>
+                )}
               </>
-            ) : mpAvailable ? (
-              <>
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-400">Ready</span>
-                {(mpStatus as any)?.version && <span className="text-theme-muted ml-auto font-mono text-[10px]">v{String((mpStatus as any).version)}</span>}
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-3.5 h-3.5 text-theme-muted" />
-                <span className="font-semibold text-theme-fg">Not installed</span>
-                <span className="text-theme-muted text-[10px] ml-auto">Click Install to set up</span>
-              </>
-            )}
-          </div>
-          {!mpInstalling && !mpAvailable && (mpStatus as any)?.error && (
-            <div className="text-[10px] text-red-400 break-all">
-              {String((mpStatus as any).error).slice(0, 200)}
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -1568,6 +1628,49 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </p>
             </div>
           )}
+
+          {(() => {
+            const local = browserUseLocalStatus as any;
+            const installedLocally = !!(local && local.installed);
+            const upd = browserUseUpdateInfo as any;
+            const updateAvailable = !!(upd && upd.updateAvailable);
+            const sourceLabel = local?.installSource === 'integrations'
+              ? 'Connected Apps'
+              : local?.installSource === 'bundled'
+                ? 'Bundled'
+                : local?.installSource === 'dev-script'
+                  ? 'Dev script'
+                  : null;
+            if (browserUseUpdating) {
+              return (
+                <div className="flex items-center gap-2 text-[11px] mt-1">
+                  <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                  <span className="font-semibold text-theme-fg">Updating Stuard Browser...</span>
+                </div>
+              );
+            }
+            return (
+              <>
+                {installedLocally && sourceLabel && (
+                  <div className="text-[10px] text-theme-muted font-mono truncate" title={String(local?.binaryPath || '')}>
+                    {sourceLabel}{local?.binaryPath ? ` · ${local.binaryPath}` : ''}
+                  </div>
+                )}
+                {updateAvailable && (
+                  <div className="flex items-center gap-2 p-2 bg-amber-500/5 border border-amber-500/30 rounded-md">
+                    <ArrowUpCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0 text-[10px] text-amber-300 font-semibold">A newer build is available on the update channel.</div>
+                    <button
+                      onClick={updateBrowserUse}
+                      className="h-6 px-2 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/40 transition-all active:scale-95"
+                    >
+                      Update
+                    </button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
         </div>
       )}
@@ -1791,6 +1894,14 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     setupBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    browserUseLocalStatus,
+    browserUseUpdateInfo,
+    browserUseUpdating,
+    updateBrowserUse,
+    mpLocalStatus,
+    mpUpdateInfo,
+    mpUpdating,
+    updateMediapipe,
   } = props;
 
   // Load profiles on mount
@@ -1991,6 +2102,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     mpStatus={mpStatus}
                     mpInstalling={mpInstalling}
                     refreshMediapipeStatus={refreshMediapipeStatus}
+                    mpLocalStatus={mpLocalStatus}
+                    mpUpdateInfo={mpUpdateInfo}
+                    mpUpdating={mpUpdating}
+                    updateMediapipe={updateMediapipe}
                     ollamaStatus={ollamaStatus}
                     ollamaChecking={ollamaChecking}
                     refreshOllamaStatus={refreshOllamaStatus}
@@ -2002,6 +2117,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     setupBrowserUse={setupBrowserUse}
                     stopBrowserUse={stopBrowserUse}
                     uninstallBrowserUse={uninstallBrowserUse}
+                    browserUseLocalStatus={browserUseLocalStatus}
+                    browserUseUpdateInfo={browserUseUpdateInfo}
+                    browserUseUpdating={browserUseUpdating}
+                    updateBrowserUse={updateBrowserUse}
                   />
                 );
               })}

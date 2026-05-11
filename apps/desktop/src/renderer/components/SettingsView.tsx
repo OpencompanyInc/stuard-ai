@@ -9,7 +9,7 @@ import { BillingSettings } from "./BillingSettings";
 import { useModelRegistry } from "../hooks/useModelRegistry";
 
 type UpdateChannel = "stable" | "beta" | "staging";
-type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error" | "up-to-date";
+type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "error" | "up-to-date";
 
 interface UpdateState {
   status: UpdateStatus;
@@ -981,6 +981,10 @@ const UpdateManager: React.FC = () => {
       if (s) {
         setState(s);
         if (s.apiEndpoint) setApiEndpoint(s.apiEndpoint);
+        // Once we hit "installing", the restart modal is no longer the
+        // current UI — the full-screen overlay is. Close the modal so it
+        // doesn't sit on top of the overlay.
+        if (s.status === "installing") setShowRestartModal(false);
       }
     });
     const unsubEndpoint = (window as any).desktopAPI?.onApiEndpointChanged?.((endpoint: string) => {
@@ -1008,6 +1012,7 @@ const UpdateManager: React.FC = () => {
       case "available": return <ArrowUpCircle className="w-5 h-5 text-amber-500" />;
       case "downloading": return <Download className="w-5 h-5 animate-pulse text-primary" />;
       case "downloaded": return <CheckCircle className="w-5 h-5 text-emerald-500" />;
+      case "installing": return <Loader2 className="w-5 h-5 animate-spin text-primary" />;
       case "error": return <AlertCircle className="w-5 h-5 text-red-500" />;
       case "up-to-date": return <CheckCircle className="w-5 h-5 text-emerald-500" />;
       default: return <RefreshCw className="w-5 h-5 text-theme-muted" />;
@@ -1019,6 +1024,7 @@ const UpdateManager: React.FC = () => {
       case "available": return `v${state.latestVersion} available`;
       case "downloading": return `Downloading... ${state.downloadProgress ?? 0}%`;
       case "downloaded": return `v${state.latestVersion} ready`;
+      case "installing": return "Installing update...";
       case "error": return "Update failed";
       case "up-to-date": return "Up to date";
       default: return "Check for updates";

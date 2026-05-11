@@ -99,39 +99,14 @@ function main() {
     console.log(`[prepare-agent] Copied .env to agent dir: ${agentEnvFile}`);
   }
 
-  // ── Copy Python fallback scripts (used when packaged binaries are absent) ──
-  const pythonScripts = ["browser_server_main.py", "browser_use_server.py", "mediapipe_service.py"];
-  for (const script of pythonScripts) {
-    const src = path.join(agentSrcDir, script);
-    if (fs.existsSync(src)) {
-      copyFileSync(src, path.join(outDir, script));
-    }
-  }
-
-  // ── Copy browser_server/ Python package (fallback for dev mode) ──
-  const browserServerSrc = path.join(agentSrcDir, "browser_server");
-  const browserServerDest = path.join(outDir, "browser_server");
-  if (fs.existsSync(browserServerSrc)) {
-    ensureDirSync(browserServerDest);
-    const serverFiles = fs.readdirSync(browserServerSrc).filter((f) => f.endsWith(".py"));
-    for (const f of serverFiles) {
-      copyFileSync(path.join(browserServerSrc, f), path.join(browserServerDest, f));
-    }
-  }
-
-  // ── Copy app/ Python package (fallback) ──
-  const appPkgSrc = path.join(agentSrcDir, "app");
-  const appPkgDest = path.join(outDir, "app");
-  const appFiles = ["__init__.py", "browser_cookies.py"];
-  if (fs.existsSync(appPkgSrc)) {
-    ensureDirSync(appPkgDest);
-    for (const f of appFiles) {
-      const src = path.join(appPkgSrc, f);
-      if (fs.existsSync(src)) {
-        copyFileSync(src, path.join(appPkgDest, f));
-      }
-    }
-  }
+  // Note: browser-use and mediapipe Python shims and their Python packages
+  // (browser_server_main.py, browser_use_server.py, mediapipe_service.py,
+  // browser_server/, app/browser_cookies.py) are intentionally NOT copied
+  // here. They were originally fallbacks for dev mode, but dev mode reads
+  // them directly from apps/agent/ source — bundling them into the release
+  // just bloats the installer. In packaged builds, browser-use and
+  // mediapipe download their native binaries on demand from R2 into
+  // userData/integrations/<service>/.
 
   // ── Copy packaged service binaries ──
   if (!fs.existsSync(distDir)) {

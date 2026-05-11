@@ -205,6 +205,38 @@ function getServiceDownloadUrl(): string {
   return `${base}/${channel}/${platform}/latest/${binaryName}`;
 }
 
+// ── Install metadata so checkForUpdate can compare against the live HEAD ──
+
+interface BrowserInstallMeta {
+  url: string;
+  etag: string | null;
+  lastModified: string | null;
+  downloadedAt: string;
+  size: number | null;
+}
+
+function getInstallMetaPath(): string {
+  return path.join(getIntegrationsDir(), 'install-meta.json');
+}
+
+function readInstallMeta(): BrowserInstallMeta | null {
+  try {
+    const raw = fs.readFileSync(getInstallMetaPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed as BrowserInstallMeta;
+  } catch {}
+  return null;
+}
+
+function writeInstallMeta(meta: BrowserInstallMeta): void {
+  try {
+    fs.mkdirSync(getIntegrationsDir(), { recursive: true });
+    fs.writeFileSync(getInstallMetaPath(), JSON.stringify(meta, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[browser-server] Failed to write install-meta.json:', e);
+  }
+}
+
 async function downloadBrowserBinary(): Promise<{ ok: boolean; error?: string }> {
   const destPath = getIntegrationsBinaryPath();
   const destDir = path.dirname(destPath);
@@ -235,6 +267,16 @@ async function downloadBrowserBinary(): Promise<{ ok: boolean; error?: string }>
 
     fs.renameSync(tmpPath, destPath);
     console.log(`[browser-server] Downloaded to ${destPath}`);
+
+    let size: number | null = null;
+    try { size = fs.statSync(destPath).size; } catch {}
+    writeInstallMeta({
+      url,
+      etag: resp.headers.get('etag'),
+      lastModified: resp.headers.get('last-modified'),
+      downloadedAt: new Date().toISOString(),
+      size,
+    });
     return { ok: true };
   } catch (err: any) {
     try { fs.unlinkSync(tmpPath); } catch {}
@@ -312,6 +354,119 @@ export async function uninstallBrowserUse(): Promise<{ ok: boolean; error?: stri
     }
   } catch {}
 
+  return { ok: true };
+}
+
+// ── Public service-management API (for Connected Apps UI) ──
+
+export interface BrowserUseLocalStatus {
+  installed: boolean;
+  running: boolean;
+  integrationsDir: string;
+  binaryPath: string | null;
+  installSource: 'integrations' | 'bundled' | 'dev-script' | null;
+  meta: BrowserInstallMeta | null;
+  downloadUrl: string;
+  sessions: string[];
+}
+
+export function getBrowserUseLocalStatus(): BrowserUseLocalStatus {
+  const integrationsBin = getIntegrationsBinaryPath();
+  const integrationsExists = fs.existsSync(integrationsBin);
+
+  const binaryName = process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser';
+  const resourceBin = path.join(process.resourcesPath, 'agent', binaryName);
+  const resourceExists = fs.existsSync(resourceBin);
+
+  const devScript = path.join(app.getAppPath(), '..', 'agent', 'browser_server_main.py');
+  const devScriptExists = fs.existsSync(devScript);
+
+  let installSource: BrowserUseLocalStatus['installSource'] = null;
+  let binaryPath: string | null = null;
+  if (integrationsExists) { installSource = 'integrations'; binaryPath = integrationsBin; }
+  else if (resourceExists) { installSource = 'bundled'; binaryPath = resourceBin; }
+  else if (devScriptExists) { installSource = 'dev-script'; binaryPath = devScript; }
+
+  const sessions: string[] = [];
+  for (const [sid, rt] of browserUseRuntimes.entries()) {
+    if (rt.process && !rt.process.killed) sessions.push(sid);
+  }
+
+  return {
+    installed: integrationsExists || resourceExists || devScriptExists,
+    running: sessions.length > 0,
+    integrationsDir: getIntegrationsDir(),
+    binaryPath,
+    installSource,
+    meta: readInstallMeta(),
+    downloadUrl: getServiceDownloadUrl(),
+    sessions,
+  };
+}
+
+export interface BrowserUseUpdateInfo {
+  ok: boolean;
+  error?: string;
+  updateAvailable: boolean;
+  reason?: 'no-local-meta' | 'etag-mismatch' | 'last-modified-newer' | 'size-mismatch' | 'up-to-date' | 'head-failed';
+  remoteEtag?: string | null;
+  remoteLastModified?: string | null;
+  remoteSize?: number | null;
+  url: string;
+}
+
+export async function checkBrowserUseForUpdate(): Promise<BrowserUseUpdateInfo> {
+  const url = getServiceDownloadUrl();
+  const meta = readInstallMeta();
+
+  if (!meta && !isBrowserBinaryInstalled()) {
+    return { ok: true, updateAvailable: false, reason: 'no-local-meta', url };
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, { method: 'HEAD' });
+  } catch (err: any) {
+    return { ok: false, error: `HEAD failed: ${err?.message || err}`, updateAvailable: false, reason: 'head-failed', url };
+  }
+  if (!resp.ok) {
+    return { ok: false, error: `HEAD failed: HTTP ${resp.status}`, updateAvailable: false, reason: 'head-failed', url };
+  }
+
+  const remoteEtag = resp.headers.get('etag');
+  const remoteLastModified = resp.headers.get('last-modified');
+  const remoteSizeRaw = resp.headers.get('content-length');
+  const remoteSize = remoteSizeRaw ? Number(remoteSizeRaw) : null;
+
+  if (!meta) {
+    return { ok: true, updateAvailable: true, reason: 'no-local-meta', remoteEtag, remoteLastModified, remoteSize, url };
+  }
+
+  if (remoteEtag && meta.etag && remoteEtag !== meta.etag) {
+    return { ok: true, updateAvailable: true, reason: 'etag-mismatch', remoteEtag, remoteLastModified, remoteSize, url };
+  }
+  if (remoteLastModified && meta.lastModified) {
+    const remoteMs = Date.parse(remoteLastModified);
+    const localMs = Date.parse(meta.lastModified);
+    if (Number.isFinite(remoteMs) && Number.isFinite(localMs) && remoteMs > localMs) {
+      return { ok: true, updateAvailable: true, reason: 'last-modified-newer', remoteEtag, remoteLastModified, remoteSize, url };
+    }
+  }
+  if (remoteSize != null && meta.size != null && remoteSize !== meta.size) {
+    return { ok: true, updateAvailable: true, reason: 'size-mismatch', remoteEtag, remoteLastModified, remoteSize, url };
+  }
+  return { ok: true, updateAvailable: false, reason: 'up-to-date', remoteEtag, remoteLastModified, remoteSize, url };
+}
+
+/**
+ * Stop running browser servers and re-download the binary.
+ * Used by the Connected Apps "Update" button.
+ */
+export async function updateBrowserUse(): Promise<{ ok: boolean; error?: string }> {
+  await stopAllBrowserUseServers();
+  _installCheckResult = null;
+  const dl = await downloadBrowserBinary();
+  if (!dl.ok) return dl;
   return { ok: true };
 }
 

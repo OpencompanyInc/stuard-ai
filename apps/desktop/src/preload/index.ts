@@ -318,6 +318,19 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('updates:api-endpoint-changed', handler);
     return () => { try { ipcRenderer.off('updates:api-endpoint-changed', handler); } catch { } };
   },
+  // Connected-Apps service management (downloaded from R2 on demand)
+  serviceMediapipeGetLocalStatus: () => ipcRenderer.invoke('service:mediapipe:getLocalStatus'),
+  serviceMediapipeCheckForUpdate: () => ipcRenderer.invoke('service:mediapipe:checkForUpdate'),
+  serviceMediapipeInstall: () => ipcRenderer.invoke('service:mediapipe:install'),
+  serviceMediapipeUpdate: () => ipcRenderer.invoke('service:mediapipe:update'),
+  serviceMediapipeUninstall: () => ipcRenderer.invoke('service:mediapipe:uninstall'),
+  serviceMediapipeStart: () => ipcRenderer.invoke('service:mediapipe:start'),
+  serviceMediapipeStop: () => ipcRenderer.invoke('service:mediapipe:stop'),
+  serviceBrowserUseGetLocalStatus: () => ipcRenderer.invoke('service:browserUse:getLocalStatus'),
+  serviceBrowserUseCheckForUpdate: () => ipcRenderer.invoke('service:browserUse:checkForUpdate'),
+  serviceBrowserUseInstall: () => ipcRenderer.invoke('service:browserUse:install'),
+  serviceBrowserUseUpdate: () => ipcRenderer.invoke('service:browserUse:update'),
+  serviceBrowserUseUninstall: () => ipcRenderer.invoke('service:browserUse:uninstall'),
   // Speech
   startSpeechStream: (url: string, token: string) => ipcRenderer.invoke('speech:start', { url, token }),
   stopSpeechStream: () => ipcRenderer.invoke('speech:stop'),

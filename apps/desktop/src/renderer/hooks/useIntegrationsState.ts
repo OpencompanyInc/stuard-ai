@@ -25,6 +25,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [ffInstalling, setFfInstalling] = useState<boolean>(false);
   const [mpStatus, setMpStatus] = useState<any | null>(null);
   const [mpInstalling, setMpInstalling] = useState<boolean>(false);
+  // Local status (desktop main: integrations dir, running process state)
+  const [mpLocalStatus, setMpLocalStatus] = useState<any | null>(null);
+  const [mpUpdateInfo, setMpUpdateInfo] = useState<any | null>(null);
+  const [mpUpdating, setMpUpdating] = useState<boolean>(false);
+  const [browserUseLocalStatus, setBrowserUseLocalStatus] = useState<any | null>(null);
+  const [browserUseUpdateInfo, setBrowserUseUpdateInfo] = useState<any | null>(null);
+  const [browserUseUpdating, setBrowserUseUpdating] = useState<boolean>(false);
   const [pyEnvId, setPyEnvId] = useState<string>("default");
   const [pyPackages, setPyPackages] = useState<string>("");
   const [pyReqTxt, setPyReqTxt] = useState<string>("");
@@ -255,16 +262,47 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       const res = await (window as any).desktopAPI?.execTool?.('mediapipe_status', {});
       if (res && typeof res === 'object') setMpStatus(res);
 
-      const available = !!(res && (res as any).available);
+      // Pull local binary + process state straight from desktop main (the
+      // agent's `mediapipe_status` only tells us whether the sidecar is
+      // currently reachable — not whether the binary is on disk or where).
+      let local: any = null;
+      try {
+        local = await (window as any).desktopAPI?.serviceMediapipeGetLocalStatus?.();
+        if (local && typeof local === 'object') setMpLocalStatus(local);
+      } catch {}
+
+      const reachable = !!(res && (res as any).available);
+      const installed = !!(local && local.installed);
       setConnectedMap((prev) => {
         const next = { ...prev } as Record<string, boolean>;
-        if (available) next.mediapipe = true;
+        if (reachable || installed) next.mediapipe = true;
         else delete next.mediapipe;
         try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
         emitConnectedChanged();
         return next;
       });
+
+      // Check R2 for a newer binary — non-blocking; ignore errors.
+      try {
+        const upd = await (window as any).desktopAPI?.serviceMediapipeCheckForUpdate?.();
+        if (upd && typeof upd === 'object') setMpUpdateInfo(upd);
+      } catch {}
     } catch {}
+  };
+
+  const updateMediapipe = async () => {
+    setMpUpdating(true);
+    try {
+      const res = await (window as any).desktopAPI?.serviceMediapipeUpdate?.();
+      if (res && !res.ok && res.error) {
+        console.error('[mediapipe:update] failed:', res.error);
+      }
+    } catch (e) {
+      console.error('[mediapipe:update] exception:', e);
+    } finally {
+      await refreshMediapipeStatus();
+      setMpUpdating(false);
+    }
   };
 
   const setupMediapipe = async () => {
@@ -346,17 +384,48 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
 
       const running = !!(res && (res as any).running);
       const installed = !!(res && (res as any).installed);
+
+      // Pull local binary state from desktop main and check R2 for newer.
+      let local: any = null;
+      try {
+        local = await (window as any).desktopAPI?.serviceBrowserUseGetLocalStatus?.();
+        if (local && typeof local === 'object') setBrowserUseLocalStatus(local);
+      } catch {}
+      const installedLocally = !!(local && local.installed);
+
       setConnectedMap((prev) => {
         const next = { ...prev } as Record<string, boolean>;
-        if (running || installed) next.browser_use = true;
+        if (running || installed || installedLocally) next.browser_use = true;
         else delete next.browser_use;
         try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
         emitConnectedChanged();
         return next;
       });
+
+      try {
+        const upd = await (window as any).desktopAPI?.serviceBrowserUseCheckForUpdate?.();
+        if (upd && typeof upd === 'object') setBrowserUseUpdateInfo(upd);
+      } catch {}
     } catch {
     } finally {
       setBrowserUseChecking(false);
+    }
+  };
+
+  const updateBrowserUse = async () => {
+    setBrowserUseUpdating(true);
+    setBrowserUseSetupProgress('Updating...');
+    try {
+      const res = await (window as any).desktopAPI?.serviceBrowserUseUpdate?.();
+      if (res && !res.ok && res.error) {
+        console.error('[browserUse:update] failed:', res.error);
+      }
+    } catch (e) {
+      console.error('[browserUse:update] exception:', e);
+    } finally {
+      setBrowserUseSetupProgress(null);
+      await refreshBrowserUseStatus();
+      setBrowserUseUpdating(false);
     }
   };
 
@@ -1078,6 +1147,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     ffInstalling,
     mpStatus,
     mpInstalling,
+    mpLocalStatus,
+    mpUpdateInfo,
+    mpUpdating,
+    browserUseLocalStatus,
+    browserUseUpdateInfo,
+    browserUseUpdating,
     pyRunning,
     pyRunCode,
     setPyRunCode,
@@ -1116,9 +1191,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     startBrowserUse,
     stopBrowserUse,
     uninstallBrowserUse,
+    updateBrowserUse,
     setupPython,
     setupFfmpeg,
     setupMediapipe,
+    updateMediapipe,
     installPython,
     runPython,
     // profile actions

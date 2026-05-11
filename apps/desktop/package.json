@@ -172,7 +172,7 @@
       "gatekeeperAssess": false
     },
     "win": {
-      "icon": "build/icon2.png",
+      "icon": "build/icon.ico",
       "target": [
         "dir"
       ]
