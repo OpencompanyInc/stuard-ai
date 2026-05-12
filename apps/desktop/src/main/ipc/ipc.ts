@@ -2168,4 +2168,5 @@ export function setupIpc() {
       return { ok: false, error: 'upload_exception', message: String(e?.message || e) };
     }
   });
+
 }

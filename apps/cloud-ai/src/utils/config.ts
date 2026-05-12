@@ -129,6 +129,13 @@ export const DEV_MODE = process.env.DEV_MODE === '1' || process.env.NODE_ENV ===
 // The real sync_accounts preference is read from the user's profile row in Supabase.
 export const SYNC_ACCOUNTS_FALLBACK = process.env.SYNC_ACCOUNTS === '1';
 
+// Master pepper for per-user envelope encryption of OAuth tokens in Supabase.
+// Required for any external_accounts read/write. Set in cloud-ai's env/secret
+// manager as a 64-character hex string (32 bytes). Rotation: bump
+// CURRENT_KEY_VERSION in token-encryption.ts; old rows continue decrypting
+// with their stored key_version.
+export const TOKEN_ENCRYPTION_PEPPER = clean(process.env.TOKEN_ENCRYPTION_PEPPER || '');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Security Configuration
 // ─────────────────────────────────────────────────────────────────────────────

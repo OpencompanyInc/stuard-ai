@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { authenticateHttpLegacy, sendAuthError } from '../auth/http';
 import { AuthErrorCode } from '../auth';
-import { getSyncPreferences, updateSyncPreferences, migrateLocalAccountsToSupabase, invalidateSyncCache } from '../supabase';
+import { getSyncPreferences, updateSyncPreferences, invalidateSyncCache } from '../supabase';
 
 /**
  * GET  /v1/preferences/sync  → read sync preferences
@@ -43,10 +43,6 @@ export async function handlePreferencesRoutes(req: IncomingMessage, res: ServerR
       sync_integrations: typeof payload.sync_integrations === 'boolean' ? payload.sync_integrations : undefined,
       timezone: payload.timezone !== undefined ? (typeof payload.timezone === 'string' ? payload.timezone : null) : undefined,
     });
-    // When sync_integrations is newly enabled, migrate local accounts to Supabase
-    if (ok && payload.sync_integrations === true) {
-      migrateLocalAccountsToSupabase(userId).catch(() => {}); // fire-and-forget
-    }
     // Invalidate the sync cache when sync flags change
     if (ok && (typeof payload.sync_accounts === 'boolean' || typeof payload.sync_integrations === 'boolean')) {
       invalidateSyncCache(userId);

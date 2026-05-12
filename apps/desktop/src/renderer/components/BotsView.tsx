@@ -96,7 +96,8 @@ interface BotBlueprint {
 
 const BOT_TOOL_RULES: Array<{ keywords: string[]; tools: string[]; emojiIndex?: number }> = [
   { keywords: ['twitter', 'tweet', 'tweets', 'x post', 'x/twitter'], tools: ['x_post_tweet', 'x_search_tweets', 'x_get_user_timeline', 'x_get_user', 'web_search'], emojiIndex: 4 },
-  { keywords: ['email', 'gmail', 'inbox', 'newsletter'], tools: ['gmail_list_messages', 'gmail_get_message_full', 'gmail_send_message', 'gmail_search_messages'], emojiIndex: 12 },
+  // Gmail read/search/get tools disabled pending Google CASA verification; only send remains.
+  { keywords: ['email', 'gmail', 'inbox', 'newsletter'], tools: ['gmail_send_message'], emojiIndex: 12 },
   { keywords: ['calendar', 'meeting', 'schedule', 'appointment'], tools: ['calendar_list_events', 'calendar_create_event', 'calendar_update_event', 'get_datetime'], emojiIndex: 12 },
   { keywords: ['github', 'issue', 'pull request', 'pr ', 'repo', 'repository'], tools: ['github_search_issues', 'github_create_issue', 'github_list_pull_requests', 'github_get_pull_request', 'github_comment_on_issue'], emojiIndex: 7 },
   { keywords: ['file', 'folder', 'document', 'docs', 'workspace', 'notes'], tools: ['file_search', 'semantic_file_search', 'read_file', 'write_file', 'file_edit', 'list_directory'], emojiIndex: 15 },
@@ -3146,7 +3147,8 @@ function TriggerPickerModal({
   onClose: () => void;
   onPick: (type: BotTriggerType) => void;
 }) {
-  const types: BotTriggerType[] = ['schedule.interval', 'schedule.cron', 'webhook', 'gmail.new_email', 'manual'];
+  // 'gmail.new_email' removed pending Google CASA verification (requires gmail.readonly restricted scope).
+  const types: BotTriggerType[] = ['schedule.interval', 'schedule.cron', 'webhook', /* 'gmail.new_email', */ 'manual'];
   const hasInterval = existing.some(t => t.type === 'schedule.interval');
 
   return createPortal(

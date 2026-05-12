@@ -1317,16 +1317,46 @@ const StandardCard: React.FC<StandardCardProps> = ({
       {isPython && (
         <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-2">
           <div className="flex items-center gap-2 text-[11px]">
-            {pyStatus?.available ? (
+            {pyStatus == null ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-theme-muted animate-spin" />
+                <span className="font-semibold text-theme-muted">Checking...</span>
+              </>
+            ) : pyStatus.available ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-semibold text-emerald-400">Ready</span>
-                <span className="text-theme-muted ml-auto font-mono text-[10px]">{pyStatus.version}</span>
+                {pyStatus.version && (
+                  <span className="text-theme-muted ml-auto font-mono text-[10px]">{pyStatus.version}</span>
+                )}
+              </>
+            ) : pyStatus.needsInstall ? (
+              <div className="flex w-full items-start gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <div className="font-semibold text-theme-fg">Python not found</div>
+                  <div className="text-[10px] text-theme-muted mt-0.5">
+                    Install Python 3.x to enable local Python tools.{' '}
+                    <button
+                      type="button"
+                      onClick={() => handleLearnMore(pyStatus.installUrl || 'https://www.python.org/downloads/')}
+                      className="font-bold text-primary hover:underline"
+                    >
+                      Download Python →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : pyInstalling ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                <span className="font-semibold text-theme-fg">Setting up...</span>
               </>
             ) : (
               <>
                 <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                <span className="font-semibold text-theme-fg">Setting up...</span>
+                <span className="font-semibold text-theme-fg">Not set up</span>
+                <span className="text-theme-muted text-[10px] ml-auto">Click Set Up to create the env</span>
               </>
             )}
           </div>
@@ -1802,22 +1832,32 @@ const StandardCard: React.FC<StandardCardProps> = ({
             )
           ) : (
             <>
-              <button
-                onClick={() => handleConnect(i.slug)}
-                disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling) || (isPython && pyInstalling)}
-                className={clsx(
-                  "flex-1 h-8 flex items-center justify-center gap-2 rounded-md text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50",
-                  (isFfmpeg || isMediapipe || isPython) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
-                )}
-              >
-                {(isFfmpeg || isMediapipe || isPython) ? (
-                  (ffInstalling || mpInstalling || pyInstalling) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />
-                ) : <ArrowRight className="w-3.5 h-3.5" />}
-                {isFfmpeg ? (ffInstalling ? 'Installing...' : 'Install')
-                 : isMediapipe ? (mpInstalling ? 'Installing...' : 'Install')
-                 : isPython ? (pyInstalling ? 'Setting up...' : 'Set Up')
-                 : 'Connect'}
-              </button>
+              {isPython && pyStatus?.needsInstall ? (
+                <button
+                  onClick={() => handleLearnMore(pyStatus.installUrl || 'https://www.python.org/downloads/')}
+                  className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-amber-600 text-white text-[11px] font-bold shadow-sm hover:bg-amber-500 transition-all active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Get Python
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleConnect(i.slug)}
+                  disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling) || (isPython && pyInstalling)}
+                  className={clsx(
+                    "flex-1 h-8 flex items-center justify-center gap-2 rounded-md text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50",
+                    (isFfmpeg || isMediapipe || isPython) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
+                  )}
+                >
+                  {(isFfmpeg || isMediapipe || isPython) ? (
+                    (ffInstalling || mpInstalling || pyInstalling) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />
+                  ) : <ArrowRight className="w-3.5 h-3.5" />}
+                  {isFfmpeg ? (ffInstalling ? 'Installing...' : 'Install')
+                   : isMediapipe ? (mpInstalling ? 'Installing...' : 'Install')
+                   : isPython ? (pyInstalling ? 'Setting up...' : 'Set Up')
+                   : 'Connect'}
+                </button>
+              )}
             </>
           )
         ) : (

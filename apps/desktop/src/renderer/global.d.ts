@@ -322,6 +322,7 @@ declare global {
       requestAgentDataPush: () => void;
       // Subscribe to "agent data just landed locally" events (VM → desktop).
       onAgentDataSynced: (cb: (payload: { source?: string; files?: number }) => void) => () => void;
+
     };
   }
 }

@@ -627,8 +627,9 @@ export const listAllToolFormats = createTool({
       { type: 'hotkey', description: 'Global hotkey trigger', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
       { type: 'keystroke', description: 'Keystroke sequence trigger', argsTemplate: { sequence: 'stuard' } },
       { type: 'fs.watch', description: 'Filesystem watch trigger', argsTemplate: { path: 'C:/path', pattern: '*.*' } },
-      { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
-      { type: 'drive.new_file', description: 'Native Google Drive push trigger for new files', argsTemplate: { profile: 'default', onlyNew: true } },
+      // ── Disabled pending Google CASA verification (push triggers need gmail.readonly / drive.readonly) ──
+      // { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
+      // { type: 'drive.new_file', description: 'Native Google Drive push trigger for new files', argsTemplate: { profile: 'default', onlyNew: true } },
     ];
 
     const registry = getToolRegistry();

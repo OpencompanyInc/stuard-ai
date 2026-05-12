@@ -11,10 +11,14 @@ import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECR
 // When you enable Sheets, you only get spreadsheets permission.
 // When you enable Drive, you only get drive permission. Etc.
 // ---------------------------------------------------------------------------
+// Only sensitive scopes here — no restricted scopes that trigger Google CASA.
+// `gmail.send` and `drive.file` cover creation/send flows without requiring
+// the paid security audit. Inbox-read and full-Drive paths are deferred
+// until we're ready to go through CASA verification.
 const SCOPE_MAP: Record<string, string[]> = {
-  drive:    ['https://www.googleapis.com/auth/drive'],
+  drive:    ['https://www.googleapis.com/auth/drive.file'],
   calendar: ['https://www.googleapis.com/auth/calendar.events'],
-  gmail:    ['https://www.googleapis.com/auth/gmail.modify'],
+  gmail:    ['https://www.googleapis.com/auth/gmail.send'],
   tasks:    ['https://www.googleapis.com/auth/tasks'],
   sheets:   ['https://www.googleapis.com/auth/spreadsheets'],
   docs:     ['https://www.googleapis.com/auth/documents'],

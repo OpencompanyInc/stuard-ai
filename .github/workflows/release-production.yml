@@ -213,6 +213,8 @@ jobs:
           SECRETS="$SECRETS,TELNYX_SIP_CONNECTION_ID=TELNYX_SIP_CONNECTION_ID:latest"
           # Internal
           SECRETS="$SECRETS,INTEGRATION_STATE_SECRET=INTEGRATION_STATE_SECRET:latest"
+          # Per-user envelope encryption key for OAuth tokens in external_accounts
+          SECRETS="$SECRETS,TOKEN_ENCRYPTION_PEPPER=TOKEN_ENCRYPTION_PEPPER:latest"
           # Billing — Polar.sh webhook signing secret
           SECRETS="$SECRETS,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest"
 

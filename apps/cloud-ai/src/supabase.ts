@@ -1,19 +1,12 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostUsd, monthlyCreditLimitForPlan, creditsFromUsd, creditsPerUsd } from './pricing';
 import { isNonBillableUsageEvent } from './utils/billing-usage';
-import { DEV_MODE, SYNC_ACCOUNTS_FALLBACK } from './utils/config';
+import { DEV_MODE } from './utils/config';
 import { normalizeUsage } from './utils/usage';
 import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
-import {
-  localGetExternalAccount,
-  localListExternalAccounts,
-  localUpsertExternalAccount,
-  localSetDefaultExternalAccount,
-  localDeleteExternalAccount,
-  localGetExternalAccessToken,
-} from './store/local-accounts';
+import { encryptForUser, decryptForUser, type EncryptedField } from './utils/token-encryption';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 // Prefer new key names, fall back to legacy
@@ -104,133 +97,160 @@ export type ExternalAccount = {
   updated_at?: string | null;
 };
 
-/** Providers that are inherently cloud-only (no local component).
- *  These always read/write Supabase regardless of the user's sync preference,
- *  because local SQLite is ephemeral and wiped on server redeployments. */
-const CLOUD_ONLY_PROVIDERS = new Set(['telnyx', 'whatsapp']);
-
-/** Resolve whether integration accounts should be synced to Supabase for this user.
- *  Enabled when either sync_accounts or sync_integrations is true.
- *  Caches per-user result for 60s to avoid hitting Supabase on every operation.
- *  Falls back to SYNC_ACCOUNTS_FALLBACK env var when the DB query fails. */
+/** Sync-cache is kept for API compatibility with other modules that still
+ *  invalidate it (e.g. preferences toggles). Account storage no longer
+ *  depends on it — Supabase is now the single source of truth for tokens. */
 const _syncCache = new Map<string, { val: boolean; ts: number }>();
-const SYNC_CACHE_TTL = 60_000; // 60 seconds
-
-async function shouldSyncAccounts(userId: string): Promise<boolean> {
-  const now = Date.now();
-  const cached = _syncCache.get(userId);
-  if (cached && (now - cached.ts) < SYNC_CACHE_TTL) return cached.val;
-  try {
-    const prefs = await getSyncPreferences(userId);
-    const result = prefs.sync_accounts || prefs.sync_integrations;
-    _syncCache.set(userId, { val: result, ts: now });
-    return result;
-  } catch {
-    // When the DB query fails, use the env-var fallback and stale cache
-    if (cached) return cached.val;
-    return SYNC_ACCOUNTS_FALLBACK;
-  }
-}
 
 /** Invalidate the sync-accounts cache for a user (e.g. after toggling sync_integrations). */
 export function invalidateSyncCache(userId: string): void {
   _syncCache.delete(userId);
 }
 
-/**
- * Migrate all local encrypted accounts to Supabase.
- * Called when a user enables sync_integrations so existing local tokens carry over.
- * Idempotent — Supabase upserts by (user_id, provider, profile_label).
- */
-export async function migrateLocalAccountsToSupabase(userId: string): Promise<{ migrated: number; errors: number }> {
-  let migrated = 0, errors = 0;
-  try {
-    const locals = await localListExternalAccounts(userId);
-    for (const acc of locals) {
-      try {
-        await _supabaseUpsertExternalAccount({
-          userId: acc.user_id,
-          provider: acc.provider,
-          access_token: acc.access_token,
-          scopes: acc.scopes,
-          refresh_token: acc.refresh_token ?? null,
-          expires_at: acc.expires_at ?? null,
-          meta: acc.meta ?? null,
-          profileLabel: acc.profile_label,
-          accountEmail: acc.account_email ?? null,
-          is_default: acc.is_default, // Preserve the local default flag
-        });
-        migrated++;
-      } catch {
-        errors++;
-      }
+/** Shape of an `external_accounts` row as it comes back from Supabase, with
+ *  the encryption columns alongside the legacy plaintext fields. */
+type ExternalAccountRow = {
+  id: string;
+  user_id: string;
+  provider: string;
+  profile_label: string;
+  is_default: boolean;
+  account_email: string | null;
+  scopes: any;
+  access_token: string | null;
+  refresh_token: string | null;
+  expires_at: string | null;
+  meta: any;
+  access_token_ct: string | null;
+  access_token_iv: string | null;
+  access_token_tag: string | null;
+  refresh_token_ct: string | null;
+  refresh_token_iv: string | null;
+  refresh_token_tag: string | null;
+  key_version: number | null;
+};
+
+const ACCOUNT_COLS = [
+  'id', 'user_id', 'provider', 'profile_label', 'is_default', 'account_email',
+  'scopes', 'access_token', 'refresh_token', 'expires_at', 'meta',
+  'access_token_ct', 'access_token_iv', 'access_token_tag',
+  'refresh_token_ct', 'refresh_token_iv', 'refresh_token_tag',
+  'key_version',
+].join(', ');
+
+function decryptRow(row: ExternalAccountRow): ExternalAccount {
+  const keyVersion = row.key_version ?? 1;
+  let accessToken: string | null = null;
+  if (row.access_token_ct && row.access_token_iv && row.access_token_tag) {
+    try {
+      accessToken = decryptForUser(row.user_id, {
+        ciphertext: row.access_token_ct,
+        iv: row.access_token_iv,
+        tag: row.access_token_tag,
+        key_version: keyVersion,
+      });
+    } catch (e: any) {
+      console.error(`[supabase] decrypt access_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
     }
-  } catch (e: any) {
-    console.error('[supabase] migrateLocalAccountsToSupabase error:', e?.message || e);
   }
-  return { migrated, errors };
+  // Legacy fallback: row predates encryption migration.
+  if (!accessToken && row.access_token) accessToken = row.access_token;
+
+  let refreshToken: string | null = null;
+  if (row.refresh_token_ct && row.refresh_token_iv && row.refresh_token_tag) {
+    try {
+      refreshToken = decryptForUser(row.user_id, {
+        ciphertext: row.refresh_token_ct,
+        iv: row.refresh_token_iv,
+        tag: row.refresh_token_tag,
+        key_version: keyVersion,
+      });
+    } catch (e: any) {
+      console.error(`[supabase] decrypt refresh_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
+    }
+  }
+  if (!refreshToken && row.refresh_token) refreshToken = row.refresh_token;
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    provider: row.provider,
+    profile_label: row.profile_label,
+    is_default: !!row.is_default,
+    account_email: row.account_email ?? null,
+    scopes: Array.isArray(row.scopes) ? row.scopes : (row.scopes ? [row.scopes] : []),
+    access_token: accessToken || '',
+    refresh_token: refreshToken,
+    expires_at: row.expires_at ?? null,
+    meta: row.meta ?? null,
+  };
+}
+
+function buildEncryptedTokenColumns(
+  userId: string,
+  accessToken: string,
+  refreshToken: string | null | undefined,
+): {
+  access_token_ct: string; access_token_iv: string; access_token_tag: string;
+  refresh_token_ct: string | null; refresh_token_iv: string | null; refresh_token_tag: string | null;
+  key_version: number;
+  // Null out the legacy plaintext columns so a leaked row reveals nothing.
+  access_token: null; refresh_token: null;
+} {
+  const at = encryptForUser(userId, accessToken) as EncryptedField;
+  const rt = refreshToken ? encryptForUser(userId, refreshToken) : null;
+  return {
+    access_token_ct: at.ciphertext,
+    access_token_iv: at.iv,
+    access_token_tag: at.tag,
+    refresh_token_ct: rt?.ciphertext ?? null,
+    refresh_token_iv: rt?.iv ?? null,
+    refresh_token_tag: rt?.tag ?? null,
+    key_version: at.key_version,
+    access_token: null,
+    refresh_token: null,
+  };
 }
 
 /**
  * Get a single external account. If profileLabel is provided, fetches that specific
  * profile. Otherwise returns the default profile for the provider.
- *
- * Read strategy:
- *   sync ON  → try Supabase first, fall back to local if Supabase returns null.
- *   sync OFF → read from local only.
  */
 export async function getExternalAccount(
   userId: string,
   provider: string,
   profileLabel?: string,
 ): Promise<ExternalAccount | null> {
-  const useSupabase = CLOUD_ONLY_PROVIDERS.has(provider) || await shouldSyncAccounts(userId);
-  if (!useSupabase) return localGetExternalAccount(userId, provider, profileLabel);
-  // Primary: Supabase (hot store)
-  const hot = await _supabaseGetExternalAccount(userId, provider, profileLabel);
-  if (hot) return hot;
-  // Fallthrough: local (cold store) — covers Supabase-down and not-yet-migrated data
-  return localGetExternalAccount(userId, provider, profileLabel);
-}
-
-async function _supabaseGetExternalAccount(
-  userId: string,
-  provider: string,
-  profileLabel?: string,
-): Promise<ExternalAccount | null> {
   if (!supabaseService) return null;
   try {
-    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
     if (profileLabel) {
       const { data, error } = await supabaseService
         .from('external_accounts')
-        .select(cols)
+        .select(ACCOUNT_COLS)
         .eq('user_id', userId)
         .eq('provider', provider)
         .eq('profile_label', profileLabel)
         .single();
       if (error || !data) return null;
-      return data as any;
+      return decryptRow(data as unknown as ExternalAccountRow);
     }
-    // Fetch default profile
     const { data, error } = await supabaseService
       .from('external_accounts')
-      .select(cols)
+      .select(ACCOUNT_COLS)
       .eq('user_id', userId)
       .eq('provider', provider)
       .eq('is_default', true)
       .single();
-    if (!error && data) return data as any;
-    // Fallback: if no default flag, get oldest (original) entry
+    if (!error && data) return decryptRow(data as unknown as ExternalAccountRow);
     const { data: fallback } = await supabaseService
       .from('external_accounts')
-      .select(cols)
+      .select(ACCOUNT_COLS)
       .eq('user_id', userId)
       .eq('provider', provider)
       .order('created_at', { ascending: true })
       .limit(1)
       .single();
-    return (fallback as any) || null;
+    return fallback ? decryptRow(fallback as unknown as ExternalAccountRow) : null;
   } catch {
     return null;
   }
@@ -238,40 +258,23 @@ async function _supabaseGetExternalAccount(
 
 /**
  * List all connected profiles for a provider (or all providers if omitted).
- *
- * Read strategy:
- *   sync ON  → try Supabase first, fall back to local if Supabase returns empty.
- *   sync OFF → read from local only.
  */
 export async function listExternalAccounts(
   userId: string,
   provider?: string,
 ): Promise<ExternalAccount[]> {
-  const useSupabase = (provider && CLOUD_ONLY_PROVIDERS.has(provider)) || await shouldSyncAccounts(userId);
-  if (!useSupabase) return localListExternalAccounts(userId, provider);
-  const hot = await _supabaseListExternalAccounts(userId, provider);
-  if (hot.length > 0) return hot;
-  // Fallthrough: local (cold store)
-  return localListExternalAccounts(userId, provider);
-}
-
-async function _supabaseListExternalAccounts(
-  userId: string,
-  provider?: string,
-): Promise<ExternalAccount[]> {
   if (!supabaseService) return [];
   try {
-    const cols = 'id, user_id, provider, profile_label, is_default, account_email, scopes, access_token, refresh_token, expires_at, meta';
     let q = supabaseService
       .from('external_accounts')
-      .select(cols)
+      .select(ACCOUNT_COLS)
       .eq('user_id', userId)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: true });
     if (provider) q = q.eq('provider', provider);
     const { data, error } = await q;
     if (error || !data) return [];
-    return data as any[];
+    return (data as unknown as ExternalAccountRow[]).map(decryptRow);
   } catch {
     return [];
   }
@@ -280,19 +283,18 @@ async function _supabaseListExternalAccounts(
 /**
  * Set a profile as the default for its provider. Clears is_default on all
  * other profiles for the same (user_id, provider).
- * Dual-write: always update local, also update Supabase when sync is on.
  */
 export async function setDefaultExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  // Always update local (cold store = source of truth)
-  const localOk = await localSetDefaultExternalAccount(userId, provider, profileLabel);
-  if (await shouldSyncAccounts(userId)) {
-    try { await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel); } catch {}
+  try {
+    await _supabaseSetDefaultExternalAccount(userId, provider, profileLabel);
+    return true;
+  } catch {
+    return false;
   }
-  return localOk;
 }
 
 async function _supabaseSetDefaultExternalAccount(
@@ -324,18 +326,17 @@ async function _supabaseSetDefaultExternalAccount(
 
 /**
  * Delete a specific profile. If it was the default, promote the next one.
- * Dual-write: always delete from local, also delete from Supabase when sync is on.
  */
 export async function deleteExternalAccount(
   userId: string,
   provider: string,
   profileLabel: string,
 ): Promise<boolean> {
-  const localOk = await localDeleteExternalAccount(userId, provider, profileLabel);
-  if (CLOUD_ONLY_PROVIDERS.has(provider) || await shouldSyncAccounts(userId)) {
-    try { await _supabaseDeleteExternalAccount(userId, provider, profileLabel); } catch {}
+  try {
+    return await _supabaseDeleteExternalAccount(userId, provider, profileLabel);
+  } catch {
+    return false;
   }
-  return localOk;
 }
 
 async function _supabaseDeleteExternalAccount(
@@ -381,10 +382,10 @@ async function _supabaseDeleteExternalAccount(
 /**
  * Upsert an external account (OAuth token).
  *
- * Write strategy (dual-write):
- *   Always write to local (cold store = source of truth).
- *   When sync is on, also write to Supabase (hot store).
- *   This prevents data loss when Supabase is temporarily unreachable.
+ * Supabase is the single source of truth. The access_token and refresh_token
+ * are encrypted with a per-user key (HKDF from TOKEN_ENCRYPTION_PEPPER + user_id)
+ * before insert — see utils/token-encryption.ts. Plaintext token columns are
+ * always written as NULL so a leaked row reveals nothing.
  */
 export async function upsertExternalAccount(input: {
   userId: string;
@@ -397,12 +398,7 @@ export async function upsertExternalAccount(input: {
   profileLabel?: string;
   accountEmail?: string | null;
 }): Promise<void> {
-  // Always write to local first (cold store = source of truth)
-  await localUpsertExternalAccount(input);
-  // Also write to Supabase when sync is enabled OR for cloud-only providers
-  if (CLOUD_ONLY_PROVIDERS.has(input.provider) || await shouldSyncAccounts(input.userId)) {
-    try { await _supabaseUpsertExternalAccount(input); } catch {}
-  }
+  await _supabaseUpsertExternalAccount(input);
 }
 
 async function _supabaseUpsertExternalAccount(input: {
@@ -450,18 +446,23 @@ async function _supabaseUpsertExternalAccount(input: {
       }
     }
 
+    const encryptedTokens = buildEncryptedTokenColumns(
+      input.userId,
+      input.access_token,
+      input.refresh_token,
+    );
+
     const values: any = {
       user_id: input.userId,
       provider: input.provider,
       profile_label: profileLabel,
       is_default: isDefault,
       account_email: input.accountEmail ?? null,
-      access_token: input.access_token,
       scopes: Array.isArray(input.scopes) ? input.scopes : [],
-      refresh_token: input.refresh_token ?? null,
       expires_at: input.expires_at ?? null,
       meta: input.meta ?? null,
       updated_at: new Date().toISOString(),
+      ...encryptedTokens,
     };
 
     // If we're about to set is_default=true, clear any other default first

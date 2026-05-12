@@ -228,9 +228,31 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     try {
       const resp = await fetch(`${AGENT_HTTP}/v1/runtime/python/status`);
       const j = await resp.json().catch(() => null);
-      if (j && typeof j === "object") setPyStatus(j);
+      if (j && typeof j === "object") {
+        setPyStatus(j);
+        // Reconcile persisted "connected" state with reality so a stale
+        // localStorage flag from a prior session doesn't make the card show
+        // ACTIVE while the runtime is missing.
+        const available = !!(j as any).available;
+        setConnectedMap((prev) => {
+          const next = { ...prev } as Record<string, boolean>;
+          if (available) next.python = true;
+          else delete next.python;
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      }
     } catch {}
   };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshPythonStatus();
+      } catch {}
+    })();
+  }, []);
 
   const refreshFfmpegStatus = async () => {
     try {
@@ -701,6 +723,27 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     await syncConnectedFromServer(token);
   }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
 
+  // OAuth completes in an external browser tab; when the user returns to the
+  // desktop window we re-pull profiles + connected state so a freshly-linked
+  // account shows up without a manual Refresh click.
+  useEffect(() => {
+    if (!session?.access_token) return;
+    const onFocus = () => {
+      void refreshProfiles();
+      void syncConnectedFromServer();
+      emitConnectedChanged();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [session?.access_token, refreshProfiles, syncConnectedFromServer]);
+
   const telnyxRequestCode = async (phone: string, slot: number = 0): Promise<{ ok: boolean; error?: string }> => {
     const token = session?.access_token;
     if (!token) return { ok: false, error: 'Not signed in.' };
@@ -920,15 +963,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     if (slug === "python") {
       try {
         await setupPython();
-        setConnectedMap((prev) => {
-          const next = { ...prev, python: true };
-          try {
-            localStorage.setItem("integrations.connected", JSON.stringify(next));
-          } catch {}
-          emitConnectedChanged();
-          return next;
-        });
-        if (!pyStatus) await refreshPythonStatus();
+        // refreshPythonStatus() inside setupPython() reconciles connectedMap.python
+        // with the actual runtime state — don't override it here, otherwise a
+        // failed setup (e.g. Python not installed) would still mark Active.
       } catch {}
       return;
     }

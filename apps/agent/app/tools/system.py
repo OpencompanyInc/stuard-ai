@@ -559,18 +559,22 @@ def _get_system_python() -> str:
 
     In dev mode ``sys.executable`` already points at the interpreter.  In a
     PyInstaller-frozen build it points at the packaged ``.exe`` which cannot
-    create venvs or run ``-m pip``.  In that case we fall back to whichever
-    Python is available on the system PATH.
+    create venvs or run ``-m pip`` — invoking it just re-spawns the agent.
+    In that case we look up Python on PATH and refuse to fall back to the
+    frozen exe (returns ``""`` if none found, so callers can surface a clear
+    "install Python" error rather than hanging).
     """
     global _cached_python_bin
     if _cached_python_bin:
         return _cached_python_bin
     is_frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
     if is_frozen:
-        found = shutil.which("python") or shutil.which("python3") or shutil.which("py")
+        found = shutil.which("python3") or shutil.which("python") or shutil.which("py")
         if found:
             _cached_python_bin = found
             return found
+        # No system Python available — caller must report this to the user.
+        return ""
     _cached_python_bin = sys.executable
     return sys.executable
 
@@ -623,6 +627,8 @@ async def _ensure_python_env(
         if emit:
             await emit("creating_env", {"envId": resolved_env_id, "path": env_dir})
         system_python = await asyncio.to_thread(_get_system_python)
+        if not system_python:
+            raise RuntimeError("python_not_installed")
         create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
         proc = await asyncio.to_thread(subprocess.run, create_cmd, capture_output=True, text=True)
         if proc.returncode != 0:
@@ -663,7 +669,11 @@ async def _ensure_python_env(
 async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         args = args or {}
-        exe = sys.executable or ""
+        is_frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+        system_python = await asyncio.to_thread(_get_system_python)
+        # In a frozen build, sys.executable is the agent .exe itself, which is
+        # NOT a usable Python interpreter. Only the resolved system_python is.
+        usable_python = system_python if is_frozen else (system_python or sys.executable or "")
         envs_root = _envs_base_dir()
         default_env_id = DEFAULT_PYTHON_ENV_ID
         active_env_id = _resolve_python_env_id(args.get("envId") if isinstance(args, dict) and args.get("envId") else None)
@@ -680,21 +690,26 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
                         envs.append(name)
         except Exception:
             envs = []
+        default_ready = os.path.exists(default_python)
+        active_ready = os.path.exists(active_python)
+        needs_install = is_frozen and not system_python
         return {
             "ok": True,
-            "available": bool(exe),
-            "python": exe,
-            "version": sys.version.split("\n")[0],
+            "available": bool(usable_python),
+            "needsInstall": needs_install,
+            "installUrl": "https://www.python.org/downloads/" if needs_install else None,
+            "python": usable_python,
+            "version": sys.version.split("\n")[0] if not is_frozen else None,
             "envsRoot": envs_root,
             "envs": envs,
             "defaultEnvId": DEFAULT_PYTHON_ENV_ID,
             "activeEnvId": active_env_id,
             "defaultEnvPath": default_env_dir,
             "defaultPython": default_python,
-            "defaultReady": os.path.exists(default_python),
+            "defaultReady": default_ready,
             "activeEnvPath": active_env_dir,
             "activePython": active_python,
-            "activeReady": os.path.exists(active_python),
+            "activeReady": active_ready,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -714,7 +729,15 @@ async def python_setup(args: Dict[str, Any]) -> Dict[str, Any]:
             "envsRoot": st.get("envsRoot"),
         }
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        msg = str(e)
+        if "python_not_installed" in msg:
+            return {
+                "ok": False,
+                "error": "python_not_installed",
+                "needsInstall": True,
+                "installUrl": "https://www.python.org/downloads/",
+            }
+        return {"ok": False, "error": msg}
 
 
 async def python_install(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:

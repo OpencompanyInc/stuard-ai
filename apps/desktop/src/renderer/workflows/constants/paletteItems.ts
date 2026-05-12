@@ -5,8 +5,9 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', args: { path: '', pattern: '*.*', recursive: true } },
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
   { k: 'trigger', t: 'webhook', label: 'Webhook', args: { mode: 'cloud' } },
-  { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', args: { profile: 'default', labelIds: ['INBOX'] } },
-  { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },
+  // ── Disabled pending Google CASA verification (push triggers need gmail.readonly / drive.readonly) ──
+  // { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', args: { profile: 'default', labelIds: ['INBOX'] } },
+  // { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },
   { k: 'trigger', t: 'hotkey', label: 'Hotkey', args: { accelerator: 'Ctrl+Alt+C' } },
   { k: 'trigger', t: 'hotkey.release', label: 'Hotkey Release', args: { accelerator: 'Ctrl+Alt+C' } },
   { k: 'trigger', t: 'outlook.calendar.poll', label: 'Outlook Calendar (poll)', args: { intervalSec: 60 } },
@@ -269,8 +270,9 @@ export const STREAM_ITEMS: PaletteItem[] = [
 
 export const INTEGRATION_ITEMS: PaletteItem[] = [
   // Google Drive
-  { k: 'cloud.tool', t: 'drive_list_files', label: 'Drive: List Files', args: { pageSize: 20 } },
-  { k: 'cloud.tool', t: 'drive_search_files', label: 'Drive: Search Files', args: { query: '', pageSize: 20, fileType: 'any' } },
+  // ── Disabled pending Google CASA verification (drive / drive.readonly restricted scopes) ──
+  // { k: 'cloud.tool', t: 'drive_list_files', label: 'Drive: List Files', args: { pageSize: 20 } },
+  // { k: 'cloud.tool', t: 'drive_search_files', label: 'Drive: Search Files', args: { query: '', pageSize: 20, fileType: 'any' } },
   { k: 'cloud.tool', t: 'drive_get_file', label: 'Drive: Get File Metadata', args: { fileId: '' } },
   { k: 'cloud.tool', t: 'drive_create_file', label: 'Drive: Create File', args: { name: 'file.txt', content: '', mimeType: 'text/plain' } },
   { k: 'cloud.tool', t: 'drive_create_folder', label: 'Drive: Create Folder', args: { name: 'New Folder' } },

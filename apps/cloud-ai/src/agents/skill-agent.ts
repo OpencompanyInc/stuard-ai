@@ -392,13 +392,13 @@ FILES & SYSTEM:
   read_file, write_file, list_directory, run_command, run_python_script, run_node_script, glob, grep
 
 COMMUNICATION:
-  gmail_send_message, gmail_list_messages, send_notification, text_to_speech, telnyx_send_sms
+  gmail_send_message, send_notification, text_to_speech, telnyx_send_sms
 
 MEDIA:
   take_screenshot, capture_media, play_audio, ffmpeg_convert_media
 
 GOOGLE:
-  calendar_list_events, calendar_create_event, drive_list_files, sheets_read_range, docs_get_document
+  calendar_list_events, calendar_create_event, sheets_create_spreadsheet, sheets_read_range, docs_create_document, docs_get_document
 
 DATABASE:
   db_store, db_retrieve, db_search, db_query

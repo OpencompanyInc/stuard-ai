@@ -651,4 +651,5 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('agent:data-synced', handler);
     return () => { try { ipcRenderer.removeListener('agent:data-synced', handler); } catch { /* noop */ } };
   },
+
 });

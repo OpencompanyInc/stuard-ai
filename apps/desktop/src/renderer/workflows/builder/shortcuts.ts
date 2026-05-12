@@ -169,7 +169,8 @@ export const TOOL_SHORTCUTS: Record<string, ToolShortcut> = {
   'gmail': { tool: 'gmail_send', args: {} },
   'email': { tool: 'gmail_send', args: {} },
   'calendar': { tool: 'google_calendar_list_events', args: {} },
-  'drive': { tool: 'google_drive_list_files', args: {} },
+  // 'drive' shortcut disabled pending Google CASA verification (drive.readonly restricted scope).
+  // 'drive': { tool: 'google_drive_list_files', args: {} },
   'sheets': { tool: 'google_sheets_read', args: {} },
   'docs': { tool: 'google_docs_read', args: {} },
   'outlook': { tool: 'outlook_send', args: {} },
