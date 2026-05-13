@@ -29,7 +29,7 @@ import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } from '../../tools/meta-tools';
 import { searchWorkflowDocs } from '../workflow-agent/docs';
 import { deployWorkflow } from '../workflow-agent/deploy';
-import { executeStep, inspectWorkflow, listWorkflows } from '../workflow-agent/tools';
+import { executeStep, inspectWorkflow, listWorkflows, loadWorkflow } from '../workflow-agent/tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
 
@@ -593,6 +593,7 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
   return {
     ...ALL_TOOLS,
     create_workflow: createWorkflowTool,
+    load_workflow: loadWorkflow,
     modify_workflow: workflowModifyTool,
     inspect_workflow: inspectWorkflow,
     execute_step: executeStep,
