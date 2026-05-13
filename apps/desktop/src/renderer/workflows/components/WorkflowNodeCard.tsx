@@ -4,6 +4,7 @@
 import React from "react";
 import { Link2, MoreHorizontal, Play, Check, X, Radio } from "lucide-react";
 import { getToolIcon, getToolColor, CATEGORY_COLORS } from "../constants/paletteCategories";
+import { getFunctionNodeIcon, getFunctionNodeColor } from "../constants/functionNodeStyle";
 import type { DesignerNode, DesignerTrigger } from "../types";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 
@@ -91,8 +92,17 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
   const { isDark } = useWorkflowTheme();
   const tool = ('tool' in node ? node.tool : node.type) || '';
-  const Icon = getToolIcon(tool, isTrigger);
-  const colorKey = getToolColor(tool, isTrigger);
+  // Per-node visual override: when an installed marketplace function is dragged
+  // in, the node carries the publisher's chosen icon/color so it doesn't render
+  // as a generic call_workflow tile.
+  const overrideIconName = (node as any)?.iconName as string | undefined;
+  const overrideColorId = (node as any)?.colorKey as string | undefined;
+  const Icon = overrideIconName
+    ? getFunctionNodeIcon(overrideIconName)
+    : getToolIcon(tool, isTrigger);
+  const colorKey = overrideColorId
+    ? getFunctionNodeColor(overrideColorId).paletteColorKey
+    : getToolColor(tool, isTrigger);
   const lightStyles = CATEGORY_COLORS[colorKey] || CATEGORY_COLORS.slate;
   const darkStyles = DARK_CATEGORY_COLORS[colorKey] || DARK_CATEGORY_COLORS.slate;
   const themeStyles = isDark

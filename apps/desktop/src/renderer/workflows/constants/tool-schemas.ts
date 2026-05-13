@@ -213,7 +213,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'elevenlabs_get_conversation', category: 'vision', kind: 'cloud', description: 'Get detailed metadata for an ElevenLabs conversation session', argsTemplate: { conversation_id: '' }, outputSchema: { ok: 'boolean', conversation: 'any', error: 'string' } },
 
   // --- DATA / AI ---
-  { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Run AI inference on text. Returns plain text, structured JSON, or vector embeddings.', argsTemplate: { prompt: '', input: '', mode: 'json', schema: {}, model: 'openai/gpt-4.1-mini', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
+  { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Unified AI inference — text, multimodal (image / audio / video / PDF / current screen), structured JSON, or embeddings. Routed via OpenRouter.', argsTemplate: { prompt: '', input: '', sources: [], mode: 'text', schema: {}, model: 'google/gemini-3.1-pro-preview', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
 
   // --- UI ---
@@ -489,6 +489,7 @@ const AI_INFERENCE_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Return plain text' },
   { value: 'json', label: 'JSON', description: 'Return structured JSON (use with schema)' },
   { value: 'embedding', label: 'Embedding', description: 'Return vector embeddings' },
+  { value: 'transcription', label: 'Transcription', description: 'Speech-to-text (Whisper) — audio source → transcript' },
 ];
 
 const ANALYZE_MEDIA_MODE_OPTIONS: ArgOption[] = [
@@ -2163,9 +2164,9 @@ if (TOOL_SCHEMAS['ai_inference']) {
     prompt: {
       type: 'string',
       label: 'Prompt',
-      description: 'The instruction or question for the AI. For embedding mode, this is the text to embed.',
+      description: 'Instruction or question for the AI. With media sources, describe what to extract or analyze (e.g. "Transcribe this audio", "Describe this screen"). For embedding mode, this is the text to embed.',
       required: true,
-      placeholder: 'Summarize this text...',
+      placeholder: 'Summarize this text / Describe the screen / Transcribe this audio',
     },
     input: {
       type: 'string',
@@ -2173,6 +2174,14 @@ if (TOOL_SCHEMAS['ai_inference']) {
       description: 'Optional text to process. Can also reference previous step output: {{step_id.text}}',
       placeholder: '{{previous_step.text}} or paste text here',
       showWhen: { field: 'mode', values: ['text', 'json'] },
+    },
+    sources: {
+      type: 'array',
+      label: 'Media Sources',
+      description: 'Media inputs — images, audio, video, PDFs, YouTube URLs, or "Capture current screen". Wire in upstream paths with {{step_id.filePath}}. Required for transcription mode; for text/json modes, requires a vision-capable model when used.',
+      itemType: 'object' as ArgType,
+      default: [],
+      showWhen: { field: 'mode', values: ['text', 'json', 'transcription'] },
     },
     mode: {
       type: 'select',
@@ -2184,9 +2193,19 @@ if (TOOL_SCHEMAS['ai_inference']) {
     model: {
       type: 'select',
       label: 'Model',
-      description: 'AI model to use. Embedding mode uses a separate embedding model automatically.',
+      description: 'AI model to use. Pick a vision-capable model when supplying media sources. Embedding mode uses a separate embedding model automatically. Transcription mode uses a Whisper-style STT model (e.g. openai/whisper-1).',
+      // Catalog is populated after AGENT_MODEL_OPTIONS is built (see override below).
       options: MODEL_OPTIONS,
-      default: 'openai/gpt-4.1-mini',
+      default: 'google/gemini-3.1-pro-preview',
+      allowFreeform: true,
+      placeholder: 'Search for a model...',
+    },
+    language: {
+      type: 'string',
+      label: 'Language',
+      description: 'Optional ISO-639-1 code (e.g. "en", "ja", "es"). Auto-detected when omitted.',
+      placeholder: 'en',
+      showWhen: { field: 'mode', value: 'transcription' },
     },
     schema: {
       type: 'json',
@@ -3076,6 +3095,19 @@ if (TOOL_SCHEMAS['analyze_media']) {
     allowFreeform: true,
     placeholder: 'Search for a model...',
     showWhen: { field: 'mode', value: 'custom' },
+  };
+}
+
+// AI INFERENCE — replace placeholder MODEL_OPTIONS with the full curated Stuard catalog
+// (same list used by the main Stuard agent). Done here because AGENT_MODEL_OPTIONS is
+// built later in this file.
+if (TOOL_SCHEMAS['ai_inference']?.args?.model) {
+  TOOL_SCHEMAS['ai_inference'].args.model = {
+    ...TOOL_SCHEMAS['ai_inference'].args.model,
+    type: 'select',
+    options: AGENT_MODEL_OPTIONS,
+    allowFreeform: true,
+    placeholder: 'Search for a model...',
   };
 }
 

@@ -61,7 +61,7 @@ declare global {
       onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string }) => void) => () => void;
       openDashboard: (options?: { tab?: string }) => Promise<void>;
       openOnboarding: () => Promise<void>;
-      openWorkflows: (options?: { marketplaceSlug?: string }) => Promise<void>;
+      openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string }) => Promise<void>;
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
@@ -109,7 +109,7 @@ declare global {
       onVMStreamEvent: (cb: (data: any) => void) => () => void;
       onRunStateSync: (cb: (data: { pendingApprovals: Array<{ id: string; tool: string; args?: Record<string, any>; description?: string; createdAt: number }>; terminals: Array<{ requestId: string; result: { text: string; finishReason: string; aborted?: boolean; error?: boolean; model?: string; conversationId?: string } }>; activePhases: Array<{ requestId: string; phase: string }> }) => void) => () => void;
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
-      onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => () => void;
+      onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
@@ -138,6 +138,7 @@ declare global {
       workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDeleteWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => Promise<{ ok: boolean; error?: string }>;
+      workflowsImportAsWorkspaceFunction: (hostId: string, sourceId: string, options?: { subdir?: string }) => Promise<{ ok: boolean; path?: string; name?: string; inputParams?: any[]; functionNode?: any; error?: string }>;
       workflowsGetAgentToolOptions: () => Promise<{ ok: boolean; tools?: Array<{ value: string; label: string; description: string; group: string }>; error?: string }>;
       onWorkflowsLog: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsStep: (cb: (data: any) => void) => void | (() => void);

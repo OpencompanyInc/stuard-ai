@@ -159,6 +159,25 @@ const DATA_COLLECTION_PATTERNS = [
 ];
 
 /**
+ * Functions are published as flat workflow specs marked with `kind: 'function'`
+ * and a `functionNode` field, but legacy publishes wrapped them as
+ * `{ type: 'function', workflow, node }`. Normalize both into a flat workflow
+ * spec the rest of the analyzer understands, while preserving whether the
+ * artifact is a function (so the AI prompt can frame the review correctly).
+ */
+function unwrapSpec(spec: any): { workflow: any; isFunction: boolean } {
+  if (spec && typeof spec === 'object') {
+    if (spec.type === 'function' && spec.workflow) {
+      return { workflow: spec.workflow, isFunction: true };
+    }
+    if (spec.kind === 'function') {
+      return { workflow: spec, isFunction: true };
+    }
+  }
+  return { workflow: spec, isFunction: false };
+}
+
+/**
  * Static analysis of workflow spec for known dangerous patterns
  */
 function staticAnalysis(spec: any): SecurityIssue[] {
@@ -496,14 +515,63 @@ function analyzeNodes(spec: any): {
 /**
  * AI-powered deep analysis for complex patterns
  */
-async function aiAnalysis(spec: any, name: string, description: string): Promise<{
+async function aiAnalysis(spec: any, name: string, description: string, isFunction: boolean): Promise<{
   issues: SecurityIssue[];
   warnings: SecurityWarning[];
   recommendations: string[];
   summary: string;
 }> {
-  const prompt = `You are a security analyst reviewing a workflow automation for a marketplace.
+  const artifactLabel = isFunction ? 'function' : 'workflow';
+
+  const functionPrompt = `You are a security analyst reviewing a reusable FUNCTION for a marketplace.
+
+WHAT A FUNCTION IS — READ THIS BEFORE ANALYZING:
+- A function is a small, callable building block (like a library function). It is NOT a standalone end-to-end workflow.
+- It declares typed inputs and outputs. A separate workflow — built and run by the installing user on their own machine — supplies those inputs and consumes the outputs.
+- The installing user always sees the full source of the function before they install or call it. There is no opaque server-side execution.
+- All node tools (e.g. ai_inference, http_request, run_python_script) are platform-provided primitives. The function spec only configures them; it does not implement them.
+
+WHAT TO FLAG (function-specific):
+- Hidden/obfuscated behavior the description doesn't disclose (e.g. a "format text" function that secretly POSTs data to a third-party server).
+- Hardcoded credentials, secrets, or tokens baked into args.
+- Calls to attacker-controlled or known-exfil services (pastebin, webhook.site, ngrok, etc.) that aren't justified by the function's purpose.
+- Embedded scripts (run_python_script / run_node_script / run_command) whose code is malicious, dynamically eval's untrusted strings, reads sensitive files (browser cookies, ~/.ssh, .env), or exfiltrates data the function isn't supposed to touch.
+- Material mismatch between the description and what the spec actually does (deceptive listing).
+
+WHAT NOT TO FLAG (these are CALLER concerns, not function concerns):
+- "Prompt injection via the {{trigger.data.X}} input." The caller chooses what to pass; sanitizing untrusted input is the caller's job. Only flag if the function itself injects something malicious into the prompt.
+- "Path traversal via a path input." If the function takes a path and reads/passes it, that is its documented contract. Only flag if the function silently rewrites paths to access something the caller didn't ask for.
+- "Sends data to a third-party AI provider." All ai_inference / cloud_tool calls go through Stuard's vetted providers (e.g. OpenRouter). This is the platform's documented behavior, not a privacy violation, unless the function additionally ships data somewhere undisclosed.
+- "No input validation / no error handling / no rate limiting." These are code-quality concerns for an end-user app, not security issues for a function building block. Use a low-severity warning at most.
+- "Lack of authentication." A function is invoked by another workflow on the same user's machine; there is no auth boundary to enforce.
+
+SEVERITY RUBRIC:
+- critical = clear malicious intent (credential theft, ransomware, covert exfiltration, browser-data harvesting).
+- high = hidden behavior that doesn't match the description, or a strong exfiltration pattern.
+- medium = a real concern a careful reviewer should raise (e.g. unexplained network call to an unusual host).
+- low = nit / code-quality.
+- Do NOT use critical or high for theoretical caller-controlled risks. If the only "issue" is "a hostile caller could pass a bad input," do not raise an issue at all.
+
+FUNCTION NAME: ${name}
+DESCRIPTION: ${description}
+
+FUNCTION SPEC:
+${JSON.stringify(spec, null, 2)}
+
+RESPOND WITH VALID JSON ONLY (no markdown, no explanation):
+{
+  "issues": [{"severity": "low|medium|high|critical", "category": "string", "title": "string", "description": "string", "location": "nodeId or null", "remediation": "string"}],
+  "warnings": [{"category": "string", "message": "string", "suggestion": "string"}],
+  "recommendations": ["string"],
+  "summary": "One paragraph summary of the security assessment, framed as a function review",
+  "descriptionMatchesFunction": true/false,
+  "suspiciousPatterns": ["pattern1", "pattern2"]
+}`;
+
+  const workflowPrompt = `You are a security analyst reviewing a workflow automation for a marketplace.
 Analyze this workflow for security issues, malicious patterns, and guideline violations.
+
+This is an event-driven workflow that runs end-to-end on a user's machine.
 
 WORKFLOW NAME: ${name}
 DESCRIPTION: ${description}
@@ -528,6 +596,8 @@ RESPOND WITH VALID JSON ONLY (no markdown, no explanation):
   "suspiciousPatterns": ["pattern1", "pattern2"]
 }`;
 
+  const prompt = isFunction ? functionPrompt : workflowPrompt;
+
   try {
     const result = await generateText({
       model: google('gemini-2.5-pro') as any,
@@ -549,15 +619,15 @@ RESPOND WITH VALID JSON ONLY (no markdown, no explanation):
 
     const parsed = JSON.parse(jsonMatch[0]);
     
-    // If description doesn't match function, that's a red flag
+    // If description doesn't match the actual behavior, that's a red flag
     if (parsed.descriptionMatchesFunction === false) {
       parsed.issues = parsed.issues || [];
       parsed.issues.push({
         severity: 'high',
         category: 'Deceptive Description',
-        title: 'Workflow behavior may not match description',
-        description: 'The AI detected that the workflow\'s actual behavior may differ from what is described.',
-        remediation: 'Update the description to accurately reflect what the workflow does.',
+        title: `${isFunction ? 'Function' : 'Workflow'} behavior may not match description`,
+        description: `The AI detected that the ${artifactLabel}'s actual behavior may differ from what is described.`,
+        remediation: `Update the description to accurately reflect what the ${artifactLabel} does.`,
       });
     }
 
@@ -617,14 +687,16 @@ export async function analyzeWorkflowSecurity(
   name: string,
   description: string
 ): Promise<SecurityAnalysisResult> {
+  const { workflow, isFunction } = unwrapSpec(spec);
+
   // 1. Static analysis
-  const staticIssues = staticAnalysis(spec);
-  
+  const staticIssues = staticAnalysis(workflow);
+
   // 2. Node-level analysis
-  const { issues: nodeIssues, warnings: nodeWarnings } = analyzeNodes(spec);
-  
+  const { issues: nodeIssues, warnings: nodeWarnings } = analyzeNodes(workflow);
+
   // 3. AI-powered deep analysis
-  const aiResult = await aiAnalysis(spec, name, description);
+  const aiResult = await aiAnalysis(workflow, name, description, isFunction);
   
   // Combine all results
   const allIssues = [...staticIssues, ...nodeIssues, ...aiResult.issues];
@@ -651,7 +723,8 @@ export async function analyzeWorkflowSecurity(
  * Quick check for obvious blockers (fast, no AI)
  */
 export function quickSecurityCheck(spec: any): { blocked: boolean; reason?: string; dataFlow?: 'local' | 'external' | 'mixed' } {
-  const specStr = JSON.stringify(spec);
+  const { workflow } = unwrapSpec(spec);
+  const specStr = JSON.stringify(workflow);
   
   // Immediate blockers - destructive actions
   if (DANGEROUS_PATTERNS.sensitiveFiles.test(specStr)) {

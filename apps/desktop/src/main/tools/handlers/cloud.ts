@@ -29,6 +29,13 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
     if (tool === 'analyze_media') {
       return execAnalyzeMedia(args, ctx);
     }
+
+    // Special handling for ai_inference with media sources -
+    // reads local files as base64 and forwards to the Mastra tool endpoint
+    // (the legacy /inference/ai/text route is text-only and ignores sources/model)
+    if (tool === 'ai_inference') {
+      return execAiInference(args, ctx);
+    }
     
     // Special handling for text_to_speech - cloud returns base64, we save/play locally
     if (tool === 'text_to_speech') {
@@ -515,6 +522,148 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
   } catch (e: any) {
     ctx.logFn(`analyze_media: Error: ${e?.message}`);
     return { ok: false, error: String(e?.message || 'analyze_media_failed') };
+  }
+}
+
+/**
+ * Special handler for ai_inference — reads local media from sources[].path,
+ * encodes them as base64 into sources[].data, then POSTs the full payload to
+ * the cloud Mastra tool at /tools/ai_inference.
+ *
+ * This replaces the legacy /inference/ai/text route, which was text-only and
+ * ignored sources, model selection, system prompts, streaming, etc.
+ */
+async function execAiInference(args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const sources = Array.isArray(args?.sources) ? args.sources : [];
+    const modelId = String(args?.model || 'openai/gpt-4.1-mini');
+
+    ctx.logFn(`ai_inference: model=${modelId}, sources=${sources.length}`);
+
+    // Pre-load local file paths into base64 data so the cloud tool doesn't
+    // need a bridge connection to read desktop files.
+    const enrichedSources: any[] = [];
+
+    for (const src of sources) {
+      const requestedPath = String(src?.path || '').trim();
+
+      // Non-file sources (URL, data, captureScreen) pass through as-is
+      if (!requestedPath) {
+        enrichedSources.push(src);
+        continue;
+      }
+
+      const recoveredPath = resolveRedactedFilePath(requestedPath);
+      const filePath = recoveredPath.path;
+
+      if (!filePath) {
+        ctx.logFn(`ai_inference: skipping empty path`);
+        continue;
+      }
+
+      let mimeType = src?.mimeType || inferMimeType(filePath);
+      let actualPath = filePath;
+      let convertedTempPath: string | null = null;
+
+      // OpenRouter only supports audio/mpeg (mp3) and audio/wav.
+      // If we have an incompatible audio format, convert via local ffmpeg first.
+      const isOpenRouter = modelId.startsWith('openrouter/');
+      const isAudio = mimeType.startsWith('audio/');
+      const OPENROUTER_AUDIO_OK = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav']);
+      const isAudioCompatible = OPENROUTER_AUDIO_OK.has(mimeType);
+
+      if (isOpenRouter && isAudio && !isAudioCompatible) {
+        ctx.logFn(`ai_inference: converting ${path.basename(filePath)} (${mimeType}) → MP3 for OpenRouter`);
+        const mp3Path = filePath.replace(/\.[^.]+$/, '_openrouter.mp3');
+        try {
+          const { execLocalTool: execLocal } = await import('./local');
+          const convertResult = await execLocal('ffmpeg_convert_media', {
+            inputPath: filePath,
+            outputPath: mp3Path,
+            overwrite: true,
+          }, ctx, 120_000);
+          if (convertResult?.ok) {
+            actualPath = mp3Path;
+            mimeType = 'audio/mpeg';
+            convertedTempPath = mp3Path;
+            ctx.logFn(`ai_inference: converted to MP3 → ${path.basename(mp3Path)}`);
+          } else {
+            ctx.logFn(`ai_inference: ffmpeg convert failed: ${convertResult?.error || 'unknown'}`);
+            // Fall through — send the original, cloud will attempt its own conversion
+          }
+        } catch (e: any) {
+          ctx.logFn(`ai_inference: ffmpeg convert error: ${e?.message}`);
+        }
+      }
+
+      // Normalize mp3 alias for OpenRouter
+      if (isOpenRouter && mimeType === 'audio/mp3') {
+        mimeType = 'audio/mpeg';
+      }
+
+      try {
+        const buf = fs.readFileSync(actualPath);
+        const data = buf.toString('base64');
+        enrichedSources.push({
+          data,
+          mimeType,
+          // Drop path — cloud can't access it anyway
+        });
+        ctx.logFn(`ai_inference: loaded ${path.basename(actualPath)} (${mimeType}, ${Math.round(buf.length / 1024)}KB)`);
+      } catch (e: any) {
+        ctx.logFn(`ai_inference: failed to read ${actualPath}: ${e?.message}`);
+        return { ok: false, error: `read_file_failed: ${actualPath}` };
+      }
+
+      // Clean up temporary converted file
+      if (convertedTempPath) {
+        try { fs.unlinkSync(convertedTempPath); } catch {}
+      }
+    }
+
+    // Build the full payload for the Mastra tool
+    const payload: any = {
+      ...args,
+      sources: enrichedSources.length > 0 ? enrichedSources : undefined,
+    };
+
+    const url = `${ctx.cloudAiUrl}/tools/ai_inference`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) {
+      headers['Authorization'] = `Bearer ${ctx.accessToken}`;
+    }
+
+    const controller = new AbortController();
+    const timeoutMs = 180_000; // 3 min for media inference
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const bodyPayload = ctx.sourceLabel ? { ...payload, source_label: ctx.sourceLabel } : payload;
+      const resp = await net.fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(bodyPayload),
+        signal: controller.signal as any,
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return { ok: false, error: `cloud_error_${resp.status}: ${errText}` };
+      }
+
+      const result: any = await resp.json();
+      const nested = result?.result;
+      if (result?.ok === true && nested && typeof nested === 'object') {
+        if ((nested as any).ok === false) return nested;
+        return { ok: true, ...nested };
+      }
+      return { ok: true, ...result };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e: any) {
+    ctx.logFn(`ai_inference error: ${e?.message}`);
+    return { ok: false, error: String(e?.message || 'ai_inference_failed') };
   }
 }
 

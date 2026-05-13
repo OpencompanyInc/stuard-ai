@@ -1365,7 +1365,7 @@ const CollapsibleToolGroup: React.FC<{
 // is the general user-facing background-agent tool. Those are the only two real
 // spawn entry points — every other name (subagent_create, spawn_agent, run_subagent,
 // deploy_subagent) was a dead alias.
-const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent']);
+const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'route_to_workflow_agent']);
 
 function resolveToolName(tool: ToolCall): string {
   return tool.tool === 'execute_tool' && tool.args?.tool_name
@@ -1381,6 +1381,7 @@ type DelegationTask = { subagent: string; instruction?: string };
 
 function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
   const args = (tool.args || {}) as Record<string, any>;
+  const toolName = resolveToolName(tool);
   // `delegate` uses args.tasks[] with {subagent, instruction}
   if (Array.isArray(args.tasks) && args.tasks.length > 0) {
     return args.tasks.map((t: any) => ({
@@ -1388,8 +1389,11 @@ function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
       instruction: typeof t?.instruction === 'string' ? t.instruction : undefined,
     }));
   }
+  // `route_to_workflow_agent` — kind is implicit in the tool name
+  const kind = toolName === 'route_to_workflow_agent'
+    ? 'workflow'
+    : (args.subagent || args.kind || args.agent || args.agent_kind || 'subagent');
   // `deploy_headless_agent` — flat args
-  const kind = args.subagent || args.kind || args.agent || args.agent_kind || 'subagent';
   const instruction = args.objective || args.task || args.prompt || args.instruction;
   return [{
     subagent: String(kind),
@@ -1549,6 +1553,45 @@ const DelegationCard: React.FC<{
     ? `${humanizeToolName(tasks[0].subagent)} agent`
     : `${tasks.length} agents`;
 
+  const hasWorkflowTask = tasks.some(t => normalizeSubagentName(t.subagent) === 'workflow');
+  // Scan child trace steps for a completed create_workflow OR load_workflow
+  // call and surface its workflow id, so "Open in Studio" can deep-link
+  // instead of dumping the user on the workflow list. Either tool is a
+  // valid signal that the workflow exists on disk and is in session.
+  const targetWorkflowId = useMemo<string | null>(() => {
+    if (!hasWorkflowTask) return null;
+    const readSpecId = (raw: unknown): string | null => {
+      if (!raw) return null;
+      let val: any = raw;
+      if (typeof val === 'string') {
+        try { val = JSON.parse(val); } catch { return null; }
+      }
+      if (typeof val !== 'object' || val === null) return null;
+      if (typeof val.workflowId === 'string' && val.workflowId) return val.workflowId;
+      if (typeof val.id === 'string' && val.id.startsWith('flow_')) return val.id;
+      if (val.spec && typeof val.spec.id === 'string' && val.spec.id) return val.spec.id;
+      return null;
+    };
+    // Walk in reverse so the most-recent create/load wins if the agent did
+    // both in one run (e.g. load → modify → create-derivative).
+    for (let i = childSteps.length - 1; i >= 0; i--) {
+      const c = childSteps[i];
+      const t = c.tool;
+      if (!t || c.kind !== 'tool') continue;
+      const name = resolveToolName(t);
+      if (name !== 'create_workflow' && name !== 'load_workflow') continue;
+      // Only deep-link once the tool has actually finished — both create
+      // and load mutate session/disk in their execute step, so completion
+      // is the safe signal that the file is openable.
+      if (t.status !== 'completed') continue;
+      const fromResult = readSpecId(t.result);
+      if (fromResult) return fromResult;
+      const fromArgs = t.args?.workflowId || t.args?.spec?.id || t.args?.tool_args?.spec?.id;
+      if (typeof fromArgs === 'string' && fromArgs) return fromArgs;
+    }
+    return null;
+  }, [hasWorkflowTask, childSteps]);
+
   const statusText = isError
     ? 'Failed'
     : isRunning
@@ -1640,6 +1683,33 @@ const DelegationCard: React.FC<{
           </div>
 
           <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+            {hasWorkflowTask && targetWorkflowId ? (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  try { window.desktopAPI?.openWorkflows({ workflowId: targetWorkflowId }); } catch {}
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try { window.desktopAPI?.openWorkflows({ workflowId: targetWorkflowId }); } catch {}
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer"
+                style={{
+                  backgroundColor: 'color-mix(in srgb, var(--primary) 14%, transparent)',
+                  color: 'color-mix(in srgb, var(--primary) 95%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--primary) 28%, transparent)',
+                }}
+                title={`Open ${targetWorkflowId} in Workflow Studio`}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open in Studio
+              </span>
+            ) : null}
             {isRunning ? (
               <Loader2
                 className="h-3.5 w-3.5 animate-spin"

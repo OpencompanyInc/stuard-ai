@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   },
   openDashboard: (options?: { tab?: string }) => ipcRenderer.invoke('system:openDashboard', options),
   openOnboarding: () => ipcRenderer.invoke('system:openOnboarding'),
-  openWorkflows: (options?: { marketplaceSlug?: string }) => ipcRenderer.invoke('system:openWorkflows', options),
+  openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string }) => ipcRenderer.invoke('system:openWorkflows', options),
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
@@ -230,6 +230,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
   workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
   workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
+  workflowsImportAsWorkspaceFunction: (hostId: string, sourceId: string, options?: { subdir?: string }) => ipcRenderer.invoke('workflows:importAsWorkspaceFunction', hostId, sourceId, options),
   onWorkflowsLog: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:log', handler);
@@ -379,7 +380,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('dashboard:navigate', handler);
     return () => { try { ipcRenderer.off('dashboard:navigate', handler); } catch { } };
   },
-  onWorkflowsNavigate: (cb: (data: { marketplaceSlug: string }) => void) => {
+  onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:navigate', handler);
     return () => { try { ipcRenderer.off('workflows:navigate', handler); } catch { } };

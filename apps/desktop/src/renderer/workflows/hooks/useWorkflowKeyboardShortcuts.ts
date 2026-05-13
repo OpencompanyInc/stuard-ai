@@ -6,6 +6,9 @@ interface UseWorkflowKeyboardShortcutsProps {
   undo: () => void;
   redo: () => void;
   duplicateNode: () => void;
+  copyNodes: () => void | Promise<void>;
+  cutNodes: () => void | Promise<void>;
+  pasteNodes: () => void | Promise<void>;
   run: () => void | Promise<void>;
   stop: () => void | Promise<void>;
   delNode: () => void;
@@ -29,6 +32,9 @@ export function useWorkflowKeyboardShortcuts({
   undo,
   redo,
   duplicateNode,
+  copyNodes,
+  cutNodes,
+  pasteNodes,
   run,
   stop,
   delNode,
@@ -76,6 +82,33 @@ export function useWorkflowKeyboardShortcuts({
       if (mod && key === "d") {
         e.preventDefault();
         duplicateNode();
+        return;
+      }
+
+      // Copy / Cut / Paste — only when NOT typing in a text field, otherwise
+      // we'd hijack the browser's native text clipboard. We also require an
+      // active node selection (or, for paste, a non-empty clipboard handled
+      // inside pasteNodes itself) so plain canvas clicks don't suppress
+      // copying surrounding UI text.
+      if (mod && key === "c" && !isTypingTarget) {
+        if (selectedNodeIds.size > 0 || selectedNodeId) {
+          e.preventDefault();
+          void copyNodes();
+        }
+        return;
+      }
+
+      if (mod && key === "x" && !isTypingTarget) {
+        if (selectedNodeIds.size > 0 || selectedNodeId) {
+          e.preventDefault();
+          void cutNodes();
+        }
+        return;
+      }
+
+      if (mod && key === "v" && !isTypingTarget) {
+        e.preventDefault();
+        void pasteNodes();
         return;
       }
 
@@ -139,6 +172,9 @@ export function useWorkflowKeyboardShortcuts({
     undo,
     redo,
     duplicateNode,
+    copyNodes,
+    cutNodes,
+    pasteNodes,
     run,
     stop,
     delNode,

@@ -83,7 +83,20 @@ function attachUnifiedTasksListener(ws: WebSocket) {
         if (event === 'unified_tasks_get_pending') {
           result = unifiedTasksService.getPendingAssignments();
         } else if (event === 'unified_tasks_mark_triggered') {
-          result = { ok: true };
+          if (data?.taskId && data?.assignmentId) {
+            result = unifiedTasksService.updateAgentAssignment(data.taskId, data.assignmentId, {
+              status: 'triggered',
+              triggeredAt: new Date().toISOString(),
+            });
+          } else {
+            result = { ok: false, error: 'missing_ids' };
+          }
+        } else if (event === 'unified_tasks_find_assignment') {
+          if (data?.assignmentId) {
+            result = unifiedTasksService.findAgentAssignment(data.assignmentId);
+          } else {
+            result = { ok: false, error: 'missing_id' };
+          }
         } else if (event === 'unified_tasks_mark_completed') {
           if (data?.taskId && data?.assignmentId) {
             result = unifiedTasksService.updateAgentAssignment(data.taskId, data.assignmentId, { status: 'completed' });
@@ -440,6 +453,20 @@ function jsonLogic(logic: any, data: any): any {
       if (typeof hay === 'string') return hay.indexOf(String(needle)) !== -1;
       if (Array.isArray(hay)) return hay.includes(needle);
       return false;
+    }
+    case 'empty': {
+      const v = a(Array.isArray(val) ? val[0] : val);
+      if (v == null) return true;
+      if (typeof v === 'string') return v.trim() === '';
+      if (Array.isArray(v)) return v.length === 0;
+      return false;
+    }
+    case 'not_empty': {
+      const v2 = a(Array.isArray(val) ? val[0] : val);
+      if (v2 == null) return false;
+      if (typeof v2 === 'string') return v2.trim() !== '';
+      if (Array.isArray(v2)) return v2.length > 0;
+      return true;
     }
     default:
       return undefined;

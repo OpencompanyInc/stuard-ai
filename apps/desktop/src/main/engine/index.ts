@@ -89,9 +89,9 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   const varsProxy: any = new Proxy({}, {
     get(_t, prop: any) {
       if (typeof prop !== 'string') return undefined;
-      const direct = getVariable(prop, undefined);
+      const direct = getVariable(prop, undefined, safe);
       if (direct !== undefined) return direct;
-      const wf = getVariable(`workflow.${prop}`, undefined);
+      const wf = getVariable(`workflow.${prop}`, undefined, safe);
       return wf;
     },
   });
@@ -99,7 +99,7 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   const workflowProxy: any = new Proxy({}, {
     get(_t, prop: any) {
       if (typeof prop !== 'string') return undefined;
-      return getVariable(`workflow.${prop}`, undefined);
+      return getVariable(`workflow.${prop}`, undefined, safe);
     },
   });
 
@@ -108,6 +108,9 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
   // - $vars.foo (auto-falls back to workflow.foo)
   ctx.workflow = workflowProxy;
   ctx.$vars = varsProxy;
+  // Stash the flow id so deeper resolvers (engine/utils.ts getAtPath) can scope
+  // variable lookups even when they don't have direct access to `safe`.
+  ctx.$flowId = safe;
 
   // Inject $workspace context for workspace-based workflows
   // Lazy require to avoid circular dependency (engine <-> workflows)

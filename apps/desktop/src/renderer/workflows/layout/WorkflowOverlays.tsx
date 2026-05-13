@@ -21,6 +21,9 @@ interface WorkflowOverlaysProps {
   onRunStep: (nodeId: string) => void;
   onRunFromHere: (nodeId: string) => void;
   onDuplicateNode: () => void;
+  onCopyNodes: () => void;
+  onCutNodes: () => void;
+  onPasteNodes: () => void;
   onDeleteNode: () => void;
   onStartReconnect: (wireIndex: number, end: "from" | "to") => void;
   onEditWire: (wireIndex: number) => void;
@@ -75,6 +78,9 @@ export function WorkflowOverlays({
   onRunStep,
   onRunFromHere,
   onDuplicateNode,
+  onCopyNodes,
+  onCutNodes,
+  onPasteNodes,
   onDeleteNode,
   onStartReconnect,
   onEditWire,
@@ -129,6 +135,9 @@ export function WorkflowOverlays({
         onRunStep={onRunStep}
         onRunFromHere={onRunFromHere}
         onDuplicateNode={onDuplicateNode}
+        onCopyNodes={onCopyNodes}
+        onCutNodes={onCutNodes}
+        onPasteNodes={onPasteNodes}
         onDeleteNode={onDeleteNode}
         onStartReconnect={onStartReconnect}
         onEditWire={onEditWire}

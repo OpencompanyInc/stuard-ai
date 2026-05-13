@@ -13,7 +13,19 @@ export interface PendingAssignment {
     type: 'reminder' | 'action' | 'check-in';
     scheduledAt: string;
     message?: string;
-    recurring: 'none' | 'daily' | 'weekly' | 'monthly';
+    recurring:
+      | 'none'
+      | 'daily'
+      | 'weekly'
+      | 'monthly'
+      | {
+          frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+          interval?: number;
+          days?: number[];
+          until?: string;
+          count?: number;
+        }
+      | null;
     status: string;
   };
 }

@@ -1,9 +1,12 @@
 import {
+  Clipboard,
+  ClipboardPaste,
   Copy,
   LayoutGrid,
   Lock,
   Maximize2,
   Play,
+  Scissors,
   Settings,
   SkipForward,
   Trash,
@@ -22,6 +25,9 @@ interface WorkflowContextMenuProps {
   onRunStep: (nodeId: string) => void;
   onRunFromHere: (nodeId: string) => void;
   onDuplicateNode: () => void;
+  onCopyNodes: () => void;
+  onCutNodes: () => void;
+  onPasteNodes: () => void;
   onDeleteNode: () => void;
   onStartReconnect: (wireIndex: number, end: "from" | "to") => void;
   onEditWire: (wireIndex: number) => void;
@@ -40,6 +46,9 @@ export function WorkflowContextMenuOverlay({
   onRunStep,
   onRunFromHere,
   onDuplicateNode,
+  onCopyNodes,
+  onCutNodes,
+  onPasteNodes,
   onDeleteNode,
   onStartReconnect,
   onEditWire,
@@ -108,12 +117,54 @@ export function WorkflowContextMenuOverlay({
                 )}
                 <button
                   onClick={() => {
-                    onDuplicateNode();
+                    onCopyNodes();
                     onClose();
                   }}
                   className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
                 >
                   <Copy className="w-4 h-4 wf-menu-item-muted" />
+                  <span>Copy{selectedNodeIds.size > 1 ? ` ${selectedNodeIds.size} nodes` : ""}</span>
+                  <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
+                    Ctrl+C
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    onCutNodes();
+                    onClose();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                >
+                  <Scissors className="w-4 h-4 wf-menu-item-muted" />
+                  <span>Cut{selectedNodeIds.size > 1 ? ` ${selectedNodeIds.size} nodes` : ""}</span>
+                  <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
+                    Ctrl+X
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    onPasteNodes();
+                    onClose();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                >
+                  <ClipboardPaste className="w-4 h-4 wf-menu-item-muted" />
+                  <span>Paste</span>
+                  <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
+                    Ctrl+V
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    onDuplicateNode();
+                    onClose();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                >
+                  <Clipboard className="w-4 h-4 wf-menu-item-muted" />
                   <span>Duplicate{selectedNodeIds.size > 1 ? ` ${selectedNodeIds.size} nodes` : ""}</span>
                   <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
                     Ctrl+D
@@ -222,6 +273,25 @@ export function WorkflowContextMenuOverlay({
           </>
         ) : (
           <>
+            {!model?.locked && (
+              <>
+                <button
+                  onClick={() => {
+                    onPasteNodes();
+                    onClose();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                >
+                  <ClipboardPaste className="w-4 h-4 wf-menu-item-muted" />
+                  <span>Paste</span>
+                  <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
+                    Ctrl+V
+                  </span>
+                </button>
+                <div className="h-px my-1 wf-menu-divider" />
+              </>
+            )}
+
             <button
               onClick={() => {
                 onAutoOrganize();

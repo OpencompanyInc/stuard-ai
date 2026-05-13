@@ -30,6 +30,11 @@ function coerceInputParams(raw: any): any {
  */
 export function specToDesignerModel(spec: any): DesignerModel {
   try {
+    // Legacy marketplace functions were wrapped as { type: 'function', workflow, node }.
+    // Unwrap so the rest of the converter sees a flat workflow spec.
+    if (spec && typeof spec === 'object' && spec.type === 'function' && spec.workflow) {
+      spec = { ...spec.workflow, functionNode: spec.node, kind: 'function' };
+    }
     const id = String(spec?.id || '').trim() || 'workflow_' + Math.random().toString(36).slice(2, 8);
     const name = String(spec?.name || 'Workflow');
     const version = String(spec?.version || '1');
@@ -71,6 +76,8 @@ export function specToDesignerModel(spec: any): DesignerModel {
         args: n?.args || {},
         fallbackTo: n?.fallbackTo || n?.fallback?.to || '',
         position: n?.position || { x: 40 + (i % 6) * 140, y: 60 + Math.floor(i / 6) * 90 },
+        iconName: typeof n?.iconName === 'string' ? n.iconName : undefined,
+        colorKey: typeof n?.colorKey === 'string' ? n.colorKey : undefined,
       }));
 
       // Normalize wires (sanitize IDs to match nodes)
@@ -95,7 +102,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
         description: spec?.description || undefined,
         outputSchema: Array.isArray(spec?.outputSchema) ? spec.outputSchema : undefined,
         marketplaceSlug: spec?.marketplaceSlug,
-        locked: !!spec?.locked
+        locked: !!spec?.locked,
+        kind: spec?.kind === 'function' ? 'function' : undefined,
+        functionNode: spec?.functionNode && typeof spec.functionNode === 'object' ? spec.functionNode : undefined,
       };
     }
 
@@ -162,7 +171,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
       description: spec?.description || undefined,
       outputSchema: Array.isArray(spec?.outputSchema) ? spec.outputSchema : undefined,
       marketplaceSlug: spec?.marketplaceSlug,
-      locked: !!spec?.locked
+      locked: !!spec?.locked,
+      kind: spec?.kind === 'function' ? 'function' : undefined,
+      functionNode: spec?.functionNode && typeof spec.functionNode === 'object' ? spec.functionNode : undefined,
     };
   } catch (e) {
     console.error('[conversions] specToDesignerModel failed:', e);
@@ -266,5 +277,7 @@ export function designerModelToStuardSpec(m: any): StuardSpec {
   if (Array.isArray(m?.variables) && m.variables.length > 0) result.variables = m.variables;
   if (Array.isArray(m?.outputSchema) && m.outputSchema.length > 0) result.outputSchema = m.outputSchema;
   if (m?.description) result.description = m.description;
+  if (m?.kind === 'function') result.kind = 'function';
+  if (m?.functionNode && typeof m.functionNode === 'object') result.functionNode = m.functionNode;
   return result;
 }

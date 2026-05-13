@@ -2,9 +2,145 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { generateText, streamText, embed } from 'ai';
 import { buildProviderModel, buildProviderEmbeddingModel } from '../utils/models';
-import { safeToolWrite, execLocalTool, hasClientBridge } from './bridge';
+import { safeToolWrite, execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
+import { logUsageEvent } from '../supabase';
 import { writeLog } from '../utils/logger';
 import { buildKnowledgeContext, buildQuickContext } from '../knowledge/retrieval';
+import {
+  loadMediaSources,
+  cleanupUploadedMedia,
+  inferMimeType,
+  normalizeAudioMimeForOpenRouter,
+  isAudioMimeOpenRouterCompatible,
+  type MediaSource,
+} from './media-loader';
+import { transcribeAudio, DEFAULT_STT_MODEL } from '../media/transcription';
+
+// ── OpenRouter audio pre-processing ─────────────────────────────────────────
+// OpenRouter only accepts audio/mpeg (MP3) and audio/wav. When the user
+// supplies an incompatible audio file (m4a, ogg, opus, aac, flac, wma, etc.)
+// we auto-convert to MP3 via the local ffmpeg_convert_media tool before
+// sending the parts.
+
+function isOpenRouterModel(modelId: string): boolean {
+  return modelId.startsWith('openrouter/');
+}
+
+/**
+ * Log usage for an ai_inference call so credit grants get debited.
+ * The /tools/<name> route doesn't bill on its own — each LLM-touching tool
+ * must log its own usage. Best-effort: never throws.
+ */
+async function logAiInferenceUsage(
+  model: string,
+  usage: any,
+  sourceLabel: string,
+): Promise<void> {
+  try {
+    const userId = getBridgeSecrets()?.userId;
+    if (!userId || typeof userId !== 'string') return;
+    if (!usage) return;
+    await logUsageEvent(userId, null, model, {
+      ...usage,
+      sourceType: 'workflow_inference',
+      source_label: sourceLabel,
+    });
+  } catch {
+    // best-effort billing — never break the tool result
+  }
+}
+
+/**
+ * For each audio source whose MIME type is not OpenRouter-compatible,
+ * convert the file to .mp3 on the user's machine via ffmpeg and
+ * replace the source entry in-place so loadMediaSources picks up the
+ * converted file.
+ */
+async function convertIncompatibleAudioForOpenRouter(
+  sources: MediaSource[],
+  writer: any,
+): Promise<{ convertedPaths: string[]; warnings: string[] }> {
+  const convertedPaths: string[] = [];
+  const warnings: string[] = [];
+
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+
+    // Handle data-based sources (pre-loaded base64 from desktop) —
+    // we can't convert on the cloud, but we should normalize MIME and warn.
+    if (!s.path && s.data) {
+      const mime = s.mimeType || 'application/octet-stream';
+      if (!mime.startsWith('audio/')) continue;
+      if (isAudioMimeOpenRouterCompatible(mime)) {
+        s.mimeType = normalizeAudioMimeForOpenRouter(mime);
+      } else {
+        const msg = `Audio format ${mime} is not supported by OpenRouter (requires mp3/wav). Pre-convert on desktop before sending.`;
+        warnings.push(msg);
+        writeLog('ai_inference_audio_incompatible_data', { mime });
+      }
+      continue;
+    }
+
+    if (!s.path) continue;
+    const mime = s.mimeType || inferMimeType(s.path);
+    if (!mime.startsWith('audio/')) continue;
+    if (isAudioMimeOpenRouterCompatible(mime)) {
+      // Already compatible — just normalize the mime string
+      s.mimeType = normalizeAudioMimeForOpenRouter(mime);
+      continue;
+    }
+
+    // Need conversion — derive an output path next to the original file
+    const outputPath = s.path.replace(/\.[^.]+$/, '_openrouter.mp3');
+
+    await safeToolWrite(writer, {
+      type: 'tool_event',
+      tool: 'ai_inference',
+      status: 'converting_audio',
+      originalMime: mime,
+      targetMime: 'audio/mpeg',
+      path: s.path,
+      outputPath,
+    });
+
+    try {
+      const result = await execLocalTool(
+        'ffmpeg_convert_media',
+        { inputPath: s.path, outputPath, overwrite: true },
+        writer,
+      );
+
+      if (result?.ok) {
+        // Swap the source to the converted file
+        sources[i] = { ...s, path: outputPath, mimeType: 'audio/mpeg' };
+        convertedPaths.push(outputPath);
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'audio_converted',
+          path: outputPath,
+        });
+      } else {
+        const msg = `Failed to convert ${s.path} (${mime}) to MP3 for OpenRouter: ${result?.error || 'unknown'}`;
+        warnings.push(msg);
+        writeLog('ai_inference_audio_convert_fail', { path: s.path, mime, error: result?.error });
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'audio_convert_failed',
+          path: s.path,
+          error: result?.error || 'ffmpeg_failed',
+        });
+      }
+    } catch (err: any) {
+      const msg = `Audio conversion error for ${s.path}: ${err?.message || 'unknown'}`;
+      warnings.push(msg);
+      writeLog('ai_inference_audio_convert_error', { path: s.path, error: err?.message });
+    }
+  }
+
+  return { convertedPaths, warnings };
+}
 
 /**
  * ai_inference - General purpose AI text/structured inference tool
@@ -66,7 +202,7 @@ function buildZodSchema(shape: Record<string, any>): z.ZodObject<any> {
 export const aiInferenceTool = createTool({
   id: 'ai_inference',
   description:
-    'Run AI inference on text input. Returns either plain text, structured JSON, or embeddings based on mode. Use for summarization, classification, extraction, Q&A, or any text-to-text/JSON transformation. Models: fast=DeepSeek/Gemini Flash, balanced=Grok/GPT-4o Mini, smart=Gemini Pro/GPT-5.',
+    'Unified AI inference — text, multimodal (image / audio / video / PDF / current screen), structured JSON, embeddings, or dedicated speech-to-text transcription (mode: "transcription" with a whisper-style model). Models routed via OpenRouter; vision-capable models required when sources are provided. Use for summarization, classification, extraction, Q&A, screen analysis, transcription, OCR, or any text/media → text/JSON transformation.',
   inputSchema: z.object({
     prompt: z
       .string()
@@ -75,10 +211,26 @@ export const aiInferenceTool = createTool({
       .string()
       .optional()
       .describe('Optional input text to process. Can also be embedded in prompt.'),
+    sources: z
+      .array(
+        z.object({
+          url: z.string().url().optional().describe('YouTube URL or direct media URL (video/PDF/image/audio)'),
+          path: z.string().optional().describe('Local file path to image, audio, video, or PDF'),
+          data: z.string().optional().describe('Base64-encoded media payload'),
+          mimeType: z.string().optional().describe('MIME type (auto-detected from extension when omitted)'),
+          captureScreen: z.boolean().optional().describe('If true, capture the current screen and analyze it (ignores other source fields)'),
+        }),
+      )
+      .optional()
+      .describe('Optional media inputs. When provided, the AI receives the prompt plus the media payload(s). Requires a vision-capable model.'),
     mode: z
-      .enum(['text', 'json', 'embedding'])
+      .enum(['text', 'json', 'embedding', 'transcription'])
       .default('text')
-      .describe('Output mode: "text" for plain text, "json" for structured output, "embedding" for vector embeddings'),
+      .describe('Output mode: "text" for plain text, "json" for structured output, "embedding" for vector embeddings, "transcription" for audio → text via OpenRouter STT (e.g. openai/whisper-1)'),
+    language: z
+      .string()
+      .optional()
+      .describe('Optional ISO-639-1 language code (e.g. "en", "ja") for transcription mode. Auto-detected when omitted.'),
     schema: z
       .record(z.string(), z.any())
       .optional()
@@ -86,7 +238,7 @@ export const aiInferenceTool = createTool({
     model: z
       .string()
       .default('openai/gpt-4.1-mini')
-      .describe('Model selection: e.g. "openai/gpt-4.1-mini", "google/gemini-2.5-pro". Defaults to "openai/gpt-4.1-mini"'),
+      .describe('Model selection: any OpenRouter model ID, e.g. "openai/gpt-4.1-mini", "google/gemini-3.1-pro-preview", "anthropic/claude-sonnet-4-20250514". Pick a vision-capable model when supplying sources.'),
     temperature: z
       .number()
       .min(0)
@@ -137,6 +289,7 @@ export const aiInferenceTool = createTool({
     const {
       prompt,
       input,
+      sources,
       mode,
       schema,
       model: modelId,
@@ -145,10 +298,12 @@ export const aiInferenceTool = createTool({
       stream: streamMode = false,
       injectMemory = false,
       memory: memoryConfig,
+      language,
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
-      mode: 'text' | 'json' | 'embedding';
+      sources?: MediaSource[];
+      mode: 'text' | 'json' | 'embedding' | 'transcription';
       schema?: Record<string, any>;
       model: string;
       temperature: number;
@@ -156,7 +311,10 @@ export const aiInferenceTool = createTool({
       stream?: boolean;
       injectMemory?: boolean;
       memory?: { enabled: boolean; lenses?: Record<string, boolean>; maxFacts?: number; conversationHistory?: { role: string; content: string }[]; customFacts?: string[] };
+      language?: string;
     };
+
+    const hasMedia = Array.isArray(sources) && sources.length > 0;
 
     await safeToolWrite(writer, {
       type: 'tool_event',
@@ -177,10 +335,12 @@ export const aiInferenceTool = createTool({
       const textToEmbed = input ? `${prompt}\n${input}` : prompt;
 
       try {
-        const { embedding: resultEmbedding } = await embed({
+        const { embedding: resultEmbedding, usage: embedUsage } = await embed({
           model: aiEmbeddingModel,
           value: textToEmbed,
         });
+
+        await logAiInferenceUsage(embeddingModelId, embedUsage, 'ai_inference:embedding');
 
         await safeToolWrite(writer, {
           type: 'tool_event',
@@ -199,6 +359,81 @@ export const aiInferenceTool = createTool({
         });
 
         return { ok: false, error: err?.message || 'embedding_failed', model: embeddingModelId };
+      }
+    }
+
+    if (mode === 'transcription') {
+      // Dedicated audio → text via OpenRouter /audio/transcriptions.
+      // Use the user's model if it looks like an STT slug (contains "whisper"),
+      // otherwise fall back to the default Whisper model.
+      const sttModel = /whisper/i.test(modelId) ? modelId : DEFAULT_STT_MODEL;
+
+      if (!Array.isArray(sources) || sources.length === 0) {
+        const err = 'transcription mode requires at least one audio source';
+        await safeToolWrite(writer, { type: 'tool_event', tool: 'ai_inference', status: 'error', error: err });
+        return { ok: false, error: err, model: sttModel };
+      }
+
+      let uploadedForStt: string[] = [];
+      try {
+        const loaded = await loadMediaSources([...sources], writer, 'ai_inference');
+        uploadedForStt = loaded.uploadedObjects;
+
+        const audioPart = loaded.parts.find(p => p.mediaType.startsWith('audio/'));
+        if (!audioPart) {
+          const err = 'transcription mode requires an audio source (no audio/* part found)';
+          await safeToolWrite(writer, { type: 'tool_event', tool: 'ai_inference', status: 'error', error: err });
+          return { ok: false, error: err, model: sttModel };
+        }
+
+        // loadMediaSources returns base64 for inlined audio, or a URL for video.
+        // We require base64 here — audio always inlines via shouldReadDirectly.
+        if (/^https?:\/\//i.test(audioPart.data)) {
+          const err = 'transcription audio was not inlined as base64 (unexpected URL part)';
+          await safeToolWrite(writer, { type: 'tool_event', tool: 'ai_inference', status: 'error', error: err });
+          return { ok: false, error: err, model: sttModel };
+        }
+
+        const buffer = Buffer.from(audioPart.data, 'base64');
+        const result = await transcribeAudio(buffer, audioPart.mediaType, language, sttModel);
+
+        // OpenRouter STT returns usage.cost in USD directly — pass it through
+        // as costUsd so logUsageEvent uses the exact billed amount.
+        await logAiInferenceUsage(
+          result.model,
+          result.usage
+            ? {
+                costUsd: result.usage.cost,
+                promptTokens: result.usage.input_tokens,
+                completionTokens: result.usage.output_tokens,
+                totalTokens: result.usage.total_tokens,
+                audioSeconds: result.usage.seconds,
+              }
+            : null,
+          'ai_inference:transcription',
+        );
+
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'completed',
+          mode: 'transcription',
+          length: result.transcript.length,
+        });
+
+        return { ok: true, text: result.transcript, model: sttModel };
+      } catch (err: any) {
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: 'error',
+          error: err?.message || 'transcription_failed',
+        });
+        return { ok: false, error: err?.message || 'transcription_failed', model: sttModel };
+      } finally {
+        if (uploadedForStt.length > 0) {
+          await cleanupUploadedMedia(uploadedForStt);
+        }
       }
     }
 
@@ -291,7 +526,51 @@ export const aiInferenceTool = createTool({
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
-    messages.push({ role: 'user', content: fullPrompt });
+
+    // Load media sources (image / audio / video / PDF / current screen) if provided.
+    // The cleanup callback removes any temporary GCS objects after the call settles.
+    let uploadedObjects: string[] = [];
+    let convertedAudioPaths: string[] = [];
+    if (hasMedia) {
+      const mutableSources = [...sources!];
+
+      // ── OpenRouter audio pre-processing ──────────────────────────────────
+      // Convert unsupported audio formats (m4a/ogg/opus/aac/flac/…) → MP3
+      // and normalize MIME types before loadMediaSources runs.
+      if (isOpenRouterModel(modelId)) {
+        const { convertedPaths, warnings } =
+          await convertIncompatibleAudioForOpenRouter(mutableSources, writer);
+        convertedAudioPaths = convertedPaths;
+
+        if (warnings.length > 0) {
+          await safeToolWrite(writer, {
+            type: 'tool_event',
+            tool: 'ai_inference',
+            status: 'audio_warnings',
+            warnings,
+          });
+        }
+      }
+
+      const loaded = await loadMediaSources(mutableSources, writer, 'ai_inference');
+      uploadedObjects = loaded.uploadedObjects;
+
+      // Emit a media_attached event so users/workflows can see what was sent
+      await safeToolWrite(writer, {
+        type: 'tool_event',
+        tool: 'ai_inference',
+        status: 'media_attached',
+        count: loaded.parts.length,
+        mediaTypes: loaded.parts.map((p: any) => p.mediaType),
+      });
+
+      messages.push({
+        role: 'user',
+        content: [{ type: 'text', text: fullPrompt }, ...loaded.parts],
+      });
+    } else {
+      messages.push({ role: 'user', content: fullPrompt });
+    }
 
     try {
       // ── STREAM MODE: create stream, push tokens in background, return immediately ──
@@ -308,7 +587,13 @@ export const aiInferenceTool = createTool({
 
         const streamId = streamResult.streamId;
 
-        // Fire and forget — stream tokens in background
+        // Fire and forget — stream tokens in background.
+        // Defer media cleanup until the stream finishes so the model can
+        // still fetch GCS-hosted URLs while generating.
+        const uploadedForStream = uploadedObjects;
+        const convertedForStream = convertedAudioPaths;
+        uploadedObjects = [];
+        convertedAudioPaths = [];
         (async () => {
           try {
             const result = await streamText({
@@ -322,10 +607,23 @@ export const aiInferenceTool = createTool({
                 await execLocalTool('stream_write', { streamId, chunk, chunkType: 'raw' }).catch(() => {});
               }
             }
+
+            // Stream done — usage is now resolvable. Log it so credits debit.
+            try {
+              const streamUsage = await result.usage;
+              await logAiInferenceUsage(modelId, streamUsage, 'ai_inference:stream');
+            } catch { /* best-effort billing */ }
           } catch (err: any) {
             writeLog('ai_inference_stream_error', { streamId, error: err?.message });
           } finally {
             await execLocalTool('stream_close', { streamId }).catch(() => {});
+            if (uploadedForStream.length > 0) {
+              await cleanupUploadedMedia(uploadedForStream);
+            }
+            // Clean up converted audio temp files
+            for (const p of convertedForStream) {
+              try { await execLocalTool('delete_file', { path: p }, writer); } catch { /* best-effort */ }
+            }
           }
         })();
 
@@ -333,20 +631,32 @@ export const aiInferenceTool = createTool({
       }
 
       if (mode === 'json' && schema) {
-        // Structured JSON output
-        const zodSchema = buildZodSchema(schema);
-        
-        // Use generateText with JSON instruction since generateObject can be finicky
+        // Structured JSON output — augment the existing user message (which may
+        // contain media parts) with the schema instruction instead of replacing it.
         const schemaDesc = JSON.stringify(schema);
-        const jsonPrompt = `${fullPrompt}\n\nRespond with a valid JSON object matching this schema: ${schemaDesc}\nOutput ONLY the JSON, no markdown or explanation.`;
-        
+        const jsonInstruction = `\n\nRespond with a valid JSON object matching this schema: ${schemaDesc}\nOutput ONLY the JSON, no markdown or explanation.`;
+
+        const last = messages[messages.length - 1];
+        if (last?.role === 'user') {
+          if (Array.isArray(last.content)) {
+            const textPart = last.content.find((p: any) => p?.type === 'text');
+            if (textPart) {
+              textPart.text += jsonInstruction;
+            } else {
+              last.content.unshift({ type: 'text', text: jsonInstruction.trim() });
+            }
+          } else if (typeof last.content === 'string') {
+            last.content += jsonInstruction;
+          }
+        }
+
         const result = await generateText({
           model: aiModel as any,
-          messages: systemPrompt 
-            ? [{ role: 'system', content: systemPrompt }, { role: 'user', content: jsonPrompt }]
-            : [{ role: 'user', content: jsonPrompt }],
+          messages,
           temperature,
         });
+
+        await logAiInferenceUsage(modelId, result.usage, 'ai_inference:json');
 
         let jsonResult: any;
         try {
@@ -384,6 +694,8 @@ export const aiInferenceTool = createTool({
           temperature,
         });
 
+        await logAiInferenceUsage(modelId, result.usage, 'ai_inference:text');
+
         const text = result.text?.trim() || '';
 
         await safeToolWrite(writer, {
@@ -405,6 +717,20 @@ export const aiInferenceTool = createTool({
       });
 
       return { ok: false, error: err?.message || 'inference_failed', model: modelId };
+    } finally {
+      if (uploadedObjects.length > 0) {
+        await cleanupUploadedMedia(uploadedObjects);
+      }
+      // Clean up temporary converted audio files
+      if (convertedAudioPaths.length > 0) {
+        for (const p of convertedAudioPaths) {
+          try {
+            await execLocalTool('delete_file', { path: p }, writer);
+          } catch {
+            // best-effort cleanup
+          }
+        }
+      }
     }
   },
 } as any);

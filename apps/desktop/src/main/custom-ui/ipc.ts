@@ -3,7 +3,7 @@ import * as path from 'path';
 import { BrowserWindow, screen, ipcMain, dialog, clipboard, Notification, app } from 'electron';
 import type { RouterContext } from '../tool-router';
 import { execTool, execLocalTool } from '../tools/index';
-import { onVariableChange, variableStore, setVariable, getVariable, type VariableEntry } from '../workflow-variables';
+import { onVariableChange, variableStore, setVariable, getVariable, parseStorageKey, composeStorageKey, type VariableEntry } from '../workflow-variables';
 import { customUiWindows, windowData } from './state';
 import { approvePathForWindow, isPathAllowed, isPathApprovedForWindow } from './security';
 import { emitStepEvent } from '../engine/events';
@@ -17,16 +17,25 @@ function varNameMatches(storeKey: string, bindName: string): boolean {
 }
 
 function broadcastVariableUpdate(name: string, entry: VariableEntry, _previousValue: any): void {
+  // Storage keys for scoped vars are `${flowId}::${scope}.${shortName}`.
+  // Parse the flowId so we only broadcast to windows owned by the same flow.
+  const { flowId: keyFlowId, scopedName } = parseStorageKey(name);
   for (const [id, win] of customUiWindows) {
     if (win.isDestroyed()) continue;
     const wd = windowData.get(id);
+
+    // Scoped vars: only deliver to windows belonging to the owning flow.
+    // Legacy unscoped keys (no flowId in key) fall back to entry.flowId, then
+    // to broadcast-everywhere for truly global state.
+    const ownerFlowId = keyFlowId ?? entry.flowId;
+    if (ownerFlowId && wd?.flowId && wd.flowId !== ownerFlowId) continue;
 
     // If this window explicitly subscribed to this variable, push the update
     const subs = wd?.subscribedVars;
     let shouldSend = false;
     if (subs) {
       for (const sub of subs) {
-        if (varNameMatches(name, sub)) {
+        if (varNameMatches(scopedName, sub)) {
           shouldSend = true;
           break;
         }
@@ -41,9 +50,9 @@ function broadcastVariableUpdate(name: string, entry: VariableEntry, _previousVa
     if (shouldSend) {
       try {
         // Strip 'workflow.' prefix for the bind name so `data-var="counter"` matches
-        const shortName = name.startsWith('workflow.') ? name.slice('workflow.'.length) : name;
+        const shortName = scopedName.startsWith('workflow.') ? scopedName.slice('workflow.'.length) : scopedName;
         win.webContents.send('stuard:var-update', {
-          name,
+          name: scopedName,
           shortName,
           value: entry.value,
           type: entry.type,
@@ -118,11 +127,25 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
     }
   });
 
+  // Helper: find the flowId associated with the event's sender window.
+  const flowIdForEvent = (event: any): string | undefined => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return undefined;
+    for (const [id, w] of customUiWindows) {
+      if (w === win) return windowData.get(id)?.flowId || undefined;
+    }
+    return undefined;
+  };
+
   // Get current value of a workflow variable (for initial rendering of data-var elements)
-  ipcMain.handle('stuard:getVar', (_event, varName: string) => {
-    // Try exact match first, then with workflow. prefix
-    let entry = variableStore.get(varName);
-    if (!entry) entry = variableStore.get(`workflow.${varName}`);
+  ipcMain.handle('stuard:getVar', (event, varName: string) => {
+    const flowId = flowIdForEvent(event);
+    // Try exact match first (scoped → unscoped), then with workflow. prefix
+    const direct = variableStore.get(composeStorageKey(flowId, varName)) ?? variableStore.get(varName);
+    const wfName = `workflow.${varName}`;
+    const entry = direct
+      ?? variableStore.get(composeStorageKey(flowId, wfName))
+      ?? variableStore.get(wfName);
     if (entry) {
       return { ok: true, name: varName, value: entry.value, type: entry.type };
     }
@@ -130,20 +153,26 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
   });
 
   // Set a workflow variable directly from custom UI
-  ipcMain.handle('stuard:setVar', (_event, args: { name: string; value: any; type?: string }) => {
+  ipcMain.handle('stuard:setVar', (event, args: { name: string; value: any; type?: string }) => {
     const { name, value, type } = args || {};
     if (!name) return { ok: false, error: 'missing_variable_name' };
+    const flowId = flowIdForEvent(event);
 
-    // Resolve name: try exact first, then with workflow. prefix for existing vars
+    // Resolve name: prefer flow-scoped lookups, then legacy unscoped, then default to workflow.<name>
     let resolvedName = name;
-    if (!variableStore.has(name) && !name.startsWith('workflow.')) {
+    if (!name.startsWith('workflow.') && !name.startsWith('local.')) {
       const wfName = `workflow.${name}`;
-      if (variableStore.has(wfName)) {
+      const scopedKey = composeStorageKey(flowId, wfName);
+      if (variableStore.has(scopedKey) || variableStore.has(wfName)) {
+        resolvedName = wfName;
+      } else if (!variableStore.has(name)) {
+        // Brand-new variable from the UI — default to workflow scope so it
+        // shares the same namespace as the rest of the workflow.
         resolvedName = wfName;
       }
     }
 
-    const entry = setVariable(resolvedName, value, type as any);
+    const entry = setVariable(resolvedName, value, type as any, flowId);
     const ctx = getRouterContext();
     ctx.logFn(`[custom_ui] setVar: ${resolvedName} = ${JSON.stringify(entry.value)} (${entry.type})`);
     return { ok: true, name: resolvedName, value: entry.value, type: entry.type };
@@ -280,23 +309,26 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
         }
       } catch { }
 
-      // Inject $vars and workflow proxies for variable access
+      // Inject $vars and workflow proxies for variable access — scoped to the
+      // calling window's workflow so two flows with same-named vars don't mix.
+      const winFlowIdForVars = winFlowId;
       const varsProxy: any = new Proxy({}, {
         get(_t: any, prop: any) {
           if (typeof prop !== 'string') return undefined;
-          const direct = getVariable(prop, undefined);
+          const direct = getVariable(prop, undefined, winFlowIdForVars);
           if (direct !== undefined) return direct;
-          return getVariable(`workflow.${prop}`, undefined);
+          return getVariable(`workflow.${prop}`, undefined, winFlowIdForVars);
         },
       });
       const workflowProxy: any = new Proxy({}, {
         get(_t: any, prop: any) {
           if (typeof prop !== 'string') return undefined;
-          return getVariable(`workflow.${prop}`, undefined);
+          return getVariable(`workflow.${prop}`, undefined, winFlowIdForVars);
         },
       });
       interpolationCtx.$vars = varsProxy;
       interpolationCtx.workflow = workflowProxy;
+      interpolationCtx.$flowId = winFlowIdForVars;
 
       // Use the engine's battle-tested interpolation which handles:
       //  - Nested templates like {{arr[{{i}}]}}

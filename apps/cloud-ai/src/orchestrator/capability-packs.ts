@@ -228,6 +228,9 @@ const WORKFLOW_TOOLS = [
   // Bootstrap (delegate-only — studio always has a session workflow loaded).
   // Single step: seeds session + persists to Automations.
   'create_workflow',
+  // Load an existing saved workflow into session so inspect/modify can act on
+  // it. Delegate-only — studio loads the workflow through the UI.
+  'load_workflow',
   // ── identical to the studio agent's toolkit from here on ──
   'search_workflow_docs',
   'search_workflow_nodes',

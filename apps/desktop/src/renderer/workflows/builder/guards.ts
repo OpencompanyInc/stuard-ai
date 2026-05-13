@@ -116,6 +116,10 @@ export function guardToString(guard: any): string {
       return `!${guardToString(val)}`;
     case 'in':
       return `${guardToString(val[0])} in ${formatValue(val[1])}`;
+    case 'empty':
+      return `${guardToString(Array.isArray(val) ? val[0] : val)} is empty`;
+    case 'not_empty':
+      return `${guardToString(Array.isArray(val) ? val[0] : val)} is not empty`;
     default:
       return JSON.stringify(guard);
   }
@@ -177,6 +181,16 @@ export function guardToShortLabel(guard: any, rightOnly?: boolean, useBool?: boo
     const left = shortVar(val[0]);
     const text = `${left} ${op} ${right}`;
     return { text: text.length > 20 ? text.slice(0, 18) + '..' : text, positive: true };
+  }
+
+  // Unary operators: empty / not_empty
+  if (op === 'empty') {
+    const left = shortVar(Array.isArray(val) ? val[0] : val);
+    return { text: `${left} empty`, positive: false };
+  }
+  if (op === 'not_empty') {
+    const left = shortVar(Array.isArray(val) ? val[0] : val);
+    return { text: `${left} ≠ empty`, positive: true };
   }
 
   // and / or → show compact

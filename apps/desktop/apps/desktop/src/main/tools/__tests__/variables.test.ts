@@ -23,7 +23,7 @@ vi.mock('../../workflow-variables', () => {
     composeStorageKey: compose,
     parseStorageKey: parse,
     saveVariables: vi.fn(),
-    setVariable: vi.fn((name: string, value: any, type: any, flowId: string | undefined) => {
+    setVariable: vi.fn((name, value, type, flowId) => {
       const key = compose(flowId, name);
       const entry = {
         value,
@@ -34,7 +34,7 @@ vi.mock('../../workflow-variables', () => {
       store.set(key, entry);
       return entry;
     }),
-    getVariable: vi.fn((name: string, _def: any, flowId: string | undefined) => {
+    getVariable: vi.fn((name, _def, flowId) => {
       if (flowId && isScoped(name)) {
         const scoped = store.get(compose(flowId, name));
         if (scoped) return scoped.value;

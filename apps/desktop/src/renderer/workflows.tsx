@@ -38,6 +38,11 @@ import { usePreferences } from "./hooks/usePreferences";
 import type { ReasoningLevel } from "./hooks/usePreferences";
 import { WorkflowThemeContext } from "./workflows/WorkflowThemeContext";
 import { getWorkflowTemplate } from "./workflows/constants/workflowTemplates";
+import {
+  buildClipboardPayload,
+  readWorkflowClipboard,
+  writeWorkflowClipboard,
+} from "./workflows/utils/workflowClipboard";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
@@ -317,6 +322,10 @@ function WorkflowsApp() {
     workspaceInfo,
   });
 
+  // Deep-link state — the effects that consume `load` live further down,
+  // after `load` is declared, to avoid the TDZ trap.
+  const pendingDeepLinkRef = useRef<string | null>(null);
+
   // Fetch credits on mount
   useEffect(() => {
     const fetchCredits = async () => {
@@ -386,6 +395,37 @@ function WorkflowsApp() {
       }
     }
   }, [chat]);
+
+  // Deep-link: open a specific workflow on launch (?workflowId=...) or when
+  // the host sends a `workflows:navigate` IPC with a workflowId. Used by the
+  // chat-side "Open in Studio" button after a workflow subagent finishes.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialId = params.get('workflowId');
+    if (initialId) pendingDeepLinkRef.current = initialId;
+
+    const unsub = (window as any).desktopAPI?.onWorkflowsNavigate?.((d: any) => {
+      if (d?.workflowId) {
+        pendingDeepLinkRef.current = String(d.workflowId);
+        if (items.some((it: any) => it.id === d.workflowId)) {
+          load(String(d.workflowId));
+          pendingDeepLinkRef.current = null;
+        } else {
+          refresh();
+        }
+      }
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, [items, load, refresh]);
+
+  useEffect(() => {
+    const pending = pendingDeepLinkRef.current;
+    if (!pending) return;
+    if (items.some((it: any) => it.id === pending)) {
+      load(pending);
+      pendingDeepLinkRef.current = null;
+    }
+  }, [items, load]);
 
   const save = useCallback(async () => {
     if (!selectedId || !model) return;
@@ -724,11 +764,116 @@ function WorkflowsApp() {
     setSelectedNodeId(newIds.size > 0 ? [...newIds][0] : "");
   }, [selectedNodeId, selectedNodeIds, model, updateModel]);
 
+  // Track the last mouse position over the canvas so paste can drop nodes
+  // near where the user is looking. Falls back to a +40 offset from origin.
+  const lastCanvasPointRef = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      lastCanvasPointRef.current = {
+        x: (e.clientX - rect.left + el.scrollLeft) / zoom,
+        y: (e.clientY - rect.top + el.scrollTop) / zoom,
+      };
+    };
+    el.addEventListener("mousemove", onMove);
+    return () => el.removeEventListener("mousemove", onMove);
+  }, [zoom, model]);
+
+  const copyNodes = useCallback(async () => {
+    if (!model) return;
+    const ids = selectedNodeIds.size > 0
+      ? selectedNodeIds
+      : (selectedNodeId ? new Set([selectedNodeId]) : new Set<string>());
+    if (ids.size === 0) return;
+    const triggers = model.triggers.filter(t => ids.has(t.id));
+    const nodes = model.nodes.filter(n => ids.has(n.id));
+    // Only carry wires whose endpoints are both inside the selection.
+    const wires = model.wires.filter(w => ids.has(w.from) && ids.has(w.to));
+    await writeWorkflowClipboard(buildClipboardPayload(triggers, nodes, wires));
+  }, [model, selectedNodeId, selectedNodeIds]);
+
+  const cutNodes = useCallback(async () => {
+    if (!model || model.locked) return;
+    await copyNodes();
+    delNode();
+  }, [model, copyNodes, delNode]);
+
+  const pasteNodes = useCallback(async () => {
+    if (!model || model.locked) return;
+    const payload = await readWorkflowClipboard();
+    if (!payload) return;
+    const totalSrc = [...payload.triggers, ...payload.nodes];
+    if (totalSrc.length === 0) return;
+
+    // Normalize source positions so the paste anchors at the cursor
+    // (or origin + 40,40 if cursor is unknown). Without normalizing,
+    // cross-workflow pastes would land wherever the source workflow
+    // had the nodes — often off-screen.
+    let minX = Infinity, minY = Infinity;
+    for (const item of totalSrc) {
+      minX = Math.min(minX, item.position?.x ?? 0);
+      minY = Math.min(minY, item.position?.y ?? 0);
+    }
+    if (!isFinite(minX)) minX = 0;
+    if (!isFinite(minY)) minY = 0;
+    const anchor = lastCanvasPointRef.current ?? { x: minX + 40, y: minY + 40 };
+    const dx = anchor.x - minX;
+    const dy = anchor.y - minY;
+
+    // Remap source IDs to fresh ones so nothing collides with existing nodes
+    // (including the case where the user pastes back into the same workflow).
+    const idMap = new Map<string, string>();
+    const stamp = Date.now().toString(36);
+    let counter = 0;
+    const mintId = (kind: string) => {
+      const safeKind = String(kind || "step").replace(/\./g, "_").split(".").pop() || "step";
+      const suffix = counter === 0 ? "" : String(counter);
+      counter++;
+      return `${safeKind}_${stamp}${suffix}`;
+    };
+    for (const t of payload.triggers) idMap.set(t.id, mintId(t.type || "trigger"));
+    for (const n of payload.nodes) idMap.set(n.id, mintId(n.type || "step"));
+
+    const newTriggers = payload.triggers.map(t => ({
+      ...t,
+      id: idMap.get(t.id)!,
+      position: { x: Math.max(0, (t.position?.x ?? 0) + dx), y: Math.max(0, (t.position?.y ?? 0) + dy) },
+    }));
+    const newNodes = payload.nodes.map(n => ({
+      ...n,
+      id: idMap.get(n.id)!,
+      // fallbackTo may point to another copied node — rewrite when possible,
+      // otherwise drop it so we don't leave a dangling reference.
+      fallbackTo: n.fallbackTo ? (idMap.get(n.fallbackTo) ?? "") : n.fallbackTo,
+      position: { x: Math.max(0, (n.position?.x ?? 0) + dx), y: Math.max(0, (n.position?.y ?? 0) + dy) },
+    }));
+    const newWires = payload.wires
+      .filter(w => idMap.has(w.from) && idMap.has(w.to))
+      .map(w => ({ ...w, from: idMap.get(w.from)!, to: idMap.get(w.to)! }));
+
+    updateModel({
+      ...model,
+      triggers: [...model.triggers, ...newTriggers],
+      nodes: [...model.nodes, ...newNodes],
+      wires: [...model.wires, ...newWires],
+    });
+
+    const pastedIds = new Set([...newTriggers.map(t => t.id), ...newNodes.map(n => n.id)]);
+    setSelectedNodeIds(pastedIds);
+    setSelectedNodeId(pastedIds.size > 0 ? [...pastedIds][0] : "");
+    setSelectedWireIndex(null);
+  }, [model, updateModel, setSelectedNodeIds, setSelectedNodeId, setSelectedWireIndex]);
+
   useWorkflowKeyboardShortcuts({
     save,
     undo,
     redo,
     duplicateNode,
+    copyNodes,
+    cutNodes,
+    pasteNodes,
     run,
     stop,
     delNode,
@@ -867,6 +1012,9 @@ function WorkflowsApp() {
           onRunStep={() => { }}
           onRunFromHere={() => { }}
           onDuplicateNode={() => { }}
+          onCopyNodes={() => { }}
+          onCutNodes={() => { }}
+          onPasteNodes={() => { }}
           onDeleteNode={() => { }}
           onStartReconnect={() => { }}
           onEditWire={() => { }}
@@ -1171,6 +1319,9 @@ function WorkflowsApp() {
         onRunStep={runStep}
         onRunFromHere={runFromHere}
         onDuplicateNode={duplicateNode}
+        onCopyNodes={copyNodes}
+        onCutNodes={cutNodes}
+        onPasteNodes={pasteNodes}
         onDeleteNode={delNode}
         onStartReconnect={startReconnect}
         onEditWire={(wireIndex) => {

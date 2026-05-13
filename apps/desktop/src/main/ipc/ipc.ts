@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativ
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, getMainWindow } from "../windows";
-import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions } from "../workflows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
@@ -285,7 +285,7 @@ export function setupIpc() {
 
   // System windows
   ipcMain.handle("system:openDashboard", (_e, options?: { tab?: string }) => openDashboardWindow(options));
-  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string }) => openWorkflowsWindow(options));
+  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string; workflowId?: string }) => openWorkflowsWindow(options));
   ipcMain.handle("system:openOnboarding", () => openOnboardingWindow());
   ipcMain.handle("system:closeOnboarding", () => closeOnboardingWindow());
   ipcMain.handle("system:openVoiceTest", () => openVoiceTestWindow());
@@ -1046,6 +1046,7 @@ export function setupIpc() {
   ipcMain.handle('workflows:readWorkspaceStuard', (_e, id: string, subPath: string) => workflows_readWorkspaceStuard(id, subPath));
   ipcMain.handle('workflows:saveWorkspaceStuard', (_e, id: string, subPath: string, content: string) => workflows_saveWorkspaceStuard(id, subPath, content));
   ipcMain.handle('workflows:listWorkspaceFunctions', (_e, id: string) => workflows_listWorkspaceFunctions(id));
+  ipcMain.handle('workflows:importAsWorkspaceFunction', (_e, hostId: string, sourceId: string, options?: { subdir?: string }) => workflows_importAsWorkspaceFunction(hostId, sourceId, options));
 
   // Python Environment Management
   ipcMain.handle('python:status', async () => {

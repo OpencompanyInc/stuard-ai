@@ -14,6 +14,7 @@ export interface UpstreamNode {
   isTrigger?: boolean;
   hasStream?: boolean;
   mediaKind?: string;
+  inputParams?: Array<{ name: string; type?: string; description?: string }>;
 }
 
 interface TextInputWithVariablesProps {
@@ -38,8 +39,14 @@ function getSuggestionFields(node: UpstreamNode, suggestFrom?: string[]): string
       })
     );
 
+  // For triggers, always surface user-defined inputParams (they're how the
+  // workflow receives runtime data — e.g. {{trigger.data.<paramName>}}).
+  const paramNames = node.isTrigger && Array.isArray(node.inputParams)
+    ? node.inputParams.map(p => p.name).filter(Boolean)
+    : [];
+
   if (!node.hasStream) {
-    return relevantOutputs;
+    return [...new Set([...paramNames, ...relevantOutputs])];
   }
 
   const extra = ['text', 'chunk', 'chunkIndex', 'fullText', 'streamId'];
@@ -47,7 +54,7 @@ function getSuggestionFields(node: UpstreamNode, suggestFrom?: string[]): string
     extra.push('volumePercent', 'chunk.volumePercent');
   }
 
-  return [...new Set([...relevantOutputs, ...extra])];
+  return [...new Set([...paramNames, ...relevantOutputs, ...extra])];
 }
 
 export function TextInputWithVariables({

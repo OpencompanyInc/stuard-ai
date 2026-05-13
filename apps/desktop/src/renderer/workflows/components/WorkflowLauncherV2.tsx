@@ -4,10 +4,10 @@ import {
   Activity,
   Box,
   Calendar,
+  CheckCircle2,
   ChevronsUpDown,
   Download,
   ExternalLink,
-  Globe,
   LayoutGrid,
   Layers,
   Lock,
@@ -219,7 +219,13 @@ export function WorkflowLauncherV2({
       try {
         const token = await getValidAccessToken().catch(() => null);
         const api = getMarketplaceApi(() => token || null);
-        if (!marketplaceSearch.trim() && marketplaceCategory === "all") {
+        const contentCategory =
+          marketplaceContentType === "skills" ? "skills"
+          : marketplaceContentType === "functions" ? "functions"
+          : null;
+        const effectiveCategory =
+          contentCategory ?? (marketplaceCategory === "all" ? null : marketplaceCategory);
+        if (!marketplaceSearch.trim() && !effectiveCategory) {
           const res = await api.getFeatured();
           if (!cancelled) {
             if (res.ok) {
@@ -232,7 +238,7 @@ export function WorkflowLauncherV2({
         } else {
           const res = await api.search({
             query: marketplaceSearch.trim() || undefined,
-            category: marketplaceCategory === "all" ? undefined : marketplaceCategory,
+            category: effectiveCategory || undefined,
             limit: 24,
           });
           if (!cancelled) {
@@ -258,7 +264,7 @@ export function WorkflowLauncherV2({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeView, marketplaceCategory, marketplaceSearch]);
+  }, [activeView, marketplaceCategory, marketplaceContentType, marketplaceSearch]);
 
   const sharedBaseItems = useMemo(() => items.filter((item) => Boolean(item.marketplaceSlug)), [items]);
 
@@ -387,23 +393,85 @@ export function WorkflowLauncherV2({
   };
 
   const handleConfirmPublishSkill = useCallback(
-    async (data: { name: string; shortDescription: string; description: string; category: string; tags: string[] }) => {
+    async (data: { name: string; shortDescription: string; description: string; category: string; tags: string[]; changelog?: string }) => {
       if (!publishingSkill) return { ok: false, error: "no_skill" };
+      const target = publishingSkill;
+      const existingSlug = target.metadata?.marketplaceSlug as string | undefined;
+      const isUpdate = Boolean(existingSlug && target.metadata?.publishStatus === 'published');
+      const persistStatus = (status: 'published' | 'failed', extras: Record<string, any>) => {
+        const now = new Date().toISOString();
+        const updated: Skill = {
+          ...target,
+          updatedAt: now,
+          metadata: {
+            ...(target.metadata || {}),
+            publishStatus: status,
+            lastPublishAttempt: now,
+            ...extras,
+          },
+        };
+        window.desktopAPI?.skillsSave?.(updated).catch(() => {});
+        setSkills(prev => prev.map(s => s.id === updated.id ? updated : s));
+      };
       try {
         const token = await getValidAccessToken().catch(() => null);
         const api = getMarketplaceApi(() => token || null);
+        const spec = { type: "skill", skill: target };
+
+        if (isUpdate && existingSlug) {
+          const res = await api.update(existingSlug, {
+            name: data.name,
+            description: data.description,
+            shortDescription: data.shortDescription,
+            spec,
+            category: data.category,
+            tags: data.tags,
+            icon: target.icon,
+            changelog: data.changelog,
+          }) as any;
+          if (res.ok) {
+            persistStatus('published', {
+              publishedAt: new Date().toISOString(),
+              marketplaceSlug: res.workflow?.slug || existingSlug,
+              publishedVersion: res.workflow?.version,
+              publishedCategory: data.category,
+              publishedTags: data.tags,
+              lastPublishError: null,
+            });
+          } else {
+            persistStatus('failed', { lastPublishError: res.error || 'Failed to update' });
+          }
+          return res;
+        }
+
         const res = await api.publish({
           name: data.name,
           description: data.description,
           shortDescription: data.shortDescription,
-          spec: { type: "skill", skill: publishingSkill },
+          spec,
           category: data.category,
           tags: data.tags,
-          icon: publishingSkill.icon,
+          icon: target.icon,
         });
+        if (res.ok) {
+          persistStatus('published', {
+            publishedAt: new Date().toISOString(),
+            marketplaceSlug: res.workflow?.slug,
+            publishedVersion: res.workflow?.version || '1',
+            publishedCategory: data.category,
+            publishedTags: data.tags,
+            lastPublishError: null,
+          });
+        } else {
+          persistStatus('failed', {
+            lastPublishError: res.error || 'Failed to publish',
+          });
+        }
         return res;
       } catch (e: any) {
-        return { ok: false, error: e?.message || "publish_failed" };
+        const errorMsg = e?.message || (isUpdate ? 'update_failed' : 'publish_failed');
+        persistStatus('failed', { lastPublishError: errorMsg });
+        return { ok: false, error: errorMsg };
       }
     },
     [publishingSkill]
@@ -442,17 +510,43 @@ export function WorkflowLauncherV2({
     [activeView, onSelect, selectedItem, visibleItems.length]
   );
 
-  const featuredRows = useMemo(() => {
-    if (marketplaceSearch.trim() || marketplaceCategory !== "all") return marketplaceItems.slice(0, 3);
+  const contentTypeFilteredItems = useMemo(() => {
+    if (marketplaceContentType === "workflows") {
+      return marketplaceItems.filter((item) => item.category !== "skills" && item.category !== "functions");
+    }
+    if (marketplaceContentType === "skills") {
+      return marketplaceItems.filter((item) => item.category === "skills");
+    }
+    if (marketplaceContentType === "functions") {
+      return marketplaceItems.filter((item) => item.category === "functions");
+    }
+    return marketplaceItems;
+  }, [marketplaceContentType, marketplaceItems]);
+
+  const contentTypeFilteredFeatured = useMemo(() => {
+    if (marketplaceContentType === "workflows") {
+      return featuredItems.filter((item) => item.category !== "skills" && item.category !== "functions");
+    }
+    if (marketplaceContentType === "skills") {
+      return featuredItems.filter((item) => item.category === "skills");
+    }
+    if (marketplaceContentType === "functions") {
+      return featuredItems.filter((item) => item.category === "functions");
+    }
     return featuredItems;
-  }, [featuredItems, marketplaceCategory, marketplaceItems, marketplaceSearch]);
+  }, [marketplaceContentType, featuredItems]);
+
+  const featuredRows = useMemo(() => {
+    if (marketplaceSearch.trim() || marketplaceCategory !== "all") return contentTypeFilteredItems.slice(0, 3);
+    return contentTypeFilteredFeatured;
+  }, [contentTypeFilteredFeatured, contentTypeFilteredItems, marketplaceCategory, marketplaceSearch]);
 
   const communityRows = useMemo(() => {
-    if (marketplaceSearch.trim() || marketplaceCategory !== "all") return marketplaceItems;
-    const featuredIds = new Set(featuredItems.map((item) => item.id));
-    const rest = marketplaceItems.filter((item) => !featuredIds.has(item.id));
-    return rest.length ? rest : marketplaceItems;
-  }, [featuredItems, marketplaceCategory, marketplaceItems, marketplaceSearch]);
+    if (marketplaceSearch.trim() || marketplaceCategory !== "all") return contentTypeFilteredItems;
+    const featuredIds = new Set(contentTypeFilteredFeatured.map((item) => item.id));
+    const rest = contentTypeFilteredItems.filter((item) => !featuredIds.has(item.id));
+    return rest.length ? rest : contentTypeFilteredItems;
+  }, [contentTypeFilteredFeatured, contentTypeFilteredItems, marketplaceCategory, marketplaceSearch]);
 
   const workflowFiltersActive = search.trim().length > 0 || workflowFilter !== "all";
 
@@ -680,37 +774,41 @@ export function WorkflowLauncherV2({
           ) : activeView === "marketplace" ? (
             <div className="space-y-8 pb-12">
               {marketplaceLoading ? (
-                <EmptyState d={d} icon={RefreshCw} title="Loading marketplace" description="Pulling featured workflows and community categories." spin />
+                <EmptyState d={d} icon={RefreshCw} title="Loading marketplace" description="Pulling featured items and community categories." spin />
               ) : marketplaceError ? (
                 <EmptyState d={d} icon={Square} title="Marketplace unavailable" description={marketplaceError} />
-              ) : marketplaceContentType === "skills" ? (
-                <MarketplaceComingSoon
-                  d={d}
-                  icon={Wand2}
-                  title="Skill Marketplace"
-                  description="Reusable agent behaviors are coming to the marketplace. Publish your own skills with the Publish button on any skill card."
-                  accent="violet"
-                  ctaLabel="Browse your Skills"
-                  onCta={() => setActiveView("skills")}
-                />
-              ) : marketplaceContentType === "functions" ? (
-                <MarketplaceComingSoon
-                  d={d}
-                  icon={Box}
-                  title="Function Marketplace"
-                  description="Functions are single-node building blocks — designed once, installed as a node into any workflow. The library opens soon."
-                  accent="amber"
-                  ctaLabel="Create a workflow"
-                  onCta={onCreate}
-                />
               ) : (
                 <>
-                  <LauncherSection title={marketplaceContentType === "workflows" ? "Featured Workflows" : "Featured"}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {featuredRows.map((workflow) => (
-                        <MarketplaceCard key={workflow.id} d={d} workflow={workflow} onClick={() => onMarketplace(workflow.slug)} />
-                      ))}
-                    </div>
+                  <LauncherSection title={
+                    marketplaceContentType === "skills" ? "Featured Skills"
+                    : marketplaceContentType === "functions" ? "Featured Functions"
+                    : marketplaceContentType === "workflows" ? "Featured Workflows"
+                    : "Featured"
+                  }>
+                    {featuredRows.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {featuredRows.map((workflow) => (
+                          <MarketplaceCard key={workflow.id} d={d} workflow={workflow} onClick={() => onMarketplace(workflow.slug)} />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        d={d}
+                        icon={marketplaceContentType === "skills" ? Wand2 : marketplaceContentType === "functions" ? Box : Store}
+                        title={
+                          marketplaceContentType === "skills" ? "No skills published yet"
+                          : marketplaceContentType === "functions" ? "No functions published yet"
+                          : "Nothing featured yet"
+                        }
+                        description={
+                          marketplaceContentType === "skills"
+                            ? "Be the first to share a skill — open Skills and hit Publish on any card."
+                            : marketplaceContentType === "functions"
+                            ? "Functions are single-node building blocks. Publish one from any workflow with the Publish button."
+                            : "Check back soon for featured items."
+                        }
+                      />
+                    )}
                   </LauncherSection>
                   <LauncherSection title="More From The Community">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -719,7 +817,18 @@ export function WorkflowLauncherV2({
                       ))}
                     </div>
                   </LauncherSection>
-                  {communityRows.length === 0 && <EmptyState d={d} icon={Store} title="No workflows found" description="Try another search term or pick a different category." />}
+                  {communityRows.length === 0 && featuredRows.length === 0 && (
+                    <EmptyState
+                      d={d}
+                      icon={marketplaceContentType === "skills" ? Wand2 : marketplaceContentType === "functions" ? Box : Store}
+                      title={
+                        marketplaceContentType === "skills" ? "No skills found"
+                        : marketplaceContentType === "functions" ? "No functions found"
+                        : "No workflows found"
+                      }
+                      description="Try another search term or pick a different category."
+                    />
+                  )}
                 </>
               )}
             </div>
@@ -855,8 +964,18 @@ function WorkflowCard({ d, item, running, deployed, highlighted, updates, deploy
         <h3 className="font-semibold text-[17px] truncate flex items-center gap-1.5 leading-none wf-fg">
           {item.name || item.id}
           {item.locked ? <Lock className="w-4 h-4 text-amber-500 shrink-0" /> : null}
-          {item.marketplaceSlug && !item.locked ? <Globe className="w-4 h-4 shrink-0 wf-fg-faint" /> : null}
         </h3>
+        {item.marketplaceSlug ? (
+          <span
+            className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider shrink-0 ${
+              d ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+            }`}
+            title="Published to Marketplace"
+          >
+            <CheckCircle2 className="w-3 h-3" />
+            Published
+          </span>
+        ) : null}
       </div>
 
       <p className="text-[14px] line-clamp-3 flex-1 leading-relaxed pr-2 wf-fg-muted">
@@ -917,17 +1036,35 @@ function WorkflowCard({ d, item, running, deployed, highlighted, updates, deploy
 function MarketplaceCard({ d, workflow, onClick, compact }: { d: boolean; workflow: MarketplaceWorkflow; onClick: () => void; compact?: boolean }) {
   const cover = workflow.thumbnail_url || workflow.cover_image_url;
   const creatorName = workflow.creator?.display_name || workflow.publisher_name || "Community";
+  const isSkill = workflow.category === "skills";
+  const isFunction = workflow.category === "functions";
+  const FallbackIcon = isSkill ? Wand2 : isFunction ? Box : Store;
+  const fallbackGradient = isSkill
+    ? "from-violet-500 via-fuchsia-600 to-pink-600"
+    : isFunction
+      ? "from-amber-500 via-orange-600 to-rose-600"
+      : "from-blue-600 via-indigo-600 to-violet-700";
   return (
     <button type="button" onClick={onClick} className={`overflow-hidden rounded-[24px] border text-left shadow-sm transition-all hover:-translate-y-1 ${d ? "bg-white/[0.03] border-white/10 hover:border-blue-400/30" : "bg-white border-slate-200 hover:border-blue-300"}`}>
       <div className={`relative ${compact ? "aspect-[16/9]" : "aspect-[16/10]"} overflow-hidden ${d ? "bg-slate-900" : "bg-slate-100"}`}>
         {cover ? (
           <img src={cover} alt={workflow.name} className="h-full w-full object-cover" />
         ) : (
-          <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 text-white">
-            <Store className="w-10 h-10" />
+          <div className={`h-full w-full flex items-center justify-center bg-gradient-to-br ${fallbackGradient} text-white`}>
+            <FallbackIcon className="w-10 h-10" />
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+        {(isSkill || isFunction) && (
+          <span className={`absolute top-3 left-3 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider backdrop-blur-sm ${
+            isSkill
+              ? "bg-violet-500/30 text-violet-50 border border-violet-300/40"
+              : "bg-amber-500/30 text-amber-50 border border-amber-300/40"
+          }`}>
+            <FallbackIcon className="w-2.5 h-2.5" />
+            {isSkill ? "Skill" : "Function"}
+          </span>
+        )}
         <div className="absolute left-4 right-4 bottom-4 text-white">
           <div className="text-[18px] font-semibold leading-tight line-clamp-1">{workflow.name}</div>
           <div className="mt-1 text-[13px] text-white/80 line-clamp-2">{workflow.short_description || workflow.description}</div>
@@ -1002,64 +1139,3 @@ function MarketplaceTypeSegmentedControl({
   );
 }
 
-function MarketplaceComingSoon({
-  d,
-  icon: Icon,
-  title,
-  description,
-  accent,
-  ctaLabel,
-  onCta,
-}: {
-  d: boolean;
-  icon: any;
-  title: string;
-  description: string;
-  accent: "violet" | "amber";
-  ctaLabel?: string;
-  onCta?: () => void;
-}) {
-  const gradient = accent === "violet"
-    ? "from-violet-500 via-fuchsia-500 to-pink-500"
-    : "from-amber-400 via-orange-500 to-rose-500";
-  const ring = accent === "violet"
-    ? d ? "bg-violet-500/15 border-violet-500/25" : "bg-violet-50 border-violet-200"
-    : d ? "bg-amber-500/15 border-amber-500/25" : "bg-amber-50 border-amber-200";
-  const textTint = accent === "violet"
-    ? d ? "text-violet-300" : "text-violet-700"
-    : d ? "text-amber-300" : "text-amber-700";
-
-  return (
-    <div className={`relative overflow-hidden rounded-3xl border ${d ? "bg-white/[0.02] border-white/[0.06]" : "bg-white border-slate-200"} shadow-sm`}>
-      <div className={`absolute -top-12 -right-12 w-64 h-64 rounded-full blur-3xl opacity-30 bg-gradient-to-br ${gradient}`} />
-      <div className="relative p-10 flex flex-col items-center text-center max-w-2xl mx-auto gap-4">
-        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border shadow-sm ${ring}`}>
-          <Icon className={`w-7 h-7 ${textTint}`} />
-        </div>
-        <div>
-          <h3 className={`text-[20px] font-bold tracking-tight ${d ? "text-white" : "text-slate-900"}`}>{title}</h3>
-          <p className={`mt-1.5 text-[14px] leading-relaxed ${d ? "text-white/60" : "text-slate-500"}`}>{description}</p>
-        </div>
-        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wider ${
-          d ? "bg-white/[0.06] text-white/70 border border-white/[0.08]" : "bg-slate-100 text-slate-600 border border-slate-200"
-        }`}>
-          <Sparkles className={`w-3 h-3 ${textTint}`} />
-          Coming Soon
-        </div>
-        {ctaLabel && onCta && (
-          <button
-            onClick={onCta}
-            className={`mt-2 inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-[13px] font-semibold transition-all ${
-              d
-                ? "bg-white/[0.08] text-white hover:bg-white/[0.12] border border-white/[0.08]"
-                : "bg-slate-900 text-white hover:bg-slate-800 shadow-md"
-            }`}
-          >
-            {ctaLabel}
-            <ExternalLink className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}

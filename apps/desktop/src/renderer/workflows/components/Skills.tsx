@@ -536,6 +536,8 @@ function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPub
   const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
   const colorClasses = getSkillColorClasses(skill.color);
   const isPending = tab === 'suggested';
+  const publishStatus = skill.metadata?.publishStatus as 'published' | 'failed' | undefined;
+  const lastPublishError = (skill.metadata?.lastPublishError as string | undefined) || '';
 
   return (
     <div
@@ -563,7 +565,7 @@ function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPub
               )}
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-semibold text-sm wf-fg truncate">{skill.name}</h3>
                 {isPending ? (
                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
@@ -578,6 +580,28 @@ function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPub
                   }`}>
                     <Sparkles className="w-2.5 h-2.5" />
                     Auto
+                  </span>
+                ) : null}
+                {!isPending && publishStatus === 'published' ? (
+                  <span
+                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                      d ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    }`}
+                    title="Published to Marketplace"
+                  >
+                    <Check className="w-2.5 h-2.5" />
+                    Published
+                  </span>
+                ) : null}
+                {!isPending && publishStatus === 'failed' ? (
+                  <span
+                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                      d ? 'bg-rose-500/15 text-rose-300 border border-rose-500/25' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                    }`}
+                    title={lastPublishError || 'Last publish attempt failed'}
+                  >
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    Publish Failed
                   </span>
                 ) : null}
               </div>
@@ -655,12 +679,14 @@ function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPub
                 <button
                   onClick={(e) => { e.stopPropagation(); onPublish(skill); }}
                   className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
-                    d ? 'text-blue-300 hover:text-blue-200 hover:bg-blue-500/10' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
+                    publishStatus === 'published'
+                      ? d ? 'text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10' : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
+                      : d ? 'text-blue-300 hover:text-blue-200 hover:bg-blue-500/10' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
                   }`}
-                  title="Publish to Marketplace"
+                  title={publishStatus === 'published' ? 'Push a new version to the Marketplace' : 'Publish to Marketplace'}
                 >
                   <Upload className="w-3 h-3" />
-                  Publish
+                  {publishStatus === 'published' ? 'Update' : 'Publish'}
                 </button>
               )}
               <button
@@ -1206,16 +1232,20 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
 interface PublishSkillModalProps {
   skill: Skill;
   onClose: () => void;
-  onConfirm: (data: { name: string; shortDescription: string; description: string; category: string; tags: string[] }) => Promise<{ ok: boolean; error?: string } | void>;
+  onConfirm: (data: { name: string; shortDescription: string; description: string; category: string; tags: string[]; changelog?: string }) => Promise<{ ok: boolean; error?: string } | void>;
 }
 
 export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillModalProps) {
   const { isDark: d } = useWorkflowTheme();
+  const isUpdate = Boolean(skill.metadata?.marketplaceSlug && skill.metadata?.publishStatus === 'published');
+  const currentVersion = (skill.metadata?.publishedVersion as string | undefined) || '1';
+  const nextVersion = String((parseInt(currentVersion, 10) || 1) + 1);
   const [name, setName] = useState(skill.name);
   const [shortDescription, setShortDescription] = useState(skill.description.slice(0, 120));
   const [description, setDescription] = useState(skill.description);
-  const [category, setCategory] = useState('skills');
-  const [tagsRaw, setTagsRaw] = useState('');
+  const [category, setCategory] = useState((skill.metadata?.publishedCategory as string | undefined) || 'skills');
+  const [tagsRaw, setTagsRaw] = useState((skill.metadata?.publishedTags as string[] | undefined)?.join(', ') || '');
+  const [changelog, setChangelog] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -1228,15 +1258,22 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
     setError(null);
     try {
       const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-      const result = await onConfirm({ name: name.trim(), shortDescription: shortDescription.trim(), description: description.trim(), category, tags });
+      const result = await onConfirm({
+        name: name.trim(),
+        shortDescription: shortDescription.trim(),
+        description: description.trim(),
+        category,
+        tags,
+        changelog: isUpdate ? changelog.trim() || undefined : undefined,
+      });
       if (result && result.ok === false) {
-        setError(result.error || 'Failed to publish');
+        setError(result.error || (isUpdate ? 'Failed to update' : 'Failed to publish'));
       } else {
         setDone(true);
         setTimeout(onClose, 1200);
       }
     } catch (e: any) {
-      setError(e?.message || 'Failed to publish');
+      setError(e?.message || (isUpdate ? 'Failed to update' : 'Failed to publish'));
     } finally {
       setBusy(false);
     }
@@ -1256,12 +1293,22 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
         {/* Header */}
         <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--wf-border)' }}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ${
+              isUpdate
+                ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
+                : 'bg-gradient-to-br from-blue-500 to-violet-600 shadow-blue-500/20'
+            }`}>
               <Upload className="w-4.5 h-4.5 text-white" />
             </div>
             <div>
-              <h3 className="font-semibold wf-fg">Publish Skill to Marketplace</h3>
-              <p className="text-xs wf-fg-muted">Share this skill with the community</p>
+              <h3 className="font-semibold wf-fg">
+                {isUpdate ? 'Update Published Skill' : 'Publish Skill to Marketplace'}
+              </h3>
+              <p className="text-xs wf-fg-muted">
+                {isUpdate
+                  ? `Push a new version (v${currentVersion} → v${nextVersion}) to the community`
+                  : 'Share this skill with the community'}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg transition-colors wf-fg-faint hover:wf-fg">
@@ -1286,8 +1333,14 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
             <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-50 border border-emerald-200">
               <Check className="w-5 h-5 text-emerald-600" />
               <div>
-                <div className="text-sm font-semibold text-emerald-700">Published successfully!</div>
-                <p className="text-xs text-emerald-600">Your skill is now live in the marketplace.</p>
+                <div className="text-sm font-semibold text-emerald-700">
+                  {isUpdate ? `Updated to v${nextVersion}!` : 'Published successfully!'}
+                </div>
+                <p className="text-xs text-emerald-600">
+                  {isUpdate
+                    ? 'Your changes are now live for everyone who installed the skill.'
+                    : 'Your skill is now live in the marketplace.'}
+                </p>
               </div>
             </div>
           ) : (
@@ -1355,6 +1408,22 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
                     />
                   </div>
                 </div>
+                {isUpdate && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium wf-fg flex items-center justify-between">
+                      <span>Changelog <span className="wf-fg-faint">(optional)</span></span>
+                      <span className="text-[10px] wf-fg-faint">v{currentVersion} → v{nextVersion}</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={changelog}
+                      onChange={(e) => setChangelog(e.target.value)}
+                      placeholder="What changed in this version?"
+                      className="w-full px-3 py-2 rounded-md text-sm resize-none focus:outline-none focus:ring-1 border"
+                      style={{ background: 'var(--wf-input-bg)', borderColor: 'var(--wf-input-border)', color: 'var(--wf-fg)' }}
+                    />
+                  </div>
+                )}
               </div>
 
               {error && (
@@ -1379,10 +1448,16 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
             <button
               onClick={handlePublish}
               disabled={busy || !name.trim()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20"
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg ${
+                isUpdate
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-emerald-500/20'
+                  : 'bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 shadow-blue-500/20'
+              }`}
             >
               {busy ? <Wand2 className="w-4 h-4 animate-pulse" /> : <Upload className="w-4 h-4" />}
-              {busy ? 'Publishing...' : 'Publish'}
+              {busy
+                ? isUpdate ? 'Updating...' : 'Publishing...'
+                : isUpdate ? `Update to v${nextVersion}` : 'Publish'}
             </button>
           </div>
         )}

@@ -9,6 +9,7 @@ import {
   Wand2, Terminal, FileText, MessageSquare, Image as ImageIcon, Cloud, ArrowRight, ArrowDown
 } from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
+import { FUNCTION_NODE_ICONS, FUNCTION_NODE_COLORS } from "../constants/functionNodeStyle";
 import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
@@ -813,8 +814,12 @@ export function PublishModal({
 
       const api = getMarketplaceApi(() => token);
 
+      // Functions are flat workflow specs with a `functionNode` metadata field
+      // (so installers/security analyzer can read spec.nodes directly). The
+      // `kind: 'function'` marker lets consumers tell them apart from
+      // event-driven workflows.
       const spec = publishAs === 'function'
-        ? { type: 'function', workflow: model, node: functionNode }
+        ? { ...model, kind: 'function', functionNode }
         : model;
 
       const res = await api.publish({
@@ -822,7 +827,7 @@ export function PublishModal({
         description,
         shortDescription: shortDescription.trim() || undefined,
         spec,
-        category: publishAs === 'function' && category === 'general' ? 'functions' : category,
+        category: publishAs === 'function' ? 'functions' : category,
         tags: publishAs === 'function' && !tags.includes('function') ? [...tags, 'function'] : tags,
         icon: publishAs === 'function' ? functionNode.icon : undefined,
         thumbnailUrl: thumbnailUrl || undefined,
@@ -2677,6 +2682,11 @@ function WorkflowDetail({
   const [importing, setImporting] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
 
+  const isFunctionListing =
+    workflow.category === 'functions' ||
+    (workflow.spec && (workflow.spec as any).kind === 'function') ||
+    (Array.isArray(workflow.tags) && workflow.tags.includes('function'));
+  const importLabel = isFunctionListing ? 'Import Function' : 'Import Workflow';
   const creator = workflow.creator;
   const gallery = workflow.media && workflow.media.length > 0
     ? workflow.media
@@ -2748,7 +2758,7 @@ function WorkflowDetail({
               className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-0.5 hover:bg-blue-700 disabled:opacity-70"
             >
               {importing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
-              Import Workflow
+              {importLabel}
             </button>
           </div>
         </div>
@@ -3207,8 +3217,19 @@ export function MarketplaceBrowser({
           locked: isLocked || false,
           marketplaceSlug: w.slug,
         };
+        const isFn =
+          w.category === 'functions' ||
+          (spec as any).kind === 'function' ||
+          (Array.isArray(w.tags) && w.tags.includes('function'));
         // Notify
-        try { (window as any).desktopAPI?.notify?.('Imported!', `${w.name} has been added to your workflows.`); } catch { }
+        try {
+          (window as any).desktopAPI?.notify?.(
+            'Imported!',
+            isFn
+              ? `${w.name} is now available in the toolbox under Installed Functions.`
+              : `${w.name} has been added to your workflows.`
+          );
+        } catch { }
         onImport(importedSpec);
         onClose();
       } else {
@@ -3486,33 +3507,6 @@ interface FunctionNodeSpec {
   outputs: FunctionPort[];
 }
 
-const FUNCTION_NODE_ICONS: Array<{ id: string; icon: any }> = [
-  { id: 'Box',           icon: Box },
-  { id: 'Zap',           icon: Zap },
-  { id: 'Brain',         icon: Brain },
-  { id: 'Database',      icon: Database },
-  { id: 'Mail',          icon: Mail },
-  { id: 'Code',          icon: Code },
-  { id: 'Globe',         icon: Globe },
-  { id: 'Wand2',         icon: Wand2 },
-  { id: 'Terminal',      icon: Terminal },
-  { id: 'FileText',      icon: FileText },
-  { id: 'MessageSquare', icon: MessageSquare },
-  { id: 'Image',         icon: ImageIcon },
-  { id: 'Cloud',         icon: Cloud },
-  { id: 'Sparkles',      icon: Sparkles },
-];
-
-const FUNCTION_NODE_COLORS: Array<{ id: string; bg: string; border: string; fg: string; ring: string }> = [
-  { id: 'indigo',  bg: '#6366f1', border: '#a5b4fc', fg: '#eef2ff', ring: 'ring-indigo-300' },
-  { id: 'blue',    bg: '#3b82f6', border: '#93c5fd', fg: '#eff6ff', ring: 'ring-blue-300' },
-  { id: 'violet',  bg: '#8b5cf6', border: '#c4b5fd', fg: '#f5f3ff', ring: 'ring-violet-300' },
-  { id: 'emerald', bg: '#10b981', border: '#6ee7b7', fg: '#ecfdf5', ring: 'ring-emerald-300' },
-  { id: 'amber',   bg: '#f59e0b', border: '#fcd34d', fg: '#fffbeb', ring: 'ring-amber-300' },
-  { id: 'rose',    bg: '#f43f5e', border: '#fda4af', fg: '#fff1f2', ring: 'ring-rose-300' },
-  { id: 'cyan',    bg: '#06b6d4', border: '#67e8f9', fg: '#ecfeff', ring: 'ring-cyan-300' },
-  { id: 'slate',   bg: '#475569', border: '#94a3b8', fg: '#f8fafc', ring: 'ring-slate-400' },
-];
 
 function deriveDefaultFunctionNode(model: any): FunctionNodeSpec {
   return autoDetectFunctionNode(model, {

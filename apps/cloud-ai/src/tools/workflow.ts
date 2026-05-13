@@ -7,7 +7,8 @@
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { safeToolWrite, getBridgeState, setBridgeState } from './bridge';
+import { safeToolWrite, getBridgeState, setBridgeState, execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
+import { validateNodeTools, formatNodeIssuesSummary } from './workflow-node-validation';
 import { workflowMap } from './workflow-system';
 import { writeLog } from '../utils/logger';
 import {
@@ -1004,20 +1005,57 @@ STUARD FILE TARGETING:
       setBridgeState(_BRIDGE_KEY, wf);
       _sessionWorkflowFallback = wf;
 
+      // Auto-persist when running as a subagent — there's no UI "Save" button,
+      // so modifications would otherwise vanish after the run. Studio mode
+      // keeps the existing behavior (dirty state + manual save) because the
+      // user is editing live on the canvas and may want to revert before
+      // committing.
+      let persisted = false;
+      let persistError: string | undefined;
+      const secrets = getBridgeSecrets();
+      const inSubagent = !!secrets && typeof (secrets as any).__subagentKind === 'string';
+      if (inSubagent && !stuardFile && hasClientBridge()) {
+        try {
+          const importRes = await execLocalTool(
+            'import_workflow',
+            { definition: wf },
+            writer as any,
+            15000,
+            { silent: true, noFallback: true },
+          );
+          persisted = !!importRes?.ok;
+          if (!persisted) persistError = importRes?.error || 'import_workflow returned not-ok';
+        } catch (e: any) {
+          persistError = e?.message || 'import_workflow threw';
+          log('modify_persist_failed', { id: wf.id, error: persistError });
+        }
+      }
+
       // Generate diagram for visual understanding
       const diagram = generateWorkflowDiagram(wf);
       const affectedFlow = buildAffectedFlowReport(beforeWorkflow, wf, touchedIds);
 
+      // Node-tool sanity check — flags hallucinated tool names, orchestrator-
+      // only tools dropped into nodes, and empty/missing tool fields. Returned
+      // in the result so the agent reads it on its next turn and fixes the
+      // node instead of moving on with a silent no-op.
+      const nodeIssues = validateNodeTools(wf);
+      const issuesSummary = formatNodeIssuesSummary(nodeIssues);
+      const finalMessage = issuesSummary ? `${message}${issuesSummary}` : message;
+
       const result = {
         ok: true as const,
-        message,
+        message: finalMessage,
         diagram,
         affectedFlow,
         workflow: wf,
+        nodeIssues: nodeIssues.length > 0 ? nodeIssues : undefined,
+        persisted: inSubagent ? persisted : undefined,
+        persistError: inSubagent ? persistError : undefined,
         ...(stuardFile ? { stuardFile } : {}),
       };
 
-      log('success', { workflowId: wf.id, message, stuardFile: stuardFile || undefined });
+      log('success', { workflowId: wf.id, message, persisted, stuardFile: stuardFile || undefined });
 
       // Emit event for immediate UI update (redundant path — also included in return value
       // so the tool-result chunk carries the workflow even if writer is unavailable)

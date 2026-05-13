@@ -11,12 +11,21 @@ export interface SubTodoItem {
   createdAt: string;
 }
 
+export interface RecurrenceRule {
+  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  interval?: number;
+  days?: number[]; // 0=Mon..6=Sun
+  until?: string; // ISO datetime
+  count?: number;
+}
+
 export interface AgentAssignment {
   id: string;
   type: 'reminder' | 'action' | 'check-in';
   scheduledAt: string; // ISO datetime when agent should act
   message?: string; // What to remind/do
-  recurring?: 'none' | 'daily' | 'weekly' | 'monthly';
+  // Legacy string format ('daily'|'weekly'|'monthly') still supported for backward compat.
+  recurring?: 'none' | 'daily' | 'weekly' | 'monthly' | RecurrenceRule | null;
   status: 'pending' | 'triggered' | 'completed' | 'cancelled';
   triggeredAt?: string | null;
   completedAt?: string | null;

@@ -171,12 +171,16 @@ export const unifiedTasksService = {
         const tasks = loadUnifiedTasks();
         const idx = tasks.findIndex((t: any) => t.id === taskId);
         if (idx >= 0) {
+            // Preserve dict-format recurrence as-is; only fall back to 'none' when missing/null.
+            const recurring = (assignment.recurring === undefined || assignment.recurring === null)
+                ? 'none'
+                : assignment.recurring;
             const newAssignment = {
                 id: `assign_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 type: assignment.type || 'reminder',
                 scheduledAt: assignment.scheduledAt,
                 message: assignment.message || '',
-                recurring: assignment.recurring || 'none',
+                recurring,
                 status: 'pending',
             };
             tasks[idx].agentAssignments = [...(tasks[idx].agentAssignments || []), newAssignment];
@@ -193,25 +197,64 @@ export const unifiedTasksService = {
         if (idx >= 0) {
             const aIdx = (tasks[idx].agentAssignments || []).findIndex((a: any) => a.id === assignmentId);
             if (aIdx >= 0) {
-                tasks[idx].agentAssignments[aIdx] = { ...tasks[idx].agentAssignments[aIdx], ...updates };
+                const prev = tasks[idx].agentAssignments[aIdx];
+                const merged = { ...prev, ...updates };
+                // Normalize an explicit null `recurring` to 'none' so consumers can rely on truthiness
+                if (Object.prototype.hasOwnProperty.call(updates || {}, 'recurring')) {
+                    merged.recurring = (updates.recurring === null || updates.recurring === undefined)
+                        ? 'none'
+                        : updates.recurring;
+                }
+                tasks[idx].agentAssignments[aIdx] = merged;
                 tasks[idx].updatedAt = new Date().toISOString();
                 saveUnifiedTasks(tasks);
-                return { ok: true, task: tasks[idx] };
+                return { ok: true, task: tasks[idx], assignment: merged };
             }
+            return { ok: false, error: 'Assignment not found' };
         }
-        return { ok: false, error: 'Assignment not found' };
+        return { ok: false, error: 'Task not found' };
     },
 
     deleteAgentAssignment: (taskId: string, assignmentId: string) => {
         const tasks = loadUnifiedTasks();
-        const idx = tasks.findIndex((t: any) => t.id === taskId);
-        if (idx >= 0) {
-            tasks[idx].agentAssignments = (tasks[idx].agentAssignments || []).filter((a: any) => a.id !== assignmentId);
-            tasks[idx].updatedAt = new Date().toISOString();
-            saveUnifiedTasks(tasks);
-            return { ok: true, task: tasks[idx] };
+        // If taskId is provided, scope to that task. Otherwise search every task for the assignment.
+        if (taskId) {
+            const idx = tasks.findIndex((t: any) => t.id === taskId);
+            if (idx >= 0) {
+                const before = (tasks[idx].agentAssignments || []).length;
+                tasks[idx].agentAssignments = (tasks[idx].agentAssignments || []).filter((a: any) => a.id !== assignmentId);
+                const removed = before !== tasks[idx].agentAssignments.length;
+                if (removed) {
+                    tasks[idx].updatedAt = new Date().toISOString();
+                    saveUnifiedTasks(tasks);
+                }
+                return { ok: true, task: tasks[idx], removed };
+            }
+            // Fall through to global search if taskId not found (caller might have passed a stale id)
         }
-        return { ok: false, error: 'Task not found' };
+        let removed = false;
+        let owningTask: any = null;
+        for (const task of tasks) {
+            const before = (task.agentAssignments || []).length;
+            task.agentAssignments = (task.agentAssignments || []).filter((a: any) => a.id !== assignmentId);
+            if (before !== task.agentAssignments.length) {
+                task.updatedAt = new Date().toISOString();
+                removed = true;
+                owningTask = task;
+                break;
+            }
+        }
+        if (removed) saveUnifiedTasks(tasks);
+        return { ok: true, removed, task: owningTask };
+    },
+
+    findAgentAssignment: (assignmentId: string) => {
+        const tasks = loadUnifiedTasks();
+        for (const task of tasks) {
+            const a = (task.agentAssignments || []).find((x: any) => x.id === assignmentId);
+            if (a) return { ok: true, task, assignment: a };
+        }
+        return { ok: false, error: 'Assignment not found' };
     },
 
     getPendingAssignments: () => {
@@ -223,9 +266,7 @@ export const unifiedTasksService = {
             for (const assignment of (task.agentAssignments || [])) {
                 if (assignment.status !== 'pending') continue;
                 const scheduledTime = new Date(assignment.scheduledAt).getTime();
-                // Return all pending, regardless of schedule (or maybe only overdue/future?)
-                // The original implementation filtered ONLY scheduled <= now.
-                // Let's keep that logic for consistency with reminders firing.
+                if (isNaN(scheduledTime)) continue;
                 if (scheduledTime <= now) {
                     pending.push({ task, assignment });
                 }

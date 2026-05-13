@@ -20,6 +20,7 @@ import { openai } from '@ai-sdk/openai';
 import { google } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { getToolRegistry, getToolMetadata } from './tool-registry';
+import { validateNodeTools, formatNodeIssuesSummary } from './workflow-node-validation';
 
 import { zodToJsonSchema, zodToTemplate } from './zod-utils';
 
@@ -452,7 +453,7 @@ EXAMPLE:
     persisted: z.boolean().optional(),
     persistError: z.string().optional(),
     error: z.string().optional(),
-  }),
+  }).passthrough(),
   execute: async (inputData, { writer }) => {
     const { spec } = inputData as { spec?: any };
 
@@ -518,15 +519,30 @@ EXAMPLE:
       persistError = 'no_desktop_bridge';
     }
 
+    // Node-tool sanity check — catches hallucinated tool names and
+    // orchestrator-only tools dropped into nodes (e.g. `delegate`, `ask_user`,
+    // `search_tools`) so the agent fixes them on the next turn instead of
+    // shipping a workflow full of silent no-ops.
+    const nodeIssues = validateNodeTools(spec);
+    const issuesSummary = formatNodeIssuesSummary(nodeIssues);
+
     await safeToolWrite(writer as any, {
       type: 'tool_event',
       tool: 'create_workflow',
       status: 'completed',
       workflowId: spec.id,
       persisted,
+      nodeIssues: nodeIssues.length > 0 ? nodeIssues : undefined,
     });
 
-    return { ok: true, id: spec.id, spec, persisted, persistError };
+    return {
+      ok: true,
+      id: spec.id,
+      spec,
+      persisted,
+      persistError,
+      ...(nodeIssues.length > 0 ? { nodeIssues, message: `Workflow created (${spec.nodes.length} nodes, ${spec.wires.length} wires).${issuesSummary}` } : {}),
+    };
   },
 });
 

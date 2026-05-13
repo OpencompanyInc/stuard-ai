@@ -3,7 +3,8 @@
  */
 import React, { useEffect, useState, useMemo, forwardRef, useImperativeHandle, useRef } from "react";
 import { Search, X, ChevronRight, GripVertical, Box, Lock, Package, Workflow } from "lucide-react";
-import { PALETTE_CATEGORIES, CATEGORY_COLORS, type PaletteCategory, type PaletteCategoryItem } from "../constants/paletteCategories";
+import { PALETTE_CATEGORIES, CATEGORY_COLORS, PALETTE_GROUPS, type PaletteCategory, type PaletteCategoryItem } from "../constants/paletteCategories";
+import { getFunctionNodeIcon } from "../constants/functionNodeStyle";
 
 export interface ToolPaletteRef {
   focusSearch: () => void;
@@ -85,12 +86,25 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
         for (const workflow of workflows) {
           const triggers = Array.isArray(workflow?.triggers) ? workflow.triggers : [];
           if (!workflow?.id || workflow.id === workflowId || !triggers.includes('function')) continue;
+          // If the publisher designed a custom function node (icon, label, color),
+          // surface it in the palette so the function looks like itself instead of
+          // a generic "call_workflow" tile.
+          const fn = workflow.functionNode;
+          const designedLabel = fn && typeof fn.label === 'string' && fn.label.trim() ? fn.label.trim() : '';
+          const iconName = fn && typeof fn.icon === 'string' ? fn.icon : undefined;
+          const colorKey = fn && typeof fn.color === 'string' ? fn.color : undefined;
           next.push({
             k: 'local.tool',
-            t: 'call_workflow',
-            label: workflow.name || workflow.id,
-            icon: Workflow,
+            // Drop handler will materialize a sub-workflow + emit
+            // call_workspace_function. Tool field here is only a hint for the
+            // palette tile; it gets overridden on drop.
+            t: 'call_workspace_function',
+            label: designedLabel || workflow.name || workflow.id,
+            icon: iconName ? getFunctionNodeIcon(iconName) : Workflow,
             args: { workflowId: workflow.id, inputs: {} },
+            iconName,
+            colorKey,
+            sourceWorkflowId: workflow.id,
           });
         }
       } catch {
@@ -102,12 +116,18 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
           const functions = Array.isArray(res?.functions) ? res.functions : [];
           for (const fn of functions) {
             if (!fn?.isFunction || !fn?.path) continue;
+            const designed = fn.functionNode;
+            const designedLabel = designed && typeof designed.label === 'string' && designed.label.trim() ? designed.label.trim() : '';
+            const iconName = designed && typeof designed.icon === 'string' ? designed.icon : undefined;
+            const colorKey = designed && typeof designed.color === 'string' ? designed.color : undefined;
             next.push({
               k: 'local.tool',
               t: 'call_workspace_function',
-              label: fn.name || fn.path,
-              icon: Workflow,
+              label: designedLabel || fn.name || fn.path,
+              icon: iconName ? getFunctionNodeIcon(iconName) : Workflow,
               args: { path: fn.path, inputs: buildInputs(fn.inputParams) },
+              iconName,
+              colorKey,
             });
           }
         } catch {
@@ -163,14 +183,51 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   const filteredCategories = useMemo(() => {
     if (!searchQuery.trim()) return paletteCategories;
     const q = searchQuery.toLowerCase();
-    return paletteCategories.map(cat => ({
-      ...cat,
-      items: cat.items.filter(item =>
-        item.label.toLowerCase().includes(q) ||
-        item.t.toLowerCase().includes(q)
-      ),
-    })).filter(cat => cat.items.length > 0);
+    return paletteCategories.map(cat => {
+      const categoryMatch =
+        cat.label.toLowerCase().includes(q) ||
+        cat.id.toLowerCase().includes(q);
+      // If the user typed a category-level term (e.g. "google", "browser"),
+      // surface every tool in that category. Otherwise filter to items that match.
+      const items = categoryMatch
+        ? cat.items
+        : cat.items.filter(item =>
+            item.label.toLowerCase().includes(q) ||
+            item.t.toLowerCase().includes(q)
+          );
+      return { ...cat, items };
+    }).filter(cat => cat.items.length > 0);
   }, [searchQuery, paletteCategories]);
+
+  /**
+   * Visually chunk categories into named groups (Core, AI, Local, …) so the user
+   * doesn't have to scan 30+ rows. The "installed" pseudo-category lives at the
+   * top of the Core group. Any category without a known group is treated as
+   * ungrouped and rendered after the last named group.
+   */
+  const groupedCategories = useMemo(() => {
+    const byId = new Map(filteredCategories.map(c => [c.id, c]));
+    const groups: { id: string; label: string; categories: PaletteCategory[] }[] = [];
+    const consumed = new Set<string>();
+
+    for (const g of PALETTE_GROUPS) {
+      const cats: PaletteCategory[] = [];
+      for (const id of g.categoryIds) {
+        const cat = byId.get(id);
+        if (cat) {
+          cats.push(cat);
+          consumed.add(id);
+        }
+      }
+      if (cats.length > 0) groups.push({ id: g.id, label: g.label, categories: cats });
+    }
+
+    const orphans = filteredCategories.filter(c => !consumed.has(c.id));
+    if (orphans.length > 0) {
+      groups.push({ id: 'other', label: 'Other', categories: orphans });
+    }
+    return groups;
+  }, [filteredCategories]);
 
   return (
     <div className="flex flex-col h-full wf-bg-elevated border-r wf-border-subtle" data-onboarding="node-palette">
@@ -227,8 +284,14 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
       )}
 
       {/* Categories */}
-      <div className="flex-1 overflow-y-auto scrollbar-minimal p-3 space-y-2">
-        {filteredCategories.map(cat => {
+      <div className="flex-1 overflow-y-auto scrollbar-minimal p-3 space-y-4">
+        {groupedCategories.map(group => (
+          <div key={group.id} className="space-y-2">
+            <div className="flex items-center gap-2 px-1 pt-1 select-none">
+              <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-muted">{group.label}</div>
+              <div className="flex-1 h-px wf-border-subtle border-t" />
+            </div>
+            {group.categories.map(cat => {
           const isExpanded = expandedCategories.has(cat.id) || !!searchQuery;
           const Icon = cat.icon;
           const styles = CATEGORY_COLORS[cat.color] || CATEGORY_COLORS.slate;
@@ -300,9 +363,11 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
               )}
             </div>
           );
-        })}
+            })}
+          </div>
+        ))}
 
-        {filteredCategories.length === 0 && (
+        {groupedCategories.length === 0 && (
           <div className="py-12 text-center">
             <div className="w-12 h-12 wf-bg-overlay rounded-2xl flex items-center justify-center mx-auto mb-3 wf-fg-muted border wf-border-subtle">
               <Search className="w-5 h-5" />

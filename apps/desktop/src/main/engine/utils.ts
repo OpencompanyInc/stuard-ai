@@ -48,9 +48,12 @@ export function getAtPath(obj: any, pathStr: string, defaultVal?: any) {
     // Special handling for $vars.varName - lookup from variable store
     if (parts[0] === '$vars' && parts.length >= 2) {
       const varName = parts[1];
-      let varValue = getVariable(varName, undefined);
+      // Scope lookups to the executing flow when ctx carries a $flowId,
+      // so two workflows defining the same variable name don't collide.
+      const flowId = obj && typeof obj === 'object' ? obj.$flowId : undefined;
+      let varValue = getVariable(varName, undefined, flowId);
       // Variables are stored with 'workflow.' prefix (e.g. 'workflow.w'), so fall back
-      if (varValue === undefined) varValue = getVariable(`workflow.${varName}`, undefined);
+      if (varValue === undefined) varValue = getVariable(`workflow.${varName}`, undefined, flowId);
       if (varValue === undefined) return defaultVal;
       // If there are more path segments, traverse into the value
       if (parts.length > 2) {
@@ -313,6 +316,22 @@ export function jsonLogic(logic: any, data: any): any {
       if (typeof hay === 'string') return hay.indexOf(String(needle)) !== -1;
       if (Array.isArray(hay)) return hay.includes(needle);
       return false;
+    }
+    case 'empty': {
+      // Unary: check if value is empty (null, undefined, "", or empty array)
+      const v = a(Array.isArray(val) ? val[0] : val);
+      if (v == null) return true;
+      if (typeof v === 'string') return v.trim() === '';
+      if (Array.isArray(v)) return v.length === 0;
+      return false;
+    }
+    case 'not_empty': {
+      // Unary: check if value is NOT empty
+      const v2 = a(Array.isArray(val) ? val[0] : val);
+      if (v2 == null) return false;
+      if (typeof v2 === 'string') return v2.trim() !== '';
+      if (Array.isArray(v2)) return v2.length > 0;
+      return true;
     }
     default:
       return undefined;

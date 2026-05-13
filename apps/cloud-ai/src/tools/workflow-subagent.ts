@@ -19,18 +19,19 @@ export const routeToWorkflowAgent = createTool({
     'Delegates a task to the Workflow Architect subagent, which specialises in creating and modifying StuardAI workflows. ' +
     'Use this when the user wants to build, edit, or manage an automation workflow. ' +
     'Provide a clear instruction describing what the workflow should do. ' +
-    'The subagent uses the same Workflow Studio toolset, with create_workflow added for new workflow bootstrapping.',
+    'The subagent uses the same Workflow Studio toolset, plus create_workflow (new workflows) and load_workflow (load an existing one for editing). ' +
+    'IMPORTANT: when the user is asking to MODIFY an existing workflow, you MUST include the existing workflow id in `instruction` (e.g. "Modify flow_morning_brief to also send a Slack ping"). Otherwise the subagent will create a duplicate instead of editing.',
   inputSchema: z.object({
     instruction: z
       .string()
       .describe(
-        'A detailed description of the workflow to create or modify. Include trigger type, steps, conditions, and any specifics the user mentioned.',
+        'A detailed description of the workflow to create or modify. For edits, ALWAYS include the existing workflow id (flow_…) so the subagent calls load_workflow instead of create_workflow. Include trigger type, steps, conditions, and any specifics the user mentioned.',
       ),
     context: z
       .string()
       .optional()
       .describe(
-        'Additional context such as existing workflow ID to modify, user preferences, or relevant conversation history.',
+        'Additional context such as the existing workflow ID being edited, user preferences, or relevant conversation history.',
       ),
     timeoutMs: z
       .number()

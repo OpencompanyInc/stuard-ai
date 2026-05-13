@@ -1050,13 +1050,17 @@ RETURNING JSON TO NEXT NODE:
   // ═══════════════════════════════════════════════════════════════════════════
   {
     id: 'ai_inference',
-    title: 'ai_inference — Stateless Text→Text/JSON/Embedding',
+    title: 'ai_inference — Unified Text + Multimodal Inference',
     keywords: [
       'ai_inference', 'ai', 'inference', 'text', 'json', 'embedding', 'model',
       'prompt', 'schema', 'structured output',
+      'vision', 'image', 'audio', 'video', 'pdf', 'screen', 'multimodal',
+      'transcription', 'transcribe', 'whisper', 'stt', 'speech to text',
+      'analyze_image', 'analyze_current_screen', 'analyze_media', 'cloud_ai_vision',
     ],
-    content: `Stateless AI calls — no tools, no multi-step reasoning. Fastest + cheapest
-AI node. For tool-using agents, see agent_nodes.
+    content: `Stateless AI calls — no tools, no multi-step reasoning. The unified AI
+node for text AND multimodal input (image, audio, video, PDF, current
+screen). For tool-using agents, see agent_nodes.
 
 TEXT MODE (default):
   { tool: "ai_inference", args: {
@@ -1066,17 +1070,58 @@ TEXT MODE (default):
   }}
   Output: { ok, text }
 
-JSON MODE (structured):
-  { tool: "ai_inference", args: {
-      prompt: "Classify sentiment",
-      input: "{{user.text}}",
-      mode: "json",
-      schema: { sentiment: "string", confidence: "number", keywords: "string[]" },
-      model: "google/gemini-2.5-pro"
-  }}
-  Output: { ok, json: { sentiment, confidence, keywords } }
+MULTIMODAL — IMAGE / SCREEN / AUDIO / VIDEO / PDF:
+  Add a "sources" array. Each entry is { path, url, data, mimeType, captureScreen }.
+  Use a vision-capable model (Gemini, GPT-4o, Claude, etc.).
 
-EMBEDDING MODE:
+  // Analyze current screen — captureScreen runs take_screenshot internally
+  { tool: "ai_inference", args: {
+      prompt: "What's on screen? Identify any errors or warnings.",
+      sources: [{ captureScreen: true }],
+      model: "google/gemini-3.1-pro-preview"
+  }}
+
+  // Analyze an image from disk or upstream step
+  { tool: "ai_inference", args: {
+      prompt: "Describe this image in detail.",
+      sources: [{ path: "{{take_screenshot.filePath}}" }],
+      model: "google/gemini-3.1-pro-preview"
+  }}
+
+  // Transcribe audio (multimodal model — gives a free-form response)
+  { tool: "ai_inference", args: {
+      prompt: "Transcribe this audio verbatim.",
+      sources: [{ path: "{{record.filePath}}" }],
+      model: "google/gemini-3.1-pro-preview"
+  }}
+
+TRANSCRIPTION MODE — dedicated Whisper STT path (audio → text only):
+  { tool: "ai_inference", args: {
+      mode: "transcription",
+      sources: [{ path: "{{record.filePath}}" }],
+      language: "en",                  // optional ISO-639-1, auto-detected if omitted
+      model: "openai/whisper-1"        // or any whisper-* OpenRouter slug
+  }}
+  Output: { ok, text }   // text is the transcript
+
+  // YouTube / direct media URL
+  { tool: "ai_inference", args: {
+      prompt: "Summarize this video.",
+      sources: [{ url: "https://youtu.be/abc123" }],
+      model: "google/gemini-3.1-pro-preview"
+  }}
+
+JSON MODE — works with or without media:
+  { tool: "ai_inference", args: {
+      prompt: "Extract structured data from this receipt image.",
+      sources: [{ path: "{{upload.filePath}}" }],
+      mode: "json",
+      schema: { vendor: "string", total: "number", items: "string[]" },
+      model: "google/gemini-3.1-pro-preview"
+  }}
+  Output: { ok, json: { vendor, total, items } }
+
+EMBEDDING MODE (text only):
   { tool: "ai_inference", args: {
       input: "...",
       mode: "embedding",
@@ -1084,11 +1129,15 @@ EMBEDDING MODE:
   }}
   Output: { ok, embedding: [...] }
 
-MODELS (examples):
-  openai/gpt-4o, openai/gpt-4.1, openai/gpt-4.1-mini
-  google/gemini-2.5-pro, google/gemini-3-pro-preview
-  deepseek/deepseek-chat
-  openai/text-embedding-3-small
+MODELS (examples — pick a vision-capable model for media):
+  google/gemini-3.1-pro-preview, google/gemini-2.5-pro   (best for media)
+  openai/gpt-4o, openai/gpt-4.1, openai/gpt-4.1-mini     (text + image)
+  anthropic/claude-sonnet-4-20250514                      (text + image)
+  openai/text-embedding-3-small                           (embedding)
+
+DEPRECATED — these IDs still exist but prefer ai_inference:
+  analyze_image / analyze_current_screen / cloud_ai_vision → use sources
+  analyze_media (transcribe / summarize video) → use sources + prompt
 
 TIP: Use JSON mode with a small schema — the model returns valid JSON every
 time, which you can chain into guards/templates without regex parsing.

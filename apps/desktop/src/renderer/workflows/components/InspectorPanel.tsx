@@ -135,6 +135,7 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
           label: trigger.label || (trigger as any).type || 'Trigger',
           tool: (trigger as any).type,
           isTrigger: true,
+          inputParams: trigger.inputParams || [],
         });
         continue;
       }

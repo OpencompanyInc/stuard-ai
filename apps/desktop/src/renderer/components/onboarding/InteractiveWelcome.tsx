@@ -106,6 +106,131 @@ function Fade({ children, delay = 0, duration = 0.8, className }: {
 // FULL-SCREEN BACKGROUND
 // =============================================================================
 
+// Reddish atmospheric glow — concentrated in the middle, fades softly to nothing
+// at the edges so the OS shows through and it feels like a real glow, not an overlay.
+// Each layer is centered via a static positioning wrapper (translate(-50%,-50%) in
+// inline style) so framer-motion's animated transforms don't clobber the centering.
+function RedSkyBackground() {
+  return (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden">
+      {/* deep core — warm bright center; only scale animates, so framer-motion composes safely */}
+      <motion.div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          x: '-50%', y: '-50%',
+          width: '65vw', height: '65vh',
+          maxWidth: '880px', maxHeight: '880px',
+          background: 'radial-gradient(ellipse at center, rgba(255,130,100,0.48) 0%, rgba(220,70,65,0.32) 25%, rgba(170,40,60,0.16) 55%, rgba(110,22,50,0.05) 75%, transparent 90%)',
+          filter: 'blur(34px)',
+        }}
+        animate={{ scale: [1, 1.04, 1] }}
+        transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+      />
+
+      {/* hotter highlight just above center */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(-50%, calc(-50% - 6vh))',
+          width: '36vw', height: '36vh',
+          maxWidth: '480px', maxHeight: '480px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(255,170,125,0.30) 0%, rgba(255,100,75,0.14) 45%, transparent 80%)',
+            filter: 'blur(38px)',
+          }}
+          animate={{ x: [0, 14, -8, 0], y: [0, -8, 6, 0] }}
+          transition={{ duration: 22, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+
+      {/* drifting cloud wisp inside the glow */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(-50%, calc(-50% + 5vh))',
+          width: '46vw', height: '22vh',
+          maxWidth: '600px', maxHeight: '290px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(255,115,85,0.14) 0%, transparent 70%)',
+            filter: 'blur(30px)',
+          }}
+          animate={{ x: [0, 18, -10, 0], y: [0, 6, -4, 0] }}
+          transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+
+      {/* irregular edge blobs — break up the perfect-oval silhouette */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% - 22vw), calc(-50% - 10vh))',
+          width: '28vw', height: '18vh', maxWidth: '380px', maxHeight: '240px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(220,70,65,0.22) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, 8, -5, 0], y: [0, -5, 3, 0] }}
+          transition={{ duration: 26, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% + 22vw), calc(-50% - 5vh))',
+          width: '26vw', height: '17vh', maxWidth: '340px', maxHeight: '220px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(200,55,70,0.20) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, -7, 5, 0], y: [0, 4, -3, 0] }}
+          transition={{ duration: 30, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% + 3vw), calc(-50% + 16vh))',
+          width: '32vw', height: '16vh', maxWidth: '420px', maxHeight: '210px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(190,50,75,0.18) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, -10, 6, 0], y: [0, 5, -3, 0] }}
+          transition={{ duration: 32, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      {/* fine grain for texture */}
+      <div
+        className="absolute inset-0 opacity-[0.05] mix-blend-overlay"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
+          backgroundSize: '128px 128px',
+        }}
+      />
+    </div>
+  );
+}
+
 function AuroraBackground() {
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden">
@@ -231,62 +356,82 @@ const CAPABILITIES: Capability[] = [
 ];
 
 // =============================================================================
-// TYPEWRITER
+// TYPEWRITER (cycling, with backspace between phrases)
 // =============================================================================
 
-function useTypewriter(text: string, speed = 40, startDelay = 600) {
+function useTypewriterCycle(phrases: string[], opts: {
+  typeSpeed?: number; deleteSpeed?: number; holdMs?: number; startDelay?: number;
+} = {}) {
+  const { typeSpeed = 45, deleteSpeed = 28, holdMs = 1300, startDelay = 600 } = opts;
   const [displayed, setDisplayed] = useState('');
-  const [done, setDone] = useState(false);
+  const [allDone, setAllDone] = useState(false);
+
   useEffect(() => {
-    setDisplayed(''); setDone(false);
-    let i = 0; let timeout: ReturnType<typeof setTimeout>;
-    const startTimeout = setTimeout(() => {
-      const tick = () => { if (i < text.length) { i++; setDisplayed(text.slice(0, i)); timeout = setTimeout(tick, speed); } else { setDone(true); } };
-      tick();
-    }, startDelay);
-    return () => { clearTimeout(startTimeout); clearTimeout(timeout); };
-  }, [text, speed, startDelay]);
-  return { displayed, done };
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wait = (ms: number) => new Promise<void>(r => { timer = setTimeout(r, ms); });
+
+    const run = async () => {
+      await wait(startDelay);
+      for (let p = 0; p < phrases.length; p++) {
+        if (cancelled) return;
+        const phrase = phrases[p];
+        for (let i = 1; i <= phrase.length; i++) {
+          if (cancelled) return;
+          setDisplayed(phrase.slice(0, i));
+          await wait(typeSpeed);
+        }
+        await wait(holdMs);
+        if (cancelled) return;
+        if (p === phrases.length - 1) { setAllDone(true); return; }
+        for (let i = phrase.length - 1; i >= 0; i--) {
+          if (cancelled) return;
+          setDisplayed(phrase.slice(0, i));
+          await wait(deleteSpeed);
+        }
+      }
+    };
+    void run();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [phrases, typeSpeed, deleteSpeed, holdMs, startDelay]);
+
+  return { displayed, allDone };
 }
 
 // =============================================================================
-// PAGE 0: TYPEWRITER INTRO
+// PAGE 0: TYPEWRITER INTRO — one line, types → holds → backspaces → next phrase
 // =============================================================================
 
-const INTRO_LINES = [
-  "Hey there, I'm Stuard.",
-  "I live on your desktop — always one shortcut away.",
-  "If you need anything, just ask.",
-  "Just ask Stuard.",
+const HELLO_LINES: string[] = [
+  "Hey. I'm Stuard.",
+  "I live here on your desktop.",
+  "Always one shortcut away.",
+  "The forgettable stuff? I'll handle it.",
+  "Just ask.",
 ];
 
 function HelloSplash({ onNext }: { onNext: () => void }) {
-  const [lineIndex, setLineIndex] = useState(0);
-  const [lines, setLines] = useState<string[]>([]);
-  const currentLine = INTRO_LINES[lineIndex];
-  const { displayed, done } = useTypewriter(currentLine || '', 35, lineIndex === 0 ? 800 : 400);
+  const { displayed, allDone } = useTypewriterCycle(HELLO_LINES);
 
   useEffect(() => {
-    if (!done || lineIndex >= INTRO_LINES.length - 1) return;
-    const t = setTimeout(() => { setLines(prev => [...prev, INTRO_LINES[lineIndex]]); setLineIndex(i => i + 1); }, 600);
+    if (!allDone) return;
+    const t = setTimeout(onNext, 2400);
     return () => clearTimeout(t);
-  }, [done, lineIndex]);
-
-  const allDone = done && lineIndex === INTRO_LINES.length - 1;
-  useEffect(() => { if (!allDone) return; const t = setTimeout(onNext, 2200); return () => clearTimeout(t); }, [allDone, onNext]);
+  }, [allDone, onNext]);
 
   return (
     <Page stepKey="hello">
-      <div className="flex flex-col items-start max-w-lg w-full px-4 select-none cursor-pointer" onClick={allDone ? onNext : undefined}>
-        {lines.map((line, i) => (
-          <motion.p key={i} initial={{ opacity: 0.8 }} animate={{ opacity: 0.35 }} transition={{ duration: 0.6 }} className="text-[clamp(1.4rem,3.5vw,2.2rem)] font-extralight leading-snug text-white/35 mb-3">{line}</motion.p>
-        ))}
-        {currentLine && (
-          <p className="text-[clamp(1.4rem,3.5vw,2.2rem)] font-extralight leading-snug text-white/85 mb-3">
-            {displayed}
-            {!done && <span className="inline-block w-[2px] h-[1em] bg-white/50 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />}
-          </p>
-        )}
+      <div
+        className="flex items-center justify-center text-center max-w-[760px] w-[80vw] px-8 select-none cursor-pointer"
+        onClick={allDone ? onNext : undefined}
+      >
+        <p
+          className="text-[clamp(1.4rem,3.2vw,2.2rem)] font-extralight leading-snug text-white/90"
+          style={{ textShadow: '0 2px 30px rgba(0,0,0,0.7)' }}
+        >
+          {displayed}
+          <span className="inline-block w-[2px] h-[1em] bg-white/65 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
+        </p>
       </div>
     </Page>
   );
@@ -1055,7 +1200,7 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
       animate={{ opacity: fadingOut ? 0 : 1 }}
       transition={{ duration: 0.6, ease: 'easeOut' }}
     >
-      <AuroraBackground />
+      {page === 0 ? <RedSkyBackground /> : <AuroraBackground />}
       {onSkip && page > 0 && page < 11 && <SkipButton onClick={onSkip} />}
       <div className="relative z-10 h-full w-full">
         <AnimatePresence mode="wait">

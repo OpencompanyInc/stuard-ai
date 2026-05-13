@@ -34,6 +34,11 @@ export interface DesignerNode {
   position: { x: number; y: number };
   /** When true, this node waits for all incoming branches to complete before executing */
   waitForAll?: boolean;
+  /** Optional visual override (icon id from FUNCTION_NODE_ICONS).
+   *  Lets a function-call node render with the design its publisher chose. */
+  iconName?: string;
+  /** Optional visual override (color id from FUNCTION_NODE_COLORS). */
+  colorKey?: string;
 }
 
 /** Input parameter definition for workflow-as-function */
@@ -131,6 +136,18 @@ export interface WorkflowVariable {
   persistState?: boolean;
 }
 
+/** Designed presentation of a function (icon, color, label, ports) — set by
+ *  the publisher in the marketplace wizard and rendered by callers when this
+ *  workflow is dragged in as a callable function. */
+export interface FunctionNodeDesign {
+  label: string;
+  tagline?: string;
+  icon: string;
+  color: string;
+  inputs: Array<{ id: string; name: string; type: string }>;
+  outputs: Array<{ id: string; name: string; type: string }>;
+}
+
 export interface DesignerModel {
   id: string;
   name: string;
@@ -150,6 +167,12 @@ export interface DesignerModel {
   marketplaceSlug?: string;
   /** Output schema for workflow return value (for workflow-as-function use) */
   outputSchema?: WorkflowOutputField[];
+  /** 'function' = published as a reusable callable building block. Undefined or
+   *  any other value = a regular event-driven workflow. */
+  kind?: 'function';
+  /** Designer's chosen visual + IO shape, shown when this function is dragged
+   *  into another workflow's canvas. */
+  functionNode?: FunctionNodeDesign;
 }
 
 export interface StuardSpec {

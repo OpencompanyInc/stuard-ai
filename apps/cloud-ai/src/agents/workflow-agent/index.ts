@@ -29,7 +29,7 @@ import {
   setActiveBridge,
   withActiveBridgeContext,
 } from '../../tools/device/shared';
-import { executeStep, listWorkflows, inspectWorkflow } from './tools';
+import { executeStep, listWorkflows, inspectWorkflow, loadWorkflow } from './tools';
 import { searchWorkflowDocs } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
@@ -159,6 +159,8 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
     // 5. Inspect workflow topology
     inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
+    // 5b. Load an existing saved workflow into session for editing
+    load_workflow: createLoggedTool(loadWorkflow, 'load_workflow'),
     // 6. Modify workflow
     modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
     // 7. Execute step (sis execute)
@@ -285,7 +287,7 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
 }
 
 // Re-export tools for external use
-export { executeStep, listWorkflows, inspectWorkflow } from './tools';
+export { executeStep, listWorkflows, inspectWorkflow, loadWorkflow } from './tools';
 export { searchWorkflowDocs } from './docs';
 export { deployWorkflow } from './deploy';
 export { workflowModifyTool } from '../../tools/workflow';

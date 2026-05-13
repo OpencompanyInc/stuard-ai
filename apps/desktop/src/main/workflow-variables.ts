@@ -29,9 +29,46 @@ export interface WorkflowVariableDefinition {
 /** Registry of workflow variable definitions by flowId */
 const variableDefinitions = new Map<string, Map<string, WorkflowVariableDefinition>>();
 
-/** Per-workflow variable store (workflow.* and local.* scoped variables) */
+/**
+ * Per-workflow variable store.
+ *
+ * Storage key format:
+ *   - Scoped (workflow.* or local.*) variables: `${flowId}::${scope}.${name}`
+ *     so different workflows can have variables of the same name without colliding.
+ *   - Unprefixed/legacy names: stored as-is (no flowId namespace).
+ *
+ * The `${flowId}::` prefix is invisible to tool callers and templates — they
+ * refer to variables by their scoped name (e.g. `workflow.counter`) and the
+ * runtime composes the storage key using the executing workflow's flowId.
+ */
 export const variableStore = new Map<string, VariableEntry>();
 const VARIABLES_FILE = path.join(app.getPath('userData'), 'workflow-variables.json');
+
+const KEY_SEPARATOR = '::';
+
+/** Is this a scoped variable name (`workflow.x` or `local.x`)? */
+function isScopedName(name: string): boolean {
+  return name.startsWith('workflow.') || name.startsWith('local.');
+}
+
+/**
+ * Compose a storage key from a flowId and a scoped variable name.
+ * If the name isn't scoped, or no flowId is given, returns the name unchanged.
+ */
+export function composeStorageKey(flowId: string | undefined, name: string): string {
+  if (!flowId || !isScopedName(name)) return name;
+  return `${flowId}${KEY_SEPARATOR}${name}`;
+}
+
+/** Parse a storage key back to its components. */
+export function parseStorageKey(key: string): { flowId?: string; scopedName: string } {
+  const idx = key.indexOf(KEY_SEPARATOR);
+  if (idx === -1) return { scopedName: key };
+  const flowId = key.slice(0, idx);
+  const scopedName = key.slice(idx + KEY_SEPARATOR.length);
+  if (!isScopedName(scopedName)) return { scopedName: key };
+  return { flowId, scopedName };
+}
 
 
 /** Callback fired after a variable changes */
@@ -133,13 +170,22 @@ function coerceValue(value: any, type: VariableType): VariableValue {
   }
 }
 
-export function getVariable(name: string, defaultValue?: VariableValue): VariableValue | undefined {
+export function getVariable(name: string, defaultValue?: VariableValue, flowId?: string): VariableValue | undefined {
+  // Prefer the flow-scoped key when both flowId and a scoped name are given.
+  if (flowId && isScopedName(name)) {
+    const scoped = variableStore.get(composeStorageKey(flowId, name));
+    if (scoped) return scoped.value;
+    // Fall through to legacy unscoped lookup so persistState values written
+    // before flow-scoping shipped remain visible until the next initializer
+    // claims them.
+  }
   const entry = variableStore.get(name);
   return entry ? entry.value : defaultValue;
 }
 
 export function setVariable(name: string, value: VariableValue, type?: VariableType, flowId?: string, silent?: boolean): VariableEntry {
-  const previousEntry = variableStore.get(name);
+  const storageKey = composeStorageKey(flowId, name);
+  const previousEntry = variableStore.get(storageKey);
   const previousValue = previousEntry?.value;
   const actualType = type || inferType(value);
   const coerced = coerceValue(value, actualType);
@@ -149,11 +195,11 @@ export function setVariable(name: string, value: VariableValue, type?: VariableT
     updatedAt: new Date().toISOString(),
     flowId,
   };
-  variableStore.set(name, entry);
+  variableStore.set(storageKey, entry);
   // Notify listeners FIRST so custom_ui gets updates instantly,
   // then debounce the disk write (which is slow for large values like base64 frames).
   if (!silent) {
-    notifyListeners(name, entry, previousValue);
+    notifyListeners(storageKey, entry, previousValue);
   }
   saveVariables();
   return entry;
@@ -240,8 +286,23 @@ export function initializeWorkflowVariables(
 
     const scope = v.scope || 'workflow';
     const fullName = `${scope}.${v.name}`;
-    const existingEntry = variableStore.get(fullName);
+    const storageKey = composeStorageKey(flowId, fullName);
+    let existingEntry = variableStore.get(storageKey);
     const storageType: VariableType = v.type === 'json' ? 'string' : (v.type as VariableType) || 'string';
+
+    // One-time migration: if this workflow declares persistState and the
+    // flow-scoped key is empty, claim a legacy unscoped entry (`workflow.x`)
+    // written before flow-scoping shipped. First workflow to claim wins —
+    // that's acceptable since the legacy behavior was already a collision.
+    if (!existingEntry && v.persistState && flowId) {
+      const legacy = variableStore.get(fullName);
+      if (legacy) {
+        variableStore.set(storageKey, { ...legacy, flowId });
+        variableStore.delete(fullName);
+        existingEntry = variableStore.get(storageKey);
+        console.log(`[VARS]   Migrated legacy ${fullName} → ${storageKey}`);
+      }
+    }
 
     // Determine if we should initialize this variable
     // - If forceReset is true, always reset to default
@@ -252,9 +313,9 @@ export function initializeWorkflowVariables(
     if (shouldReset) {
       const value = v.defaultValue;
       setVariable(fullName, value, storageType, flowId);
-      console.log(`[VARS]   Initialized ${fullName} = ${JSON.stringify(value)} (${storageType})`);
+      console.log(`[VARS]   Initialized ${storageKey} = ${JSON.stringify(value)} (${storageType})`);
     } else {
-      console.log(`[VARS]   Preserved ${fullName} = ${JSON.stringify(existingEntry?.value)} (persistState: true)`);
+      console.log(`[VARS]   Preserved ${storageKey} = ${JSON.stringify(existingEntry?.value)} (persistState: true)`);
     }
   }
 }
@@ -272,14 +333,18 @@ export function cleanupWorkflowVariables(flowId: string): void {
     const scope = def.scope || 'workflow';
     const fullName = `${scope}.${name}`;
     if (!def.persistState) {
-      variableStore.delete(fullName);
-      console.log(`[VARS] Cleaned up non-persistent variable: ${fullName}`);
+      const storageKey = composeStorageKey(flowId, fullName);
+      variableStore.delete(storageKey);
+      console.log(`[VARS] Cleaned up non-persistent variable: ${storageKey}`);
     }
   }
 
-  // Clean up all local.* variables associated with this workflow's flows
+  // Clean up all local.* variables associated with this workflow's flow.
+  // local.* entries are flow-scoped, so their storage keys are prefixed
+  // with `${flowId}::`.
+  const localPrefix = `${flowId}${KEY_SEPARATOR}local.`;
   for (const [name, entry] of variableStore.entries()) {
-    if (name.startsWith('local.') && entry.flowId === flowId) {
+    if (name.startsWith(localPrefix) || (name.startsWith('local.') && entry.flowId === flowId)) {
       variableStore.delete(name);
       console.log(`[VARS] Cleaned up local variable: ${name} (flowId: ${flowId})`);
     }

@@ -18,7 +18,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge } from '../../tools/bridge';
-import { getSessionWorkflow } from '../../tools/workflow';
+import { getSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
 import { workflowMap } from '../../tools/workflow-system';
 import { writeLog } from '../../utils/logger';
 import {
@@ -161,6 +161,82 @@ export const listWorkflows = createTool({
     } catch (e: any) {
       wfLog('list_workflows_error', { error: e.message });
       return { ok: false, workflows: [], error: e.message };
+    }
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOAD WORKFLOW - Load an existing workflow from disk into the session
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const loadWorkflow = createTool({
+  id: 'load_workflow',
+  description:
+    'Load an existing saved workflow into the editing session so inspect_workflow and modify_workflow can act on it. ' +
+    'Use this when the user references an existing workflow by id (e.g. "modify flow_morning_brief"). ' +
+    'Call list_workflows first if you do not know the exact id. ' +
+    'After loading, call inspect_workflow to see the current topology before editing.',
+  inputSchema: z.object({
+    workflowId: z.string().describe('The id of the saved workflow to load (e.g. "flow_morning_brief").'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+    nodes: z.number().optional(),
+    wires: z.number().optional(),
+    triggers: z.number().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData, { writer }) => {
+    const { workflowId } = inputData as { workflowId: string };
+    wfLog('load_workflow_start', { workflowId });
+
+    if (!workflowId) return { ok: false, error: 'workflowId is required' };
+    if (!hasClientBridge()) {
+      return { ok: false, error: 'No client bridge available — cannot read local workflows.' };
+    }
+
+    try {
+      const res = await execLocalTool(
+        'read_local_workflow',
+        { workflowId },
+        writer as any,
+        10_000,
+        { silent: true, noFallback: true },
+      );
+
+      let workflow: any = null;
+      if (res?.ok) {
+        if (res.model && typeof res.model === 'object') workflow = res.model;
+        else if (typeof res.content === 'string') {
+          try { workflow = JSON.parse(res.content); } catch { workflow = null; }
+        }
+      }
+
+      if (!workflow || typeof workflow !== 'object') {
+        return { ok: false, error: res?.error || `Workflow not found: ${workflowId}` };
+      }
+
+      if (!workflow.id) workflow.id = workflowId;
+      setSessionWorkflow(workflow);
+      wfLog('load_workflow_loaded', {
+        id: workflow.id,
+        nodes: workflow.nodes?.length,
+        triggers: workflow.triggers?.length,
+      });
+
+      return {
+        ok: true,
+        id: String(workflow.id),
+        name: workflow.name ? String(workflow.name) : undefined,
+        nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
+        wires: Array.isArray(workflow.wires) ? workflow.wires.length : 0,
+        triggers: Array.isArray(workflow.triggers) ? workflow.triggers.length : 0,
+      };
+    } catch (e: any) {
+      wfLog('load_workflow_error', { workflowId, error: e?.message });
+      return { ok: false, error: e?.message || 'Failed to load workflow' };
     }
   },
 });

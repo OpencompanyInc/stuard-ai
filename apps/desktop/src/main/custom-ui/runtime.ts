@@ -153,7 +153,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     // Push each data key as a workflow variable so useVar hooks update reactively.
     if (safeData && typeof safeData === 'object') {
       for (const [key, value] of Object.entries(safeData)) {
-        setVariable(key, value as VariableValue);
+        setVariable(key, value as VariableValue, undefined, flowId || undefined);
       }
     }
 
@@ -310,7 +310,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   // (prevents stale reads from the global variable store on subsequent runs)
   if (safeData && typeof safeData === 'object') {
     for (const [key, value] of Object.entries(safeData)) {
-      setVariable(key, value as VariableValue);
+      setVariable(key, value as VariableValue, undefined, flowId || undefined);
     }
   }
 
@@ -545,9 +545,10 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
   // Without this, update_custom_ui({ data: { name: "foo" } }) only refreshes
   // data-bind elements in raw-HTML UIs but leaves React useVar('name') stale.
   if (updates && typeof updates === 'object') {
+    const updateFlowId = winData?.flowId || (args?.flowId as string | undefined) || undefined;
     for (const [key, value] of Object.entries(updates)) {
       try {
-        setVariable(key, value as VariableValue);
+        setVariable(key, value as VariableValue, undefined, updateFlowId);
       } catch (e: any) {
         ctx.logFn(`update_custom_ui: setVariable failed for "${key}": ${e?.message}`);
       }

@@ -935,15 +935,19 @@ export function openDashboardWindow(options?: { tab?: string }) {
   dashboardWin = d;
 }
 
-export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
+export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workflowId?: string }) {
   const initialSlug = options?.marketplaceSlug || '';
+  const initialWorkflowId = options?.workflowId || '';
 
   if (workflowsWin && !workflowsWin.isDestroyed()) {
     workflowsWin.show();
     workflowsWin.focus();
     workflowsWin.moveTop();
-    if (initialSlug) {
-      workflowsWin.webContents.send('workflows:navigate', { marketplaceSlug: initialSlug });
+    if (initialSlug || initialWorkflowId) {
+      workflowsWin.webContents.send('workflows:navigate', {
+        ...(initialSlug ? { marketplaceSlug: initialSlug } : {}),
+        ...(initialWorkflowId ? { workflowId: initialWorkflowId } : {}),
+      });
     }
     return;
   }
@@ -987,9 +991,17 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
       });
     });
   }
+  const queryParts: string[] = [];
+  if (initialSlug) queryParts.push(`marketplaceSlug=${encodeURIComponent(initialSlug)}`);
+  if (initialWorkflowId) queryParts.push(`workflowId=${encodeURIComponent(initialWorkflowId)}`);
+  const queryString = queryParts.length ? `?${queryParts.join('&')}` : '';
+  const loadFileQuery: Record<string, string> = {};
+  if (initialSlug) loadFileQuery.marketplaceSlug = initialSlug;
+  if (initialWorkflowId) loadFileQuery.workflowId = initialWorkflowId;
+
   if (isDev) {
-    const url = initialSlug
-      ? `${getRendererUrl("workflows")}?marketplaceSlug=${encodeURIComponent(initialSlug)}`
+    const url = queryString
+      ? `${getRendererUrl("workflows")}${queryString}`
       : getRendererUrl("workflows");
     d.loadURL(url);
   } else {
@@ -999,8 +1011,8 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string }) {
     ];
     for (const p of candidates) {
       if (fs.existsSync(p)) {
-        if (initialSlug) {
-          d.loadFile(p, { query: { marketplaceSlug: initialSlug } });
+        if (Object.keys(loadFileQuery).length > 0) {
+          d.loadFile(p, { query: loadFileQuery });
         } else {
           d.loadFile(p);
         }

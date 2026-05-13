@@ -1566,6 +1566,8 @@ export function workflows_list() {
       let marketplaceSlug = '';
       let locked = false;
       let triggers: string[] = [];
+      let kind: string | undefined = undefined;
+      let functionNode: any = undefined;
       try {
         const stat = fs.statSync(filePath);
         updatedAt = new Date(stat.mtimeMs).toISOString();
@@ -1579,10 +1581,12 @@ export function workflows_list() {
         if (Array.isArray(j?.triggers)) {
           triggers = (j.triggers as any[]).map((t: any) => String(t?.type || '')).filter((s: string) => !!s);
         }
+        if (j && j.kind === 'function') kind = 'function';
+        if (j && j.functionNode && typeof j.functionNode === 'object') functionNode = j.functionNode;
       } catch { }
       const hasRuntime = flowRuntimes.has(id);
       const running = isStuardEngineRunning(id);
-      return { id, name, description, updatedAt, version, marketplaceSlug, locked, hasRuntime, running, triggers, folder: folder || undefined, isWorkspace: !!isWorkspace };
+      return { id, name, description, updatedAt, version, marketplaceSlug, locked, hasRuntime, running, triggers, folder: folder || undefined, isWorkspace: !!isWorkspace, kind, functionNode };
     };
 
     // Scan root-level entries
@@ -2675,6 +2679,7 @@ export function workflows_listWorkspaceFunctions(id: string) {
       triggers?: string[];
       inputParams?: any[];
       outputSchema?: any[];
+      functionNode?: any;
     }> = [];
 
     const walkDir = (dir: string, prefix: string) => {
@@ -2701,6 +2706,7 @@ export function workflows_listWorkspaceFunctions(id: string) {
                 triggers: triggers.filter(Boolean),
                 inputParams: functionTrigger?.inputParams || [],
                 outputSchema: model?.outputSchema || [],
+                functionNode: model?.functionNode && typeof model.functionNode === 'object' ? model.functionNode : undefined,
               });
             } catch {
               functions.push({
@@ -2718,5 +2724,96 @@ export function workflows_listWorkspaceFunctions(id: string) {
     return { ok: true, functions };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed'), functions: [] };
+  }
+}
+
+/**
+ * Materialize a top-level workflow as an internal sub-workflow inside another
+ * workflow's workspace. Used when a user drags an installed marketplace
+ * function onto a different workflow's canvas — instead of leaving a fragile
+ * cross-workflow `call_workflow` reference, we copy the function's spec into
+ * the host workspace under `imported/<slug>.stuard` and the canvas wires a
+ * `call_workspace_function` node to that path.
+ *
+ * Returns the path (relative to the host workspace) at which the spec was
+ * written, plus parsed functionNode metadata so the caller can render the
+ * call node with the publisher's chosen icon/color.
+ */
+export function workflows_importAsWorkspaceFunction(
+  hostId: string,
+  sourceId: string,
+  options?: { subdir?: string }
+) {
+  try {
+    const safeHost = safeFlowId(String(hostId || ''));
+    const safeSource = safeFlowId(String(sourceId || ''));
+    if (!safeHost || !safeSource) return { ok: false, error: 'invalid_id' };
+    if (safeHost === safeSource) return { ok: false, error: 'same_workflow' };
+
+    const sourcePath = findWorkflowPath(safeSource);
+    if (!sourcePath) return { ok: false, error: 'source_not_found' };
+
+    let sourceModel: any;
+    try {
+      const rawSource = prepareForLoad(fs.readFileSync(sourcePath, 'utf-8'));
+      sourceModel = JSON.parse(rawSource || '{}');
+    } catch {
+      return { ok: false, error: 'source_unreadable' };
+    }
+    if (sourceModel?.locked) {
+      // Locked workflows are encrypted at rest with this machine's key; we'd
+      // be writing plaintext into the host workspace, breaking that contract.
+      return { ok: false, error: 'source_locked' };
+    }
+
+    // Make sure the host is a workspace (auto-migrate flat → workspace).
+    const ensure = workflows_ensureWorkspace(safeHost);
+    if (!ensure.ok) return { ok: false, error: ensure.error || 'host_not_workspace' };
+    const wsDir = ensure.workspacePath || getWorkspaceDir(safeHost);
+    if (!wsDir) return { ok: false, error: 'host_not_workspace' };
+
+    // Pick a sub-path inside `imported/` (avoid colliding with existing files).
+    const subdir = (options?.subdir || 'imported').replace(/[^a-zA-Z0-9_/-]/g, '');
+    const baseSlug =
+      String(sourceModel?.name || safeSource)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48) || 'function';
+    let slug = baseSlug;
+    let counter = 1;
+    while (fs.existsSync(path.join(wsDir, subdir, `${slug}.stuard`))) {
+      counter += 1;
+      slug = `${baseSlug}-${counter}`;
+    }
+    const subPath = `${subdir}/${slug}.stuard`;
+
+    // Strip cross-workflow links — the imported copy is now standalone.
+    const internalId = `${safeHost}__${slug}`;
+    const cloned = {
+      ...sourceModel,
+      id: internalId,
+      autostart: false,
+      marketplaceSlug: undefined,
+      kind: sourceModel?.kind === 'function' ? 'function' : sourceModel?.kind,
+    };
+    delete (cloned as any).marketplaceSlug;
+
+    const writeRes = workflows_saveWorkspaceStuard(safeHost, subPath, JSON.stringify(cloned, null, 2));
+    if (!writeRes.ok) return { ok: false, error: writeRes.error || 'write_failed' };
+
+    // Pull out the bits the renderer needs to wire a call_workspace_function
+    // node with the right inputs and visual design.
+    const functionTrigger =
+      Array.isArray(cloned?.triggers) ? cloned.triggers.find((t: any) => t?.type === 'function') : null;
+    return {
+      ok: true,
+      path: subPath,
+      name: cloned?.name || slug,
+      inputParams: functionTrigger?.inputParams || [],
+      functionNode: cloned?.functionNode || null,
+    };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
   }
 }

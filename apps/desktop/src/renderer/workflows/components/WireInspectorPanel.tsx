@@ -13,35 +13,58 @@ import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 // Back edge (cycle) detection is in ../utils/graphUtils.ts
 
 /** Styled dropdown to replace native selects */
-function StyledSelect({ 
-  value, 
-  onChange, 
-  options, 
+function StyledSelect({
+  value,
+  onChange,
+  options,
   placeholder = 'Select...',
-  size = 'sm'
-}: { 
-  value: string; 
-  onChange: (v: string) => void; 
-  options: Array<{ value: string; label: string; group?: string }>;
+  size = 'sm',
+  searchable = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string; group?: string; description?: string }>;
   placeholder?: string;
   size?: 'sm' | 'xs';
+  searchable?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement>(null);
-  
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
   const selectedOption = options.find(o => o.value === value);
-  
-  // Group options
+
+  // Filter then group options
   const groups = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? options.filter(o =>
+          o.label.toLowerCase().includes(q) ||
+          o.value.toLowerCase().includes(q) ||
+          (o.group || '').toLowerCase().includes(q) ||
+          (o.description || '').toLowerCase().includes(q)
+        )
+      : options;
     const grouped = new Map<string, typeof options>();
-    for (const opt of options) {
+    for (const opt of filtered) {
       const g = opt.group || '';
       if (!grouped.has(g)) grouped.set(g, []);
       grouped.get(g)!.push(opt);
     }
     return grouped;
-  }, [options]);
-  
+  }, [options, search]);
+
+  // Reset & focus search when opening
+  React.useEffect(() => {
+    if (open) {
+      setSearch('');
+      if (searchable) {
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+    }
+  }, [open, searchable]);
+
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -51,11 +74,11 @@ function StyledSelect({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-  
-  const sizeClasses = size === 'xs' 
-    ? 'px-2 py-1.5 text-[11px]' 
+
+  const sizeClasses = size === 'xs'
+    ? 'px-2 py-1.5 text-[11px]'
     : 'px-3 py-2 text-xs';
-  
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -68,36 +91,60 @@ function StyledSelect({
         </span>
         <ChevronDown className={`w-3.5 h-3.5 wf-fg-faint transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
-      
+
       {open && (
-        <div className="absolute z-50 w-full mt-1 rounded-xl shadow-xl max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150 wf-menu">
-          <div className="p-1">
-            {Array.from(groups.entries()).map(([groupName, groupOpts]) => (
-              <div key={groupName || '__ungrouped__'}>
-                {groupName && (
-                  <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider sticky top-0 bg-transparent wf-menu-header">
-                    {groupName}
+        <div className="absolute z-50 w-full mt-1 rounded-xl shadow-xl max-h-72 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150 wf-menu">
+          {searchable && (
+            <div className="p-1.5 border-b wf-border-subtle wf-bg-overlay sticky top-0 z-10">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search variables…"
+                className="w-full px-2 py-1.5 text-[11px] border wf-border-subtle rounded-md wf-input wf-fg focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+                onKeyDown={e => {
+                  if (e.key === 'Escape') { setOpen(false); }
+                }}
+              />
+            </div>
+          )}
+          <div className="overflow-y-auto p-1 flex-1">
+            {Array.from(groups.entries()).length === 0 ? (
+              <div className="px-3 py-4 text-xs wf-fg-faint text-center">No matches</div>
+            ) : (
+              Array.from(groups.entries()).map(([groupName, groupOpts]) => (
+                <div key={groupName || '__ungrouped__'}>
+                  {groupName && (
+                    <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider sticky top-0 bg-transparent wf-menu-header">
+                      {groupName}
+                    </div>
+                  )}
+                  <div className="space-y-0.5">
+                    {groupOpts.map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => { onChange(opt.value); setOpen(false); }}
+                        className={`w-full px-2.5 py-2 text-left text-xs rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
+                          opt.value === value
+                            ? 'wf-accent-soft font-medium [color:var(--wf-accent)]'
+                            : 'wf-menu-item'
+                        }`}
+                      >
+                        <span className="flex flex-col items-start min-w-0">
+                          <span className="truncate w-full">{opt.label}</span>
+                          {opt.description && (
+                            <span className="text-[10px] wf-fg-faint truncate w-full">{opt.description}</span>
+                          )}
+                        </span>
+                        {opt.value === value && <Check className="w-3.5 h-3.5 shrink-0" />}
+                      </button>
+                    ))}
                   </div>
-                )}
-                <div className="space-y-0.5">
-                  {groupOpts.map(opt => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => { onChange(opt.value); setOpen(false); }}
-                      className={`w-full px-2.5 py-2 text-left text-xs rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
-                        opt.value === value
-                          ? 'wf-accent-soft font-medium [color:var(--wf-accent)]'
-                          : 'wf-menu-item'
-                      }`}
-                    >
-                      <span>{opt.label}</span>
-                      {opt.value === value && <Check className="w-3.5 h-3.5 shrink-0" />}
-                    </button>
-                  ))}
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       )}
@@ -128,7 +175,13 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
       const sourceId = wire.from;
       const trigger = model.triggers.find(t => t.id === sourceId);
       if (trigger) {
-        result.push({ id: trigger.id, label: trigger.label || trigger.type || 'Trigger', tool: undefined });
+        result.push({
+          id: trigger.id,
+          label: trigger.label || trigger.type || 'Trigger',
+          tool: trigger.type,
+          isTrigger: true,
+          inputParams: trigger.inputParams || [],
+        });
         continue;
       }
       const node = model.nodes.find(n => n.id === sourceId);
@@ -189,6 +242,7 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
         label: sourceItem.label || (tool || (sourceItem as any).type) || 'Source',
         tool: tool || (isTrigger ? (trigger as any).type : undefined),
         isTrigger,
+        inputParams: isTrigger ? (trigger?.inputParams || []) : undefined,
       });
     }
     return upstream;
@@ -616,6 +670,16 @@ function WireConditionSection({
 
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const op = Object.keys(raw)[0];
+
+    // Handle unary operators (empty / not_empty) — no RHS
+    if (op === 'empty' || op === 'not_empty') {
+      const inner = Array.isArray((raw as any)[op]) ? (raw as any)[op][0] : (raw as any)[op];
+      if (inner && typeof inner === 'object' && 'var' in inner && typeof inner.var === 'string') {
+        return { lhs: inner.var as string, op, rhs: '' };
+      }
+      return null;
+    }
+
     if (!op || !['==', '!=', '>', '>=', '<', '<=', 'in'].includes(op)) return null;
     const val = (raw as any)[op];
     if (!Array.isArray(val) || val.length < 2) return null;
@@ -701,18 +765,53 @@ function WireConditionSection({
 
   // Build operand options
   const operandOptions = useMemo(() => {
-    const opts: Array<{ value: string; label: string; group: string }> = [];
+    const opts: Array<{ value: string; label: string; group: string; description?: string }> = [];
     if (Array.isArray(workflowVariables) && workflowVariables.length) {
       for (const v of workflowVariables) {
         if (!v?.name) continue;
-        opts.push({ value: `workflow.${v.name}`, label: `workflow.${v.name}`, group: 'Workflow Variables' });
+        opts.push({
+          value: `workflow.${v.name}`,
+          label: `workflow.${v.name}`,
+          group: 'Workflow Variables',
+          description: v.description,
+        });
       }
     }
     for (const n of upstreamNodes) {
-      const outputs = n.tool ? getToolOutputs(n.tool) : ['ok', 'result'];
-      opts.push({ value: n.id, label: n.id, group: 'Step Outputs' });
-      for (const f of outputs) {
-        opts.push({ value: `${n.id}.${f}`, label: `${n.id}.${f}`, group: 'Step Outputs' });
+      if (n.isTrigger) {
+        // Triggers expose data at ctx.trigger.data.* — not ctx.<triggerId>.*
+        opts.push({
+          value: 'trigger.data',
+          label: 'trigger.data',
+          group: `Trigger — ${n.label}`,
+          description: 'Full trigger payload',
+        });
+        // User-defined input params (workflow-as-function)
+        for (const p of n.inputParams || []) {
+          if (!p?.name) continue;
+          opts.push({
+            value: `trigger.data.${p.name}`,
+            label: `trigger.data.${p.name}`,
+            group: `Trigger — ${n.label}`,
+            description: p.description || (p.type ? `Input param (${p.type})` : 'Input param'),
+          });
+        }
+        // Static tool outputs (e.g. gmail.new_email → from, subject, …)
+        const outputs = n.tool ? getToolOutputs(n.tool) : [];
+        for (const f of outputs) {
+          opts.push({
+            value: `trigger.data.${f}`,
+            label: `trigger.data.${f}`,
+            group: `Trigger — ${n.label}`,
+            description: `Trigger output`,
+          });
+        }
+      } else {
+        const outputs = n.tool ? getToolOutputs(n.tool) : ['ok', 'result'];
+        opts.push({ value: n.id, label: n.id, group: `Step — ${n.label}` });
+        for (const f of outputs) {
+          opts.push({ value: `${n.id}.${f}`, label: `${n.id}.${f}`, group: `Step — ${n.label}` });
+        }
       }
     }
     return opts;
@@ -767,8 +866,14 @@ function WireConditionSection({
     if (field === 'rhs') setBuilderRhs(value);
 
     if (newLhs) {
-      const logic = { if: { [newOp]: [{ var: newLhs }, parseRhsValue(newRhs)] } };
-      onUpdate({ guard: logic });
+      // Unary operators (empty/not_empty) don't use RHS
+      if (newOp === 'empty' || newOp === 'not_empty') {
+        const logic = { if: { [newOp]: [{ var: newLhs }] } };
+        onUpdate({ guard: logic });
+      } else {
+        const logic = { if: { [newOp]: [{ var: newLhs }, parseRhsValue(newRhs)] } };
+        onUpdate({ guard: logic });
+      }
     }
   }, [builderLhs, builderOp, builderRhs, onUpdate, parseRhsValue]);
 
@@ -841,7 +946,7 @@ function WireConditionSection({
 
             {editorMode === 'builder' ? (
               <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2">
+                <div className={`grid gap-2 ${builderOp === 'empty' || builderOp === 'not_empty' ? 'grid-cols-2' : 'grid-cols-3'}`}>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-muted mb-1 block">Left</label>
                     <StyledSelect
@@ -849,8 +954,8 @@ function WireConditionSection({
                       onChange={(v) => handleBuilderChange('lhs', v)}
                       placeholder="Select…"
                       size="xs"
+                      searchable
                       options={[
-                        { value: '', label: 'Select…' },
                         // Include current value if not already in options
                         ...(builderLhs && !operandOptions.some(o => o.value === builderLhs)
                           ? [{ value: builderLhs, label: builderLhs, group: 'Current' }]
@@ -869,6 +974,8 @@ function WireConditionSection({
                       options={[
                         { value: '==', label: 'Equals' },
                         { value: '!=', label: 'Not equals' },
+                        { value: 'empty', label: 'Is empty' },
+                        { value: 'not_empty', label: 'Is not empty' },
                         { value: '>', label: 'Greater' },
                         { value: '>=', label: 'Greater or equal' },
                         { value: '<', label: 'Less' },
@@ -877,6 +984,8 @@ function WireConditionSection({
                     />
                   </div>
 
+                  {/* RHS - hidden for unary operators */}
+                  {builderOp !== 'empty' && builderOp !== 'not_empty' && (
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-muted mb-1 block">Right</label>
                     <TextInputWithVariables
@@ -888,9 +997,11 @@ function WireConditionSection({
                       suggestFrom={['*.*']}
                     />
                   </div>
+                  )}
                 </div>
 
-                {/* Quick value buttons */}
+                {/* Quick value buttons - hidden for unary operators */}
+                {builderOp !== 'empty' && builderOp !== 'not_empty' && (
                 <div className="flex gap-1.5">
                   {['true', 'false'].map(val => (
                     <button
@@ -906,11 +1017,16 @@ function WireConditionSection({
                     </button>
                   ))}
                 </div>
+                )}
 
                 {/* Preview */}
                 <div className="flex items-center gap-2 px-3 py-2 wf-bg-overlay rounded-lg border wf-border-subtle">
                   <code className="text-[11px] font-mono wf-fg-muted">
-                    {builderLhs ? `${builderLhs} ${builderOp} ${builderRhs || '?'}` : 'Select a variable...'}
+                    {builderLhs
+                      ? (builderOp === 'empty' || builderOp === 'not_empty'
+                        ? `${builderLhs} ${builderOp === 'empty' ? 'is empty' : 'is not empty'}`
+                        : `${builderLhs} ${builderOp} ${builderRhs || '?'}`)
+                      : 'Select a variable...'}
                   </code>
                 </div>
               </div>

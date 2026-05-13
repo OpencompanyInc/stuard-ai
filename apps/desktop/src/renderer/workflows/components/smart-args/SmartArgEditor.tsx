@@ -12,6 +12,7 @@ import type { UIWindowConfig } from '../../../ui-builder/types';
 import { extractHtmlFromComponent } from '../../../ui-builder/utils/codeGenerator';
 import { supabase } from '../../../lib/supabaseClient';
 import { getCloudAiHttp } from '../../../utils/cloud';
+import { useModelRegistry } from '../../../hooks/useModelRegistry';
 import { HotkeyEditor } from './editors/HotkeyEditor';
 import { AcceleratorEditor } from './editors/AcceleratorEditor';
 import { SelectInput } from './editors/SelectInput';
@@ -152,6 +153,47 @@ function unescapeComponentCode(code: string): string {
   return result;
 }
 
+// AI tools whose `model` field should be powered by the live OpenRouter registry
+// (same catalog used by the main Stuard chat) instead of the static models.json snapshot.
+const LIVE_MODEL_TOOLS = new Set([
+  'ai_inference',
+  'agent_node',
+  'analyze_media',
+]);
+
+function isAiModelArg(toolName: string, argKey: string): boolean {
+  return argKey === 'model' && LIVE_MODEL_TOOLS.has(toolName);
+}
+
+/**
+ * Convert the live OpenRouter-backed model registry into ArgOption[] for SelectInput.
+ * Grouped by provider for readability, sorted by category (smart → balanced → fast).
+ */
+function useLiveModelOptions(enabled: boolean): ArgOption[] {
+  const { models } = useModelRegistry();
+
+  return useMemo(() => {
+    if (!enabled) return [];
+    const categoryOrder: Record<string, number> = { smart: 0, balanced: 1, fast: 2, research: 3 };
+    const sorted = [...models].sort((a, b) => {
+      const ca = categoryOrder[a.category as string] ?? 99;
+      const cb = categoryOrder[b.category as string] ?? 99;
+      if (ca !== cb) return ca - cb;
+      return String(a.name).localeCompare(String(b.name));
+    });
+    return sorted.map((m): ArgOption => {
+      const provider = m.provider || String(m.id).split('/')[0];
+      const tier = m.category ? String(m.category) : '';
+      const tierLabel = tier ? `${tier.charAt(0).toUpperCase()}${tier.slice(1)}` : '';
+      return {
+        value: m.id,
+        label: m.name,
+        description: [provider, tierLabel].filter(Boolean).join(' · '),
+      };
+    });
+  }, [enabled, models]);
+}
+
 export interface SmartArgEditorProps {
   toolName: string;
   argKey: string;
@@ -169,6 +211,8 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   const argSchema = schema?.args[argKey];
   const isGoogleProfile = isGoogleProfileArg(toolName, argKey);
   const googleProfileOptions = useGoogleProfileOptions(isGoogleProfile);
+  const isAiModel = isAiModelArg(toolName, argKey);
+  const liveModelOptions = useLiveModelOptions(isAiModel);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -322,16 +366,20 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
           />
         );
 
-      case 'select':
-        return options ? (
+      case 'select': {
+        // For AI model fields, use the live OpenRouter registry (matches main Stuard chat).
+        // Falls back to the static options when the registry is still loading.
+        const effectiveOptions = isAiModel && liveModelOptions.length > 0 ? liveModelOptions : options;
+        return effectiveOptions ? (
           <SelectInput
             value={value}
             onChange={onChange}
-            options={options}
-            placeholder={placeholder}
-            allowFreeform={allowFreeform}
+            options={effectiveOptions}
+            placeholder={isAiModel ? 'Search OpenRouter models...' : placeholder}
+            allowFreeform={isAiModel ? true : allowFreeform}
           />
         ) : null;
+      }
 
       case 'multiselect':
         return options ? (
