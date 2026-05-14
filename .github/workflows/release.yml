@@ -40,6 +40,8 @@ env:
   GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
   TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+  # tsc OOMs on the default 2GB heap when typechecking cloud-ai (large include via ../../shared).
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
