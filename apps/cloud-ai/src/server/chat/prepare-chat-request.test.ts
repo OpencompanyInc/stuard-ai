@@ -40,6 +40,7 @@ const {
 vi.mock('../../agents/workflow-agent', () => {
   return {
     getWorkflowAgent: getWorkflowAgentMock,
+    getWorkflowAgentForUser: getWorkflowAgentMock,
   };
 });
 
@@ -56,6 +57,7 @@ vi.mock('../../auth', () => {
 vi.mock('../../orchestrator', () => {
   return {
     getOrchestratorAgent: getOrchestratorAgentMock,
+    getOrchestratorAgentForUser: getOrchestratorAgentMock,
   };
 });
 
@@ -218,6 +220,8 @@ describe('prepareChatRequest', () => {
       'openai/gpt-5.4',
       getSkillsFromContextMock.mock.results[0]?.value,
       [],
+      null,
+      undefined,
     );
     expect(buildInputMessagesMock).toHaveBeenCalledWith(expect.objectContaining({ agent }));
     expect(secretBag.__modelTier).toBe('balanced');

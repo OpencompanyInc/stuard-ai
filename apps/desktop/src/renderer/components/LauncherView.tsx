@@ -48,6 +48,7 @@ import { clsx } from "clsx";
 import type {
   ChatMode,
   ChatModelsConfig,
+  ModelSourcePreference,
   ReasoningLevel,
 } from "../hooks/usePreferences";
 import { ModelSelector } from "./ModelSelector";
@@ -107,6 +108,8 @@ interface LauncherViewProps {
   onChatModeChange?: (mode: ChatMode) => void;
   chatModels?: ChatModelsConfig;
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
+  modelSource?: ModelSourcePreference;
+  onModelSourceChange?: (source: ModelSourcePreference) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
@@ -269,6 +272,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onChatModeChange,
   chatModels,
   onChatModelsChange,
+  modelSource = "stuard",
+  onModelSourceChange,
   reasoningLevel,
   onReasoningLevelChange,
   onCollapse,
@@ -1705,6 +1710,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   <ModelSelector
                     selectedModelId={selectedModelId}
                     onSelectModel={(id) => onChatModeChange?.(id as any)}
+                    modelSource={modelSource}
+                    onModelSourceChange={onModelSourceChange}
                     reasoningLevel={reasoningLevel}
                     onReasoningLevelChange={onReasoningLevelChange}
                     side="top"

@@ -49,6 +49,19 @@ declare global {
   interface Window {
     desktopAPI: {
       syncAuthSession: (session: any | null) => Promise<{ ok: boolean; error?: string }>;
+      // Codex (ChatGPT subscription) — tokens come from local `codex` CLI
+      codexStatus: () => Promise<{
+        installed: boolean;
+        signedIn: boolean;
+        accountEmail: string | null;
+        planType: string | null;
+        authJsonPath: string;
+        lastSyncedAtMs: number | null;
+        lastSyncError: string | null;
+      }>;
+      codexSyncToCloud: (opts?: { force?: boolean }) => Promise<{ ok: boolean; error?: string; skipped?: boolean }>;
+      codexOpenLogin: () => Promise<{ ok: boolean; error?: string }>;
+      codexRevealDir: () => Promise<{ ok: boolean }>;
       show: () => Promise<void>;
       hide: () => Promise<void>;
       toggle: () => Promise<void>;

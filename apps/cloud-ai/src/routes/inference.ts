@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { generateText, generateObject, streamText, embed, embedMany, stepCountIs, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { google, buildProviderEmbeddingModel, buildProviderModel } from '../utils/models';
+import { google, buildProviderEmbeddingModel, buildProviderModel, buildProviderModelForUser } from '../utils/models';
 import { z } from 'zod';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
@@ -1229,6 +1229,7 @@ Filename: ${filename}`;
       const body = await readJsonBody(req);
       const messages = Array.isArray(body?.messages) ? body.messages : [];
       const modelRaw = String(body?.model || 'gemini-3-flash-preview').trim();
+      const modelSource = typeof body?.modelSource === 'string' ? String(body.modelSource).trim() : undefined;
       const temperature = typeof body?.temperature === 'number' ? body.temperature : 0.3;
 
       if (messages.length === 0) {
@@ -1265,17 +1266,19 @@ Filename: ${filename}`;
 
       let result: any = null;
       let usedModelId = '';
+      let usedSource: 'byok' | 'friendly' | 'subscription' = 'friendly';
       let lastError: any = null;
       for (const candidateId of modelCandidates) {
-        const model = buildProviderModel(candidateId);
-        if (!model) continue;
+        const resolved = await buildProviderModelForUser(chatUserId, candidateId, modelSource);
+        if (!resolved) continue;
         try {
           result = await generateText({
-            model: model as any,
+            model: resolved.model as any,
             messages: proxyMessages,
             temperature,
           });
           usedModelId = candidateId;
+          usedSource = resolved.source;
           break;
         } catch (e: any) {
           lastError = e;
@@ -1283,7 +1286,13 @@ Filename: ${filename}`;
         }
       }
       if (!result) throw lastError || new Error('no_available_model');
-      await logInferenceUsage(chatUserId, usedModelId || modelCandidates[0], result.usage, 'Chat Proxy (browser-use)');
+      await logInferenceUsage(
+        chatUserId,
+        usedModelId || modelCandidates[0],
+        result.usage,
+        'Chat Proxy (browser-use)',
+        { billingExcluded: usedSource === 'byok' || usedSource === 'subscription' },
+      );
 
       const wantsJson = shouldNormalizeJsonOutput(nonEmptyMessages);
       const rawText = result.text?.trim() || '';

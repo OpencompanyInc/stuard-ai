@@ -23,6 +23,8 @@ vi.mock('../../agents/stuard-agent', () => {
 vi.mock('../../agents/workflow-agent', () => {
   return {
     getWorkflowAgent: getWorkflowAgentMock,
+    getWorkflowAgentForUser: getWorkflowAgentMock,
+    WORKFLOW_SYSTEM_PROMPT: '',
   };
 });
 
@@ -35,6 +37,7 @@ vi.mock('../../utils/logger', () => {
 vi.mock('../../agents/skill-agent', () => {
   return {
     getSkillAgent: vi.fn(),
+    getSkillAgentForUser: vi.fn(),
     SKILL_SYSTEM_PROMPT: '',
     clearSessionSkill: vi.fn(),
     setSessionSkill: vi.fn(),
@@ -66,6 +69,7 @@ vi.mock('../../utils/usage', () => {
 vi.mock('../../orchestrator', () => {
   return {
     getOrchestratorAgent: getOrchestratorAgentMock,
+    getOrchestratorAgentForUser: getOrchestratorAgentMock,
   };
 });
 

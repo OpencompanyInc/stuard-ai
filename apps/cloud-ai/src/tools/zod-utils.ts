@@ -13,6 +13,202 @@
 
 import { z } from 'zod';
 
+const COERCED_TOOL_SCHEMA = Symbol.for('stuard.coercedToolInputSchema');
+const COERCED_TOOL = Symbol.for('stuard.coercedTool');
+
+function getSchemaDef(schema: any): any {
+  return schema?._zod?.def ?? schema?._def;
+}
+
+function getSchemaType(schema: any): string | undefined {
+  const def = getSchemaDef(schema);
+  const type = def?.type ?? def?.typeName;
+  if (['optional', 'nullable', 'nullish', 'default', 'catch', 'readonly', 'nonoptional'].includes(type)) {
+    return getSchemaType(def?.innerType);
+  }
+  return type;
+}
+
+function getObjectShape(schema: any, def: any): Record<string, any> | undefined {
+  const shape = schema?.shape ?? def?.shape;
+  return typeof shape === 'function' ? shape() : shape;
+}
+
+function parseJsonishString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!['[', '{', '"'].includes(trimmed[0])) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function splitScalarArrayString(value: string, elementSchema: any): unknown[] {
+  const parsed = parseJsonishString(value);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed !== value) return [parsed];
+
+  const trimmed = value.trim();
+  const elementType = getSchemaType(elementSchema);
+  const scalarElementTypes = new Set(['string', 'number', 'int', 'integer', 'float', 'boolean']);
+  if (scalarElementTypes.has(String(elementType)) && /[\n,]/.test(trimmed)) {
+    return trimmed
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [trimmed];
+}
+
+/**
+ * Normalize common LLM tool-argument shape mistakes before Zod validation.
+ *
+ * The most common provider/model error is emitting a scalar for an array field
+ * (`labels: "bug"` instead of `labels: ["bug"]`). Zod should still reject
+ * genuinely invalid input, but this gives tool calls a chance to recover from
+ * obvious JSON-shape mistakes before the AI SDK/Mastra validation layer aborts
+ * the whole turn.
+ */
+export function normalizeToolInputForSchema(schema: any, value: any): any {
+  const def = getSchemaDef(schema);
+  if (!def) return value;
+
+  const type = def.type ?? def.typeName;
+
+  switch (type) {
+    case 'optional':
+    case 'nullable':
+    case 'nullish':
+    case 'default':
+    case 'catch':
+    case 'readonly':
+    case 'nonoptional':
+      if (value == null) return value;
+      return normalizeToolInputForSchema(def.innerType, value);
+
+    case 'pipe':
+      return normalizeToolInputForSchema(def.in ?? def.innerType, value);
+
+    case 'object': {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+      const shape = getObjectShape(schema, def);
+      if (!shape || typeof shape !== 'object') return value;
+      const next: Record<string, any> = { ...value };
+      for (const [key, fieldSchema] of Object.entries(shape)) {
+        if (Object.prototype.hasOwnProperty.call(next, key)) {
+          next[key] = normalizeToolInputForSchema(fieldSchema, next[key]);
+        }
+      }
+      return next;
+    }
+
+    case 'array': {
+      if (value == null) return value;
+      const elementSchema = schema?.element ?? def.element ?? def.innerType;
+      const rawItems = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+          ? splitScalarArrayString(value, elementSchema)
+          : [value];
+      return rawItems.map((item) => normalizeToolInputForSchema(elementSchema, item));
+    }
+
+    case 'tuple': {
+      if (!Array.isArray(value)) return value;
+      const items = def.items ?? [];
+      return value.map((item, index) => normalizeToolInputForSchema(items[index], item));
+    }
+
+    case 'union': {
+      try {
+        if (schema?.safeParse?.(value)?.success) return value;
+      } catch {}
+      const options = Array.isArray(def.options) ? def.options : [];
+      for (const option of options) {
+        const normalized = normalizeToolInputForSchema(option, value);
+        try {
+          if (option?.safeParse?.(normalized)?.success) return normalized;
+        } catch {}
+      }
+      return value;
+    }
+
+    case 'number':
+    case 'int':
+    case 'integer':
+    case 'float':
+      if (typeof value === 'string' && value.trim() !== '') {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) return numeric;
+      }
+      return value;
+
+    case 'boolean':
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true') return true;
+        if (normalized === 'false') return false;
+      }
+      return value;
+
+    case 'string':
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      return value;
+
+    default:
+      return value;
+  }
+}
+
+export function coerceToolInputSchema(schema: any): any {
+  if (!schema || (schema as any)[COERCED_TOOL_SCHEMA]) return schema;
+  const wrapped = z.preprocess((value) => normalizeToolInputForSchema(schema, value), schema);
+  (wrapped as any)[COERCED_TOOL_SCHEMA] = true;
+  (wrapped as any).__stuardBaseSchema = schema;
+  return wrapped;
+}
+
+export function withToolInputCoercion<T extends Record<string, any>>(tool: T): T {
+  if (!tool || typeof tool !== 'object' || (tool as any)[COERCED_TOOL]) return tool;
+  const inputSchema = (tool as any).inputSchema || (tool as any).parameters;
+  if (!inputSchema) return tool;
+
+  const originalExecute = typeof (tool as any).execute === 'function'
+    ? (tool as any).execute.bind(tool)
+    : undefined;
+  const wrapped: any = {
+    ...tool,
+    inputSchema: coerceToolInputSchema(inputSchema),
+  };
+
+  if ((tool as any).parameters) {
+    wrapped.parameters = wrapped.inputSchema;
+  }
+
+  if (originalExecute) {
+    wrapped.execute = async (args: any, ctx: any) => {
+      const normalized = normalizeToolInputForSchema(inputSchema, args);
+      const parsed = typeof inputSchema?.safeParse === 'function'
+        ? inputSchema.safeParse(normalized)
+        : null;
+      return originalExecute(parsed?.success ? parsed.data : normalized, ctx);
+    };
+  }
+
+  wrapped[COERCED_TOOL] = true;
+  return wrapped as T;
+}
+
+export function withToolInputCoercionMap<T extends Record<string, any>>(tools: T): T {
+  const wrapped: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(tools || {})) {
+    wrapped[name] = withToolInputCoercion(tool as any);
+  }
+  return wrapped as T;
+}
+
 // ─── JSON Schema conversion ──────────────────────────────────────────────────
 
 /**

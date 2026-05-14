@@ -32,6 +32,7 @@ export interface LiveUsageBillingTrackerOptions {
   sourceRef: string;
   sourceType?: string;
   sourceLabel?: string;
+  billingExcluded?: boolean;
   onSettlement?: (summary: LiveUsageSettlementSummary) => void | Promise<void>;
 }
 
@@ -159,13 +160,17 @@ export class LiveUsageBillingTracker {
 
   async settleIncrement(input: any, meta: { trigger: string; stepNumber?: number; partial?: boolean }):
     Promise<LiveUsageSettlementSummary> {
-    this.cumulativeTotals = addBillingTotals(this.cumulativeTotals, usageLikeToTotals(this.options.model, input));
+    const usageInput = this.options.billingExcluded ? { ...toUsageLike(input), billingExcluded: true } : input;
+    this.cumulativeTotals = addBillingTotals(this.cumulativeTotals, usageLikeToTotals(this.options.model, usageInput));
     return this.flush(meta);
   }
 
   async settleToUsageList(inputs: any[], meta: { trigger: string; stepNumber?: number; partial?: boolean }):
     Promise<LiveUsageSettlementSummary> {
-    this.cumulativeTotals = totalsFromUsageList(this.options.model, inputs);
+    const usageInputs = this.options.billingExcluded
+      ? (Array.isArray(inputs) ? inputs : []).map((input) => ({ ...toUsageLike(input), billingExcluded: true }))
+      : inputs;
+    this.cumulativeTotals = totalsFromUsageList(this.options.model, usageInputs);
     return this.flush(meta);
   }
 
@@ -202,6 +207,7 @@ export class LiveUsageBillingTracker {
           creditCost: delta.credits,
           sourceType: this.options.sourceType,
           source_label: this.options.sourceLabel,
+          ...(this.options.billingExcluded ? { billingExcluded: true } : {}),
           sourceRef: this.options.sourceRef,
           settlement_trigger: meta.trigger,
           settlement_step_number: meta.stepNumber,

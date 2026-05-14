@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import type { WebSocket } from 'ws';
 
-import { getBotAgent } from '../../agents/bot-agent';
-import { getWorkflowAgent } from '../../agents/workflow-agent';
+import { getBotAgentForUser } from '../../agents/bot-agent';
+import { getWorkflowAgentForUser } from '../../agents/workflow-agent';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
-import { getOrchestratorAgent, type BotPromptSummary } from '../../orchestrator';
+import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
 import {
@@ -143,9 +143,14 @@ export async function prepareChatRequest({
   const requestedMode = normalizeTierChoice(msg?.model);
   const routedTier = await resolveModelTier(msg, messages, requestedMode, ws, requestId);
   const chosenModelId = resolveChosenModelId(msg, routedTier);
+  const modelSource = typeof msg?.modelSource === 'string' ? String(msg.modelSource).trim() : undefined;
+  console.log('[cloud-ai] chat msg modelSource:', JSON.stringify(msg?.modelSource), '→ normalized:', modelSource ?? '(none)', '| keys:', Object.keys(msg || {}).join(','));
   secretBag.__modelTier = routedTier;
   if (chosenModelId) {
     secretBag.__modelId = chosenModelId;
+  }
+  if (modelSource) {
+    secretBag.__modelSource = modelSource;
   }
 
   // Surface how the model got picked. We hit a regression where users had a
@@ -162,6 +167,7 @@ export async function prepareChatRequest({
       requestedMode,
       routedTier,
       chosenModelId: chosenModelId || null,
+      modelSource: modelSource || null,
       explicitModelId: typeof msg?.modelId === 'string' ? msg.modelId : null,
       modelConfigTiers: tierKeys,
       modelConfigTierDefault: typeof tierDefault === 'string' ? tierDefault : null,
@@ -226,8 +232,10 @@ export async function prepareChatRequest({
     enabledIntegrations,
     mcpTools,
     workflowModelId,
+    modelSource,
     ws,
     requestId,
+    userId: authUser?.userId || null,
   });
   if (!agent) {
     return null;
@@ -242,6 +250,7 @@ export async function prepareChatRequest({
     requestedMode,
     routedTier,
     chosenModelId,
+    modelSource,
     modelLabel,
     contextPathsForMeta,
     attachmentDescriptorsForMeta,
@@ -265,6 +274,7 @@ export async function prepareChatRequest({
         mode: requestedMode,
         tier: routedTier,
         modelId: chosenModelId,
+        modelSource,
         contextPaths: contextPathsForMeta,
         attachments: attachmentDescriptorsForMeta,
       });
@@ -286,6 +296,7 @@ export async function prepareChatRequest({
     requestedMode,
     routedTier,
     chosenModelId,
+    modelSource,
     conversationId,
     conversationCreatedNow,
     modelLabel,
@@ -470,6 +481,8 @@ interface ResolveAgentArgs {
   enabledIntegrations: string[];
   mcpTools: Record<string, any>;
   workflowModelId?: string;
+  modelSource?: string;
+  userId?: string | null;
   ws: WebSocket;
   requestId?: string;
 }
@@ -483,21 +496,25 @@ async function resolveAgent({
   enabledIntegrations,
   mcpTools,
   workflowModelId,
+  modelSource,
+  userId,
   ws,
   requestId,
 }: ResolveAgentArgs) {
   if (agentType === 'workflow') {
-    return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId);
+    return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId, userId, modelSource);
   }
 
   if (agentType === 'bot') {
     const ctx = msg?.context || {};
     await ensureExecutionToolsRegistered();
-    return getBotAgent({
+    return await getBotAgentForUser({
       botId: String(ctx?.proactiveBotId || ctx?.botId || '').trim() || undefined,
       botName: String(ctx?.botName || '').trim() || undefined,
       model: routedTier,
       modelId: chosenModelId,
+      modelSource,
+      userId,
       allowedTools: Array.isArray(ctx?.allowedTools) ? ctx.allowedTools : [],
       mcpTools,
     });
@@ -506,13 +523,15 @@ async function resolveAgent({
   await ensureExecutionToolsRegistered();
   const skills = getSkillsFromContext();
   const bots = extractBotPromptSummaries(msg?.context || {});
-  return getOrchestratorAgent(
+  return await getOrchestratorAgentForUser(
     routedTier,
     enabledIntegrations,
     mcpTools,
     chosenModelId,
     skills,
     bots,
+    userId,
+    modelSource,
   );
 }
 
@@ -522,9 +541,15 @@ async function resolveWorkflowAgent(
   workflowModelId: string | undefined,
   ws: WebSocket,
   requestId: string | undefined,
+  userId?: string | null,
+  modelSource?: string,
 ) {
   try {
-    const agent = getWorkflowAgent(workflowModelId);
+    const agent = await getWorkflowAgentForUser({
+      modelId: workflowModelId,
+      userId,
+      modelSource,
+    });
     const rawAgent = typeof msg?.agent === 'string' ? String(msg.agent) : '';
     const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).trim() : '';
     const contextMode = typeof msg?.context?.mode === 'string' ? String(msg.context.mode).trim() : '';
@@ -634,6 +659,7 @@ interface ResolveConversationArgs {
   requestedMode: TierChoice;
   routedTier: ModelChoice;
   chosenModelId?: string;
+  modelSource?: string;
   modelLabel: string;
   contextPathsForMeta?: Array<{ path: string; name: string; isDirectory: boolean }>;
   attachmentDescriptorsForMeta?: any[];
@@ -649,6 +675,7 @@ async function resolveConversation({
   requestedMode,
   routedTier,
   chosenModelId,
+  modelSource,
   modelLabel,
   contextPathsForMeta,
   attachmentDescriptorsForMeta,
@@ -687,6 +714,7 @@ async function resolveConversation({
       mode: requestedMode,
       tier: routedTier,
       modelId: chosenModelId,
+      modelSource,
       contextPaths: contextPathsForMeta,
       attachments: attachmentDescriptorsForMeta,
     },

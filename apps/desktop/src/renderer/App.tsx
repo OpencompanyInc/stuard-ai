@@ -74,7 +74,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, chatModels: defaultChatModels } = usePreferences();
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, chatModels: defaultChatModels, modelSource, setModelSource } = usePreferences();
   const { modelById } = useModelRegistry();
   const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
     try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
@@ -226,6 +226,13 @@ export default function App() {
   useEffect(() => {
     setChatModels(defaultChatModels);
   }, [defaultChatModels, setChatModels]);
+
+  useEffect(() => {
+    if (typeof chatMode === 'string' && chatMode.startsWith('codex/')) {
+      setChatMode(`openai/${chatMode.slice('codex/'.length)}` as any);
+      setModelSource('subscription');
+    }
+  }, [chatMode, setChatMode, setModelSource]);
 
   // Listen for approval responses from notification overlay (when permission was handled out-of-app)
   useEffect(() => {
@@ -977,6 +984,7 @@ export default function App() {
         contextPaths: contextPaths.length > 0 ? contextPaths : undefined,
         mode: modeToSend,
         modelId: typeof modelIdToSend === 'string' ? modelIdToSend : undefined,
+        modelSource,
         modelConfig: modelConfigToSend,
         reasoningLevel,
       });
@@ -994,7 +1002,7 @@ export default function App() {
       .then((res: any) => (res?.skills || []).filter((s: any) => s.isActive !== false))
       .catch(() => [])
       .then((skills: any[]) => doSend(skills));
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, modelSource, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
@@ -1022,11 +1030,12 @@ export default function App() {
     return editMessage(messageId, newText, {
       mode,
       modelId,
+      modelSource,
       modelConfig,
       reasoningLevel,
       context,
     });
-  }, [chatMode, chatModels, modelById, tone, customTone, persona, reasoningLevel, editMessage]);
+  }, [chatMode, chatModels, modelById, modelSource, tone, customTone, persona, reasoningLevel, editMessage]);
 
   const handleSteer = useCallback(() => {
     if (!signedIn) { handleSignIn(); return; }
@@ -1721,6 +1730,8 @@ export default function App() {
                     onChatModeChange={setChatMode as any}
                     chatModels={chatModels}
                     onChatModelsChange={setChatModels as any}
+                    modelSource={modelSource}
+                    onModelSourceChange={setModelSource}
                     reasoningLevel={reasoningLevel}
                     onReasoningLevelChange={setReasoningLevel}
                     overlayMode={overlayMode}
@@ -1800,6 +1811,8 @@ export default function App() {
                     onChatModeChange={setChatMode as any}
                     chatModels={chatModels}
                     onChatModelsChange={setChatModels as any}
+                    modelSource={modelSource}
+                    onModelSourceChange={setModelSource}
                     reasoningLevel={reasoningLevel}
                     onReasoningLevelChange={setReasoningLevel}
 

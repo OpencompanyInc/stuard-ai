@@ -2,9 +2,9 @@
 import { WebSocket } from 'ws';
 
 import { getSkillsFromContext } from '../../tools/skill-tools';
-import { getBotAgent } from '../../agents/bot-agent';
-import { getWorkflowAgent, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
-import { getSkillAgent, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
+import { getBotAgentForUser } from '../../agents/bot-agent';
+import { getWorkflowAgentForUser, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
+import { getSkillAgentForUser, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import { writeLog } from '../../utils/logger';
@@ -18,7 +18,7 @@ import {
   pruneToolOutputs,
 } from '../../memory/context-compactor';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
-import { getOrchestratorAgent, type BotPromptSummary } from '../../orchestrator';
+import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
 import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../../tools/proactive-task-tools';
@@ -130,6 +130,7 @@ interface AgentMessage {
   agent?: AgentType;
   model?: ModelChoice | 'auto';
   modelId?: string;
+  modelSource?: string;
   modelConfig?: any;
   reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
   integrations?: string[];
@@ -315,6 +316,8 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     (typeof message.modelId === 'string' && message.modelId.trim())
       ? message.modelId.trim()
       : pickDefaultModelId(message.modelConfig, model);
+  const modelSource = typeof message.modelSource === 'string' ? message.modelSource.trim() : undefined;
+  const billingExcluded = modelSource === 'api_key' || modelSource === 'subscription';
   const _bStart = Date.now();
   const budget = computeBudget(chosenModelId || model);
   pruneToolOutputs(history as any[], budget);
@@ -355,6 +358,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       sourceRef: `agent:${requestId || conversationId || Date.now()}`,
       sourceType: 'inference',
       sourceLabel,
+      billingExcluded,
       onSettlement: (summary) => {
         send(ws, {
           type: 'progress',
@@ -393,18 +397,20 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         await ensureExecutionToolsRegistered();
       }
       const agent = agentType === 'workflow'
-        ? getWorkflowAgent(chosenModelId)
+        ? await getWorkflowAgentForUser({ modelId: chosenModelId, userId, modelSource })
         : agentType === 'skill'
-          ? getSkillAgent(chosenModelId)
+          ? await getSkillAgentForUser(chosenModelId, userId, modelSource)
           : agentType === 'bot'
-            ? getBotAgent({
+            ? await getBotAgentForUser({
                 botId: String(context?.proactiveBotId || context?.botId || '').trim() || undefined,
                 botName: String(context?.botName || '').trim() || undefined,
                 model: model as ModelChoice,
                 modelId: chosenModelId,
+                modelSource,
+                userId,
                 allowedTools: Array.isArray(context?.allowedTools) ? context.allowedTools : [],
               })
-            : getOrchestratorAgent(model as ModelChoice, integrations, {}, chosenModelId, skills, bots);
+            : await getOrchestratorAgentForUser(model as ModelChoice, integrations, {}, chosenModelId, skills, bots, userId, modelSource);
       console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
 
       // Build context prefix for paths

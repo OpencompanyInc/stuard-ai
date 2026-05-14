@@ -30,6 +30,7 @@ export interface PreparedChatRequest {
   requestedMode: TierChoice;
   routedTier: ModelChoice;
   chosenModelId?: string;
+  modelSource?: string;
   conversationId: string | null;
   conversationCreatedNow: boolean;
   modelLabel: string;

@@ -249,6 +249,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
+            modelSource: typeof msg?.modelSource === 'string' ? String(msg.modelSource).trim() : undefined,
           }, 'stuard', forcePersist);
           if (conversationId) {
             sendTagged({ type: 'conversation', conversationId });
@@ -259,6 +260,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
+            modelSource: typeof msg?.modelSource === 'string' ? String(msg.modelSource).trim() : undefined,
           }, forcePersist);
         }
       }
@@ -268,6 +270,7 @@ export class SocketManager {
         agent: msg.agent, // 'stuard' or 'workflow'
         model: modelName,
         modelId: chosenModelId,
+        modelSource: typeof msg?.modelSource === 'string' ? String(msg.modelSource).trim() : undefined,
         modelConfig: (msg?.modelConfig && typeof msg.modelConfig === 'object') ? msg.modelConfig : undefined,
         reasoningLevel: typeof msg?.reasoningLevel === 'string' ? msg.reasoningLevel : undefined,
         integrations: msg.integrations,
@@ -306,6 +309,7 @@ export class SocketManager {
             mode: modelName,
             tier: modelName === 'auto' ? undefined : modelName,
             modelId: chosenModelId,
+            modelSource: typeof msg?.modelSource === 'string' ? String(msg.modelSource).trim() : undefined,
           }, forcePersist);
         }
       } finally {

@@ -7,6 +7,7 @@ import { invalidateRendererSyncPrefsCache } from "../utils/syncPrefs";
 import { clsx } from "clsx";
 import { BillingSettings } from "./BillingSettings";
 import { useModelRegistry } from "../hooks/useModelRegistry";
+import { ApiKeysSection } from "./settings/ApiKeysSection";
 
 type UpdateChannel = "stable" | "beta" | "staging";
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "error" | "up-to-date";
@@ -1471,19 +1472,22 @@ function BillingTab() {
 // MAIN COMPONENT (MemoriesView-style layout)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type SettingsTab = 'general' | 'billing' | 'updates';
+type SettingsTab = 'general' | 'providers' | 'billing' | 'updates';
 
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
+    { id: 'providers', label: 'Providers' },
     { id: 'billing', label: 'Billing' },
     { id: 'updates', label: 'Updates' },
   ];
 
   const renderActiveTab = () => {
     switch (activeTab) {
+      case 'providers':
+        return <ApiKeysSection />;
       case 'billing':
         return <BillingTab />;
       case 'updates':

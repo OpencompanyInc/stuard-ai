@@ -32,12 +32,13 @@ import { deployWorkflow } from '../workflow-agent/deploy';
 import { executeStep, inspectWorkflow, listWorkflows, loadWorkflow } from '../workflow-agent/tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
+import { withToolInputCoercionMap } from '../../tools/zod-utils';
 
 const require = createRequire(import.meta.url);
 const { SIS: SISRuntime } = require('sis-tools') as { SIS: new (...args: any[]) => SISType };
 
 // Consolidated tool map
-export const ALL_TOOLS = {
+const RAW_ALL_TOOLS = {
   // Keep minimal set while refactoring streaming
   wait: waitTool,
   run_sequential: runSequentialTool,
@@ -303,6 +304,8 @@ export const ALL_TOOLS = {
   // X/Twitter
   ...xTools,
 } as const;
+
+export const ALL_TOOLS = withToolInputCoercionMap(RAW_ALL_TOOLS);
 
 
 /**
@@ -590,7 +593,7 @@ export async function getToolsForQuery(
  * throwing "Tool X not found".
  */
 export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
-  return {
+  return withToolInputCoercionMap({
     ...ALL_TOOLS,
     create_workflow: createWorkflowTool,
     load_workflow: loadWorkflow,
@@ -602,5 +605,5 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
     search_workflow_nodes,
     search_workflow_docs: searchWorkflowDocs,
     ...mcpTools,
-  };
+  });
 }

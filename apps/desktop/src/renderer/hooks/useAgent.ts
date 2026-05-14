@@ -360,6 +360,7 @@ interface SendMessageOptions {
   contextPaths?: ContextPath[]; // Files/folders from @ mention
   mode?: string;
   modelId?: string;
+  modelSource?: 'stuard' | 'api_key' | 'subscription';
   modelConfig?: any;
   reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
   silent?: boolean;
@@ -622,6 +623,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   type LastSendModelOptions = {
     mode?: string;
     modelId?: string;
+    modelSource?: 'stuard' | 'api_key' | 'subscription';
     modelConfig?: any;
     reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
     context?: Record<string, any>;
@@ -1202,6 +1204,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             queueFront: true,
             mode: lastOpts?.mode,
             modelId: lastOpts?.modelId,
+            modelSource: lastOpts?.modelSource,
             modelConfig: lastOpts?.modelConfig,
             reasoningLevel: lastOpts?.reasoningLevel,
             context: lastOpts?.context,
@@ -2960,12 +2963,14 @@ export function useAgent(options?: string | UseAgentOptions) {
       const hasModelHint =
         (typeof options.mode === 'string' && options.mode) ||
         (typeof options.modelId === 'string' && options.modelId) ||
+        (typeof options.modelSource === 'string' && options.modelSource) ||
         (options.modelConfig && typeof options.modelConfig === 'object') ||
         (typeof options.reasoningLevel === 'string' && options.reasoningLevel);
       if (hasModelHint) {
         lastSendOptionsRef.current.set(targetTabId, {
           mode: options.mode,
           modelId: options.modelId,
+          modelSource: options.modelSource,
           modelConfig: options.modelConfig,
           reasoningLevel: options.reasoningLevel,
           context: options.context,
@@ -3016,6 +3021,12 @@ export function useAgent(options?: string | UseAgentOptions) {
       if (typeof options.modelId === 'string' && options.modelId) {
         payload.modelId = options.modelId;
       }
+      if (typeof options.modelSource === 'string' && options.modelSource) {
+        payload.modelSource = options.modelSource;
+      }
+      try {
+        console.log('[agent] sendMessage modelSource:', JSON.stringify(options.modelSource), '| payload.modelSource:', JSON.stringify(payload.modelSource), '| modelId:', payload.modelId);
+      } catch {}
       if (options.modelConfig && typeof options.modelConfig === 'object') {
         payload.modelConfig = options.modelConfig;
       }
@@ -3109,6 +3120,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     options?: {
       mode?: string;
       modelId?: string;
+      modelSource?: 'stuard' | 'api_key' | 'subscription';
       modelConfig?: any;
       reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
       context?: Record<string, any>;
@@ -3166,6 +3178,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       context: options?.context,
       mode: options?.mode,
       modelId: options?.modelId,
+      modelSource: options?.modelSource,
       modelConfig: options?.modelConfig,
       reasoningLevel: options?.reasoningLevel,
     });

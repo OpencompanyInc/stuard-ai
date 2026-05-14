@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const LS_PREFIX = "stuard.pref.";
 
 export type ChatMode = 'auto' | string;
+export type ModelSourcePreference = 'stuard' | 'api_key' | 'subscription';
 
 /** Per-request reasoning effort level for models that support it. */
 export type ReasoningLevel = 'none' | 'low' | 'medium' | 'high';
@@ -76,6 +77,8 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
   'openai/gpt-5.1-codex-mini',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
+  'openai/gpt-5.4',
+  'openai/gpt-5.5',
   'deepseek/deepseek-chat',
   'deepseek/deepseek-reasoner',
   'anthropic/claude-3-5-haiku-latest',
@@ -98,6 +101,8 @@ const REASONING_MODEL_IDS = new Set<string>([
   'openai/gpt-5-pro',
   'openai/gpt-5.1',
   'openai/gpt-5.1-chat-latest',
+  'openai/gpt-5.4',
+  'openai/gpt-5.5',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3-pro-preview',
   'google/gemini-2.5-pro',
@@ -131,6 +136,8 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'openai/gpt-4o-mini': 128000,
   'openai/gpt-5.2-codex': 700000,
   'openai/gpt-5.3-codex': 1000000,
+  'openai/gpt-5.4': 400000,
+  'openai/gpt-5.5': 400000,
   'xai/grok-4': 256000,
   'xai/grok-4-fast': 2000000,
   'xai/grok-3': 128000,
@@ -186,6 +193,8 @@ const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research
   'openai/gpt-5.1-codex-mini': 'balanced',
   'openai/gpt-5.2-codex': 'smart',
   'openai/gpt-5.3-codex': 'smart',
+  'openai/gpt-5.4': 'smart',
+  'openai/gpt-5.5': 'smart',
   'deepseek/deepseek-chat': 'fast',
   'deepseek/deepseek-reasoner': 'smart',
   'anthropic/claude-3-5-haiku-latest': 'fast',
@@ -326,6 +335,10 @@ export function usePreferences() {
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
   const [chatModels, setChatModelsState] = useState<ChatModelsConfig>(() => getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
   const [chatMode, setChatModeState] = useState<ChatMode>(() => normalizeChatMode(getLS<any>('chat_mode', DEFAULT_CHAT_MODE), getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+  const [modelSource, setModelSourceState] = useState<ModelSourcePreference>(() => {
+    const raw = String(getLS<any>('model_source', 'stuard') || '').trim();
+    return raw === 'api_key' || raw === 'subscription' ? raw : 'stuard';
+  });
   // Timezone: auto-detect from browser, allow manual override stored in main-process settings
   const detectedTz = useMemo(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } }, []);
   const [timezone, setTimezoneState] = useState<string>(() => getLS<string>('timezone', '') || detectedTz);
@@ -354,6 +367,7 @@ export function usePreferences() {
     setLS('chat_models', chatModels);
     try { (window as any).desktopAPI?.setPrefs?.({ chatModels }); } catch { }
   }, [chatModels]);
+  useEffect(() => { setLS('model_source', modelSource); }, [modelSource]);
   useEffect(() => { setLS('timezone', timezone); }, [timezone]);
   useEffect(() => { setLS('timezone_override', timezoneOverride); }, [timezoneOverride]);
   // Sync timezone to main process (for cron scheduling) whenever it changes
@@ -410,6 +424,7 @@ export function usePreferences() {
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
           if (key === 'chat_models') setChatModelsState(val ?? DEFAULT_CHAT_MODELS);
           if (key === 'chat_mode') setChatModeState(normalizeChatMode(val ?? DEFAULT_CHAT_MODE, getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+          if (key === 'model_source') setModelSourceState(val === 'api_key' || val === 'subscription' ? val : 'stuard');
           if (key === 'timezone') setTimezoneState(val || detectedTz);
           if (key === 'timezone_override') setTimezoneOverrideState(val ?? false);
         } catch { }
@@ -436,6 +451,7 @@ export function usePreferences() {
   const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
   const setChatMode = useCallback((v: ChatMode) => { setChatModeState(v); }, []);
   const setChatModels = useCallback((v: ChatModelsConfig) => { setChatModelsState(v); }, []);
+  const setModelSource = useCallback((v: ModelSourcePreference) => { setModelSourceState(v === 'api_key' || v === 'subscription' ? v : 'stuard'); }, []);
   const setTimezone = useCallback((v: string) => { setTimezoneState(v); }, []);
   const setTimezoneOverride = useCallback((v: boolean) => { setTimezoneOverrideState(v); }, []);
 
@@ -474,6 +490,8 @@ export function usePreferences() {
     setChatMode,
     chatModels,
     setChatModels,
+    modelSource,
+    setModelSource,
     timezone,
     setTimezone,
     timezoneOverride,

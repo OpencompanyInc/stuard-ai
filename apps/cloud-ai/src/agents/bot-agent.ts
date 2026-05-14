@@ -1,7 +1,8 @@
 import { Agent } from '@mastra/core/agent';
 
-import { getModel } from './stuard/models';
+import { getModel, getModelForUser } from './stuard/models';
 import type { ModelChoice } from '../router/model-router';
+import type { ModelSourcePreference } from '../utils/models';
 import { resolveExecutionTools } from '../orchestrator/execution-tools-resolver';
 import { wrapToolWithBridge } from '../orchestrator/subagent-runtime';
 import { getBridgeSecrets, getBridgeWs } from '../tools/bridge';
@@ -103,5 +104,38 @@ export function getBotAgent(args: {
   (agent as any).__diagInstructions = [{ role: 'system', content: buildBotSystemPrompt(args) }];
   (agent as any).__activeToolNames = Object.keys(selectedTools);
   (agent as any).__executionToolNames = Object.keys(selectedTools);
+  return agent;
+}
+
+export async function getBotAgentForUser(args: {
+  botId?: string;
+  botName?: string;
+  model: ModelChoice;
+  modelId?: string;
+  modelSource?: ModelSourcePreference | string | null;
+  userId?: string | null;
+  allowedTools?: unknown;
+  mcpTools?: Record<string, any>;
+}): Promise<Agent> {
+  const safeBotId = String(args.botId || args.botName || 'bot')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .slice(0, 80) || 'bot';
+  const selectedTools = buildBotToolSet(args);
+  const model = await getModelForUser(args.model, args.modelId, args.userId, args.modelSource);
+  const instructions = [{ role: 'system', content: buildBotSystemPrompt(args) }] as any;
+  const agent = new Agent({
+    id: `stuard-bot-${safeBotId}`,
+    name: args.botName ? `Stuard Bot: ${String(args.botName).slice(0, 80)}` : `Stuard Bot ${safeBotId}`,
+    instructions,
+    model: model as any,
+    tools: selectedTools,
+  });
+
+  (agent as any).__diagTools = selectedTools;
+  (agent as any).__diagInstructions = instructions;
+  (agent as any).__activeToolNames = Object.keys(selectedTools);
+  (agent as any).__executionToolNames = Object.keys(selectedTools);
+  (agent as any).__modelSource = (model as any)?.__stuardResolvedSource;
+  (agent as any).__billingExcluded = !!(model as any)?.__stuardBillingExcluded;
   return agent;
 }

@@ -12,6 +12,7 @@ import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } fro
 import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
+import { setupCodexIpc } from "../codex/codex-service";
 import logger from "../utils/logger";
 import { getFileIconCached, getFilePreviewCached } from "../services/icon-cache";
 import * as fs from "fs";
@@ -266,6 +267,7 @@ function updateBrowserUseChromeSyncSettingsLocal(updates: Partial<BrowserUseChro
 export function setupIpc() {
   setupSpeechIpc();
   setupTerminalIpc();
+  setupCodexIpc();
   const proactiveAvailableTools = Object.keys(TOOL_REGISTRY)
     .filter((toolName) => !toolName.startsWith('proactive_task_'))
     .sort((a, b) => a.localeCompare(b));

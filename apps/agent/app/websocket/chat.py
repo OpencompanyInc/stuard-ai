@@ -41,6 +41,8 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
     model = msg.get("model")
     model_id = msg.get("modelId")
     model_config = msg.get("modelConfig")
+    model_source = msg.get("modelSource")
+    reasoning_level = msg.get("reasoningLevel")
     auth = msg.get("auth") or None
     messages = msg.get("messages") or None
     memory = msg.get("memory") or None
@@ -98,6 +100,10 @@ async def handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
                 payload["modelId"] = model_id.strip()
             if isinstance(model_config, dict) and model_config:
                 payload["modelConfig"] = model_config
+            if isinstance(model_source, str) and model_source.strip():
+                payload["modelSource"] = model_source.strip()
+            if isinstance(reasoning_level, str) and reasoning_level.strip():
+                payload["reasoningLevel"] = reasoning_level.strip()
             if request_id:
                 payload["requestId"] = request_id
 

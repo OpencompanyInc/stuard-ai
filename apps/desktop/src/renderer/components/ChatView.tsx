@@ -11,6 +11,7 @@ import { ContextItem } from "./FileNavigator";
 import type {
   ChatMode,
   ChatModelsConfig,
+  ModelSourcePreference,
   ReasoningLevel,
 } from "../hooks/usePreferences";
 import { useModelRegistry } from "../hooks/useModelRegistry";
@@ -95,6 +96,8 @@ interface ChatViewProps {
   onChatModeChange?: (mode: ChatMode) => void;
   chatModels?: ChatModelsConfig;
   onChatModelsChange?: (cfg: ChatModelsConfig) => void;
+  modelSource?: ModelSourcePreference;
+  onModelSourceChange?: (source: ModelSourcePreference) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
@@ -196,6 +199,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onChatModeChange,
   chatModels,
   onChatModelsChange,
+  modelSource = "stuard",
+  onModelSourceChange,
   reasoningLevel,
   onReasoningLevelChange,
   overlayMode = "compact",
@@ -535,6 +540,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               textareaRef={textareaRef}
               selectedModelId={selectedModelId}
               onChatModeChange={onChatModeChange}
+              modelSource={modelSource}
+              onModelSourceChange={onModelSourceChange}
               reasoningLevel={reasoningLevel}
               onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}
@@ -732,6 +739,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               textareaRef={textareaRef}
               selectedModelId={selectedModelId}
               onChatModeChange={onChatModeChange}
+              modelSource={modelSource}
+              onModelSourceChange={onModelSourceChange}
               reasoningLevel={reasoningLevel}
               onReasoningLevelChange={onReasoningLevelChange}
               fileNavRef={fileNavRef}

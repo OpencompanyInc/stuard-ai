@@ -8,7 +8,8 @@
 
 import { Agent } from '@mastra/core/agent';
 import os from 'node:os';
-import { getModel, getAgentName } from '../agents/stuard/models';
+import { getModel, getModelForUser, getAgentName } from '../agents/stuard/models';
+import type { ModelSourcePreference } from '../utils/models';
 import { buildAvailableSkillsPromptSection, type SkillSummary } from '../tools/skill-tools';
 import type { ModelChoice } from '../router/model-router';
 import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
@@ -302,5 +303,57 @@ export function getOrchestratorAgent(
   (agent as any).__diagInstructions = instructions;
   (agent as any).__activeToolNames = Object.keys(activeTools);
   (agent as any).__executionToolNames = Object.keys(executionTools);
+  (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
+  (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
+  return agent;
+}
+
+export async function getOrchestratorAgentForUser(
+  model: ModelChoice,
+  enabledIntegrations: string[] = [],
+  mcpTools: Record<string, any> = {},
+  modelId?: string,
+  skills: SkillSummary[] = [],
+  bots: BotPromptSummary[] = [],
+  userId?: string | null,
+  modelSource?: ModelSourcePreference | string | null,
+): Promise<Agent> {
+  const activeTools = getOrchestratorActiveTools(mcpTools);
+  const executionTools = { ...getExecutionToolsLazy(mcpTools), ...activeTools };
+  const selectedModel = await getModelForUser(model, modelId, userId, modelSource);
+  const name = getAgentName(model);
+
+  const bridgeWs = getBridgeWs();
+  const bridgeSecrets = getBridgeSecrets();
+  if (bridgeWs) {
+    for (const toolName of Object.keys(executionTools)) {
+      executionTools[toolName] = wrapToolWithBridge(executionTools[toolName], bridgeWs, bridgeSecrets);
+    }
+  }
+
+  const instructions = [
+    {
+      role: 'system',
+      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots),
+      providerOptions: {
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+      },
+    },
+  ];
+
+  const agent = new Agent({
+    id: `orchestrator-${name}`,
+    name: `Orchestrator ${name}`,
+    instructions: instructions as any,
+    model: selectedModel as any,
+    tools: executionTools,
+  });
+
+  (agent as any).__diagTools = activeTools;
+  (agent as any).__diagInstructions = instructions;
+  (agent as any).__activeToolNames = Object.keys(activeTools);
+  (agent as any).__executionToolNames = Object.keys(executionTools);
+  (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
+  (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
   return agent;
 }

@@ -62,6 +62,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     requestedMode,
     routedTier,
     chosenModelId,
+    modelSource,
     conversationId,
     conversationCreatedNow,
     modelLabel,
@@ -84,6 +85,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const streamChunks: StreamChunkRecord[] = [];
   const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
   const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'bot' ? 'Bot Agent' : 'Chat';
+  const billingExcluded = modelSource === 'api_key' || modelSource === 'subscription';
   const billingTracker = new LiveUsageBillingTracker({
     userId: authUser?.userId ?? null,
     conversationId,
@@ -91,6 +93,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     sourceRef: `chat:${requestId || conversationId || Date.now()}`,
     sourceType: 'inference',
     sourceLabel,
+    billingExcluded,
     onSettlement: (summary) => {
       send(ws, {
         type: 'progress',
@@ -171,8 +174,9 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const bridgeWs = getBridgeWs();
 
   try {
-    console.log('[cloud-ai] Starting stream with model:', modelLabel);
-    writeLog('stream_start', { model: modelLabel, conversationId });
+    const resolvedSource = (agent as any)?.__modelSource ?? 'unknown';
+    console.log('[cloud-ai] Starting stream with model:', modelLabel, '| requested modelSource:', modelSource ?? '(none)', '| resolved source:', resolvedSource, '| billingExcluded:', billingExcluded);
+    writeLog('stream_start', { model: modelLabel, conversationId, modelSource, resolvedSource });
 
     if (authUser?.userId && requestId) {
       registerRun(authUser.userId, requestId);

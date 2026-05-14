@@ -11,7 +11,7 @@
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { buildProviderModel } from '../../utils/models';
+import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreference } from '../../utils/models';
 import { writeLog } from '../../utils/logger';
 
 // Core tools
@@ -33,6 +33,7 @@ import { executeStep, listWorkflows, inspectWorkflow, loadWorkflow } from './too
 import { searchWorkflowDocs } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
+import { normalizeToolInputForSchema, coerceToolInputSchema } from '../../tools/zod-utils';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -46,6 +47,7 @@ const DEFAULT_WORKFLOW_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface WorkflowAgentOptions {
   modelId?: string;
+  modelInstance?: any;
   includeCreateWorkflow?: boolean;
   extraTools?: Record<string, any>;
   instructionsSuffix?: string;
@@ -71,12 +73,15 @@ function normalizeWorkflowAgentOptions(modelIdOrOptions?: string | WorkflowAgent
 }
 
 function createLoggedTool(tool: any, name: string) {
+  const inputSchema = tool.inputSchema || tool.parameters;
   return {
     ...tool,
+    ...(inputSchema ? { inputSchema: coerceToolInputSchema(inputSchema) } : {}),
     execute: async (args: any, runCtx?: any) => {
-      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(args, null, 2));
+      const normalizedArgs = inputSchema ? normalizeToolInputForSchema(inputSchema, args) : args;
+      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(normalizedArgs, null, 2));
       try {
-        const result = await tool.execute(args, runCtx);
+        const result = await tool.execute(normalizedArgs, runCtx);
         console.log(`[workflow-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
         return result;
       } catch (error) {
@@ -99,9 +104,10 @@ function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Re
   return createTool({
     id: toolId,
     description: tool.description || '',
-    inputSchema,
+    inputSchema: coerceToolInputSchema(inputSchema),
     outputSchema,
     execute: async (args: any, ctx: any) => {
+      const normalizedArgs = normalizeToolInputForSchema(inputSchema, args);
       if (bridgeWs && bridgeWs.readyState === 1) {
         const activeBridgeScope = setActiveBridge(bridgeWs, bridgeSecrets);
         try {
@@ -111,7 +117,7 @@ function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Re
               : localToolSpec;
             return await execLocalToolWithCapturedBridge(
               toolId,
-              args,
+              normalizedArgs,
               ctx?.writer,
               workflowToolSpec,
               { ws: bridgeWs, secrets: bridgeSecrets },
@@ -120,7 +126,7 @@ function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Re
           return await withActiveBridgeContext(
             bridgeWs,
             bridgeSecrets,
-            () => withClientBridge(bridgeWs, () => originalExecute(args, ctx), bridgeSecrets),
+            () => withClientBridge(bridgeWs, () => originalExecute(normalizedArgs, ctx), bridgeSecrets),
           );
         } finally {
           clearActiveBridge(activeBridgeScope);
@@ -130,13 +136,13 @@ function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Re
       if (bridgeSecrets) {
         const secretsScope = setActiveBridge(null, bridgeSecrets);
         try {
-          return await runWithSecrets(bridgeSecrets, () => originalExecute(args, ctx));
+          return await runWithSecrets(bridgeSecrets, () => originalExecute(normalizedArgs, ctx));
         } finally {
           clearActiveBridge(secretsScope);
         }
       }
 
-      return originalExecute(args, ctx);
+      return originalExecute(normalizedArgs, ctx);
     },
   });
 }
@@ -208,28 +214,28 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
 
   const provider = String(modelId.split('/')[0] || '').toLowerCase();
 
-  if (provider === 'google' && !GOOGLE_API_KEY) {
+  if (!options.modelInstance && provider === 'google' && !GOOGLE_API_KEY) {
     workflowAgentLog('error', { message: 'GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set', modelId });
     throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for google workflow models');
   }
-  if (provider === 'openai' && !OPENAI_API_KEY) {
+  if (!options.modelInstance && provider === 'openai' && !OPENAI_API_KEY) {
     workflowAgentLog('error', { message: 'OPENAI_API_KEY not set', modelId });
     throw new Error('OPENAI_API_KEY is required for openai workflow models');
   }
-  if (provider === 'xai' && !XAI_API_KEY) {
+  if (!options.modelInstance && provider === 'xai' && !XAI_API_KEY) {
     workflowAgentLog('error', { message: 'XAI_API_KEY not set', modelId });
     throw new Error('XAI_API_KEY is required for xai workflow models');
   }
-  if (provider === 'deepseek' && !DEEPSEEK_API_KEY) {
+  if (!options.modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY) {
     workflowAgentLog('error', { message: 'DEEPSEEK_API_KEY not set', modelId });
     throw new Error('DEEPSEEK_API_KEY is required for deepseek workflow models');
   }
-  if (provider === 'perplexity' && !PERPLEXITY_API_KEY) {
+  if (!options.modelInstance && provider === 'perplexity' && !PERPLEXITY_API_KEY) {
     workflowAgentLog('error', { message: 'PERPLEXITY_API_KEY not set', modelId });
     throw new Error('PERPLEXITY_API_KEY is required for perplexity workflow models');
   }
 
-  const model = buildProviderModel(modelId);
+  const model = options.modelInstance || buildProviderModel(modelId);
   if (!model) {
     workflowAgentLog('error', { message: 'Failed to build provider model', modelId });
     throw new Error(`Unsupported workflow modelId: ${modelId}`);
@@ -256,6 +262,8 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
   });
 
   (agent as any).__activeToolNames = toolNames;
+  (agent as any).__modelSource = (model as any)?.__stuardResolvedSource;
+  (agent as any).__billingExcluded = !!(model as any)?.__stuardBillingExcluded;
 
   // Add message logging and inject providerOptions for thinking at stream level
   const originalStream = agent.stream.bind(agent);
@@ -284,6 +292,27 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
   };
 
   return agent;
+}
+
+export async function getWorkflowAgentForUser(
+  modelIdOrOptions?: string | (WorkflowAgentOptions & {
+    userId?: string | null;
+    modelSource?: ModelSourcePreference | string | null;
+  }),
+): Promise<Agent> {
+  const options = normalizeWorkflowAgentOptions(modelIdOrOptions as any) as WorkflowAgentOptions & {
+    userId?: string | null;
+    modelSource?: ModelSourcePreference | string | null;
+  };
+  const modelId =
+    (typeof options.modelId === 'string' && options.modelId.trim())
+      ? options.modelId.trim()
+      : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
+  const resolved = await buildProviderModelForUser(options.userId, modelId, options.modelSource);
+  if (!resolved?.model) {
+    throw new Error(`Unsupported workflow modelId: ${modelId}`);
+  }
+  return getWorkflowAgent({ ...options, modelId, modelInstance: resolved.model });
 }
 
 // Re-export tools for external use

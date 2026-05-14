@@ -570,6 +570,7 @@ export interface MessageMetadata {
   mode?: string;
   tier?: string;
   modelId?: string;
+  modelSource?: string;
   kind?: string;
   interjection?: boolean;
   appliedTo?: 'step' | 'next_turn';

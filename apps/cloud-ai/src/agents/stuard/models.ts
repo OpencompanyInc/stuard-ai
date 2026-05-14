@@ -1,4 +1,4 @@
-import { buildProviderModel } from '../../utils/models';
+import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreference } from '../../utils/models';
 import { getDefaultModelForCategory } from '../../pricing';
 import type { ModelChoice } from '../../router/model-router';
 
@@ -34,6 +34,38 @@ export function getModel(model: ModelChoice, modelId?: string) {
   );
 }
 
+export async function getModelForUser(
+  model: ModelChoice,
+  modelId?: string,
+  userId?: string | null,
+  sourcePreference: ModelSourcePreference | string | null | undefined = 'auto',
+) {
+  const trimmedId = typeof modelId === 'string' ? modelId.trim() : '';
+  if (trimmedId) {
+    const override = await buildProviderModelForUser(userId, trimmedId, sourcePreference);
+    if (override?.model) {
+      try {
+        (override.model as any).__stuardResolvedSource = override.source;
+        (override.model as any).__stuardBillingExcluded = override.billingExcluded;
+      } catch { }
+      return override.model;
+    }
+    throw new Error(`Unable to initialize selected model: ${trimmedId}`);
+  }
+
+  const defaultId = getDefaultModelForCategory(model as any);
+  const selected = await buildProviderModelForUser(userId, defaultId, sourcePreference);
+  if (selected?.model) {
+    try {
+      (selected.model as any).__stuardResolvedSource = selected.source;
+      (selected.model as any).__stuardBillingExcluded = selected.billingExcluded;
+    } catch { }
+    return selected.model;
+  }
+
+  return getModel(model);
+}
+
 export function getAgentName(model: ModelChoice): string {
   return model === 'smart' ? 'cloud-ai-deep' : 'cloud-ai-balanced';
 }
@@ -41,4 +73,3 @@ export function getAgentName(model: ModelChoice): string {
 export function getEffort(model: ModelChoice, effort?: 'low' | 'medium' | 'high'): 'low' | 'medium' | 'high' {
   return effort || (model === 'smart' ? 'high' : 'medium');
 }
-

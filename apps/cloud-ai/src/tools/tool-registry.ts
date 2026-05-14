@@ -1,4 +1,5 @@
 import { ToolAction } from '@mastra/core/tools';
+import { withToolInputCoercion } from './zod-utils';
 
 export type ToolLocation = 'device' | 'compute' | 'cloud';
 
@@ -71,7 +72,8 @@ export function registerTool(
   try {
     const name = tool?.id || tool?.name;
     if (name && typeof tool?.execute === 'function') {
-      TOOL_REGISTRY.set(name, tool);
+      const safeTool = withToolInputCoercion(tool);
+      TOOL_REGISTRY.set(name, safeTool);
 
       // Derive location: explicit > category default > 'compute'
       const resolved = location || CATEGORY_LOCATION[category] || 'compute';

@@ -8,7 +8,7 @@ import QueuePanel from '../QueuePanel';
 import { CheckpointManager } from '../CheckpointManager';
 import { ModelSelector } from '../ModelSelector';
 import { ContextItem, FileNavRef } from '../FileNavigator';
-import type { ReasoningLevel } from '../../hooks/usePreferences';
+import type { ModelSourcePreference, ReasoningLevel } from '../../hooks/usePreferences';
 import type { ContextUsageMetrics } from '../../utils/contextUsage';
 import { ContextUsageIndicator } from '../ContextUsageIndicator';
 import { supabase } from '../../lib/supabaseClient';
@@ -127,6 +127,8 @@ interface ChatInputAreaProps {
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   selectedModelId: string;
   onChatModeChange?: (mode: any) => void;
+  modelSource?: ModelSourcePreference;
+  onModelSourceChange?: (source: ModelSourcePreference) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
   fileNavRef?: React.RefObject<FileNavRef>;
@@ -174,6 +176,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   textareaRef,
   selectedModelId,
   onChatModeChange,
+  modelSource = 'stuard',
+  onModelSourceChange,
   reasoningLevel,
   onReasoningLevelChange,
   fileNavRef,
@@ -932,6 +936,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             onSelectModel={(id) => {
               try { onChatModeChange?.(id as any); } catch { }
             }}
+            modelSource={modelSource}
+            onModelSourceChange={onModelSourceChange}
             reasoningLevel={reasoningLevel}
             onReasoningLevelChange={onReasoningLevelChange}
             side="top"

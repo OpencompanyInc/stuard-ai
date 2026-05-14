@@ -8,12 +8,13 @@
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { buildProviderModel } from '../utils/models';
+import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreference } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { safeToolWrite, getBridgeState, setBridgeState } from '../tools/bridge';
 import { search_tools } from '../tools/meta-tools';
 import { retrieveToolFormat } from '../tools/workflow-system';
 import { web_search } from '../tools/perplexity-tools';
+import { normalizeToolInputForSchema, coerceToolInputSchema } from '../tools/zod-utils';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -463,7 +464,7 @@ export function skillAgentLog(event: string, data?: Record<string, any>) {
     writeLog(`skill_agent_${event}`, data);
 }
 
-export function getSkillAgent(modelIdOverride?: string): Agent {
+function createSkillAgent(modelIdOverride?: string, modelInstance?: any): Agent {
     const modelId =
         (typeof modelIdOverride === 'string' && modelIdOverride.trim())
             ? modelIdOverride.trim()
@@ -471,23 +472,23 @@ export function getSkillAgent(modelIdOverride?: string): Agent {
 
     const provider = String(modelId.split('/')[0] || '').toLowerCase();
 
-    if (provider === 'google' && !GOOGLE_API_KEY) {
+    if (!modelInstance && provider === 'google' && !GOOGLE_API_KEY) {
         throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for google skill models');
     }
-    if (provider === 'openai' && !OPENAI_API_KEY) {
+    if (!modelInstance && provider === 'openai' && !OPENAI_API_KEY) {
         throw new Error('OPENAI_API_KEY is required for openai skill models');
     }
-    if (provider === 'xai' && !XAI_API_KEY) {
+    if (!modelInstance && provider === 'xai' && !XAI_API_KEY) {
         throw new Error('XAI_API_KEY is required for xai skill models');
     }
-    if (provider === 'deepseek' && !DEEPSEEK_API_KEY) {
+    if (!modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY) {
         throw new Error('DEEPSEEK_API_KEY is required for deepseek skill models');
     }
-    if (provider === 'perplexity' && !PERPLEXITY_API_KEY) {
+    if (!modelInstance && provider === 'perplexity' && !PERPLEXITY_API_KEY) {
         throw new Error('PERPLEXITY_API_KEY is required for perplexity skill models');
     }
 
-    const model = buildProviderModel(modelId);
+    const model = modelInstance || buildProviderModel(modelId);
     if (!model) {
         throw new Error(`Unsupported skill modelId: ${modelId}`);
     }
@@ -495,20 +496,25 @@ export function getSkillAgent(modelIdOverride?: string): Agent {
     skillAgentLog('init', { model: modelId });
 
     // Create logging wrappers for tools
-    const createLoggedTool = (tool: any, name: string) => ({
-        ...tool,
-        execute: async (args: any, runCtx?: any) => {
-            console.log(`[skill-agent] Tool call: ${name}`, JSON.stringify(args, null, 2));
-            try {
-                const result = await tool.execute(args, runCtx);
-                console.log(`[skill-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
-                return result;
-            } catch (error) {
-                console.error(`[skill-agent] Tool error: ${name}`, error);
-                throw error;
+    const createLoggedTool = (tool: any, name: string) => {
+        const inputSchema = tool.inputSchema || tool.parameters;
+        return {
+            ...tool,
+            ...(inputSchema ? { inputSchema: coerceToolInputSchema(inputSchema) } : {}),
+            execute: async (args: any, runCtx?: any) => {
+                const normalizedArgs = inputSchema ? normalizeToolInputForSchema(inputSchema, args) : args;
+                console.log(`[skill-agent] Tool call: ${name}`, JSON.stringify(normalizedArgs, null, 2));
+                try {
+                    const result = await tool.execute(normalizedArgs, runCtx);
+                    console.log(`[skill-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
+                    return result;
+                } catch (error) {
+                    console.error(`[skill-agent] Tool error: ${name}`, error);
+                    throw error;
+                }
             }
-        }
-    });
+        };
+    };
 
     const tools = {
         modify_skill: createLoggedTool(modifySkillTool, 'modify_skill'),
@@ -527,6 +533,8 @@ export function getSkillAgent(modelIdOverride?: string): Agent {
         model: model as any,
         tools,
     });
+    (agent as any).__modelSource = (model as any)?.__stuardResolvedSource;
+    (agent as any).__billingExcluded = !!(model as any)?.__stuardBillingExcluded;
 
     // Add thinking config injection (same as workflow agent)
     const originalStream = agent.stream.bind(agent);
@@ -554,4 +562,24 @@ export function getSkillAgent(modelIdOverride?: string): Agent {
     };
 
     return agent;
+}
+
+export function getSkillAgent(modelIdOverride?: string): Agent {
+    return createSkillAgent(modelIdOverride);
+}
+
+export async function getSkillAgentForUser(
+    modelIdOverride?: string,
+    userId?: string | null,
+    modelSource?: ModelSourcePreference | string | null,
+): Promise<Agent> {
+    const modelId =
+        (typeof modelIdOverride === 'string' && modelIdOverride.trim())
+            ? modelIdOverride.trim()
+            : (process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview');
+    const resolved = await buildProviderModelForUser(userId, modelId, modelSource);
+    if (!resolved?.model) {
+        throw new Error(`Unsupported skill modelId: ${modelId}`);
+    }
+    return createSkillAgent(modelId, resolved.model);
 }

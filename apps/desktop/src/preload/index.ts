@@ -11,6 +11,12 @@ const __agentWs = process.env.AGENT_WS || process.env.AGENT_WS_URL || "";
 try { contextBridge.exposeInMainWorld('__AGENT_WS__', __agentWs); } catch { }
 
 contextBridge.exposeInMainWorld("desktopAPI", {
+  // Codex (ChatGPT subscription) — auth happens via the local `codex` CLI;
+  // we just read ~/.codex/auth.json and push tokens to cloud-ai.
+  codexStatus: () => ipcRenderer.invoke('codex:status'),
+  codexSyncToCloud: (opts?: { force?: boolean }) => ipcRenderer.invoke('codex:syncToCloud', opts),
+  codexOpenLogin: () => ipcRenderer.invoke('codex:openLogin'),
+  codexRevealDir: () => ipcRenderer.invoke('codex:revealDir'),
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
