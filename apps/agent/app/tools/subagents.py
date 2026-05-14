@@ -45,7 +45,16 @@ class SubAgentTask:
     result: Optional[Dict[str, Any]]
     created_at: str
     updated_at: str
-    
+    # Pending steer messages — queued by the user from the UI and drained
+    # by the agent loop between tool/step boundaries. Each entry has
+    # {"id": str, "message": str, "created_at": iso} so the UI can show
+    # a "queued" indicator while the loop hasn't picked it up yet.
+    pending_steers: List[Dict[str, Any]] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.pending_steers is None:
+            self.pending_steers = []
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -148,6 +157,61 @@ def list_subagents(
     # Sort by created_at descending and limit
     results.sort(key=lambda t: t.created_at, reverse=True)
     return results[:limit]
+
+
+def enqueue_steer(task_id: str, message: str) -> Optional[Dict[str, Any]]:
+    """Append a steering message to a running sub-agent's queue.
+
+    Returns the queued entry on success, None if the task is missing or not running.
+    """
+    message = (message or '').strip()
+    if not message:
+        return None
+
+    entry = {
+        'id': str(uuid.uuid4()),
+        'message': message,
+        'created_at': _now_iso(),
+    }
+
+    with _subagent_lock:
+        task = _running_subagents.get(task_id)
+        if not task or task.status != 'running':
+            return None
+        task.pending_steers.append(entry)
+        task.updated_at = _now_iso()
+        # Also record the steer in logs so the trace view shows it.
+        task.logs.append({
+            'type': 'user_steer_queued',
+            'steer_id': entry['id'],
+            'message': message,
+            'timestamp': entry['created_at'],
+        })
+        if len(task.logs) > 500:
+            task.logs = task.logs[-500:]
+
+    return entry
+
+
+def drain_steers(task_id: str) -> List[Dict[str, Any]]:
+    """Atomically pop all pending steer messages for a sub-agent."""
+    with _subagent_lock:
+        task = _running_subagents.get(task_id)
+        if not task or not task.pending_steers:
+            return []
+        drained = task.pending_steers
+        task.pending_steers = []
+        task.updated_at = _now_iso()
+        for entry in drained:
+            task.logs.append({
+                'type': 'user_steer_applied',
+                'steer_id': entry.get('id'),
+                'message': entry.get('message'),
+                'timestamp': _now_iso(),
+            })
+        if len(task.logs) > 500:
+            task.logs = task.logs[-500:]
+        return drained
 
 
 def cleanup_completed_subagents(max_age_hours: int = 24) -> int:
@@ -281,6 +345,47 @@ async def subagent_update(args: Dict[str, Any]) -> ToolResult:
             "task": task.to_dict()
         }
 
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def subagent_steer(args: Dict[str, Any]) -> ToolResult:
+    """Queue a steering message for a running sub-agent.
+
+    Used by the desktop UI to nudge an in-flight sub-agent. The message is
+    drained by the agent loop before its next LLM call (see subagent_consume_steers).
+    """
+    try:
+        task_id = args.get('task_id', '')
+        message = args.get('message', '')
+        if not task_id:
+            return {"ok": False, "error": "task_id is required"}
+        if not message or not str(message).strip():
+            return {"ok": False, "error": "message is required"}
+
+        entry = enqueue_steer(task_id, str(message))
+        if entry is None:
+            task = get_subagent(task_id)
+            if not task:
+                return {"ok": False, "error": f"Sub-agent not found: {task_id}"}
+            return {"ok": False, "error": f"Sub-agent is not running (status: {task.status})"}
+
+        return {"ok": True, "steer": entry}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def subagent_consume_steers(args: Dict[str, Any]) -> ToolResult:
+    """Drain pending steer messages for a sub-agent. Called by the cloud loop
+    between steps so user nudges land before the next LLM call.
+    """
+    try:
+        task_id = args.get('task_id', '')
+        if not task_id:
+            return {"ok": False, "error": "task_id is required"}
+
+        drained = drain_steers(task_id)
+        return {"ok": True, "steers": drained}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

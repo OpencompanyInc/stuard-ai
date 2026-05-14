@@ -1,99 +1,130 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
-import OverlayDemo from './OverlayDemo';
 
 const HeroSection = () => {
-  const footerRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
-    document.body.classList.add('show-grid');
-
-    const handleScroll = () => {
-      const footer = footerRef.current;
-      if (!footer) return;
-      const rect = footer.getBoundingClientRect();
-      const past = rect.top <= 0;
-      document.body.classList.toggle('grid-faded', past);
-    };
-
-    handleScroll();
-    window.addEventListener('scroll', handleScroll);
+    document.body.classList.add('hero-dark');
     return () => {
-      window.removeEventListener('scroll', handleScroll);
-      document.body.classList.remove('grid-faded');
-      document.body.classList.remove('show-grid');
+      document.body.classList.remove('hero-dark');
     };
   }, []);
 
   return (
-    <section className="relative flex flex-col items-center px-4 pt-40 pb-20 overflow-visible">
-      
+    <section
+      className="
+        hero-section
+        relative
+        flex flex-col items-center justify-center
+        min-h-[calc(100vh-112px)]
+        px-4
+        py-20
+        overflow-hidden
+        text-white
+      "
+    >
+      {/* Wavy grid background */}
+      <div className="hero-bg" aria-hidden="true" />
+      {/* Soft vignette so the text reads cleanly over the grid */}
+      <div className="hero-vignette" aria-hidden="true" />
+
       {/* Main Content */}
-      <div className="max-w-4xl mx-auto text-center z-10 flex flex-col items-center">
-        
+      <div className="relative z-10 flex flex-col items-center text-center max-w-6xl mx-auto">
         {/* Headline */}
-        <h1 
-          className="serif-display font-medium text-center mx-auto"
-          style={{
-            fontSize: '60px',
-            lineHeight: '1.1',
-            color: '#171717',
-            maxWidth: '900px',
-            marginBottom: '24px'
-          }}
+        <h1
+          className="
+            font-bold tracking-tight
+            text-[44px] sm:text-[64px] lg:text-[85px]
+            leading-[1.1] sm:leading-[1.08] lg:leading-[101px]
+            text-[#F5F5F5]
+            max-w-[1062px]
+          "
         >
-          The only AI assistant <span className="text-gray-400">you&apos;ll ever need.</span>
+          Your Entire <span className="text-[#FF6A6A]">Workflow.</span>
+          <br />
+          <span className="text-[#FF6A6A]">One Intelligent</span> Assistant.
         </h1>
 
         {/* Subtitle */}
-        <p 
-          className="font-medium text-center mx-auto"
-          style={{
-            fontFamily: 'var(--font-inter), sans-serif',
-            fontSize: '18px',
-            lineHeight: '28px',
-            color: '#404040',
-            maxWidth: '640px'
-          }}
+        <p
+          className="
+            mt-7
+            text-[17px] sm:text-[21px] lg:text-[25px]
+            leading-[1.36]
+            font-medium
+            text-[#D4D4D4]
+            max-w-[845px]
+          "
         >
-          <strong>Copilot stops at answers. Stuard keeps going.</strong> Your personal assistant that remembers everything, runs automations, and replaces the 5 subscriptions you&apos;re paying for.
+          Stuard works across your apps, files, and workflows — helping you
+          find, create, and execute instantly.
         </p>
 
         {/* CTA Buttons */}
-        <div className="pt-10 max-w-xl mx-auto w-full">
-          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-4">
-            <Link href="/signup">
-              <button className="px-8 py-3.5 text-sm font-semibold text-white bg-[#171717] hover:bg-[#000000] rounded-lg transition-colors shadow-lg shadow-black/10 flex items-center justify-center gap-2 whitespace-nowrap">
-                Get Started Free
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </button>
-            </Link>
-            <Link href="/download">
-              <button className="px-8 py-3.5 text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 rounded-lg transition-colors border border-gray-200 shadow-sm flex items-center justify-center gap-2 whitespace-nowrap">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download for Windows
-              </button>
-            </Link>
-          </div>
-          <p className="text-[11px] text-gray-500 font-medium tracking-wide text-center">
-            Free to start. No credit card required. Local-first & privacy-focused.
-          </p>
+        <div className="mt-12 flex flex-col sm:flex-row items-center gap-5 sm:gap-[50px]">
+          <Link href="/signup">
+            <button
+              className="
+                inline-flex items-center justify-center gap-2.5
+                h-[68px] px-[30px]
+                rounded-full
+                bg-[#FF0617]/90 hover:bg-[#FF383C]
+                text-white text-[21.6px] font-normal
+                shadow-[0_18px_50px_-18px_rgba(255,6,23,0.65)]
+                transition-colors
+                whitespace-nowrap
+              "
+            >
+              Try Stuard Free
+              <svg
+                width="29"
+                height="29"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="12 5 19 12 12 19" />
+              </svg>
+            </button>
+          </Link>
+
+          <Link href="#demo">
+            <button
+              className="
+                inline-flex items-center justify-center gap-2.5
+                h-[68px] px-[30px]
+                rounded-full
+                bg-[#171717]/30 hover:bg-[#171717]/50
+                border border-white/10
+                text-white text-[21.6px] font-normal
+                transition-colors
+                whitespace-nowrap
+              "
+            >
+              Watch Demo
+              <svg
+                width="29"
+                height="29"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polygon points="6 4 20 12 6 20 6 4" />
+              </svg>
+            </button>
+          </Link>
         </div>
-
-        {/* Interactive Overlay Demo */}
-        <OverlayDemo />
-
       </div>
-
-      {/* Marker for grid fade trigger */}
-      <div ref={footerRef} className="absolute bottom-0 left-0 right-0 h-1" />
-
     </section>
   );
 };

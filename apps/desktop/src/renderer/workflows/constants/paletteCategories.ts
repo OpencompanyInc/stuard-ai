@@ -651,7 +651,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'x_post_tweet', label: 'Post to X', icon: Send, args: { text: '', reply_to_tweet_id: '' } },
       { k: 'cloud.tool', t: 'x_delete_tweet', label: 'Delete Post', icon: Trash2, args: { id: '' } },
       { k: 'cloud.tool', t: 'x_send_dm', label: 'Send DM', icon: MessageSquare, args: { recipient_username: '', text: '' } },
-      { k: 'cloud.tool', t: 'x_list_dms', label: 'List DMs', icon: Inbox, args: { conversation_id: '', participant_id: '', max_results: 20 } },
+      { k: 'cloud.tool', t: 'x_list_dms', label: 'List DMs', icon: Inbox, args: { conversation_id: '', participant_username: '', max_results: 20 } },
       { k: 'cloud.tool', t: 'x_get_user', label: 'Get User', icon: User, args: { username: '' } },
       { k: 'cloud.tool', t: 'x_list_followers', label: 'List Followers', icon: List, args: { username: '', max_results: 100 } },
       { k: 'cloud.tool', t: 'x_list_following', label: 'List Following', icon: List, args: { username: '', max_results: 100 } },

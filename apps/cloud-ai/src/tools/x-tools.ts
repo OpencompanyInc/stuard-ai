@@ -26,6 +26,7 @@ const profileField = z.string().optional().describe(
 
 const tweetFields = 'author_id,created_at,public_metrics,lang,referenced_tweets,conversation_id,in_reply_to_user_id';
 const userFields = 'username,name,verified,profile_image_url';
+const dmEventFields = 'id,text,created_at,sender_id,event_type,dm_conversation_id,attachments,referenced_tweets';
 
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
@@ -199,6 +200,27 @@ function buildUsersById(body: any): Map<string, any> {
   const usersById = new Map<string, any>();
   for (const u of (body?.includes?.users || [])) usersById.set(u.id, u);
   return usersById;
+}
+
+function formatDmEvent(e: any, usersById: Map<string, any>) {
+  const sender = e?.sender_id ? usersById.get(e.sender_id) : null;
+  return {
+    id: e.id,
+    text: e.text || '',
+    sender_id: e.sender_id || null,
+    sender: sender ? {
+      id: sender.id,
+      username: sender.username,
+      name: sender.name,
+      verified: sender.verified,
+      profile_image_url: sender.profile_image_url,
+    } : null,
+    created_at: e.created_at || null,
+    event_type: e.event_type,
+    conversation_id: e.dm_conversation_id || null,
+    attachments: e.attachments || null,
+    referenced_tweets: e.referenced_tweets || [],
+  };
 }
 
 function formatTweet(t: any, usersById: Map<string, any>) {
@@ -705,39 +727,58 @@ export const x_send_dm = createTool({
 
 export const x_list_dms = createTool({
   id: 'x_list_dms',
-  description: 'List recent X/Twitter direct message (DM) events from a conversation with another user.',
+  description: 'List recent X/Twitter direct message (DM) events. Can read the full inbox, a conversation_id, or a 1:1 conversation by participant id/username. Returns sent and received messages with sender details.',
   inputSchema: z.object({
     conversation_id: z.string().optional().describe('Existing dm_conversation_id'),
     participant_id: z.string().optional().describe('X user_id of the other participant (resolved to a 1:1 conversation)'),
-    max_results: z.number().int().min(5).max(100).default(20),
+    participant_username: z.string().optional().describe('@username of the other participant (without @); resolved to participant_id for a 1:1 conversation'),
+    max_results: z.number().int().min(1).max(100).default(20),
+    pagination_token: z.string().optional().describe('Pagination token from a previous call. X calls this pagination_token.'),
+    next_token: z.string().optional().describe('Alias for pagination_token from the previous response meta.next_token.'),
     profile: profileField,
   }),
   execute: async (inputData) => {
-    const { conversation_id, participant_id, max_results, profile } = inputData as any;
+    const { conversation_id, participant_id, participant_username, max_results, pagination_token, next_token, profile } = inputData as any;
     const userId = requireUserId();
     await gateCredits(userId);
+    let targetParticipantId = participant_id as string | undefined;
+    if (!targetParticipantId && participant_username) {
+      const lookup = await xFetch(`/users/by/username/${encodeURIComponent(cleanUsername(participant_username) || participant_username)}`, profile);
+      targetParticipantId = lookup.body?.data?.id;
+      if (!targetParticipantId) throw new Error(`x_user_not_found: ${participant_username}`);
+      await meterX(userId, 'lookup_user', X_PRICE_USD_USER);
+    }
+
     const params = new URLSearchParams({
       max_results: String(max_results || 20),
-      'dm_event.fields': 'id,text,created_at,sender_id,event_type',
+      event_types: 'MessageCreate',
+      'dm_event.fields': dmEventFields,
+      expansions: 'sender_id',
+      'user.fields': userFields,
     });
+    const pageToken = pagination_token || next_token;
+    if (pageToken) params.set('pagination_token', String(pageToken));
+
     let path: string;
     if (conversation_id) {
       path = `/dm_conversations/${encodeURIComponent(conversation_id)}/dm_events?${params}`;
-    } else if (participant_id) {
-      path = `/dm_conversations/with/${encodeURIComponent(participant_id)}/dm_events?${params}`;
+    } else if (targetParticipantId) {
+      path = `/dm_conversations/with/${encodeURIComponent(targetParticipantId)}/dm_events?${params}`;
     } else {
-      throw new Error('conversation_id_or_participant_id_required');
+      path = `/dm_events?${params}`;
     }
+
     const { body } = await xFetch(path, profile);
-    const events = (body?.data || []).map((e: any) => ({
-      id: e.id,
-      text: e.text,
-      sender_id: e.sender_id,
-      created_at: e.created_at,
-      event_type: e.event_type,
-    }));
+    const usersById = buildUsersById(body);
+    const events = (body?.data || []).map((e: any) => formatDmEvent(e, usersById));
     await meterX(userId, 'list_dms', X_PRICE_USD_READ);
-    return { events, count: events.length, next_token: body?.meta?.next_token || null };
+    return {
+      events,
+      count: events.length,
+      result_count: body?.meta?.result_count ?? events.length,
+      next_token: body?.meta?.next_token || null,
+      pagination_token: body?.meta?.next_token || null,
+    };
   },
 });
 

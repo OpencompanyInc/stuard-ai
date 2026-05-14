@@ -110,7 +110,7 @@ export function WorkflowHeader({
               <button onClick={onRedo} disabled={!canRedo || model.locked} className={`p-1.5 rounded-full transition-all ${canRedo && !model.locked ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Redo">
                 <Redo2 className="w-3.5 h-3.5" />
               </button>
-              <button onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-full transition-all ${dirty ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Save">
+              <button id="wf-target-save" onClick={onSave} disabled={!dirty} className={`p-1.5 rounded-full transition-all ${dirty ? "wf-fg-muted wf-hover-fg" : "wf-fg-faint opacity-40"}`} title="Save">
                 <Save className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -123,7 +123,7 @@ export function WorkflowHeader({
                 <Square className="w-3 h-3 fill-current" /> Stop
               </button>
             ) : manualTriggers.length > 1 ? (
-              <div className="relative">
+              <div className="relative" id="wf-target-run">
                 <div className="flex">
                   <button onClick={() => onRun()} className="px-3 py-1.5 rounded-l-full flex items-center gap-1.5 text-[11px] font-medium transition-all wf-header-action-btn">
                     <Play className="w-3 h-3 fill-current" /> Run
@@ -152,7 +152,7 @@ export function WorkflowHeader({
                 )}
               </div>
             ) : (
-              <button onClick={() => onRun()} className="px-3 py-1.5 rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all wf-header-action-btn">
+              <button id="wf-target-run" onClick={() => onRun()} className="px-3 py-1.5 rounded-full flex items-center gap-1.5 text-[11px] font-medium transition-all wf-header-action-btn">
                 <Play className="w-3 h-3 fill-current" /> Run
               </button>
             )}

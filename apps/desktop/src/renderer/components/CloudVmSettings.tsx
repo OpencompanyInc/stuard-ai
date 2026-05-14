@@ -224,6 +224,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [connectingSince, setConnectingSince] = useState<Record<string, number>>({});
+  const [autoRestoreAttempted, setAutoRestoreAttempted] = useState(false);
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
   const [confirm, confirmDialog] = useConfirm();
 
@@ -264,23 +265,37 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const services = data?.vm?.services || {};
   const browserReachable = !!data?.vm?.browserReachable;
 
-  // VM Settings is VM-local by design: cloud DB accounts are legacy sync input,
-  // not the source of truth for whether an integration is available in the VM.
-  const useVmAsSource = true;
+  const vmProviderSet = useMemo(() => new Set(
+    vmIntegrations
+      .map((entry) => String(entry.provider || '').trim().toLowerCase())
+      .filter(Boolean),
+  ), [vmIntegrations]);
+  const backedUpProviderSet = useMemo(() => new Set(
+    integrations
+      .map((entry) => String(entry.provider || '').trim().toLowerCase())
+      .filter(Boolean),
+  ), [integrations]);
+  const missingBackedUpProviders = useMemo(
+    () => Array.from(backedUpProviderSet).filter((provider) => !vmProviderSet.has(provider)),
+    [backedUpProviderSet, vmProviderSet],
+  );
+  const usingDurableBackup = missingBackedUpProviders.length > 0;
 
   const connectedMap = useMemo(() => {
     const m: Record<string, Array<IntegrationEntry | VmIntegrationEntry>> = {};
-    const source: Array<IntegrationEntry | VmIntegrationEntry> = useVmAsSource
-      ? vmIntegrations
-      : integrations;
-    for (const it of source) {
+    for (const it of vmIntegrations) {
       const provider = String((it as any).provider || '');
       if (!provider) continue;
       const list = m[provider] || (m[provider] = []);
       list.push(it);
     }
+    for (const it of integrations) {
+      const provider = String((it as any).provider || '');
+      if (!provider || m[provider]?.length) continue;
+      m[provider] = [it];
+    }
     return m;
-  }, [integrations, vmIntegrations, useVmAsSource]);
+  }, [integrations, vmIntegrations]);
 
   useEffect(() => {
     const pending = Object.keys(connectingSince);
@@ -341,6 +356,13 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
   const syncOAuth = () => runSync('oauth', '/v1/cloud-engine/sync-oauth-to-vm', undefined, 'OAuth tokens sync');
   const syncBrowser = () => runSync('browser', '/v1/cloud-engine/sync-browser-profile-to-vm', undefined, 'Browser profile sync');
   const syncMemory = () => runSync('memory', '/v1/cloud-engine/sync-agent-data', { mode: 'full' }, 'Memory & knowledge sync');
+
+  useEffect(() => {
+    if (!isRunning || loading || refreshing || autoRestoreAttempted) return;
+    if (!usingDurableBackup) return;
+    setAutoRestoreAttempted(true);
+    void runSync('oauth:auto', '/v1/cloud-engine/sync-oauth-to-vm', undefined, 'OAuth restore');
+  }, [autoRestoreAttempted, isRunning, loading, refreshing, usingDurableBackup]);
 
   // Service restart isn't exposed as a dedicated endpoint yet — the runtime is
   // managed by the engine boot scripts. We expose a gentle "rerun startup"
@@ -524,14 +546,16 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
         {/* Cloud integrations */}
         <Section
           title="Cloud integrations"
-          subtitle={useVmAsSource
-            ? 'OAuth providers actually installed on this VM. New connects from here are stored in the VM token store only.'
-            : 'OAuth providers that connect straight to the VM. Tokens are stored locally in the VM token store.'}
+          subtitle={usingDurableBackup
+            ? 'OAuth providers are backed up and being restored to this VM so they survive relaunches and updates.'
+            : 'OAuth providers available on this VM. New connects are stored on the VM and backed up for restore.'}
           icon={Link2}
           accent="primary"
           right={
             <span className="text-[11px] font-medium text-theme-muted">
-              {useVmAsSource ? `${vmIntegrations.length} on VM` : `${integrations.length} connected`}
+              {usingDurableBackup
+                ? `${vmIntegrations.length} on VM / ${missingBackedUpProviders.length} backed up`
+                : `${vmIntegrations.length} on VM`}
             </span>
           }
         >
@@ -547,6 +571,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
                   : !!first?.expiresAt && new Date(first.expiresAt!).getTime() < Date.now()
               );
               const syncedAt = first && 'syncedAt' in (first as any) ? (first as VmIntegrationEntry).syncedAt : null;
+              const isBackedUpOnly = isLinked && !vmProviderSet.has(entry.provider.toLowerCase());
               const Icon = entry.icon;
               const busy = busyKey === `disc:${entry.slug}`;
               const connecting = !!connectingSince[entry.slug];
@@ -569,7 +594,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
                       {isLinked && !expired && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
                           <CheckCircle2 className="h-3 w-3" />
-                          {useVmAsSource ? 'On VM' : 'Linked'}
+                          {isBackedUpOnly ? 'Backed up' : 'On VM'}
                         </span>
                       )}
                       {isLinked && expired && (

@@ -8,6 +8,7 @@ import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
 import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, enqueueInterjection, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
+import { enqueueSubagentSteer } from '../../orchestrator/subagent-runtime';
 
 export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
@@ -99,6 +100,23 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
       accepted: depth > 0,
       depth,
       message: depth > 0 ? 'queued for next step' : 'empty interjection',
+    }, requestId);
+    return;
+  }
+
+  if (kind === 'subagent_steer') {
+    const subagentId = typeof msg?.subagentId === 'string' ? msg.subagentId.trim() : '';
+    const text = typeof msg?.text === 'string' ? msg.text : '';
+    const requestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
+    const depth = subagentId ? enqueueSubagentSteer(subagentId, text) : 0;
+    send(ws, {
+      type: 'subagent_steer_ack',
+      subagentId,
+      accepted: depth > 0,
+      depth,
+      message: depth > 0
+        ? 'queued for next subagent step'
+        : (!subagentId ? 'subagentId required' : 'empty steer'),
     }, requestId);
     return;
   }

@@ -28,6 +28,9 @@ export interface MediaLibraryItem {
 
 export interface MediaLibraryPrefs {
   syncMode: MediaSyncMode;
+  storageRootPath: string | null;
+  resolvedStorageRootPath: string;
+  defaultStorageRootPath: string;
 }
 
 export interface MediaLibrarySummary {
@@ -68,7 +71,12 @@ function toErrorMessage(error: unknown) {
 export function useMediaLibrary() {
   const [items, setItems] = useState<MediaLibraryItem[]>([]);
   const [summary, setSummary] = useState<MediaLibrarySummary>(emptySummary());
-  const [prefs, setPrefs] = useState<MediaLibraryPrefs>({ syncMode: 'local-only' });
+  const [prefs, setPrefs] = useState<MediaLibraryPrefs>({
+    syncMode: 'local-only',
+    storageRootPath: null,
+    resolvedStorageRootPath: '',
+    defaultStorageRootPath: '',
+  });
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -89,7 +97,12 @@ export function useMediaLibrary() {
 
       setItems(Array.isArray(itemsResp.items) ? itemsResp.items : []);
       setSummary(summaryResp.summary || emptySummary());
-      setPrefs(prefsResp.prefs || { syncMode: 'local-only' });
+      setPrefs(prefsResp.prefs || {
+        syncMode: 'local-only',
+        storageRootPath: null,
+        resolvedStorageRootPath: '',
+        defaultStorageRootPath: '',
+      });
       setError(null);
     } catch (nextError) {
       setError(toErrorMessage(nextError));
@@ -136,6 +149,21 @@ export function useMediaLibrary() {
       return { ok: false, error: message };
     }
   }, [refresh, sync]);
+
+  const updateStorageRoot = useCallback(async (storageRootPath: string | null) => {
+    try {
+      const resp = await window.desktopAPI.mediaUpdatePrefs({ storageRootPath });
+      if (!resp.ok || !resp.prefs) throw new Error(resp.error || 'Failed to update media folder');
+      setPrefs(resp.prefs);
+      await refresh(true);
+      setError(null);
+      return { ok: true, prefs: resp.prefs };
+    } catch (nextError) {
+      const message = toErrorMessage(nextError);
+      setError(message);
+      return { ok: false, error: message };
+    }
+  }, [refresh]);
 
   const importPaths = useCallback(async (paths: string[]) => {
     setImporting(true);
@@ -207,6 +235,7 @@ export function useMediaLibrary() {
     refresh,
     sync,
     updateSyncMode,
+    updateStorageRoot,
     importPaths,
     deleteItem,
   };

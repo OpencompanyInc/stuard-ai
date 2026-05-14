@@ -5,6 +5,7 @@ import { getExternalAccount } from '../supabase';
 import { getBridgeSecrets, getBridgeWs, withClientBridge, execLocalTool } from './bridge';
 import { writeLog } from '../utils/logger';
 import { randomUUID } from 'crypto';
+import { createInterjectionUserMessage } from '../server/chat/interjections';
 
 const MAX_LOG_ENTRIES = 200;
 const LOG_FLUSH_MS = 750;
@@ -374,10 +375,49 @@ async function runHeadlessTask(
       };
     }
 
-    // 3. Run the agent and stream results
+    // 3. Run the agent and stream results.
+    //
+    // prepareStep drains user-queued steering messages between steps. The desktop
+    // UI POSTs to /v1/subagents/{id}/steer which enqueues into the local Python
+    // registry; we drain them here so a nudge lands as a user message *before*
+    // the next LLM call. This is the safe injection point — never mid-tool-call.
     const stream: any = await agent.stream([{ role: 'user', content: objective }], {
       providerOptions,
       abortSignal: abortController.signal,
+      prepareStep: async ({ messages: stepMessages }: any) => {
+        try {
+          const res: any = await execLocalTool('subagent_consume_steers', { task_id: taskId });
+          const steers: any[] = Array.isArray(res?.steers) ? res.steers : [];
+          if (steers.length === 0) return {};
+
+          const base = Array.isArray(stepMessages) ? stepMessages : [];
+          const content =
+            '[User steering — applied mid-task]\n' +
+            steers
+              .map((s: any, i: number) => `Steer ${i + 1}: ${String(s.message || '').trim()}`)
+              .join('\n') +
+            '\n\nUse this guidance in the next step before continuing.';
+
+          // Surface each steer in the activity log so the UI shows it took effect.
+          await Promise.all(
+            steers.map((s: any) =>
+              execLocalTool('subagent_update', {
+                task_id: taskId,
+                log: {
+                  type: 'user_steer_injected',
+                  steer_id: s.id,
+                  message: s.message,
+                  timestamp: Date.now(),
+                },
+              }).catch(() => {}),
+            ),
+          );
+
+          return { messages: [...base, createInterjectionUserMessage(content)] };
+        } catch {
+          return {};
+        }
+      },
       onFinish: async ({ text, finishReason }) => {
         finished = true;
         runningTasks.delete(taskId);

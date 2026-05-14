@@ -29,6 +29,9 @@ export { };
 
  interface MediaLibraryPrefs {
    syncMode: MediaSyncMode;
+   storageRootPath: string | null;
+   resolvedStorageRootPath: string;
+   defaultStorageRootPath: string;
  }
 
  interface MediaLibrarySummary {
@@ -96,7 +99,7 @@ declare global {
       mediaList: () => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
       mediaSummary: () => Promise<{ ok: boolean; summary?: MediaLibrarySummary; error?: string }>;
       mediaGetPrefs: () => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
-      mediaUpdatePrefs: (updates: { syncMode?: MediaSyncMode }) => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
+      mediaUpdatePrefs: (updates: { syncMode?: MediaSyncMode; storageRootPath?: string | null }) => Promise<{ ok: boolean; prefs?: MediaLibraryPrefs; error?: string }>;
       mediaSync: (itemIds?: string[]) => Promise<{ ok: boolean; synced?: number; failed?: number; items?: MediaLibraryItem[]; error?: string }>;
       mediaImportPaths: (paths: string[]) => Promise<{ ok: boolean; items?: MediaLibraryItem[]; error?: string }>;
       mediaOpenPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;

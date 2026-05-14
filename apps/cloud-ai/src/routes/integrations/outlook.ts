@@ -195,6 +195,17 @@ export async function handleOutlookRoutes(req: IncomingMessage, res: ServerRespo
       } catch {}
 
       if (storageTarget === 'vm') {
+        const account = {
+          userId,
+          provider: 'outlook',
+          access_token,
+          scopes,
+          refresh_token: refresh_token || null,
+          expires_at,
+          meta: { token_type: tokenBody.token_type || 'Bearer', storage_target: 'vm' },
+          profileLabel,
+          accountEmail,
+        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'outlook',
           profileLabel,
@@ -210,6 +221,14 @@ export async function handleOutlookRoutes(req: IncomingMessage, res: ServerRespo
             ? 'Start the cloud engine, then connect Outlook again so the VM can store the token.'
             : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
           res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=outlook&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        try {
+          await upsertExternalAccount(account);
+        } catch (saveErr: any) {
+          console.error('[outlook] Failed to save VM token backup:', saveErr?.message || saveErr);
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=outlook&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
           res.end();
           return true;
         }

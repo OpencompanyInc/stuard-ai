@@ -255,6 +255,8 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "subagent_status": ("core", "Get sub-agent status"),
     "subagent_list": ("core", "List sub-agents"),
     "subagent_update": ("core", "Update sub-agent"),
+    "subagent_steer": ("core", "Queue a steering message for a running sub-agent"),
+    "subagent_consume_steers": ("core", "Drain pending steer messages for a sub-agent"),
 
     # ── Math ─────────────────────────────────────────────────────────────────
     "math_add": ("math", "Add two values/tensors"),
@@ -1070,6 +1072,8 @@ _HANDLERS.update({
     "subagent_status": subagents.subagent_status,
     "subagent_list": subagents.subagent_list,
     "subagent_update": subagents.subagent_update,
+    "subagent_steer": subagents.subagent_steer,
+    "subagent_consume_steers": subagents.subagent_consume_steers,
 
     # Math
     "math_add": math_ops.math_add,

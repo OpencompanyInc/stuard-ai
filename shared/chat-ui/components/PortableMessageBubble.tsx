@@ -76,12 +76,13 @@ type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
 interface AssistantTraceStepData {
   id: string;
-  kind: 'reasoning' | 'tool' | 'status';
+  kind: 'reasoning' | 'tool' | 'status' | 'text';
   label: string;
   status: TraceStatus;
   content?: string;
   tool?: ToolCall;
   nested?: boolean;
+  subagentId?: string;
   statusVariant?: 'compacting';
   statusMeta?: {
     round?: number;
@@ -265,19 +266,21 @@ function CopyActionButton({
   );
 }
 
-function summarizeReasoningLabel(content: string): string {
+function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
   const plain = content
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/[`*_>#-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!plain) return 'Planning next moves';
+  if (!plain) return fallback;
 
   const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
   const summary = truncatePreviewText(sentence, 72);
-  return summary.split(' ').length >= 2 ? summary : 'Planning next moves';
+  return summary.split(' ').length >= 2 ? summary : fallback;
 }
+
+const SUBAGENT_REPLY_FALLBACK = 'Subagent reply';
 
 function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantTraceStepData[] {
   const compacted: AssistantTraceStepData[] = [];
@@ -285,21 +288,26 @@ function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantT
   for (const step of steps) {
     const last = compacted[compacted.length - 1];
     if (
-      step.kind === 'reasoning'
-      && last?.kind === 'reasoning'
+      (step.kind === 'reasoning' || step.kind === 'text')
+      && last?.kind === step.kind
       && step.content
       && last.content
       && Boolean(step.nested) === Boolean(last.nested)
+      && (step.subagentId || '') === (last.subagentId || '')
       && isRedundantStreamingUpdate(last.content, step.content)
     ) {
       const mergedContent = mergeStreamingText(last.content, step.content);
       compacted[compacted.length - 1] = {
         ...last,
         id: step.id,
-        label: summarizeReasoningLabel(mergedContent),
+        label: summarizeReasoningLabel(
+          mergedContent,
+          step.kind === 'text' ? SUBAGENT_REPLY_FALLBACK : 'Planning next moves',
+        ),
         status: step.status === 'active' ? 'active' : last.status,
         content: mergedContent,
         nested: step.nested,
+        subagentId: step.subagentId,
       };
       continue;
     }
@@ -328,6 +336,37 @@ function isDelegatedToolCall(tool: ToolCall): boolean {
   );
 }
 
+function isTopLevelDuplicateOfNestedTool(tool: ToolCall, streamChunks?: StreamChunk[]): boolean {
+  if (isDelegatedToolCall(tool) || !tool.id || !streamChunks?.length) return false;
+  return streamChunks.some((chunk) => (
+    chunk.type === 'tool' &&
+    chunk.tool.id === tool.id &&
+    isDelegatedToolCall(chunk.tool)
+  ));
+}
+
+function isTopLevelDuplicateOfNestedText(
+  chunk: Extract<StreamChunk, { type: 'text' }>,
+  streamChunks?: StreamChunk[],
+): boolean {
+  if (chunk.nested || !chunk.content.trim() || !streamChunks?.length) return false;
+  return streamChunks.some((candidate) => {
+    if (candidate.type !== 'text' || !candidate.nested || !candidate.content.trim()) return false;
+    return isRedundantStreamingUpdate(candidate.content, chunk.content)
+      || isRedundantStreamingUpdate(chunk.content, candidate.content);
+  });
+}
+
+function isTextDuplicateOfNestedText(text: string, streamChunks?: StreamChunk[]): boolean {
+  const content = String(text || '');
+  if (!content.trim() || !streamChunks?.length) return false;
+  return streamChunks.some((candidate) => {
+    if (candidate.type !== 'text' || !candidate.nested || !candidate.content.trim()) return false;
+    return isRedundantStreamingUpdate(candidate.content, content)
+      || isRedundantStreamingUpdate(content, candidate.content);
+  });
+}
+
 function buildTraceSteps(
   streamChunks: StreamChunk[] | undefined,
   reasoning: string | undefined,
@@ -347,6 +386,10 @@ function buildTraceSteps(
       (lastIndex, chunk, index) => (chunk.type === 'reasoning' ? index : lastIndex),
       -1,
     );
+    const lastNestedTextIndex = streamChunks.reduce(
+      (lastIndex, chunk, index) => (chunk.type === 'text' && chunk.nested ? index : lastIndex),
+      -1,
+    );
 
     streamChunks.forEach((chunk, index) => {
       if (chunk.type === 'reasoning') {
@@ -357,12 +400,27 @@ function buildTraceSteps(
           status: isStreaming && index === lastReasoningIndex ? 'active' : 'complete',
           content: chunk.content,
           nested: chunk.nested,
+          subagentId: chunk.subagentId,
+        });
+        return;
+      }
+
+      if (chunk.type === 'text' && chunk.nested) {
+        steps.push({
+          id: `nested-text-${index}`,
+          kind: 'text',
+          label: summarizeReasoningLabel(chunk.content, SUBAGENT_REPLY_FALLBACK),
+          status: isStreaming && index === lastNestedTextIndex ? 'active' : 'complete',
+          content: chunk.content,
+          nested: true,
+          subagentId: chunk.subagentId,
         });
         return;
       }
 
       if (chunk.type === 'tool') {
         const tc = chunk.tool;
+        if (isTopLevelDuplicateOfNestedTool(tc, streamChunks)) return;
         if (shouldHideTool(tc)) return;
         steps.push({
           id: tc.id || `tool-${index}`,
@@ -371,6 +429,7 @@ function buildTraceSteps(
           status: mapTraceStatus(tc, isStreaming),
           tool: tc,
           nested: isDelegatedToolCall(tc),
+          subagentId: tc.subagentId,
         });
         return;
       }
@@ -382,6 +441,7 @@ function buildTraceSteps(
           label: chunk.label,
           status: chunk.state === 'active' ? 'active' : 'complete',
           nested: chunk.nested,
+          subagentId: chunk.subagentId,
           statusVariant: chunk.variant,
           statusMeta: chunk.meta,
         });
@@ -410,6 +470,7 @@ function buildTraceSteps(
       status: mapTraceStatus(tool, isStreaming),
       tool,
       nested: isDelegatedToolCall(tool),
+      subagentId: tool.subagentId,
     });
   });
 
@@ -441,6 +502,8 @@ function buildRenderBlocks(
 
     for (const chunk of streamChunks) {
       if (chunk.type === 'text') {
+        if (chunk.nested) continue;
+        if (isTopLevelDuplicateOfNestedText(chunk, streamChunks)) continue;
         pendingText = mergeStreamingText(pendingText, chunk.content);
       }
 
@@ -460,7 +523,7 @@ function buildRenderBlocks(
       blocks.push({ type: 'tool', tool });
     }
   }
-  if (text) {
+  if (text && !isTextDuplicateOfNestedText(text, streamChunks)) {
     blocks.push({ type: 'text', text });
   }
   return blocks;
@@ -1157,7 +1220,7 @@ function AssistantTracePanel({
                     )
                   }
                 >
-                  {step.kind === 'reasoning' && step.content ? (
+                  {(step.kind === 'reasoning' || step.kind === 'text') && step.content ? (
                     <div
                       className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
                       style={{

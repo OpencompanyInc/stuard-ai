@@ -390,7 +390,7 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'x_post_tweet', label: 'X: Post', args: { text: '', reply_to_tweet_id: '' } },
   { k: 'cloud.tool', t: 'x_delete_tweet', label: 'X: Delete Post', args: { id: '' } },
   { k: 'cloud.tool', t: 'x_send_dm', label: 'X: Send DM', args: { recipient_username: '', text: '' } },
-  { k: 'cloud.tool', t: 'x_list_dms', label: 'X: List DMs', args: { conversation_id: '', participant_id: '', max_results: 20 } },
+  { k: 'cloud.tool', t: 'x_list_dms', label: 'X: List DMs', args: { conversation_id: '', participant_username: '', max_results: 20 } },
   { k: 'cloud.tool', t: 'x_get_user', label: 'X: Get User', args: { username: '' } },
   { k: 'cloud.tool', t: 'x_list_followers', label: 'X: List Followers', args: { username: '', max_results: 100 } },
   { k: 'cloud.tool', t: 'x_list_following', label: 'X: List Following', args: { username: '', max_results: 100 } },

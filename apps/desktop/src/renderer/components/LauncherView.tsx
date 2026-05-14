@@ -8,7 +8,6 @@
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import {
-  LayoutGrid,
   MicOff,
   Mic,
   Plus,
@@ -225,24 +224,22 @@ const quickActions = [
     description: "Search your files",
   },
   {
-    id: "sidebar",
-    label: "Sidebar",
-    icon: LayoutGrid,
-    color: "from-blue-500 to-cyan-600",
-    bgLight: "bg-blue-500/10",
-    textColor: "text-blue-500",
-    description: "Toggle sidebar",
-    hidden: true,
+    id: "tasks",
+    label: "Tasks",
+    icon: ListTodo,
+    color: "from-sky-500 to-indigo-600",
+    bgLight: "bg-sky-500/10",
+    textColor: "text-sky-500",
+    description: "View your tasks",
   },
   {
-    id: "window",
-    label: "Window",
-    icon: AppWindow,
-    color: "from-blue-500 to-cyan-600",
-    bgLight: "bg-blue-500/10",
-    textColor: "text-blue-500",
-    description: "Toggle window",
-    hidden: true,
+    id: "add",
+    label: "Add",
+    icon: Plus,
+    color: "from-slate-400 to-slate-600",
+    bgLight: "bg-theme-hover",
+    textColor: "text-theme-muted",
+    description: "Create a shortcut",
   },
 ];
 
@@ -843,12 +840,19 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         case "files":
           setQuery("@");
           break;
+        case "tasks":
+          setViewMode("tasks");
+          break;
+        case "add":
+          setShowBookmarkEditor(true);
+          break;
         case "chat":
         default:
+          setViewMode("chat");
           break;
       }
     },
-    [onToggleSidebar, setQuery],
+    [setQuery],
   );
 
   // Voice status overrides default status when voice is active
@@ -1074,7 +1078,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
                 {/* Quick Actions Grid */}
                 {!showResults && (
-                  <div className="grid grid-cols-4 gap-1.5 mb-3 shrink-0">
+                  <div className="grid grid-cols-5 gap-1.5 mb-3 shrink-0">
                     {quickActions.map((action) => (
                       <button
                         key={action.id}

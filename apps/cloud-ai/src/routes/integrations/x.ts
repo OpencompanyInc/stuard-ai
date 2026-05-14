@@ -276,6 +276,17 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       } catch {}
 
       if (storageTarget === 'vm') {
+        const account = {
+          userId,
+          provider: 'x',
+          access_token,
+          scopes,
+          refresh_token,
+          expires_at: expiresAt,
+          meta: { token_type: tBody.token_type || 'bearer', storage_target: 'vm' },
+          profileLabel,
+          accountEmail,
+        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'x',
           profileLabel,
@@ -291,6 +302,14 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
             ? 'Start the cloud engine, then connect X again so the VM can store the token.'
             : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
           res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=x&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        try {
+          await upsertExternalAccount(account);
+        } catch (saveErr: any) {
+          console.error('[x] Failed to save VM token backup:', saveErr?.message || saveErr);
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=x&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
           res.end();
           return true;
         }

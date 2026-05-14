@@ -1,4 +1,4 @@
-import React, { memo, useState, useMemo } from 'react';
+import React, { memo, useState, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -22,8 +22,12 @@ import {
   Search,
   MessageSquare,
   Clock,
+  Send,
+  CornerDownLeft,
 } from 'lucide-react';
 import type { SubAgentTask } from '@/hooks/useSubagentDashboard';
+
+const AGENT_HTTP = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -332,6 +336,108 @@ const ToolActivity: React.FC<{ logs: any[] }> = ({ logs }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Component: Steer Input — nudge a running sub-agent mid-flight
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SteerInput: React.FC<{ taskId: string; pendingCount: number }> = ({ taskId, pendingCount }) => {
+  const [value, setValue] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justSent, setJustSent] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const send = async () => {
+    const message = value.trim();
+    if (!message || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${AGENT_HTTP}/v1/subagents/${taskId}/steer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error || 'Failed to queue steer');
+      } else {
+        setValue('');
+        setJustSent(true);
+        setTimeout(() => setJustSent(false), 1500);
+        // Keep focus so the user can stack multiple nudges quickly.
+        inputRef.current?.focus();
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Network error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  return (
+    <div className="pt-1">
+      <div className="flex items-center gap-1.5 mb-2">
+        <CornerDownLeft className="w-3.5 h-3.5 text-blue-500" />
+        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+          Steer
+        </span>
+        {pendingCount > 0 && (
+          <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-md px-1.5 py-0.5">
+            {pendingCount} queued
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-theme-muted opacity-70">
+          Applied at next tool boundary · Enter to send
+        </span>
+      </div>
+      <div
+        className={clsx(
+          'flex items-end gap-2 rounded-2xl border bg-white/[0.03] px-3 py-2 backdrop-blur-md transition-colors',
+          error ? 'border-red-500/30' : 'border-white/[0.08] focus-within:border-blue-500/30',
+        )}
+      >
+        <textarea
+          ref={inputRef}
+          value={value}
+          onChange={(e) => { setValue(e.target.value); if (error) setError(null); }}
+          onKeyDown={onKeyDown}
+          placeholder="Nudge this agent (e.g., 'focus on docs only', 'skip the build step')"
+          rows={1}
+          className="flex-1 resize-none bg-transparent text-[12.5px] text-theme-fg placeholder:text-theme-muted/60 outline-none leading-relaxed max-h-[80px] overflow-y-auto custom-scrollbar"
+          disabled={sending}
+        />
+        <button
+          onClick={send}
+          disabled={!value.trim() || sending}
+          className={clsx(
+            'shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-lg border transition-all',
+            value.trim() && !sending
+              ? 'bg-blue-500/15 border-blue-500/30 text-blue-500 hover:bg-blue-500/25'
+              : 'bg-white/[0.04] border-white/[0.06] text-theme-muted/50 cursor-not-allowed',
+          )}
+          title="Send steer (Enter)"
+        >
+          {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      {error && (
+        <div className="mt-1.5 text-[10.5px] text-red-500 px-1">{error}</div>
+      )}
+      {justSent && !error && (
+        <div className="mt-1.5 text-[10.5px] text-emerald-500 px-1">Queued · will apply before the next tool call</div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Component: Task Detail — reasoning + output focused
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -392,6 +498,13 @@ const TaskDetail: React.FC<{ task: SubAgentTask }> = ({ task }) => {
         <div className="h-[2px] bg-theme-border overflow-hidden relative rounded-full mx-1">
           <div className="absolute top-0 bottom-0 w-1/3 bg-blue-500/60 animate-[shimmer_2s_infinite_linear]" />
         </div>
+      )}
+
+      {task.status === 'running' && (
+        <SteerInput
+          taskId={task.id}
+          pendingCount={task.pending_steers?.length ?? 0}
+        />
       )}
 
       {reasoning && (

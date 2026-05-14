@@ -308,6 +308,7 @@ export function WorkflowMainContent({
           {/* Floating AI Chat Panel */}
           {viewMode === "ai" && (
             <div
+              id="wf-target-chat"
               className="absolute right-20 top-24 bottom-24 flex flex-col z-20 rounded-[20px] shadow-2xl pointer-events-auto border wf-panel"
               style={{
                 width: aiLeftWidth,
@@ -386,6 +387,7 @@ export function WorkflowMainContent({
           {/* Floating Tool Palette for Manual Mode */}
           {viewMode === "manual" && (
             <div
+              id="wf-target-palette"
               className="absolute left-6 top-32 bottom-24 w-64 rounded-xl shadow-2xl flex flex-col shrink-0 z-20 overflow-hidden pointer-events-auto border wf-panel"
               style={{
                 backdropFilter: 'var(--wf-glass-blur)',

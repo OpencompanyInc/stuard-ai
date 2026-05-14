@@ -217,6 +217,8 @@ jobs:
           SECRETS="$SECRETS,TOKEN_ENCRYPTION_PEPPER=TOKEN_ENCRYPTION_PEPPER:latest"
           # Billing — Polar.sh webhook signing secret
           SECRETS="$SECRETS,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest"
+          # IndexNow — ping Bing/Yandex/etc. when workflows publish for fast search-engine discovery
+          SECRETS="$SECRETS,INDEXNOW_KEY=INDEXNOW_KEY:latest"
 
           gcloud run deploy stuard-cloud-ai-prod \
             --image "$IMAGE" \

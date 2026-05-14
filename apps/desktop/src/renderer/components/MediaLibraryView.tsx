@@ -340,7 +340,7 @@ function MediaCard({ item, viewMode, onClick }: { item: MediaLibraryItem; viewMo
 /* ────────────────────────── Main Component ────────────────────────── */
 
 export function MediaLibraryView() {
-  const { items, summary, loading, importing, error, refresh, importPaths, deleteItem } = useMediaLibrary();
+  const { items, summary, prefs, loading, importing, error, refresh, importPaths, deleteItem, updateStorageRoot } = useMediaLibrary();
   const [query, setQuery] = useState('');
   const search = useDeferredValue(query.trim().toLowerCase());
   const [activeCategory, setActiveCategory] = useState('all');
@@ -390,6 +390,29 @@ export function MediaLibraryView() {
     if (!result.ok) return showToast(result.error || 'Import failed');
     showToast(`Imported ${result.items?.length || 0} item(s)`);
   }, [importPaths, showToast]);
+
+  const openMediaFolder = useCallback(async () => {
+    const root = prefs.resolvedStorageRootPath;
+    if (!root) return;
+    const result = await window.desktopAPI.mediaOpenPath(root);
+    if (!result.ok) showToast(result.error || 'Could not open media folder');
+  }, [prefs.resolvedStorageRootPath, showToast]);
+
+  const changeMediaFolder = useCallback(async () => {
+    const picked = await window.desktopAPI.pickFolder({ title: 'Choose media library folder' });
+    if (!picked.ok) return showToast(picked.error || 'Could not open folder picker');
+    const folder = picked.folders?.[0]?.path;
+    if (!folder) return;
+    const result = await updateStorageRoot(folder);
+    if (!result.ok) return showToast(result.error || 'Could not update media folder');
+    showToast('Media folder updated');
+  }, [showToast, updateStorageRoot]);
+
+  const resetMediaFolder = useCallback(async () => {
+    const result = await updateStorageRoot(null);
+    if (!result.ok) return showToast(result.error || 'Could not reset media folder');
+    showToast('Media folder reset');
+  }, [showToast, updateStorageRoot]);
 
   const openItem = useCallback(async (item: MediaLibraryItem) => {
     if (item.localPath) {
@@ -469,6 +492,23 @@ export function MediaLibraryView() {
             <button onClick={() => void refresh()} className="rounded-xl bg-theme-hover/50 p-2 text-theme-muted hover:text-theme-fg transition"><RefreshCw className="h-4 w-4" /></button>
             <button onClick={() => void importMedia()} disabled={importing} className="flex items-center gap-1.5 rounded-xl bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 transition disabled:opacity-50">
               {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Import
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-xl border border-theme/10 bg-theme-hover/25 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <button type="button" onClick={() => void openMediaFolder()} className="flex min-w-0 items-center gap-2 text-left text-xs text-theme-muted hover:text-theme-fg">
+            <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+            <span className="truncate">{prefs.resolvedStorageRootPath || 'Media folder not set'}</span>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {prefs.storageRootPath && (
+              <button type="button" onClick={() => void resetMediaFolder()} className="rounded-lg px-2.5 py-1.5 text-xs text-theme-muted hover:bg-theme-hover hover:text-theme-fg">
+                Reset
+              </button>
+            )}
+            <button type="button" onClick={() => void changeMediaFolder()} className="rounded-lg bg-theme-hover/60 px-2.5 py-1.5 text-xs font-medium text-theme-fg hover:bg-theme-hover">
+              Change Folder
             </button>
           </div>
         </div>

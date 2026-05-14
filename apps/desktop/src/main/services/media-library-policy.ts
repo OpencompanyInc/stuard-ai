@@ -1,10 +1,4 @@
-const MEDIA_GALLERY_EXCLUDED_TOOL_NAMES = new Set([
-  'take_screenshot',
-  'capture_media',
-  'stop_capture',
-  'capture_screen',
-  'capture_system_audio',
-]);
+const MEDIA_GALLERY_EXCLUDED_TOOL_NAMES = new Set<string>();
 
 export interface MediaGalleryPolicyItemLike {
   metadata?: Record<string, any> | null;

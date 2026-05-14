@@ -1063,6 +1063,40 @@ export function useAgent(options?: string | UseAgentOptions) {
     return true;
   }, [getRequestIdForTab, syncQueuedMessages]);
 
+  // Nudge a specific running delegated subagent. Unlike steerMessage (which
+  // targets the orchestrator/main turn), this routes through the cloud WS to
+  // the in-process steer queue for that subagentId and is drained at the
+  // subagent's next step boundary (never mid-tool-call).
+  const steerSubagent = useCallback((subagentId: string, text: string): boolean => {
+    const trimmed = String(text || '').trim();
+    if (!subagentId || !trimmed) return false;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify({
+        type: 'subagent_steer',
+        subagentId,
+        text: trimmed,
+        timestamp: Date.now(),
+      }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Expose globally so nested components (e.g. DelegationCard inside
+  // MessageBubble) can call it without deep prop drilling. Matches the
+  // existing window-based pattern (__AGENT_HTTP__).
+  useEffect(() => {
+    (window as any).__stuardSteerSubagent__ = steerSubagent;
+    return () => {
+      if ((window as any).__stuardSteerSubagent__ === steerSubagent) {
+        delete (window as any).__stuardSteerSubagent__;
+      }
+    };
+  }, [steerSubagent]);
+
   const flushQueuedSteeringMessages = useCallback((targetTabId: string, requestId?: string) => {
     // The interjection is sent to the server eagerly in queueSteeringMessage so it
     // races ahead of the next step's prepareStep. This routine handles only the
@@ -3466,6 +3500,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     currentStreamChunks,
     sendMessage,
     steerMessage: queueSteeringMessage,
+    steerSubagent,
     stopGeneration,
     connect,
     disconnect,

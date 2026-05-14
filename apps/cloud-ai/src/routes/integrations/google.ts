@@ -287,6 +287,17 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       } catch {}
 
       if (storageTarget === 'vm') {
+        const account = {
+          userId,
+          provider: 'google',
+          access_token,
+          scopes: mergedScopes,
+          refresh_token: finalRefreshToken,
+          expires_at,
+          meta: { token_type: tokenBody.token_type || 'Bearer', storage_target: 'vm' },
+          profileLabel,
+          accountEmail,
+        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'google',
           profileLabel,
@@ -302,6 +313,14 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
             ? 'Start the cloud engine, then connect Google again so the VM can store the token.'
             : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
           res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        try {
+          await upsertExternalAccount(account);
+        } catch (saveErr: any) {
+          console.error('[google] Failed to save VM token backup:', saveErr?.message || saveErr);
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
           res.end();
           return true;
         }

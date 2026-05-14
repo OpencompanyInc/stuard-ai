@@ -117,7 +117,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   mediaList: () => ipcRenderer.invoke('media:list'),
   mediaSummary: () => ipcRenderer.invoke('media:summary'),
   mediaGetPrefs: () => ipcRenderer.invoke('media:getPrefs'),
-  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud' }) => ipcRenderer.invoke('media:updatePrefs', updates),
+  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud'; storageRootPath?: string | null }) => ipcRenderer.invoke('media:updatePrefs', updates),
   mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
   mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
   mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),

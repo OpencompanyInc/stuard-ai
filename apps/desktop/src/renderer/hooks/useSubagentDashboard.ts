@@ -12,6 +12,7 @@ export interface SubAgentTask {
   updated_at: string;
   logs: any[];
   result?: any;
+  pending_steers?: Array<{ id: string; message: string; created_at: string }>;
 }
 
 export interface UseSubagentDashboardReturn {

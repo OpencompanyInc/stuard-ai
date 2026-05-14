@@ -378,7 +378,16 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
             placeholder={isAiModel ? 'Search OpenRouter models...' : placeholder}
             allowFreeform={isAiModel ? true : allowFreeform}
           />
-        ) : null;
+        ) : (
+          <TextInputWithVariables
+            value={String(value ?? '')}
+            onChange={onChange}
+            placeholder={placeholder || label || argKey}
+            upstreamNodes={upstreamNodes}
+            workflowVariables={workflowVariables}
+            suggestFrom={suggestFrom}
+          />
+        );
       }
 
       case 'multiselect':

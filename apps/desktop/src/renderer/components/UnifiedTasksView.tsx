@@ -290,21 +290,66 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
             )}
           </div>
         ) : (
-          <div className="flex justify-center">
+          <div className="flex flex-col items-center gap-3">
             <div className="inline-flex items-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] p-1 shadow-sm">
-              {(['pending', 'completed'] as const).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={clsx(
-                    "px-5 py-2 text-[13px] font-semibold rounded-full transition-all capitalize min-w-[70px]",
-                    filter === f ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
-                  )}
-                >
-                  {f}
-                </button>
-              ))}
+              <button
+                onClick={() => handleSubTabChange('todo')}
+                className={clsx(
+                  "flex items-center gap-2 px-5 py-2 text-[13px] font-semibold rounded-full transition-all min-w-[110px] justify-center",
+                  subTab === 'todo'
+                    ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm"
+                    : "text-theme-muted hover:text-theme-fg"
+                )}
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                To-do
+                {filteredTasks.length > 0 && (
+                  <span className={clsx(
+                    "min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] font-bold px-1",
+                    subTab === 'todo' ? "bg-primary/10 text-primary" : "bg-theme-hover text-theme-muted"
+                  )}>
+                    {filteredTasks.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => handleSubTabChange('reminders')}
+                className={clsx(
+                  "flex items-center gap-2 px-5 py-2 text-[13px] font-semibold rounded-full transition-all min-w-[110px] justify-center",
+                  subTab === 'reminders'
+                    ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm"
+                    : "text-theme-muted hover:text-theme-fg"
+                )}
+              >
+                <Bell className="w-3.5 h-3.5" />
+                Reminders
+                {allReminders.length > 0 && (
+                  <span className={clsx(
+                    "min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] font-bold px-1",
+                    subTab === 'reminders' ? "bg-amber-500/10 text-amber-500" : "bg-theme-hover text-theme-muted"
+                  )}>
+                    {allReminders.length}
+                  </span>
+                )}
+              </button>
             </div>
+
+            {subTab === 'todo' && (
+              <div className="inline-flex items-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] p-1 shadow-sm">
+                {(['pending', 'completed'] as const).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={clsx(
+                      "px-5 py-2 text-[13px] font-semibold rounded-full transition-all capitalize min-w-[70px]",
+                      filter === f ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

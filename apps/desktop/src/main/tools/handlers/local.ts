@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { RouterContext } from '../types';
+import { requestToolApproval } from '../../services/tool-approval';
 
 // WebSocket connection pool for Python agent
 let agentWs: WebSocket | null = null;
@@ -101,7 +102,7 @@ const resetTimeout = (ms: number) => {
     // Start with the full timeout
     resetTimeout(effectiveTimeout);
     
-    const onMessage = (raw: WebSocket.RawData) => {
+    const onMessage = async (raw: WebSocket.RawData) => {
       try {
         const msg = JSON.parse(raw.toString('utf8'));
         const t = String(msg?.type || '').toLowerCase();
@@ -187,9 +188,26 @@ const resetTimeout = (ms: number) => {
             ctx.logFn(`❌ Media tools error: ${(data as any)?.error || 'unknown'}`);
           } else if (status === 'approval_required') {
             if (timeoutId) clearTimeout(timeoutId);
-            ws.off('message', onMessage);
-            ws.off('close', onClose);
-            if (!done) { done = true; resolve({ ok: false, error: 'approval_required' }); }
+            ctx.logFn(`${tool}: waiting for permission...`);
+            const allow = await requestToolApproval({
+              id,
+              tool,
+              toolOriginal: String(data.toolOriginal || tool),
+              approvalArgs: (data.args && typeof data.args === 'object') ? data.args : undefined,
+              description: typeof data.description === 'string' ? data.description : undefined,
+              timeoutMs: 55_000,
+            });
+            if (done) return;
+            try {
+              ws.send(JSON.stringify({ type: 'approval_response', id, allow }));
+            } catch {
+              if (timeoutId) clearTimeout(timeoutId);
+              ws.off('message', onMessage);
+              ws.off('close', onClose);
+              if (!done) { done = true; resolve({ ok: false, error: 'approval_response_failed' }); }
+              return;
+            }
+            resetTimeout(effectiveTimeout);
             return;
           } else if (status) {
             // Log other events for debugging

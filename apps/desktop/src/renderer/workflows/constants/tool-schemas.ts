@@ -286,7 +286,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'x_post_tweet', category: 'integrations', kind: 'cloud', description: 'Post a new tweet/post on X/Twitter. Optionally reply to an existing tweet by passing reply_to_tweet_id', argsTemplate: { text: '', reply_to_tweet_id: '', profile: '' }, outputSchema: { id: 'string', text: 'string', url: 'string' } },
   { id: 'x_delete_tweet', category: 'integrations', kind: 'cloud', description: 'Delete one of your X/Twitter tweets/posts by id', argsTemplate: { id: '', profile: '' }, outputSchema: { deleted: 'boolean' } },
   { id: 'x_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message (DM) on X/Twitter to another user', argsTemplate: { recipient_id: '', recipient_username: '', text: '', profile: '' }, outputSchema: { dm_event_id: 'string', conversation_id: 'string' } },
-  { id: 'x_list_dms', category: 'integrations', kind: 'cloud', description: 'List recent X/Twitter direct message (DM) events from a conversation with another user', argsTemplate: { conversation_id: '', participant_id: '', max_results: 20, profile: '' }, outputSchema: { events: 'any[]', count: 'number', next_token: 'string' } },
+  { id: 'x_list_dms', category: 'integrations', kind: 'cloud', description: 'List recent X/Twitter direct message (DM) events from the inbox, a conversation, or a 1:1 participant', argsTemplate: { conversation_id: '', participant_id: '', participant_username: '', max_results: 20, pagination_token: '', profile: '' }, outputSchema: { events: 'any[]', count: 'number', result_count: 'number', next_token: 'string', pagination_token: 'string' } },
   { id: 'x_get_user', category: 'integrations', kind: 'cloud', description: 'Look up an X/Twitter user profile by username or user_id', argsTemplate: { username: '', user_id: '', profile: '' }, outputSchema: { id: 'string', username: 'string', name: 'string', description: 'string', verified: 'boolean', location: 'string', profile_image_url: 'string', created_at: 'string', metrics: 'object', url: 'string' } },
   { id: 'x_list_followers', category: 'integrations', kind: 'cloud', description: 'List followers of an X/Twitter user', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
   { id: 'x_list_following', category: 'integrations', kind: 'cloud', description: 'List the accounts an X/Twitter user is following', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
@@ -479,6 +479,28 @@ const AUDIO_FORMAT_OPTIONS: ArgOption[] = [
   { value: 'opus', label: 'Opus', description: 'High quality compressed' },
 ];
 
+const RECORDING_AUDIO_FORMAT_OPTIONS: ArgOption[] = [
+  { value: 'wav', label: 'WAV', description: 'Best for editing or transcription' },
+  { value: 'mp3', label: 'MP3', description: 'Smaller file size' },
+];
+
+const TTS_AUDIO_FORMAT_OPTIONS: ArgOption[] = [
+  { value: 'mp3', label: 'MP3', description: 'Small, widely compatible audio' },
+  { value: 'wav', label: 'WAV', description: 'Uncompressed audio' },
+  { value: 'opus', label: 'Opus', description: 'High quality compressed audio' },
+  { value: 'aac', label: 'AAC', description: 'Good for Apple/mobile playback' },
+  { value: 'flac', label: 'FLAC', description: 'Lossless compressed audio' },
+];
+
+const DATE_TIME_FORMAT_OPTIONS: ArgOption[] = [
+  { value: 'dddd, MMMM D [at] h:mm A', label: 'Friendly Date + Time', description: 'Wednesday, May 13 at 9:30 PM' },
+  { value: 'dddd, MMMM D, YYYY', label: 'Date in Words', description: 'Wednesday, May 13, 2026' },
+  { value: 'YYYY-MM-DD HH:mm:ss', label: 'Sortable Date + Time', description: '2026-05-13 21:30:00' },
+  { value: 'YYYY-MM-DD', label: 'Date Only', description: '2026-05-13' },
+  { value: 'h:mm A', label: 'Time Only', description: '9:30 PM' },
+  { value: 'iso', label: 'Automation Timestamp', description: 'Best for saving, sorting, and comparing' },
+];
+
 const ANALYZE_MODE_OPTIONS: ArgOption[] = [
   { value: 'text', label: 'Text', description: 'Return plain text response' },
   { value: 'json', label: 'JSON', description: 'Return structured JSON' },
@@ -638,6 +660,33 @@ const VARIANT_OPTIONS: ArgOption[] = [
   { value: 'default', label: 'Default' },
 ];
 
+const LINK_PREVIEW_VARIANT_OPTIONS: ArgOption[] = [
+  { value: 'large', label: 'Large Preview', description: 'Room for image, title, and summary' },
+  { value: 'compact', label: 'Compact Preview', description: 'Smaller link card' },
+];
+
+const PROGRESS_VARIANT_OPTIONS: ArgOption[] = [
+  { value: 'download', label: 'Download', description: 'For download or transfer progress' },
+  { value: 'upload', label: 'Upload', description: 'For upload progress' },
+  { value: 'sync', label: 'Sync', description: 'For syncing data' },
+  { value: 'processing', label: 'Processing', description: 'For background work' },
+];
+
+const PROGRESS_STATUS_OPTIONS: ArgOption[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'success', label: 'Complete' },
+  { value: 'warning', label: 'Needs Attention' },
+  { value: 'error', label: 'Failed' },
+];
+
+const PROGRESS_COLOR_OPTIONS: ArgOption[] = [
+  { value: 'blue', label: 'Blue' },
+  { value: 'green', label: 'Green' },
+  { value: 'purple', label: 'Purple' },
+  { value: 'orange', label: 'Orange' },
+  { value: 'red', label: 'Red' },
+];
+
 const INSTAGRAM_MEDIA_TYPE_OPTIONS: ArgOption[] = [
   { value: 'IMAGE', label: 'Image Post', description: 'Publish a single image using a public image URL' },
   { value: 'VIDEO', label: 'Video Post', description: 'Publish a standard video post using a public video URL' },
@@ -666,20 +715,60 @@ const WHATSAPP_MIME_TYPE_OPTIONS: ArgOption[] = [
   { value: 'application/pdf', label: 'PDF Document', description: 'PDF file upload' },
 ];
 
+const TOOL_ARG_SELECT_OPTIONS: Record<string, Record<string, ArgOption[]>> = {
+  get_datetime: {
+    format: DATE_TIME_FORMAT_OPTIONS,
+  },
+  capture_media: {
+    kind: MEDIA_KIND_OPTIONS,
+  },
+  capture_screen: {
+    target: SCREEN_TARGET_OPTIONS,
+    quality: SCREEN_QUALITY_OPTIONS,
+  },
+  capture_system_audio: {
+    format: RECORDING_AUDIO_FORMAT_OPTIONS,
+  },
+  text_to_speech: {
+    format: TTS_AUDIO_FORMAT_OPTIONS,
+  },
+  stream_create: {
+    kind: STREAM_KIND_OPTIONS,
+  },
+  deploy_headless_agent: {
+    model: MODEL_OPTIONS,
+  },
+  ask_confirmation: {
+    variant: VARIANT_OPTIONS,
+  },
+  show_details: {
+    variant: VARIANT_OPTIONS,
+  },
+  show_link: {
+    variant: LINK_PREVIEW_VARIANT_OPTIONS,
+  },
+  show_info_card: {
+    variant: VARIANT_OPTIONS,
+  },
+  show_progress: {
+    variant: PROGRESS_VARIANT_OPTIONS,
+    status: PROGRESS_STATUS_OPTIONS,
+    color: PROGRESS_COLOR_OPTIONS,
+  },
+};
+
 const KNOWN_SELECT_OPTIONS: Record<string, ArgOption[]> = {
   'button': MOUSE_BUTTON_OPTIONS,
   'shell': SHELL_OPTIONS,
   'voice': TTS_VOICE_OPTIONS,
-  'model': MODEL_OPTIONS,
-  'kind': MEDIA_KIND_OPTIONS,
-  'format': AUDIO_FORMAT_OPTIONS,
-  'target': SCREEN_TARGET_OPTIONS,
-  'quality': SCREEN_QUALITY_OPTIONS,
   'severity': SEVERITY_OPTIONS,
   'op': COMPARE_OP_OPTIONS,
   'scope': VARIABLE_SCOPE_OPTIONS,
-  'variant': VARIANT_OPTIONS,
 };
+
+function getKnownSelectOptions(toolId: string | undefined, key: string): ArgOption[] | undefined {
+  return (toolId ? TOOL_ARG_SELECT_OPTIONS[toolId]?.[key] : undefined) || KNOWN_SELECT_OPTIONS[key];
+}
 
 const ADVANCED_ARG_KEYS = new Set([
   'timeoutMs',
@@ -704,7 +793,7 @@ const HIDDEN_ARG_KEYS = new Set([
   '_uiDesign',
 ]);
 
-function inferArgType(key: string, value: any): ArgType {
+function inferArgType(key: string, value: any, toolId?: string): ArgType {
   if (key === 'code' || key === 'script') return 'code';
   if (key === 'path' || key === 'filePath' || key === 'imagePath' || key === 'src' || key === 'dest' || key === 'cwd' || key === 'outputPath' || key === 'inputPath' || key === 'outputPattern') return 'path';
   if (key === 'attachments') return 'files';
@@ -715,11 +804,7 @@ function inferArgType(key: string, value: any): ArgType {
   if (typeof value === 'number') return 'number';
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'object' && value !== null) return 'object';
-  if (KNOWN_SELECT_OPTIONS[key]) return 'select';
-  if (typeof value === 'string') {
-    const enumPatterns = ['fixed', 'until_stop', 'photo', 'video', 'audio', 'left', 'right', 'middle', 'auto', 'cmd', 'powershell', 'bash', 'text', 'json', 'boolean'];
-    if (enumPatterns.includes(value)) return 'select';
-  }
+  if (getKnownSelectOptions(toolId, key)) return 'select';
   return 'string';
 }
 
@@ -808,7 +893,8 @@ function convertDefinition(def: ToolDefinition): ToolSchema {
   const args: Record<string, ArgSchema> = {};
 
   for (const [key, value] of Object.entries(def.argsTemplate)) {
-    const type = inferArgType(key, value);
+    const type = inferArgType(key, value, def.id);
+    const selectOptions = getKnownSelectOptions(def.id, key);
     const argSchema: ArgSchema = {
       type,
       label: KNOWN_LABELS[key] || keyToLabel(key),
@@ -819,8 +905,8 @@ function convertDefinition(def: ToolDefinition): ToolSchema {
       hidden: HIDDEN_ARG_KEYS.has(key),
     };
 
-    if (type === 'select' && KNOWN_SELECT_OPTIONS[key]) {
-      argSchema.options = KNOWN_SELECT_OPTIONS[key];
+    if (type === 'select' && selectOptions) {
+      argSchema.options = selectOptions;
     }
 
     if (type === 'code') {
@@ -866,7 +952,7 @@ for (const trigger of TRIGGER_DEFINITIONS) {
     args: Object.fromEntries(
       Object.entries(trigger.argsTemplate).map(([key, value]) => [
         key,
-        { type: inferArgType(key, value), label: keyToLabel(key), default: value } as ArgSchema,
+        { type: inferArgType(key, value, trigger.type), label: keyToLabel(key), default: value } as ArgSchema,
       ])
     ),
     outputs: ['trigger'],
@@ -876,6 +962,48 @@ for (const trigger of TRIGGER_DEFINITIONS) {
 // ============================================================================
 // SCHEMA OVERRIDES - Explicit field configurations for better UX
 // ============================================================================
+
+if (TOOL_SCHEMAS['get_datetime']) {
+  TOOL_SCHEMAS['get_datetime'].label = 'Get Current Time';
+  TOOL_SCHEMAS['get_datetime'].description = 'Get the current date and time with ready-to-use outputs like date, time, weekday, and a friendly formatted value.';
+  TOOL_SCHEMAS['get_datetime'].args = {
+    format: {
+      type: 'select',
+      label: 'Show As',
+      description: 'Choose how the formatted time should look. Leave blank if you only need the built-in date and time outputs.',
+      options: DATE_TIME_FORMAT_OPTIONS,
+      placeholder: 'Choose a display style',
+      allowFreeform: true,
+    },
+    tzOffset: {
+      type: 'number',
+      label: 'Time Zone',
+      description: 'Advanced. Leave blank for this computer\'s local time. Use minutes from UTC only when you need a fixed offset, such as -300 for US Central Standard Time.',
+      placeholder: 'Local time',
+      advanced: true,
+    },
+  };
+}
+
+if (TOOL_SCHEMAS['launch_application_or_uri']) {
+  TOOL_SCHEMAS['launch_application_or_uri'].label = 'Open App, File, or Link';
+  TOOL_SCHEMAS['launch_application_or_uri'].args = {
+    target: {
+      type: 'string',
+      label: 'App, File, or URL',
+      description: 'What to open. Use a website URL, a file/folder path, or an app command.',
+      required: true,
+      placeholder: 'https://example.com or C:/Users/name/Documents/report.pdf',
+    },
+    args: {
+      type: 'array',
+      label: 'App Arguments',
+      description: 'Optional extra arguments for app commands.',
+      itemType: 'string',
+      advanced: true,
+    },
+  };
+}
 
 // Command tools - explicit approval toggle plus an optional approval description
 for (const toolId of ['run_command']) {
@@ -1774,6 +1902,82 @@ const ELEVENLABS_MODEL_OPTIONS = [
   { value: 'eleven_monolingual_v1', label: 'Monolingual v1 (English only)' },
 ];
 
+if (TOOL_SCHEMAS['text_to_speech']) {
+  TOOL_SCHEMAS['text_to_speech'].label = 'Text to Speech';
+  TOOL_SCHEMAS['text_to_speech'].args = {
+    ...TOOL_SCHEMAS['text_to_speech'].args,
+    text: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.text,
+      type: 'string',
+      label: 'Text to Read',
+      description: 'The words to turn into audio.',
+      required: true,
+      placeholder: 'Hello! This is your workflow speaking.',
+    },
+    voice_id: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.voice_id,
+      type: 'string',
+      label: 'Voice',
+      description: 'ElevenLabs voice ID. Leave the default if you do not need a specific voice.',
+      placeholder: 'JBFqnCBsd6RMkjVDRZzb',
+    },
+    model_id: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.model_id,
+      type: 'select',
+      label: 'Voice Model',
+      description: 'Speech model to use.',
+      options: ELEVENLABS_MODEL_OPTIONS,
+      default: 'eleven_multilingual_v2',
+      advanced: true,
+    },
+    format: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.format,
+      type: 'select',
+      label: 'Audio File Type',
+      description: 'Choose the saved audio format.',
+      options: TTS_AUDIO_FORMAT_OPTIONS,
+      default: 'mp3',
+    },
+    language_code: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.language_code,
+      label: 'Language Hint',
+      description: 'Optional language code if you want to guide pronunciation.',
+      placeholder: 'en',
+      advanced: true,
+    },
+    speed: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.speed,
+      type: 'number',
+      label: 'Speed',
+      description: 'Speech speed. 1 is normal.',
+      default: 1,
+      advanced: true,
+    },
+    save: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.save,
+      type: 'boolean',
+      label: 'Save Audio File',
+      description: 'Save the generated audio to disk.',
+      default: true,
+    },
+    play: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.play,
+      type: 'boolean',
+      label: 'Play When Done',
+      description: 'Open the audio after it is generated.',
+      default: false,
+    },
+    outputPath: {
+      ...TOOL_SCHEMAS['text_to_speech'].args.outputPath,
+      type: 'path',
+      label: 'Save As',
+      description: 'Optional path for the generated audio file.',
+      placeholder: 'C:/Users/name/Music/voice.mp3',
+      advanced: true,
+    },
+  };
+}
+
 if (TOOL_SCHEMAS['telnyx_send_mms']) {
   TOOL_SCHEMAS['telnyx_send_mms'].args = {
     media_url: {
@@ -2099,6 +2303,14 @@ for (const toolId of ['capture_media', 'capture_screen', 'capture_system_audio']
 
 // capture_media: mirror toggle for selfie-cam
 if (TOOL_SCHEMAS['capture_media']) {
+  TOOL_SCHEMAS['capture_media'].args.kind = {
+    ...TOOL_SCHEMAS['capture_media'].args.kind,
+    type: 'select',
+    label: 'Capture Type',
+    description: 'Choose what to record.',
+    options: MEDIA_KIND_OPTIONS,
+    default: 'audio',
+  };
   TOOL_SCHEMAS['capture_media'].args.mirror = {
     type: 'boolean' as any,
     label: 'Mirror (Flip Horizontal)',
@@ -2122,8 +2334,35 @@ if (TOOL_SCHEMAS['capture_media']) {
   };
 }
 
+if (TOOL_SCHEMAS['capture_screen']) {
+  TOOL_SCHEMAS['capture_screen'].args.target = {
+    ...TOOL_SCHEMAS['capture_screen'].args.target,
+    type: 'select',
+    label: 'What to Record',
+    description: 'Choose the part of the screen to record.',
+    options: SCREEN_TARGET_OPTIONS,
+    default: 'fullscreen',
+  };
+  TOOL_SCHEMAS['capture_screen'].args.quality = {
+    ...TOOL_SCHEMAS['capture_screen'].args.quality,
+    type: 'select',
+    label: 'Video Quality',
+    description: 'Higher quality creates larger files.',
+    options: SCREEN_QUALITY_OPTIONS,
+    default: 'medium',
+  };
+}
+
 // capture_system_audio: silence mode support
 if (TOOL_SCHEMAS['capture_system_audio']) {
+  TOOL_SCHEMAS['capture_system_audio'].args.format = {
+    ...TOOL_SCHEMAS['capture_system_audio'].args.format,
+    type: 'select',
+    label: 'Audio File Type',
+    description: 'Choose the saved recording format.',
+    options: RECORDING_AUDIO_FORMAT_OPTIONS,
+    default: 'wav',
+  };
   TOOL_SCHEMAS['capture_system_audio'].args.silenceThreshold = {
     type: 'number' as any,
     label: 'Silence Threshold (%)',
@@ -2819,6 +3058,65 @@ if (TOOL_SCHEMAS['show_details']) {
     type: 'json',
     label: 'Sections',
     description: 'Expandable sections: [{"title": "...", "content": "..."}, ...]',
+  };
+  TOOL_SCHEMAS['show_details'].args.variant = {
+    ...TOOL_SCHEMAS['show_details'].args.variant,
+    type: 'select',
+    label: 'Style',
+    description: 'Visual tone for the details panel.',
+    options: VARIANT_OPTIONS,
+    default: 'default',
+    advanced: true,
+  };
+}
+
+if (TOOL_SCHEMAS['show_link']) {
+  TOOL_SCHEMAS['show_link'].args.variant = {
+    ...TOOL_SCHEMAS['show_link'].args.variant,
+    type: 'select',
+    label: 'Preview Size',
+    description: 'Choose how much space the link preview should use.',
+    options: LINK_PREVIEW_VARIANT_OPTIONS,
+    default: 'large',
+  };
+}
+
+if (TOOL_SCHEMAS['show_info_card']) {
+  TOOL_SCHEMAS['show_info_card'].args.variant = {
+    ...TOOL_SCHEMAS['show_info_card'].args.variant,
+    type: 'select',
+    label: 'Tone',
+    description: 'Visual tone for the card.',
+    options: VARIANT_OPTIONS,
+    default: 'info',
+  };
+}
+
+if (TOOL_SCHEMAS['show_progress']) {
+  TOOL_SCHEMAS['show_progress'].args.variant = {
+    ...TOOL_SCHEMAS['show_progress'].args.variant,
+    type: 'select',
+    label: 'Progress Type',
+    description: 'Pick the kind of work this progress represents.',
+    options: PROGRESS_VARIANT_OPTIONS,
+    default: 'download',
+  };
+  TOOL_SCHEMAS['show_progress'].args.status = {
+    ...TOOL_SCHEMAS['show_progress'].args.status,
+    type: 'select',
+    label: 'Status',
+    description: 'Current state of the work.',
+    options: PROGRESS_STATUS_OPTIONS,
+    default: 'active',
+  };
+  TOOL_SCHEMAS['show_progress'].args.color = {
+    ...TOOL_SCHEMAS['show_progress'].args.color,
+    type: 'select',
+    label: 'Color',
+    description: 'Accent color for the progress bar.',
+    options: PROGRESS_COLOR_OPTIONS,
+    default: 'blue',
+    advanced: true,
   };
 }
 

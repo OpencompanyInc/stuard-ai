@@ -688,6 +688,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   }, [session?.access_token, CLOUD_AI_HTTP]);
 
+  useEffect(() => {
+    if (!session?.access_token) {
+      setProfiles([]);
+      return;
+    }
+    void refreshProfiles();
+  }, [session?.access_token, refreshProfiles]);
+
   /** Set a given profile as the default for its provider */
   const setDefaultProfile = useCallback(async (provider: string, profileLabel: string) => {
     const token = session?.access_token;

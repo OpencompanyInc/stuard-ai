@@ -6,6 +6,7 @@ import {
   Calendar,
   CheckCircle2,
   ChevronsUpDown,
+  Compass,
   Download,
   ExternalLink,
   LayoutGrid,
@@ -78,6 +79,7 @@ interface WorkflowLauncherV2Props {
   onStop?: (id: string) => Promise<void>;
   onShowPublished?: () => void;
   onDashboard?: () => void;
+  onReplayTour?: () => void;
 }
 
 export function WorkflowLauncherV2({
@@ -94,6 +96,7 @@ export function WorkflowLauncherV2({
   onStop,
   onShowPublished,
   onDashboard,
+  onReplayTour,
 }: WorkflowLauncherV2Props) {
   const { isDark } = useWorkflowTheme();
   const d = isDark;
@@ -638,6 +641,9 @@ export function WorkflowLauncherV2({
           <SideNavItem d={d} active={activeView === "marketplace"} icon={Store} label="Marketplace" onClick={() => setActiveView("marketplace")} accent />
           <div className="h-px my-2" style={{ background: "var(--wf-border)" }} />
           <SideNavItem d={d} icon={ExternalLink} label="Stuard Dashboard" onClick={onDashboard} />
+          {onReplayTour && (
+            <SideNavItem d={d} icon={Compass} label="Take the tour" onClick={onReplayTour} />
+          )}
         </div>
 
         <div className="rounded-[24px] p-3 no-drag shrink-0 shadow-sm border space-y-1 wf-bg-elevated wf-border">

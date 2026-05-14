@@ -3,6 +3,7 @@ import { verifyToken, getSupabaseService } from '../supabase';
 import { resolveEmbedder } from '../utils/embeddings';
 import { embed } from 'ai';
 import { analyzeWorkflowSecurity, quickSecurityCheck, type SecurityAnalysisResult } from '../marketplace/security-analyzer';
+import { pingIndexNow, workflowUrl } from '../utils/indexnow';
 
 // Helper to read JSON body
 async function readBody(req: IncomingMessage): Promise<any> {
@@ -473,6 +474,7 @@ export async function handleMarketplaceRoutes(
       const [workflow] = await hydrateWorkflowRows(supabase, [data.id], user.userId);
 
       console.log('[marketplace] published workflow:', data?.slug);
+      if (data?.slug) pingIndexNow([workflowUrl(data.slug)]);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true, workflow: workflow || data }));
     } catch (e: any) {
@@ -1047,6 +1049,7 @@ export async function handleMarketplaceRoutes(
       const [workflow] = await hydrateWorkflowRows(supabase, [existing.id], user.userId);
 
       console.log('[marketplace] updated workflow:', data?.slug, 'to version', newVersion);
+      if (data?.slug) pingIndexNow([workflowUrl(data.slug)]);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true, workflow: workflow || data, previousVersion: oldVersion }));
     } catch (e: any) {

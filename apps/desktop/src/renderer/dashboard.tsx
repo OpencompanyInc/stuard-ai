@@ -255,6 +255,7 @@ function DashboardApp() {
   const [convMessages, setConvMessages] = useState<any[]>([]);
   const [convLoading, setConvLoading] = useState<boolean>(false);
   const [creditsInfo, setCreditsInfo] = useState<null | { ok?: boolean; plan?: string; limit?: number; used?: number; remaining?: number; unlimited?: boolean; creditsPerUsd?: number }>(null);
+  const [creditsLoading, setCreditsLoading] = useState(false);
   const [appVersion, setAppVersion] = useState<string>('0.1.10');
   const billingRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -467,8 +468,10 @@ function DashboardApp() {
     if (!session) {
       setProfile(null);
       setCreditsInfo(null);
+      setCreditsLoading(false);
       return;
     }
+    setCreditsLoading(true);
     try {
       const userId = session.user.id;
       const { data, error } = await supabase
@@ -575,6 +578,9 @@ function DashboardApp() {
         });
       } catch { }
     } catch { }
+    finally {
+      setCreditsLoading(false);
+    }
   }, [session]);
 
   const loadConversations = useCallback(async (requestedLimit = 20, force = false) => {
@@ -1541,6 +1547,7 @@ function DashboardApp() {
                             <OverviewView
                               creditsInfo={creditsInfo}
                               creditsFallback={creditsFallback}
+                              creditsLoading={creditsLoading}
                               profile={profile}
                               usageCount={usageCount}
                               usageCountLoading={usageCountLoading}

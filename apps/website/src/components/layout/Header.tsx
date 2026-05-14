@@ -5,49 +5,101 @@ import Image from 'next/image';
 
 import { useAuthContext } from '@/components/providers/AuthProvider';
 
+const navLinks = [
+  { href: '#about', label: 'About' },
+  { href: '#features', label: 'Features' },
+  { href: '#how-it-works', label: 'How It Works' },
+  { href: '/pricing', label: 'Pricing' },
+  { href: '#faq', label: 'FAQ' },
+];
+
 const Header = () => {
   const { user } = useAuthContext();
+
   return (
     <header className="flex justify-center px-4 pt-3 pointer-events-none">
-      <div className="bg-[#F3F1EB]/92 backdrop-blur-md border border-black/5 shadow-sm rounded-full px-4 py-2 flex items-center gap-6 pointer-events-auto max-w-5xl w-full justify-between">
-
+      <div
+        className="
+          pointer-events-auto
+          relative
+          flex items-center justify-between
+          w-full max-w-6xl
+          h-[68px]
+          pl-6 pr-2
+          rounded-full
+          bg-white/[0.02]
+          border border-white/10
+        "
+      >
         {/* Logo */}
-        <Link href="/" className="flex-shrink-0">
+        <Link href="/" className="flex items-center gap-2 flex-shrink-0">
           <Image
-            src="/stuard-logo.png"
+            src="/stuard-mark.png"
             alt="Stuard"
-            width={40}
-            height={40}
-            className="w-10 h-10"
+            width={32}
+            height={32}
+            className="w-8 h-8 object-contain"
+            priority
           />
+          <span className="text-white text-[22px] font-medium tracking-tight leading-none">
+            Stuard
+          </span>
         </Link>
 
         {/* Desktop Nav */}
-        <nav className="hidden lg:flex items-center gap-6 text-[15px] font-medium text-gray-500 select-none">
-          <Link href="/download" className="hover:text-black transition-colors">Download</Link>
-          <Link href="/marketplace" className="hover:text-black transition-colors">Marketplace</Link>
-          <Link href="/pricing" className="hover:text-black transition-colors">Pricing</Link>
+        <nav className="hidden lg:flex items-center gap-9 text-[15px] font-medium text-white/80 select-none">
+          {navLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="hover:text-white transition-colors"
+            >
+              {link.label}
+            </Link>
+          ))}
         </nav>
 
-        {/* Action Button */}
-        <div className="flex items-center gap-4">
+        {/* Action Buttons */}
+        <div className="flex items-center gap-3">
           {user ? (
             <Link href="/dashboard">
-              <button className="bg-black text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:opacity-80 transition-all">
+              <button
+                className="
+                  inline-flex items-center gap-2
+                  h-[52px] px-7
+                  rounded-xl
+                  bg-[#FF1727] hover:bg-[#FF383C]
+                  text-white text-[15px] font-medium
+                  transition-colors
+                "
+              >
                 Dashboard
               </button>
             </Link>
           ) : (
-            <>
-              <Link href="/login" className="text-sm font-medium text-gray-600 hover:text-black hidden lg:block">
-                Sign In
-              </Link>
-              <Link href="/signup">
-                <button className="bg-black text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:opacity-80 transition-all">
-                  Get Started
-                </button>
-              </Link>
-            </>
+            <Link href="/download">
+              <button
+                className="
+                  inline-flex items-center gap-2
+                  h-[52px] px-7
+                  rounded-xl
+                  bg-[#FF1727] hover:bg-[#FF383C]
+                  text-white text-[15px] font-medium
+                  transition-colors
+                "
+              >
+                Download Now
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d="M3 5.5 11 4v8H3V5.5ZM13 3.75 21 2v10h-8V3.75ZM3 13h8v7L3 18.5V13ZM13 13h8v8l-8-1.5V13Z" />
+                </svg>
+              </button>
+            </Link>
           )}
         </div>
       </div>

@@ -13,6 +13,7 @@ import {
 interface OverviewViewProps {
   creditsInfo: any | null;
   creditsFallback: any | null;
+  creditsLoading?: boolean;
   profile: any | null;
   usageCount: number;
   usageCountLoading: boolean;
@@ -24,6 +25,7 @@ interface OverviewViewProps {
 export const OverviewView: React.FC<OverviewViewProps> = ({
   creditsInfo,
   creditsFallback,
+  creditsLoading,
   profile,
   usageCount,
   usageCountLoading,
@@ -31,11 +33,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   conversationsLoading,
   onNavigate,
 }) => {
+  const isCreditsLoading = !!creditsLoading && !creditsInfo;
   const planLabel = String(creditsInfo?.plan || profile?.plan || profile?.plan_name || 'Starter');
   const remaining = Math.max(0, creditsInfo?.remaining ?? creditsFallback?.remaining ?? 0);
   const limit = Math.max(1, creditsInfo?.limit ?? creditsFallback?.limit ?? 0);
   const used = Math.max(0, creditsInfo?.used ?? creditsFallback?.used ?? 0);
-  const usageWidth = `${Math.min(100, Math.max(0, (used / Math.max(1, limit)) * 100))}%`;
+  const remainingPct = Math.min(100, Math.max(0, (remaining / Math.max(1, limit)) * 100));
+  const remainingWidth = `${remainingPct}%`;
   const openPricing = () => {
     try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { window.open('https://stuard.ai/pricing', '_blank'); }
   };
@@ -64,12 +68,25 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 <div className="text-[18px] font-semibold text-theme-fg tracking-tight">Plan Overview</div>
               </div>
               <span className="dashboard-pill px-3 py-1 text-[10px] font-semibold text-theme-muted">
-                {planLabel}
+                {isCreditsLoading ? (
+                  <span className="inline-block h-3 w-12 rounded-full bg-theme-muted/20 animate-pulse" />
+                ) : (
+                  planLabel
+                )}
               </span>
             </div>
-            
+
             <div className="space-y-4">
-              {creditsInfo?.unlimited ? (
+              {isCreditsLoading ? (
+                <>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <div className="h-[46px] md:h-[50px] w-32 rounded-xl bg-theme-muted/20 animate-pulse" />
+                    <div className="h-7 w-16 rounded-md bg-theme-muted/15 animate-pulse" />
+                    <div className="h-4 w-14 rounded bg-theme-muted/10 animate-pulse" />
+                  </div>
+                  <div className="h-3 rounded-full w-full bg-theme-muted/20 animate-pulse border border-[color:var(--dashboard-panel-border)]" />
+                </>
+              ) : creditsInfo?.unlimited ? (
                  <div>
                    <div className="text-4xl font-semibold tracking-tight text-theme-fg">Unlimited</div>
                    <div className="text-sm text-theme-muted font-medium mt-1">Credits available</div>
@@ -87,11 +104,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                       Credits
                     </div>
                   </div>
-                  
-                  <div className="h-3 rounded-full overflow-hidden w-full bg-black/10 dark:bg-white/10 border border-[color:var(--dashboard-panel-border)]">
+
+                  <div className="h-3 rounded-full overflow-hidden w-full bg-black/30 dark:bg-black/45 border border-black/20 dark:border-white/10 shadow-[inset_0_2px_4px_rgba(0,0,0,0.35)]">
                     <div
-                      className="h-full bg-gradient-to-r from-primary to-blue-500 rounded-full transition-all duration-1000 ease-out"
-                      style={{ width: usageWidth }}
+                      className="h-full bg-gradient-to-r from-cyan-300 via-sky-400 to-blue-500 rounded-full transition-all duration-1000 ease-out shadow-[0_0_12px_rgba(56,189,248,0.7)]"
+                      style={{ width: remainingWidth, minWidth: remaining > 0 ? '8px' : '0px' }}
                     />
                   </div>
                 </>
@@ -209,24 +226,38 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             </div>
           ) : (
             <div className="divide-y divide-[color:var(--dashboard-panel-border)] relative z-10">
-              {conversations.slice(0, 5).map((c: any) => (
-                <div 
-                  key={c.id} 
+              {conversations.slice(0, 5).map((c: any) => {
+                const preview = (() => {
+                  const last = typeof c.last_message === 'string' ? c.last_message.trim() : '';
+                  if (last) return last;
+                  const count = Number(c.message_count) || 0;
+                  if (count > 0) return `${count} message${count === 1 ? '' : 's'}`;
+                  const updated = c.updated_at || c.created_at;
+                  if (updated) {
+                    try {
+                      return `Started ${new Date(updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+                    } catch { }
+                  }
+                  return 'New conversation';
+                })();
+                return (
+                <div
+                  key={c.id}
                   className="group flex items-center gap-6 p-6 hover:bg-[color:var(--dashboard-hover)] transition-all duration-300 cursor-pointer relative overflow-hidden"
                   onClick={() => onNavigate('history')}
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300 shadow-[0_0_12px_rgba(0,122,204,0.5)]" />
-                  
+
                   <div className="w-14 h-14 rounded-2xl dashboard-card-muted flex items-center justify-center shrink-0 shadow-sm group-hover:scale-110 transition-all duration-300">
                     <MessageSquare className="w-6 h-6 text-theme-muted group-hover:text-primary transition-colors duration-300" />
                   </div>
-                  
+
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-[16px] text-theme-fg truncate group-hover:text-primary transition-colors duration-300 tracking-tight">
                       {c.title || `Conversation ${String(c.id).slice(0, 8)}`}
                     </div>
                     <div className="text-[13px] text-theme-muted mt-1.5 truncate font-medium opacity-80 group-hover:opacity-100 transition-opacity duration-300">
-                      {c.last_message || "No messages preview"}
+                      {preview}
                     </div>
                   </div>
 
@@ -237,7 +268,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                     <ArrowRight className="w-5 h-5 text-primary opacity-0 group-hover:opacity-100 -translate-x-4 group-hover:translate-x-0 transition-all duration-300" />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

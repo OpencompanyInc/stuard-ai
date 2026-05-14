@@ -415,6 +415,23 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
       const accountEmail = cfg.formatAccountLabel(profile);
 
       if (verified.storageTarget === 'vm') {
+        const account = {
+          userId: verified.userId,
+          provider: cfg.provider,
+          access_token: token.access_token,
+          scopes,
+          refresh_token: token.refresh_token ?? null,
+          expires_at: expiresAt,
+          meta: {
+            token_type: token.token_type || 'bearer',
+            external_user_id: profile?.id || profile?.user_id || token.raw?.user_id || null,
+            profile,
+            provider: cfg.provider,
+            storage_target: 'vm',
+          },
+          profileLabel: verified.profileLabel,
+          accountEmail,
+        };
         const vmResult = await storeOAuthTokensOnVM(verified.userId, [{
           provider: cfg.provider,
           profileLabel: verified.profileLabel,
@@ -430,6 +447,13 @@ export async function handleMetaRoutes(req: IncomingMessage, res: ServerResponse
             ? `Start the cloud engine, then connect ${cfg.provider} again so the VM can store the token.`
             : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
           redirect(res, `${WEBSITE_BASE_URL}/integrations/error?provider=${encodeURIComponent(cfg.provider)}&message=${encodeURIComponent(message)}`);
+          return true;
+        }
+        try {
+          await upsertExternalAccount(account);
+        } catch (saveErr: any) {
+          console.error(`[${cfg.provider}] Failed to save VM token backup:`, saveErr?.message || saveErr);
+          redirect(res, `${WEBSITE_BASE_URL}/integrations/error?provider=${encodeURIComponent(cfg.provider)}&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`);
           return true;
         }
         redirect(res, `${WEBSITE_BASE_URL}/integrations/success?provider=${encodeURIComponent(cfg.provider)}&profile=${encodeURIComponent(verified.profileLabel)}&target=vm`);

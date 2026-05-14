@@ -7,6 +7,7 @@ import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
+import { settleToolApprovalResponse } from "../services/tool-approval";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
 import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm } from "../services";
 import { setupSpeechIpc } from "./speech";
@@ -458,7 +459,7 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-  ipcMain.handle("media:updatePrefs", (_e, updates?: { syncMode?: 'local-only' | 'mirror-cloud' }) => {
+  ipcMain.handle("media:updatePrefs", (_e, updates?: { syncMode?: 'local-only' | 'mirror-cloud'; storageRootPath?: string | null }) => {
     try {
       return { ok: true, prefs: updateMediaLibraryPrefs(updates || {}) };
     } catch (e: any) {
@@ -703,6 +704,7 @@ export function setupIpc() {
       if (payload?.id) {
         dismissNotificationById(String(payload.id));
       }
+      settleToolApprovalResponse(payload);
       const mainWin = getMainWindow();
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send('approval:response', { id: payload.id, allow: payload.allow });

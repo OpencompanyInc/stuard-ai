@@ -1,5 +1,6 @@
 import { app, net } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import logger from '../utils/logger';
@@ -37,6 +38,9 @@ export interface MediaLibraryItem {
 
 export interface MediaLibraryPrefs {
   syncMode: MediaSyncMode;
+  storageRootPath: string | null;
+  resolvedStorageRootPath: string;
+  defaultStorageRootPath: string;
 }
 
 export interface MediaLibrarySummary {
@@ -80,26 +84,66 @@ type MediaLibraryStore = {
 
 const DEFAULT_PREFS: MediaLibraryPrefs = {
   syncMode: 'local-only',
+  storageRootPath: null,
+  resolvedStorageRootPath: '',
+  defaultStorageRootPath: '',
 };
 
 let storeCache: MediaLibraryStore | null = null;
 let prefsCache: MediaLibraryPrefs | null = null;
 let syncPromise: Promise<{ ok: boolean; synced: number; failed: number; items: MediaLibraryItem[] }> | null = null;
 
-function mediaRootDir() {
+function mediaConfigDir() {
   return path.join(app.getPath('userData'), 'media-library');
 }
 
 function mediaDbPath() {
-  return path.join(mediaRootDir(), 'media-index.json');
+  return path.join(mediaConfigDir(), 'media-index.json');
 }
 
 function mediaPrefsPath() {
-  return path.join(mediaRootDir(), 'media-prefs.json');
+  return path.join(mediaConfigDir(), 'media-prefs.json');
 }
 
-function ensureMediaRoot() {
-  fs.mkdirSync(mediaRootDir(), { recursive: true });
+function ensureMediaConfigDir() {
+  fs.mkdirSync(mediaConfigDir(), { recursive: true });
+}
+
+function getDefaultMediaStorageRoot() {
+  const envRoot = String(process.env.STUARD_MEDIA_DIR || process.env.STUARD_AI_MEDIA_DIR || '').trim();
+  if (envRoot) return path.resolve(envRoot.replace(/^~(?=$|[\\/])/, os.homedir()));
+  try {
+    return path.join(app.getPath('documents'), 'StuardAI', 'media');
+  } catch {
+    return path.join(os.homedir(), 'Documents', 'StuardAI', 'media');
+  }
+}
+
+function normalizeStorageRootPath(value: unknown) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return path.resolve(raw.replace(/^~(?=$|[\\/])/, os.homedir()));
+}
+
+export function getMediaLibraryRoot() {
+  return normalizeStorageRootPath(loadPrefs().storageRootPath) || getDefaultMediaStorageRoot();
+}
+
+export function ensureMediaRoot() {
+  const root = getMediaLibraryRoot();
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+export function getMediaLibrarySourceDir(source: string, createdAt = new Date()) {
+  return ensureDirForSource(source, createdAt);
+}
+
+function isPathInsideDir(targetPath: string, dirPath: string) {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedDir = path.resolve(dirPath);
+  const relative = path.relative(resolvedDir, resolvedTarget);
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function normalizeTag(value: string) {
@@ -131,7 +175,7 @@ function ensureDirForSource(source: string, createdAt = new Date()) {
   const yyyy = createdAt.getFullYear();
   const mm = String(createdAt.getMonth() + 1).padStart(2, '0');
   const sourceDir = path.join(
-    mediaRootDir(),
+    ensureMediaRoot(),
     source
       .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
       .replace(/\s+/g, '-')
@@ -146,7 +190,7 @@ function ensureDirForSource(source: string, createdAt = new Date()) {
 
 function loadStore(): MediaLibraryStore {
   if (storeCache) return storeCache;
-  ensureMediaRoot();
+  ensureMediaConfigDir();
   try {
     if (fs.existsSync(mediaDbPath())) {
       const raw = fs.readFileSync(mediaDbPath(), 'utf-8');
@@ -164,7 +208,7 @@ function loadStore(): MediaLibraryStore {
 }
 
 function saveStore(store: MediaLibraryStore) {
-  ensureMediaRoot();
+  ensureMediaConfigDir();
   const normalized = {
     items: [...store.items].sort((a, b) => {
       const bTime = Date.parse(b.updatedAt || b.createdAt || '') || 0;
@@ -178,25 +222,33 @@ function saveStore(store: MediaLibraryStore) {
 
 function loadPrefs(): MediaLibraryPrefs {
   if (prefsCache) return prefsCache;
-  ensureMediaRoot();
+  ensureMediaConfigDir();
   try {
     if (fs.existsSync(mediaPrefsPath())) {
       const raw = fs.readFileSync(mediaPrefsPath(), 'utf-8');
       const parsed = JSON.parse(raw) as Partial<MediaLibraryPrefs>;
+      const storageRootPath = normalizeStorageRootPath(parsed?.storageRootPath);
       prefsCache = {
         syncMode: parsed?.syncMode === 'mirror-cloud' ? 'mirror-cloud' : 'local-only',
+        storageRootPath,
+        resolvedStorageRootPath: storageRootPath || getDefaultMediaStorageRoot(),
+        defaultStorageRootPath: getDefaultMediaStorageRoot(),
       };
       return prefsCache;
     }
   } catch (error) {
     logger.warn('[media-library] Failed to load prefs:', error);
   }
-  prefsCache = { ...DEFAULT_PREFS };
+  prefsCache = {
+    ...DEFAULT_PREFS,
+    resolvedStorageRootPath: getDefaultMediaStorageRoot(),
+    defaultStorageRootPath: getDefaultMediaStorageRoot(),
+  };
   return prefsCache;
 }
 
 function savePrefs(prefs: MediaLibraryPrefs) {
-  ensureMediaRoot();
+  ensureMediaConfigDir();
   fs.writeFileSync(mediaPrefsPath(), JSON.stringify(prefs, null, 2), 'utf-8');
   prefsCache = prefs;
 }
@@ -366,10 +418,10 @@ function fileExists(targetPath: string | null | undefined) {
 
 /** Check if a path is already inside a known StuardAI media directory (gallery or Documents). */
 function isInMediaDirectory(filePath: string) {
-  const normalized = path.resolve(filePath);
-  if (normalized.startsWith(mediaRootDir())) return true;
-  const docsMedia = path.join(require('os').homedir(), 'Documents', 'StuardAI', 'media');
-  if (normalized.startsWith(path.resolve(docsMedia))) return true;
+  if (isPathInsideDir(filePath, getMediaLibraryRoot())) return true;
+  if (isPathInsideDir(filePath, mediaConfigDir())) return true;
+  const docsMedia = path.join(os.homedir(), 'Documents', 'StuardAI', 'media');
+  if (isPathInsideDir(filePath, docsMedia)) return true;
   return false;
 }
 
@@ -461,18 +513,31 @@ function extractAttachmentUrl(input: any): string | null {
 }
 
 export function getMediaLibraryPrefs() {
-  return { ...loadPrefs() };
+  const prefs = loadPrefs();
+  const root = ensureMediaRoot();
+  return {
+    ...prefs,
+    resolvedStorageRootPath: root,
+    defaultStorageRootPath: getDefaultMediaStorageRoot(),
+  };
 }
 
 export function updateMediaLibraryPrefs(updates: Partial<MediaLibraryPrefs>) {
   const currentPrefs = loadPrefs();
+  const storageRootPath = Object.prototype.hasOwnProperty.call(updates, 'storageRootPath')
+    ? normalizeStorageRootPath(updates.storageRootPath)
+    : currentPrefs.storageRootPath;
   const nextPrefs: MediaLibraryPrefs = {
     syncMode: updates.syncMode === 'mirror-cloud'
       ? 'mirror-cloud'
       : updates.syncMode === 'local-only'
         ? 'local-only'
         : currentPrefs.syncMode,
+    storageRootPath,
+    resolvedStorageRootPath: storageRootPath || getDefaultMediaStorageRoot(),
+    defaultStorageRootPath: getDefaultMediaStorageRoot(),
   };
+  fs.mkdirSync(nextPrefs.resolvedStorageRootPath, { recursive: true });
   savePrefs(nextPrefs);
   if (currentPrefs.syncMode !== 'mirror-cloud' && nextPrefs.syncMode === 'mirror-cloud') {
     void syncMediaLibrary().catch((error) => {
@@ -548,7 +613,7 @@ export async function registerLocalMedia(options: RegisterLocalMediaOptions) {
     originalPath,
   });
 
-  const finalPath = options.linkOnly || originalPath.startsWith(mediaRootDir())
+  const finalPath = options.linkOnly || isInMediaDirectory(originalPath)
     ? originalPath
     : copyFileIntoLibrary(originalPath, source, options.preserveName);
 

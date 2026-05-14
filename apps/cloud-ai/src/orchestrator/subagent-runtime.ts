@@ -32,6 +32,7 @@ import type {
   SubagentAnswer,
 } from './types';
 import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
+import { createInterjectionUserMessage } from '../server/chat/interjections';
 import { LiveUsageBillingTracker } from '../services/live-usage-billing';
 import { normalizeUsage } from '../utils/usage';
 import { computeBudget, estimateTokens } from '../memory/token-budget';
@@ -90,6 +91,40 @@ export function answerSubagentQuestion(questionId: string, answer: string): bool
 /** Get the count of pending questions (for diagnostics). */
 export function getPendingQuestionCount(): number {
   return pendingQuestions.size;
+}
+
+// ─── Mid-flight steering for delegated subagents ─────────────────────────────
+//
+// The desktop UI can nudge an in-flight delegated subagent by id. Steers are
+// queued in-process and drained at the next step boundary (prepareStep). This
+// is in-process only — the subagent runs inside the cloud-ai server and has no
+// entry in the local Python registry, so the WS handler routes here directly.
+
+type SteerEntry = { text: string; timestamp: number };
+const subagentSteerQueues = new Map<string, SteerEntry[]>();
+
+/** Queue a steering message for a running delegated subagent. Returns new depth. */
+export function enqueueSubagentSteer(subagentId: string, text: string): number {
+  const trimmed = String(text || '').trim();
+  if (!subagentId || !trimmed) return 0;
+  const queue = subagentSteerQueues.get(subagentId) || [];
+  queue.push({ text: trimmed, timestamp: Date.now() });
+  subagentSteerQueues.set(subagentId, queue);
+  return queue.length;
+}
+
+/** Atomically pop pending steer messages for a subagent. */
+export function drainSubagentSteers(subagentId: string): SteerEntry[] {
+  const queue = subagentSteerQueues.get(subagentId);
+  if (!queue || queue.length === 0) return [];
+  subagentSteerQueues.delete(subagentId);
+  return queue;
+}
+
+/** Returns true if there's at least one queued steer for this subagent. */
+export function hasPendingSubagentSteers(subagentId: string): boolean {
+  const queue = subagentSteerQueues.get(subagentId);
+  return !!queue && queue.length > 0;
 }
 
 // ─── Child-side tools ────────────────────────────────────────────────────────
@@ -636,7 +671,27 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
             if (Array.isArray(stepMessages)) {
               streamAccumulatedMessages = [...stepMessages];
             }
-            return {};
+
+            // Drain any user-queued steers and inject them as a user message
+            // before the next LLM call. Applied between steps (tool boundaries),
+            // never mid-tool-call. Matches the main-chat interjection pattern.
+            const steers = drainSubagentSteers(subagentId);
+            if (steers.length === 0) return {};
+
+            const base = Array.isArray(stepMessages) ? stepMessages : [];
+            const content =
+              '[User steering — applied mid-task]\n' +
+              steers
+                .map((s, i) => `Steer ${i + 1}: ${s.text}`)
+                .join('\n') +
+              '\n\nUse this guidance in the next step before continuing.';
+
+            for (const s of steers) {
+              emitToClient('user_steer', { text: s.text, timestamp: s.timestamp });
+            }
+            writeLog('subagent_steer_applied', { subagentId, count: steers.length });
+
+            return { messages: [...base, createInterjectionUserMessage(content)] };
           },
           onStepFinish: async (stepData: any) => {
             finishedSteps.push({
@@ -1143,6 +1198,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   } finally {
     suppressClientEvents = true;
     runningSubagents.delete(subagentId);
+    subagentSteerQueues.delete(subagentId);
     if (runtimeBridgeScope) {
       clearActiveBridge(runtimeBridgeScope);
     }

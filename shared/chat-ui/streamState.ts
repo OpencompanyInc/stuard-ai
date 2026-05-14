@@ -35,40 +35,67 @@ function mergeToolCall(existing: ToolCall, incoming: ToolCall): ToolCall {
   };
 }
 
-export function appendTextChunk(chunks: StreamChunk[], content: string): StreamChunk[] {
+export function appendTextChunk(
+  chunks: StreamChunk[],
+  content: string,
+  options?: { nested?: boolean; subagentId?: string },
+): StreamChunk[] {
   if (!content) return chunks;
 
   const next = [...chunks];
   const last = next[next.length - 1];
+  const nested = options?.nested;
+  const subagentId = options?.subagentId;
 
-  if (last?.type === 'text') {
+  if (
+    last?.type === 'text' &&
+    Boolean(last.nested) === Boolean(nested) &&
+    (last.subagentId || '') === (subagentId || '')
+  ) {
     next[next.length - 1] = {
       type: 'text',
       content: mergeStreamingText(last.content, content),
+      ...(nested ? { nested: true } : {}),
+      ...(subagentId ? { subagentId } : {}),
     };
     return next;
   }
 
-  next.push({ type: 'text', content });
+  next.push({
+    type: 'text',
+    content,
+    ...(nested ? { nested: true } : {}),
+    ...(subagentId ? { subagentId } : {}),
+  });
   return next;
 }
 
-export function appendReasoningChunk(chunks: StreamChunk[], content: string, nested = false): StreamChunk[] {
+export function appendReasoningChunk(
+  chunks: StreamChunk[],
+  content: string,
+  nested = false,
+  subagentId?: string,
+): StreamChunk[] {
   if (!content) return chunks;
 
   const next = [...chunks];
   const last = next[next.length - 1];
 
-  if (last?.type === 'reasoning' && Boolean(last.nested) === Boolean(nested)) {
+  if (
+    last?.type === 'reasoning' &&
+    Boolean(last.nested) === Boolean(nested) &&
+    (last.subagentId || '') === (subagentId || '')
+  ) {
     next[next.length - 1] = {
       type: 'reasoning',
       content: mergeStreamingText(last.content, content),
       nested,
+      ...(subagentId ? { subagentId } : {}),
     };
     return next;
   }
 
-  next.push({ type: 'reasoning', content, nested });
+  next.push({ type: 'reasoning', content, nested, ...(subagentId ? { subagentId } : {}) });
   return next;
 }
 

@@ -7,26 +7,21 @@ import {
   Folder,
   FileText,
   Zap,
-  MessageSquare,
-  Terminal,
   Plus,
   X,
   Pencil,
   Trash2,
   Check,
-  Settings2,
   ChevronRight,
   Star,
   Sparkles,
-  ListTodo,
   Keyboard,
-  Brain,
 } from 'lucide-react';
 
 export interface Bookmark {
   id: string;
   name: string;
-  type: 'url' | 'app' | 'file' | 'folder' | 'workflow' | 'space' | 'dashboard' | 'tasks' | 'terminal' | 'overlay' | 'semantic-search';
+  type: 'url' | 'app' | 'file' | 'folder';
   target: string;
   icon?: string;
   color?: string;
@@ -38,13 +33,6 @@ const BOOKMARK_TYPES = [
   { type: 'app', label: 'Application', icon: AppWindow, color: 'text-purple-500', bg: 'bg-purple-500/10', description: 'Launch an app' },
   { type: 'file', label: 'File', icon: FileText, color: 'text-emerald-500', bg: 'bg-emerald-500/10', description: 'Open a file' },
   { type: 'folder', label: 'Folder', icon: Folder, color: 'text-yellow-500', bg: 'bg-yellow-500/10', description: 'Open a folder' },
-  { type: 'workflow', label: 'Workflow', icon: Zap, color: 'text-amber-500', bg: 'bg-amber-500/10', description: 'Run a Stuard workflow' },
-  { type: 'space', label: 'Space', icon: MessageSquare, color: 'text-cyan-500', bg: 'bg-cyan-500/10', description: 'Open a conversation space' },
-  { type: 'terminal', label: 'Terminal', icon: Terminal, color: 'text-orange-500', bg: 'bg-orange-500/10', description: 'Open the built-in terminal' },
-  { type: 'overlay', label: 'Overlay', icon: Sparkles, color: 'text-violet-500', bg: 'bg-violet-500/10', description: 'Open the Stuard overlay' },
-  { type: 'dashboard', label: 'Dashboard', icon: Settings2, color: 'text-indigo-500', bg: 'bg-indigo-500/10', description: 'Open Dashboard tab' },
-  { type: 'tasks', label: 'Tasks', icon: ListTodo, color: 'text-emerald-500', bg: 'bg-emerald-500/10', description: 'Open tasks (To-Do or Agent)' },
-  { type: 'semantic-search', label: 'Semantic Search', icon: Brain, color: 'text-purple-500', bg: 'bg-purple-500/10', description: 'Search files by meaning using AI embeddings' },
 ] as const;
 
 // Quick presets for common shortcuts
@@ -53,36 +41,15 @@ const QUICK_PRESETS = [
   { name: 'YouTube', type: 'url' as const, target: 'https://youtube.com', icon: Globe },
   { name: 'GitHub', type: 'url' as const, target: 'https://github.com', icon: Globe },
   { name: 'ChatGPT', type: 'url' as const, target: 'https://chat.openai.com', icon: Sparkles },
-  { name: 'Terminal', type: 'terminal' as const, target: 'terminal', icon: Terminal },
-  { name: 'Overlay', type: 'overlay' as const, target: 'overlay', icon: Sparkles },
-  { name: 'Planner', type: 'dashboard' as const, target: 'planner', icon: Settings2 },
-  { name: 'Memories', type: 'dashboard' as const, target: 'memories', icon: Settings2 },
-  { name: 'Tasks', type: 'tasks' as const, target: 'todo', icon: ListTodo },
-  { name: 'Semantic Search', type: 'semantic-search' as const, target: 'semantic-search', icon: Brain },
 ];
 
 export const getTypeConfig = (type: string) => {
   return BOOKMARK_TYPES.find(t => t.type === type) || BOOKMARK_TYPES[0];
 };
 
-const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>(['space', 'tasks', 'terminal', 'overlay', 'semantic-search']);
+const TYPES_WITH_DEFAULT_TARGET = new Set<Bookmark['type']>();
 
-const getDefaultBookmarkTarget = (type?: Bookmark['type'] | null): string => {
-  switch (type) {
-    case 'space':
-      return 'spaces';
-    case 'tasks':
-      return 'todo';
-    case 'terminal':
-      return 'terminal';
-    case 'overlay':
-      return 'overlay';
-    case 'semantic-search':
-      return 'semantic-search';
-    default:
-      return '';
-  }
-};
+const getDefaultBookmarkTarget = (_type?: Bookmark['type'] | null): string => '';
 
 const findKeybindConflict = (keybind: string | undefined, bookmarks: Bookmark[], excludeId?: string): Bookmark | null => {
   const normalized = String(keybind || '').trim().toLowerCase();
@@ -477,13 +444,11 @@ export function BookmarkEditor({
   onClose,
   bookmarks,
   onSave,
-  workflows = []
 }: {
   isOpen: boolean;
   onClose: () => void;
   bookmarks: Bookmark[];
   onSave: (bookmarks: Bookmark[]) => void;
-  workflows?: Array<{ id: string; name: string }>;
 }) {
   const [localBookmarks, setLocalBookmarks] = useState<Bookmark[]>(bookmarks);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -772,182 +737,6 @@ export function BookmarkEditor({
           {/* ADD FORM VIEW */}
           {view === 'add' && selectedType && (
             <div className="space-y-4">
-              {/* Workflow selector */}
-              {selectedType === 'workflow' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Workflow</div>
-                  {workflows.length > 0 ? (
-                    <div className="space-y-1.5 max-h-[200px] overflow-y-auto custom-scrollbar">
-                      {workflows.map(w => (
-                        <button
-                          key={w.id}
-                          onClick={() => setNewBookmark({ ...newBookmark, target: w.id, name: newBookmark.name || w.name })}
-                          className={clsx(
-                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                            newBookmark.target === w.id ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                          )}
-                        >
-                          <Zap className={clsx("w-4 h-4", newBookmark.target === w.id ? "text-primary" : "text-amber-500")} />
-                          <span className="text-[13px] font-medium text-theme-fg truncate">{w.name}</span>
-                          {newBookmark.target === w.id && <Check className="w-4 h-4 text-primary ml-auto" />}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 text-theme-muted">
-                      <p className="text-[12px]">No workflows found</p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Space selector */}
-              {selectedType === 'space' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Space</div>
-                  <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: 'spaces', name: newBookmark.name || 'Open Spaces' })}
-                    className={clsx(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                      newBookmark.target === 'spaces' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                    )}
-                  >
-                    <MessageSquare className={clsx("w-4 h-4", newBookmark.target === 'spaces' ? "text-primary" : "text-cyan-500")} />
-                    <span className="text-[13px] font-medium text-theme-fg">Open Spaces Sidebar</span>
-                    {newBookmark.target === 'spaces' && <Check className="w-4 h-4 text-primary ml-auto" />}
-                  </button>
-                </>
-              )}
-
-              {/* Dashboard selector */}
-              {selectedType === 'dashboard' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Tab</div>
-                  <div className="space-y-1.5">
-                    {[
-                      { id: '', label: 'Dashboard Home' },
-                      { id: 'planner', label: 'Planner' },
-                      { id: 'memories', label: 'Memories' },
-                      { id: 'integrations', label: 'Integrations' },
-                      { id: 'settings', label: 'Settings' },
-                    ].map(tab => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setNewBookmark({ ...newBookmark, target: tab.id, name: newBookmark.name || tab.label })}
-                        className={clsx(
-                          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                          newBookmark.target === tab.id ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                        )}
-                      >
-                        <Settings2 className={clsx("w-4 h-4", newBookmark.target === tab.id ? "text-primary" : "text-indigo-500")} />
-                        <span className="text-[13px] font-medium text-theme-fg">{tab.label}</span>
-                        {newBookmark.target === tab.id && <Check className="w-4 h-4 text-primary ml-auto" />}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {/* Tasks selector */}
-              {selectedType === 'tasks' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Select Task Type</div>
-                  <div className="space-y-1.5">
-                    <button
-                      onClick={() => setNewBookmark({ ...newBookmark, target: 'todo', name: newBookmark.name || 'To-Do List' })}
-                      className={clsx(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                        newBookmark.target === 'todo' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                      )}
-                    >
-                      <ListTodo className={clsx("w-4 h-4", newBookmark.target === 'todo' ? "text-primary" : "text-emerald-500")} />
-                      <div className="flex-1">
-                        <span className="text-[13px] font-medium text-theme-fg">To-Do List</span>
-                        <p className="text-[10px] text-theme-muted">Your personal tasks</p>
-                      </div>
-                      {newBookmark.target === 'todo' && <Check className="w-4 h-4 text-primary" />}
-                    </button>
-                    <button
-                      onClick={() => setNewBookmark({ ...newBookmark, target: 'agent', name: newBookmark.name || 'Agent Tasks' })}
-                      className={clsx(
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                        newBookmark.target === 'agent' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                      )}
-                    >
-                      <Sparkles className={clsx("w-4 h-4", newBookmark.target === 'agent' ? "text-primary" : "text-amber-500")} />
-                      <div className="flex-1">
-                        <span className="text-[13px] font-medium text-theme-fg">Agent Tasks</span>
-                        <p className="text-[10px] text-theme-muted">AI sub-agent tasks</p>
-                      </div>
-                      {newBookmark.target === 'agent' && <Check className="w-4 h-4 text-primary" />}
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {/* Terminal selector */}
-              {selectedType === 'terminal' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Open</div>
-                  <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: 'terminal', name: newBookmark.name || 'Terminal' })}
-                    className={clsx(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                      newBookmark.target === 'terminal' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                    )}
-                  >
-                    <Terminal className={clsx("w-4 h-4", newBookmark.target === 'terminal' ? "text-primary" : "text-orange-500")} />
-                    <div className="flex-1">
-                      <span className="text-[13px] font-medium text-theme-fg">Open Terminal</span>
-                      <p className="text-[10px] text-theme-muted">Jump straight into the built-in terminal</p>
-                    </div>
-                    {newBookmark.target === 'terminal' && <Check className="w-4 h-4 text-primary" />}
-                  </button>
-                </>
-              )}
-
-              {/* Overlay selector */}
-              {selectedType === 'overlay' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Open</div>
-                  <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: 'overlay', name: newBookmark.name || 'Stuard Overlay' })}
-                    className={clsx(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                      newBookmark.target === 'overlay' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                    )}
-                  >
-                    <Sparkles className={clsx("w-4 h-4", newBookmark.target === 'overlay' ? "text-primary" : "text-violet-500")} />
-                    <div className="flex-1">
-                      <span className="text-[13px] font-medium text-theme-fg">Open Overlay</span>
-                      <p className="text-[10px] text-theme-muted">Bring the main Stuard overlay to the front</p>
-                    </div>
-                    {newBookmark.target === 'overlay' && <Check className="w-4 h-4 text-primary" />}
-                  </button>
-                </>
-              )}
-
-              {/* Semantic Search selector */}
-              {selectedType === 'semantic-search' && (
-                <>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-theme-muted mb-2">Semantic File Search</div>
-                  <button
-                    onClick={() => setNewBookmark({ ...newBookmark, target: 'semantic-search', name: newBookmark.name || 'Semantic Search' })}
-                    className={clsx(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left",
-                      newBookmark.target === 'semantic-search' ? "bg-primary/15 ring-1 ring-primary/40" : "bg-theme-hover/40 hover:bg-theme-hover"
-                    )}
-                  >
-                    <Brain className={clsx("w-4 h-4", newBookmark.target === 'semantic-search' ? "text-primary" : "text-purple-500")} />
-                    <div className="flex-1">
-                      <span className="text-[13px] font-medium text-theme-fg">Search Files by Meaning</span>
-                      <p className="text-[10px] text-theme-muted">Use AI embeddings to find files by content, not just keywords</p>
-                    </div>
-                    {newBookmark.target === 'semantic-search' && <Check className="w-4 h-4 text-primary" />}
-                  </button>
-                </>
-              )}
-
               {/* URL input */}
               {selectedType === 'url' && (
                 <div className="space-y-3">

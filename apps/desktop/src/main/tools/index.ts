@@ -17,7 +17,7 @@ import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handl
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse, shutdownAllBrowserUseServers } from './handlers/browser-use';
-import { captureToolMedia, registerLocalMedia } from '../services/media-library';
+import { captureToolMedia, getMediaLibrarySourceDir, registerLocalMedia } from '../services/media-library';
 import { isRustFileTool, execRustFileTool } from './handlers/file-indexer';
 
 export * from './registry';
@@ -61,14 +61,11 @@ async function execMediaRegister(args: any): Promise<any> {
   const results: any[] = [];
   const fs = require('fs');
   const path = require('path');
-  const os = require('os');
 
   // Handle base64 images array (from generate_image)
   if (images.length > 0) {
     const { randomUUID } = require('crypto');
-    const docsDir = path.join(os.homedir(), 'Documents');
-    const imgDir = path.join(docsDir, 'StuardAI', 'media', source === 'generated' ? 'generated' : source);
-    try { fs.mkdirSync(imgDir, { recursive: true }); } catch {}
+    const imgDir = getMediaLibrarySourceDir(source === 'generated' ? 'generated' : source);
 
     for (const img of images) {
       try {
@@ -111,9 +108,7 @@ async function execMediaRegister(args: any): Promise<any> {
   if (base64Data) {
     try {
       const { randomUUID } = require('crypto');
-      const docsDir = path.join(os.homedir(), 'Documents');
-      const mediaDir = path.join(docsDir, 'StuardAI', 'media', source || 'misc');
-      try { fs.mkdirSync(mediaDir, { recursive: true }); } catch {}
+      const mediaDir = getMediaLibrarySourceDir(source || 'misc');
 
       const extFromMime = mimeType?.split('/')[1]?.replace('jpeg', 'jpg');
       const ext = (format || extFromMime || path.extname(fileNameArg).replace(/^\./, '') || 'bin').toLowerCase();

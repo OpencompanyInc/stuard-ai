@@ -819,18 +819,20 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
       }
     };
 
-    const pushText = (chunk: string) => {
+    const pushText = (chunk: string, options?: { nested?: boolean; subagentId?: string }) => {
       if (!chunk) return;
-      accText = mergeStreamingText(accText, chunk);
-      accChunks = appendTextChunk(accChunks, chunk);
-      setStreamText(accText);
+      if (!options?.nested) {
+        accText = mergeStreamingText(accText, chunk);
+        setStreamText(accText);
+      }
+      accChunks = appendTextChunk(accChunks, chunk, options);
       setStreamChunks([...accChunks]);
     };
 
-    const pushReasoning = (chunk: string, nested = false) => {
+    const pushReasoning = (chunk: string, nested = false, subagentId?: string) => {
       if (!chunk) return;
       if (!nested) { accReasoning = mergeStreamingText(accReasoning, chunk); setStreamReasoning(accReasoning); }
-      accChunks = appendReasoningChunk(accChunks, chunk, nested);
+      accChunks = appendReasoningChunk(accChunks, chunk, nested, subagentId);
       setStreamChunks([...accChunks]);
     };
 
@@ -993,8 +995,10 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 const subEvent = event.event || '';
                 const subData = event.data || {};
                 const subagentId = event.subagentId || subData.subagentId || '';
-                if ((subEvent === 'delta' || subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
-                  pushReasoning(subData.text, true);
+                if ((subEvent === 'delta' || subEvent === 'text') && subData.text) {
+                  pushText(subData.text, { nested: true, subagentId: subagentId || undefined });
+                } else if ((subEvent === 'reasoning' || subEvent === 'reasoning_start') && subData.text) {
+                  pushReasoning(subData.text, true, subagentId || undefined);
                 } else if (subEvent === 'compacting') {
                   const phase = subData.phase === 'done' ? 'done' : 'start';
                   const round = typeof subData.round === 'number' ? subData.round : undefined;
@@ -1006,6 +1010,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                     label: phase === 'done' ? 'Subagent compacted context' : 'Subagent compacting context',
                     state: phase === 'done' ? 'complete' : 'active',
                     nested: true,
+                    subagentId: subagentId || undefined,
                     meta: {
                       round,
                       maxRounds: typeof subData.maxRounds === 'number' ? subData.maxRounds : undefined,

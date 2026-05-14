@@ -217,6 +217,17 @@ export async function handleRedditRoutes(req: IncomingMessage, res: ServerRespon
       } catch {}
 
       if (storageTarget === 'vm') {
+        const account = {
+          userId,
+          provider: 'reddit',
+          access_token,
+          scopes,
+          refresh_token,
+          expires_at: expiresAt,
+          meta: { token_type: tokenBody.token_type || 'bearer', storage_target: 'vm' },
+          profileLabel,
+          accountEmail,
+        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'reddit',
           profileLabel,
@@ -232,6 +243,14 @@ export async function handleRedditRoutes(req: IncomingMessage, res: ServerRespon
             ? 'Start the cloud engine, then connect Reddit again so the VM can store the token.'
             : `Could not store token on VM: ${vmResult.error || 'store_oauth_tokens_failed'}`;
           res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=reddit&message=${encodeURIComponent(message)}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        try {
+          await upsertExternalAccount(account);
+        } catch (saveErr: any) {
+          console.error('[reddit] Failed to save VM token backup:', saveErr?.message || saveErr);
+          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=reddit&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
           res.end();
           return true;
         }

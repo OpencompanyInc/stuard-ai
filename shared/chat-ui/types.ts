@@ -21,8 +21,8 @@ export interface ToolCall {
 }
 
 export type StreamChunk =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning'; content: string; nested?: boolean }
+  | { type: 'text'; content: string; nested?: boolean; subagentId?: string }
+  | { type: 'reasoning'; content: string; nested?: boolean; subagentId?: string }
   | { type: 'tool'; tool: ToolCall }
   | {
       type: 'status';
@@ -31,6 +31,7 @@ export type StreamChunk =
       label: string;
       state: 'active' | 'complete';
       nested?: boolean;
+      subagentId?: string;
       meta?: {
         round?: number;
         maxRounds?: number;

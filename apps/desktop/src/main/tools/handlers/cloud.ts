@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import { RouterContext } from '../types';
 import { TOOL_REGISTRY } from '../registry';
 import { resolveRedactedFilePath } from './redacted-path';
+import { getMediaLibrarySourceDir } from '../../services/media-library';
 
 /**
  * Execute a tool via Cloud AI HTTP endpoint
@@ -731,12 +732,11 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     // Save to file if requested
     if (save || play) {
       const { randomUUID } = await import('crypto');
-      const os = await import('os');
       const { join } = await import('path');
       const { writeFile, mkdir } = await import('fs/promises');
 
       const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
-      const ttsDir = join(os.homedir(), 'Documents', 'StuardAI', 'media', 'generated-audio');
+      const ttsDir = getMediaLibrarySourceDir('generated-audio');
       const targetPath = outputPath || join(ttsDir, fileName);
       filePath = targetPath;
 
@@ -857,12 +857,10 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
 
     // Re-save images locally using _b64 from cloud, since cloud temp paths aren't accessible
     const { randomUUID } = await import('crypto');
-    const { homedir } = await import('os');
     const { join } = await import('path');
     const { writeFile, mkdir } = await import('fs/promises');
 
-    const docsDir = join(homedir(), 'Documents');
-    const imgDir = join(docsDir, 'StuardAI', 'media', 'generated');
+    const imgDir = getMediaLibrarySourceDir('generated');
     try { await mkdir(imgDir, { recursive: true }); } catch {}
 
     const savedImages: Array<{ filePath: string; format: string; sizeBytes?: number; revisedPrompt?: string }> = [];

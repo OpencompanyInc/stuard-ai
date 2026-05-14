@@ -254,6 +254,32 @@ async def http_subagents_get(task_id: str) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+@router.post("/subagents/{task_id}/steer")
+async def http_subagents_steer(task_id: str, payload: Dict[str, Any]) -> JSONResponse:
+    """Queue a steering message for a running sub-agent.
+
+    The desktop UI POSTs `{message: str}` here to nudge an in-flight sub-agent.
+    The message is drained by the cloud loop before its next LLM call.
+    """
+    try:
+        message = (payload or {}).get("message", "")
+        if not isinstance(message, str) or not message.strip():
+            return JSONResponse({"ok": False, "error": "message is required"}, status_code=400)
+
+        entry = subagents.enqueue_steer(task_id, message)
+        if entry is None:
+            task = subagents.get_subagent(task_id)
+            if not task:
+                return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+            return JSONResponse(
+                {"ok": False, "error": f"sub-agent is not running (status: {task.status})"},
+                status_code=409,
+            )
+        return JSONResponse({"ok": True, "steer": entry})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Knowledge Graph API
 # ═══════════════════════════════════════════════════════════════════════════════

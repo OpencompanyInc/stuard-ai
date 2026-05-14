@@ -14,10 +14,79 @@ import os
 import platform
 
 
+_DATETIME_FORMAT_ALIASES = {
+    "friendly_datetime": "%A, %B %d at %I:%M %p",
+    "friendly_date": "%A, %B %d, %Y",
+    "sortable_datetime": "%Y-%m-%d %H:%M:%S",
+    "date": "%Y-%m-%d",
+    "time": "%I:%M %p",
+    "time_12h": "%I:%M %p",
+    "time_24h": "%H:%M",
+    "iso": "%Y-%m-%dT%H:%M:%S",
+}
+
+_MOMENT_TO_STRFTIME_TOKENS = (
+    ("dddd", "%A"),
+    ("ddd", "%a"),
+    ("YYYY", "%Y"),
+    ("YY", "%y"),
+    ("MMMM", "%B"),
+    ("MMM", "%b"),
+    ("MM", "%m"),
+    ("M", "%m"),
+    ("DD", "%d"),
+    ("D", "%d"),
+    ("HH", "%H"),
+    ("H", "%H"),
+    ("hh", "%I"),
+    ("h", "%I"),
+    ("mm", "%M"),
+    ("ss", "%S"),
+    ("A", "%p"),
+)
+
+
+def _normalize_datetime_format(fmt: Any) -> str:
+    """Accept Python strftime, friendly aliases, or common Moment/Day.js tokens."""
+    raw = str(fmt or "").strip()
+    if not raw:
+        return ""
+
+    alias = _DATETIME_FORMAT_ALIASES.get(raw.lower())
+    if alias:
+        return alias
+
+    if "%" in raw:
+        return raw
+
+    out = []
+    i = 0
+    while i < len(raw):
+        if raw[i] == "[":
+            end = raw.find("]", i + 1)
+            if end != -1:
+                out.append(raw[i + 1:end])
+                i = end + 1
+                continue
+
+        matched = False
+        for token, replacement in _MOMENT_TO_STRFTIME_TOKENS:
+            if raw.startswith(token, i):
+                out.append(replacement)
+                i += len(token)
+                matched = True
+                break
+        if not matched:
+            out.append(raw[i])
+            i += 1
+
+    return "".join(out)
+
+
 async def get_datetime(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """Get current date and time with optional formatting."""
     try:
-        fmt = args.get("format")
+        fmt = _normalize_datetime_format(args.get("format"))
         tz_offset = args.get("tzOffset")  # offset in minutes from UTC
         
         now = datetime.datetime.now()

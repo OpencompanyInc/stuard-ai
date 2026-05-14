@@ -50,6 +50,18 @@ body.dashboard-shell [data-site-header-nav] {
   display: none;
 }
 
+/* Dark theme switch driven by the hero section */
+body.hero-dark {
+  background-color: #0A0A0B;
+  color: #F5F5F5;
+}
+
+body.hero-dark [data-site-header-nav] {
+  /* The announcement bar above the nav uses dark background by default,
+     so just make sure the wrapper doesn't paint over our hero. */
+  background: transparent;
+}
+
 /* Grid background pattern - only on homepage */
 body.show-grid::before {
   content: "";
@@ -80,6 +92,38 @@ body.show-grid::after {
 /* Fade in plain background (hide grid) */
 body.grid-faded::after {
   opacity: 1;
+}
+
+/* ── Hero (dark, wavy grid bg) ──────────────────────────────────────────── */
+
+.hero-section {
+  background-color: #0A0A0B;
+}
+
+.hero-section .hero-bg {
+  position: absolute;
+  inset: 0;
+  background-image: url('/hero-bg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.65;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-section .hero-vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at center,
+      rgba(10, 10, 11, 0) 0%,
+      rgba(10, 10, 11, 0.35) 55%,
+      rgba(10, 10, 11, 0.85) 100%
+    );
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* Utilities */

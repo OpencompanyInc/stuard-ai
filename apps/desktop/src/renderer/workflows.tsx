@@ -43,6 +43,21 @@ import {
   readWorkflowClipboard,
   writeWorkflowClipboard,
 } from "./workflows/utils/workflowClipboard";
+import {
+  useWorkflowOnboarding,
+  WorkflowWelcomeScreen,
+  WorkflowCoach,
+  WorkflowSpotlight,
+  buildManualOnboardingWorkflow,
+  getManualOnboardingValidation,
+  getOnboardingStepConfig,
+  MANUAL_ONBOARDING_NOTIFICATION_STEP_ID,
+  MANUAL_ONBOARDING_SET_VARIABLE_STEP_ID,
+  MANUAL_ONBOARDING_TIMESTAMP_STEP_ID,
+  MANUAL_ONBOARDING_TRIGGER_ID,
+  normalizeManualOnboardingWorkflow,
+  runAiDemoSequence,
+} from "./workflows/onboarding";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
@@ -223,6 +238,15 @@ function WorkflowsApp() {
     setModel(m);
     setDirty(true);
   }, []);
+
+  const onboarding = useWorkflowOnboarding();
+  const currentStepConfig = onboarding.stepId
+    ? getOnboardingStepConfig(onboarding.track, onboarding.stepId)
+    : null;
+  const aiDemoCleanupRef = useRef<(() => void) | null>(null);
+  const onboardingRunLogBaselineRef = useRef(0);
+  const onboardingRunObservedRef = useRef(false);
+  const previousOnboardingStepRef = useRef<string | null>(null);
 
   // Update model with history tracking
   const updateModel = useCallback((m: DesignerModel) => {
@@ -521,8 +545,14 @@ function WorkflowsApp() {
 
   const run = useCallback(async (triggerId?: string) => {
     if (!selectedId) return;
+    // Workflows run from the on-disk file, so any pending edits must be saved
+    // first or they'd be silently ignored. Auto-save when dirty so Run always
+    // reflects what the user sees on the canvas.
+    if (dirty) {
+      await save();
+    }
     await runWorkflowById(selectedId, triggerId);
-  }, [runWorkflowById, selectedId]);
+  }, [runWorkflowById, selectedId, dirty, save]);
 
   const stop = useCallback(async () => {
     if (!selectedId) return;
@@ -544,6 +574,7 @@ function WorkflowsApp() {
     }
 
     console.log('[Workflows] Running single step:', nodeId, node.tool);
+    if (dirty) await save();
     setRunningIds(p => ({ ...p, [selectedId]: true }));
 
     try {
@@ -566,7 +597,7 @@ function WorkflowsApp() {
       setRunningIds(p => ({ ...p, [selectedId]: false }));
       alert(e?.message || 'Step execution failed');
     }
-  }, [selectedId, model]);
+  }, [selectedId, model, dirty, save]);
 
   // Run workflow starting from a specific step
   const runFromHere = useCallback(async (nodeId: string) => {
@@ -585,6 +616,7 @@ function WorkflowsApp() {
     if (!node) return;
 
     console.log('[Workflows] Running from step:', nodeId);
+    if (dirty) await save();
     setRunningIds(p => ({ ...p, [selectedId]: true }));
 
     try {
@@ -603,7 +635,7 @@ function WorkflowsApp() {
       setRunningIds(p => ({ ...p, [selectedId]: false }));
       alert(e?.message || 'Run failed');
     }
-  }, [selectedId, model, run]);
+  }, [selectedId, model, run, dirty, save]);
 
   const delNode = useCallback(() => {
     if (!model) return;
@@ -694,23 +726,163 @@ function WorkflowsApp() {
     return { ...inputModel, triggers: newTriggers, nodes: newNodes };
   }, []);
 
-  const create = async (projectName?: string, templateId?: string) => {
-    const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
-    const template = getWorkflowTemplate(templateId);
-    const skeleton = template.build(safe, projectName || template.defaultName);
+  const createFromModel = useCallback(async (skeleton: DesignerModel): Promise<string | null> => {
     const arrangedSkeleton = applyAutoLayoutToModel(skeleton);
     try {
-      const res = await (window as any).desktopAPI?.workflowsSave?.(safe, JSON.stringify(arrangedSkeleton, null, 2));
+      const res = await (window as any).desktopAPI?.workflowsSave?.(skeleton.id, JSON.stringify(arrangedSkeleton, null, 2));
       if (res?.ok) {
         await refresh();
-        await load(safe);
-      } else {
-        alert(res?.error || 'Failed to create workflow');
+        await load(skeleton.id);
+        return skeleton.id;
       }
+      alert(res?.error || 'Failed to create workflow');
     } catch (e: any) {
       alert(e?.message || 'Failed to create workflow');
     }
-  };
+    return null;
+  }, [applyAutoLayoutToModel, load, refresh]);
+
+  const create = useCallback(async (projectName?: string, templateId?: string): Promise<string | null> => {
+    const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
+    const template = getWorkflowTemplate(templateId);
+    const skeleton = template.build(safe, projectName || template.defaultName);
+    return createFromModel(skeleton);
+  }, [createFromModel]);
+
+  // Begin the AI demo tour. Always creates a fresh blank workflow so the demo
+  // sequence has a clean slate (we don't want to overwrite an existing one),
+  // enters AI mode, then runs the fake chat exchange + demo model apply. No
+  // network calls and no credits used — see runAiDemoSequence for the script.
+  const beginAiTour = useCallback(async () => {
+    // Tear down any previous demo run that's still in flight.
+    aiDemoCleanupRef.current?.();
+    aiDemoCleanupRef.current = null;
+
+    const workflowId = await create(undefined, "blank");
+    if (!workflowId) return;
+    setViewMode("ai");
+    setRightPanel("ai");
+    onboarding.beginAiTour();
+
+    // After the new workflow mounts, kick off the fake sequence. We give React
+    // a moment so the AI panel is on screen before the messages stream in.
+    setTimeout(() => {
+      aiDemoCleanupRef.current = runAiDemoSequence({
+        chat: { setMessages: chat.setMessages, setBusy: chat.setBusy },
+        applyModel,
+        workflowId: workflowId || selectedId || `flow_demo_${Math.random().toString(36).slice(2, 8)}`,
+        workflowName: "Tour Demo Workflow",
+      });
+    }, 350);
+  }, [onboarding, create, chat.setMessages, chat.setBusy, applyModel, selectedId]);
+
+  // Begin the manual tour. Same shell setup (fresh workflow), but enters manual
+  // mode so the user actually drags + wires nodes themselves. Always creates a
+  // new workflow so we never dirty an existing one the user opened.
+  const beginManualTour = useCallback(async () => {
+    aiDemoCleanupRef.current?.();
+    aiDemoCleanupRef.current = null;
+
+    const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
+    const workflowId = await createFromModel(buildManualOnboardingWorkflow(safe, "Task Ping Tour"));
+    if (!workflowId) return;
+    setViewMode("manual");
+    setRightPanel("none");
+    onboarding.beginManualTour();
+  }, [createFromModel, onboarding]);
+
+  // Make sure we cancel any pending fake-demo timers if the user skips out.
+  useEffect(() => {
+    if (onboarding.phase !== "guided" || onboarding.track !== "ai") {
+      aiDemoCleanupRef.current?.();
+      aiDemoCleanupRef.current = null;
+    }
+  }, [onboarding.phase, onboarding.track]);
+
+  // During the manual tour, keep the starter workflow focused on the lesson:
+  // variables are created up front, and the notification the user drags in gets
+  // templated so it actually consumes both workflow vars and a previous step.
+  useEffect(() => {
+    if (onboarding.phase !== "guided" || onboarding.track !== "manual") return;
+    if (!model || model.locked) return;
+    if (!model.nodes.some((node) => node.tool === "send_notification")) return;
+    const normalized = normalizeManualOnboardingWorkflow(model);
+    if (normalized !== model) updateModel(normalized);
+  }, [model, onboarding.phase, onboarding.track, updateModel]);
+
+  const manualOnboardingValidation = useMemo(
+    () => getManualOnboardingValidation(model),
+    [model]
+  );
+
+  const currentStepGate = useMemo(() => {
+    if (!currentStepConfig?.manualAction) return { canAdvance: true, blockedHint: "" };
+    if (onboarding.track !== "manual") return { canAdvance: true, blockedHint: "" };
+
+    switch (currentStepConfig.id) {
+      case "variables":
+        if (rightPanel !== "inspector") {
+          return { canAdvance: false, blockedHint: "Open Inspector so the workflow variables are visible." };
+        }
+        if (selectedNodeId) {
+          return { canAdvance: false, blockedHint: "Click empty canvas so Workflow Variables are shown instead of a node." };
+        }
+        if (!manualOnboardingValidation.variablesReady) {
+          return {
+            canAdvance: false,
+            blockedHint: "Keep notificationTitle, taskName, and taskOwner as workflow text variables with values.",
+          };
+        }
+        return { canAdvance: true, blockedHint: "" };
+      case "timestampArgs":
+        if (rightPanel !== "inspector" || selectedNodeId !== MANUAL_ONBOARDING_TIMESTAMP_STEP_ID) {
+          return { canAdvance: false, blockedHint: "Select Get Current Time and keep Inspector open." };
+        }
+        if (!manualOnboardingValidation.timestampReady) {
+          return { canAdvance: false, blockedHint: "The time step needs the tour's format argument so formatted output exists." };
+        }
+        return { canAdvance: true, blockedHint: "" };
+      case "setVariableArgs":
+        if (rightPanel !== "inspector" || selectedNodeId !== MANUAL_ONBOARDING_SET_VARIABLE_STEP_ID) {
+          return { canAdvance: false, blockedHint: "Select Store Start Time and keep Inspector open." };
+        }
+        if (!manualOnboardingValidation.setVariableReady) {
+          return {
+            canAdvance: false,
+            blockedHint: "Store Start Time must set startedAt to {{step_timestamp.formatted}} with workflow scope.",
+          };
+        }
+        return { canAdvance: true, blockedHint: "" };
+      case "notificationArgs":
+        if (!manualOnboardingValidation.notificationNodeExists) {
+          return { canAdvance: false, blockedHint: "Add Send Notification from the palette first." };
+        }
+        if (rightPanel !== "inspector" || selectedNodeId !== MANUAL_ONBOARDING_NOTIFICATION_STEP_ID) {
+          return { canAdvance: false, blockedHint: "Select Send Task Ping and keep Inspector open." };
+        }
+        if (!manualOnboardingValidation.notificationArgsReady) {
+          return {
+            canAdvance: false,
+            blockedHint: "The title/body must use the workflow variables, including {{workflow.startedAt}}.",
+          };
+        }
+        return { canAdvance: true, blockedHint: "" };
+      case "save":
+        if (!manualOnboardingValidation.readyToRun) {
+          return { canAdvance: false, blockedHint: "Finish the variables, checked args, and both wires before saving." };
+        }
+        return { canAdvance: true, blockedHint: "" };
+      default:
+        return { canAdvance: true, blockedHint: "" };
+    }
+  }, [
+    currentStepConfig?.id,
+    currentStepConfig?.manualAction,
+    onboarding.track,
+    rightPanel,
+    selectedNodeId,
+    manualOnboardingValidation,
+  ]);
 
   const duplicateNode = useCallback(() => {
     if (!model) return;
@@ -959,6 +1131,139 @@ function WorkflowsApp() {
 
   const isRunning = runningIds[selectedId];
 
+  useEffect(() => {
+    if (onboarding.phase !== "guided" || onboarding.track !== "manual") return;
+
+    if (onboarding.stepId === "variables") {
+      setSelectedNodeId("");
+      setSelectedNodeIds(new Set());
+      setSelectedWireIndex(null);
+      setRightPanel("inspector");
+      return;
+    }
+
+    if (onboarding.stepId === "timestampArgs") {
+      setSelectedNodeId(MANUAL_ONBOARDING_TIMESTAMP_STEP_ID);
+      setSelectedNodeIds(new Set([MANUAL_ONBOARDING_TIMESTAMP_STEP_ID]));
+      setSelectedWireIndex(null);
+      setRightPanel("inspector");
+      return;
+    }
+
+    if (onboarding.stepId === "setVariableArgs") {
+      setSelectedNodeId(MANUAL_ONBOARDING_SET_VARIABLE_STEP_ID);
+      setSelectedNodeIds(new Set([MANUAL_ONBOARDING_SET_VARIABLE_STEP_ID]));
+      setSelectedWireIndex(null);
+      setRightPanel("inspector");
+      return;
+    }
+
+    if (onboarding.stepId === "notificationArgs" && manualOnboardingValidation.notificationNodeExists) {
+      setSelectedNodeId(MANUAL_ONBOARDING_NOTIFICATION_STEP_ID);
+      setSelectedNodeIds(new Set([MANUAL_ONBOARDING_NOTIFICATION_STEP_ID]));
+      setSelectedWireIndex(null);
+      setRightPanel("inspector");
+      return;
+    }
+
+    if (
+      onboarding.stepId === "wire"
+      || onboarding.stepId === "storeWire"
+      || onboarding.stepId === "palette"
+      || onboarding.stepId === "notifyWire"
+    ) {
+      setSelectedWireIndex(null);
+      setRightPanel("none");
+    }
+  }, [
+    onboarding.phase,
+    onboarding.track,
+    onboarding.stepId,
+    manualOnboardingValidation.notificationNodeExists,
+    setSelectedNodeId,
+    setSelectedNodeIds,
+    setSelectedWireIndex,
+  ]);
+
+  useEffect(() => {
+    if (previousOnboardingStepRef.current === onboarding.stepId) return;
+    previousOnboardingStepRef.current = onboarding.stepId;
+    if (onboarding.stepId === "run") {
+      onboardingRunLogBaselineRef.current = logs.length;
+      onboardingRunObservedRef.current = false;
+    }
+  }, [onboarding.stepId, logs.length]);
+
+  // Onboarding: AI advances once its generated demo nodes appear. Manual
+  // advances the palette step only after the user adds Send Notification.
+  useEffect(() => {
+    if (onboarding.stepId === "describe" && model?.nodes?.length) {
+      onboarding.advance();
+      return;
+    }
+    if (onboarding.stepId !== "palette") return;
+    if (model?.nodes?.some((node) => node.tool === "send_notification")) {
+      onboarding.advance();
+    }
+  }, [onboarding.stepId, model?.nodes, onboarding]);
+
+  // Onboarding: manual wiring checks for the specific lesson wires so the final
+  // workflow actually passes timestamp output into the notification step.
+  useEffect(() => {
+    if (onboarding.stepId === "wire") {
+      const hasTriggerToTimestamp = model?.wires?.some(
+        (wire) =>
+          wire.from === MANUAL_ONBOARDING_TRIGGER_ID
+          && wire.to === MANUAL_ONBOARDING_TIMESTAMP_STEP_ID
+      );
+      if (hasTriggerToTimestamp) onboarding.advance();
+      return;
+    }
+    if (onboarding.stepId === "storeWire") {
+      if (manualOnboardingValidation.storeVariableWireReady) onboarding.advance();
+      return;
+    }
+    if (onboarding.stepId !== "notifyWire") return;
+    if (manualOnboardingValidation.notificationWireReady) {
+      onboarding.advance();
+    }
+  }, [onboarding.stepId, model?.wires, manualOnboardingValidation.storeVariableWireReady, manualOnboardingValidation.notificationWireReady, onboarding]);
+
+  // Onboarding: shared "run" step — advances on the first execution.
+  useEffect(() => {
+    if (onboarding.stepId !== "run") return;
+    if (isRunning && (onboarding.track !== "manual" || manualOnboardingValidation.readyToRun)) {
+      onboardingRunObservedRef.current = true;
+      onboarding.advance();
+    }
+  }, [onboarding.stepId, onboarding.track, isRunning, manualOnboardingValidation.readyToRun, onboarding]);
+
+  // Onboarding: shared "logs" step — advances when the logs panel is opened.
+  useEffect(() => {
+    if (onboarding.stepId !== "logs") return;
+    const hasFreshRunLog = logs.length > onboardingRunLogBaselineRef.current;
+    if (
+      rightPanel === "logs"
+      && (onboarding.track !== "manual" || (onboardingRunObservedRef.current && hasFreshRunLog))
+    ) {
+      onboarding.advance();
+    }
+  }, [onboarding.stepId, onboarding.track, rightPanel, logs.length, onboarding]);
+
+  // Onboarding: shared "variables" step — advances when the Inspector opens
+  // (Variables panel lives inside the Inspector).
+  useEffect(() => {
+    if (onboarding.track === "manual") return;
+    if (onboarding.stepId !== "variables") return;
+    if (rightPanel === "inspector") onboarding.advance();
+  }, [onboarding.stepId, onboarding.track, rightPanel, onboarding]);
+
+  // Onboarding: shared "docs" step (final) — advances/finishes when Docs opens.
+  useEffect(() => {
+    if (onboarding.stepId !== "docs") return;
+    if (rightPanel === "docs") onboarding.finish();
+  }, [onboarding.stepId, rightPanel, onboarding]);
+
   // When no workflow is selected, show the launcher
   if (!selectedId || !model) {
     return (
@@ -994,7 +1299,17 @@ function WorkflowsApp() {
           }}
           onShowPublished={() => setShowMyPublished(true)}
           onDashboard={() => (window as any).desktopAPI?.openDashboard?.()}
+          onReplayTour={onboarding.replay}
         />
+
+        {onboarding.phase === "welcome" && (
+          <WorkflowWelcomeScreen
+            onBeginAi={beginAiTour}
+            onBeginManual={beginManualTour}
+            onSkip={onboarding.skip}
+            isReplay={onboarding.seen}
+          />
+        )}
 
         {showNameModal && (
           <ProjectNameModal
@@ -1231,6 +1546,7 @@ function WorkflowsApp() {
           <div className="w-6 h-[1.5px] shrink-0 rounded-full" style={{ background: 'var(--wf-border)' }} />
 
           <button
+            id="wf-target-logs"
             onClick={() => {
               if (!model?.locked) {
                 setRightPanel((p) => {
@@ -1281,6 +1597,7 @@ function WorkflowsApp() {
             <FileCode className="w-5 h-5" />
           </button>
           <button
+            id="wf-target-docs"
             onClick={() => {
               setRightPanel((p) => {
                 const next = p === 'docs' ? 'none' : 'docs';
@@ -1294,6 +1611,7 @@ function WorkflowsApp() {
             <BookOpen className="w-5 h-5" />
           </button>
           <button
+            id="wf-target-inspector"
             onClick={() => {
               if (!model?.locked) {
                 setRightPanel((p) => {
@@ -1375,6 +1693,84 @@ function WorkflowsApp() {
         onClosePendingUpdate={() => setPendingUpdate(null)}
         onApplyPendingUpdate={executeWorkflowUpdate}
       />
+
+      {onboarding.phase === "guided" && currentStepConfig && (
+        <>
+          {currentStepConfig.targetId && (
+            <WorkflowSpotlight
+              targetId={currentStepConfig.targetId}
+              refresh={onboarding.stepIndex}
+            />
+          )}
+          <WorkflowCoach
+            step={currentStepConfig}
+            currentIndex={onboarding.stepIndex}
+            totalSteps={onboarding.totalSteps}
+            onAdvance={async () => {
+              // The save step actually saves before advancing — that's the whole
+              // point of teaching "save before run". Docs is the final step so
+              // its button finishes the tour entirely.
+              if (!currentStepGate.canAdvance) return;
+              if (currentStepConfig.id === "intro") {
+                setSelectedNodeId("");
+                setSelectedNodeIds(new Set());
+                setSelectedWireIndex(null);
+                setRightPanel("inspector");
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "variables") {
+                setSelectedNodeId(MANUAL_ONBOARDING_TIMESTAMP_STEP_ID);
+                setSelectedNodeIds(new Set([MANUAL_ONBOARDING_TIMESTAMP_STEP_ID]));
+                setSelectedWireIndex(null);
+                setRightPanel("inspector");
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "timestampArgs") {
+                setSelectedWireIndex(null);
+                setRightPanel("none");
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "setVariableArgs") {
+                setSelectedWireIndex(null);
+                setRightPanel("none");
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "notificationArgs") {
+                setSelectedWireIndex(null);
+                setRightPanel("none");
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "save") {
+                if (dirty) await save();
+                onboarding.advance();
+                return;
+              }
+              if (currentStepConfig.id === "docs") {
+                onboarding.finish();
+                return;
+              }
+              onboarding.advance();
+            }}
+            onSkip={onboarding.skip}
+            canAdvance={currentStepGate.canAdvance}
+            blockedHint={currentStepGate.blockedHint}
+          />
+        </>
+      )}
+
+      {onboarding.phase === "welcome" && (
+        <WorkflowWelcomeScreen
+          onBeginAi={beginAiTour}
+          onBeginManual={beginManualTour}
+          onSkip={onboarding.skip}
+          isReplay={onboarding.seen}
+        />
+      )}
     </div>
     </WorkflowThemeContext.Provider>
   );

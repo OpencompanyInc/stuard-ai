@@ -1,7 +1,13 @@
+import { createClient } from '@supabase/supabase-js';
+
 const CATEGORIES = [
-  'productivity', 'automation', 'data', 'integration', 
+  'productivity', 'automation', 'data', 'integration',
   'ai', 'media', 'developer', 'communication', 'general'
 ];
+
+// Sitemap protocol caps a single file at 50,000 URLs. Stay well under that
+// to leave headroom for static + category URLs.
+const SITEMAP_WORKFLOW_LIMIT = 45000;
 
 interface WorkflowSummary {
   slug: string;
@@ -10,17 +16,46 @@ interface WorkflowSummary {
 }
 
 async function fetchMarketplaceWorkflows(): Promise<WorkflowSummary[]> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
-  try {
-    const res = await fetch(`${baseUrl}/v1/marketplace/search?limit=100`, {
-      next: { revalidate: 3600 }, // Cache for 1 hour
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.results || [];
-  } catch {
-    return [];
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } });
+      const { data, error } = await supabase
+        .from('marketplace_workflows')
+        .select('slug, updated_at, created_at')
+        .eq('status', 'published')
+        .order('updated_at', { ascending: false })
+        .limit(SITEMAP_WORKFLOW_LIMIT);
+      if (!error && data) {
+        return data as WorkflowSummary[];
+      }
+    } catch {
+      // fall through to API fallback
+    }
   }
+
+  // Fallback: paginate the search API (server hard-caps limit at 50 per page).
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.stuard.ai';
+  const PAGE_SIZE = 50;
+  const collected: WorkflowSummary[] = [];
+  try {
+    for (let offset = 0; offset < SITEMAP_WORKFLOW_LIMIT; offset += PAGE_SIZE) {
+      const res = await fetch(`${baseUrl}/v1/marketplace/search?limit=${PAGE_SIZE}&offset=${offset}`, {
+        next: { revalidate: 3600 },
+      });
+      if (!res.ok) break;
+      const data = await res.json();
+      const page: WorkflowSummary[] = data.results || [];
+      if (page.length === 0) break;
+      collected.push(...page);
+      if (page.length < PAGE_SIZE) break;
+    }
+  } catch {
+    // return whatever we managed to collect
+  }
+  return collected;
 }
 
 export async function GET() {

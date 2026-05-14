@@ -1516,6 +1516,131 @@ function assignDelegationChildrenToTasks(
   return assignments;
 }
 
+// Inline nudge for a running delegated subagent. Routes through the cloud WS
+// (window.__stuardSteerSubagent__, set by useAgent) which queues into the
+// subagent-runtime's in-process steer queue. The subagent drains queued steers
+// at its next step boundary and injects them as a user message before the
+// next LLM call — never mid-tool-call.
+const DelegationSteerInput: React.FC<{ subagentIds: string[] }> = ({ subagentIds }) => {
+  const [value, setValue] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justSent, setJustSent] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const send = useCallback(() => {
+    const text = value.trim();
+    if (!text || sending || subagentIds.length === 0) return;
+    const fn = (window as any).__stuardSteerSubagent__ as
+      | ((subagentId: string, text: string) => boolean)
+      | undefined;
+    if (typeof fn !== 'function') {
+      setError('Not connected');
+      return;
+    }
+    setSending(true);
+    setError(null);
+    const results = subagentIds.map((id) => fn(id, text));
+    setSending(false);
+    if (results.every((r) => r === false)) {
+      setError('Failed to queue steer');
+      return;
+    }
+    setValue('');
+    setJustSent(true);
+    setTimeout(() => setJustSent(false), 1500);
+    inputRef.current?.focus();
+  }, [value, sending, subagentIds]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  const targetLabel =
+    subagentIds.length === 1
+      ? 'this agent'
+      : `${subagentIds.length} agents`;
+
+  return (
+    <div
+      className="mt-2 rounded-lg border"
+      style={{
+        borderColor: 'color-mix(in srgb, var(--primary) 22%, transparent)',
+        backgroundColor: 'color-mix(in srgb, var(--primary) 6%, transparent)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 pt-1.5 pb-1">
+        <span
+          className="text-[9.5px] font-bold uppercase tracking-wider"
+          style={{ color: 'color-mix(in srgb, var(--primary) 95%, transparent)' }}
+        >
+          Steer {targetLabel}
+        </span>
+        <span
+          className="ml-auto text-[9.5px]"
+          style={{ color: 'color-mix(in srgb, var(--foreground-muted) 80%, transparent)' }}
+        >
+          Applied at next tool boundary · Enter to send
+        </span>
+      </div>
+      <div className="flex items-end gap-1.5 px-2 pb-2">
+        <textarea
+          ref={inputRef}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            if (error) setError(null);
+          }}
+          onKeyDown={onKeyDown}
+          placeholder="Nudge this agent (e.g., 'skip the build step', 'use markdown only')"
+          rows={1}
+          disabled={sending}
+          className="flex-1 resize-none rounded-md border bg-transparent px-2 py-1.5 text-[11.5px] leading-snug outline-none max-h-[80px] overflow-y-auto scrollbar-none"
+          style={{
+            borderColor: 'color-mix(in srgb, var(--foreground-muted) 18%, transparent)',
+            color: 'color-mix(in srgb, var(--foreground) 88%, transparent)',
+          }}
+        />
+        <button
+          type="button"
+          onClick={send}
+          disabled={!value.trim() || sending}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-all disabled:cursor-not-allowed disabled:opacity-50"
+          style={{
+            borderColor: value.trim() && !sending
+              ? 'color-mix(in srgb, var(--primary) 35%, transparent)'
+              : 'color-mix(in srgb, var(--foreground-muted) 20%, transparent)',
+            backgroundColor: value.trim() && !sending
+              ? 'color-mix(in srgb, var(--primary) 18%, transparent)'
+              : 'transparent',
+            color: value.trim() && !sending
+              ? 'color-mix(in srgb, var(--primary) 95%, transparent)'
+              : 'color-mix(in srgb, var(--foreground-muted) 75%, transparent)',
+          }}
+          title="Send steer (Enter)"
+        >
+          {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+        </button>
+      </div>
+      {(error || justSent) && (
+        <div
+          className="px-2.5 pb-1.5 text-[10px]"
+          style={{
+            color: error
+              ? 'color-mix(in srgb, var(--destructive) 95%, transparent)'
+              : 'color-mix(in srgb, var(--primary) 90%, transparent)',
+          }}
+        >
+          {error || 'Queued · will apply before the next tool call'}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DelegationCard: React.FC<{
   step: AssistantTraceStepData;
   childSteps: AssistantTraceStepData[];
@@ -1548,6 +1673,18 @@ const DelegationCard: React.FC<{
     return () => clearInterval(id);
   }, [isRunning]);
   const elapsedSec = tool.timestamp ? Math.max(0, Math.floor((now - tool.timestamp) / 1000)) : 0;
+
+  // Unique subagentIds emitted by children so we can route mid-flight steers
+  // to the right runtime queue. Only meaningful while the card is running.
+  const activeSubagentIds = useMemo(() => {
+    if (!isRunning) return [] as string[];
+    const ids = new Set<string>();
+    for (const c of childSteps) {
+      const sid = c.subagentId?.trim();
+      if (sid) ids.add(sid);
+    }
+    return Array.from(ids);
+  }, [isRunning, childSteps]);
 
   const agentLabel = tasks.length === 1
     ? `${humanizeToolName(tasks[0].subagent)} agent`
@@ -1778,6 +1915,9 @@ const DelegationCard: React.FC<{
                     ) : null}
                   </ChainOfThoughtStep>
                 ))}
+                {isRunning && activeSubagentIds.length > 0 ? (
+                  <DelegationSteerInput subagentIds={activeSubagentIds} />
+                ) : null}
               </div>
             </motion.div>
           ) : null}
@@ -2458,6 +2598,27 @@ function isDelegatedToolCall(tool: ToolCall): boolean {
   );
 }
 
+function isTopLevelDuplicateOfNestedTool(tool: ToolCall, streamChunks?: StreamChunk[]): boolean {
+  if (isDelegatedToolCall(tool) || !tool.id || !streamChunks?.length) return false;
+  return streamChunks.some((chunk) => (
+    chunk.type === 'tool' &&
+    chunk.tool.id === tool.id &&
+    isDelegatedToolCall(chunk.tool)
+  ));
+}
+
+function isTopLevelDuplicateOfNestedText(
+  chunk: Extract<StreamChunk, { type: 'text' }>,
+  streamChunks?: StreamChunk[],
+): boolean {
+  if (chunk.nested || !chunk.content.trim() || !streamChunks?.length) return false;
+  return streamChunks.some((candidate) => {
+    if (candidate.type !== 'text' || !candidate.nested || !candidate.content.trim()) return false;
+    return isRedundantStreamingUpdate(candidate.content, chunk.content)
+      || isRedundantStreamingUpdate(chunk.content, candidate.content);
+  });
+}
+
 const AssistantTracePanel: React.FC<{
   reasoning?: string;
   reasoningDuration?: number;
@@ -2517,6 +2678,7 @@ const AssistantTracePanel: React.FC<{
 
         if (chunk.type === 'tool') {
           const tc = chunk.tool;
+          if (isTopLevelDuplicateOfNestedTool(tc, streamChunks)) return;
           if (HIDDEN_TOOL_NAMES.has(tc.tool) || GENUI_TOOL_NAMES.has(tc.tool)) return;
 
           steps.push({
@@ -3347,6 +3509,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               }
               // Text chunk
               if (chunk.type === 'text') {
+                if (isTopLevelDuplicateOfNestedText(chunk, streamChunks)) return null;
                 const chunkSegments = extractContentSegments(chunk.content);
                 return (
                   <div
