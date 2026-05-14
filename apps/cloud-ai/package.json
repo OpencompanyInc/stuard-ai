@@ -29,7 +29,6 @@
     "@ai-sdk/google": "^3.0.18",
     "@ai-sdk/openai": "^3.0.23",
     "@ai-sdk/xai": "^3.0.48",
-    "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.2",
     "@elevenlabs/elevenlabs-js": "^2.35.0",
     "@google-cloud/compute": "^6.7.0",
@@ -53,6 +52,9 @@
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.3",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
