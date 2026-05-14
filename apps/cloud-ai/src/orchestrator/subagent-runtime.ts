@@ -11,8 +11,9 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
 import { detectRetryableToolError } from '../routes/proactive-utils';
-import { getWorkflowAgent } from '../agents/workflow-agent';
-import { getModel } from '../agents/stuard/models';
+import { getWorkflowAgent, getWorkflowAgentForUser } from '../agents/workflow-agent';
+import { getModel, getModelForUser } from '../agents/stuard/models';
+import type { ModelSourcePreference } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
 import { mirrorToDesktop } from '../services/vm-stream-mirror';
@@ -291,7 +292,7 @@ export function wrapToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Rec
   return wrapped;
 }
 
-function buildSubagent(
+async function buildSubagent(
   pack: CapabilityPack,
   correlation: SubagentCorrelation,
   model: ModelChoice = 'balanced',
@@ -299,28 +300,48 @@ function buildSubagent(
   bridgeWs?: any,
   bridgeSecrets?: Record<string, any>,
   onQuestion?: (question: SubagentQuestion) => Promise<SubagentAnswer>,
-): Agent {
+  userId?: string | null,
+  modelSource?: ModelSourcePreference | string | null,
+): Promise<Agent> {
   const executionTools = getExecutionToolsLazy();
-  const selectedModel = getModel(model, modelId);
+  const selectedModel = (userId && modelSource)
+    ? await getModelForUser(model, modelId, userId, modelSource)
+    : getModel(model, modelId);
 
   const askTool = makeAskOrchestratorTool(correlation, onQuestion);
   const returnTool = makeReturnControlTool(correlation);
   const progressTool = makeReportProgressTool(correlation);
 
   if (pack.kind === 'workflow') {
-    const workflowAgent = getWorkflowAgent({
-      modelId,
-      includeCreateWorkflow: true,
-      extraTools: {
-        ask_orchestrator: askTool,
-        return_control: returnTool,
-        report_progress: progressTool,
-      },
-      id: `subagent-workflow-${correlation.subagentId.slice(0, 8)}`,
-      name: `${pack.label} Subagent`,
-      bridgeWs,
-      bridgeSecrets,
-    });
+    const workflowAgent = (userId && modelSource)
+      ? await getWorkflowAgentForUser({
+          modelId,
+          includeCreateWorkflow: true,
+          extraTools: {
+            ask_orchestrator: askTool,
+            return_control: returnTool,
+            report_progress: progressTool,
+          },
+          id: `subagent-workflow-${correlation.subagentId.slice(0, 8)}`,
+          name: `${pack.label} Subagent`,
+          bridgeWs,
+          bridgeSecrets,
+          userId,
+          modelSource,
+        })
+      : getWorkflowAgent({
+          modelId,
+          includeCreateWorkflow: true,
+          extraTools: {
+            ask_orchestrator: askTool,
+            return_control: returnTool,
+            report_progress: progressTool,
+          },
+          id: `subagent-workflow-${correlation.subagentId.slice(0, 8)}`,
+          name: `${pack.label} Subagent`,
+          bridgeWs,
+          bridgeSecrets,
+        });
     const toolNames = (workflowAgent as any).__activeToolNames || Object.keys((workflowAgent as any).tools || {});
 
     writeLog('subagent_build', {
@@ -394,6 +415,10 @@ export interface RunSubagentOptions {
   parentRunId: string;
   model?: ModelChoice;
   modelId?: string;
+  /** Acting user, used to resolve BYOK / ChatGPT-subscription credentials. */
+  userId?: string | null;
+  /** Billing source preference to inherit from the parent orchestrator. */
+  modelSource?: ModelSourcePreference | string | null;
   bridgeWs?: any;
   bridgeSecrets?: Record<string, any>;
   /**
@@ -417,6 +442,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     parentRunId,
     model = 'balanced',
     modelId,
+    userId: explicitUserId,
+    modelSource: explicitModelSource,
     bridgeWs: explicitBridgeWs,
     bridgeSecrets: explicitBridgeSecrets,
     chatWs: explicitChatWs,
@@ -500,7 +527,25 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // the desktop flow (where chat and bridge are the same) keeps working.
   const chatWs = explicitChatWs || (bridgeSecrets as any)?.__chatWs || undefined;
 
-  const agent = buildSubagent(pack, correlation, model, modelId, bridgeWs, subagentBridgeSecrets, onQuestion);
+  // Inherit the parent's billing source (subscription / api_key / stuard) so
+  // delegated subagents don't silently fall back to friendly billed inference
+  // when the orchestrator was running on a user's ChatGPT subscription or BYOK.
+  const inheritedUserId = explicitUserId
+    ?? (typeof bridgeSecrets?.userId === 'string' ? bridgeSecrets.userId : undefined);
+  const inheritedModelSource = explicitModelSource
+    ?? (typeof bridgeSecrets?.__modelSource === 'string' ? bridgeSecrets.__modelSource : undefined);
+
+  const agent = await buildSubagent(
+    pack,
+    correlation,
+    model,
+    modelId,
+    bridgeWs,
+    subagentBridgeSecrets,
+    onQuestion,
+    inheritedUserId,
+    inheritedModelSource,
+  );
   const timeoutMs = request.timeoutMs ?? pack.timeoutMs ?? 0;
 
   let prompt = request.instruction;

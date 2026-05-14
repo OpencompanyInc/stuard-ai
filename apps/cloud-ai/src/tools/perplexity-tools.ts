@@ -95,17 +95,82 @@ async function executeXSearch(input: {
 export const web_search = createTool({
   id: 'web_search',
   description:
-    'Search for up-to-date information. Use mode "web" (default) for general web search, or mode "x" to search X (Twitter) posts. Returns concise results with title, URL, and snippet.',
+    [
+      'Search the web for up-to-date information. Returns concise results with title, URL, and snippet.',
+      '',
+      'Modes:',
+      '- mode="web" (default): general web search via Perplexity.',
+      '- mode="x": search X/Twitter posts via Grok x_search.',
+      '',
+      'CRITICAL — query string must be natural language only. The backend does NOT parse Google-style operators:',
+      '- Do NOT write site:, -site:, intitle:, inurl:, OR, AND, quotes for phrase-match. They are treated as literal text and degrade results.',
+      '- Use the structured parameters instead (search_domain_filter, search_recency_filter, search_after_date_filter, etc.).',
+      '',
+      'Domain filtering (search_domain_filter):',
+      '- Pass bare hostnames: ["linkedin.com", "github.com"]. Subdomains work ("blog.example.com"). PATHS DO NOT WORK — "linkedin.com/in" is invalid.',
+      '- Prefix with "-" to exclude: ["-pinterest.com", "-reddit.com"].',
+      '- Max 20 entries. A root domain (example.com) matches all subdomains.',
+      '- LinkedIn, X/Twitter, and other login-gated sites have very sparse coverage; filtering to them often returns zero. Prefer a broad query.',
+      '',
+      'Date filtering: use search_recency_filter for relative ranges, or the absolute MM/DD/YYYY filters for precise windows.',
+    ].join('\n'),
   inputSchema: z.object({
-    query: z.string().min(1).describe('Search query'),
+    query: z
+      .string()
+      .min(1)
+      .describe(
+        'Natural-language search query. Do NOT include site:, OR, quotes, or other Google operators — use the structured filter parameters instead.',
+      ),
     mode: z
       .enum(['web', 'x'])
       .default('web')
       .optional()
-      .describe('Search mode: "web" for general web search (default), "x" for X/Twitter post search'),
-    max_results: z.number().int().min(1).max(10).default(5).optional().describe('Number of results (default 5, max 10). Only used in web mode.'),
-    search_domain_filter: z.array(z.string()).max(10).optional().describe('Domains to include/exclude (prefix with -). Only used in web mode.'),
-    country: z.string().length(2).optional().describe('Country code (e.g. "US"). Only used in web mode.'),
+      .describe('Search mode: "web" for general web search (default, uses Perplexity), "x" for X/Twitter post search (uses Grok).'),
+    max_results: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .default(5)
+      .optional()
+      .describe('Number of web results to return (1-20, default 5). Only used in web mode.'),
+    search_domain_filter: z
+      .array(z.string().max(253))
+      .max(20)
+      .optional()
+      .describe(
+        'Restrict results to these hostnames. Pass bare hosts like "linkedin.com" or subdomains like "blog.example.com" — paths are NOT supported. Prefix with "-" to exclude (e.g. "-pinterest.com"). Max 20. Only used in web mode.',
+      ),
+    country: z
+      .string()
+      .length(2)
+      .optional()
+      .describe('ISO 3166-1 alpha-2 country code (e.g. "US", "GB") for localized results. Only used in web mode.'),
+    search_language_filter: z
+      .array(z.string().length(2))
+      .max(20)
+      .optional()
+      .describe('ISO 639-1 language codes (e.g. ["en", "es"]) to bias results. Max 20. Only used in web mode.'),
+    search_recency_filter: z
+      .enum(['hour', 'day', 'week', 'month', 'year'])
+      .optional()
+      .describe('Relative published-within window. Easier than the absolute date filters for "recent" queries. Only used in web mode.'),
+    search_after_date_filter: z
+      .string()
+      .optional()
+      .describe('Only results published on/after this date. Format: MM/DD/YYYY. Only used in web mode.'),
+    search_before_date_filter: z
+      .string()
+      .optional()
+      .describe('Only results published on/before this date. Format: MM/DD/YYYY. Only used in web mode.'),
+    last_updated_after_filter: z
+      .string()
+      .optional()
+      .describe('Only results last updated on/after this date. Format: MM/DD/YYYY. Only used in web mode.'),
+    last_updated_before_filter: z
+      .string()
+      .optional()
+      .describe('Only results last updated on/before this date. Format: MM/DD/YYYY. Only used in web mode.'),
     // X search specific params
     allowed_x_handles: z.array(z.string()).max(10).optional().describe('Only include posts from these X handles (max 10). Only used in x mode.'),
     excluded_x_handles: z.array(z.string()).max(10).optional().describe('Exclude posts from these X handles (max 10). Only used in x mode.'),
@@ -135,19 +200,53 @@ export const web_search = createTool({
     }
 
     // --- Web search mode (Perplexity) ---
-    const { max_results, search_domain_filter, country } = inputData;
+    const {
+      max_results,
+      search_domain_filter,
+      country,
+      search_language_filter,
+      search_recency_filter,
+      search_after_date_filter,
+      search_before_date_filter,
+      last_updated_after_filter,
+      last_updated_before_filter,
+    } = inputData;
 
     if (!PERPLEXITY_API_KEY) {
       throw new Error('Missing PERPLEXITY_API_KEY configuration');
     }
 
+    const finalQuery = query.trim();
+
+    // Sanitize domain filter: Perplexity rejects entries with paths. Strip any path
+    // accidentally included (e.g. "linkedin.com/in" -> "linkedin.com") and dedupe.
+    const sanitizedDomains = (search_domain_filter ?? [])
+      .map((d) => {
+        if (typeof d !== 'string') return '';
+        const trimmed = d.trim();
+        if (!trimmed) return '';
+        const neg = trimmed.startsWith('-');
+        const bare = neg ? trimmed.slice(1) : trimmed;
+        const host = bare.split('/')[0].split('?')[0].toLowerCase();
+        return host ? (neg ? `-${host}` : host) : '';
+      })
+      .filter((d) => d.length > 0)
+      .filter((d, i, arr) => arr.indexOf(d) === i)
+      .slice(0, 20);
+
     const body: any = {
-      query: query.trim(),
+      query: finalQuery,
       max_results: max_results || 5,
       max_tokens_per_page: 512,
     };
-    if (search_domain_filter) body.search_domain_filter = search_domain_filter;
+    if (sanitizedDomains.length > 0) body.search_domain_filter = sanitizedDomains;
     if (country) body.country = country;
+    if (search_language_filter?.length) body.search_language_filter = search_language_filter;
+    if (search_recency_filter) body.search_recency_filter = search_recency_filter;
+    if (search_after_date_filter) body.search_after_date_filter = search_after_date_filter;
+    if (search_before_date_filter) body.search_before_date_filter = search_before_date_filter;
+    if (last_updated_after_filter) body.last_updated_after_filter = last_updated_after_filter;
+    if (last_updated_before_filter) body.last_updated_before_filter = last_updated_before_filter;
 
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -168,6 +267,13 @@ export const web_search = createTool({
     // Trim results to essential fields only - strip metadata the LLM doesn't need
     const rawResults = Array.isArray((data as any).results) ? (data as any).results : [];
     const trimmedResults = rawResults.map(trimSearchResult);
+    console.log(
+      '[web_search] query=%j domains=%j recency=%j count=%d',
+      finalQuery,
+      sanitizedDomains,
+      search_recency_filter ?? null,
+      trimmedResults.length,
+    );
     return { results: trimmedResults };
   },
 });
