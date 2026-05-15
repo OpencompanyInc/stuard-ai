@@ -1,6 +1,6 @@
 import type React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Circle, CornerDownRight, ListTodo, Paperclip, X } from "lucide-react";
+import { Circle, CornerDownRight, ListTodo, Paperclip, Sparkles, X } from "lucide-react";
 
 interface QueuedMessage {
   id: string;
@@ -9,7 +9,13 @@ interface QueuedMessage {
   attachments?: unknown[];
   contextPaths?: unknown[];
   kind?: "message" | "steer";
+  subagentTarget?: { id: string; kind: string };
 }
+
+const humanizeSubagentKind = (kind: string) =>
+  String(kind || "subagent")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
 interface QueuePanelProps {
   messages: QueuedMessage[];
@@ -52,6 +58,9 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
             {visibleMessages.map((msg, index) => {
               const isFirst = index === 0;
               const isSteer = msg.kind === "steer";
+              const subagentLabel = msg.subagentTarget
+                ? `${humanizeSubagentKind(msg.subagentTarget.kind)} agent`
+                : null;
               const attachmentCount = (Array.isArray(msg.attachments) ? msg.attachments.length : 0)
                 + (Array.isArray(msg.contextPaths) ? msg.contextPaths.length : 0);
 
@@ -66,7 +75,11 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                 >
                   <div className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                     {isSteer ? (
-                      <CornerDownRight className={isFirst ? "w-3.5 h-3.5 text-primary" : "w-3.5 h-3.5 text-theme-muted/70"} />
+                      subagentLabel ? (
+                        <Sparkles className={isFirst ? "w-3.5 h-3.5 text-violet-500" : "w-3.5 h-3.5 text-violet-500/60"} strokeWidth={2.4} />
+                      ) : (
+                        <CornerDownRight className={isFirst ? "w-3.5 h-3.5 text-primary" : "w-3.5 h-3.5 text-theme-muted/70"} />
+                      )
                     ) : (
                       <>
                         <Circle className={isFirst ? "w-3.5 h-3.5 text-primary" : "w-3.5 h-3.5 text-theme-muted/70"} />
@@ -82,6 +95,15 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                         : "text-[12px] font-medium text-theme-muted truncate"}>
                         {msg.text || "Empty message"}
                       </p>
+                      {subagentLabel && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300 text-[9px] font-black uppercase tracking-widest shrink-0 border border-violet-500/15">
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-500 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500" />
+                          </span>
+                          {subagentLabel}
+                        </span>
+                      )}
                       {attachmentCount > 0 && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-theme-muted shrink-0">
                           <Paperclip className="w-3 h-3" />
@@ -91,9 +113,15 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                     </div>
                     {(isSteer || isFirst) && (
                       <div className={isFirst
-                        ? "text-[9px] font-black uppercase tracking-widest text-primary/80"
+                        ? subagentLabel
+                          ? "text-[9px] font-black uppercase tracking-widest text-violet-600/90 dark:text-violet-400/90"
+                          : "text-[9px] font-black uppercase tracking-widest text-primary/80"
                         : "text-[9px] font-bold uppercase tracking-widest text-theme-muted/70"}>
-                        {isSteer ? "Applies next step" : "Up next"}
+                        {isSteer
+                          ? subagentLabel
+                            ? `Nudges ${subagentLabel} at next step`
+                            : "Applies next step"
+                          : "Up next"}
                       </div>
                     )}
                   </div>

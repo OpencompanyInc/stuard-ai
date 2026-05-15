@@ -641,7 +641,7 @@ export const search_workflow_nodes = createTool({
         query: z.string().optional().describe('Free-text query for semantic node search.'),
         category: z.string().optional().describe('Filter nodes to a specific category.'),
         kind: z.string().optional().describe('Filter nodes to a specific kind (local, cloud, orchestration).'),
-        limit: z.number().int().positive().max(20).default(8).optional().describe('Maximum number of nodes to return.'),
+        limit: z.number().int().positive().max(3).default(3).optional().describe('Maximum number of nodes to return (capped at 3).'),
         includeSchema: z.boolean().default(true).optional().describe('Whether to include input/output schema details.'),
     }),
     outputSchema: z.object({

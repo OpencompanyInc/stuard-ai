@@ -3,6 +3,7 @@
   useMemo,
   useState,
   useEffect,
+  useCallback,
 } from "react";
 import { clsx } from "clsx";
 import { Sparkles } from "lucide-react";
@@ -28,6 +29,8 @@ import { buildContextUsageMetrics } from "../utils/contextUsage";
 import { useFileNavigator } from "../hooks/useFileNavigator";
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
 
+const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
+
 interface ChatViewProps {
   messages: any[];
   currentResponse?: string;
@@ -51,6 +54,12 @@ interface ChatViewProps {
   setQuery: (q: string) => void;
   onSend: () => void;
   onSteer?: () => void;
+  // Steer target dropdown — list of running delegated subagents in this tab,
+  // plus whichever one is currently selected. 'orchestrator' means the steer
+  // composer nudges the parent turn instead of any subagent.
+  activeSubagents?: Array<{ id: string; kind: string }>;
+  steerTarget?: string;
+  onSteerTargetChange?: (target: string) => void;
   onStop?: () => void;
   isStreaming?: boolean;
   isRecording?: boolean;
@@ -174,6 +183,9 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   setQuery,
   onSend,
   onSteer,
+  activeSubagents = [],
+  steerTarget,
+  onSteerTargetChange,
   onStop,
   isStreaming,
   voiceActive,
@@ -256,6 +268,89 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const subagentDash = useSubagentDashboard(
     activeChatTab?.serverId || undefined,
   );
+
+  // Merge cloud-ai delegated agents (passed in via props) with running
+  // Python local agents (polled from the dashboard) so the composer's steer
+  // dropdown can target either. The id namespaces don't collide: cloud-ai
+  // uses 'sa-*' and Python uses uuid4 strings, so steer routing on the
+  // parent side can dispatch by prefix.
+  const combinedActiveSubagents = useMemo(() => {
+    const list: Array<{ id: string; kind: string }> = activeSubagents.map(
+      (s) => ({ id: s.id, kind: s.kind }),
+    );
+    const seen = new Set(list.map((s) => s.id));
+    for (const task of subagentDash.tasks || []) {
+      if (task.status !== "running" || seen.has(task.id)) continue;
+      // Python tasks don't carry a kind — fall back to the truncated objective
+      // so the user sees something meaningful in the dropdown.
+      const objective = (task.objective || "").trim();
+      const label =
+        objective.length > 0
+          ? objective.slice(0, 36) + (objective.length > 36 ? "…" : "")
+          : "headless";
+      list.push({ id: task.id, kind: label });
+      seen.add(task.id);
+    }
+    return list;
+  }, [activeSubagents, subagentDash.tasks]);
+
+  const cloudSubagentIds = useMemo(
+    () => new Set(activeSubagents.map((s) => s.id)),
+    [activeSubagents],
+  );
+
+  const handleSteerFromComposer = useCallback(() => {
+    const target = steerTarget || "orchestrator";
+    if (target === "orchestrator" || cloudSubagentIds.has(target)) {
+      onSteer?.();
+      return;
+    }
+
+    const localTask = subagentDash.tasks.find(
+      (task) => task.id === target && task.status === "running",
+    );
+    if (!localTask) {
+      onSteer?.();
+      return;
+    }
+
+    const message = query.trim();
+    if (!message || attachments.length > 0 || contextPaths.length > 0 || !isStreaming) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const res = await fetch(`${AGENT_HTTP}/v1/subagents/${target}/steer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          console.error(
+            "[ChatView] Failed to steer local subagent",
+            data?.error || res.statusText,
+          );
+          return;
+        }
+        setQuery("");
+        subagentDash.refresh();
+      } catch (err) {
+        console.error("[ChatView] Failed to steer local subagent", err);
+      }
+    })();
+  }, [
+    attachments.length,
+    cloudSubagentIds,
+    contextPaths.length,
+    isStreaming,
+    onSteer,
+    query,
+    setQuery,
+    steerTarget,
+    subagentDash,
+  ]);
 
   // Listen for view mode change events (e.g., from bookmark shortcuts)
   useEffect(() => {
@@ -511,7 +606,10 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               query={query}
               setQuery={setQuery}
               onSend={onSend}
-              onSteer={onSteer}
+              onSteer={handleSteerFromComposer}
+              activeSubagents={combinedActiveSubagents}
+              steerTarget={steerTarget}
+              onSteerTargetChange={onSteerTargetChange}
               onStop={onStop}
               isStreaming={isStreaming}
               voiceActive={voiceActive}
@@ -710,7 +808,10 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               query={query}
               setQuery={setQuery}
               onSend={onSend}
-              onSteer={onSteer}
+              onSteer={handleSteerFromComposer}
+              activeSubagents={combinedActiveSubagents}
+              steerTarget={steerTarget}
+              onSteerTargetChange={onSteerTargetChange}
               onStop={onStop}
               isStreaming={isStreaming}
               voiceActive={voiceActive}

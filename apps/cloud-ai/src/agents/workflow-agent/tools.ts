@@ -243,15 +243,24 @@ export const loadWorkflow = createTool({
 
 export const inspectWorkflow = createTool({
   id: 'inspect_workflow',
-  description: 'Inspect workflow topology. Use this for overview, full selected node/trigger details plus surrounding topology, or a single wire lookup.',
+  description:
+    'Inspect workflow topology. Use mode="overview" for a summary; "node_flow" with nodeId for node details + surrounding topology; "trigger_flow" with triggerId for trigger details; "wire" with from/to (or index) for a single wire lookup. Pass null for unused fields.',
+  // Schema is laid out for OpenAI strict mode (required by GPT-5 / Responses API
+  // with strict tool schemas): every property is in `required`, optional fields
+  // are `.nullable()` instead of `.optional()`. Without this, OpenAI rejects
+  // tool calls or omits the call entirely, which is what made inspect_workflow
+  // appear "broken" on GPT-5 while Gemini accepted it fine.
   inputSchema: z.object({
     mode: z.enum(['overview', 'node_flow', 'trigger_flow', 'wire']),
-    nodeId: z.string().optional(),
-    triggerId: z.string().optional(),
-    from: z.string().optional(),
-    to: z.string().optional(),
-    index: z.number().int().min(0).optional(),
+    nodeId: z.string().nullable(),
+    triggerId: z.string().nullable(),
+    from: z.string().nullable(),
+    to: z.string().nullable(),
+    index: z.number().int().min(0).nullable(),
   }),
+  // Output schema is internal-only — it validates the tool's return value
+  // before it's serialized for the model. OpenAI strict mode does not apply to
+  // outputs, so `.optional()` is fine here and keeps the return shape relaxed.
   outputSchema: z.object({
     ok: z.boolean(),
     summary: z.string().optional(),
@@ -263,7 +272,16 @@ export const inspectWorkflow = createTool({
     error: z.string().optional(),
   }),
   execute: async (inputData) => {
-    const { mode, nodeId, triggerId, from, to, index } = inputData as any;
+    const raw = inputData as any;
+    // Schema is nullable for OpenAI strict mode — coerce nulls back to
+    // undefined so downstream helpers (getWireBySelector, typeof checks) work
+    // unchanged.
+    const mode = raw?.mode;
+    const nodeId = raw?.nodeId ?? undefined;
+    const triggerId = raw?.triggerId ?? undefined;
+    const from = raw?.from ?? undefined;
+    const to = raw?.to ?? undefined;
+    const index = raw?.index ?? undefined;
     wfLog('inspect_workflow', { mode, nodeId, triggerId, from, to, index });
 
     const workflow = getSessionWorkflow() || (workflowMap.size === 1 ? Array.from(workflowMap.values())[0] : null);

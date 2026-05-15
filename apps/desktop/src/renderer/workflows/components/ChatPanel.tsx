@@ -265,6 +265,7 @@ export interface ToolEvent {
 
 export type StreamItem =
   | { type: 'text'; content: string }
+  | { type: 'reasoning'; content: string }
   | { type: 'tool'; event: ToolEvent };
 
 // Helper to safely parse partial or full JSON args for workflow_modify
@@ -1100,7 +1101,7 @@ export function ChatPanel({
 
               {/* Tools & Content */}
               {streamItems.map((item, i) => (
-                item.type === 'text' ? (
+                item.type === 'reasoning' ? null : item.type === 'text' ? (
                   <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.08] text-white/80 shadow-sm text-sm leading-relaxed">
                     <ReactMarkdown 
                       remarkPlugins={[remarkGfm, remarkMath]} 

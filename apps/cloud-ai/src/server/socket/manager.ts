@@ -11,6 +11,7 @@ import { registerConnection, getDesktopWs, type ClientType } from '../../service
 import { sendVMTerminalCommand } from '../../services/vm-command';
 import { verifyVMToken } from '../../services/vm-tokens';
 import { enqueueInterjection } from './state';
+import { enqueueSubagentSteer, isSubagentRunning } from '../../orchestrator/subagent-runtime';
 
 // State maps
 const wsAlive = new WeakMap<WebSocket, boolean>();
@@ -154,6 +155,28 @@ export class SocketManager {
         depth,
         message: depth > 0 ? 'queued for next step' : 'empty interjection',
         requestId: steerRequestId,
+      });
+      return;
+    }
+
+    if (kind === 'subagent_steer') {
+      const subagentId = typeof msg?.subagentId === 'string' ? msg.subagentId.trim() : '';
+      const text = typeof msg?.text === 'string' ? msg.text : '';
+      const requestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
+      const subagentAlive = subagentId ? isSubagentRunning(subagentId) : false;
+      const depth = subagentId && subagentAlive ? enqueueSubagentSteer(subagentId, text) : 0;
+      let ackMessage: string;
+      if (!subagentId) ackMessage = 'subagentId required';
+      else if (!subagentAlive) ackMessage = 'subagent_not_running';
+      else if (depth === 0) ackMessage = 'empty steer';
+      else ackMessage = 'queued for next subagent step';
+      this.send(ws, {
+        type: 'subagent_steer_ack',
+        subagentId,
+        accepted: depth > 0,
+        depth,
+        message: ackMessage,
+        requestId,
       });
       return;
     }

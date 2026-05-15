@@ -5,10 +5,16 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import clsx from "clsx";
-import { User, Bot, AlertCircle, CheckCircle2, RotateCw, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check, Shield } from "lucide-react";
+import { User, Bot, AlertCircle, CheckCircle2, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check, Shield, ArrowRight, Box } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
-import { ReasoningBlock } from "../../../components/ReasoningBlock";
+import { Shimmer } from "../../../components/ai-elements/Shimmer";
+import {
+  ChainOfThought,
+  ChainOfThoughtHeader,
+  ChainOfThoughtContent,
+  ChainOfThoughtStep,
+} from "../../../components/ai-elements/ChainOfThought";
 import type { Message, StreamItem, ToolEvent, WorkflowApprovalRequest } from "../../hooks/useWorkflowChat";
 import { prepareMarkdownForDisplay } from "../../../utils/text";
 
@@ -211,6 +217,89 @@ function formatToolName(name: string): string {
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function getFilenameFromPath(p: string): string {
+  return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p;
+}
+
+// Inline code chip for tool args (filename, command, URL, etc.)
+const InlineCodeChip: React.FC<{ children: React.ReactNode; title?: string; max?: number }> = ({ children, title, max = 56 }) => {
+  const text = typeof children === 'string' ? children : String(children ?? '');
+  const display = text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return (
+    <code
+      title={title || (typeof children === 'string' ? children : undefined)}
+      className="wf-bg-overlay wf-fg-muted px-[5px] py-[1px] rounded-md text-[10px] font-mono align-baseline border wf-border-subtle"
+    >
+      {display}
+    </code>
+  );
+};
+
+// Action-oriented label for a tool call (mirrors main agent CoT). Falls back to the
+// humanized tool name when no recognizable args are present.
+function getToolLabel(tool: string, args: any): React.ReactNode {
+  const a = (args && typeof args === 'object') ? args : {};
+  const path = typeof a.path === 'string' ? a.path : (typeof a.filePath === 'string' ? a.filePath : null);
+  const filename = path ? getFilenameFromPath(path) : null;
+  switch (tool) {
+    case 'workspace_write_file':
+    case 'write_file': {
+      if (!filename) break;
+      return <span>{a.append ? 'Appended to' : 'Wrote'} <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'workspace_read_file':
+    case 'read_file':
+    case 'file_read': {
+      if (!filename) break;
+      return <span>Read <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'workspace_delete_file':
+    case 'delete_file': {
+      if (!filename) break;
+      return <span>Deleted <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'workspace_create_folder':
+    case 'create_directory': {
+      if (!filename) break;
+      return <span>Created folder <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'workspace_list':
+    case 'list_directory': {
+      if (!filename) break;
+      return <span>Listed <InlineCodeChip title={path || undefined}>{filename}</InlineCodeChip></span>;
+    }
+    case 'web_search': {
+      const q = typeof a.query === 'string' ? a.query : (typeof a.q === 'string' ? a.q : null);
+      return q ? <span>Searched the web for <InlineCodeChip max={48}>{q}</InlineCodeChip></span> : 'Searched the web';
+    }
+    case 'scrape_url': {
+      const url = typeof a.url === 'string' ? a.url : null;
+      if (!url) break;
+      let host = url;
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { }
+      return <span>Scraped <InlineCodeChip title={url}>{host}</InlineCodeChip></span>;
+    }
+    case 'run_command':
+    case 'run_terminal_command': {
+      const cmd = typeof a.command === 'string' ? a.command : null;
+      return cmd ? <span>Ran <InlineCodeChip max={56}>{cmd}</InlineCodeChip></span> : 'Ran command';
+    }
+    case 'workflow_modify':
+    case 'modify_workflow':
+      return 'Modifying workflow';
+    case 'create_workflow':
+      return 'Creating workflow';
+    case 'run_workflow':
+    case 'invoke_workflow':
+      return 'Running workflow';
+    case 'analyze_media':
+      return 'Analyzed media';
+    case 'get_local_time':
+      return 'Checked the time';
+  }
+  return formatToolName(tool);
+}
+
 const PermissionBar = ({
   approval,
   count,
@@ -352,7 +441,7 @@ const ModifyWorkflowView = ({
       {showPending && (
         <div className="bg-transparent p-3 whitespace-pre-wrap break-words">
           <div className="text-[11px] flex items-center gap-2 wf-fg-muted">
-            <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
             Processing workflow changes...
           </div>
         </div>
@@ -378,8 +467,365 @@ const ModifyWorkflowView = ({
   );
 };
 
-const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any) => void }) => {
-  // execute_tool is a wrapper — show the actual tool being executed
+// --- Custom Tool Output Renderers ---
+// Mirrors the visual language of the main chat's ToolTraceContent: small
+// chips/pills for metadata, dedicated cards per tool, mono-spaced previews,
+// muted box backgrounds. Per-tool views surface the actually useful field
+// instead of dumping JSON.
+
+const PreviewBadge: React.FC<{ label: string; value: string; tone?: 'default' | 'accent' | 'success' | 'warn' }> = ({ label, value, tone = 'default' }) => {
+  const toneStyle: Record<string, React.CSSProperties> = {
+    default: {
+      backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 14%, transparent)',
+      color: 'color-mix(in srgb, var(--foreground, #fff) 80%, transparent)',
+    },
+    accent: {
+      backgroundColor: 'color-mix(in srgb, #3b82f6 20%, transparent)',
+      color: '#60a5fa',
+    },
+    success: {
+      backgroundColor: 'color-mix(in srgb, #10b981 18%, transparent)',
+      color: '#6ee7b7',
+    },
+    warn: {
+      backgroundColor: 'color-mix(in srgb, #f59e0b 20%, transparent)',
+      color: '#fcd34d',
+    },
+  };
+  return (
+    <div
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] leading-5"
+      style={toneStyle[tone]}
+    >
+      <span className="opacity-70">{label}</span>
+      <span className="truncate font-medium">{value}</span>
+    </div>
+  );
+};
+
+// Visual node card used by inspect_workflow's node_flow / trigger_flow modes.
+// Shows incoming wires as left-side arrows feeding into the focused node card,
+// outgoing wires as right-side arrows exiting it. Tries to make the topology
+// glanceable instead of forcing the user to mentally parse JSON.
+const InspectNodeFlowCard: React.FC<{ flow: any; kind: 'node' | 'trigger' }> = ({ flow, kind }) => {
+  const focusId: string = String(flow?.id || flow?.element?.id || flow?.element?.elementId || '');
+  const element = flow?.element || flow;
+  const type: string = String(element?.type || element?.tool || element?.kind || '');
+  const name: string = String(element?.name || element?.label || '');
+  const incoming = Array.isArray(flow?.incoming) ? flow.incoming : Array.isArray(flow?.incomingWires) ? flow.incomingWires : [];
+  const outgoing = Array.isArray(flow?.outgoing) ? flow.outgoing : Array.isArray(flow?.outgoingWires) ? flow.outgoingWires : [];
+
+  const wireLine = (w: any, side: 'in' | 'out') => {
+    const other = side === 'in' ? (w?.from || w?.source || w?.id) : (w?.to || w?.target || w?.id);
+    const guard = w?.guard || w?.condition || w?.classifications?.[0];
+    return (
+      <div className="flex items-center gap-1.5 py-0.5">
+        {side === 'in' ? (
+          <ArrowRight className="w-3 h-3 shrink-0" style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 60%, transparent)' }} />
+        ) : (
+          <ArrowRight className="w-3 h-3 shrink-0 rotate-0" style={{ color: 'color-mix(in srgb, #3b82f6 75%, transparent)' }} />
+        )}
+        <span className="font-mono text-[11px] wf-fg-muted truncate">{String(other || '?')}</span>
+        {guard && (
+          <span className="font-mono text-[10px] wf-fg-faint truncate" title={String(guard)}>
+            [{typeof guard === 'string' ? guard : 'guard'}]
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      {incoming.length > 0 && (
+        <div className="rounded-lg border wf-border-subtle wf-bg-sunken px-3 py-2">
+          <div className="text-[9px] font-bold uppercase tracking-wider wf-fg-faint mb-1">Incoming · {incoming.length}</div>
+          {incoming.slice(0, 6).map((w: any, i: number) => <div key={i}>{wireLine(w, 'in')}</div>)}
+          {incoming.length > 6 && <div className="text-[10px] wf-fg-faint mt-0.5">… +{incoming.length - 6} more</div>}
+        </div>
+      )}
+
+      <div
+        className="rounded-xl px-3 py-2.5 shadow-sm"
+        style={{
+          backgroundColor: 'color-mix(in srgb, #3b82f6 14%, transparent)',
+          border: '1px solid color-mix(in srgb, #3b82f6 35%, transparent)',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Box className="w-3.5 h-3.5 shrink-0" style={{ color: '#60a5fa' }} />
+          <span className="font-mono text-[12px] font-semibold" style={{ color: '#bfdbfe' }}>{focusId || '(unknown)'}</span>
+          {kind === 'trigger' && <PreviewBadge label="kind" value="trigger" tone="accent" />}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {type && <PreviewBadge label="type" value={type} />}
+          {name && name !== focusId && <PreviewBadge label="name" value={name} />}
+        </div>
+      </div>
+
+      {outgoing.length > 0 && (
+        <div className="rounded-lg border wf-border-subtle wf-bg-sunken px-3 py-2">
+          <div className="text-[9px] font-bold uppercase tracking-wider wf-fg-faint mb-1">Outgoing · {outgoing.length}</div>
+          {outgoing.slice(0, 6).map((w: any, i: number) => <div key={i}>{wireLine(w, 'out')}</div>)}
+          {outgoing.length > 6 && <div className="text-[10px] wf-fg-faint mt-0.5">… +{outgoing.length - 6} more</div>}
+        </div>
+      )}
+
+      {incoming.length === 0 && outgoing.length === 0 && (
+        <div className="rounded-lg border wf-border-subtle wf-bg-sunken px-3 py-2 text-[11px] wf-fg-faint">
+          No wires connected to this {kind}.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const InspectWireCard: React.FC<{ wire: any }> = ({ wire }) => {
+  const from = wire?.from || wire?.source || '?';
+  const to = wire?.to || wire?.target || '?';
+  const type = wire?.type || wire?.classifications?.[0];
+  const guard = wire?.guard || wire?.condition;
+  return (
+    <div
+      className="rounded-xl px-3 py-2.5"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--foreground-muted, #a6a6a6) 18%, transparent)',
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[12px] wf-fg-muted truncate">{String(from)}</span>
+        <ArrowRight className="w-3.5 h-3.5 shrink-0" style={{ color: '#60a5fa' }} />
+        <span className="font-mono text-[12px] wf-fg truncate">{String(to)}</span>
+      </div>
+      {(type || guard) && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {type && <PreviewBadge label="type" value={String(type)} tone="accent" />}
+          {guard && <PreviewBadge label="guard" value={typeof guard === 'string' ? guard : 'expression'} />}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const InspectOverviewView: React.FC<{ result: any }> = ({ result }) => {
+  const summary = typeof result?.summary === 'string' ? result.summary : '';
+  const v = result?.validation;
+  const errors = Array.isArray(v?.issues) ? v.issues.filter((i: any) => i?.type === 'error').length : 0;
+  const warnings = Array.isArray(v?.issues) ? v.issues.filter((i: any) => i?.type === 'warning').length : 0;
+  const t = result?.topology || {};
+  const nodes = typeof t?.nodes === 'number' ? t.nodes : (Array.isArray(t?.nodes) ? t.nodes.length : undefined);
+  const triggers = typeof t?.triggers === 'number' ? t.triggers : (Array.isArray(t?.triggers) ? t.triggers.length : undefined);
+  const wires = typeof t?.wires === 'number' ? t.wires : (Array.isArray(t?.wires) ? t.wires.length : undefined);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {triggers !== undefined && <PreviewBadge label="triggers" value={String(triggers)} />}
+        {nodes !== undefined && <PreviewBadge label="nodes" value={String(nodes)} />}
+        {wires !== undefined && <PreviewBadge label="wires" value={String(wires)} />}
+        {errors > 0 && <PreviewBadge label="errors" value={String(errors)} tone="warn" />}
+        {warnings > 0 && <PreviewBadge label="warnings" value={String(warnings)} tone="warn" />}
+        {errors === 0 && warnings === 0 && v && <PreviewBadge label="status" value="clean" tone="success" />}
+      </div>
+      {summary && (
+        <div
+          className="overflow-auto scrollbar-minimal rounded-lg px-3 py-2 text-[10.5px] leading-[1.55] max-h-64"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--foreground-muted, #a6a6a6) 15%, transparent)',
+          }}
+        >
+          <pre className="font-mono whitespace-pre wf-fg-muted">{summary}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const InspectWorkflowOutput: React.FC<{ args: any; result: any }> = ({ args, result }) => {
+  const mode = String(args?.mode || 'overview');
+  if (mode === 'overview') return <InspectOverviewView result={result} />;
+  if (mode === 'node_flow' && result?.nodeFlow) return <InspectNodeFlowCard flow={result.nodeFlow} kind="node" />;
+  if (mode === 'trigger_flow' && result?.triggerFlow) return <InspectNodeFlowCard flow={result.triggerFlow} kind="trigger" />;
+  if (mode === 'wire' && result?.wire) return <InspectWireCard wire={result.wire} />;
+  // Unknown mode but we got something — still try overview shape.
+  if (typeof result?.summary === 'string') return <InspectOverviewView result={result} />;
+  return null;
+};
+
+// Search-style tool outputs: render each hit as a small card with a title and
+// optional snippet. Used by search_workflow_docs, search_workflow_nodes,
+// search_tools, list_workflows. web_search gets its own favicon-chip view.
+const SearchResultCard: React.FC<{ item: any }> = ({ item }) => {
+  const title = String(item?.title || item?.name || item?.id || item?.label || item?.path || '').trim();
+  const desc = String(item?.description || item?.snippet || item?.summary || item?.content || '').trim();
+  const category = item?.category || item?.kind;
+  return (
+    <div
+      className="rounded-lg px-2.5 py-1.5"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--foreground-muted, #a6a6a6) 14%, transparent)',
+      }}
+    >
+      <div className="flex items-center gap-1.5">
+        {title && <span className="text-[11.5px] font-semibold wf-fg truncate" title={title}>{title}</span>}
+        {category && <PreviewBadge label="" value={String(category)} />}
+      </div>
+      {desc && (
+        <div
+          className="mt-0.5 text-[10.5px] leading-[1.5]"
+          style={{ color: 'color-mix(in srgb, var(--foreground, #fff) 60%, transparent)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+        >
+          {desc}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SearchResultsOutput: React.FC<{ result: any }> = ({ result }) => {
+  const items: any[] = Array.isArray(result?.results) ? result.results
+    : Array.isArray(result?.matches) ? result.matches
+    : Array.isArray(result?.hits) ? result.hits
+    : Array.isArray(result?.items) ? result.items
+    : Array.isArray(result?.nodes) ? result.nodes
+    : Array.isArray(result?.workflows) ? result.workflows
+    : Array.isArray(result?.sections) ? result.sections
+    : Array.isArray(result?.tools) ? result.tools
+    : [];
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[9px] font-bold uppercase tracking-wider wf-fg-faint">{items.length} result{items.length === 1 ? '' : 's'}</div>
+      <div className="space-y-1">
+        {items.slice(0, 6).map((it: any, i: number) => <SearchResultCard key={i} item={it} />)}
+      </div>
+      {items.length > 6 && <div className="text-[10px] wf-fg-faint">… +{items.length - 6} more</div>}
+    </div>
+  );
+};
+
+// Favicon-chip web search results, mirrors WebSearchSources from the main chat.
+function faviconUrl(siteUrl: string): string {
+  try {
+    const host = new URL(siteUrl).hostname;
+    return `https://www.google.com/s2/favicons?sz=32&domain=${host}`;
+  } catch {
+    return '';
+  }
+}
+
+const WebSearchSourcesView: React.FC<{ query?: string; result: any }> = ({ query, result }) => {
+  const arr: any[] = Array.isArray(result?.results) ? result.results
+    : Array.isArray(result?.sources) ? result.sources
+    : Array.isArray(result?.data) ? result.data
+    : [];
+  const sources = arr
+    .filter((it): it is Record<string, any> => it && typeof it === 'object' && typeof it.url === 'string')
+    .map((it) => ({ title: String(it.title || ''), url: String(it.url) }));
+  if (sources.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {query && <div className="text-[11.5px] wf-fg-muted">{query}</div>}
+      <div className="flex flex-wrap gap-1.5">
+        {sources.slice(0, 8).map((s) => {
+          let host = s.url;
+          try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch { }
+          return (
+            <a
+              key={s.url}
+              href={s.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10.5px] font-medium wf-fg-muted hover:opacity-80 transition-opacity"
+              style={{ backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 14%, transparent)' }}
+              title={s.title || host}
+            >
+              <img src={faviconUrl(s.url)} alt="" className="h-3 w-3 rounded-sm" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              {host}
+            </a>
+          );
+        })}
+        {sources.length > 8 && <span className="self-center text-[10px] wf-fg-faint">+{sources.length - 8} more</span>}
+      </div>
+    </div>
+  );
+};
+
+const GenericJSONOutput: React.FC<{ result: any }> = ({ result }) => {
+  const text = useMemo(() => {
+    try { return JSON.stringify(result, null, 2); } catch { return String(result ?? ''); }
+  }, [result]);
+  if (!text || text === 'null' || text === '{}') return null;
+  return (
+    <div
+      className="overflow-auto scrollbar-minimal rounded-lg px-3 py-2 text-[10px] font-mono leading-[1.55] max-h-48 whitespace-pre"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--foreground-muted, #a6a6a6) 14%, transparent)',
+        color: 'color-mix(in srgb, var(--foreground, #fff) 65%, transparent)',
+      }}
+    >
+      {text}
+    </div>
+  );
+};
+
+// Dispatches to a tool-specific output renderer when the tool completed
+// successfully. Falls back to a compact JSON view otherwise.
+const ToolOutputView: React.FC<{ tool: string; args: any; result: any }> = ({ tool, args, result }) => {
+  if (!result) return null;
+  const t = tool.toLowerCase();
+  if (t === 'inspect_workflow') {
+    const view = <InspectWorkflowOutput args={args} result={result} />;
+    if (view) return view;
+  }
+  if (t === 'web_search') {
+    const view = <WebSearchSourcesView query={args?.query || args?.q} result={result} />;
+    if (view) return view;
+  }
+  if (t === 'search_workflow_docs' || t === 'search_workflow_nodes' || t === 'search_tools' || t === 'list_workflows') {
+    const view = <SearchResultsOutput result={result} />;
+    if (view) return view;
+  }
+  return <GenericJSONOutput result={result} />;
+};
+
+// --- Chain of Thought (assistant trace) ---
+// Single collapsible container per assistant message that holds reasoning
+// chunks and tool calls in the order they occurred. Mirrors the main chat's
+// AssistantTracePanel (apps/desktop/src/renderer/components/MessageBubble.tsx).
+
+type WfTraceStep =
+  | { kind: 'reasoning'; id: string; content: string; status: 'active' | 'complete' }
+  | { kind: 'tool'; id: string; evt: ToolEvent };
+
+function summarizeReasoningLabel(content: string, fallback = 'Planning next moves'): string {
+  const plain = content
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!plain) return fallback;
+  const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
+  if (sentence.split(' ').length < 2) return fallback;
+  return sentence.length > 72 ? `${sentence.slice(0, 71)}…` : sentence;
+}
+
+function formatDurationSec(s: number): string {
+  if (s < 60) return `${Math.floor(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+}
+
+// Per-step row that renders a tool call inside the chain of thought.
+const WfToolStep: React.FC<{
+  evt: ToolEvent;
+  isLast: boolean;
+  isStreaming: boolean;
+  onUndo?: (snapshot: any) => void;
+}> = ({ evt, isLast, isStreaming, onUndo }) => {
   const rawTool = evt.tool === 'execute_tool' && (evt.args?.tool_name || evt.argsText)
     ? (evt.args?.tool_name || (() => { try { return JSON.parse(evt.argsText || '{}').tool_name; } catch { return evt.tool; } })())
     : evt.tool;
@@ -395,67 +841,170 @@ const ToolCallItem = ({ evt, onUndo }: { evt: ToolEvent; onUndo?: (snapshot: any
   }, [evt.args, evt.argsText, isModify]);
 
   const resultFailed = evt.result && evt.result.ok === false;
-  const resultError = evt.result?.error;
+  const status = String(evt.status || '').toLowerCase();
+  const isCompleted = status === 'completed' && !resultFailed;
+  const isErrored = status === 'error' || status === 'failed' || resultFailed;
+  const isActive = !isCompleted && !isErrored;
 
-  const isRunning =
-    !resultFailed && evt.status !== 'completed' && evt.status !== 'error' && evt.status !== 'failed';
+  const stepStatus: 'active' | 'complete' | 'error' = isErrored ? 'error' : isCompleted ? 'complete' : 'active';
+  const richLabel = getToolLabel(rawTool || evt.tool, args);
 
-  if (isModify) {
-    return (
-      <div className="mb-4">
+  return (
+    <ChainOfThoughtStep
+      status={stepStatus}
+      isLast={isLast}
+      label={
+        isActive && isStreaming ? (
+          <Shimmer as="span" duration={2.4} spread={3}>{richLabel as any}</Shimmer>
+        ) : (richLabel as any)
+      }
+    >
+      {isModify ? (
         <ModifyWorkflowView
           args={args}
           result={evt.result}
           workflowBefore={evt.workflowBefore}
           onUndo={onUndo}
         />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mb-2 group">
-      <div className="flex items-center gap-2 py-1">
-        <span
-          className="block w-1.5 h-1.5 shrink-0 rounded-full"
-          style={{
-            backgroundColor: resultFailed
-              ? '#f59e0b'
-              : evt.status === 'completed' ? 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 40%, transparent)'
-              : evt.status === 'error' || evt.status === 'failed' ? '#ef4444'
-              : 'color-mix(in srgb, var(--foreground, #fff) 40%, transparent)',
-          }}
-        />
-        <span
-          className="text-[12px] leading-5"
-          style={{ color: 'color-mix(in srgb, var(--foreground, #fff) 68%, transparent)' }}
-        >
-          {formatToolName(rawTool || evt.tool)}
-        </span>
-        {isRunning && (
-          <RotateCw className="w-3 h-3 animate-spin" style={{ color: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 50%, transparent)' }} />
-        )}
-      </div>
-
-      {resultFailed && resultError && (
+      ) : isErrored && (evt.result?.error || resultFailed) ? (
         <div
-          className="ml-3.5 mt-1 rounded-lg px-3 py-2 text-[11px] flex gap-2"
-          style={{ backgroundColor: 'color-mix(in srgb, #f59e0b 8%, transparent)', color: '#f59e0b' }}
+          className="rounded-lg px-3 py-2 text-[11px] leading-relaxed flex gap-2"
+          style={{ backgroundColor: 'color-mix(in srgb, #ef4444 12%, transparent)', color: '#fca5a5' }}
         >
           <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
-          <span>{resultError}</span>
+          <span>{evt.result?.error || 'Tool failed'}</span>
         </div>
-      )}
+      ) : isCompleted && evt.result ? (
+        <ToolOutputView tool={rawTool || evt.tool} args={args} result={evt.result} />
+      ) : null}
 
+      {/* File paths surface as quick-action chips below the tool body */}
       {evt.result && (() => {
         const filePaths = extractFilePaths(evt.result);
         return filePaths.length > 0 ? (
-          <div className="flex flex-col gap-0.5 ml-3.5 mt-1">
+          <div className="mt-1.5 flex flex-col gap-0.5">
             {filePaths.map((fp) => <FilePathActions key={fp} filePath={fp} />)}
           </div>
         ) : null;
       })()}
-    </div>
+    </ChainOfThoughtStep>
+  );
+};
+
+// Per-step row for reasoning content. Renders the prose in a muted box,
+// just like the main chat's reasoning steps.
+const WfReasoningStep: React.FC<{
+  content: string;
+  isLast: boolean;
+  isStreaming: boolean;
+  isLastReasoning: boolean;
+}> = ({ content, isLast, isStreaming, isLastReasoning }) => {
+  const active = isStreaming && isLastReasoning;
+  const label = summarizeReasoningLabel(content);
+  return (
+    <ChainOfThoughtStep
+      status={active ? 'active' : 'complete'}
+      isLast={isLast}
+      label={
+        active ? (
+          <Shimmer as="span" duration={2.4} spread={3}>{label}</Shimmer>
+        ) : label
+      }
+    >
+      {content && (
+        <div
+          className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed break-words prose prose-sm max-w-none prose-p:my-1 prose-headings:font-semibold prose-headings:text-[12px] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px] prose-strong:font-semibold"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 10%, transparent)',
+            color: 'color-mix(in srgb, var(--foreground, #fff) 62%, transparent)',
+          }}
+        >
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+          >
+            {content}
+          </ReactMarkdown>
+        </div>
+      )}
+    </ChainOfThoughtStep>
+  );
+};
+
+const WorkflowAssistantTrace: React.FC<{
+  parts: StreamItem[];
+  reasoningText?: string;
+  reasoningDuration?: number;
+  isStreaming: boolean;
+  defaultOpen?: boolean;
+  onUndo?: (snapshot: any) => void;
+}> = ({ parts, reasoningText, reasoningDuration, isStreaming, defaultOpen, onUndo }) => {
+  const steps = useMemo<WfTraceStep[]>(() => {
+    const out: WfTraceStep[] = [];
+    let lastReasoningIdx = -1;
+    parts.forEach((it, i) => {
+      if (it.type === 'reasoning') {
+        out.push({ kind: 'reasoning', id: `r-${i}`, content: it.content, status: 'complete' });
+        lastReasoningIdx = out.length - 1;
+      } else if (it.type === 'tool') {
+        out.push({ kind: 'tool', id: it.event.id || `t-${i}`, evt: it.event });
+      }
+    });
+    // Fallback when only a flat reasoning string is available (legacy messages).
+    if (out.length === 0 && reasoningText && reasoningText.trim()) {
+      out.push({ kind: 'reasoning', id: 'r-legacy', content: reasoningText, status: 'complete' });
+    }
+    // Mark only the last reasoning chunk as 'active' if streaming.
+    if (isStreaming && lastReasoningIdx >= 0) {
+      const last = out[lastReasoningIdx];
+      if (last.kind === 'reasoning') last.status = 'active';
+    }
+    return out;
+  }, [parts, reasoningText, isStreaming]);
+
+  if (steps.length === 0) return null;
+
+  const lastReasoningIdx = steps.reduce((acc, s, i) => (s.kind === 'reasoning' ? i : acc), -1);
+
+  const headerLabel = isStreaming
+    ? 'Thinking…'
+    : reasoningDuration
+      ? `Thought for ${formatDurationSec(reasoningDuration)}`
+      : 'Thought';
+
+  return (
+    <ChainOfThought defaultOpen={defaultOpen ?? isStreaming} className="w-full">
+      <ChainOfThoughtHeader>
+        <span className="text-[12.5px] wf-fg-muted">
+          {isStreaming ? <Shimmer as="span" duration={2.4} spread={3}>{headerLabel}</Shimmer> : headerLabel}
+        </span>
+      </ChainOfThoughtHeader>
+      <ChainOfThoughtContent>
+        {steps.map((step, idx) => {
+          const isLast = idx === steps.length - 1;
+          if (step.kind === 'reasoning') {
+            return (
+              <WfReasoningStep
+                key={step.id}
+                content={step.content}
+                isLast={isLast}
+                isStreaming={isStreaming}
+                isLastReasoning={idx === lastReasoningIdx}
+              />
+            );
+          }
+          return (
+            <WfToolStep
+              key={step.id}
+              evt={step.evt}
+              isLast={isLast}
+              isStreaming={isStreaming}
+              onUndo={onUndo}
+            />
+          );
+        })}
+      </ChainOfThoughtContent>
+    </ChainOfThought>
   );
 };
 
@@ -568,7 +1117,7 @@ export function ChatHistory({
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border shadow-sm mt-0.5
               ${msg.role === 'user'
                 ? 'wf-bg-overlay wf-border-subtle wf-fg-muted'
-                : 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400'}`}>
+                : 'bg-blue-500/20 border-blue-500/30 text-blue-400'}`}>
               {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
 
@@ -592,6 +1141,20 @@ export function ChatHistory({
                 </div>
               )}
 
+              {/* Assistant chain-of-thought renders ABOVE the final text so the
+                  reasoning/tool trace reads top-down and the answer lands at
+                  the bottom of the bubble (closer to the input). */}
+              {msg.role === 'assistant' && ((msg.parts && msg.parts.length > 0) || (msg.reasoning && msg.reasoning.trim())) && (
+                <div className="w-full mb-1.5">
+                  <WorkflowAssistantTrace
+                    parts={(msg.parts || []) as StreamItem[]}
+                    reasoningText={msg.reasoning}
+                    isStreaming={false}
+                    onUndo={onUndo}
+                  />
+                </div>
+              )}
+
               <div className={`px-4 py-3 rounded-3xl shadow-sm text-[13px] leading-relaxed
                 ${msg.role === 'user'
                   ? 'wf-bg-elevated wf-fg rounded-tr-sm border wf-border-subtle'
@@ -603,7 +1166,7 @@ export function ChatHistory({
                     components={{
                       img: (props) => <ChatMedia {...props as any} />,
                       p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
-                      a: ({ node, ...props }) => <a {...props} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 decoration-indigo-500/30 hover:decoration-indigo-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
+                      a: ({ node, ...props }) => <a {...props} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 decoration-blue-500/30 hover:decoration-blue-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
                       pre: ({ children, ...props }: any) => {
                         let childProps: any = {};
                         let codeContent = children;
@@ -650,7 +1213,7 @@ export function ChatHistory({
                       ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                       li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                       blockquote: (props) => (
-                        <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+                        <blockquote className="border-l-4 border-blue-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-blue-500/10 to-transparent rounded-r-lg" {...props}>
                           <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                         </blockquote>
                       ),
@@ -678,45 +1241,16 @@ export function ChatHistory({
                 </div>
               </div>
 
-              {msg.reasoning && (
-                <div className="w-full">
-                  <ReasoningBlock
-                    text={msg.reasoning}
-                    isOpen={false}
-                    onToggle={() => { }}
-                    isComplete={true}
-                  />
-                </div>
-              )}
-
-              {msg.parts && msg.parts.length > 0 && (
-                <div className="w-full space-y-2 mt-1">
-                  {msg.parts
-                    .filter(p => p.type === 'tool')
-                    .map((p: any, idx) => (
-                      <ToolCallItem key={idx} evt={p.event} onUndo={onUndo} />
-                    ))}
-                </div>
-              )}
             </div>
           </div>
         ))}
 
         {(streamItems.length > 0 || busy || reasoningText) && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 border border-indigo-700 wf-fg flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+            <div className="w-8 h-8 rounded-full bg-blue-600 border border-blue-700 wf-fg flex items-center justify-center shrink-0 shadow-sm mt-0.5">
               <Bot className="w-4 h-4" />
             </div>
             <div className="flex flex-col gap-2 max-w-[90%] w-full">
-              {reasoningText && (
-                <ReasoningBlock
-                  text={reasoningText}
-                  isOpen={!!(reasoningText && busy)}
-                  onToggle={() => setShowReasoning(!showReasoning)}
-                  isComplete={!busy}
-                />
-              )}
-
               {pendingApprovals.length > 0 && onRespondToApproval && (
                 <PermissionBar
                   approval={pendingApprovals[0]}
@@ -725,8 +1259,30 @@ export function ChatHistory({
                 />
               )}
 
-              {streamItems.map((item, i) => (
-                item.type === 'text' ? (
+              {/* Unified chain-of-thought: reasoning + tool calls inside a
+                  collapsible "Thinking…" container. Text deltas render below
+                  the trace as their own assistant bubble. */}
+              {(streamItems.some(it => it.type !== 'text') || reasoningText) ? (
+                <WorkflowAssistantTrace
+                  parts={streamItems.filter(it => it.type !== 'text')}
+                  reasoningText={reasoningText}
+                  isStreaming={busy}
+                  defaultOpen={busy}
+                  onUndo={onUndo}
+                />
+              ) : busy && !streamItems.some(it => it.type === 'text') ? (
+                <div className="flex items-center gap-1.5 py-1 text-[12.5px] wf-fg-muted">
+                  <span
+                    className="block w-1.5 h-1.5 shrink-0 rounded-full animate-pulse"
+                    style={{ backgroundColor: 'color-mix(in srgb, var(--foreground-muted, #a6a6a6) 60%, transparent)' }}
+                  />
+                  <Shimmer as="span" duration={2.4} spread={3}>Thinking…</Shimmer>
+                </div>
+              ) : null}
+
+              {(() => {
+                return streamItems.map((item, i) => (
+                  item.type === 'reasoning' || item.type === 'tool' ? null : item.type === 'text' ? (
                   <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm wf-bg-sunken border wf-border-subtle wf-fg shadow-sm text-[13px] leading-relaxed">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
@@ -734,7 +1290,7 @@ export function ChatHistory({
                       components={{
                         img: (props) => <ChatMedia {...props as any} />,
                         p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
-                        a: ({ node, ...props }) => <a {...props} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 decoration-indigo-500/30 hover:decoration-indigo-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
+                        a: ({ node, ...props }) => <a {...props} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 decoration-blue-500/30 hover:decoration-blue-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
                         pre: ({ children, ...props }: any) => {
                           let childProps: any = {};
                           let codeContent = children;
@@ -774,7 +1330,7 @@ export function ChatHistory({
                         ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                         li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                         blockquote: (props) => (
-                          <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
+                          <blockquote className="border-l-4 border-blue-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-blue-500/10 to-transparent rounded-r-lg" {...props}>
                             <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                           </blockquote>
                         ),
@@ -800,18 +1356,9 @@ export function ChatHistory({
                       {preprocessMessageContent(item.content)}
                     </ReactMarkdown>
                   </div>
-                ) : (
-                  <ToolCallItem key={i} evt={item.event} onUndo={onUndo} />
-                )
-              ))}
-
-              {busy && streamItems.length === 0 && !reasoningText && (
-                <div className="flex items-center gap-2 wf-fg-faint text-xs px-2 py-1">
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-75" />
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce delay-150" />
-                </div>
-              )}
+                ) : null
+                ));
+              })()}
             </div>
           </div>
         )}

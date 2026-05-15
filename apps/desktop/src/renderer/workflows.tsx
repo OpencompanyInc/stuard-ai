@@ -62,7 +62,7 @@ import {
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
 function WorkflowsApp() {
-  const { themeMode } = usePreferences();
+  const { themeMode, modelSource, setModelSource } = usePreferences();
   const isDark = themeMode === 'dark' || themeMode === 'custom';
   const { items, folders, loading, refresh, updates } = useWorkflows();
   const { logs, setLogs, executionState, runningIds, setRunningIds } = useWorkflowRuntime();
@@ -342,6 +342,7 @@ function WorkflowsApp() {
     workflowId: selectedId, // Pass workflow ID for session scoping
     errors,
     selectedModelId: workflowChatModelId,
+    selectedModelSource: modelSource,
     selectedReasoningLevel: workflowReasoningLevel,
     workspaceInfo,
   });
@@ -1418,10 +1419,12 @@ function WorkflowsApp() {
           openTabs={openTabs}
           logs={logs}
           workflowChatModelId={workflowChatModelId}
+          workflowModelSource={modelSource}
           workflowReasoningLevel={workflowReasoningLevel}
           chat={chat}
           onApplyModel={applyModel}
           onSetWorkflowChatModelId={setWorkflowChatModelId}
+          onSetWorkflowModelSource={setModelSource}
           onSetWorkflowReasoningLevel={setWorkflowReasoningLevel}
           onSetActiveTab={setActiveTab}
           onCloseFileTab={closeFileTab}

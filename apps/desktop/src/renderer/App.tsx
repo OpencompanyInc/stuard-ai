@@ -214,7 +214,7 @@ export default function App() {
   // Agent Hook
   const {
     messages, state, ai, currentResponse, currentReasoning, currentToolCalls, currentStreamChunks,
-    sendMessage, steerMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
+    sendMessage, steerMessage, steerSubagent, activeSubagentsByTab, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
     subscribeProgress, queueDepth, queuedMessages, cancelQueuedMessage, respondToApproval, lastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
@@ -222,6 +222,25 @@ export default function App() {
     editMessage, revertFiles, redoFiles,
     reconcileTerminalState,
   } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
+
+  // Selected target for the next steer message in the main composer. 'orchestrator'
+  // (the default) routes through queueSteeringMessage; any other value is a
+  // delegated subagentId routed through steerSubagent. The list of active
+  // cloud subagents per tab come from useAgent. Local Python/headless subagents
+  // are discovered lower in ChatView, so only auto-reset stale cloud ids here.
+  const [steerTarget, setSteerTarget] = useState<string>('orchestrator');
+  const activeSubagentsForTab: Array<{ id: string; kind: string }> = useMemo(() => {
+    const list = (activeSubagentsByTab as Record<string, Array<{ id: string; kind: string }>>)?.[activeTabId] || [];
+    return list;
+  }, [activeSubagentsByTab, activeTabId]);
+  useEffect(() => {
+    setSteerTarget('orchestrator');
+  }, [activeTabId]);
+  useEffect(() => {
+    if (steerTarget.startsWith('sa-') && !activeSubagentsForTab.some(s => s.id === steerTarget)) {
+      setSteerTarget('orchestrator');
+    }
+  }, [steerTarget, activeSubagentsForTab]);
 
   useEffect(() => {
     setChatModels(defaultChatModels);
@@ -1042,13 +1061,20 @@ export default function App() {
     const text = query.trim();
     if (!text || attachments.length > 0 || contextPaths.length > 0 || !canSteerCurrentTurn) return;
 
-    const queued = steerMessage?.(text);
-    if (queued) {
+    // Route to a delegated subagent when one is selected as the target,
+    // otherwise nudge the orchestrator with the normal interjection flow.
+    const targetedSubagent = steerTarget !== 'orchestrator'
+      ? activeSubagentsForTab.find(s => s.id === steerTarget)
+      : undefined;
+    const ok = targetedSubagent
+      ? Boolean(steerSubagent?.(targetedSubagent.id, text, { kind: targetedSubagent.kind, tabId: activeTabId }))
+      : Boolean(steerMessage?.(text));
+    if (ok) {
       setQuery("");
       clearTranscript();
       baseQueryRef.current = "";
     }
-  }, [signedIn, query, attachments.length, contextPaths.length, canSteerCurrentTurn, steerMessage, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments.length, contextPaths.length, canSteerCurrentTurn, steerMessage, steerSubagent, steerTarget, activeSubagentsForTab, activeTabId, handleSignIn, clearTranscript]);
 
   // Handle GenUI responses (syntax-based GenUI like ```genui:choices)
   const handleGenUIResponse = useCallback((component: string, result: any) => {
@@ -1764,6 +1790,9 @@ export default function App() {
                     onSteer={handleSteer}
                     onStop={stopGeneration}
                     isStreaming={isStreaming}
+                    activeSubagents={activeSubagentsForTab}
+                    steerTarget={steerTarget}
+                    onSteerTargetChange={setSteerTarget}
                     internalSidebarOpen={internalSidebarOpen}
                     activeSidebarTab={activeSidebarTab}
                     onToggleInternalSidebar={handleToggleInternalSidebar}

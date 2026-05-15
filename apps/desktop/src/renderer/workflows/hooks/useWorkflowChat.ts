@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import type { ReasoningLevel } from '../../hooks/usePreferences';
+import type { ModelSourcePreference, ReasoningLevel } from '../../hooks/usePreferences';
 import { mergeStreamingText } from '../../utils/streamMerge';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
@@ -48,6 +48,7 @@ interface UseWorkflowChatProps {
   initialMessages?: Message[];
   errors?: any[];
   selectedModelId?: string | 'auto';
+  selectedModelSource?: ModelSourcePreference;
   selectedReasoningLevel?: ReasoningLevel;
   workspaceInfo?: WorkspaceInfoForChat | null;
 }
@@ -84,6 +85,7 @@ export function useWorkflowChat({
   initialMessages = [],
   errors = [],
   selectedModelId = 'auto',
+  selectedModelSource = 'stuard',
   selectedReasoningLevel = 'high',
   workspaceInfo,
 }: UseWorkflowChatProps) {
@@ -455,8 +457,12 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
               model: 'auto',
             };
 
-            if (selectedModelId && selectedModelId !== 'auto') {
+            const hasExplicitModel = !!(selectedModelId && selectedModelId !== 'auto');
+            if (hasExplicitModel) {
               payload.modelId = selectedModelId;
+            }
+            if (hasExplicitModel && selectedModelSource && typeof selectedModelSource === 'string') {
+              payload.modelSource = selectedModelSource;
             }
             if (selectedReasoningLevel && typeof selectedReasoningLevel === 'string') {
               payload.reasoningLevel = selectedReasoningLevel;
@@ -605,14 +611,35 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
 
               } else if (evt.event === 'reasoning' || evt.event === 'reasoning_start' || evt.event === 'reasoning_end') {
                 if (evt.event === 'reasoning_start') {
+                  // Open a fresh reasoning chunk so the next reasoning text starts a
+                  // new inline block (separated from prior tool calls / reasoning).
+                  const last = currentItems[currentItems.length - 1];
+                  if (!last || last.type !== 'reasoning' || (last as any).content) {
+                    currentItems.push({ type: 'reasoning', content: '' });
+                    setStreamItems([...currentItems]);
+                  }
                   setShowReasoning(true);
                   return;
                 }
                 if (evt.event === 'reasoning_end') return;
                 const r = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!r) return;
+                // Keep aggregated reasoningText for persisted message metadata / backward compat.
                 currentReasoning = mergeStreamingText(currentReasoning, r);
                 setReasoningText(currentReasoning);
+                // Append to the last reasoning chunk if it is the most recent item,
+                // otherwise open a new reasoning chunk. This way each tool call naturally
+                // breaks up the chain-of-thought into separate inline blocks.
+                const last = currentItems[currentItems.length - 1];
+                if (last && last.type === 'reasoning') {
+                  currentItems[currentItems.length - 1] = {
+                    type: 'reasoning',
+                    content: mergeStreamingText(last.content, r),
+                  };
+                } else {
+                  currentItems.push({ type: 'reasoning', content: r });
+                }
+                setStreamItems([...currentItems]);
                 setShowReasoning(true);
 
               } else if (evt.event === 'tool_event') {
@@ -882,7 +909,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
       setPendingApprovals([]);
       setBusy(false);
     }
-  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel, selectedModelId, selectedReasoningLevel, workspaceInfo, workflowId, WORKFLOW_APPROVAL_TOOLS, describeApprovalRequest, queueApproval, requestLocalToolApproval]);
+  }, [messages, busy, model, errors, cloudAiHttp, onApplyModel, selectedModelId, selectedModelSource, selectedReasoningLevel, workspaceInfo, workflowId, WORKFLOW_APPROVAL_TOOLS, describeApprovalRequest, queueApproval, requestLocalToolApproval]);
 
   const latestAssistantContext = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {

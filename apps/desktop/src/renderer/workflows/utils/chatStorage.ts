@@ -4,6 +4,7 @@
 
 export type StoredStreamItem =
   | { type: 'text'; content: string }
+  | { type: 'reasoning'; content: string }
   | { type: 'tool'; event: any };
 
 export interface ChatMessage {
@@ -42,6 +43,9 @@ function normalizeMessage(message: any): ChatMessage {
           }
           if (part?.type === 'text') {
             return { type: 'text', content: typeof part?.content === 'string' ? part.content : '' } satisfies StoredStreamItem;
+          }
+          if (part?.type === 'reasoning') {
+            return { type: 'reasoning', content: typeof part?.content === 'string' ? part.content : '' } satisfies StoredStreamItem;
           }
           return null;
         })

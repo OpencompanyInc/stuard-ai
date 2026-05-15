@@ -1,7 +1,7 @@
 import React, { useCallback, useState, forwardRef, useImperativeHandle, useRef } from "react";
 import { Link2, Square, Plus, ImagePlus, X } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
-import type { ReasoningLevel } from "../../../hooks/usePreferences";
+import type { ModelSourcePreference, ReasoningLevel } from "../../../hooks/usePreferences";
 import type { ContextUsageMetrics } from "../../../utils/contextUsage";
 import { ContextUsageIndicator } from "../../../components/ContextUsageIndicator";
 
@@ -74,9 +74,22 @@ export const ChatInput = forwardRef<ChatInputRef, {
   contextMetrics?: ContextUsageMetrics | null;
   selectedModelId?: string | 'auto';
   onSelectModel?: (id: string | 'auto') => void;
+  modelSource?: ModelSourcePreference;
+  onModelSourceChange?: (source: ModelSourcePreference) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
-}>(({ onSend, busy, onStop, contextMetrics, selectedModelId, onSelectModel, reasoningLevel, onReasoningLevelChange }, ref) => {
+}>(({
+  onSend,
+  busy,
+  onStop,
+  contextMetrics,
+  selectedModelId,
+  onSelectModel,
+  modelSource,
+  onModelSourceChange,
+  reasoningLevel,
+  onReasoningLevelChange,
+}, ref) => {
   const [text, setText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragKind, setDragKind] = useState<'url' | 'images' | null>(null);
@@ -288,6 +301,8 @@ export const ChatInput = forwardRef<ChatInputRef, {
               <ModelSelector
                 selectedModelId={selectedModelId}
                 onSelectModel={onSelectModel}
+                modelSource={modelSource}
+                onModelSourceChange={onModelSourceChange}
                 reasoningLevel={reasoningLevel}
                 onReasoningLevelChange={onReasoningLevelChange}
                 side="top"

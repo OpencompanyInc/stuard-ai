@@ -2482,9 +2482,9 @@ export const searchWorkflowDocs = createTool({
       .number()
       .int()
       .min(1)
-      .max(8)
+      .max(3)
       .default(3)
-      .describe('Maximum number of doc sections to return (default: 3)'),
+      .describe('Maximum number of doc sections to return (capped at 3).'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),

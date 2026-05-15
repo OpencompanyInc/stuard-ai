@@ -56,6 +56,17 @@ export function abortRunningSubagent(subagentId: string): boolean {
   return false;
 }
 
+/**
+ * Whether a delegated subagent is currently executing in this process.
+ * Used by the WS steer handler to reject `subagent_steer` requests for
+ * unknown ids — otherwise a steer enqueued for a finished/missing subagent
+ * would sit in `subagentSteerQueues` forever and the user would get a
+ * misleading `accepted: true` ack.
+ */
+export function isSubagentRunning(subagentId: string): boolean {
+  return runningSubagents.has(subagentId);
+}
+
 export function abortAllRunningSubagents(): number {
   let count = 0;
   for (const [id, controller] of runningSubagents) {
@@ -404,6 +415,8 @@ async function buildSubagent(
   });
 
   (agent as any).__activeToolNames = toolNames;
+  (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
+  (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
   return agent;
 }
 
@@ -622,13 +635,21 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     bridgeSecrets.conversationId.trim()
       ? bridgeSecrets.conversationId.trim()
       : null;
+  // Skip Stuard credit billing when the parent orchestrator was running on the
+  // user's own ChatGPT/Codex subscription or BYOK key — the underlying API
+  // call is already paid for by the user, so subagents must not double-charge.
+  const billingExcluded =
+    !!(agent as any)?.__billingExcluded ||
+    inheritedModelSource === 'api_key' ||
+    inheritedModelSource === 'subscription';
   const billingTracker = new LiveUsageBillingTracker({
-    userId: bridgeSecrets?.userId,
+    userId: inheritedUserId ?? bridgeSecrets?.userId,
     conversationId: parentConversationId,
     model: resolvedModelId,
     sourceRef: `subagent:${subagentId}`,
     sourceType: 'subagent',
     sourceLabel,
+    billingExcluded,
     onSettlement: (summary) => {
       emitToClient('billing_update', {
         sourceRef: summary.sourceRef,

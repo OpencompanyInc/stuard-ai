@@ -107,6 +107,13 @@ interface ChatInputAreaProps {
   setQuery: (q: string) => void;
   onSend: () => void;
   onSteer?: () => void;
+  // Steer target dropdown — list of running delegated subagents in the
+  // current tab plus the selected target. 'orchestrator' is the implicit
+  // default. When the user picks a subagent, sendInActiveMode routes the
+  // text to that subagent instead of the parent turn.
+  activeSubagents?: Array<{ id: string; kind: string }>;
+  steerTarget?: string;
+  onSteerTargetChange?: (target: string) => void;
   onStop?: () => void;
   isStreaming?: boolean;
   attachments?: Array<{ type: 'image' | 'file'; name: string }>;
@@ -156,6 +163,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   setQuery,
   onSend,
   onSteer,
+  activeSubagents = [],
+  steerTarget = 'orchestrator',
+  onSteerTargetChange,
   onStop,
   isStreaming = false,
   attachments = [],
@@ -209,13 +219,36 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   // Only surface the steer/queue toggle when the user is actually composing a
   // message — empty input means there's nothing to send either way.
   const showInterjectToggle = canSteer && query.trim().length > 0;
+  // Targeting a specific subagent forces steer mode — "queue turn" applies to
+  // the parent conversation and doesn't make sense at the subagent level.
+  const targetingSubagent = steerTarget !== 'orchestrator'
+    && activeSubagents.some((s) => s.id === steerTarget);
+  const effectiveMode: 'queue' | 'steer' = targetingSubagent ? 'steer' : interjectMode;
   const sendInActiveMode = useCallback(() => {
-    if (canSteer && interjectMode === 'steer' && query.trim()) {
+    if (canSteer && effectiveMode === 'steer' && query.trim()) {
       onSteer?.();
     } else {
       onSend();
     }
-  }, [canSteer, interjectMode, onSend, onSteer, query]);
+  }, [canSteer, effectiveMode, onSend, onSteer, query]);
+
+  // Resolve the human-readable label for the current steer target. Falls back
+  // to the bare id (or 'Subagent') when the running list hasn't reported a
+  // kind yet — better than rendering an empty chip.
+  const humanizeSubagentKind = (kind: string) =>
+    String(kind || 'subagent')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  const steerTargetLabel = (() => {
+    if (steerTarget === 'orchestrator') return 'Orchestrator';
+    const match = activeSubagents.find((s) => s.id === steerTarget);
+    if (match) return `${humanizeSubagentKind(match.kind)} agent`;
+    return 'Subagent';
+  })();
+  // Target selector stays visible during the entire turn so the user can
+  // re-aim a steer without first toggling into steer mode. When there are no
+  // delegated subagents to pick from we drop it — there's nothing to choose.
+  const showSteerTargetSelector = canSteer && activeSubagents.length > 0;
 
   // ── Realtime Voice Conversation Test State ──
   const [rtOpen, setRtOpen] = useState(false);
@@ -671,39 +704,140 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             transition={{ duration: 0.18 }}
             className="overflow-hidden"
           >
-            <div className="flex items-center justify-between gap-2 px-3 pt-1 pb-0.5">
-              <span className="text-[10px] font-black uppercase tracking-widest text-theme-muted">
-                On send
-              </span>
-              <div className="flex items-center gap-0.5 bg-theme-hover/60 rounded-full p-0.5 border border-theme/10">
-                <button
-                  type="button"
-                  onClick={() => setInterjectMode('steer')}
-                  className={clsx(
-                    "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
-                    interjectMode === 'steer'
-                      ? "bg-primary text-primary-fg"
-                      : "text-theme-muted hover:text-theme-fg"
-                  )}
-                  title="Steer the current step — interjects now, before the next tool runs"
-                >
-                  <CornerDownRight className="w-3 h-3" strokeWidth={2.5} />
-                  Steer step
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInterjectMode('queue')}
-                  className={clsx(
-                    "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
-                    interjectMode === 'queue'
-                      ? "bg-primary text-primary-fg"
-                      : "text-theme-muted hover:text-theme-fg"
-                  )}
-                  title="Queue the message — sends after the current turn finishes"
-                >
-                  <ListTodo className="w-3 h-3" strokeWidth={2.5} />
-                  Queue turn
-                </button>
+            <div className="flex items-center justify-between gap-2 px-3 pt-1.5 pb-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] font-black uppercase tracking-widest text-theme-muted shrink-0">
+                  On send
+                </span>
+                <span className="text-[10px] font-bold text-theme-muted/70 truncate">
+                  {effectiveMode === 'steer'
+                    ? targetingSubagent
+                      ? `Nudge ${steerTargetLabel.toLowerCase()} now`
+                      : 'Interject before next tool'
+                    : 'Queue for after this turn'}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {/* Steer target selector — visible whenever subagents are running */}
+                {showSteerTargetSelector && (
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        className={clsx(
+                          "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1 border",
+                          targetingSubagent
+                            ? "bg-violet-500/12 border-violet-500/25 text-violet-600 dark:text-violet-300"
+                            : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg"
+                        )}
+                        title="Pick which agent the steer should nudge"
+                      >
+                        {targetingSubagent ? (
+                          <span className="relative flex h-1.5 w-1.5 mr-0.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                          </span>
+                        ) : (
+                          <Sparkles className="w-3 h-3" strokeWidth={2.5} />
+                        )}
+                        <span className="normal-case tracking-normal text-[10.5px] font-bold truncate max-w-[140px]">
+                          {steerTargetLabel}
+                        </span>
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        className="DropdownContent z-[10005] min-w-[220px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl"
+                        sideOffset={6}
+                        align="end"
+                        collisionPadding={10}
+                      >
+                        <div className="px-2 pt-1.5 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
+                          Send next message to
+                        </div>
+                        <DropdownMenu.Item
+                          onSelect={() => onSteerTargetChange?.('orchestrator')}
+                          className={clsx(
+                            "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
+                            steerTarget === 'orchestrator'
+                              ? "bg-primary/10 text-primary"
+                              : "text-theme-fg hover:bg-theme-hover"
+                          )}
+                        >
+                          <CornerDownRight className="w-3.5 h-3.5 text-primary/70 shrink-0" strokeWidth={2.4} />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold">Orchestrator</div>
+                            <div className="text-[10px] text-theme-muted truncate">Main conversation • supports queue</div>
+                          </div>
+                          {steerTarget === 'orchestrator' && <span className="text-[9px] uppercase tracking-wider font-black text-primary">Active</span>}
+                        </DropdownMenu.Item>
+                        {activeSubagents.length > 0 && (
+                          <>
+                            <div className="px-2 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
+                              Running subagents
+                            </div>
+                            {activeSubagents.map((sa) => (
+                              <DropdownMenu.Item
+                                key={sa.id}
+                                onSelect={() => onSteerTargetChange?.(sa.id)}
+                                className={clsx(
+                                  "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
+                                  steerTarget === sa.id
+                                    ? "bg-violet-500/12 text-violet-700 dark:text-violet-300"
+                                    : "text-theme-fg hover:bg-theme-hover"
+                                )}
+                              >
+                                <span className="relative flex h-2 w-2 shrink-0">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-semibold truncate">{humanizeSubagentKind(sa.kind)} agent</div>
+                                  <div className="text-[10px] text-theme-muted truncate">Mid-task nudge • applies at next step</div>
+                                </div>
+                                {steerTarget === sa.id && <span className="text-[9px] uppercase tracking-wider font-black text-violet-600 dark:text-violet-300">Active</span>}
+                              </DropdownMenu.Item>
+                            ))}
+                          </>
+                        )}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                )}
+                {/* Steer-vs-queue toggle. Hidden when targeting a subagent —
+                    queue mode only makes sense for the orchestrator. */}
+                {!targetingSubagent && (
+                  <div className="flex items-center gap-0.5 bg-theme-hover/60 rounded-full p-0.5 border border-theme/10">
+                    <button
+                      type="button"
+                      onClick={() => setInterjectMode('steer')}
+                      className={clsx(
+                        "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
+                        interjectMode === 'steer'
+                          ? "bg-primary text-primary-fg"
+                          : "text-theme-muted hover:text-theme-fg"
+                      )}
+                      title="Steer the current step — interjects now, before the next tool runs"
+                    >
+                      <CornerDownRight className="w-3 h-3" strokeWidth={2.5} />
+                      Steer step
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInterjectMode('queue')}
+                      className={clsx(
+                        "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
+                        interjectMode === 'queue'
+                          ? "bg-primary text-primary-fg"
+                          : "text-theme-muted hover:text-theme-fg"
+                      )}
+                      title="Queue the message — sends after the current turn finishes"
+                    >
+                      <ListTodo className="w-3 h-3" strokeWidth={2.5} />
+                      Queue turn
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -880,7 +1014,15 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               ref={textareaRef}
               data-onboarding="chat-input"
               className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2"
-              placeholder={isStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
+              placeholder={
+                isStreaming
+                  ? targetingSubagent
+                    ? `Nudge ${steerTargetLabel.toLowerCase()}…`
+                    : effectiveMode === 'steer'
+                      ? 'Steer the current step…'
+                      : 'Queue after this turn…'
+                  : 'Just ask Stuard'
+              }
               value={query}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
               onPaste={onPaste}
@@ -918,8 +1060,15 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   if (canSteer && (e.metaKey || e.ctrlKey) && query.trim()) {
-                    if (interjectMode === 'steer') onSend();
-                    else onSteer?.();
+                    // Cmd/Ctrl+Enter flips the action: steer→queue, queue→steer.
+                    // When targeting a subagent, queue isn't applicable so the
+                    // override falls back to the normal send to the orchestrator.
+                    if (effectiveMode === 'steer') {
+                      if (targetingSubagent) sendInActiveMode();
+                      else onSend();
+                    } else {
+                      onSteer?.();
+                    }
                   } else {
                     sendInActiveMode();
                   }
@@ -955,16 +1104,23 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           ) : query.trim() ? (
             <button
               onClick={sendInActiveMode}
-              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
+              className={clsx(
+                "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 hover:opacity-90 flex-shrink-0",
+                canSteer && effectiveMode === 'steer' && targetingSubagent
+                  ? "bg-violet-500 text-white"
+                  : "bg-primary text-primary-fg"
+              )}
               title={
                 canSteer
-                  ? interjectMode === 'steer'
-                    ? "Steer current step (Cmd/Ctrl+Enter to queue instead)"
+                  ? effectiveMode === 'steer'
+                    ? targetingSubagent
+                      ? `Nudge ${steerTargetLabel} now`
+                      : "Steer current step (Cmd/Ctrl+Enter to queue instead)"
                     : "Queue after this turn (Cmd/Ctrl+Enter to steer instead)"
                   : "Send message"
               }
             >
-              {canSteer && interjectMode === 'steer' ? (
+              {canSteer && effectiveMode === 'steer' ? (
                 <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
               ) : (
                 <ArrowUp className="w-5 h-5" strokeWidth={2.5} />

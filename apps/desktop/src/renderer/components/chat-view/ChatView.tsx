@@ -37,6 +37,12 @@ interface ChatViewProps {
   setQuery: (q: string) => void;
   onSend: () => void;
   onSteer?: () => void;
+  // Steer routing — list of running delegated subagents in the current tab and
+  // which one (if any) the next steer should target. 'orchestrator' means the
+  // composer nudges the parent turn instead of any subagent.
+  activeSubagents?: Array<{ id: string; kind: string }>;
+  steerTarget?: string;
+  onSteerTargetChange?: (target: string) => void;
   // Voice mode
   voiceActive?: boolean;
   onToggleVoice?: () => void;
@@ -111,6 +117,9 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   setQuery,
   onSend,
   onSteer,
+  activeSubagents,
+  steerTarget,
+  onSteerTargetChange,
   voiceActive,
   onToggleVoice,
   voiceState,
@@ -372,6 +381,9 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           setQuery={setQuery}
           onSend={onSend}
           onSteer={onSteer}
+          activeSubagents={activeSubagents}
+          steerTarget={steerTarget}
+          onSteerTargetChange={onSteerTargetChange}
           attachments={attachments}
           onRemoveAttachment={onRemoveAttachment}
           onAttachFiles={onAttachFiles}

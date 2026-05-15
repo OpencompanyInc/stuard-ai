@@ -4,7 +4,7 @@ import SimpleBar from 'simplebar-react';
 import { motion } from 'framer-motion';
 import MessageBubble from './MessageBubble';
 import 'simplebar-react/dist/simplebar.min.css';
-import { ChevronUp, CornerDownRight, Loader2 } from 'lucide-react';
+import { ChevronUp, CornerDownRight, Loader2, Sparkles } from 'lucide-react';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
 import { Shimmer } from './ai-elements/Shimmer';
 import {
@@ -40,7 +40,13 @@ interface Message {
   checkpointId?: string;
   reverted?: boolean;
   kind?: 'message' | 'steer';
+  subagentTarget?: { id: string; kind: string };
 }
+
+const humanizeSubagentKind = (kind: string) =>
+  String(kind || 'subagent')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
 interface MessageListProps {
   messages: Message[];
@@ -345,10 +351,17 @@ const MessageList: React.FC<MessageListProps> = ({
                   : { duration: 0 }}
               >
                 <div className="flex justify-end mb-1 pr-1">
-                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black uppercase tracking-widest text-primary/70">
-                    <CornerDownRight className="w-3 h-3" />
-                    Steered
-                  </span>
+                  {m.subagentTarget ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300 text-[9.5px] font-black uppercase tracking-widest border border-violet-500/15">
+                      <Sparkles className="w-3 h-3" strokeWidth={2.5} />
+                      Steered {humanizeSubagentKind(m.subagentTarget.kind)} agent
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[9.5px] font-black uppercase tracking-widest text-primary/70">
+                      <CornerDownRight className="w-3 h-3" />
+                      Steered
+                    </span>
+                  )}
                 </div>
                 {bubble}
               </motion.div>

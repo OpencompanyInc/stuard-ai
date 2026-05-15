@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from "react";
-import type { ReasoningLevel } from "../../hooks/usePreferences";
+import type { ModelSourcePreference, ReasoningLevel } from "../../hooks/usePreferences";
 import type { ValidationError } from "../builder/compiler";
 import { ChatHistory } from "../components/chat/ChatHistory";
 import { ChatInput, ChatInputRef } from "../components/chat/ChatInput";
@@ -81,6 +81,7 @@ interface WorkflowMainContentProps {
   openTabs: OpenFileTab[];
   logs: Array<{ ts: string; msg: string }>;
   workflowChatModelId: string | "auto";
+  workflowModelSource: ModelSourcePreference;
   workflowReasoningLevel: ReasoningLevel;
   chat: {
     messages: any[];
@@ -104,6 +105,7 @@ interface WorkflowMainContentProps {
   };
   onApplyModel: (model: any) => void;
   onSetWorkflowChatModelId: (id: string | "auto") => void;
+  onSetWorkflowModelSource: (source: ModelSourcePreference) => void;
   onSetWorkflowReasoningLevel: (level: ReasoningLevel) => void;
   onSetActiveTab: (tab: string) => void;
   onCloseFileTab: (filePath: string) => void;
@@ -176,10 +178,12 @@ export function WorkflowMainContent({
   openTabs,
   logs,
   workflowChatModelId,
+  workflowModelSource,
   workflowReasoningLevel,
   chat,
   onApplyModel,
   onSetWorkflowChatModelId,
+  onSetWorkflowModelSource,
   onSetWorkflowReasoningLevel,
   onSetActiveTab,
   onCloseFileTab,
@@ -369,6 +373,8 @@ export function WorkflowMainContent({
                       contextMetrics={workflowContextMetrics}
                       selectedModelId={workflowChatModelId}
                       onSelectModel={onSetWorkflowChatModelId}
+                      modelSource={workflowModelSource}
+                      onModelSourceChange={onSetWorkflowModelSource}
                       reasoningLevel={workflowReasoningLevel}
                       onReasoningLevelChange={onSetWorkflowReasoningLevel}
                     />

@@ -330,6 +330,9 @@ interface Message {
   // 'steer' marks user messages that were interjected mid-turn so the UI can
   // visually annotate them and split the surrounding chain-of-thought.
   kind?: 'message' | 'steer';
+  // When a steer targets a delegated subagent (not the orchestrator) we tag
+  // the message so the chat shows which agent received the nudge.
+  subagentTarget?: { id: string; kind: string };
 }
 
 interface ProgressEvent {
@@ -377,6 +380,10 @@ type QueuedMessage = {
   kind?: 'message' | 'steer';
   tabId?: string;
   requestId?: string;
+  // Set when a steer is routed to a specific delegated subagent rather than
+  // the orchestrator. The composer/queue panel use this to label the chip
+  // with which agent will receive the nudge.
+  subagentTarget?: { id: string; kind: string };
 };
 
 type PendingSendItem = {
@@ -614,7 +621,27 @@ export function useAgent(options?: string | UseAgentOptions) {
   const lastStreamActivityRef = useRef<number>(0); // Watchdog: last time we received streaming data
   const modifiedFilesRef = useRef<Set<string>>(new Set()); // Track files modified in current turn
   const turnCheckpointIdRef = useRef<string | null>(null); // Checkpoint ID for current turn
-  const activeSubagentsByTabRef = useRef<Map<string, Set<string>>>(new Map());
+  // Per-tab map of running delegated subagents → their kind label.
+  // The kind feeds the composer's "Steer target" dropdown so the user can pick
+  // which running subagent to nudge from the normal input.
+  const activeSubagentsByTabRef = useRef<Map<string, Map<string, { kind: string }>>>(new Map());
+  const [activeSubagentsByTab, setActiveSubagentsByTab] = useState<Record<string, Array<{ id: string; kind: string }>>>({});
+  const syncActiveSubagentsState = useCallback((tabId: string) => {
+    const inner = activeSubagentsByTabRef.current.get(tabId);
+    setActiveSubagentsByTab(prev => {
+      const list = inner
+        ? Array.from(inner.entries()).map(([id, v]) => ({ id, kind: v.kind || 'subagent' }))
+        : [];
+      const next = { ...prev };
+      if (list.length === 0) {
+        if (!next[tabId]) return prev;
+        delete next[tabId];
+      } else {
+        next[tabId] = list;
+      }
+      return next;
+    });
+  }, []);
   const deferredDelegatedFinalsRef = useRef<Map<string, DeferredDelegatedFinal>>(new Map());
 
   // Last model selection used by sendMessage per tab, so fallback resends
@@ -648,21 +675,26 @@ export function useAgent(options?: string | UseAgentOptions) {
     return getActiveSubagentCount(tab.id) > 0 || hasPendingDelegatedToolWork(tab);
   };
 
-  const markSubagentActive = (tabId: string, subagentId: string) => {
+  const markSubagentActive = (tabId: string, subagentId: string, kind?: string) => {
     if (!tabId || !subagentId) return;
-    const set = activeSubagentsByTabRef.current.get(tabId) || new Set<string>();
-    set.add(subagentId);
-    activeSubagentsByTabRef.current.set(tabId, set);
+    const inner = activeSubagentsByTabRef.current.get(tabId) || new Map<string, { kind: string }>();
+    const prev = inner.get(subagentId);
+    const nextKind = kind || prev?.kind || 'subagent';
+    if (prev && prev.kind === nextKind) return; // no state change
+    inner.set(subagentId, { kind: nextKind });
+    activeSubagentsByTabRef.current.set(tabId, inner);
+    syncActiveSubagentsState(tabId);
   };
 
   const markSubagentFinished = (tabId: string, subagentId: string) => {
     if (!tabId || !subagentId) return;
-    const set = activeSubagentsByTabRef.current.get(tabId);
-    if (!set) return;
-    set.delete(subagentId);
-    if (set.size === 0) {
+    const inner = activeSubagentsByTabRef.current.get(tabId);
+    if (!inner || !inner.has(subagentId)) return;
+    inner.delete(subagentId);
+    if (inner.size === 0) {
       activeSubagentsByTabRef.current.delete(tabId);
     }
+    syncActiveSubagentsState(tabId);
   };
 
   // Tab Management
@@ -695,6 +727,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     // Clean up request tracking for the closed tab
     runningTabsRef.current.delete(id);
     activeSubagentsByTabRef.current.delete(id);
+    syncActiveSubagentsState(id);
     deferredDelegatedFinalsRef.current.delete(id);
     lastSendOptionsRef.current.delete(id);
     // Remove any requestId -> tabId mappings pointing to this tab
@@ -777,6 +810,7 @@ export function useAgent(options?: string | UseAgentOptions) {
 
       const targetTabId = activeTabIdRef.current;
       activeSubagentsByTabRef.current.delete(targetTabId);
+      syncActiveSubagentsState(targetTabId);
       deferredDelegatedFinalsRef.current.delete(targetTabId);
       setTabs(prev => prev.map(t => {
         if (t.id !== targetTabId) return t;
@@ -1069,23 +1103,68 @@ export function useAgent(options?: string | UseAgentOptions) {
   // targets the orchestrator/main turn), this routes through the cloud WS to
   // the in-process steer queue for that subagentId and is drained at the
   // subagent's next step boundary (never mid-tool-call).
-  const steerSubagent = useCallback((subagentId: string, text: string): boolean => {
+  //
+  // Mirrors queueSteeringMessage's UX: the steer lands in the QueuePanel and
+  // tab status immediately so the user sees it was accepted, and the eventual
+  // server `user_steer` event flushes it into chat history as a steer bubble
+  // tagged with the subagent it nudged.
+  const steerSubagent = useCallback((
+    subagentId: string,
+    text: string,
+    opts?: { kind?: string; tabId?: string },
+  ): boolean => {
     const trimmed = String(text || '').trim();
     if (!subagentId || !trimmed) return false;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+    const targetTabId = opts?.tabId || activeTabIdRef.current;
+    const requestId = targetTabId ? getRequestIdForTab(targetTabId) : undefined;
+    const subagentKind = (() => {
+      if (opts?.kind) return opts.kind;
+      if (!targetTabId) return 'subagent';
+      const inner = activeSubagentsByTabRef.current.get(targetTabId);
+      return inner?.get(subagentId)?.kind || 'subagent';
+    })();
+
     try {
       ws.send(JSON.stringify({
         type: 'subagent_steer',
         subagentId,
         text: trimmed,
         timestamp: Date.now(),
+        // Include requestId so a future multi-instance backend can route the
+        // steer back to the instance running the parent turn.
+        requestId,
       }));
-      return true;
     } catch {
       return false;
     }
-  }, []);
+
+    const item: QueuedMessage = {
+      id: `steer-sa-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: trimmed,
+      timestamp: Date.now(),
+      kind: 'steer',
+      tabId: targetTabId,
+      requestId,
+      subagentTarget: { id: subagentId, kind: subagentKind },
+    };
+    syncQueuedMessages((prev) => [...prev, item]);
+
+    if (targetTabId) {
+      const humanKind = subagentKind
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+      setTabs(prev => prev.map(t =>
+        t.id === targetTabId
+          ? { ...t, aiState: { ...t.aiState, statusText: `Steer queued for ${humanKind} agent` } }
+          : t
+      ));
+    }
+    setState((s) => ({ ...s, status: 'queued' }));
+    return true;
+  }, [getRequestIdForTab, syncQueuedMessages]);
 
   // Expose globally so nested components (e.g. DelegationCard inside
   // MessageBubble) can call it without deep prop drilling. Matches the
@@ -1099,16 +1178,33 @@ export function useAgent(options?: string | UseAgentOptions) {
     };
   }, [steerSubagent]);
 
-  const flushQueuedSteeringMessages = useCallback((targetTabId: string, requestId?: string) => {
+  const flushQueuedSteeringMessages = useCallback((
+    targetTabId: string,
+    requestId?: string,
+    opts?: { subagentId?: string; orchestratorOnly?: boolean },
+  ) => {
     // The interjection is sent to the server eagerly in queueSteeringMessage so it
     // races ahead of the next step's prepareStep. This routine handles only the
     // local chat-history commit at the step_finished boundary: move queued steers
     // for this turn into the chat alongside the interrupted CoT.
-    const queued = queuedMessagesRef.current.filter((item) =>
-      item.kind === 'steer'
-      && item.tabId === targetTabId
-      && (!requestId || item.requestId === requestId)
-    );
+    //
+    // Subagent steers live in the same queue but flush on a different signal —
+    // the subagent's own `user_steer` event — so callers pass `subagentId` to
+    // commit just that subagent's items, and orchestrator paths pass
+    // `orchestratorOnly` so they don't yank subagent steers that haven't been
+    // applied yet.
+    const queued = queuedMessagesRef.current.filter((item) => {
+      if (item.kind !== 'steer') return false;
+      if (item.tabId !== targetTabId) return false;
+      if (requestId && item.requestId && item.requestId !== requestId) return false;
+      if (opts?.subagentId) {
+        return item.subagentTarget?.id === opts.subagentId;
+      }
+      if (opts?.orchestratorOnly) {
+        return !item.subagentTarget;
+      }
+      return true;
+    });
     if (queued.length === 0) return;
 
     const sent: QueuedMessage[] = queued;
@@ -1121,11 +1217,14 @@ export function useAgent(options?: string | UseAgentOptions) {
       // as its own assistant message ahead of the steer, so the chat order reads:
       //   [user] → [interrupted CoT] → [steer] → [next CoT]
       // rather than the steer landing before the CoT it was responding to.
+      // Skip this for subagent-only flushes — the parent turn is still active
+      // and its CoT belongs to the orchestrator, not the steered subagent.
       const hasInFlightWork =
-        t.currentToolCalls.length > 0
-        || t.currentStreamChunks.length > 0
-        || Boolean(t.currentResponse)
-        || Boolean(t.currentReasoning);
+        !opts?.subagentId
+        && (t.currentToolCalls.length > 0
+          || t.currentStreamChunks.length > 0
+          || Boolean(t.currentResponse)
+          || Boolean(t.currentReasoning));
 
       const partialAssistant: Message[] = hasInFlightWork ? [{
         id: `partial-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1143,6 +1242,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         text: item.text,
         timestamp: item.timestamp,
         kind: 'steer' as const,
+        subagentTarget: item.subagentTarget,
       }));
 
       if (hasInFlightWork) {
@@ -1156,7 +1256,12 @@ export function useAgent(options?: string | UseAgentOptions) {
         currentReasoning: hasInFlightWork ? '' : t.currentReasoning,
         currentToolCalls: hasInFlightWork ? [] : t.currentToolCalls,
         currentStreamChunks: hasInFlightWork ? [] : t.currentStreamChunks,
-        aiState: { ...t.aiState, statusText: 'Steer sent to next step' },
+        aiState: {
+          ...t.aiState,
+          statusText: opts?.subagentId
+            ? 'Subagent steer applied'
+            : 'Steer sent to next step',
+        },
       };
     }));
   }, [syncQueuedMessages]);
@@ -2150,7 +2255,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               }));
               setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
             } else if (evt.event === 'interjection_applied') {
-              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId);
+              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId, { orchestratorOnly: true });
               setStreamingAI((prev) => ({
                 ...prev,
                 phase: prev.phase === 'idle' ? 'responding' : prev.phase,
@@ -2158,10 +2263,10 @@ export function useAgent(options?: string | UseAgentOptions) {
               }));
               setState((s) => ({ ...s, status: 'steered' }));
             } else if (evt.event === 'step_finished') {
-              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId);
+              flushQueuedSteeringMessages(getTargetTabId(), msg.requestId, { orchestratorOnly: true });
               setStreamingAI((prev) => ({
                 ...prev,
-                statusText: queuedMessagesRef.current.some((item) => item.kind === 'steer') ? 'Applying steer…' : prev.statusText,
+                statusText: queuedMessagesRef.current.some((item) => item.kind === 'steer' && !item.subagentTarget) ? 'Applying steer…' : prev.statusText,
               }));
             } else {
               setState((s) => ({ ...s, status: evt.event }));
@@ -2170,6 +2275,24 @@ export function useAgent(options?: string | UseAgentOptions) {
             setStreamingAI((prev) => ({
               ...prev,
               statusText: msg.accepted === false ? 'Steer not applied' : 'Steer queued',
+            }));
+          } else if (msg.type === 'subagent_steer_ack') {
+            // The server enqueued the steer for a delegated subagent. It'll
+            // drain at the subagent's next step boundary and we'll get a
+            // `user_steer` subagent_event to confirm — until then surface a
+            // light status so the user knows it landed.
+            const accepted = msg.accepted !== false;
+            const subId = typeof msg.subagentId === 'string' ? msg.subagentId : '';
+            if (!accepted) {
+              // Reject — pull our optimistic queue entry back out so the user
+              // isn't left with a phantom steer chip.
+              syncQueuedMessages((prev) => prev.filter((item) =>
+                !(item.kind === 'steer' && item.subagentTarget?.id === subId)
+              ));
+            }
+            setStreamingAI((prev) => ({
+              ...prev,
+              statusText: accepted ? 'Subagent steer queued' : 'Subagent steer rejected',
             }));
           } else if (msg.type === 'queued') {
             const pos = Number(msg.position || 0);
@@ -2344,7 +2467,12 @@ export function useAgent(options?: string | UseAgentOptions) {
             const subagentTargetTabId = getTargetTabId();
             const isTerminalSubagentEvent = eventType === 'completed' || eventType === 'error' || eventType === 'cancelled';
             if (subagentTrackingId && !isTerminalSubagentEvent && eventType !== 'tool_result') {
-              markSubagentActive(subagentTargetTabId, subagentTrackingId);
+              const subagentKindHint = typeof data.kind === 'string' && data.kind
+                ? data.kind
+                : typeof data.label === 'string' && data.label
+                  ? data.label
+                  : undefined;
+              markSubagentActive(subagentTargetTabId, subagentTrackingId, subagentKindHint);
             }
 
             if (eventType === 'started') {
@@ -2486,8 +2614,20 @@ export function useAgent(options?: string | UseAgentOptions) {
               const toolId = data.toolCallId || data.id || `sub-tc-${Date.now()}`;
               const subagentId = subEvt.subagentId || '';
               updateStreamingTab(t => {
-                const existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                // Subagents emit two `tool_call` events per logical call: one from
+                // the AI SDK `tool-call` chunk and one from the bridge `tool_event`
+                // with a different id. Match by (toolName, subagentId, pending) so
+                // the second arrival merges into the first instead of doubling.
+                let existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                if (!existing) {
+                  existing = t.currentToolCalls.find(tc =>
+                    tc.tool === toolName &&
+                    (tc.subagentId || '') === subagentId &&
+                    tc.status === 'called'
+                  );
+                }
                 if (existing) {
+                  const canonicalId = existing.id;
                   const nextCall: ToolCall = {
                     ...existing,
                     tool: existing.tool || toolName,
@@ -2498,9 +2638,9 @@ export function useAgent(options?: string | UseAgentOptions) {
                   };
                   return {
                     ...t,
-                    currentToolCalls: t.currentToolCalls.map(tc => tc.id === toolId ? nextCall : tc),
+                    currentToolCalls: t.currentToolCalls.map(tc => tc.id === canonicalId ? nextCall : tc),
                     currentStreamChunks: t.currentStreamChunks.map(ch =>
-                      ch.type === 'tool' && ch.tool.id === toolId
+                      ch.type === 'tool' && ch.tool.id === canonicalId
                         ? { ...ch, tool: { ...ch.tool, ...nextCall } }
                         : ch
                     ),
@@ -2547,7 +2687,19 @@ export function useAgent(options?: string | UseAgentOptions) {
                 const toolName = data.tool || data.name || data.toolName || 'tool';
 
                 updateStreamingTab(t => {
-                  const existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                  // Match by id first, then fall back to (toolName, subagentId, pending)
+                  // so a bridge-id result still finds the AI-SDK-id call entry (and
+                  // vice versa). Without this fallback the bridge result is dropped
+                  // into a new entry and the orig AI-SDK call never closes.
+                  let existing = t.currentToolCalls.find(tc => tc.id === toolId);
+                  if (!existing) {
+                    existing = t.currentToolCalls.find(tc =>
+                      tc.tool === toolName &&
+                      (tc.subagentId || '') === subagentId &&
+                      tc.status === 'called'
+                    );
+                  }
+                  const canonicalId = existing?.id || toolId;
                   const nextCall: ToolCall = existing
                     ? {
                         ...existing,
@@ -2572,13 +2724,13 @@ export function useAgent(options?: string | UseAgentOptions) {
                       };
 
                   const currentToolCalls = existing
-                    ? t.currentToolCalls.map(tc => tc.id === toolId ? nextCall : tc)
+                    ? t.currentToolCalls.map(tc => tc.id === canonicalId ? nextCall : tc)
                     : [...t.currentToolCalls, nextCall];
 
-                  const hasChunk = t.currentStreamChunks.some(ch => ch.type === 'tool' && ch.tool.id === toolId);
+                  const hasChunk = t.currentStreamChunks.some(ch => ch.type === 'tool' && ch.tool.id === canonicalId);
                   const currentStreamChunks = hasChunk
                     ? t.currentStreamChunks.map(ch =>
-                        ch.type === 'tool' && ch.tool.id === toolId
+                        ch.type === 'tool' && ch.tool.id === canonicalId
                           ? { ...ch, tool: { ...ch.tool, ...nextCall } }
                           : ch
                       )
@@ -2639,6 +2791,43 @@ export function useAgent(options?: string | UseAgentOptions) {
                 statusText: phase === 'done' ? 'Responding…' : 'Compacting context…',
               }));
               setState((s) => ({ ...s, status: phase === 'done' ? 'responding' : 'compacting' }));
+            } else if (eventType === 'user_steer') {
+              // Server confirmed the user's mid-flight steer landed. Show it
+              // as a nested status pill inside the delegation card so the
+              // user can see the steer was applied (and what text was used).
+              const subagentId = subEvt.subagentId || '';
+              const text = typeof data.text === 'string' ? data.text.trim() : '';
+              if (text) {
+                const id = `subagent-steer-${subagentId || 'sub'}-${data.timestamp ?? Date.now()}`;
+                const truncated = text.length > 80 ? text.slice(0, 77) + '…' : text;
+                updateStreamingTab(t => {
+                  if (t.currentStreamChunks.some(ch => ch.type === 'status' && ch.id === id)) return t;
+                  return {
+                    ...t,
+                    currentStreamChunks: [
+                      ...t.currentStreamChunks,
+                      {
+                        type: 'status' as const,
+                        id,
+                        label: `Steer applied · "${truncated}"`,
+                        state: 'complete' as const,
+                        nested: true,
+                        subagentId,
+                      },
+                    ],
+                  };
+                });
+              }
+              // Move any queued subagent-steer items targeting this subagent
+              // out of the QueuePanel and into the chat history as steer
+              // bubbles tagged with the subagent label.
+              if (subagentId) {
+                flushQueuedSteeringMessages(
+                  subagentTargetTabId,
+                  typeof msg.requestId === 'string' ? msg.requestId : undefined,
+                  { subagentId },
+                );
+              }
             } else if (eventType === 'retry' || eventType === 'error' || eventType === 'cancelled' || eventType === 'completed') {
               const subagentId = subEvt.subagentId || '';
               const id = `subagent-${eventType}-${subagentId || 'sub'}-${Date.now()}`;
@@ -2706,6 +2895,7 @@ export function useAgent(options?: string | UseAgentOptions) {
                   markSubagentFinished(subagentTargetTabId, subagentTrackingId);
                 } else if (getActiveSubagentCount(subagentTargetTabId) <= 1) {
                   activeSubagentsByTabRef.current.delete(subagentTargetTabId);
+                  syncActiveSubagentsState(subagentTargetTabId);
                 }
                 if (getActiveSubagentCount(subagentTargetTabId) === 0) {
                   queueDeferredDelegatedFinalCheck(subagentTargetTabId, typeof msg.requestId === 'string' ? msg.requestId : undefined, true);
@@ -2761,7 +2951,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             // log it and keep the stream alive. Steering will be a no-op until
             // the cloud-ai server is updated.
             const errMsg = String(msg.message || '');
-            if (/unknown type:\s*(interjection|steer)/i.test(errMsg)
+            if (/unknown type:\s*(interjection|steer|subagent_steer)/i.test(errMsg)
               || (msg.code && /interjection|steer/i.test(String(msg.code)))) {
               console.warn('[agent] Server rejected steer/interjection; chat continues. Update cloud-ai to enable mid-stream steering.');
               return;
@@ -2829,6 +3019,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             // Clean up request tracking and mark tab as no longer running
             const completedTabId = getTargetTabId();
             activeSubagentsByTabRef.current.delete(completedTabId);
+            syncActiveSubagentsState(completedTabId);
             deferredDelegatedFinalsRef.current.delete(completedTabId);
             if (msg.requestId) {
               requestIdToTabRef.current.delete(msg.requestId);
@@ -3457,6 +3648,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       }));
       runningTabsRef.current.clear();
       activeSubagentsByTabRef.current.clear();
+      setActiveSubagentsByTab({});
       deferredDelegatedFinalsRef.current.clear();
       pendingResponseTabsRef.current = [];
       requestIdToTabRef.current.clear();
@@ -3514,6 +3706,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     sendMessage,
     steerMessage: queueSteeringMessage,
     steerSubagent,
+    activeSubagentsByTab,
     stopGeneration,
     connect,
     disconnect,
