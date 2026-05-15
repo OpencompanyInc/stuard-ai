@@ -300,7 +300,7 @@ export const listMyFeedback = createTool({
       .select('id, type, title, status, severity, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .limit(limit ?? 10);
 
     if (type !== 'all') {
       query = query.eq('type', type);
@@ -398,7 +398,7 @@ export const reportBug = createTool({
     error: z.string().optional(),
     cancelled: z.boolean().optional(),
   }),
-  execute: async (inputData, runCtx) => {
+  execute: (async (inputData: any, runCtx: any) => {
     const { title, description, severity, screenshots } = inputData;
     return submitFeedback.execute?.({
       type: 'bug' as const,
@@ -409,7 +409,7 @@ export const reportBug = createTool({
       labels: ['bug'],
       skipConfirmation: false,
     } as any, runCtx);
-  },
+  }) as any,
 });
 
 export const suggestFeature = createTool({
@@ -426,7 +426,7 @@ export const suggestFeature = createTool({
     error: z.string().optional(),
     cancelled: z.boolean().optional(),
   }),
-  execute: async (inputData, runCtx) => {
+  execute: (async (inputData: any, runCtx: any) => {
     const { title, description, screenshots } = inputData;
     return submitFeedback.execute?.({
       type: 'feature' as const,
@@ -436,7 +436,7 @@ export const suggestFeature = createTool({
       labels: ['enhancement'],
       skipConfirmation: false,
     } as any, runCtx);
-  },
+  }) as any,
 });
 
 // Export all feedback tools

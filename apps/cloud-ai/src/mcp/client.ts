@@ -5,13 +5,13 @@
  * These servers handle OAuth internally - we just connect and use tools.
  */
 
-import { MCPConfiguration } from '@mastra/mcp';
+import { MCPClient } from '@mastra/mcp';
 import { getMCPIntegration } from './registry';
 
 // Cache of active MCP clients
 // Key: `${userId}:${integrationId}`
 const clientCache = new Map<string, {
-  client: MCPConfiguration;
+  client: MCPClient;
   createdAt: number;
 }>();
 
@@ -25,7 +25,7 @@ export async function getMCPClientForIntegration(
   userId: string,
   integrationId: string,
   accessToken?: string
-): Promise<MCPConfiguration | null> {
+): Promise<MCPClient | null> {
   const integration = getMCPIntegration(integrationId);
   if (!integration || !integration.available) {
     return null;
@@ -65,7 +65,7 @@ export async function getMCPClientForIntegration(
       };
     }
 
-    const client = new MCPConfiguration({
+    const client = new MCPClient({
       id: `stuard-${integrationId}-${userId}`,
       servers: {
         [integrationId]: serverConfig,
@@ -98,7 +98,7 @@ export async function getMCPToolsForIntegration(
   }
 
   try {
-    return await client.getTools();
+    return await client.listTools();
   } catch (error) {
     console.error(`[MCP] Failed to get tools for ${integrationId}:`, error);
     return {};

@@ -550,7 +550,7 @@ export const generate_image = createTool({
     provider: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async (input) => {
+  execute: async (input: any) => {
     const { prompt, input_images = [], model, size, aspect_ratio, quality, n, format, background } = input;
 
     try {

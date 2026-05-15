@@ -37,11 +37,31 @@ function resolveModulePath(modulePath: string): string {
       } catch {}
     }
 
-    // Final fallback: walk up from __dirname looking for node_modules
+    // Final fallback: walk up from __dirname looking for node_modules.
+    // Also probe `.ignored/` (pnpm parks shadowed packages there during partial
+    // installs) and the pnpm virtual store, so a half-finished `pnpm install`
+    // doesn't take the chat UI down.
     let dir = __dirname;
     for (let i = 0; i < 10; i++) {
-      const candidate = path.join(dir, 'node_modules', modulePath);
-      if (fs.existsSync(candidate)) return candidate;
+      const nm = path.join(dir, 'node_modules');
+      const candidates = [
+        path.join(nm, modulePath),
+        path.join(nm, '.ignored', modulePath),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      const pnpmDir = path.join(nm, '.pnpm');
+      if (fs.existsSync(pnpmDir)) {
+        try {
+          const prefix = pkgName + '@';
+          const matches = fs.readdirSync(pnpmDir).filter((n) => n.startsWith(prefix));
+          for (const m of matches) {
+            const candidate = path.join(pnpmDir, m, 'node_modules', modulePath);
+            if (fs.existsSync(candidate)) return candidate;
+          }
+        } catch {}
+      }
       const parent = path.dirname(dir);
       if (parent === dir) break;
       dir = parent;

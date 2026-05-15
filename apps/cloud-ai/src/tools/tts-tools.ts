@@ -91,7 +91,7 @@ export const text_to_speech = createTool({
     played: z.boolean().optional(),
     error: z.string().optional(),
   }),
-  execute: async (inputData, { writer }) => {
+  execute: async (inputData: any, { writer }) => {
     const { text, voice_id, model_id, language_code, speed, stability, similarity_boost, style, format, save, play, outputPath } = inputData;
 
     try {
@@ -124,14 +124,15 @@ export const text_to_speech = createTool({
 
       if (save || play) {
         const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
-        filePath = outputPath || join(mediaGalleryDir('generated-audio'), fileName);
+        const resolvedFilePath: string = outputPath || join(mediaGalleryDir('generated-audio'), fileName);
+        filePath = resolvedFilePath;
 
-        const dir = filePath.substring(0, filePath.lastIndexOf('/') || filePath.lastIndexOf('\\'));
+        const dir = resolvedFilePath.substring(0, resolvedFilePath.lastIndexOf('/') || resolvedFilePath.lastIndexOf('\\'));
         if (dir) {
           await mkdir(dir, { recursive: true }).catch(() => {});
         }
 
-        await writeFile(filePath, audioBuffer);
+        await writeFile(resolvedFilePath, audioBuffer);
 
         // Register saved audio in the desktop media library via bridge (best-effort, silent)
         try {

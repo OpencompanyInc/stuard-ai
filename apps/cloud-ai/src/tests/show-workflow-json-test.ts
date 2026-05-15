@@ -20,7 +20,7 @@ const workflowId = process.argv[2] || process.env.WORKFLOW_ID || 'flow_example';
 async function main() {
   console.log(`🔎 Fetching workflow JSON for: ${workflowId}`);
 
-  const result = await show_json_workflow_code.execute?.(
+  const result: any = await show_json_workflow_code.execute?.(
     {
       id: workflowId,
     } as any,

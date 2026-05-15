@@ -341,7 +341,7 @@ export const telnyx_send_voice_note = createTool({
     to: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async (input) => {
+  execute: async (input: any) => {
     try {
       const userId = await requireUserId();
       const phone = await getVerifiedPhone(userId);
@@ -401,7 +401,7 @@ export const telnyx_voice_call = createTool({
     provider: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async (input) => {
+  execute: async (input: any) => {
     try {
       const userId = await requireUserId();
       const phone = await getVerifiedPhone(userId);

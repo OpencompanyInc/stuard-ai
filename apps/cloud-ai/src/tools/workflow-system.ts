@@ -215,7 +215,7 @@ function markWorkflowToolArgs(args: any): any {
   return { ...(args as Record<string, any>), __workflowToolCall: true };
 }
 
-async function runOne(step: z.infer<typeof StepSchema>, writer?: WritableStreamDefaultWriter<any>, eventTool = 'run_sequential') {
+async function runOne(step: any, writer?: WritableStreamDefaultWriter<any>, eventTool = 'run_sequential') {
   const { tool, args, kind, timeoutMs } = step;
   const toolName = normalizeToolName(tool);
   const startEvt = { type: 'tool_event', tool: eventTool, status: 'step_started', step: { tool, kind } };
