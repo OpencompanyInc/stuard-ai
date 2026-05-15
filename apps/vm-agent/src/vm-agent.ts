@@ -64,6 +64,63 @@ const deployExecutor = new DeployExecutor();
 // Python agent WS communication is shared via vm-agent-ws.ts
 // (sendToAgent, getAgentWs, buildVMMemoryContext are imported above)
 
+const AGENT_DATA_SYNC_IDLE_GRACE_MS = 10_000;
+let _activeAgentOperations = 0;
+let _lastAgentOperationEndedAt = 0;
+let _deferredAgentDataDownloadArgs: any | null = null;
+let _deferredAgentDataDownloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function beginAgentOperation(): void {
+  _activeAgentOperations++;
+}
+
+function endAgentOperation(): void {
+  _activeAgentOperations = Math.max(0, _activeAgentOperations - 1);
+  if (_activeAgentOperations === 0) {
+    _lastAgentOperationEndedAt = Date.now();
+    scheduleDeferredAgentDataDownloadIfIdle();
+  }
+}
+
+function agentDataSyncDelayMs(): number {
+  if (_activeAgentOperations > 0) return AGENT_DATA_SYNC_IDLE_GRACE_MS;
+  if (!_lastAgentOperationEndedAt) return 0;
+  return Math.max(0, AGENT_DATA_SYNC_IDLE_GRACE_MS - (Date.now() - _lastAgentOperationEndedAt));
+}
+
+function deferAgentDataDownload(args: any, reason: string): any {
+  const mode = String(args?.mode || 'full').toLowerCase() === 'delta' ? 'delta' : 'full';
+  _deferredAgentDataDownloadArgs = { ...(args || {}), direction: 'download', mode };
+  scheduleDeferredAgentDataDownloadIfIdle();
+  return { ok: true, direction: 'download', mode, deferred: true, reason };
+}
+
+function scheduleDeferredAgentDataDownloadIfIdle(): void {
+  if (!_deferredAgentDataDownloadArgs || _deferredAgentDataDownloadTimer) return;
+  const delay = Math.max(1_000, agentDataSyncDelayMs());
+  _deferredAgentDataDownloadTimer = setTimeout(() => {
+    _deferredAgentDataDownloadTimer = null;
+    if (!_deferredAgentDataDownloadArgs) return;
+
+    const waitMs = agentDataSyncDelayMs();
+    if (waitMs > 0) {
+      scheduleDeferredAgentDataDownloadIfIdle();
+      return;
+    }
+
+    const args = _deferredAgentDataDownloadArgs;
+    _deferredAgentDataDownloadArgs = null;
+    syncAgentData(args)
+      .then((result) => {
+        if (result?.ok) console.log('[vm-agent] Deferred agent data download complete');
+        else console.warn('[vm-agent] Deferred agent data download failed:', result?.error || 'unknown');
+      })
+      .catch((e: any) => {
+        console.warn('[vm-agent] Deferred agent data download errored:', e?.message || e);
+      });
+  }, delay);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — verify HMAC bearer token on each request
 //
@@ -374,8 +431,14 @@ async function handleCommand(command: string, args: any): Promise<any> {
       return await handleToolExec(args);
 
     // ── Database Sync ────────────────────────────────────────────────────
-    case 'sync_agent_data':
+    case 'sync_agent_data': {
+      const direction = String(args?.direction || 'upload').toLowerCase();
+      const waitMs = agentDataSyncDelayMs();
+      if (direction === 'download' && waitMs > 0) {
+        return deferAgentDataDownload(args, _activeAgentOperations > 0 ? 'agent_busy' : 'agent_recently_active');
+      }
       return await syncAgentData(args);
+    }
 
     // ── OAuth Token Storage ──────────────────────────────────────────────
     case 'store_oauth_tokens':
@@ -437,6 +500,7 @@ async function handleAgentChat(args: any): Promise<any> {
   const conversationId = args.conversationId || randomUUID();
   const model = args.model || 'balanced';
 
+  beginAgentOperation();
   try {
     // Load history BEFORE storing the new user message so the prior-turn array
     // doesn't accidentally include the current message.
@@ -492,6 +556,8 @@ async function handleAgentChat(args: any): Promise<any> {
     return { ok: true, conversationId, ...result };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'agent_chat_failed') };
+  } finally {
+    endAgentOperation();
   }
 }
 
@@ -510,6 +576,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
   const conversationId = args.conversationId || randomUUID();
   const model = args.model || 'balanced';
   const modelId = typeof args.modelId === 'string' && args.modelId.trim() ? args.modelId.trim() : undefined;
+  beginAgentOperation();
 
   // Set up NDJSON streaming response
   res.writeHead(200, {
@@ -695,6 +762,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
   } catch (e: any) {
     writeLine({ type: 'error', error: String(e?.message || 'agent_chat_failed') });
   } finally {
+    endAgentOperation();
     res.end();
   }
 }
@@ -703,6 +771,7 @@ async function handleToolExec(args: any): Promise<any> {
   const tool = String(args.tool || '').trim();
   if (!tool) return { ok: false, error: 'missing tool name' };
 
+  beginAgentOperation();
   try {
     const result = await sendToAgent({
       type: 'tool_exec',
@@ -712,6 +781,8 @@ async function handleToolExec(args: any): Promise<any> {
     return result;
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'tool_exec_failed') };
+  } finally {
+    endAgentOperation();
   }
 }
 
@@ -723,6 +794,7 @@ async function handleAgentExecute(args: any): Promise<any> {
   const tools = args.tools || null;
   const model = args.model || 'balanced';
 
+  beginAgentOperation();
   try {
     const memoryContext = await buildVMMemoryContext(task, args.queryEmbedding);
 
@@ -746,6 +818,8 @@ async function handleAgentExecute(args: any): Promise<any> {
     return { ok: true, ...result };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'agent_execute_failed') };
+  } finally {
+    endAgentOperation();
   }
 }
 
@@ -763,60 +837,64 @@ async function processVMConversationTurn(
   userMessage: string,
   assistantMessage: string,
 ): Promise<void> {
-  // Store assistant message
-  await sendToAgent({
-    type: 'tool_exec',
-    tool: 'message_add',
-    args: { conversation_id: conversationId, role: 'assistant', content: assistantMessage },
-  }, 10_000).catch(() => {});
-  emitChatSyncToDesktop('new_message', conversationId, { role: 'assistant', content: assistantMessage });
-
-  // Get existing segments to determine current state
-  const segListResult = await sendToAgent({
-    type: 'tool_exec',
-    tool: 'segment_list',
-    args: { conversation_id: conversationId },
-  }, 10_000).catch(() => null);
-
-  const existingSegments: any[] = segListResult?.segments || segListResult?.result || [];
-  const lastSegment = existingSegments[existingSegments.length - 1] || null;
-
-  // Use a lightweight AI call via the Python agent to analyze the turn.
-  // The Python agent's 'conversation_analyze_segment' may not exist, so we
-  // create a summary ourselves and store a new segment when appropriate.
-  // For simplicity, create/update a segment for every meaningful turn.
-  const summaryText = `User: ${userMessage.slice(0, 200)}. Assistant: ${assistantMessage.slice(0, 200)}`;
-  const topics = extractSimpleTopics(userMessage);
-
-  // Generate embedding for the segment
-  let segmentEmbedding: number[] | undefined;
+  beginAgentOperation();
   try {
-    const embedText = `${summaryText} Topics: ${topics.join(', ')}`;
-    const embedResult = await sendToAgent({
+    // Store assistant message
+    await sendToAgent({
       type: 'tool_exec',
-      tool: 'generate_embedding',
-      args: { text: embedText },
-    }, 15_000).catch(() => null);
-    segmentEmbedding = embedResult?.embedding || embedResult?.result?.embedding;
-  } catch { /* non-fatal */ }
+      tool: 'message_add',
+      args: { conversation_id: conversationId, role: 'assistant', content: assistantMessage },
+    }, 10_000).catch(() => {});
+    emitChatSyncToDesktop('new_message', conversationId, { role: 'assistant', content: assistantMessage });
 
-  // Create a new segment for this turn
-  const turnCount = existingSegments.length + 1;
-  await sendToAgent({
-    type: 'tool_exec',
-    tool: 'segment_create',
-    args: {
-      conversation_id: conversationId,
-      start_turn: turnCount,
-      summary: summaryText.slice(0, 500),
-      topics,
-      ...(segmentEmbedding ? { embedding: segmentEmbedding } : {}),
-    },
-  }, 10_000).catch((e: any) => {
-    console.warn('[vm-agent] segment_create failed:', e?.message);
-  });
+    // Get existing segments to determine current state
+    const segListResult = await sendToAgent({
+      type: 'tool_exec',
+      tool: 'segment_list',
+      args: { conversation_id: conversationId },
+    }, 10_000).catch(() => null);
 
-  console.log(`[vm-agent] Processed conversation turn: ${conversationId}, segments: ${turnCount}`);
+    const existingSegments: any[] = segListResult?.segments || segListResult?.result || [];
+
+    // Use a lightweight AI call via the Python agent to analyze the turn.
+    // The Python agent's 'conversation_analyze_segment' may not exist, so we
+    // create a summary ourselves and store a new segment when appropriate.
+    // For simplicity, create/update a segment for every meaningful turn.
+    const summaryText = `User: ${userMessage.slice(0, 200)}. Assistant: ${assistantMessage.slice(0, 200)}`;
+    const topics = extractSimpleTopics(userMessage);
+
+    // Generate embedding for the segment
+    let segmentEmbedding: number[] | undefined;
+    try {
+      const embedText = `${summaryText} Topics: ${topics.join(', ')}`;
+      const embedResult = await sendToAgent({
+        type: 'tool_exec',
+        tool: 'generate_embedding',
+        args: { text: embedText },
+      }, 15_000).catch(() => null);
+      segmentEmbedding = embedResult?.embedding || embedResult?.result?.embedding;
+    } catch { /* non-fatal */ }
+
+    // Create a new segment for this turn
+    const turnCount = existingSegments.length + 1;
+    await sendToAgent({
+      type: 'tool_exec',
+      tool: 'segment_create',
+      args: {
+        conversation_id: conversationId,
+        start_turn: turnCount,
+        summary: summaryText.slice(0, 500),
+        topics,
+        ...(segmentEmbedding ? { embedding: segmentEmbedding } : {}),
+      },
+    }, 10_000).catch((e: any) => {
+      console.warn('[vm-agent] segment_create failed:', e?.message);
+    });
+
+    console.log(`[vm-agent] Processed conversation turn: ${conversationId}, segments: ${turnCount}`);
+  } finally {
+    endAgentOperation();
+  }
 }
 
 /** Extract simple topic keywords from text. */
@@ -1641,6 +1719,10 @@ function scheduleQuickSync() {
  */
 async function periodicAgentDataSync(): Promise<void> {
   if (_syncInFlight) return;
+  if (agentDataSyncDelayMs() > 0) {
+    scheduleQuickSync();
+    return;
+  }
   if (!hasAgentDataChanged()) return;
 
   _syncInFlight = true;

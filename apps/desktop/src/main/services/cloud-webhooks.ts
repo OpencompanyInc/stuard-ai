@@ -473,20 +473,49 @@ async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full')
             return false;
         }
 
-        await fetch(`${apiBase}/v1/cloud-engine/push-agent-data`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({ mode }),
-            signal: AbortSignal.timeout(15_000),
-        }).catch((e: any) => {
-            logger.warn(`[cloud-webhooks] push-agent-data notify failed: ${e?.message}`);
-        });
+        let shouldNotifyVm = true;
+        let engineStatus = '';
+        try {
+            const statusResp = await fetch(`${apiBase}/v1/cloud-engine/status`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` },
+                signal: AbortSignal.timeout(8_000),
+            });
+            if (statusResp.ok) {
+                const statusData: any = await statusResp.json().catch(() => ({}));
+                engineStatus = String(statusData?.engine?.status || '');
+                shouldNotifyVm = engineStatus === 'running';
+            }
+        } catch (e: any) {
+            logger.warn(`[cloud-webhooks] Could not check VM status before agent-data notify: ${e?.message}`);
+        }
+
+        let pushOutcome = 'uploaded to cloud storage';
+        if (shouldNotifyVm) {
+            const notifyResp = await fetch(`${apiBase}/v1/cloud-engine/push-agent-data`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ mode }),
+                signal: AbortSignal.timeout(15_000),
+            }).catch((e: any) => {
+                logger.warn(`[cloud-webhooks] push-agent-data notify failed: ${e?.message}`);
+                return null;
+            });
+            if (notifyResp?.ok) {
+                pushOutcome = 'pushed to VM';
+            } else if (notifyResp) {
+                pushOutcome = 'uploaded to cloud storage; VM notify failed';
+                logger.warn(`[cloud-webhooks] push-agent-data notify returned HTTP ${notifyResp.status}`);
+            }
+        } else {
+            logger.info(`[cloud-webhooks] Agent data uploaded; VM notify skipped (${engineStatus || 'no running engine'})`);
+        }
 
         _lastPushSucceededAt = Date.now();
-        logger.info(`[cloud-webhooks] Desktop agent data ${mode} pushed to VM`);
+        logger.info(`[cloud-webhooks] Desktop agent data ${mode} ${pushOutcome}`);
         return true;
     } catch (e: any) {
         logger.error(`[cloud-webhooks] Push agent data to VM failed: ${e?.message}`);

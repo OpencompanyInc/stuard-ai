@@ -41,15 +41,16 @@ let currentMode: OverlayMode = "compact";
 const APP_ICON_FILENAME = "icon2.png";
 
 function getAppIconPath(): string | undefined {
+  const appPath = (() => { try { return app?.getAppPath?.() || ""; } catch { return ""; } })();
   const candidates = [
     // Packaged: extraResources lands the file directly under resources/
     path.join(process.resourcesPath || "", APP_ICON_FILENAME),
     // Dev (tsup output dist/main/index.js — climb out to apps/desktop/icons)
     path.join(__dirname, "..", "..", "icons", APP_ICON_FILENAME),
-    path.join(app.getAppPath(), "icons", APP_ICON_FILENAME),
+    appPath ? path.join(appPath, "icons", APP_ICON_FILENAME) : "",
     // Legacy fallbacks (older builds kept icons under build/)
     path.join(__dirname, "..", "..", "build", APP_ICON_FILENAME),
-    path.join(app.getAppPath(), "build", APP_ICON_FILENAME),
+    appPath ? path.join(appPath, "build", APP_ICON_FILENAME) : "",
   ];
   for (const p of candidates) {
     try {

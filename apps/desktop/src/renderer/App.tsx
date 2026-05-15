@@ -781,7 +781,7 @@ export default function App() {
         try {
           if ((window as any).desktopAPI?.execTool) {
             if (wakewordEnabled) {
-              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.5, triggerCount: 6 });
+              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: wakewordSensitivity, cooldown: 1.5, triggerCount: 8 });
             } else {
               await (window as any).desktopAPI.execTool('wakeword_stop', {});
             }

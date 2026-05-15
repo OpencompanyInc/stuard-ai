@@ -295,13 +295,14 @@ function setLS<T>(key: string, value: T) {
   } catch { }
 }
 
-const DEFAULT_WAKEWORD_SENSITIVITY = 0.95;
+const DEFAULT_WAKEWORD_SENSITIVITY = 0.80;
 
 function normalizeWakewordSensitivity(v: any): number {
   const n = Number(v);
   if (!Number.isFinite(n)) return DEFAULT_WAKEWORD_SENSITIVITY;
-  // Migrate the previous default to the stricter wake-word cutoff.
+  // Migrate previous defaults to the retrained-model default.
   if (Math.abs(n - 0.88) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  if (Math.abs(n - 0.95) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
   return Math.max(0.3, Math.min(0.99, n));
 }
 

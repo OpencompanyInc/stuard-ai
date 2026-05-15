@@ -18,9 +18,9 @@ from listen_numpy import list_input_devices, listen as listen_numpy
 
 
 THRESHOLDS = {
-    "strict": 0.985,
-    "default": 0.95,
-    "relaxed": 0.80,
+    "strict": 0.95,
+    "default": 0.80,
+    "relaxed": 0.65,
 }
 DEFAULT_WAKE_TEXT = "Hey Stuard"
 
@@ -74,11 +74,16 @@ def build_parser() -> argparse.ArgumentParser:
     listen_parser.add_argument("--cooldown", type=float, default=1.5)
     listen_parser.add_argument("--device", type=int, default=None)
     listen_parser.add_argument("--seconds", type=float, default=None)
-    listen_parser.add_argument("--trigger-count", type=int, default=6)
+    listen_parser.add_argument("--trigger-count", type=int, default=8)
     listen_parser.add_argument("--ema-alpha", type=float, default=0.25)
     listen_parser.add_argument("--min-rms", type=float, default=0.003)
     listen_parser.add_argument("--no-status", action="store_true")
     listen_parser.add_argument("--status-every", type=float, default=0.5)
+    listen_parser.add_argument(
+        "--capture-dir",
+        default=None,
+        help="If set, save the 1.5s buffer to this dir on each trigger",
+    )
 
     subparsers.add_parser("devices", help="List available audio input devices")
     return parser
@@ -122,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         trigger_count=args.trigger_count,
         ema_alpha=args.ema_alpha,
         min_rms=args.min_rms,
+        capture_dir=args.capture_dir,
     )
     return 0
 

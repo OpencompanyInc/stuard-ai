@@ -1911,7 +1911,6 @@ const InputArea = forwardRef(function InputArea(
           onClose={() => setShowBookmarkEditor(false)}
           bookmarks={bookmarks}
           onSave={saveBookmarks}
-          workflows={localWorkflows.map(w => ({ id: w.id, name: w.name || 'Untitled' }))}
         />
       </div>
     );

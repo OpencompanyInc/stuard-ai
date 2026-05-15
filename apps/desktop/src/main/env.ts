@@ -8,4 +8,4 @@ export function initEnv() {
   try { dotenv.config({ path: path.join(process.resourcesPath, "agent", ".env") }); } catch {}
 }
 
-export const isDev = !app.isPackaged;
+export const isDev = !app?.isPackaged;
