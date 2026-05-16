@@ -74,7 +74,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, chatModels: defaultChatModels, modelSource, setModelSource } = usePreferences();
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, setChatMode: setDefaultChatMode, chatModels: defaultChatModels, setChatModels: setDefaultChatModels, modelSource, setModelSource } = usePreferences();
   const { modelById } = useModelRegistry();
   const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
     try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
@@ -252,6 +252,18 @@ export default function App() {
       setModelSource('subscription');
     }
   }, [chatMode, setChatMode, setModelSource]);
+
+  // Persist launcher model choice across tabs/restarts. useAgent's setters only
+  // touch per-tab state; pair them with the preferences setters so the next
+  // tab/session opens on the same model.
+  const handleChatModeChange = useCallback((mode: any) => {
+    setChatMode(mode);
+    try { setDefaultChatMode(mode); } catch { }
+  }, [setChatMode, setDefaultChatMode]);
+  const handleChatModelsChange = useCallback((cfg: any) => {
+    setChatModels(cfg);
+    try { setDefaultChatModels(cfg); } catch { }
+  }, [setChatModels, setDefaultChatModels]);
 
   // Listen for approval responses from notification overlay (when permission was handled out-of-app)
   useEffect(() => {
@@ -1753,9 +1765,9 @@ export default function App() {
                     modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
                     connectionStatus={connectionStatus}
                     chatMode={chatMode}
-                    onChatModeChange={setChatMode as any}
+                    onChatModeChange={handleChatModeChange as any}
                     chatModels={chatModels}
-                    onChatModelsChange={setChatModels as any}
+                    onChatModelsChange={handleChatModelsChange as any}
                     modelSource={modelSource}
                     onModelSourceChange={setModelSource}
                     reasoningLevel={reasoningLevel}
@@ -1837,9 +1849,9 @@ export default function App() {
                     plannerData={plannerData}
                     translucentMode={translucentMode}
                     chatMode={chatMode}
-                    onChatModeChange={setChatMode as any}
+                    onChatModeChange={handleChatModeChange as any}
                     chatModels={chatModels}
-                    onChatModelsChange={setChatModels as any}
+                    onChatModelsChange={handleChatModelsChange as any}
                     modelSource={modelSource}
                     onModelSourceChange={setModelSource}
                     reasoningLevel={reasoningLevel}

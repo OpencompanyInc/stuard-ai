@@ -1401,6 +1401,16 @@ export function toggleWindow() {
   logger.info("toggleWindow: currently visible=", win.isVisible());
 
   if (win.isVisible() && !wasHidden) {
+    // In window/sidebar mode, the window persists on-screen. If the user hits
+    // the hotkey from another foreground app, they want to bring this window
+    // forward — not dismiss it. Only fall through to hide when this window is
+    // already the focused one.
+    if (currentMode !== 'compact' && !win.isFocused()) {
+      try { if (win.isMinimized()) win.restore(); } catch { }
+      try { win.moveTop(); } catch { }
+      try { win.focus(); } catch { }
+      return;
+    }
     if (now - lastShowAt < OVERLAY_HIDE_AFTER_SHOW_GUARD_MS) return;
     hideWindow();
   } else {

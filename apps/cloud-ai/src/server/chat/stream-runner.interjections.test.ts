@@ -5,6 +5,7 @@ const {
   addUserMessageMock,
   deleteAbortControllerMock,
   finishRunMock,
+  getBridgeSecretsMock,
   getBridgeWsMock,
   getDesktopWsMock,
   sendMock,
@@ -18,6 +19,7 @@ const {
     addUserMessageMock: vi.fn(),
     deleteAbortControllerMock: vi.fn(),
     finishRunMock: vi.fn(),
+    getBridgeSecretsMock: vi.fn(() => undefined),
     getBridgeWsMock: vi.fn(() => undefined),
     getDesktopWsMock: vi.fn(() => undefined),
     sendMock: vi.fn(),
@@ -89,6 +91,7 @@ vi.mock('../../tools/bridge', () => {
   return {
     withClientBridge: withClientBridgeMock,
     getBridgeWs: getBridgeWsMock,
+    getBridgeSecrets: getBridgeSecretsMock,
   };
 });
 
@@ -153,6 +156,8 @@ describe('runPreparedChatStream interjections', () => {
     addUserMessageMock.mockClear();
     deleteAbortControllerMock.mockClear();
     finishRunMock.mockClear();
+    getBridgeSecretsMock.mockClear();
+    getBridgeSecretsMock.mockReturnValue(undefined);
     getBridgeWsMock.mockClear();
     getDesktopWsMock.mockClear();
     sendMock.mockClear();
