@@ -8,7 +8,7 @@ import { normalizeUsage } from '../../utils/usage';
 import { normalizeThreadTitle, THREAD_TITLE_SYSTEM } from '../../utils/thread-title';
 import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
-import { withClientBridge, getBridgeWs } from '../../tools/bridge';
+import { withClientBridge, getBridgeWs, getBridgeSecrets } from '../../tools/bridge';
 import {
   addAssistantMessage,
   addUserMessage,
@@ -189,6 +189,14 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
     abortController = new AbortController();
     setAbortController(ws, requestId, abortController);
+    const bridgeSecrets = getBridgeSecrets();
+    if (bridgeSecrets) {
+      if (requestId) {
+        bridgeSecrets.__requestId = requestId;
+      }
+      bridgeSecrets.__chatWs = ws;
+      bridgeSecrets.__abortSignal = abortController.signal;
+    }
 
     const hardTimeoutMs = getHardTimeoutMs(agentType);
     if (hardTimeoutMs > 0) {
@@ -694,6 +702,7 @@ function appendCompletedToolCallsToHistory(history: any[], toolCallsMap: Map<str
       type: 'tool-call' as const,
       toolCallId: toolCall.id,
       toolName: toolCall.tool,
+      input: toolCall.input ?? toolCall.args ?? {},
       args: toolCall.args || {},
     })),
   });
@@ -710,6 +719,7 @@ function appendCompletedToolCallsToHistory(history: any[], toolCallsMap: Map<str
         type: 'tool-result',
         toolCallId: toolCall.id,
         toolName: toolCall.tool,
+        output: { type: 'text', value: resultText },
         result: resultText,
       }],
     });
@@ -997,13 +1007,14 @@ function handleStreamChunk({
 
       case 'tool-call': {
         runtime.sawToolCall = true;
-        const toolName = chunk?.payload?.toolName || 'tool';
-        const toolCallId = chunk?.payload?.toolCallId || `tc-${Date.now()}`;
-        const toolArgs = chunk?.payload?.args;
+        const toolName = chunk?.payload?.toolName || chunk?.payload?.tool || chunk?.payload?.name || chunk?.toolName || chunk?.tool || chunk?.name || 'tool';
+        const toolCallId = chunk?.payload?.toolCallId || chunk?.payload?.id || chunk?.toolCallId || chunk?.id || `tc-${Date.now()}`;
+        const toolArgs = chunk?.payload?.args ?? chunk?.payload?.input ?? chunk?.args ?? chunk?.input ?? {};
         const toolCall = {
           id: toolCallId,
           tool: toolName,
           status: 'called',
+          input: toolArgs,
           args: toolArgs,
           timestamp: Date.now(),
         };
@@ -1020,9 +1031,9 @@ function handleStreamChunk({
 
       case 'tool-result': {
         runtime.sawToolCall = true;
-        const toolName = chunk?.payload?.toolName || 'tool';
-        const toolCallId = chunk?.payload?.toolCallId || '';
-        const toolResult = chunk?.payload?.result;
+        const toolName = chunk?.payload?.toolName || chunk?.payload?.tool || chunk?.payload?.name || chunk?.toolName || chunk?.tool || chunk?.name || 'tool';
+        const toolCallId = chunk?.payload?.toolCallId || chunk?.payload?.id || chunk?.toolCallId || chunk?.id || '';
+        const toolResult = chunk?.payload?.result ?? chunk?.payload?.output ?? chunk?.result ?? chunk?.output;
         const existingCall = toolCallsMap.get(toolCallId);
         if (existingCall) {
           existingCall.status = 'completed';

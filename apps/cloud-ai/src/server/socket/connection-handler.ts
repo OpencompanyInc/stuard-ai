@@ -8,7 +8,8 @@ import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
 import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, enqueueInterjection, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
-import { enqueueSubagentSteer } from '../../orchestrator/subagent-runtime';
+import { abortRunningSubagentsForRequest, enqueueSubagentSteer, isSubagentRunning } from '../../orchestrator/subagent-runtime';
+import { abortHeadlessTasksForRequest } from '../../tools/deploy-headless-agent';
 
 export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
@@ -42,6 +43,8 @@ export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
     ws.on('close', () => {
       writeLog('ws_disconnected');
+      try { abortRunningSubagentsForRequest(ws); } catch { }
+      try { abortHeadlessTasksForRequest(ws); } catch { }
       cleanupSocketState(ws);
     });
   } catch { }
@@ -72,13 +75,17 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
     const stopRequestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
     if (stopRequestId) {
       const aborted = abortAndCleanup(ws, stopRequestId);
-      console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted}`);
-      send(ws, { type: 'stopped', success: aborted, requestId: stopRequestId });
+      const subagentsAborted = abortRunningSubagentsForRequest(ws, stopRequestId);
+      const headlessAborted = abortHeadlessTasksForRequest(ws, stopRequestId);
+      console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted} | subagents=${subagentsAborted} | headless=${headlessAborted}`);
+      send(ws, { type: 'stopped', success: aborted || subagentsAborted > 0 || headlessAborted > 0, requestId: stopRequestId, subagentsAborted, headlessAborted });
     } else {
       const abortedCount = abortAllRequests(ws);
-      if (abortedCount > 0) {
-        console.log(`[cloud-ai] Aborting ALL ${abortedCount} stream(s) by user request`);
-        send(ws, { type: 'stopped', success: true });
+      const subagentsAborted = abortRunningSubagentsForRequest(ws);
+      const headlessAborted = abortHeadlessTasksForRequest(ws);
+      if (abortedCount > 0 || subagentsAborted > 0 || headlessAborted > 0) {
+        console.log(`[cloud-ai] Aborting ALL ${abortedCount} stream(s), ${subagentsAborted} subagent(s), and ${headlessAborted} headless task(s) by user request`);
+        send(ws, { type: 'stopped', success: true, subagentsAborted, headlessAborted });
       } else {
         send(ws, { type: 'stopped', success: false, message: 'no active stream' });
       }
@@ -108,15 +115,22 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
     const subagentId = typeof msg?.subagentId === 'string' ? msg.subagentId.trim() : '';
     const text = typeof msg?.text === 'string' ? msg.text : '';
     const requestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
-    const depth = subagentId ? enqueueSubagentSteer(subagentId, text) : 0;
+    // Reject early when the target subagent isn't running so the steer
+    // doesn't sit forever in subagentSteerQueues. Otherwise the user
+    // would get a misleading accepted=true ack for a no-op.
+    const subagentAlive = subagentId ? isSubagentRunning(subagentId) : false;
+    const depth = subagentId && subagentAlive ? enqueueSubagentSteer(subagentId, text) : 0;
+    let ackMessage: string;
+    if (!subagentId) ackMessage = 'subagentId required';
+    else if (!subagentAlive) ackMessage = 'subagent_not_running';
+    else if (depth === 0) ackMessage = 'empty steer';
+    else ackMessage = 'queued for next subagent step';
     send(ws, {
       type: 'subagent_steer_ack',
       subagentId,
       accepted: depth > 0,
       depth,
-      message: depth > 0
-        ? 'queued for next subagent step'
-        : (!subagentId ? 'subagentId required' : 'empty steer'),
+      message: ackMessage,
     }, requestId);
     return;
   }

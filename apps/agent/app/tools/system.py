@@ -21,6 +21,108 @@ _terminal_lock = threading.Lock()
 _terminal_sessions: Dict[str, Dict[str, Any]] = {}
 COMMAND_CHECKPOINT_MAX_ENTRIES = int(os.getenv("COMMAND_CHECKPOINT_MAX_ENTRIES", "2000"))
 
+# Tail size for accumulated live output included on the final result. Lets the
+# model see the actual command output without bloating result payloads when a
+# build emits megabytes of logs.
+LIVE_OUTPUT_TAIL_BYTES = int(os.getenv("STUARD_LIVE_OUTPUT_TAIL_BYTES", "65536"))
+
+
+async def _stream_subprocess(
+    argv: List[str],
+    *,
+    cwd: Optional[str],
+    timeout_ms: int,
+    emit: Optional[Callable[[str, Dict[str, Any] | None], Awaitable[None]]] = None,
+    flush_ms: int = 120,
+    max_chunk: int = 8192,
+) -> tuple[Optional[int], str, str, bool]:
+    """Spawn ``argv`` and stream stdout/stderr while accumulating them.
+
+    Emits ``progress`` events of shape ``{liveOutput: str, stream: 'stdout'|'stderr'}``
+    so the UI can render a live terminal panel. Returns
+    ``(returncode, stdout_full, stderr_full, timed_out)``.
+
+    Output is flushed when a newline arrives or every ``flush_ms`` milliseconds
+    so commands that don't print newlines still progress visibly.
+    """
+    proc_kwargs: Dict[str, Any] = {
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    if cwd:
+        proc_kwargs["cwd"] = cwd
+
+    proc = await asyncio.create_subprocess_exec(*argv, **proc_kwargs)
+
+    stdout_buf: List[str] = []
+    stderr_buf: List[str] = []
+
+    async def pump(stream: Optional[asyncio.StreamReader], label: str, sink: List[str]) -> None:
+        if stream is None:
+            return
+        loop = asyncio.get_event_loop()
+        pending = b""
+        last_emit = loop.time()
+        while True:
+            try:
+                chunk = await stream.read(max_chunk)
+            except Exception:
+                break
+            if not chunk:
+                break
+            pending += chunk
+            now = loop.time()
+            has_newline = b"\n" in pending
+            interval_elapsed = (now - last_emit) * 1000 >= flush_ms
+            if not (has_newline or interval_elapsed):
+                continue
+            if has_newline:
+                idx = pending.rfind(b"\n") + 1
+                payload = pending[:idx]
+                pending = pending[idx:]
+            else:
+                payload = pending
+                pending = b""
+            text = payload.decode("utf-8", errors="replace")
+            sink.append(text)
+            if emit:
+                try:
+                    await emit("progress", {"liveOutput": text, "stream": label})
+                except Exception:
+                    pass
+            last_emit = now
+        if pending:
+            text = pending.decode("utf-8", errors="replace")
+            sink.append(text)
+            if emit:
+                try:
+                    await emit("progress", {"liveOutput": text, "stream": label})
+                except Exception:
+                    pass
+
+    timed_out = False
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                pump(proc.stdout, "stdout", stdout_buf),
+                pump(proc.stderr, "stderr", stderr_buf),
+                proc.wait(),
+            ),
+            timeout=max(0.1, timeout_ms / 1000),
+        )
+    except asyncio.TimeoutError:
+        timed_out = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
+    return proc.returncode, "".join(stdout_buf), "".join(stderr_buf), timed_out
+
 # Cached binary paths to avoid repeated slow PATH traversal on Windows
 _cached_python_bin: str | None = None
 _cached_node_bin: str | None = None
@@ -451,20 +553,31 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             checkpoint_before=checkpoint,
         )
     try:
-        completed = await asyncio.to_thread(
-            subprocess.run,
-            argv,
-            shell=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_ms / 1000,
+        rc, stdout, stderr, timed_out = await _stream_subprocess(
+            [str(a) for a in argv],
             cwd=resolved_cwd,
+            timeout_ms=timeout_ms,
+            emit=emit,
         )
         _finish_command_checkpoint(checkpoint)
-        return {"ok": True, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr, "shell": shell_used}
-    except subprocess.TimeoutExpired:
+        if timed_out:
+            return {
+                "ok": False,
+                "error": "timeout",
+                "shell": shell_used,
+                "stdout": stdout[-LIVE_OUTPUT_TAIL_BYTES:],
+                "stderr": stderr[-LIVE_OUTPUT_TAIL_BYTES:],
+            }
+        return {
+            "ok": True,
+            "exitCode": rc,
+            "stdout": stdout,
+            "stderr": stderr,
+            "shell": shell_used,
+        }
+    except FileNotFoundError as e:
         _finish_command_checkpoint(checkpoint)
-        return {"ok": False, "error": "timeout", "shell": shell_used}
+        return {"ok": False, "error": f"shell_not_found: {e}", "shell": shell_used}
 
 
 async def list_terminals(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -951,20 +1064,32 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             await emit("executing", {"python": py_bin, "script": script_path, "envId": env_id or None})
 
         try:
-            proc = await asyncio.to_thread(
-                subprocess.run,
+            rc, stdout, stderr, timed_out = await _stream_subprocess(
                 [py_bin, script_path, *arg_list],
-                capture_output=True,
-                text=True,
-                timeout=max(0.1, timeout_ms / 1000),
                 cwd=resolved_cwd,
+                timeout_ms=timeout_ms,
+                emit=emit,
             )
-            
+
+            if timed_out:
+                _finish_command_checkpoint(checkpoint)
+                if emit:
+                    await emit("timeout", {"timeoutMs": timeout_ms})
+                return {
+                    "ok": False,
+                    "error": "timeout",
+                    "python": py_bin,
+                    "envId": env_id,
+                    "envPath": env_dir,
+                    "stdout": stdout[-LIVE_OUTPUT_TAIL_BYTES:],
+                    "stderr": stderr[-LIVE_OUTPUT_TAIL_BYTES:],
+                }
+
             result = {
-                "ok": proc.returncode == 0,
-                "exitCode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "ok": rc == 0,
+                "exitCode": rc,
+                "stdout": stdout,
+                "stderr": stderr,
                 "python": py_bin,
                 "envId": env_id,
                 "envPath": env_dir,
@@ -972,19 +1097,14 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             _finish_command_checkpoint(checkpoint)
             if packages_installed:
                 result["packagesInstalled"] = packages_installed
-            
+
             if emit:
-                if proc.returncode == 0:
+                if rc == 0:
                     await emit("completed", {"exitCode": 0})
                 else:
-                    await emit("script_error", {"exitCode": proc.returncode, "stderr": proc.stderr[:500]})
-            
+                    await emit("script_error", {"exitCode": rc, "stderr": stderr[:500]})
+
             return result
-        except subprocess.TimeoutExpired:
-            _finish_command_checkpoint(checkpoint)
-            if emit:
-                await emit("timeout", {"timeoutMs": timeout_ms})
-            return {"ok": False, "error": "timeout", "python": py_bin, "envId": env_id, "envPath": env_dir}
         finally:
             for p in cleanup:
                 try:

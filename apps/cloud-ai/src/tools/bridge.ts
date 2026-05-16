@@ -18,6 +18,7 @@ type Pending = {
   reject: (e: any) => void;
   writer?: WritableStreamDefaultWriter<any>;
   timeout?: NodeJS.Timeout;
+  heartbeat?: NodeJS.Timeout;
   tool: string;
   silent?: boolean;
   subagentMeta?: Record<string, any>;
@@ -48,6 +49,7 @@ function ensureBridgeCleanupListener(ws: WebSocket) {
     // Clear all timeouts and reject all pending promises
     for (const [id, pend] of pending.entries()) {
       try { if (pend.timeout) clearTimeout(pend.timeout); } catch { }
+      try { if (pend.heartbeat) clearInterval(pend.heartbeat); } catch { }
       try { pend.resolve({ ok: false, error: 'bridge_closed' }); } catch { }
     }
     pending.clear();
@@ -161,6 +163,7 @@ export function handleClientToolMessage(ws: WebSocket, msg: any) {
   }
   if (type === 'tool_result') {
     try { if (pend.timeout) clearTimeout(pend.timeout); } catch {}
+    try { if (pend.heartbeat) clearInterval(pend.heartbeat); } catch {}
     getPending(ws).delete(id);
     pend.resolve(msg.result);
     return;
@@ -260,16 +263,65 @@ export async function execLocalTool(tool: string, args: any, writer?: WritableSt
   }
   if (useBridge) {
     const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Honor the parent stream's abort signal. Stream-runner stashes its
+    // AbortSignal at bridgeSecrets.__abortSignal; without this listener,
+    // a `stop` from the user aborts the parent loop but the in-flight
+    // bridged tool call sits awaiting tool_result until the timeout fires.
+    const abortSignal = store?.secrets?.__abortSignal as AbortSignal | undefined;
+    if (abortSignal && abortSignal.aborted) {
+      return { ok: false, error: 'aborted', aborted: true };
+    }
     return new Promise<any>((resolve, reject) => {
       const pend: Pending = { resolve, reject, writer, tool, silent, subagentMeta };
-      const timer = setTimeout(() => {
+      const startedAt = Date.now();
+      let abortHandler: (() => void) | undefined;
+      const cleanup = () => {
+        try { if (pend.timeout) clearTimeout(pend.timeout); } catch {}
+        try { if (pend.heartbeat) clearInterval(pend.heartbeat); } catch {}
+        try { if (abortHandler && abortSignal) abortSignal.removeEventListener('abort', abortHandler); } catch {}
         getPending(store.ws).delete(id);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
         try {
           (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'timeout', id, ...subagentMeta }); } catch {} })();
         } catch {}
         resolve({ ok: false, error: 'timeout', timedOut: true });
       }, timeoutMs);
       pend.timeout = timer;
+      if (abortSignal) {
+        abortHandler = () => {
+          cleanup();
+          try {
+            (async () => { try { await __queueWriterWrite(writer, { type: 'tool_event', tool, status: 'aborted', id, ...subagentMeta }); } catch {} })();
+          } catch {}
+          resolve({ ok: false, error: 'aborted', aborted: true });
+        };
+        abortSignal.addEventListener('abort', abortHandler, { once: true });
+      }
+      // Wrap resolve/reject so the bridge's tool_result path also cleans up.
+      const origResolve = pend.resolve;
+      const origReject = pend.reject;
+      pend.resolve = (v: any) => { cleanup(); origResolve(v); };
+      pend.reject = (e: any) => { cleanup(); origReject(e); };
+      if (!silent && timeoutMs >= 30_000) {
+        pend.heartbeat = setInterval(() => {
+          try {
+            (async () => {
+              try {
+                await __queueWriterWrite(writer, {
+                  type: 'tool_event',
+                  tool,
+                  status: 'running',
+                  id,
+                  elapsedMs: Date.now() - startedAt,
+                  ...subagentMeta,
+                });
+              } catch {}
+            })();
+          } catch {}
+        }, 15_000);
+      }
       getPending(store.ws).set(id, pend);
       // Notify tool called (await in microtask to avoid stream lock) - skip if silent
       if (!silent) {

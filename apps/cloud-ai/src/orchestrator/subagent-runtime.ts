@@ -42,14 +42,23 @@ import type { ModelChoice } from '../router/model-router';
 import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
 
-// Track running subagents so they can be aborted when the parent stream is cancelled
-const runningSubagents = new Map<string, AbortController>();
+// Track running subagents so they can be aborted when the parent stream is cancelled.
+// The request/socket metadata keeps a stop from one chat turn from cancelling
+// unrelated delegated work on another connection.
+type RunningSubagent = {
+  controller: AbortController;
+  requestId?: string;
+  chatWs?: any;
+  bridgeWs?: any;
+};
+
+const runningSubagents = new Map<string, RunningSubagent>();
 const DEFAULT_SUBAGENT_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function abortRunningSubagent(subagentId: string): boolean {
-  const controller = runningSubagents.get(subagentId);
-  if (controller) {
-    controller.abort();
+  const running = runningSubagents.get(subagentId);
+  if (running) {
+    running.controller.abort();
     runningSubagents.delete(subagentId);
     return true;
   }
@@ -69,11 +78,26 @@ export function isSubagentRunning(subagentId: string): boolean {
 
 export function abortAllRunningSubagents(): number {
   let count = 0;
-  for (const [id, controller] of runningSubagents) {
-    try { controller.abort(); } catch {}
+  for (const [, running] of runningSubagents) {
+    try { running.controller.abort(); } catch {}
     count++;
   }
   runningSubagents.clear();
+  return count;
+}
+
+export function abortRunningSubagentsForRequest(chatWs: any, requestId?: string): number {
+  let count = 0;
+  for (const [id, running] of Array.from(runningSubagents.entries())) {
+    const sameRequest = requestId
+      ? running.requestId === requestId
+      : true;
+    const sameSocket = !chatWs || running.chatWs === chatWs || running.bridgeWs === chatWs;
+    if (!sameSocket || !sameRequest) continue;
+    try { running.controller.abort(); } catch {}
+    runningSubagents.delete(id);
+    count++;
+  }
   return count;
 }
 
@@ -137,6 +161,44 @@ export function drainSubagentSteers(subagentId: string): SteerEntry[] {
 export function hasPendingSubagentSteers(subagentId: string): boolean {
   const queue = subagentSteerQueues.get(subagentId);
   return !!queue && queue.length > 0;
+}
+
+function getStreamTextDelta(chunk: any): string {
+  const payload = chunk?.payload;
+  if (typeof payload === 'string') return payload;
+  return String(payload?.text || chunk?.text || chunk?.textDelta || chunk?.delta || '');
+}
+
+function getStreamToolCall(chunk: any) {
+  const payload = chunk?.payload && typeof chunk.payload === 'object' ? chunk.payload : {};
+  const toolName = String(payload.toolName || payload.tool || payload.name || chunk?.toolName || chunk?.tool || chunk?.name || 'tool');
+  const toolCallId = String(payload.toolCallId || payload.id || chunk?.toolCallId || chunk?.id || `subagent-tool-${Date.now()}`);
+  const args = payload.args ?? payload.input ?? chunk?.args ?? chunk?.input ?? {};
+  return { toolName, toolCallId, args, raw: { ...payload, ...chunk, toolName, toolCallId, args } };
+}
+
+function getStreamToolResult(chunk: any) {
+  const payload = chunk?.payload && typeof chunk.payload === 'object' ? chunk.payload : {};
+  const toolName = String(payload.toolName || payload.tool || payload.name || chunk?.toolName || chunk?.tool || chunk?.name || 'tool');
+  const toolCallId = String(payload.toolCallId || payload.id || chunk?.toolCallId || chunk?.id || `subagent-tool-${Date.now()}`);
+  const result = payload.result ?? chunk?.result ?? payload.output ?? chunk?.output;
+  const status = String(payload.status || chunk?.status || '').toLowerCase();
+  const error = payload.error ?? chunk?.error ?? result?.error;
+  const isError =
+    status === 'error' ||
+    status === 'failed' ||
+    status === 'timeout' ||
+    typeof error !== 'undefined' ||
+    result?.ok === false;
+  return { toolName, toolCallId, result, status, error, isError };
+}
+
+function getReturnControlSummary(toolName: string, result: any): string {
+  if (toolName !== 'return_control' || !result) return '';
+  const parsed = typeof result === 'string'
+    ? (() => { try { return JSON.parse(result); } catch { return {}; } })()
+    : result;
+  return typeof parsed?.summary === 'string' ? parsed.summary : '';
 }
 
 // ─── Child-side tools ────────────────────────────────────────────────────────
@@ -462,38 +524,24 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     chatWs: explicitChatWs,
     onEvent,
     onQuestion,
-    abortSignal: externalSignal,
+    abortSignal: explicitAbortSignal,
   } = opts;
 
   const subagentId = `sa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const correlation: SubagentCorrelation = { runId, parentRunId, subagentId };
   const startTime = Date.now();
 
-  const localAbort = new AbortController();
-  runningSubagents.set(subagentId, localAbort);
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      localAbort.abort();
-    } else {
-      externalSignal.addEventListener('abort', () => localAbort.abort(), { once: true });
-    }
-  }
-
-  writeLog('subagent_start', {
-    subagentId,
-    kind: request.kind,
-    instruction: request.instruction.slice(0, 200),
-  });
-
-  // NOTE: the `started` event is emitted via emitToClient further below,
-  // after bridgeWs is resolved, so it reaches the desktop client.
-
   // Resolve bridge context up-front so integration packs can include the
   // acting user's identity in their system prompt (the integration tools
   // already authenticate as this user via their stored OAuth tokens).
   const bridgeWs = explicitBridgeWs || getBridgeWs();
   const bridgeSecrets = explicitBridgeSecrets || getBridgeSecrets();
+  const inheritedAbortSignal = bridgeSecrets?.__abortSignal as AbortSignal | undefined;
+  const externalSignal = explicitAbortSignal || (
+    inheritedAbortSignal && typeof inheritedAbortSignal === 'object' && 'aborted' in inheritedAbortSignal
+      ? inheritedAbortSignal
+      : undefined
+  );
 
   // Resolve capability pack
   let pack: CapabilityPack | undefined;
@@ -539,6 +587,38 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // __chatWs stashed on bridgeSecrets by runAgent. Falls back to bridgeWs so
   // the desktop flow (where chat and bridge are the same) keeps working.
   const chatWs = explicitChatWs || (bridgeSecrets as any)?.__chatWs || undefined;
+  const requestId =
+    typeof (bridgeSecrets as any)?.__requestId === 'string' && (bridgeSecrets as any).__requestId
+      ? (bridgeSecrets as any).__requestId
+      : undefined;
+
+  const localAbort = new AbortController();
+  runningSubagents.set(subagentId, {
+    controller: localAbort,
+    requestId,
+    chatWs,
+    bridgeWs,
+  });
+
+  let onExternalAbort: (() => void) | undefined;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      localAbort.abort();
+    } else {
+      onExternalAbort = () => localAbort.abort();
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+
+  writeLog('subagent_start', {
+    subagentId,
+    kind: request.kind,
+    instruction: request.instruction.slice(0, 200),
+    requestId,
+  });
+
+  // NOTE: the `started` event is emitted via emitToClient further below,
+  // after bridgeWs is resolved, so it reaches the desktop client.
 
   // Inherit the parent's billing source (subscription / api_key / stuard) so
   // delegated subagents don't silently fall back to friendly billed inference
@@ -576,10 +656,6 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     ? setActiveBridge(bridgeWs, subagentBridgeSecrets)
     : setActiveBridge(null, subagentBridgeSecrets);
 
-  const requestId =
-    typeof (subagentBridgeSecrets as any)?.__requestId === 'string' && (subagentBridgeSecrets as any).__requestId
-      ? (subagentBridgeSecrets as any).__requestId
-      : undefined;
   let suppressClientEvents = false;
 
   const emitToClient = (event: string, data: any, opts?: { force?: boolean }) => {
@@ -801,7 +877,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
               // Text deltas
               if (ct === 'text-delta') {
-                const text = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
+                const text = getStreamTextDelta(chunk);
                 if (text) {
                   fullText += text;
                   emitToClient('delta', { text });
@@ -812,7 +888,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                 emitToClient('reasoning_start', { id: chunk.payload?.id });
               }
               else if (ct === 'reasoning-delta' || ct === 'reasoning' || ct === 'thinking-delta') {
-                const text = chunk.payload?.text || chunk.textDelta || (typeof chunk.payload === 'string' ? chunk.payload : '');
+                const text = getStreamTextDelta(chunk);
                 if (text) emitToClient('reasoning', { text });
               }
               else if (ct === 'reasoning-end' || ct === 'thinking-end') {
@@ -820,8 +896,8 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               }
               // Tool calls
               else if (ct === 'tool-call') {
-                const tc = chunk.payload || {};
-                allToolCalls.push(tc);
+                const tc = getStreamToolCall(chunk);
+                allToolCalls.push(tc.raw);
                 emitToClient('tool_call', {
                   tool: tc.toolName,
                   toolCallId: tc.toolCallId,
@@ -854,28 +930,18 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               }
               // Tool results
               else if (ct === 'tool-result') {
-                const tr = chunk.payload || {};
-                const result = tr.result;
-                const isError =
-                  tr.status === 'error' ||
-                  tr.status === 'failed' ||
-                  tr.status === 'timeout' ||
-                  typeof tr.error !== 'undefined' ||
-                  result?.ok === false;
+                const tr = getStreamToolResult(chunk);
                 emitToClient('tool_result', {
                   tool: tr.toolName,
                   toolCallId: tr.toolCallId,
-                  result,
-                  status: isError ? 'error' : 'completed',
-                  error: tr.error || result?.error,
+                  result: tr.result,
+                  status: tr.isError ? 'error' : 'completed',
+                  error: tr.error,
                 });
                 // Capture return_control result as fallback for summary extraction
-                const trName = tr.toolName || '';
-                if (trName === 'return_control' && result) {
-                  const res = typeof result === 'string' ? (() => { try { return JSON.parse(result); } catch { return {}; } })() : result;
-                  if (res?.summary && !returnControlResult) {
-                    returnControlResult = res.summary;
-                  }
+                const summary = getReturnControlSummary(tr.toolName, tr.result);
+                if (summary && !returnControlResult) {
+                  returnControlResult = summary;
                 }
               }
               // Stream/tool errors
@@ -907,9 +973,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               else if (typeof chunk === 'string' && chunk) {
                 fullText += chunk;
                 emitToClient('delta', { text: chunk });
-              } else if (chunk?.textDelta) {
-                fullText += chunk.textDelta;
-                emitToClient('delta', { text: chunk.textDelta });
+              } else {
+                const text = getStreamTextDelta(chunk);
+                if (text) {
+                  fullText += text;
+                  emitToClient('delta', { text });
+                }
               }
             }
           }
@@ -970,96 +1039,94 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               localAbort.signal.addEventListener('abort', onLocalAbort2, { once: true });
               needsCompaction = false;
 
-              console.log(`[subagent:${subagentId}] Re-streaming with compacted context`);
-              const compactedStreamOptions = buildStreamOptions();
-              const compactedStreamResult: any = await (agent as any).stream(messages, compactedStreamOptions);
-              const compactedStream = compactedStreamResult?.fullStream || compactedStreamResult;
+              try {
+                console.log(`[subagent:${subagentId}] Re-streaming with compacted context`);
+                const compactedStreamOptions = buildStreamOptions();
+                const compactedStreamResult: any = await (agent as any).stream(messages, compactedStreamOptions);
+                const compactedStream = compactedStreamResult?.fullStream || compactedStreamResult;
 
-              if (compactedStream && typeof compactedStream[Symbol.asyncIterator] === 'function') {
-                for await (const chunk of compactedStream) {
-                  if (localAbort.signal.aborted) break;
-                  const ct = chunk?.type;
-                  if (ct === 'text-delta') {
-                    const text = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
-                    if (text) { fullText += text; emitToClient('delta', { text }); }
-                  } else if (ct === 'tool-call') {
-                    const tc = chunk.payload || {};
-                    allToolCalls.push(tc);
-                    emitToClient('tool_call', { tool: tc.toolName, toolCallId: tc.toolCallId, args: tc.args });
-                  } else if (ct === 'tool_event') {
-                    const te = chunk.payload || chunk;
-                    const status = String(te.status || '').toLowerCase();
-                    const toolCallId = te.toolCallId || te.id || `subagent-tool-${Date.now()}`;
-                    const tool = te.tool || te.toolName || 'tool';
-                    if (status === 'called' || status === 'started' || status === 'running') {
-                      emitToClient('tool_call', {
-                        tool,
-                        toolCallId,
-                        args: te.args,
-                        description: te.description,
-                      });
-                    } else if (status) {
-                      const isError = status === 'error' || status === 'failed' || status === 'timeout';
+                if (compactedStream && typeof compactedStream[Symbol.asyncIterator] === 'function') {
+                  for await (const chunk of compactedStream) {
+                    if (localAbort.signal.aborted) break;
+                    const ct = chunk?.type;
+                    if (ct === 'text-delta') {
+                      const text = getStreamTextDelta(chunk);
+                      if (text) { fullText += text; emitToClient('delta', { text }); }
+                    } else if (ct === 'tool-call') {
+                      const tc = getStreamToolCall(chunk);
+                      allToolCalls.push(tc.raw);
+                      emitToClient('tool_call', { tool: tc.toolName, toolCallId: tc.toolCallId, args: tc.args });
+                    } else if (ct === 'tool_event') {
+                      const te = chunk.payload || chunk;
+                      const status = String(te.status || '').toLowerCase();
+                      const toolCallId = te.toolCallId || te.id || `subagent-tool-${Date.now()}`;
+                      const tool = te.tool || te.toolName || 'tool';
+                      if (status === 'called' || status === 'started' || status === 'running') {
+                        emitToClient('tool_call', {
+                          tool,
+                          toolCallId,
+                          args: te.args,
+                          description: te.description,
+                        });
+                      } else if (status) {
+                        const isError = status === 'error' || status === 'failed' || status === 'timeout';
+                        emitToClient('tool_result', {
+                          tool,
+                          toolCallId,
+                          result: isError ? undefined : (te.result ?? te),
+                          status: isError ? 'error' : 'completed',
+                          error: isError ? (te.error || (status === 'timeout' ? 'Tool timed out' : 'Tool failed')) : undefined,
+                        });
+                      }
+                    } else if (ct === 'tool-result') {
+                      const tr = getStreamToolResult(chunk);
                       emitToClient('tool_result', {
-                        tool,
-                        toolCallId,
-                        result: isError ? undefined : (te.result ?? te),
-                        status: isError ? 'error' : 'completed',
-                        error: isError ? (te.error || (status === 'timeout' ? 'Tool timed out' : 'Tool failed')) : undefined,
+                        tool: tr.toolName,
+                        toolCallId: tr.toolCallId,
+                        result: tr.result,
+                        status: tr.isError ? 'error' : 'completed',
+                        error: tr.error,
                       });
+                      const summary = getReturnControlSummary(tr.toolName, tr.result);
+                      if (summary && !returnControlResult) {
+                        returnControlResult = summary;
+                      }
+                    } else if (ct === 'error') {
+                      const errPayload = chunk.payload || {};
+                      const errMessage = errPayload.message || errPayload.error || 'Subagent stream error';
+                      emitToClient('tool_result', {
+                        tool: errPayload.toolName || errPayload.tool || 'stream',
+                        toolCallId: errPayload.toolCallId || errPayload.id || `subagent-err-${Date.now()}`,
+                        status: 'error',
+                        error: String(errMessage),
+                      });
+                    } else if (ct === 'finish') {
+                      const payload = chunk.payload || chunk;
+                      if (payload?.usage) {
+                        streamUsage = { ...payload.usage, providerMetadata: chunk?.providerMetadata ?? payload?.providerMetadata };
+                      }
+                    } else if (ct === 'reasoning-delta' || ct === 'reasoning' || ct === 'thinking-delta') {
+                      const text = getStreamTextDelta(chunk);
+                      if (text) emitToClient('reasoning', { text });
+                    } else if (typeof chunk === 'string' && chunk) {
+                      fullText += chunk; emitToClient('delta', { text: chunk });
+                    } else {
+                      const text = getStreamTextDelta(chunk);
+                      if (text) {
+                        fullText += text;
+                        emitToClient('delta', { text });
+                      }
                     }
-                  } else if (ct === 'tool-result') {
-                    const tr = chunk.payload || {};
-                    const result = tr.result;
-                    const isError =
-                      tr.status === 'error' ||
-                      tr.status === 'failed' ||
-                      tr.status === 'timeout' ||
-                      typeof tr.error !== 'undefined' ||
-                      result?.ok === false;
-                    emitToClient('tool_result', {
-                      tool: tr.toolName,
-                      toolCallId: tr.toolCallId,
-                      result,
-                      status: isError ? 'error' : 'completed',
-                      error: tr.error || result?.error,
-                    });
-                    const trName = tr.toolName || '';
-                    if (trName === 'return_control' && result) {
-                      const res = typeof result === 'string' ? (() => { try { return JSON.parse(result); } catch { return {}; } })() : result;
-                      if (res?.summary && !returnControlResult) returnControlResult = res.summary;
-                    }
-                  } else if (ct === 'error') {
-                    const errPayload = chunk.payload || {};
-                    const errMessage = errPayload.message || errPayload.error || 'Subagent stream error';
-                    emitToClient('tool_result', {
-                      tool: errPayload.toolName || errPayload.tool || 'stream',
-                      toolCallId: errPayload.toolCallId || errPayload.id || `subagent-err-${Date.now()}`,
-                      status: 'error',
-                      error: String(errMessage),
-                    });
-                  } else if (ct === 'finish') {
-                    const payload = chunk.payload || chunk;
-                    if (payload?.usage) {
-                      streamUsage = { ...payload.usage, providerMetadata: chunk?.providerMetadata ?? payload?.providerMetadata };
-                    }
-                  } else if (ct === 'reasoning-delta' || ct === 'reasoning' || ct === 'thinking-delta') {
-                    const text = chunk.payload?.text || chunk.textDelta || '';
-                    if (text) emitToClient('reasoning', { text });
-                  } else if (typeof chunk === 'string' && chunk) {
-                    fullText += chunk; emitToClient('delta', { text: chunk });
-                  } else if (chunk?.textDelta) {
-                    fullText += chunk.textDelta; emitToClient('delta', { text: chunk.textDelta });
                   }
                 }
+                if (!fullText && compactedStreamResult?.text) {
+                  fullText = compactedStreamResult.text;
+                  emitToClient('delta', { text: compactedStreamResult.text });
+                }
+                if (!streamUsage && compactedStreamResult?.usage) streamUsage = compactedStreamResult.usage;
+              } finally {
+                localAbort.signal.removeEventListener('abort', onLocalAbort2);
               }
-              if (!fullText && compactedStreamResult?.text) {
-                fullText = compactedStreamResult.text;
-                emitToClient('delta', { text: compactedStreamResult.text });
-              }
-              if (!streamUsage && compactedStreamResult?.usage) streamUsage = compactedStreamResult.usage;
-
-              localAbort.signal.removeEventListener('abort', onLocalAbort2);
             } catch (compactError: any) {
               if (compactError?.name === 'AbortError' || localAbort.signal.aborted) {
                 throw compactError;
@@ -1263,6 +1330,9 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     };
   } finally {
     suppressClientEvents = true;
+    if (externalSignal && onExternalAbort) {
+      try { externalSignal.removeEventListener('abort', onExternalAbort); } catch {}
+    }
     runningSubagents.delete(subagentId);
     subagentSteerQueues.delete(subagentId);
     if (runtimeBridgeScope) {

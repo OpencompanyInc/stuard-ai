@@ -53,16 +53,16 @@ export function parseChunk(chunk: unknown): StreamEvent | null {
     }
 
     case 'tool-call': {
-      const toolCallId = (payload?.toolCallId ?? `tc-${Date.now()}`) as string;
-      const toolName = (payload?.toolName ?? 'tool') as string;
-      const args = (payload?.args ?? {}) as Record<string, unknown>;
+      const toolCallId = (payload?.toolCallId ?? payload?.id ?? c.toolCallId ?? c.id ?? `tc-${Date.now()}`) as string;
+      const toolName = (payload?.toolName ?? payload?.tool ?? payload?.name ?? c.toolName ?? c.tool ?? c.name ?? 'tool') as string;
+      const args = (payload?.args ?? payload?.input ?? c.args ?? c.input ?? {}) as Record<string, unknown>;
       return { type: 'tool-call', toolCallId, toolName, args };
     }
 
     case 'tool-result': {
-      const toolCallId = (payload?.toolCallId ?? '') as string;
-      const toolName = (payload?.toolName ?? 'tool') as string;
-      const result = payload?.result;
+      const toolCallId = (payload?.toolCallId ?? payload?.id ?? c.toolCallId ?? c.id ?? '') as string;
+      const toolName = (payload?.toolName ?? payload?.tool ?? payload?.name ?? c.toolName ?? c.tool ?? c.name ?? 'tool') as string;
+      const result = payload?.result ?? payload?.output ?? c.result ?? c.output;
       return { type: 'tool-result', toolCallId, toolName, result };
     }
 

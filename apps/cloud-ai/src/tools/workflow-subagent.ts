@@ -12,6 +12,8 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { writeLog } from '../utils/logger';
 import { runSubagent } from '../orchestrator/subagent-runtime';
+import type { DelegationResult } from '../orchestrator/types';
+import { getBridgeSecrets, getBridgeWs, withClientBridge } from './bridge';
 
 export const routeToWorkflowAgent = createTool({
   id: 'route_to_workflow_agent',
@@ -47,11 +49,25 @@ export const routeToWorkflowAgent = createTool({
     writeLog('route_to_workflow_agent_start', { instruction, hasContext: !!context });
 
     const runId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const result = await runSubagent({
+    const bridgeWs = getBridgeWs();
+    const bridgeSecrets = getBridgeSecrets();
+    const abortSignal = bridgeSecrets?.__abortSignal as AbortSignal | undefined;
+    const run = () => runSubagent({
       request: { kind: 'workflow', instruction, context, timeoutMs },
       runId,
       parentRunId: runId,
+      bridgeWs,
+      bridgeSecrets,
+      chatWs: (bridgeSecrets as any)?.__chatWs,
+      userId: typeof bridgeSecrets?.userId === 'string' ? bridgeSecrets.userId : undefined,
+      modelSource: typeof bridgeSecrets?.__modelSource === 'string' ? bridgeSecrets.__modelSource : undefined,
+      abortSignal: abortSignal && typeof abortSignal === 'object' && 'aborted' in abortSignal
+        ? abortSignal
+        : undefined,
     });
+    const result = (bridgeWs && (bridgeWs as any).readyState === 1
+      ? await withClientBridge(bridgeWs as any, run, bridgeSecrets)
+      : await run()) as DelegationResult;
     return { ok: result.ok, result: result.result, error: result.error };
   },
 });

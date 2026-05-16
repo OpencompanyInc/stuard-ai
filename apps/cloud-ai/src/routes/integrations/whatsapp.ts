@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import {
   upsertExternalAccount,
   getExternalAccount,
@@ -19,7 +19,7 @@ import {
 } from '../../supabase';
 import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
-import { WA_PHONE_NUMBER_ID, WA_ACCESS_TOKEN, WA_WEBHOOK_VERIFY_TOKEN } from '../../utils/config';
+import { WA_PHONE_NUMBER_ID, WA_ACCESS_TOKEN, WA_WEBHOOK_VERIFY_TOKEN, META_APP_SECRET } from '../../utils/config';
 import { stripMarkdownForSms } from '../sms-utils';
 import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost } from '../../pricing';
@@ -305,7 +305,27 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
   // ── Meta Webhook Events (POST) ────────────────────────────────────────────
   if (req.method === 'POST' && pathname === '/integrations/whatsapp/webhook') {
     try {
-      const body = JSON.parse(await readBody(req));
+      const rawBody = await readBody(req);
+
+      // Verify HMAC-SHA256 signature so forged payloads can't trigger agent
+      // runs or burn credits. Meta signs every POST with META_APP_SECRET.
+      if (META_APP_SECRET) {
+        const sigHeader = String(req.headers['x-hub-signature-256'] || '');
+        const expected = 'sha256=' + createHmac('sha256', META_APP_SECRET).update(rawBody).digest('hex');
+        let valid = false;
+        try {
+          const a = Buffer.from(sigHeader);
+          const b = Buffer.from(expected);
+          valid = a.length === b.length && timingSafeEqual(a, b);
+        } catch { valid = false; }
+        if (!valid) {
+          console.warn('[whatsapp] webhook signature mismatch — dropping');
+          sendJson(res, 401, { ok: false, error: 'invalid_signature' });
+          return true;
+        }
+      }
+
+      const body = JSON.parse(rawBody);
       const entry = body?.entry?.[0];
       const change = entry?.changes?.[0];
       const value = change?.value;
@@ -588,6 +608,51 @@ export async function handleWhatsAppRoutes(req: IncomingMessage, res: ServerResp
               });
             }
           }
+        }
+      }
+
+      // ── Inbound calls (WhatsApp Business Calling API) ────────────────────
+      // We don't accept the call (no audio bridge yet); we let it ring out and
+      // send a fallback text so the caller gets an immediate response.
+      const incomingCalls: any[] = value?.calls || [];
+      for (const call of incomingCalls) {
+        const callEvent: string = call?.event || '';
+        const callId: string = call?.id || '';
+        const callFrom: string = call?.from || '';
+        const callDirection: string = call?.direction || '';
+
+        const dedupKey = `call:${callId}:${callEvent}`;
+        if (callId && _isMsgDuplicate(dedupKey)) {
+          console.log('[whatsapp] skipping duplicate call event', { callId, event: callEvent });
+          continue;
+        }
+        if (callId) _markMsgProcessed(dedupKey);
+
+        console.log('[whatsapp] call event', {
+          event: callEvent,
+          callId: callId.slice(0, 24),
+          from: callFrom,
+          direction: callDirection,
+        });
+
+        // Only react to user-initiated connect events
+        if (callEvent !== 'connect' || !callFrom) continue;
+
+        const callUserId = await findUserIdByWhatsApp(callFrom);
+        if (!callUserId) {
+          console.warn('[whatsapp] inbound call from unlinked number', { from: callFrom });
+          continue;
+        }
+
+        try {
+          await waSendText(
+            callFrom,
+            "Sorry, I can't take voice calls here yet — but I'm right here over text. " +
+            "Send your message and I'll reply right away."
+          );
+          await deductWhatsAppCredit(callUserId);
+        } catch (e: any) {
+          console.error('[whatsapp] call-fallback text failed:', e?.message);
         }
       }
     } catch (e: any) {

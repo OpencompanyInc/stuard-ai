@@ -15,18 +15,39 @@ function getBrowserUseSessionId(taskId: string): string {
   return `subagent-${taskId}`;
 }
 
+type RunningHeadlessTask = {
+  controller: AbortController;
+  requestId?: string;
+  chatWs?: any;
+  bridgeWs?: any;
+};
+
 // Store abort controllers for running headless tasks
-const runningTasks = new Map<string, AbortController>();
+const runningTasks = new Map<string, RunningHeadlessTask>();
 
 export function abortHeadlessTask(taskId: string): boolean {
-  const controller = runningTasks.get(taskId);
-  if (controller) {
+  const running = runningTasks.get(taskId);
+  if (running) {
     console.log(`[HeadlessAgent] Aborting task: ${taskId}`);
-    controller.abort();
+    running.controller.abort();
     runningTasks.delete(taskId);
     return true;
   }
   return false;
+}
+
+export function abortHeadlessTasksForRequest(chatWs?: any, requestId?: string): number {
+  let count = 0;
+  for (const [taskId, running] of Array.from(runningTasks.entries())) {
+    const sameRequest = requestId ? running.requestId === requestId : true;
+    const sameSocket = !chatWs || running.chatWs === chatWs || running.bridgeWs === chatWs;
+    if (!sameRequest || !sameSocket) continue;
+    console.log(`[HeadlessAgent] Aborting task for stopped request: ${taskId}`);
+    try { running.controller.abort(); } catch {}
+    runningTasks.delete(taskId);
+    count++;
+  }
+  return count;
 }
 
 export function getRunningTaskIds(): string[] {
@@ -256,7 +277,7 @@ async function launchOneTask(
 
   // Start the agent execution
   const run = () =>
-    runHeadlessTask(localTaskId, userId, objective, toolsAllowed, customSystemPrompt, model, taskMode)
+    runHeadlessTask(localTaskId, userId, objective, toolsAllowed, customSystemPrompt, model, taskMode, subagentSecrets, bridgeWs)
       .then(() => {
         // Fetch the final result from local registry
         return execLocalTool('subagent_status', { task_id: localTaskId })
@@ -307,10 +328,29 @@ async function runHeadlessTask(
   toolsAllowed?: string[],
   customSystemPrompt?: string,
   model: any = 'fast',
-  mode: 'generic' | 'specialized' = 'generic'
+  mode: 'generic' | 'specialized' = 'generic',
+  bridgeSecrets?: Record<string, any>,
+  bridgeWs?: any,
 ) {
   const abortController = new AbortController();
-  runningTasks.set(taskId, abortController);
+  const parentAbortSignal = bridgeSecrets?.__abortSignal as AbortSignal | undefined;
+  const requestId = typeof bridgeSecrets?.__requestId === 'string' ? bridgeSecrets.__requestId : undefined;
+  const chatWs = (bridgeSecrets as any)?.__chatWs;
+  runningTasks.set(taskId, {
+    controller: abortController,
+    requestId,
+    chatWs,
+    bridgeWs,
+  });
+  let parentAbortHandler: (() => void) | undefined;
+  if (parentAbortSignal) {
+    if (parentAbortSignal.aborted) {
+      abortController.abort();
+    } else {
+      parentAbortHandler = () => abortController.abort();
+      parentAbortSignal.addEventListener('abort', parentAbortHandler, { once: true });
+    }
+  }
 
   let aggregatedText = '';
   let lastReasoningFlush = 0;
@@ -422,6 +462,14 @@ async function runHeadlessTask(
         finished = true;
         runningTasks.delete(taskId);
         const finalText = String(text || '').trim() || String(aggregatedText || '').trim();
+        if (abortController.signal.aborted) {
+          await execLocalTool('subagent_update', {
+            task_id: taskId,
+            status: 'cancelled',
+            result: { text: finalText, finishReason: 'aborted', stoppedBy: 'user' }
+          }).catch(() => {});
+          return;
+        }
         await execLocalTool('subagent_update', {
           task_id: taskId,
           status: 'completed',
@@ -433,6 +481,11 @@ async function runHeadlessTask(
     const fullStream = (stream as any)?.fullStream || stream;
 
     for await (const chunk of fullStream as any) {
+      if (abortController.signal.aborted) {
+        const abortError = new Error('Headless agent aborted');
+        (abortError as any).name = 'AbortError';
+        throw abortError;
+      }
       const evType = (chunk as any)?.type;
 
       if (evType === 'tool-call') {
@@ -469,6 +522,12 @@ async function runHeadlessTask(
           }
         }
       }
+    }
+
+    if (abortController.signal.aborted) {
+      const abortError = new Error('Headless agent aborted');
+      (abortError as any).name = 'AbortError';
+      throw abortError;
     }
 
     // Final reasoning flush
@@ -512,5 +571,9 @@ async function runHeadlessTask(
       status: 'failed',
       result: { error: error.message }
     }).catch(() => {});
+  } finally {
+    if (parentAbortSignal && parentAbortHandler) {
+      try { parentAbortSignal.removeEventListener('abort', parentAbortHandler); } catch {}
+    }
   }
 }

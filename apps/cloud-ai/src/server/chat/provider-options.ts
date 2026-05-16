@@ -5,6 +5,7 @@ interface ProviderOptionsArgs {
   agentType: AgentType;
   workflowModelId?: string;
   chosenModelId?: string;
+  modelSource?: string;
   modelLabel: string;
   msg: any;
 }
@@ -36,6 +37,7 @@ export function buildProviderOptions({
   agentType,
   workflowModelId,
   chosenModelId,
+  modelSource,
   modelLabel,
   msg,
 }: ProviderOptionsArgs) {
@@ -94,6 +96,18 @@ export function buildProviderOptions({
         reasoningEffort: reasoningLevel as 'low' | 'medium' | 'high',
       };
     }
+  }
+
+  const usesCodexSubscription =
+    modelSource === 'subscription'
+    || chosenModelId?.startsWith('codex/')
+    || modelLabel.startsWith('codex/');
+
+  if (usesCodexSubscription) {
+    providerOptions.openai = {
+      ...(providerOptions.openai || {}),
+      store: false,
+    };
   }
 
   return providerOptions;

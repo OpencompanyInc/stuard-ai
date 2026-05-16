@@ -191,9 +191,7 @@ export async function prepareChatRequest({
       const stored = await getConversationMessages(authUser.userId, hydrationConvId, 100);
       if (stored && stored.length > 0) {
         for (const row of stored) {
-          if (!row?.role || typeof row.content !== 'string') continue;
-          if (row.role !== 'user' && row.role !== 'assistant' && row.role !== 'system') continue;
-          history.push({ role: row.role, content: row.content });
+          appendStoredMessageToHistory(history, row);
         }
         conversations.set(ws, history);
       }
@@ -309,6 +307,7 @@ export async function prepareChatRequest({
       agentType,
       workflowModelId,
       chosenModelId,
+      modelSource,
       modelLabel,
       msg,
     }),
@@ -413,6 +412,92 @@ function appendNewUserMessagesToHistory(history: any[], messages: any[]) {
     if (!history.find((entry: any) => entry.role === 'user' && entry.content === userMessage.content)) {
       history.push(userMessage);
     }
+  }
+}
+
+function appendStoredMessageToHistory(history: any[], row: any) {
+  if (!row?.role || typeof row.content !== 'string') return;
+  if (row.role !== 'user' && row.role !== 'assistant' && row.role !== 'system' && row.role !== 'tool') return;
+
+  if (row.role === 'assistant') {
+    appendStoredAssistantToolCalls(history, row.metadata?.toolCalls);
+  }
+
+  if (row.role === 'tool') {
+    appendStoredToolMessage(history, row);
+    return;
+  }
+
+  if (row.content.trim()) {
+    history.push({ role: row.role, content: row.content });
+  }
+}
+
+function appendStoredAssistantToolCalls(history: any[], toolCalls: any) {
+  const completed = (Array.isArray(toolCalls) ? toolCalls : [])
+    .filter((toolCall: any) => toolCall?.id && toolCall?.tool && toolCall?.result !== undefined);
+  if (completed.length === 0) return;
+
+  history.push({
+    role: 'assistant',
+    content: completed.map((toolCall: any) => ({
+      type: 'tool-call' as const,
+      toolCallId: String(toolCall.id),
+      toolName: String(toolCall.tool),
+      input: toolCall.input ?? toolCall.args ?? {},
+      args: toolCall.args ?? toolCall.input ?? {},
+    })),
+  });
+
+  history.push({
+    role: 'tool',
+    content: completed.map((toolCall: any) => {
+      const resultText = stringifyToolResult(toolCall.result);
+      return {
+        type: 'tool-result' as const,
+        toolCallId: String(toolCall.id),
+        toolName: String(toolCall.tool),
+        output: { type: 'text' as const, value: resultText },
+        result: resultText,
+      };
+    }),
+  });
+}
+
+function appendStoredToolMessage(history: any[], row: any) {
+  const toolResults = Array.isArray(row.tool_results) ? row.tool_results : [];
+  if (toolResults.length > 0) {
+    history.push({
+      role: 'tool',
+      content: toolResults
+        .filter((toolResult: any) => toolResult?.toolCallId || toolResult?.tool_call_id)
+        .map((toolResult: any) => {
+          const toolCallId = String(toolResult.toolCallId || toolResult.tool_call_id);
+          const toolName = String(toolResult.toolName || toolResult.tool || toolResult.name || 'tool');
+          const resultText = stringifyToolResult(toolResult.result ?? toolResult.output ?? '');
+          return {
+            type: 'tool-result' as const,
+            toolCallId,
+            toolName,
+            output: { type: 'text' as const, value: resultText },
+            result: resultText,
+          };
+        }),
+    });
+    return;
+  }
+
+  if (row.content.trim()) {
+    history.push({ role: 'tool', content: row.content });
+  }
+}
+
+function stringifyToolResult(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value ?? '');
+  } catch {
+    return String(value ?? '');
   }
 }
 

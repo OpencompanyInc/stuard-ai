@@ -978,6 +978,13 @@ async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
             names.append({"name": name, "type": typ})
     except FileNotFoundError:
         raise ValueError(f"path not found: {p}")
+    if not names:
+        return {
+            "ok": True,
+            "items": [],
+            "empty": True,
+            "message": f"Directory is empty: {p}. Nothing to inspect — do not re-list; either report this to the user or take a different action.",
+        }
     return {"ok": True, "items": names}
 
 

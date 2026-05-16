@@ -68,7 +68,7 @@ interface CodexInputItem {
  * request-transformer logic: strip stateful AI SDK constructs, force
  * stateless mode, normalize reasoning, prepend our system prelude.
  */
-function transformBody(body: any, originalModelId: string, hasTools: boolean): any {
+export function transformBody(body: any, originalModelId: string, hasTools: boolean): any {
   const out = { ...body };
 
   // ChatGPT backend requires stateless mode and streaming on the wire.
@@ -78,6 +78,8 @@ function transformBody(body: any, originalModelId: string, hasTools: boolean): a
   // Drop fields the backend rejects.
   delete out.max_output_tokens;
   delete out.max_completion_tokens;
+  delete out.previous_response_id;
+  delete out.conversation;
 
   // Reasoning continuity in stateless mode requires the encrypted-content
   // include. Always present, even if the caller asked for something else.
@@ -99,9 +101,12 @@ function transformBody(body: any, originalModelId: string, hasTools: boolean): a
     verbosity: out.text?.verbosity || 'medium',
   };
 
-  // Filter input: strip ids (stateless mode); drop AI SDK item_reference;
-  // convert orphaned function_call_output into messages so the model
-  // doesn't lose tool results.
+  // Filter input: strip ids (stateless mode); drop AI SDK item_reference.
+  // Codex subscription calls set providerOptions.openai.store=false before
+  // AI SDK serialization so normal tool loops include both the function_call
+  // and function_call_output items in this stateless payload. If an older
+  // caller still sends an unmatched output, keep the observation as plain
+  // context without leaking adapter vocabulary into the model.
   if (Array.isArray(out.input)) {
     const seenCallIds = new Set<string>();
     for (const item of out.input as CodexInputItem[]) {
@@ -121,7 +126,7 @@ function transformBody(body: any, originalModelId: string, hasTools: boolean): a
         filtered.push({
           type: 'message',
           role: 'user',
-          content: [{ type: 'input_text', text: `[orphan tool result: ${text.slice(0, 4000)}]` }],
+          content: [{ type: 'input_text', text: `Tool result from previous step: ${text.slice(0, 4000)}` }],
         });
         continue;
       }

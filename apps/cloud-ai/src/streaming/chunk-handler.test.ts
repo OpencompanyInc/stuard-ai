@@ -56,6 +56,22 @@ describe('parseChunk', () => {
       expect(result?.type).toBe('tool-call');
       expect((result as any).toolCallId).toMatch(/^tc-\d+$/);
     });
+
+    it('should parse AI SDK top-level tool-call fields', () => {
+      const result = parseChunk({
+        type: 'tool-call',
+        toolCallId: 'tc-top',
+        toolName: 'create_folder',
+        input: { path: 'C:/Users/solar/Test' },
+      });
+
+      expect(result).toEqual({
+        type: 'tool-call',
+        toolCallId: 'tc-top',
+        toolName: 'create_folder',
+        args: { path: 'C:/Users/solar/Test' },
+      });
+    });
   });
 
   describe('tool-result events', () => {
@@ -74,6 +90,22 @@ describe('parseChunk', () => {
         toolCallId: 'tc-123',
         toolName: 'web_search',
         result: { data: 'results' },
+      });
+    });
+
+    it('should parse AI SDK top-level tool-result fields', () => {
+      const result = parseChunk({
+        type: 'tool-result',
+        toolCallId: 'tc-top',
+        toolName: 'create_folder',
+        output: { ok: true },
+      });
+
+      expect(result).toEqual({
+        type: 'tool-result',
+        toolCallId: 'tc-top',
+        toolName: 'create_folder',
+        result: { ok: true },
       });
     });
   });

@@ -176,6 +176,7 @@ async function runDelegateTask(
     ? 'integration' as const
     : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm' | 'bot';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const parentAbortSignal = bridgeSecrets?.__abortSignal;
 
   writeLog('delegate_start', {
     subagent: name,
@@ -268,6 +269,9 @@ async function runDelegateTask(
       bridgeWs: bridgeWs as any,
       bridgeSecrets,
       chatWs,
+      abortSignal: parentAbortSignal && typeof parentAbortSignal === 'object' && 'aborted' in parentAbortSignal
+        ? parentAbortSignal as AbortSignal
+        : undefined,
       onQuestion,
     });
   };

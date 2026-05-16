@@ -14,6 +14,7 @@ const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
   balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
   smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
 };
+const LOCALLY_STOPPED_REQUEST_TTL_MS = 10 * 60_000;
 
 function cloneChatModelsConfig(cfg?: ChatModelsConfig | null): ChatModelsConfig {
   const source = cfg || DEFAULT_TAB_CHAT_MODELS;
@@ -590,6 +591,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const streamingTabIdRef = useRef<string | null>(null); // Track which tab initiated the stream
   const pendingResponseTabsRef = useRef<string[]>([]); // Queue of tabs waiting for responses (FIFO) - legacy
   const requestIdToTabRef = useRef<Map<string, string>>(new Map()); // Map requestId -> tabId for parallel routing
+  const locallyStoppedRequestsRef = useRef<Map<string, number>>(new Map()); // Requests the UI already committed as stopped
   const activeRequestIdRef = useRef<string | null>(null); // Current request being processed (for non-requestId messages)
   const conversationIdRef = useRef<string | null>(null); // Mirror of conversationId state for sync access
   const progressHandlersRef = useRef<Set<(evt: ProgressEvent) => void>>(new Set());
@@ -674,6 +676,27 @@ export function useAgent(options?: string | UseAgentOptions) {
     if (!tab) return false;
     return getActiveSubagentCount(tab.id) > 0 || hasPendingDelegatedToolWork(tab);
   };
+
+  const pruneLocallyStoppedRequests = useCallback(() => {
+    const cutoff = Date.now() - LOCALLY_STOPPED_REQUEST_TTL_MS;
+    for (const [requestId, stoppedAt] of locallyStoppedRequestsRef.current.entries()) {
+      if (stoppedAt < cutoff) {
+        locallyStoppedRequestsRef.current.delete(requestId);
+      }
+    }
+  }, []);
+
+  const markRequestLocallyStopped = useCallback((requestId?: string) => {
+    if (!requestId) return;
+    pruneLocallyStoppedRequests();
+    locallyStoppedRequestsRef.current.set(requestId, Date.now());
+  }, [pruneLocallyStoppedRequests]);
+
+  const isRequestLocallyStopped = useCallback((requestId?: string) => {
+    if (!requestId) return false;
+    pruneLocallyStoppedRequests();
+    return locallyStoppedRequestsRef.current.has(requestId);
+  }, [pruneLocallyStoppedRequests]);
 
   const markSubagentActive = (tabId: string, subagentId: string, kind?: string) => {
     if (!tabId || !subagentId) return;
@@ -791,24 +814,24 @@ export function useAgent(options?: string | UseAgentOptions) {
   const stopGeneration = useCallback((): boolean => {
     try {
       const wsOpen = !!(wsRef.current && wsRef.current.readyState === WebSocket.OPEN);
+      const targetTabId = activeTabIdRef.current;
+      let targetRequestId: string | undefined;
+      for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
+        if (tabId === targetTabId) { targetRequestId = reqId; break; }
+      }
 
       if (wsOpen) {
-        const targetTabId = activeTabIdRef.current;
-        let targetRequestId: string | undefined;
-        for (const [reqId, tabId] of requestIdToTabRef.current.entries()) {
-          if (tabId === targetTabId) { targetRequestId = reqId; break; }
-        }
         const stopPayload: any = { type: 'stop' };
         if (targetRequestId) stopPayload.requestId = targetRequestId;
         wsRef.current!.send(JSON.stringify(stopPayload));
       }
+      markRequestLocallyStopped(targetRequestId);
 
       streamingRef.current = false;
       stoppedRef.current = true;
       if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
       deltaBufferRef.current = '';
 
-      const targetTabId = activeTabIdRef.current;
       activeSubagentsByTabRef.current.delete(targetTabId);
       syncActiveSubagentsState(targetTabId);
       deferredDelegatedFinalsRef.current.delete(targetTabId);
@@ -838,11 +861,29 @@ export function useAgent(options?: string | UseAgentOptions) {
         };
       }));
 
+      if (targetRequestId) {
+        finishCompletedTurn(targetTabId, targetRequestId, true);
+      } else {
+        pendingSendRef.current = pendingSendRef.current.filter((item) => item.tabId !== targetTabId);
+        const nextQueuedMessages = queuedMessagesRef.current.filter((item) => item.tabId !== targetTabId);
+        queuedMessagesRef.current = nextQueuedMessages;
+        queueDepthRef.current = nextQueuedMessages.length;
+        setQueuedMessages(nextQueuedMessages);
+        setQueueDepth(nextQueuedMessages.length);
+        pendingResponseTabsRef.current = pendingResponseTabsRef.current.filter(t => t !== targetTabId);
+        runningTabsRef.current.delete(targetTabId);
+        turnHadPartialCommitRef.current.delete(targetTabId);
+        if (streamingTabIdRef.current === targetTabId) {
+          streamingTabIdRef.current = null;
+        }
+        tryDequeueAndSend();
+      }
+
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [markRequestLocallyStopped, syncActiveSubagentsState]);
 
   const execLocalTool = useCallback(async (tool: string, args: any): Promise<any> => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -1276,9 +1317,14 @@ export function useAgent(options?: string | UseAgentOptions) {
     pendingSendRef.current = pendingSendRef.current.filter((item) =>
       completedRequestId ? item.requestId !== completedRequestId : item.tabId !== completedTabId
     );
-    syncQueuedMessages((prev) => prev.filter((item) =>
+    const fallbackSteers = isAborted ? [] : queuedMessagesRef.current.filter((item) =>
       item.kind === 'steer'
-        || (completedRequestId ? item.requestId !== completedRequestId : item.tabId !== completedTabId)
+      && item.tabId === completedTabId
+      && (completedRequestId ? item.requestId === completedRequestId : true)
+    );
+    syncQueuedMessages((prev) => prev.filter((item) =>
+      (completedRequestId ? item.requestId !== completedRequestId : item.tabId !== completedTabId)
+        || (!isAborted && item.kind === 'steer')
     ));
     const fifoIdx = pendingResponseTabsRef.current.indexOf(completedTabId);
     if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
@@ -1288,11 +1334,6 @@ export function useAgent(options?: string | UseAgentOptions) {
       streamingTabIdRef.current = null;
     }
 
-    const fallbackSteers = queuedMessagesRef.current.filter((item) =>
-      item.kind === 'steer'
-      && item.tabId === completedTabId
-      && (completedRequestId ? item.requestId === completedRequestId : true)
-    );
     if (!isAborted && fallbackSteers.length > 0) {
       const fallbackIds = new Set(fallbackSteers.map((item) => item.id));
       const fallbackText = fallbackSteers
@@ -1469,6 +1510,22 @@ export function useAgent(options?: string | UseAgentOptions) {
 
           if (msg.type === 'progress' || msg.type === 'final' || msg.type === 'subagent_event' || msg.type === 'stopped' || msg.type === 'queued') {
             lastStreamActivityRef.current = Date.now();
+          }
+
+          const incomingRequestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
+          if (incomingRequestId && isRequestLocallyStopped(incomingRequestId)) {
+            if (msg.type === 'stopped') {
+              streamingRef.current = false;
+              if (runningTabsRef.current.size === 0) {
+                stoppedRef.current = false;
+              }
+              if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+              deltaBufferRef.current = '';
+              return;
+            }
+            if (msg.type === 'progress' || msg.type === 'final' || msg.type === 'subagent_event' || msg.type === 'error' || msg.type === 'queued') {
+              return;
+            }
           }
 
           // Determine target tab from requestId (parallel routing) or fallback to FIFO queue
@@ -1992,6 +2049,39 @@ export function useAgent(options?: string | UseAgentOptions) {
                         currentStreamChunks: [...t.currentStreamChunks, { type: 'tool' as const, tool: newCall }]
                       };
                     });
+                  } else if (normalizedStatus === 'running' || normalizedStatus === 'executing' || normalizedStatus === 'progress') {
+                    const liveChunk = typeof d.liveOutput === 'string'
+                      ? d.liveOutput
+                      : typeof d.output === 'string'
+                        ? d.output
+                        : '';
+                    updateStreamingTab(t => {
+                      const findMatch = (tc: ToolCall) =>
+                        tc.id === toolCallId || pendingToolMatchesEvent(tc);
+                      const applyRunning = (tc: ToolCall): ToolCall => {
+                        const merged = applyToolNesting({ ...tc, status: 'running' }, tc);
+                        if (!liveChunk) return merged;
+                        // Cap tail at ~16KB to keep DOM light while still showing
+                        // recent context for long-running build/compile output.
+                        const combined = (merged.liveOutput || '') + liveChunk;
+                        const TAIL = 16 * 1024;
+                        return {
+                          ...merged,
+                          liveOutput: combined.length > TAIL ? combined.slice(combined.length - TAIL) : combined,
+                        };
+                      };
+                      return {
+                        ...t,
+                        currentToolCalls: t.currentToolCalls.map(tc =>
+                          findMatch(tc) ? applyRunning(tc) : tc
+                        ),
+                        currentStreamChunks: t.currentStreamChunks.map(chunk =>
+                          chunk.type === 'tool' && findMatch(chunk.tool)
+                            ? { ...chunk, tool: applyRunning(chunk.tool) }
+                            : chunk
+                        ),
+                      };
+                    });
                   } else if (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed' || normalizedStatus === 'timeout') {
                     // Update existing tool call with result in both arrays
                     const newStatus = normalizedStatus === 'completed' ? 'completed' : 'error';
@@ -2450,10 +2540,45 @@ export function useAgent(options?: string | UseAgentOptions) {
             setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {
             console.log('[agent] Stream stopped by server:', msg.success);
+            const stoppedRequestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
+            const stoppedTabId = getTargetTabId();
             streamingRef.current = false;
             stoppedRef.current = false;
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
+            if (stoppedRequestId && requestIdToTabRef.current.has(stoppedRequestId)) {
+              markRequestLocallyStopped(stoppedRequestId);
+              activeSubagentsByTabRef.current.delete(stoppedTabId);
+              syncActiveSubagentsState(stoppedTabId);
+              deferredDelegatedFinalsRef.current.delete(stoppedTabId);
+              setTabs(prev => prev.map(t => {
+                if (t.id !== stoppedTabId) return t;
+                const hasWork = t.currentToolCalls.length > 0 || t.currentStreamChunks.length > 0 || t.currentResponse || t.currentReasoning;
+                if (!hasWork) {
+                  return { ...t, aiState: { ...t.aiState, phase: 'idle', statusText: 'Stopped' } };
+                }
+                return {
+                  ...t,
+                  messages: [...t.messages, {
+                    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    role: 'assistant',
+                    text: (t.currentResponse || '') + '\n\n*(Stopped)*',
+                    reasoning: t.currentReasoning || undefined,
+                    toolCalls: t.currentToolCalls.length > 0 ? [...t.currentToolCalls] : undefined,
+                    streamChunks: t.currentStreamChunks.length > 0 ? [...t.currentStreamChunks] : undefined,
+                    timestamp: Date.now(),
+                    aborted: true,
+                  }],
+                  currentResponse: '',
+                  currentReasoning: '',
+                  currentToolCalls: [],
+                  currentStreamChunks: [],
+                  aiState: { ...t.aiState, phase: 'idle', statusText: 'Stopped' },
+                };
+              }));
+              finishCompletedTurn(stoppedTabId, stoppedRequestId, true);
+              setTabLastError(stoppedTabId, null);
+            }
           } else if (msg.type === 'subagent_event') {
             if (stoppedRef.current) return;
             // Subagent events are sent directly by the runtime. If one arrives
