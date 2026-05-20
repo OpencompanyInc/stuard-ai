@@ -4,17 +4,17 @@ import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
-import QueuePanel from '../QueuePanel';
-import { CheckpointManager } from '../CheckpointManager';
-import { ModelSelector } from '../ModelSelector';
-import { ContextItem, FileNavRef } from '../FileNavigator';
-import type { ModelSourcePreference, ReasoningLevel } from '../../hooks/usePreferences';
-import type { ContextUsageMetrics } from '../../utils/contextUsage';
-import { ContextUsageIndicator } from '../ContextUsageIndicator';
-import { supabase } from '../../lib/supabaseClient';
-import { VoiceOrb, type VoiceState } from '../voice/VoiceOrb';
-import { describeTool, friendlyVoiceState } from '../voice/voiceLabels';
-import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../hooks/useVoiceMode';
+import QueuePanel from '../../../../QueuePanel';
+import { CheckpointManager } from '../../../../CheckpointManager';
+import { ModelSelector } from '../../../../ModelSelector';
+import { ContextItem, FileNavRef } from '../../../../FileNavigator';
+import type { ModelSourcePreference, ReasoningLevel } from '../../../../../hooks/usePreferences';
+import type { ContextUsageMetrics } from '../../../../../utils/contextUsage';
+import { ContextUsageIndicator } from '../../../../ContextUsageIndicator';
+import { supabase } from '../../../../../lib/supabaseClient';
+import { VoiceOrb, type VoiceState } from '../../../../voice/VoiceOrb';
+import { describeTool, friendlyVoiceState } from '../../../../voice/voiceLabels';
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../../../hooks/useVoiceMode';
 
 // ── Realtime Voice Conversation Test Helpers ──
 

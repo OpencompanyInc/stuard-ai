@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { FolderKanban, GripVertical, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
-import { XTerminalPanel } from '../XTerminalPanel';
+import { XTerminalPanel } from '../../../XTerminalPanel';
 import { SidebarTodoPanel } from './SidebarTodoPanel';
 import { SidebarProjectsPanel } from './SidebarProjectsPanel';
 

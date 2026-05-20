@@ -35,39 +35,39 @@ import {
   CornerDownLeft,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { VoiceOrb, type VoiceState } from "./voice/VoiceOrb";
-import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
-import { describeTool, friendlyVoiceState } from "./voice/voiceLabels";
+import { VoiceOrb, type VoiceState } from "../../../voice/VoiceOrb";
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../../../../hooks/useVoiceMode";
+import { describeTool, friendlyVoiceState } from "../../../voice/voiceLabels";
 import type {
   UsePlannerDataResult,
   NextUpItem,
   PlannerTask,
-} from "../hooks/usePlannerData";
-import { CommandItem } from "./CommandPalette";
+} from "../../../../hooks/usePlannerData";
+import { CommandItem } from "../../../CommandPalette";
 import { clsx } from "clsx";
 import type {
   ChatMode,
   ChatModelsConfig,
   ModelSourcePreference,
   ReasoningLevel,
-} from "../hooks/usePreferences";
-import { ModelSelector } from "./ModelSelector";
-import { useModelRegistry } from "../hooks/useModelRegistry";
-import { SidebarTabsPanel } from "./SidebarTabsPanel";
-import { ChatTabs } from "./chat-view/ChatTabs";
-import { ChatHeaderActions } from "./chat-view/ChatHeaderActions";
+} from "../../../../hooks/usePreferences";
+import { ModelSelector } from "../../../ModelSelector";
+import { useModelRegistry } from "../../../../hooks/useModelRegistry";
+import { SidebarTabsPanel } from "../../shared/sidebar/SidebarTabsPanel";
+import { ChatTabs } from "../window/parts/ChatTabs";
+import { ChatHeaderActions } from "../window/parts/ChatHeaderActions";
 import {
   QuickShortcutsGrid,
   BookmarkEditor,
   useBookmarks,
   getTypeConfig,
   type Bookmark,
-} from "./QuickShortcuts";
-import { TasksView, type TaskSubTab } from "./TasksView";
-import { SuggestedPrompts } from "./onboarding/SuggestedPrompts";
-import { ContextItem } from "./FileNavigator";
-import { FileNavigatorOverlay } from "./chat-view/FileNavigatorOverlay";
-import { useFileNavigator } from "../hooks/useFileNavigator";
+} from "../../../QuickShortcuts";
+import { TasksView, type TaskSubTab } from "../../../TasksView";
+import { SuggestedPrompts } from "../../../onboarding/SuggestedPrompts";
+import { ContextItem } from "../../../FileNavigator";
+import { FileNavigatorOverlay } from "../window/parts/FileNavigatorOverlay";
+import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 
 interface LauncherViewProps {
   query: string;

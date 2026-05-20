@@ -12,24 +12,24 @@ import {
   PlusIcon
 } from "@radix-ui/react-icons";
 import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines } from 'lucide-react';
-import { VoiceMorphPill } from './voice/VoiceMorphPill';
-import type { VoiceToolEvent } from '../hooks/useVoiceMode';
+import { VoiceMorphPill } from '../../../voice/VoiceMorphPill';
+import type { VoiceToolEvent } from '../../../../hooks/useVoiceMode';
 import { clsx } from 'clsx';
-import QueuePanel from './QueuePanel';
-import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
-import MessageBubble from './MessageBubble';
-import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark, getTypeConfig } from './QuickShortcuts';
+import QueuePanel from '../../../QueuePanel';
+import { FileNavigator, ContextItem, FileNavRef } from '../../../FileNavigator';
+import MessageBubble from '../messages/MessageBubble/MessageBubble';
+import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark, getTypeConfig } from '../../../QuickShortcuts';
 import stuardLogo from '@website-assets/logo.png';
-import googleLogo from '../assets/icons/google.png';
-import bingLogo from '../assets/icons/bing.png';
-import duckduckgoLogo from '../assets/icons/duckduckgo.png';
-import youtubeLogo from '../assets/icons/youtube.png';
-import githubLogo from '../assets/icons/github.png';
+import googleLogo from '../../../../assets/icons/google.png';
+import bingLogo from '../../../../assets/icons/bing.png';
+import duckduckgoLogo from '../../../../assets/icons/duckduckgo.png';
+import youtubeLogo from '../../../../assets/icons/youtube.png';
+import githubLogo from '../../../../assets/icons/github.png';
 
-import type { UrgencyLevel } from '../hooks/usePlannerData';
-import { useWorkflows } from '../workflows/hooks/useWorkflows';
-import { getMarketplaceApi } from '../utils/cloud';
-import { chooseDropdownPlacement } from '../utils/dropdownPlacement';
+import type { UrgencyLevel } from '../../../../hooks/usePlannerData';
+import { useWorkflows } from '../../../../workflows/hooks/useWorkflows';
+import { getMarketplaceApi } from '../../../../utils/cloud';
+import { chooseDropdownPlacement } from '../../../../utils/dropdownPlacement';
 
 interface InputAreaProps {
   query: string;

@@ -16,7 +16,7 @@ import {
   useProjects,
   setConversationProject,
   type Project,
-} from '../../hooks/useProjects';
+} from '../../../../../hooks/useProjects';
 
 interface ActiveProjectBarProps {
   project: Project;

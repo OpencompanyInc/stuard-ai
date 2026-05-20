@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import clsx from 'clsx';
 import { ListTodo, Inbox } from 'lucide-react';
-import { AgentTodoList, type AgentTodoItem, type AgentTodoListProps } from '../genui/AgentTodoList';
+import { AgentTodoList, type AgentTodoItem, type AgentTodoListProps } from '../../../genui/AgentTodoList';
 
 interface TodoSnapshot {
   items: AgentTodoItem[];

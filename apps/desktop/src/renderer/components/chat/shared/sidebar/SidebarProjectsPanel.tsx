@@ -12,8 +12,8 @@ import {
   useProjects,
   type Project,
   type ProjectStatus,
-} from '../../hooks/useProjects';
-import { ProjectHomeView } from '../projects/ProjectHomeView';
+} from '../../../../hooks/useProjects';
+import { ProjectHomeView } from '../../../projects/ProjectHomeView';
 
 interface SidebarProjectsPanelProps {
   className?: string;

@@ -1,6 +1,6 @@
 import React, { forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ContextItem, FileNavigator, FileNavRef } from '../FileNavigator';
+import { ContextItem, FileNavigator, FileNavRef } from '../../../../FileNavigator';
 
 interface FileNavigatorOverlayProps {
   showFileNav: boolean;

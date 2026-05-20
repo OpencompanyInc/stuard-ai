@@ -10,8 +10,8 @@ import { useModelRegistry } from '../hooks/useModelRegistry';
 import { useCloudEngine } from '../hooks/useCloudEngine';
 import type { ModelMeta } from '../hooks/usePreferences';
 import { mergeStreamingText } from '../utils/streamMerge';
-import MessageBubble from './MessageBubble';
-import { AskUserPrompt } from './chat-view/AskUserPrompt';
+import MessageBubble from './chat/shared/messages/MessageBubble/MessageBubble';
+import { AskUserPrompt } from './chat/modes/window/parts/AskUserPrompt';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '../../../../../shared/chat-ui/streamState';
 import type { Message as ChatMessage, StreamChunk, ToolCall as VmToolCall } from '../../../../../shared/chat-ui/types';
 

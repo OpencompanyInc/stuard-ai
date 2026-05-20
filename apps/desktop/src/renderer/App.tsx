@@ -5,8 +5,8 @@ import { useAgent } from './hooks/useAgent';
 import CommandPalette, { type CommandItem } from './components/CommandPalette';
 import HotkeysHelp from './components/HotkeysHelp';
 import { PermissionDialog } from './components/PermissionDialog';
-import { AskUserPrompt } from './components/chat-view/AskUserPrompt';
-import InputArea from './components/InputArea';
+import { AskUserPrompt } from './components/chat/modes/window/parts/AskUserPrompt';
+import InputArea from './components/chat/shared/input/InputArea';
 import type { ContextItem } from './components/FileNavigator';
 import { usePreferences } from './hooks/usePreferences';
 import { useModelRegistry } from './hooks/useModelRegistry';
@@ -29,11 +29,11 @@ import {
 import { useSpeechToText } from './hooks/useSpeechToText';
 import { useVoiceMode } from './hooks/useVoiceMode';
 import { usePlannerData } from './hooks/usePlannerData';
-import { LauncherView } from './components/LauncherView';
-import { ChatView } from './components/ChatView';
+import { LauncherView } from './components/chat/modes/launcher/LauncherView';
+import { ChatView } from './components/chat/modes/window/ChatView';
 import { useActiveProject } from './hooks/useActiveProject';
 import { setConversationProject } from './hooks/useProjects';
-import { ActiveProjectChip, ExitProjectToast } from './components/chat-view/ActiveProjectBar';
+import { ActiveProjectChip, ExitProjectToast } from './components/chat/modes/window/parts/ActiveProjectBar';
 import {
   Mic,
   Plus,

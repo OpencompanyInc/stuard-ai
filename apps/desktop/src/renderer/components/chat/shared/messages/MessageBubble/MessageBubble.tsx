@@ -5,27 +5,27 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import clsx from 'clsx';
-import { isRedundantStreamingUpdate, mergeStreamingText } from '../utils/streamMerge';
-import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
+import { isRedundantStreamingUpdate, mergeStreamingText } from '../../../../../utils/streamMerge';
+import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../utils/text';
 import 'katex/dist/katex.min.css';
 import { Archive, ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ToolCall, StreamChunk } from '../hooks/useAgent';
+import type { ToolCall, StreamChunk } from '../../../../../hooks/useAgent';
 
-import { AudioPlayer } from './AudioPlayer';
-import { AttachmentPreviewStrip } from './AttachmentPreview';
-import { LinkPreview } from './LinkPreview';
-import { GenUIContainer, GenUIErrorBoundary } from './genui';
-import { useFileViewerOptional } from './file-viewer';
-import { Shimmer } from './ai-elements/Shimmer';
-import { useElapsedSeconds, useElapsedSecondsFine } from '../hooks/useSharedTicker';
+import { AudioPlayer } from '../../../../AudioPlayer';
+import { AttachmentPreviewStrip } from '../../../../AttachmentPreview';
+import { LinkPreview } from '../../../../LinkPreview';
+import { GenUIContainer, GenUIErrorBoundary } from '../../../../genui';
+import { useFileViewerOptional } from '../../../../file-viewer';
+import { Shimmer } from '../../../../ai-elements/Shimmer';
+import { useElapsedSeconds, useElapsedSecondsFine } from '../../../../../hooks/useSharedTicker';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
-} from './ai-elements/ChainOfThought';
-import type { ChatAttachment } from '../utils/attachments';
+} from '../../../../ai-elements/ChainOfThought';
+import type { ChatAttachment } from '../../../../../utils/attachments';
 
 // GenUI tools that render interactive UI components
 const GENUI_TOOL_NAMES = new Set([

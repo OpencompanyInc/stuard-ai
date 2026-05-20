@@ -7,29 +7,29 @@
 } from "react";
 import { clsx } from "clsx";
 import { Sparkles } from "lucide-react";
-import MessageList from "./MessageList";
-import { ContextItem } from "./FileNavigator";
+import MessageList from "../../shared/messages/MessageList";
+import { ContextItem } from "../../../FileNavigator";
 import type {
   ChatMode,
   ChatModelsConfig,
   ModelSourcePreference,
   ReasoningLevel,
-} from "../hooks/usePreferences";
-import { useModelRegistry } from "../hooks/useModelRegistry";
-import { ChatTabs } from "./chat-view/ChatTabs";
-import { ChatHeaderActions } from "./chat-view/ChatHeaderActions";
-import { ChatInputArea } from "./chat-view/ChatInputArea";
-import { FileNavigatorOverlay } from "./chat-view/FileNavigatorOverlay";
-import { SidebarTabsPanel } from "./SidebarTabsPanel";
-import { TasksView, TaskSubTab } from "./TasksView";
-import { SubagentDashboard } from "./chat-view/SubagentDashboard";
-import { AskUserPrompt } from "./chat-view/AskUserPrompt";
-import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
-import { buildContextUsageMetrics } from "../utils/contextUsage";
-import { useFileNavigator } from "../hooks/useFileNavigator";
-import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
-import { ActiveProjectBar } from "./chat-view/ActiveProjectBar";
-import type { Project } from "../hooks/useProjects";
+} from "../../../../hooks/usePreferences";
+import { useModelRegistry } from "../../../../hooks/useModelRegistry";
+import { ChatTabs } from "./parts/ChatTabs";
+import { ChatHeaderActions } from "./parts/ChatHeaderActions";
+import { ChatInputArea } from "./parts/ChatInputArea";
+import { FileNavigatorOverlay } from "./parts/FileNavigatorOverlay";
+import { SidebarTabsPanel } from "../../shared/sidebar/SidebarTabsPanel";
+import { TasksView, TaskSubTab } from "../../../TasksView";
+import { SubagentDashboard } from "./parts/SubagentDashboard";
+import { AskUserPrompt } from "./parts/AskUserPrompt";
+import { useSubagentDashboard } from "../../../../hooks/useSubagentDashboard";
+import { buildContextUsageMetrics } from "../../../../utils/contextUsage";
+import { useFileNavigator } from "../../../../hooks/useFileNavigator";
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../../../../hooks/useVoiceMode";
+import { ActiveProjectBar } from "./parts/ActiveProjectBar";
+import type { Project } from "../../../../hooks/useProjects";
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 

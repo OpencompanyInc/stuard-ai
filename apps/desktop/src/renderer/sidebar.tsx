@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import './styles.css';
 import './scrollbar.css';
 import { usePreferences } from './hooks/usePreferences';
-import { SidebarView } from './components/sidebar/SidebarView';
+import { SidebarView } from './components/chat/shared/sidebar/SidebarView';
 
 type SidebarTabId = 'terminal' | 'todo' | 'projects';
 

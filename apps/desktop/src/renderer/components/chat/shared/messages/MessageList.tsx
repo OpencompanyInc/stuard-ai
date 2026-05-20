@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useMemo, memo, useState, useCallback } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { motion } from 'framer-motion';
-import MessageBubble from './MessageBubble';
+import MessageBubble from './MessageBubble/MessageBubble';
 import { CornerDownRight } from 'lucide-react';
-import type { ToolCall, StreamChunk } from '../hooks/useAgent';
-import type { ChatAttachment } from '../utils/attachments';
+import type { ToolCall, StreamChunk } from '../../../../hooks/useAgent';
+import type { ChatAttachment } from '../../../../utils/attachments';
 
 interface ContextPath {
   path: string;

@@ -1,16 +1,16 @@
 import React, { memo, useCallback, useRef, useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { X } from 'lucide-react';
-import MessageList from '../MessageList';
-import { ContextItem } from '../FileNavigator';
-import type { ChatMode, ChatModelsConfig } from '../../hooks/usePreferences';
-import { useModelRegistry } from '../../hooks/useModelRegistry';
-import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../hooks/useVoiceMode';
+import MessageList from '../../../shared/messages/MessageList';
+import { ContextItem } from '../../../../FileNavigator';
+import type { ChatMode, ChatModelsConfig } from '../../../../../hooks/usePreferences';
+import { useModelRegistry } from '../../../../../hooks/useModelRegistry';
+import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../../../hooks/useVoiceMode';
 import { ChatTabs } from './ChatTabs';
 import { ChatHeaderActions } from './ChatHeaderActions';
 import { ChatInputArea } from './ChatInputArea';
 import { FileNavigatorOverlay } from './FileNavigatorOverlay';
-import { chooseDropdownPlacement } from '../../utils/dropdownPlacement';
+import { chooseDropdownPlacement } from '../../../../../utils/dropdownPlacement';
 
 interface ChatViewProps {
   messages: any[];

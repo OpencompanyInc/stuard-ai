@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from "react";
 import { clsx } from "clsx";
 import { ArrowLeft, FolderKanban, ListTodo, Maximize2, Terminal, X } from "lucide-react";
-import { XTerminalPanel } from "./XTerminalPanel";
-import { SidebarTodoPanel } from "./sidebar/SidebarTodoPanel";
-import { SidebarProjectsPanel } from "./sidebar/SidebarProjectsPanel";
+import { XTerminalPanel } from "../../../XTerminalPanel";
+import { SidebarTodoPanel } from "./SidebarTodoPanel";
+import { SidebarProjectsPanel } from "./SidebarProjectsPanel";
 
 type SidebarTabId = "terminal" | "todo" | "projects";
 
