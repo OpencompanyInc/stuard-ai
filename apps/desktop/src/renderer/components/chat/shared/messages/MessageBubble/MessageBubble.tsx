@@ -27,100 +27,11 @@ import {
 } from '../../../../ai-elements/ChainOfThought';
 import type { ChatAttachment } from '../../../../../utils/attachments';
 
-// GenUI tools that render interactive UI components
-const GENUI_TOOL_NAMES = new Set([
-  // Decision & Input (blocking - wait for user response)
-  'ask_confirmation',
-  'show_choices',
-  'request_files',
-  'show_files',
-  'show_form',
-  // Inline custom React UI (blocking or non-blocking based on args)
-  'chat_ui',
-]);
-
-// Tools that should be hidden from the chat UI (internal/silent tools)
-const HIDDEN_TOOL_NAMES = new Set([
-  // Segment tools (internal for conversation management)
-  'segment_create',
-  'segment_update',
-  'segment_end',
-  'segment_list',
-  'segment_list_recent',
-  'segment_search',
-  'segment_get',
-  'segment_build_topic_drawers',
-  'segment_search_drawers_by_embedding',
-  // Collection tools (internal background processing)
-  'collection_summary_upsert',
-  'collection_summary_list',
-  'collection_summary_get',
-  // Memory tools (internal)
-  'memory_store',
-  'memory_recall',
-  'memory_update',
-  'memory_search',
-  'memory_stats',
-  'conversation_create',
-  'conversation_get',
-  'conversation_list',
-  'conversation_update',
-  'conversation_delete',
-  'conversation_search',
-  'conversation_get_spaces',
-  'message_add',
-  'message_list',
-  // Project-mode bookkeeping is represented by the active project UI, not
-  // repeated tool pills in the chat trace.
-  'list_projects',
-  'enter_project_mode',
-  'exit_project_mode',
-  'project_create',
-  'project_get',
-  'project_list',
-  'project_update',
-  'project_delete',
-  'conversation_set_project',
-  'journal_add',
-  'journal_list',
-  'journal_delete',
-  'memory_add',
-  'memory_create',
-  'memory_list',
-  'memory_search',
-  'project_search',
-  // Agent internal tools
-  'agent_todo',
-  // Knowledge tools (internal)
-  'knowledge_add_fact',
-  'knowledge_update_fact',
-  'knowledge_build_context',
-  'knowledge_get_directives',
-  'knowledge_get_identity',
-  // Planner internal tools
-  'planner_list_items',
-  // Internal subagent management tools — spawn-style ones are surfaced as
-  // delegation rectangles instead (see DELEGATION_TOOL_NAMES below).
-  'subagent_update',
-  'subagent_status',
-  'subagent_list',
-  'subagent_stop',
-  // Internal meta-tools (invisible to user)
-  'get_tool_schema',
-  'search_tools',
-  // Orchestrator reply tool (invisible to user)
-  'reply_to_subagent',
-  // ask_user renders inline prompt, not a tool pill
-  'ask_user',
-  // Low-level binary I/O helpers — only ever called transitively from
-  // analyze_media / OCR / cloud-storage tools; the base64 payload is huge and
-  // useless to display in the trace.
-  'read_file_binary',
-  'read_file_base64',
-  'upload_file_to_url',
-  // GenUI display tools (rendered as UI, don't need pill)
-  ...GENUI_TOOL_NAMES,
-]);
+import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES, GENUI_COMPONENT_MAP } from './constants';
+import { toMediaSrc, extractYouTubeVideoId, formatDuration } from './helpers/media';
+import { stripMarkdown, stripMarkdownFromArgs, normalizeMarkdownSpacing, processCustomMarkdown } from './helpers/markdown';
+import { FILE_PATH_RE, IMAGE_EXTS, AUDIO_EXTS, getFileExt, isFilePath, extractFilePaths, getFilenameFromPath } from './helpers/filePaths';
+import { humanizeToolName, getQueryFromArgs, getAnalyzeMediaTarget } from './helpers/toolLabels';
 
 
 
@@ -446,42 +357,6 @@ interface MessageBubbleProps {
 }
 
 // Convert local file path to local-file:// URL for Electron (custom protocol)
-function toMediaSrc(src: string): string {
-  if (!src) return '';
-  // Already a web URL or data URI
-  if (/^(https?:|data:)/i.test(src)) return src;
-  // Already using local-file protocol
-  if (/^local-file:/i.test(src)) return src;
-  // Convert file:// to local-file://
-  if (/^file:/i.test(src)) {
-    return src.replace(/^file:/i, 'local-file:');
-  }
-  // Convert Windows/Unix path to local-file:// URL
-  let path = src.trim();
-  const encodePath = (inputPath: string, preserveDrive: boolean) => {
-    const parts = inputPath.split('/');
-    return parts
-      .map((part, idx) => {
-        if (preserveDrive && idx === 0 && /^[a-zA-Z]:$/.test(part)) return part;
-        return encodeURIComponent(part);
-      })
-      .join('/');
-  };
-  // Handle Windows paths (C:\... or C:/...)
-  if (/^[a-zA-Z]:[/\\]/.test(path)) {
-    path = path.replace(/\\/g, '/');
-    return `local-file:///${encodePath(path, true)}`;
-  }
-  // Handle Unix absolute paths
-  if (path.startsWith('/')) {
-    path = path.replace(/\\/g, '/');
-    return `local-file://${encodePath(path, false)}`;
-  }
-  // Relative path - assume local
-  path = path.replace(/\\/g, '/');
-  return `local-file:///${encodePath(path, false)}`;
-}
-
 // Image component that handles loading states and local/web URLs (memoized)
 const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt }) => {
   const [loaded, setLoaded] = useState(false);
@@ -556,49 +431,6 @@ type ContentSegment =
   | { kind: 'link_preview'; url: string }
   | { kind: 'genui'; component: string; args: any; id: string }
   | { kind: 'genui_loading'; component: string; title?: string };
-
-// Strip markdown formatting from text (for GenUI component labels)
-function stripMarkdown(text: string): string {
-  if (typeof text !== 'string') return text;
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, '$1')  // **bold** → bold
-    .replace(/\*([^*]+)\*/g, '$1')      // *italic* → italic
-    .replace(/__([^_]+)__/g, '$1')      // __bold__ → bold
-    .replace(/_([^_]+)_/g, '$1')        // _italic_ → italic
-    .replace(/~~([^~]+)~~/g, '$1')      // ~~strike~~ → strike
-    .replace(/`([^`]+)`/g, '$1')        // `code` → code
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // [text](url) → text
-}
-
-// Recursively strip markdown from all string values in an object
-function stripMarkdownFromArgs(args: any): any {
-  if (typeof args === 'string') return stripMarkdown(args);
-  if (Array.isArray(args)) return args.map(stripMarkdownFromArgs);
-  if (args && typeof args === 'object') {
-    const result: any = {};
-    for (const [key, value] of Object.entries(args)) {
-      result[key] = stripMarkdownFromArgs(value);
-    }
-    return result;
-  }
-  return args;
-}
-
-// Map genui:* component names to GenUIContainer tool names
-const GENUI_COMPONENT_MAP: Record<string, string> = {
-  'confirm': 'ask_confirmation',
-  'confirmation': 'ask_confirmation',
-  'choices': 'show_choices',
-  'choice': 'show_choices',
-  'files': 'request_files',
-  'dropzone': 'request_files',
-  'tree': 'show_files',
-  'filetree': 'show_files',
-  'form': 'show_form',
-  'wizard': 'show_form',
-  'survey': 'show_form',
-  'form_wizard': 'show_form',
-};
 
 function extractContentSegments(inputText: string): ContentSegment[] {
   if (!inputText) return [];
@@ -805,22 +637,6 @@ function extractContentSegments(inputText: string): ContentSegment[] {
 }
 
 // Extract YouTube video ID from URL
-function extractYouTubeVideoId(url: string): string | null {
-  const patterns = [
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
-  ];
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
-  }
-  return null;
-}
-
 // YouTube embed component with oEmbed fetch (memoized)
 interface YouTubeEmbedProps {
   videoId: string;
@@ -922,44 +738,6 @@ const YouTubeEmbed: React.FC<YouTubeEmbedProps> = memo(({ videoId, url }) => {
   );
 });
 
-// Format seconds to human readable
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}m ${secs}s`;
-}
-
-// Detect file paths in tool results and render copy/open actions
-const FILE_PATH_RE = /^([a-zA-Z]:[/\\]|\/(?:tmp|var|home|Users)\/).+\.\w{1,5}$/;
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
-const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'opus', 'm4a']);
-
-function getFileExt(p: string): string {
-  return (p.match(/\.([a-zA-Z0-9]+)$/)?.[1] || '').toLowerCase();
-}
-
-function isFilePath(v: unknown): v is string {
-  return typeof v === 'string' && FILE_PATH_RE.test(v.trim());
-}
-
-/** Extract all file paths from a tool result (flat or nested in arrays/objects) */
-function extractFilePaths(result: any): string[] {
-  const paths: string[] = [];
-  if (!result || typeof result !== 'object') return paths;
-
-  const walk = (obj: any) => {
-    if (!obj || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) { obj.forEach(walk); return; }
-    for (const [key, val] of Object.entries(obj)) {
-      if (isFilePath(val)) paths.push(val);
-      else if (typeof val === 'object' && val) walk(val);
-    }
-  };
-  walk(result);
-  return [...new Set(paths)];
-}
-
 const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   const [copied, setCopied] = React.useState(false);
   const ext = getFileExt(filePath);
@@ -1032,19 +810,6 @@ const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) => {
   );
 };
 
-// Humanize tool name - removes underscores, capitalizes words, makes it readable
-function humanizeToolName(tool: string): string {
-  return tool
-    .replace(/_/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase to spaces
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim();
-}
-
-function getFilenameFromPath(p: string): string {
-  return p.split(/[/\\]/).pop() || p;
-}
-
 // A subtle inline `code`-styled chip used inside step labels to highlight the
 // argument that matters most (file path, command, query). Kept small so it
 // blends with the surrounding label text.
@@ -1065,29 +830,6 @@ const InlineCodeChip: React.FC<{ children: React.ReactNode; title?: string; max?
     </code>
   );
 };
-
-function getQueryFromArgs(args: Record<string, any>): string | null {
-  const candidates = ['query', 'search_term', 'q', 'pattern'];
-  for (const k of candidates) {
-    if (typeof args[k] === 'string' && args[k].trim()) return args[k].trim();
-  }
-  return null;
-}
-
-function getAnalyzeMediaTarget(args: Record<string, any>): string | null {
-  const sources = Array.isArray(args.sources) ? args.sources : [];
-  if (sources.length === 0) return null;
-  if (sources.length === 1) {
-    const src = sources[0] || {};
-    if (src.captureScreen) return 'screen capture';
-    if (typeof src.path === 'string') return getFilenameFromPath(src.path);
-    if (typeof src.url === 'string') {
-      try { return new URL(src.url).hostname.replace(/^www\./, ''); } catch { return src.url; }
-    }
-    return 'media';
-  }
-  return `${sources.length} media files`;
-}
 
 // Build a richer, action-oriented label for the chain-of-thought trace row.
 // For known tools we surface the most relevant argument (file path, command,
@@ -2896,29 +2638,6 @@ const AssistantTracePanel: React.FC<{
     </ChainOfThought>
   );
 };
-
-function normalizeMarkdownSpacing(input: string): string {
-  const raw = String(input || '').replace(/\r\n/g, '\n');
-  const parts = raw.split('```');
-  const normalized = parts.map((part, idx) => {
-    if (idx % 2 === 1) return part;
-    return part
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n');
-  });
-  return normalized.join('```');
-}
-
-// Process text for custom markdown extensions (==highlight==, ++underline++)
-function processCustomMarkdown(text: string): string {
-  return convertLatexDelims(
-    escapeCurrencyDollars(
-      normalizeMarkdownSpacing(text)
-        .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
-        .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)')
-    )
-  );
-}
 
 const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, attachments, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles, onRedoFiles }) => {
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
