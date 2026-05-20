@@ -13,6 +13,7 @@ import {
   Layers,
   Lock,
   Play,
+  Plug,
   RefreshCw,
   Rocket,
   Search,
@@ -80,6 +81,7 @@ interface WorkflowLauncherV2Props {
   onShowPublished?: () => void;
   onDashboard?: () => void;
   onReplayTour?: () => void;
+  onIntegrationBuilder?: () => void;
 }
 
 export function WorkflowLauncherV2({
@@ -97,6 +99,7 @@ export function WorkflowLauncherV2({
   onShowPublished,
   onDashboard,
   onReplayTour,
+  onIntegrationBuilder,
 }: WorkflowLauncherV2Props) {
   const { isDark } = useWorkflowTheme();
   const d = isDark;
@@ -639,6 +642,9 @@ export function WorkflowLauncherV2({
           <SideNavItem d={d} active={activeView === "deployed"} icon={Rocket} label="Deployed Workflows" onClick={() => setActiveView("deployed")} />
           <SideNavItem d={d} active={activeView === "shared"} icon={Share2} label="Shared Workflows" onClick={() => setActiveView("shared")} />
           <SideNavItem d={d} active={activeView === "marketplace"} icon={Store} label="Marketplace" onClick={() => setActiveView("marketplace")} accent />
+          {onIntegrationBuilder && (
+            <SideNavItem d={d} icon={Plug} label="Integration Builder" onClick={onIntegrationBuilder} />
+          )}
           <div className="h-px my-2" style={{ background: "var(--wf-border)" }} />
           <SideNavItem d={d} icon={ExternalLink} label="Stuard Dashboard" onClick={onDashboard} />
           {onReplayTour && (

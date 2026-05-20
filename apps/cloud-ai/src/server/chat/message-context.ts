@@ -1,5 +1,5 @@
 import * as memoryService from '../../memory/conversations';
-import { buildKnowledgeContext } from '../../knowledge/retrieval';
+import { buildKnowledgeContext, computeCompositeScore, hasTemporalIntent, mmrRerank } from '../../knowledge/retrieval';
 import { buildAttachmentParts } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import type { AgentType } from './types';
@@ -12,6 +12,12 @@ interface BuildInputMessagesArgs {
   enabledIntegrations: string[];
   agentType: AgentType;
   agent: any;
+  /**
+   * Active conversation id (when authenticated + resolved). Threaded through
+   * to retrieval so segments/facts from this conversation get a continuity
+   * boost (P6).
+   */
+  conversationId?: string | null;
 }
 
 export async function buildInputMessages({
@@ -22,6 +28,7 @@ export async function buildInputMessages({
   enabledIntegrations,
   agentType,
   agent,
+  conversationId,
 }: BuildInputMessagesArgs) {
   const recentHistory = history.slice(-50) as any[];
   let inputMessages: any[] = providedMessages && providedMessages.length > 0
@@ -34,7 +41,7 @@ export async function buildInputMessages({
   prependHiddenContext(msg, inputMessages);
 
   if (agentType !== 'workflow') {
-    inputMessages = await appendKnowledgeContext(prompt, inputMessages);
+    inputMessages = await appendKnowledgeContext(prompt, inputMessages, conversationId);
   }
 
   logTokenBreakdown(inputMessages, agent);
@@ -117,7 +124,12 @@ function prependCompactContextMessage(msg: any, inputMessages: any[], enabledInt
     const paths: Array<{ path: string; name: string; isDirectory: boolean; type?: string; metadata?: any }> = Array.isArray(incomingContext?.paths)
       ? incomingContext.paths
       : [];
-    const fileContextPaths = paths.filter((path) => !(path.type === 'bot' || String(path.path || '').startsWith('bot://')));
+    const fileContextPaths = paths.filter((path) => !(
+      path.type === 'bot'
+      || path.type === 'agent'
+      || String(path.path || '').startsWith('bot://')
+      || String(path.path || '').startsWith('agent://')
+    ));
     if (fileContextPaths.length > 0) {
       const pathText = fileContextPaths
         .map((path) => `${path.isDirectory ? '📁' : '📄'} ${path.name}: ${path.path}`)
@@ -125,21 +137,27 @@ function prependCompactContextMessage(msg: any, inputMessages: any[], enabledInt
       contextParts.push(`Referenced: ${pathText}`);
     }
 
-    const mentionedBots = paths.filter((path) => path.type === 'bot' || String(path.path || '').startsWith('bot://'));
+    const mentionedBots = paths.filter((path) => (
+      path.type === 'bot'
+      || path.type === 'agent'
+      || String(path.path || '').startsWith('bot://')
+      || String(path.path || '').startsWith('agent://')
+    ));
     if (mentionedBots.length > 0) {
       const botText = mentionedBots
         .map((path) => {
           const metadata = path.metadata && typeof path.metadata === 'object' ? path.metadata : {};
-          const id = String(metadata.id || path.path || '').replace(/^bot:\/\//, '');
+          const kind = path.type === 'agent' || String(path.path || '').startsWith('agent://') ? 'agent' : 'bot';
+          const id = String(metadata.id || path.path || '').replace(/^(bot|agent):\/\//, '');
           const status = metadata.status ? `, status: ${metadata.status}` : '';
           const lastRunAt = metadata.lastRunAt ? `, lastRunAt: ${metadata.lastRunAt}` : '';
           const nextRunAt = metadata.nextRunAt ? `, nextRunAt: ${metadata.nextRunAt}` : '';
           const vm = metadata.vmDeployedAt ? ', vm: deployed' : '';
-          return `@${path.name} (id: ${id}${status}${lastRunAt}${nextRunAt}${vm})`;
+          return `@${path.name} (${kind}, id: ${id}${status}${lastRunAt}${nextRunAt}${vm})`;
         })
         .join(', ');
-      contextParts.push(`Mentioned bots: ${botText}`);
-      contextParts.push('When the user addresses one of these @mentioned bots or asks for bot status/details, use ask_bot or bot_get_status before answering. Use bot_create and bot_deploy when the user asks to create or deploy bots from chat.');
+      contextParts.push(`Mentioned configured agents/bots: ${botText}`);
+      contextParts.push('When the user addresses one of these @mentioned agents/bots or asks for status/details, delegate to the agent or bot subagent with the id before answering. Use the delegated agent/bot subagent for create/deploy workflows too.');
     }
 
     const personaRaw = typeof incomingContext?.persona === 'string' ? incomingContext.persona.trim() : '';
@@ -171,14 +189,52 @@ function prependHiddenContext(msg: any, inputMessages: any[]) {
   } catch { }
 }
 
-async function appendKnowledgeContext(prompt: string, inputMessages: any[]) {
+/**
+ * Wider net for segment fetch — composite scoring + MMR (in `buildPastContextLines`)
+ * picks the best 3 out of these. Threshold mirrors the fact-search threshold so
+ * recall is comparable between the two layers.
+ */
+const SEGMENT_FETCH_LIMIT = 15;
+const SEGMENT_FETCH_THRESHOLD = 0.45;
+
+/**
+ * P4: per-section character budgets. When a section overflows, drop trailing
+ * lines (not mid-line truncation) so we never show "Build comma…" cut off.
+ *
+ * Render order is determined by the order keys appear in `SECTION_RENDER_ORDER`.
+ * `null` budget means unlimited (used for highly-stable USER_IDENTITY).
+ */
+const SECTION_BUDGETS: Record<string, number | null> = {
+  USER_IDENTITY: null,
+  PROFILE_DETAILS_NEEDED: 200,
+  SYSTEM_INSTRUCTIONS: 500,
+  CURRENT_CONTEXT: 350, // per block — there can be up to 2
+  ABOUT_USER: 300,
+  RELEVANT_MEMORIES: 600,
+  RELEVANT_COLLECTIONS: 200,
+  PAST_CONTEXT: 500,
+  PENDING_MEMORIES: 350,
+};
+
+const SECTION_RENDER_ORDER = [
+  'USER_IDENTITY',
+  'PROFILE_DETAILS_NEEDED',
+  'SYSTEM_INSTRUCTIONS',
+  'CURRENT_CONTEXT',
+  'ABOUT_USER',
+  'RELEVANT_MEMORIES',
+  'RELEVANT_COLLECTIONS',
+  'PAST_CONTEXT',
+  'PENDING_MEMORIES',
+];
+
+async function appendKnowledgeContext(prompt: string, inputMessages: any[], activeConversationId?: string | null) {
   const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
-  const knowledgeMaxChars = 2000;
 
   if (useParallelEmbeddings && prompt) {
     try {
       const queryEmbedding = await getOrCreateQueryEmbedding(prompt);
-      const [knowledgeContext, segmentMatches] = await Promise.all([
+      const [knowledgeContext, segmentMatches, collectionBlock] = await Promise.all([
         buildKnowledgeContext(prompt, {
           includeIdentity: true,
           includeDirectives: true,
@@ -186,14 +242,20 @@ async function appendKnowledgeContext(prompt: string, inputMessages: any[]) {
           maxGlobalFacts: 4,
           detectEntities: true,
           queryEmbedding,
+          activeConversationId,
         }).catch(() => null),
-        memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 })
+        memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD })
           .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
+        // P5: pre-computed topic-level digests. Cheap (one bridge call, no LLM).
+        // Skipped silently on bridge errors so it never blocks the prompt.
+        memoryService.buildCollectionContext(queryEmbedding, { maxTopics: 2 })
+          .catch(() => ''),
       ]);
 
-      const contextParts = buildKnowledgeContextParts(knowledgeContext?.text || '', segmentMatches, knowledgeMaxChars);
-      if (contextParts.length > 0) {
-        return [{ role: 'system', content: contextParts.join('\n\n') }, ...inputMessages];
+      const sections = collectSections(knowledgeContext, segmentMatches, collectionBlock, prompt, activeConversationId);
+      const blob = renderBudgetedSections(sections);
+      if (blob) {
+        return [{ role: 'system', content: blob }, ...inputMessages];
       }
     } catch (error) {
       console.error('[cloud-ai] Parallel knowledge/memory pipeline failed:', error);
@@ -201,61 +263,162 @@ async function appendKnowledgeContext(prompt: string, inputMessages: any[]) {
     return inputMessages;
   }
 
-  const contextParts: string[] = [];
+  let knowledgeContext: Awaited<ReturnType<typeof buildKnowledgeContext>> | null = null;
   try {
-    const knowledgeContext = await buildKnowledgeContext(prompt, {
+    knowledgeContext = await buildKnowledgeContext(prompt, {
       includeIdentity: true,
       includeDirectives: true,
       includeBio: false,
       maxGlobalFacts: 4,
       detectEntities: true,
+      activeConversationId,
     });
-    if (knowledgeContext.text.trim()) {
-      contextParts.push(knowledgeContext.text.trim().slice(0, knowledgeMaxChars));
-    }
   } catch { }
 
+  let segmentMatches: Awaited<ReturnType<typeof memoryService.searchSegments>> = [];
   try {
     const query = String(prompt || '').trim();
     if (query) {
-      const matches = await memoryService.searchSegments(query, { limit: 3, threshold: 0.6 });
-      contextParts.push(...buildPastContextLines(matches));
+      segmentMatches = await memoryService.searchSegments(query, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD });
     }
   } catch { }
 
-  if (contextParts.length > 0) {
-    return [{ role: 'system', content: contextParts.join('\n\n') }, ...inputMessages];
+  const sections = collectSections(knowledgeContext, segmentMatches, '', prompt, activeConversationId);
+  const blob = renderBudgetedSections(sections);
+  if (blob) {
+    return [{ role: 'system', content: blob }, ...inputMessages];
   }
 
   return inputMessages;
 }
 
-function buildKnowledgeContextParts(knowledgeText: string, segmentMatches: Array<{ score: number; segment: any }>, maxChars: number) {
-  const contextParts: string[] = [];
-  if (knowledgeText.trim()) {
-    contextParts.push(knowledgeText.trim().slice(0, maxChars));
+function collectSections(
+  knowledgeContext: Awaited<ReturnType<typeof buildKnowledgeContext>> | null,
+  segmentMatches: Array<{ score: number; segment: any }>,
+  collectionBlock: string,
+  prompt: string,
+  activeConversationId?: string | null,
+): Array<{ key: string; text: string }> {
+  const sections: Array<{ key: string; text: string }> = [];
+
+  if (knowledgeContext?.sections) {
+    for (const s of knowledgeContext.sections) {
+      sections.push({ key: s.key, text: s.text });
+    }
   }
 
-  const pastContextLines = buildPastContextLines(segmentMatches);
-  if (pastContextLines.length > 0) {
-    contextParts.push(pastContextLines.join('\n'));
+  if (collectionBlock && collectionBlock.trim()) {
+    sections.push({ key: 'RELEVANT_COLLECTIONS', text: collectionBlock.trim() });
   }
 
-  return contextParts;
+  const pastLines = buildPastContextLines(segmentMatches, prompt, activeConversationId);
+  if (pastLines.length > 0) {
+    sections.push({ key: 'PAST_CONTEXT', text: pastLines.join('\n') });
+  }
+
+  return sections;
 }
 
-function buildPastContextLines(matches: Array<{ score: number; segment: any }>) {
-  const similar = matches.filter(({ score }) => score >= 0.6).slice(0, 3);
-  if (similar.length === 0) {
-    return [];
+/**
+ * P4: render sections in canonical order, truncating each section's body lines
+ * (preserving the header) when it exceeds its char budget. The header is the
+ * first line — always kept; body lines are dropped tail-first.
+ *
+ * Exported for testing.
+ */
+export function renderBudgetedSections(sections: Array<{ key: string; text: string }>): string {
+  const buckets = new Map<string, Array<{ key: string; text: string }>>();
+  for (const s of sections) {
+    if (!buckets.has(s.key)) buckets.set(s.key, []);
+    buckets.get(s.key)!.push(s);
   }
 
-  const lines = ['[PAST CONTEXT]'];
-  for (const { segment } of similar) {
-    const summary = String(segment.summary || '').trim().slice(0, 100);
-    if (summary) {
-      lines.push(`- ${summary}`);
+  const out: string[] = [];
+  for (const key of SECTION_RENDER_ORDER) {
+    const items = buckets.get(key);
+    if (!items) continue;
+    for (const item of items) {
+      const budget = SECTION_BUDGETS[key];
+      if (budget === null || budget === undefined) {
+        out.push(item.text);
+        continue;
+      }
+      out.push(applySectionBudget(item.text, budget));
     }
+  }
+  return out.join('\n\n');
+}
+
+function applySectionBudget(text: string, budgetChars: number): string {
+  if (text.length <= budgetChars) return text;
+  const lines = text.split('\n');
+  if (lines.length <= 1) return text.slice(0, budgetChars); // single-line section: hard cut as last resort
+  const header = lines[0];
+  let body = lines.slice(1);
+  // Drop trailing lines until we fit. Keep at least one body line so the
+  // section still says something beyond its header.
+  while (body.length > 1 && (header.length + 1 + body.join('\n').length) > budgetChars) {
+    body.pop();
+  }
+  return [header, ...body].join('\n');
+}
+
+/**
+ * P1: segments now go through the same composite scoring + MMR rerank pipeline
+ * as facts, with a conversation-thread continuity boost when the segment
+ * originated in the active conversation.
+ *
+ * P2: each line is rendered as `- YYYY-MM-DD [topic1, topic2]: <summary>` so
+ * the model can reference *when* and *what* the prior discussion was about
+ * without inventing details.
+ *
+ * Exported for testing.
+ */
+export function buildPastContextLines(
+  matches: Array<{ score: number; segment: any }>,
+  prompt: string,
+  activeConversationId?: string | null,
+) {
+  if (matches.length === 0) return [];
+
+  const temporalBoost = hasTemporalIntent(prompt);
+
+  const scored = matches
+    .map(({ segment, score }) => {
+      const conversationBoost = activeConversationId
+        && segment?.conversation_id
+        && String(segment.conversation_id) === activeConversationId
+        ? 0.15
+        : 0;
+      return {
+        segment,
+        score: computeCompositeScore(score, {
+          created_at: segment?.created_at,
+          confidence: 1.0,
+          source: 'segment',
+        }, { temporalBoost, conversationBoost }),
+        vector: Array.isArray(segment?.vector) ? segment.vector : undefined,
+      };
+    })
+    .filter((c) => c.score > 0);
+
+  if (scored.length === 0) return [];
+
+  const reranked = mmrRerank(scored, 3, 0.7, (c) => c.segment);
+  if (reranked.length === 0) return [];
+
+  const lines = ['[PAST CONTEXT]'];
+  for (const { item: segment } of reranked) {
+    const summary = String(segment?.summary || '').trim().slice(0, 140);
+    if (!summary) continue;
+    const dateStr = String(segment?.created_at || '').slice(0, 10);
+    const topics = Array.isArray(segment?.topics)
+      ? segment.topics.filter(Boolean).slice(0, 3).join(', ')
+      : '';
+    const datePart = dateStr ? `${dateStr}` : '';
+    const topicPart = topics ? ` [${topics}]` : '';
+    const prefix = (datePart || topicPart) ? `${datePart}${topicPart}: ` : '';
+    lines.push(`- ${prefix}${summary}`);
   }
 
   return lines.length > 1 ? lines : [];

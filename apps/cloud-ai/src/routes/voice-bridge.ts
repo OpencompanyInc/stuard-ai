@@ -19,7 +19,7 @@
 
 import { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
-import { verifyToken } from '../supabase';
+import { verifyToken, checkAccess } from '../supabase';
 import { writeLog } from '../utils/logger';
 import {
   getVoiceProvider,
@@ -30,12 +30,14 @@ import {
   buildVoiceContext,
   type VoiceSession,
   type VoiceSessionConfig,
+  type VoiceUsageEvent,
 } from '../voice';
 import {
   executeVoiceToolCall,
   truncateVoiceToolResult,
 } from '../voice/voice-runtime-tools';
 import { getDesktopWs } from '../services/vm-bridge';
+import { LiveUsageBillingTracker } from '../services/live-usage-billing';
 
 interface VoiceBridgeConfig {
   provider?: string;
@@ -45,6 +47,10 @@ interface VoiceBridgeConfig {
   initialMessage?: string;
   /** When true, skip tool injection (e.g. for diagnostic/preview sessions). */
   disableTools?: boolean;
+  /** Legacy client hint. Ignored for billing until voice BYOK is implemented. */
+  modelSource?: 'subscription' | 'api_key' | 'friendly' | string;
+  /** Optional conversation id so usage rows attach to the right thread. */
+  conversationId?: string;
 }
 
 export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
@@ -53,6 +59,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
   let userId: string | null = null;
   let isClosed = false;
   let voiceSessionId: string | null = null;
+  let billingTracker: LiveUsageBillingTracker | null = null;
 
   const authTimeout = setTimeout(() => {
     if (!authenticated) {
@@ -65,13 +72,18 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
   const providers = getConfiguredProviders().map(p => ({ id: p.id, name: p.name }));
   send(ws, { type: 'providers', providers, default: getDefaultProviderId() });
 
-  ws.on('message', async (data: Buffer | string) => {
+  ws.on('message', async (data: Buffer | string, isBinary?: boolean) => {
     if (isClosed) return;
 
-    // Binary data = audio from mic
-    if (Buffer.isBuffer(data) && authenticated && session) {
+    // The `ws` library emits Buffer for both binary and text frames, so
+    // `Buffer.isBuffer(data)` alone can't tell them apart — gate on the
+    // `isBinary` flag instead. Without this, JSON control frames (video_frame,
+    // text, interrupt) sent after the session is created would get misrouted
+    // into sendAudio.
+    if (isBinary && authenticated && session) {
       // Convert raw PCM16 buffer to base64 for the provider
-      session.sendAudio(data.toString('base64'));
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as any);
+      session.sendAudio(buf.toString('base64'));
       return;
     }
 
@@ -116,9 +128,31 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         session = null;
       }
       voiceSessionId = null;
+      billingTracker = null;
 
       const config = msg as VoiceBridgeConfig;
       const wantTools = !config.disableTools;
+
+      // Preflight credit gate. Reject before opening the upstream WebSocket
+      // so a user with no credits never spends provider tokens. checkAccess
+      // returns { allowed: true } in dev mode and for unlimited plans.
+      if (userId) {
+        try {
+          const access = await checkAccess(userId);
+          if (!access.allowed) {
+            send(ws, {
+              type: 'error',
+              message: access.reason || 'credit_limit_exceeded',
+              data: { plan: access.plan, limit: access.limit, used: access.used },
+            });
+            return;
+          }
+        } catch (err: any) {
+          console.warn('[voice-bridge] checkAccess failed, denying session:', err?.message);
+          send(ws, { type: 'error', message: 'credit_check_failed' });
+          return;
+        }
+      }
 
       // Pick a provider. When the caller didn't pin one, prefer a tool-capable
       // provider so the voice agent runs as the orchestrator (delegate, search
@@ -186,6 +220,34 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         'You are Stuard, a helpful AI assistant. Always respond in English. Keep responses concise and conversational.';
       const effectiveTools = voiceContext?.tools || [];
 
+      // Voice realtime currently uses Stuard-owned provider keys. Do not trust
+      // client modelSource claims until voice BYOK/subscription resolution exists.
+      const billingExcluded = false;
+
+      // Pick the model id we'll log against. Providers stamp a fully qualified
+      // id (e.g. `openai/gpt-4o-realtime-preview`) on each usage event, but
+      // we need a placeholder for the tracker constructor — it's only used
+      // when the per-event `costUsd` is missing, which shouldn't happen.
+      const placeholderModel = providerId === 'openai-realtime'
+        ? (config.model || 'gpt-4o-realtime-preview')
+        : providerId === 'gemini-live'
+          ? (config.model || 'gemini-3.1-flash-live-preview')
+          : providerId === 'grok-realtime'
+            ? (config.model || 'grok-3')
+            : providerId === 'elevenlabs'
+              ? (config.model || 'eleven_turbo_v2_5')
+              : (config.model || providerId);
+
+      billingTracker = userId ? new LiveUsageBillingTracker({
+        userId,
+        conversationId: typeof config.conversationId === 'string' ? config.conversationId : null,
+        model: placeholderModel,
+        sourceRef: `voice:${providerId}`,
+        sourceType: 'voice',
+        sourceLabel: `Voice (${providerId})`,
+        billingExcluded,
+      }) : null;
+
       try {
         const sessionConfig: VoiceSessionConfig = {
           providerId,
@@ -211,6 +273,33 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
           onInterruption: () => {
             if (!isClosed) {
               send(ws, { type: 'interruption' });
+            }
+          },
+          onUsage: (event: VoiceUsageEvent) => {
+            if (!billingTracker) return;
+            // Fire-and-forget: a billing error must not stall the voice turn.
+            // settleIncrement logs its own errors via writeLog('live_usage_billing_error').
+            void billingTracker.settleIncrement(
+              {
+                promptTokens: event.inputTokens,
+                completionTokens: event.outputTokens,
+                totalTokens: event.inputTokens + event.outputTokens,
+                cachedPromptTokens: event.cachedInputTokens || 0,
+                reasoningTokens: event.reasoningTokens || 0,
+                costUsd: event.costUsd,
+                // Carry the provider-stamped model so the log row reflects the
+                // actual model, not the tracker's placeholder.
+                model: event.model,
+              },
+              { trigger: 'voice_turn' },
+            ).catch(() => { /* swallowed — logged inside the tracker */ });
+            if (!isClosed) {
+              send(ws, {
+                type: 'usage',
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                costUsd: event.costUsd,
+              });
             }
           },
           onFunctionCall: (callId, name, argsJson) => {
@@ -290,6 +379,22 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
       return;
     }
 
+    // Video / screen frame from client. Currently only Gemini Live consumes
+    // these; other providers silently ignore. Frame is expected to be a
+    // base64-encoded JPEG (or PNG). Caller is responsible for keeping cadence
+    // ≤1 FPS per Gemini's guidance.
+    if (msg.type === 'video_frame') {
+      if (!session) return;
+      if (!session.sendImage) {
+        console.warn(`[voice-bridge] video_frame dropped — provider '${session.providerId}' does not implement sendImage. Use gemini-live for vision.`);
+        return;
+      }
+      const data = typeof msg.data === 'string' ? msg.data : '';
+      const mimeType = typeof msg.mimeType === 'string' ? msg.mimeType : 'image/jpeg';
+      if (data) session.sendImage(data, mimeType);
+      return;
+    }
+
     // Interrupt
     if (msg.type === 'interrupt' && session?.interrupt) {
       session.interrupt();
@@ -317,12 +422,23 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
     if (isClosed) return;
     isClosed = true;
     clearTimeout(authTimeout);
+    // Close the upstream session first — for ElevenLabs this triggers the
+    // close-time duration usage event, which routes through onUsage and is
+    // settled by the tracker before we drop the reference below.
     if (session) {
       try { session.close(reason); } catch {}
       session = null;
     }
+    const totals = billingTracker?.getCumulativeTotals();
+    billingTracker = null;
     voiceSessionId = null;
-    writeLog('voice_bridge_disconnected', { userId: userId || 'unauth', reason });
+    writeLog('voice_bridge_disconnected', {
+      userId: userId || 'unauth',
+      reason,
+      totalCredits: totals?.credits || 0,
+      totalCostUsd: totals?.costUsd || 0,
+      totalTokens: totals?.totalTokens || 0,
+    });
   }
 }
 

@@ -153,7 +153,7 @@ function titleFromGoal(goal: string): string {
   const title = words
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
-  return title.endsWith('Bot') ? title : `${title} Bot`;
+  return title.endsWith('Agent') ? title : `${title} Agent`;
 }
 
 function inferInterval(goal: string): ScheduleInterval {
@@ -200,18 +200,18 @@ function buildBotBlueprint(goal: string, availableTools: string[], preferredName
     `- ${objective}`,
     '',
     'Operating rules:',
-    '- Review the trigger context and recent bot memory before acting.',
+    '- Review the trigger context and recent agent memory before acting.',
     '- Use granted tools to verify facts or complete actions before guessing.',
     '- Keep actions focused on the objective and avoid unrelated work.',
-    '- Record useful durable findings in bot memory.',
+    '- Record useful durable findings in agent memory.',
     '- Notify the user only for completed work, decisions, risks, or useful findings.',
     '',
     'Success criteria:',
-    '- The user can trust the bot to run with minimal babysitting.',
+    '- The user can trust the agent to run with minimal babysitting.',
     '- Each run produces either a concrete result, a concise status update, or no notification when nothing changed.',
   ].join('\n');
   const instructions = [
-    'At each wake-up, inspect the trigger payload, recent bot memory, and open tasks.',
+    'At each wake-up, inspect the trigger payload, recent agent memory, and open tasks.',
     'Decide whether action is needed for the objective.',
     'Use the allowed tools to complete the next useful step, update memory/tasks when relevant, and send a concise app notification when there is something worth interrupting the user for.',
   ].join(' ');
@@ -869,22 +869,33 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
 
   const selectedBot = useMemo(() => bots.find(b => b.id === selectedBotId) || null, [bots, selectedBotId]);
 
+  const handleDeleteFromList = useCallback(async (bot: Bot) => {
+    if (!confirm(`Delete "${bot.name}"? This cannot be undone.`)) return;
+    const res = await window.desktopAPI.botsDelete(bot.id);
+    if (res?.ok) {
+      if (selectedBotId === bot.id) setSelectedBotId(null);
+      await refresh();
+    } else if (res?.error) {
+      alert(res.error);
+    }
+  }, [refresh, selectedBotId]);
+
   const runningCount = visibleBots.filter(b => b.status === 'running').length;
   const erroredCount = visibleBots.filter(b => b.status === 'errored').length;
   const onVmCount = bots.filter(b => !!b.vmDeployedAt).length;
   const localOnlyCount = bots.filter(b => !b.vmDeployedAt).length;
 
   const isVmScope = scope === 'vm';
-  const headerTitle = isVmScope ? 'Bots on VM' : 'Bots';
+  const headerTitle = isVmScope ? 'Agents on VM' : 'Agents';
   const headerSubtitle = isVmScope
-    ? 'Bots running 24/7 on your cloud VM — independent of whether your laptop is open.'
+    ? 'Agents running 24/7 on your cloud VM — independent of whether your laptop is open.'
     : 'Build and deploy 24/7 agents — each with its own personality, tools, and memory.';
 
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center gap-3">
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        <span className="text-sm text-theme-muted">Loading bots…</span>
+        <span className="text-sm text-theme-muted">Loading agents…</span>
       </div>
     );
   }
@@ -920,7 +931,7 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
           className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" />
-          New Bot
+          New Agent
         </button>
       </div>
 
@@ -930,7 +941,7 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
           <section>
             <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Overview</h2>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <StatCard value={padCount(visibleBots.length)} label={isVmScope ? 'On VM' : 'Total Bots'} />
+              <StatCard value={padCount(visibleBots.length)} label={isVmScope ? 'On VM' : 'Total Agents'} />
               <StatCard value={padCount(runningCount)} label="Running" />
               <StatCard
                 value={padCount(isVmScope ? localOnlyCount : onVmCount)}
@@ -940,10 +951,10 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
             </div>
           </section>
 
-          {/* Bots grid */}
+          {/* Agents grid */}
           <section>
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-[15px] font-semibold text-theme-fg">{isVmScope ? 'Deployed to VM' : 'Bots'}</h2>
+              <h2 className="text-[15px] font-semibold text-theme-fg">{isVmScope ? 'Deployed to VM' : 'Agents'}</h2>
               <span className="text-[12px] text-theme-muted">
                 {visibleBots.length} {isVmScope ? 'on VM' : 'total'}
               </span>
@@ -955,12 +966,12 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-[15px] font-semibold text-theme-fg">
-                    {isVmScope ? 'No bots on this VM yet' : 'No bots yet'}
+                    {isVmScope ? 'No agents on this VM yet' : 'No agents yet'}
                   </h3>
                   <p className="max-w-sm text-[12px] text-theme-muted">
                     {isVmScope
-                      ? 'Open any bot and choose “Deploy to VM” so it keeps running even when your laptop is closed.'
-                      : 'Create your first bot to put it to work in the background.'}
+                      ? 'Open any agent and choose “Deploy to VM” so it keeps running even when your laptop is closed.'
+                      : 'Create your first agent to put it to work in the background.'}
                   </p>
                 </div>
                 {!isVmScope && (
@@ -969,14 +980,19 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
                     className="mt-1 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[12px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    New Bot
+                    New Agent
                   </button>
                 )}
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {visibleBots.map(bot => (
-                  <BotCard key={bot.id} bot={bot} onClick={() => setSelectedBotId(bot.id)} />
+                  <BotCard
+                    key={bot.id}
+                    bot={bot}
+                    onClick={() => setSelectedBotId(bot.id)}
+                    onDelete={() => handleDeleteFromList(bot)}
+                  />
                 ))}
                 {!isVmScope && (
                   <button
@@ -984,7 +1000,7 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
                     className="flex min-h-[140px] items-center justify-center gap-2 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 text-[13px] text-theme-muted transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
                   >
                     <Plus className="h-4 w-4" />
-                    New Bot
+                    New Agent
                   </button>
                 )}
               </div>
@@ -1009,47 +1025,63 @@ export function BotsView({ scope = 'all' }: BotsViewProps = {}) {
 
 // ─── Bot card ──────────────────────────────────────────────────────────────
 
-function BotCard({ bot, onClick }: { bot: Bot; onClick: () => void }) {
+function BotCard({ bot, onClick, onDelete }: { bot: Bot; onClick: () => void; onDelete?: () => void }) {
   const status = statusInfo(bot.status);
   const onVm = !!bot.vmDeployedAt;
 
   return (
-    <button
-      onClick={onClick}
-      className="group relative flex flex-col gap-3 rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-5 text-left transition hover:bg-theme-hover/30"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-theme-card text-xl shadow-sm">
-            {bot.emoji || '🤖'}
+    <div className="group relative rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 transition hover:bg-theme-hover/30">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full flex-col gap-3 p-5 text-left"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-theme-card text-xl shadow-sm">
+              {bot.emoji || '🤖'}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-semibold text-theme-fg">{bot.name}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+                <span className={clsx('h-1.5 w-1.5 rounded-full', status.dot)} />
+                <span className={clsx('font-medium', status.textColor)}>{status.label}</span>
+                {bot.isLegacyDefault && (
+                  <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">default</span>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="truncate text-[15px] font-semibold text-theme-fg">{bot.name}</div>
-            <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-              <span className={clsx('h-1.5 w-1.5 rounded-full', status.dot)} />
-              <span className={clsx('font-medium', status.textColor)}>{status.label}</span>
-              {bot.isLegacyDefault && (
-                <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">default</span>
-              )}
+          <div className="flex shrink-0 items-center gap-1.5 pr-9">
+            {onVm && <DashboardBadge label="On VM" tone="primary" icon={Cloud} />}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
+            <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Last run</div>
+            <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">{timeAgo(bot.lastRunAt)}</div>
+          </div>
+          <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
+            <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Next in</div>
+            <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
+              {bot.status === 'running' ? timeUntil(bot.nextRunAt) : '—'}
             </div>
           </div>
         </div>
-        {onVm && <DashboardBadge label="On VM" tone="primary" icon={Cloud} />}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
-          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Last run</div>
-          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">{timeAgo(bot.lastRunAt)}</div>
-        </div>
-        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
-          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Next in</div>
-          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
-            {bot.status === 'running' ? timeUntil(bot.nextRunAt) : '—'}
-          </div>
-        </div>
-      </div>
-    </button>
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-500/20 bg-red-500/5 text-red-300 opacity-0 transition hover:bg-red-500/10 hover:text-red-200 focus:opacity-100 group-hover:opacity-100"
+          title="Delete agent"
+          aria-label={`Delete ${bot.name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1098,8 +1130,8 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
       });
     } else if (event.type === 'phase') {
       if (event.phase === 'generate') {
-        setGenerateStage('Designing the bot');
-        pushProgress({ icon: 'phase', title: 'Designing the bot' });
+        setGenerateStage('Designing the agent');
+        pushProgress({ icon: 'phase', title: 'Designing the agent' });
       } else {
         setGenerateStage('Refining the output');
         pushProgress({ icon: 'phase', title: 'Refining the output' });
@@ -1248,7 +1280,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
         onClick={e => e.stopPropagation()}
       >
         <div className="mb-5">
-          <h2 className="font-stuard text-lg font-semibold text-theme-fg">New Bot</h2>
+          <h2 className="font-stuard text-lg font-semibold text-theme-fg">New Agent</h2>
           <p className="mt-1 text-[12px] text-theme-muted">Describe the outcome, then generate a ready-to-run setup or tune it by hand.</p>
         </div>
 
@@ -1286,7 +1318,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 Tools
               </button>
               <span className="text-[11px] text-theme-muted">
-                {selectedTools.length === 0 ? 'Default bot tools only' : `${selectedTools.length} tool${selectedTools.length === 1 ? '' : 's'} selected`}
+                {selectedTools.length === 0 ? 'Default agent tools only' : `${selectedTools.length} tool${selectedTools.length === 1 ? '' : 's'} selected`}
               </span>
               {selectedTools.slice(0, 4).map(tool => (
                 <span
@@ -1401,7 +1433,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
             <input
               autoFocus
               type="text"
-              placeholder="Twitter Update Bot"
+              placeholder="Twitter Update Agent"
               value={name}
               onChange={e => setName(e.target.value)}
               className="flex-1 rounded-xl border border-theme/30 dark:border-transparent bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
@@ -1443,7 +1475,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-theme-muted">You can add cron, webhook, and Gmail triggers after creating the bot.</p>
+            <p className="mt-1 text-[11px] text-theme-muted">You can add cron, webhook, and Gmail triggers after creating the agent.</p>
           </div>
         </div>
 
@@ -1463,7 +1495,7 @@ function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated
             className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            Create Bot
+            Create Agent
           </button>
         </div>
 
@@ -1743,7 +1775,7 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
           <button
             onClick={onBack}
             className="rounded-full p-1.5 text-theme-muted transition hover:bg-theme-hover/40 hover:text-theme-fg"
-            title="Back to bots"
+            title="Back to agents"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -1756,8 +1788,8 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
               <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
               <span>
                 {bot.isLegacyDefault
-                  ? 'Default proactive bot — your always-on agent.'
-                  : 'Configure how this bot wakes up, thinks, and remembers.'}
+                  ? 'Default proactive agent — your always-on agent.'
+                  : 'Configure how this agent wakes up, thinks, and remembers.'}
               </span>
             </p>
           </div>
@@ -1801,27 +1833,18 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
        * collapses into a thin summary strip across the top so users still
        * see status at a glance without sacrificing card real-estate.
        */}
-      {tab === 'kanban' && (
-        <KanbanSummaryStrip
-          status={status}
-          nextRunValue={nextRunValue}
-          activeTaskCount={displayedTasks.length}
-          totalRuns={displayedLogs.length}
-          executionLabel={executionTargetMeta.label}
-          modelLabel={modelModeMeta.label}
-          triggerLabel={triggerSummary}
-          vmDeployed={!!bot.vmDeployedAt}
-        />
-      )}
       <div className={clsx(
         'grid min-h-0 flex-1 gap-6 overflow-hidden',
         tab === 'kanban'
-          ? 'grid-cols-1'
+          ? 'grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]'
           : 'grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]',
       )}>
         {/* ── LEFT aside (hidden on kanban tab) ─────────────────── */}
-        {tab !== 'kanban' && (
-          <aside className="overflow-y-auto px-1 pb-2 scrollbar-minimal">
+        {(
+          <aside className={clsx(
+            'overflow-y-auto px-1 pb-2 scrollbar-minimal',
+            tab === 'kanban' ? 'lg:order-2' : 'lg:order-1',
+          )}>
             <div className="space-y-7">
               {/* Overview */}
               <section>
@@ -1873,7 +1896,10 @@ function BotDetailView({ bot, onBack, onChange, scope = 'all' }: { bot: Bot; onB
         )}
 
         {/* ── RIGHT/MAIN: Tabs + tab content ────────────────────── */}
-        <main className="flex min-h-0 flex-col overflow-hidden">
+        <main className={clsx(
+          'flex min-h-0 flex-col overflow-hidden',
+          tab === 'kanban' ? 'lg:order-1' : 'lg:order-2',
+        )}>
           {/* Tabs */}
           <div className="mb-4 flex flex-shrink-0 items-center gap-2 p-0.5">
             {tabs.map(t => {
@@ -2002,8 +2028,8 @@ function ActivityTab({
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
               {vmActivity
-                ? 'No active kanban cards — the bot will add some as it works. See the Kanban tab for the full board.'
-                : 'No tasks yet — the bot will create some when it runs.'}
+                ? 'No active kanban cards — the agent will add some as it works. See the Kanban tab for the full board.'
+                : 'No tasks yet — the agent will create some when it runs.'}
             </div>
           </div>
         ) : (
@@ -2037,7 +2063,7 @@ function ActivityTab({
         {logs.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              No runs yet. Click "Run Now" or deploy the bot.
+              No runs yet. Click "Run Now" or deploy the agent.
             </div>
           </div>
         ) : (
@@ -2093,7 +2119,7 @@ function MemoryTab({
       {onToggleMemory && (
         <ConfigRow
           label="Memory tool"
-          description="Inject recent runs and facts into the bot's system prompt at runtime so it remembers across runs."
+          description="Inject recent runs and facts into the agent's system prompt at runtime so it remembers across runs."
           control={<Toggle checked={memoryEnabled} onChange={onToggleMemory} />}
         />
       )}
@@ -2124,7 +2150,7 @@ function MemoryTab({
         {summaries.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              Memory will populate after the bot runs a few times.
+              Memory will populate after the agent runs a few times.
             </div>
           </div>
         ) : (
@@ -2329,33 +2355,21 @@ function SettingsTab({
       </section>
 
       {/* Danger zone */}
-      {!bot.isLegacyDefault && (
-        <section className="rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3.5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[14px] font-semibold text-red-300">Delete bot</div>
-              <p className="mt-0.5 text-[12px] text-theme-muted">Removes the bot and stops all scheduled runs. Tasks and run logs will be cleared.</p>
-            </div>
-            <button
-              onClick={onDelete}
-              className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-transparent px-4 py-2 text-[13px] font-medium text-red-300 transition hover:bg-red-500/10"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
+      <section className="rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[14px] font-semibold text-red-300">Delete agent</div>
+            <p className="mt-0.5 text-[12px] text-theme-muted">Removes the agent and stops all scheduled runs. Tasks and run logs will be cleared.</p>
           </div>
-        </section>
-      )}
-
-      {bot.isLegacyDefault && (
-        <section className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-4 py-3.5 shadow-sm">
-          <div className="flex items-center gap-2 text-theme-fg">
-            <Sparkles className="h-3.5 w-3.5 text-primary/80" />
-            <span className="text-[13px] font-medium">This is your default bot.</span>
-          </div>
-          <p className="mt-1 text-[12px] text-theme-muted">It was created from your previous Proactive setup and can't be deleted — but it works just like any other bot now. Add triggers, tools, and deploy to VM as you wish.</p>
-        </section>
-      )}
+          <button
+            onClick={onDelete}
+            className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-transparent px-4 py-2 text-[13px] font-medium text-red-300 transition hover:bg-red-500/10"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -2391,8 +2405,8 @@ function ToolsSection({
           </h3>
           <p className="mt-0.5 text-[12px] text-theme-muted">
             {selected.length === 0
-              ? 'No extra tools added. Bot can use only its default bot tools.'
-              : `${selected.length} extra tool${selected.length === 1 ? '' : 's'} added to this bot.`}
+              ? 'No extra tools added. Agent can use only its default agent tools.'
+              : `${selected.length} extra tool${selected.length === 1 ? '' : 's'} added to this agent.`}
           </p>
         </div>
         <button
@@ -2406,7 +2420,7 @@ function ToolsSection({
 
       {selected.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-3 text-[12px] text-theme-muted">
-          This bot starts with only its default bot tools. Click <span className="font-medium text-theme-fg">Add tools</span> to give it specific extra tools.
+          This agent starts with only its default agent tools. Click <span className="font-medium text-theme-fg">Add tools</span> to give it specific extra tools.
         </div>
       ) : (
         <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-3.5 py-3 shadow-sm">
@@ -2414,9 +2428,10 @@ function ToolsSection({
             {selected.map(tool => (
               <span
                 key={tool}
-                className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 py-1 pl-3 pr-1 text-[11px] font-mono text-primary"
+                title={tool}
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 py-1 pl-3 pr-1 text-[11px] font-medium text-primary"
               >
-                {tool}
+                {humanizeToolName(tool)}
                 <button
                   onClick={() => remove(tool)}
                   className="rounded-full p-0.5 transition hover:bg-primary/20"
@@ -2459,7 +2474,10 @@ function ToolsPickerModal({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return available;
-    return available.filter(t => t.toLowerCase().includes(q));
+    return available.filter(t =>
+      t.toLowerCase().includes(q) ||
+      humanizeToolName(t).toLowerCase().includes(q),
+    );
   }, [available, search]);
 
   const toggle = (tool: string) => {
@@ -2484,7 +2502,7 @@ function ToolsPickerModal({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-stuard text-lg font-semibold text-theme-fg">Add tools</h2>
-              <p className="mt-0.5 text-[12px] text-theme-muted">Pick exact extra tools for this bot. Empty = default bot tools only.</p>
+              <p className="mt-0.5 text-[12px] text-theme-muted">Pick exact extra tools for this agent. Empty = default agent tools only.</p>
             </div>
             <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">{draft.size} selected</span>
           </div>
@@ -2512,6 +2530,7 @@ function ToolsPickerModal({
           ) : (
             filtered.map(tool => {
               const checked = draft.has(tool);
+              const label = humanizeToolName(tool);
               return (
                 <button
                   key={tool}
@@ -2527,7 +2546,7 @@ function ToolsPickerModal({
                   )}>
                     {checked && <Check className="h-3 w-3 text-primary-fg" />}
                   </div>
-                  <span className="font-mono truncate">{tool}</span>
+                  <span className="truncate font-medium" title={tool}>{label}</span>
                 </button>
               );
             })
@@ -2618,9 +2637,9 @@ function SkillsSection({
   };
 
   const description = isInherit
-    ? `Inheriting all ${activeSkills.length} active skill${activeSkills.length === 1 ? '' : 's'}. Restrict to give this bot a focused subset.`
+    ? `Inheriting all ${activeSkills.length} active skill${activeSkills.length === 1 ? '' : 's'}. Restrict to give this agent a focused subset.`
     : selected.length === 0
-      ? 'Restricted — no skills available to this bot.'
+      ? 'Restricted — no skills available to this agent.'
       : `${selected.length} skill${selected.length === 1 ? '' : 's'} enabled.`;
 
   return (
@@ -2654,11 +2673,11 @@ function SkillsSection({
 
       {isInherit ? (
         <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-3 text-[12px] text-theme-muted">
-          This bot can use any skill you've enabled globally. Click <span className="font-medium text-theme-fg">Restrict…</span> to scope it down.
+          This agent can use any skill you've enabled globally. Click <span className="font-medium text-theme-fg">Restrict…</span> to scope it down.
         </div>
       ) : selected.length === 0 && ghostSelected.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-3 text-[12px] text-theme-muted">
-          No skills selected. Click <span className="font-medium text-theme-fg">Pick skills</span> to grant this bot access to specific skills.
+          No skills selected. Click <span className="font-medium text-theme-fg">Pick skills</span> to grant this agent access to specific skills.
         </div>
       ) : (
         <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-3.5 py-3 shadow-sm">
@@ -2687,7 +2706,7 @@ function SkillsSection({
                 title="This skill is currently inactive or has been deleted"
               >
                 <AlertCircle className="h-3 w-3" />
-                {id}
+                {humanizeToolName(id)}
                 <button
                   onClick={() => remove(id)}
                   className="rounded-full p-0.5 transition hover:bg-amber-500/20"
@@ -2752,14 +2771,14 @@ function SkillsPickerModal({
       style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
     >
       <div
-        className="w-full max-w-xl overflow-hidden rounded-3xl border border-theme/50 dark:border-transparent bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
+        className="w-full max-w-2xl overflow-hidden rounded-3xl border border-theme/50 dark:border-transparent bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
         <div className="border-b border-theme/15 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-stuard text-lg font-semibold text-theme-fg">Pick skills</h2>
-              <p className="mt-0.5 text-[12px] text-theme-muted">Only checked skills are available to this bot at run time.</p>
+              <p className="mt-0.5 text-[12px] text-theme-muted">Only checked skills are available to this agent at run time.</p>
             </div>
             <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">{draft.size} selected</span>
           </div>
@@ -2781,47 +2800,51 @@ function SkillsPickerModal({
           </div>
         </div>
 
-        <div className="max-h-[440px] overflow-y-auto p-2 scrollbar-minimal">
+        <div className="max-h-[460px] overflow-y-auto p-3 scrollbar-minimal">
           {filtered.length === 0 ? (
             <div className="px-3 py-8 text-center text-[12px] text-theme-muted">
               {skills.length === 0 ? 'No active skills yet. Create skills from the Skills tab first.' : `No skills match "${search}".`}
             </div>
           ) : (
-            filtered.map(skill => {
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {filtered.map(skill => {
               const checked = draft.has(skill.id);
               return (
                 <button
                   key={skill.id}
                   onClick={() => toggle(skill.id)}
                   className={clsx(
-                    'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition',
-                    checked ? 'bg-primary/10' : 'hover:bg-theme-hover/40',
+                    'flex min-h-[92px] w-full items-start gap-3 rounded-2xl border px-3 py-3 text-left transition',
+                    checked
+                      ? 'border-primary/40 bg-primary/10 shadow-sm'
+                      : 'border-theme/30 dark:border-transparent bg-theme-card/50 hover:bg-theme-hover/40',
                   )}
                 >
                   <div className={clsx(
-                    'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                    'mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border',
                     checked ? 'border-primary bg-primary' : 'border-theme/30',
                   )}>
                     {checked && <Check className="h-3 w-3 text-primary-fg" />}
                   </div>
                   <span
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-base"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-base"
                     style={skill.color ? { backgroundColor: `${skill.color}20` } : undefined}
                     aria-hidden
                   >
                     {skill.icon || '✨'}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className={clsx('truncate text-[13px] font-medium', checked ? 'text-primary' : 'text-theme-fg')}>
+                    <div className={clsx('text-[13px] font-semibold leading-5', checked ? 'text-primary' : 'text-theme-fg')}>
                       {skill.name}
                     </div>
                     {skill.description && (
-                      <div className="mt-0.5 line-clamp-1 text-[11.5px] text-theme-muted">{skill.description}</div>
+                      <div className="mt-1 line-clamp-2 text-[11.5px] leading-4 text-theme-muted">{skill.description}</div>
                     )}
                   </div>
                 </button>
               );
-            })
+            })}
+            </div>
           )}
         </div>
 
@@ -2903,7 +2926,7 @@ function VmDeploySection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
           title="Cloud VM (24/7)"
           subtitle={onVm
             ? `Deployed ${timeAgo(bot.vmDeployedAt)} · the VM keeps running this even when your laptop is closed.`
-            : 'Push this bot to your cloud VM so it keeps running when your laptop is closed.'}
+            : 'Push this agent to your cloud VM so it keeps running when your laptop is closed.'}
           status={onVm ? 'On VM' : 'Not deployed'}
           tone={onVm ? 'primary' : 'neutral'}
           action={
@@ -2937,7 +2960,7 @@ function VmDeploySection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
         </div>
       )}
       <p className="mt-2 text-[11px] text-theme-muted/80">
-        Deployed bots run on the VM alongside local runs, with their private kanban synced back into this tab.
+        Deployed agents run on the VM alongside local runs, with their private kanban synced back into this tab.
       </p>
     </section>
   );
@@ -2947,9 +2970,9 @@ function humanizeVmError(err?: string): string {
   if (!err) return 'Action failed.';
   if (err === 'not_authenticated') return 'Sign in to use the VM.';
   if (err === 'vm_unreachable' || err === 'engine_not_running' || err === 'no_engine_for_user') return 'Could not reach your VM. Make sure it’s running.';
-  if (err === 'config_not_found' || err === 'bot_not_found') return 'Bot config not found.';
-  if (err === 'bot_id_required') return 'Missing bot id.';
-  if (err === 'bot_not_deployed_to_vm') return 'This bot isn’t deployed to the VM yet.';
+  if (err === 'config_not_found' || err === 'bot_not_found') return 'Agent config not found.';
+  if (err === 'bot_id_required') return 'Missing agent id.';
+  if (err === 'bot_not_deployed_to_vm') return 'This agent isn’t deployed to the VM yet.';
   if (err === 'http_404') return 'Your cloud-ai service is missing the /v1/bot/run route. Redeploy cloud-ai to pick it up.';
   if (err.startsWith('http_')) return `Cloud-ai responded ${err.replace('http_', '')}.`;
   return err;
@@ -3002,14 +3025,14 @@ function TriggersSection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
       // have nothing to edit.
       if (type !== 'manual') setEditingId(res.trigger.id);
     } else if (res?.error === 'invalid_input') {
-      alert('That trigger type is already on this bot. Pick a different one or edit the existing trigger.');
+      alert('That trigger type is already on this agent. Pick a different one or edit the existing trigger.');
     }
   };
 
   const handleRemove = async (triggerId: string) => {
     const res = await window.desktopAPI.botsRemoveTrigger(bot.id, triggerId);
     if (!res?.ok) {
-      alert('A bot must keep at least one trigger. Switch this one to "Manual" if you want no automation.');
+      alert('An agent must keep at least one trigger. Switch this one to "Manual" if you want no automation.');
       return;
     }
     await onChanged();
@@ -3026,8 +3049,8 @@ function TriggersSection({ bot, onChanged }: { bot: Bot; onChanged: () => Promis
     <section>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-semibold text-theme-fg">When should this bot run?</h3>
-          <p className="mt-0.5 text-[12px] text-theme-muted">Add as many triggers as you want. Any one firing wakes the bot.</p>
+          <h3 className="text-[15px] font-semibold text-theme-fg">When should this agent run?</h3>
+          <p className="mt-0.5 text-[12px] text-theme-muted">Add as many triggers as you want. Any one firing wakes the agent.</p>
         </div>
         <button
           onClick={() => setPickerOpen(true)}
@@ -3163,7 +3186,7 @@ function TriggerPickerModal({
       >
         <div className="mb-4">
           <h2 className="font-stuard text-lg font-semibold text-theme-fg">Add a trigger</h2>
-          <p className="mt-0.5 text-[12px] text-theme-muted">Pick how this bot should wake up.</p>
+          <p className="mt-0.5 text-[12px] text-theme-muted">Pick how this agent should wake up.</p>
         </div>
         <div className="space-y-2">
           {types.map(t => {
@@ -3188,7 +3211,7 @@ function TriggerPickerModal({
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-medium text-theme-fg">{meta.label}</div>
                   <div className="text-[11px] text-theme-muted">{meta.tagline}</div>
-                  {disabled && <div className="mt-0.5 text-[10px] text-amber-400">Already on this bot</div>}
+                  {disabled && <div className="mt-0.5 text-[10px] text-amber-400">Already on this agent</div>}
                 </div>
               </button>
             );
@@ -3445,7 +3468,7 @@ function WebhookEditor({ args }: { args: Record<string, any> }) {
           </button>
         </div>
         <p className="mt-1.5 text-[11px] text-theme-muted">
-          POST to this URL from anything on your machine (Zapier desktop agents, curl, scripts). The bot wakes immediately and the request body is passed in as the trigger payload.
+          POST to this URL from anything on your machine (Zapier desktop agents, curl, scripts). The agent wakes immediately and the request body is passed in as the trigger payload.
         </p>
       </div>
 

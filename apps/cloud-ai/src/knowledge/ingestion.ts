@@ -257,6 +257,14 @@ async function executeAddPending(
 // MAIN INGESTION FUNCTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * B1: when re-extracting incrementally, look back this many turns past the
+ * stored offset so the extractor sees the conversational lead-in (the prior
+ * user turn often disambiguates the new one). Trades a few extra input tokens
+ * for sharper extractions.
+ */
+const INCREMENTAL_EXTRACTION_LOOKBACK = 2;
+
 export async function ingestConversationTurn(
   conversationHistory: Array<{ role: string; content: string }>,
   options?: {
@@ -273,6 +281,32 @@ export async function ingestConversationTurn(
   const bridgeAvailable = hasClientBridge();
   if (!bridgeAvailable) {
     console.log('[knowledge] Bridge not available — skipping existing context fetch and action execution');
+  }
+
+  // B1: incremental extraction. Track which turns we've already extracted from
+  // and only re-process the new tail (with a small lookback for context). When
+  // there's no stored offset (fresh conversation or bridge unavailable) we
+  // fall back to the full-history behavior.
+  let extractionSlice = conversationHistory;
+  let extractionOffsetBefore = 0;
+  if (bridgeAvailable && options?.conversationId) {
+    try {
+      const offsetResult = await execSilentLocalTool(
+        'conversation_get_extraction_offset',
+        { conversation_id: options.conversationId },
+        5000,
+      );
+      const offset = Number(offsetResult?.offset ?? 0);
+      if (Number.isFinite(offset) && offset > 0 && offset < conversationHistory.length) {
+        const sliceStart = Math.max(0, offset - INCREMENTAL_EXTRACTION_LOOKBACK);
+        extractionSlice = conversationHistory.slice(sliceStart);
+        extractionOffsetBefore = offset;
+        console.log(`[knowledge] Incremental extraction: history=${conversationHistory.length} offset=${offset} sliceStart=${sliceStart} sliceLen=${extractionSlice.length}`);
+      }
+    } catch (err) {
+      // Falls back to full history — incremental is best-effort.
+      console.log('[knowledge] Failed to fetch extraction offset, processing full history:', err);
+    }
   }
 
   // Step 0: Fetch existing context to inform extraction decisions
@@ -374,11 +408,11 @@ export async function ingestConversationTurn(
     }
   }
 
-  // Step 1: Extract knowledge from the full conversation thread
+  // Step 1: Extract knowledge from the (possibly sliced) conversation thread
   console.log('[knowledge] Starting extraction...');
-  const extracted = options?.skipExtraction 
+  const extracted = options?.skipExtraction
     ? { actions: [], detected_entities: [] }
-    : await extractKnowledge(conversationHistory, existingContext);
+    : await extractKnowledge(extractionSlice, existingContext);
   console.log('[knowledge] Extraction complete, actions:', extracted.actions.length);
 
   // Step 2: Execute actions
@@ -386,8 +420,28 @@ export async function ingestConversationTurn(
     ? await executeKnowledgeActions(extracted.actions, { skipEmbeddings: options?.skipEmbeddings, conversationId: options?.conversationId })
     : { success: 0, failed: 0, results: [] };
 
+  // B1: advance the extraction watermark *after* extraction succeeds.
+  // Failure-mode: if anything blew up before this line, the offset stays put
+  // so the next turn will retry the same range — at worst we re-extract a
+  // turn or two, never lose data.
+  if (bridgeAvailable && options?.conversationId && conversationHistory.length > extractionOffsetBefore) {
+    try {
+      await execSilentLocalTool(
+        'conversation_set_extraction_offset',
+        {
+          conversation_id: options.conversationId,
+          turn_index: conversationHistory.length,
+        },
+        5000,
+      );
+    } catch (err) {
+      console.log('[knowledge] Failed to advance extraction offset (will retry next turn):', err);
+    }
+  }
+
   writeLog('knowledge_ingestion_complete', {
     historyLength: conversationHistory.length,
+    sliceLength: extractionSlice.length,
     actionsExtracted: extracted.actions.length,
     actionsSucceeded: executed.success,
     actionsFailed: executed.failed,

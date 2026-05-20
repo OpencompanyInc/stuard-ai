@@ -25,8 +25,8 @@ async function validateAuth(req: IncomingMessage): Promise<{ userId: string | nu
     } catch {}
   }
   
-  // Dev mode allows unauthenticated local requests
-  if (IS_DEVELOPMENT) {
+  // Local-only escape hatch for manual inference testing.
+  if (IS_DEVELOPMENT && process.env.ALLOW_UNAUTHENTICATED_INFERENCE === '1') {
     return { userId: null, isAuthed: true };
   }
   
@@ -67,11 +67,13 @@ async function logInferenceUsage(
 
 /** Check if user has credits before running inference. Returns error string or null if OK. */
 async function requireCredits(userId: string | null): Promise<string | null> {
-  if (!userId) return null; // dev mode — no user to check
+  if (!userId) return 'unauthorized';
   try {
     const access = await checkAccess(userId);
     if (!access.allowed) return access.reason || 'credit_limit_exceeded';
-  } catch {}
+  } catch {
+    return 'credit_check_failed';
+  }
   return null;
 }
 

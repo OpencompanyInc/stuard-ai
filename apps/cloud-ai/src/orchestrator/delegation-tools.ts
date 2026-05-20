@@ -107,6 +107,8 @@ interface DelegateTaskInput {
   skill?: string;
   bot_id?: string;
   bot_name?: string;
+  agent_id?: string;
+  agent_name?: string;
 }
 
 interface PreparedDelegateTask extends DelegateTaskInput {
@@ -146,14 +148,14 @@ function prepareDelegateTask(task: DelegateTaskInput): { preparedTask?: Prepared
   };
 }
 
-function buildBotTargetContext(task: DelegateTaskInput): string | undefined {
-  const botId = task.bot_id?.trim();
-  const botName = task.bot_name?.trim();
-  if (!botId && !botName) return undefined;
+function buildTargetContext(task: DelegateTaskInput, targetKind: 'bot' | 'agent'): string | undefined {
+  const id = (targetKind === 'agent' ? task.agent_id : task.bot_id)?.trim();
+  const name = (targetKind === 'agent' ? task.agent_name : task.bot_name)?.trim();
+  if (!id && !name) return undefined;
 
   return [
-    botId ? `Target bot id: ${botId}` : undefined,
-    botName ? `Target bot name: ${botName}` : undefined,
+    id ? `Target ${targetKind} id: ${id}` : undefined,
+    name ? `Target ${targetKind} name: ${name}` : undefined,
   ].filter(Boolean).join('\n');
 }
 
@@ -170,11 +172,11 @@ async function runDelegateTask(
   chatWs: any,
 ) {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot', 'agent'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm' | 'bot';
+    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm' | 'bot' | 'agent';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const parentAbortSignal = bridgeSecrets?.__abortSignal;
 
@@ -255,9 +257,11 @@ async function runDelegateTask(
       request: {
         kind,
         instruction: task.instruction,
+        targetAgentId: name === 'agent' ? task.agent_id?.trim() : task.bot_id?.trim(),
+        targetAgentName: name === 'agent' ? task.agent_name?.trim() : task.bot_name?.trim(),
         context: joinContextSections(
           isIntegration ? `Integration group: ${name}` : undefined,
-          name === 'bot' ? buildBotTargetContext(task) : undefined,
+          name === 'bot' || name === 'agent' ? buildTargetContext(task, name) : undefined,
           task.skillContext,
           task.context,
         ),
@@ -319,7 +323,8 @@ export const delegate = createTool({
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
     '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
     '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
-    '  bot         — proactive bot lookup/status/ask workflows by bot id or name\n' +
+    '  bot         — legacy proactive bot status/ask workflows by bot id or name\n' +
+    '  agent       — proactive agent status/ask workflows by agent id or name\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +
@@ -335,7 +340,7 @@ export const delegate = createTool({
     tasks: z.array(z.object({
       subagent: z
         .string()
-        .describe('Name of the subagent (e.g. "browser", "file_ops", "bot", "google").'),
+        .describe('Name of the subagent (e.g. "browser", "file_ops", "agent", "bot", "google").'),
       instruction: z
         .string()
         .describe('Detailed instruction describing what the subagent should do.'),
@@ -355,6 +360,14 @@ export const delegate = createTool({
         .string()
         .optional()
         .describe('Optional target bot display name when subagent is "bot".'),
+      agent_id: z
+        .string()
+        .optional()
+        .describe('Optional target agent id when subagent is "agent" (for example "agent_default" or "agent_...").'),
+      agent_name: z
+        .string()
+        .optional()
+        .describe('Optional target agent display name when subagent is "agent".'),
     })).min(1).max(10).describe('Array of tasks to delegate. Use 1 for a single task, or multiple for parallel execution.'),
   }),
   execute: async ({ tasks }) => {

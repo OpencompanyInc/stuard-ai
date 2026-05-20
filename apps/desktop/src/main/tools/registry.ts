@@ -40,15 +40,31 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'proactive_task_update': { kind: 'electron' },
   'proactive_task_create': { kind: 'electron' },
   'proactive_task_delete': { kind: 'electron' },
-  // Bot management tools for normal agent chat (@tag status, create, deploy)
+  // Agent management tools for normal agent chat (@tag status, create, deploy)
+  'agent_list': { kind: 'electron' },
+  'agent_get_status': { kind: 'electron' },
+  'agent_create': { kind: 'electron' },
+  'agent_deploy': { kind: 'electron' },
+  'agent_pause': { kind: 'electron' },
+  'agent_delete': { kind: 'electron' },
+  'ask_agent': { kind: 'electron' },
+  'agent_ask': { kind: 'electron' },
+  // Legacy bot aliases
   'bot_list': { kind: 'electron' },
   'bot_get_status': { kind: 'electron' },
   'bot_create': { kind: 'electron' },
   'bot_deploy': { kind: 'electron' },
   'bot_pause': { kind: 'electron' },
+  'bot_delete': { kind: 'electron' },
   'ask_bot': { kind: 'electron' },
   'bot_ask': { kind: 'electron' },
-  // Bot's private kanban + run log (scoped by ctx.proactiveBotId)
+  // Agent's private kanban + run log (scoped by ctx.proactiveBotId)
+  'agent_memory_list': { kind: 'electron' },
+  'agent_memory_create': { kind: 'electron' },
+  'agent_memory_update': { kind: 'electron' },
+  'agent_memory_delete': { kind: 'electron' },
+  'agent_memory_log': { kind: 'electron' },
+  // Legacy memory aliases
   'bot_memory_list': { kind: 'electron' },
   'bot_memory_create': { kind: 'electron' },
   'bot_memory_update': { kind: 'electron' },

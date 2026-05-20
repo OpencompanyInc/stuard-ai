@@ -43,6 +43,8 @@ import { handleBillingRoutes } from './billing';
 import { handleAccountRoutes } from './account';
 import { handlePolarWebhook } from './polar-webhook';
 import { handleByokRoutes } from './byok';
+import { handleIntegrationsDraftRoutes } from './integrations-draft';
+import { handleIntegrationsAssistRoutes } from './integrations-assist';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handlePolarWebhook(req, res, parsedUrl)) return true;
@@ -75,6 +77,8 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
   if (await handlePreferencesRoutes(req, res, parsedUrl)) return true;
   if (await handleByokRoutes(req, res, parsedUrl)) return true;
+  if (await handleIntegrationsDraftRoutes(req, res, parsedUrl)) return true;
+  if (await handleIntegrationsAssistRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudEngineRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleStorageRoutes(req, res, parsedUrl)) return true;

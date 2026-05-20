@@ -85,7 +85,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const streamChunks: StreamChunkRecord[] = [];
   const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
   const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'bot' ? 'Bot Agent' : 'Chat';
-  const billingExcluded = modelSource === 'api_key' || modelSource === 'subscription';
+  const billingExcluded = !!(agent as any)?.__billingExcluded;
   const billingTracker = new LiveUsageBillingTracker({
     userId: authUser?.userId ?? null,
     conversationId,
@@ -191,6 +191,8 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     setAbortController(ws, requestId, abortController);
     const bridgeSecrets = getBridgeSecrets();
     if (bridgeSecrets) {
+      bridgeSecrets.__modelSource = (agent as any)?.__modelSource;
+      bridgeSecrets.__billingExcluded = billingExcluded;
       if (requestId) {
         bridgeSecrets.__requestId = requestId;
       }
@@ -794,6 +796,38 @@ function startWithPostRunBridge(
   }
 }
 
+/**
+ * B5: in-memory per-process counter for "turns since last collection
+ * synthesis". Cheap heuristic — when it hits the interval, we kick off a
+ * background `synthesizeCollections` run. Process restarts reset to 0 (a
+ * full synthesis on the *next* trigger is fine; the synthesizer is idempotent
+ * for already-fresh topics).
+ */
+let _collectionSynthesisTurnCounter = 0;
+function shouldRunCollectionSynthesis(): boolean {
+  _collectionSynthesisTurnCounter += 1;
+  const interval = Math.max(1, parseInt(process.env.COLLECTION_SYNTHESIS_INTERVAL || '20', 10));
+  if (_collectionSynthesisTurnCounter >= interval) {
+    _collectionSynthesisTurnCounter = 0;
+    return true;
+  }
+  return false;
+}
+
+/** B2: separate counter for the consolidation pass (vector dedup of bio/project
+ *  facts). Runs more often than synthesis because facts accumulate faster than
+ *  topic drawers go stale. */
+let _consolidationTurnCounter = 0;
+function shouldRunConsolidation(): boolean {
+  _consolidationTurnCounter += 1;
+  const interval = Math.max(1, parseInt(process.env.FACT_CONSOLIDATION_INTERVAL || '10', 10));
+  if (_consolidationTurnCounter >= interval) {
+    _consolidationTurnCounter = 0;
+    return true;
+  }
+  return false;
+}
+
 function startKnowledgeIngestion(
   history: any[],
   conversationId: string | null,
@@ -806,26 +840,30 @@ function startKnowledgeIngestion(
   const run = async () => {
     try {
       const { ingestConversationTurn, analyzeForAutoSkill } = await import('../../knowledge');
+      const { synthesizeCollections } = await import('../../memory/collection-synthesizer');
+      const { execLocalTool } = await import('../../tools/bridge');
       const fullHistory = [...history];
       console.log('[cloud-ai] Starting knowledge ingestion, history length:', fullHistory.length);
 
-      ingestConversationTurn(fullHistory).then(({ extracted, executed }) => {
-        console.log('[cloud-ai] Knowledge ingestion complete:', {
-          actionsExtracted: extracted.actions.length,
-          actionsSucceeded: executed.success,
-          actionsFailed: executed.failed,
-          actions: extracted.actions.map((action: any) => action.action),
-        });
-        if (extracted.actions.length > 0) {
-          writeLog('knowledge_ingested', {
+      // B1: thread conversationId through so extraction can be incremental.
+      ingestConversationTurn(fullHistory, conversationId ? { conversationId } : undefined)
+        .then(({ extracted, executed }) => {
+          console.log('[cloud-ai] Knowledge ingestion complete:', {
             actionsExtracted: extracted.actions.length,
             actionsSucceeded: executed.success,
             actionsFailed: executed.failed,
+            actions: extracted.actions.map((action: any) => action.action),
           });
-        }
-      }).catch((error) => {
-        console.error('[cloud-ai] Knowledge ingestion failed:', error);
-      });
+          if (extracted.actions.length > 0) {
+            writeLog('knowledge_ingested', {
+              actionsExtracted: extracted.actions.length,
+              actionsSucceeded: executed.success,
+              actionsFailed: executed.failed,
+            });
+          }
+        }).catch((error) => {
+          console.error('[cloud-ai] Knowledge ingestion failed:', error);
+        });
 
       analyzeForAutoSkill(fullHistory, conversationId ?? undefined, totalTokens).then((draft) => {
         if (draft) {
@@ -834,6 +872,50 @@ function startKnowledgeIngestion(
       }).catch((error) => {
         console.error('[cloud-ai] Auto-skill analysis failed:', error);
       });
+
+      // B4: pending-memory TTL + cap hygiene. Single SQL — runs every turn.
+      execLocalTool('pending_memory_expire', {}, undefined, 5000, { silent: true })
+        .then((result: any) => {
+          if (result && (result.expired > 0 || result.dropped > 0)) {
+            writeLog('pending_memory_expire', result);
+          }
+        })
+        .catch((error) => {
+          console.log('[cloud-ai] pending_memory_expire failed (non-fatal):', error);
+        });
+
+      // B5: periodic collection synthesizer. Cheap fast-LLM calls, only
+      // refreshes stale/new topics. Fires every N turns.
+      if (shouldRunCollectionSynthesis()) {
+        synthesizeCollections({ minSegments: 5 })
+          .then((stats: any) => {
+            console.log('[cloud-ai] Collection synthesis ran:', stats);
+            writeLog('collection_synthesis_complete', stats);
+          })
+          .catch((error: any) => {
+            console.log('[cloud-ai] Collection synthesis failed (non-fatal):', error);
+          });
+      }
+
+      // B2 stage 1: pairwise vector dedup for bio + project facts. Pure
+      // SQL+numpy on the desktop side — no vectors crossing the bridge, no
+      // LLM. Catches accidental duplicates from drift in extraction phrasing.
+      if (shouldRunConsolidation()) {
+        Promise.all([
+          execLocalTool('knowledge_consolidate_facts', { category: 'personal', subtype: 'bio' }, undefined, 30000, { silent: true }),
+          execLocalTool('knowledge_consolidate_facts', { category: 'project', subtype: 'detail' }, undefined, 30000, { silent: true }),
+        ])
+          .then(([bioStats, projStats]) => {
+            const totalConsolidated = (Number(bioStats?.consolidated) || 0) + (Number(projStats?.consolidated) || 0);
+            if (totalConsolidated > 0) {
+              console.log('[cloud-ai] Fact consolidation:', { bio: bioStats, project: projStats });
+              writeLog('fact_consolidation_complete', { bio: bioStats, project: projStats });
+            }
+          })
+          .catch((error) => {
+            console.log('[cloud-ai] Fact consolidation failed (non-fatal):', error);
+          });
+      }
     } catch (error) {
       console.error('[cloud-ai] Knowledge pipeline import failed:', error);
     }

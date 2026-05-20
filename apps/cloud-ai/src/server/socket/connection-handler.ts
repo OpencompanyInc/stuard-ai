@@ -6,7 +6,7 @@ import { writeLog } from '../../utils/logger';
 import { handleChatMessage } from '../chat/handle-chat-message';
 import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
-import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, enqueueInterjection, wsAlive } from './state';
+import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, countActiveRequests, enqueueInterjection, getOnlyActiveRequestId, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
 import { abortRunningSubagentsForRequest, enqueueSubagentSteer, isSubagentRunning } from '../../orchestrator/subagent-runtime';
 import { abortHeadlessTasksForRequest } from '../../tools/deploy-headless-agent';
@@ -80,12 +80,22 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
       console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted} | subagents=${subagentsAborted} | headless=${headlessAborted}`);
       send(ws, { type: 'stopped', success: aborted || subagentsAborted > 0 || headlessAborted > 0, requestId: stopRequestId, subagentsAborted, headlessAborted });
     } else {
-      const abortedCount = abortAllRequests(ws);
-      const subagentsAborted = abortRunningSubagentsForRequest(ws);
-      const headlessAborted = abortHeadlessTasksForRequest(ws);
-      if (abortedCount > 0 || subagentsAborted > 0 || headlessAborted > 0) {
-        console.log(`[cloud-ai] Aborting ALL ${abortedCount} stream(s), ${subagentsAborted} subagent(s), and ${headlessAborted} headless task(s) by user request`);
-        send(ws, { type: 'stopped', success: true, subagentsAborted, headlessAborted });
+      // No requestId provided. To avoid wiping out parallel streams from other
+      // tabs on a shared socket, only auto-abort when exactly one stream is in
+      // flight (unambiguous target). Otherwise refuse and require a requestId.
+      const activeCount = countActiveRequests(ws);
+      if (activeCount > 1) {
+        console.log(`[cloud-ai] Refusing bare stop: ${activeCount} active streams — requestId required to disambiguate`);
+        send(ws, { type: 'stopped', success: false, message: 'requestId required: multiple active streams', activeCount });
+        return;
+      }
+      const soleRequestId = getOnlyActiveRequestId(ws);
+      const aborted = activeCount === 1 ? abortAndCleanup(ws, soleRequestId) : false;
+      const subagentsAborted = abortRunningSubagentsForRequest(ws, soleRequestId);
+      const headlessAborted = abortHeadlessTasksForRequest(ws, soleRequestId);
+      if (aborted || subagentsAborted > 0 || headlessAborted > 0) {
+        console.log(`[cloud-ai] Bare stop aborted sole active work: stream=${aborted} requestId=${soleRequestId || '∅'} subagents=${subagentsAborted} headless=${headlessAborted}`);
+        send(ws, { type: 'stopped', success: true, requestId: soleRequestId, subagentsAborted, headlessAborted });
       } else {
         send(ws, { type: 'stopped', success: false, message: 'no active stream' });
       }

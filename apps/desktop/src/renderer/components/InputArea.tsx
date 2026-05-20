@@ -11,14 +11,14 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines } from 'lucide-react';
 import { VoiceMorphPill } from './voice/VoiceMorphPill';
 import type { VoiceToolEvent } from '../hooks/useVoiceMode';
 import { clsx } from 'clsx';
 import QueuePanel from './QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from './FileNavigator';
 import MessageBubble from './MessageBubble';
-import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark } from './QuickShortcuts';
+import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark, getTypeConfig } from './QuickShortcuts';
 import stuardLogo from '@website-assets/logo.png';
 import googleLogo from '../assets/icons/google.png';
 import bingLogo from '../assets/icons/bing.png';
@@ -124,6 +124,62 @@ const shouldRunInputSemanticSearch = (query: string): boolean => {
   const compactLen = normalized.replace(/\s+/g, '').length;
   const tokenCount = normalized ? normalized.split(' ').length : 0;
   return tokenCount > 1 && compactLen >= 6;
+};
+
+const HighlightMatch: React.FC<{ text: string; query: string }> = ({ text, query }) => {
+  const q = String(query || '').trim();
+  if (!q || !text) return <>{text}</>;
+  const lower = String(text).toLowerCase();
+  const qLower = q.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(qLower, i);
+    if (idx < 0) {
+      parts.push(<React.Fragment key={`t-${k++}`}>{text.slice(i)}</React.Fragment>);
+      break;
+    }
+    if (idx > i) parts.push(<React.Fragment key={`t-${k++}`}>{text.slice(i, idx)}</React.Fragment>);
+    parts.push(
+      <span key={`m-${k++}`} style={{ color: '#FF383C' }}>{text.slice(idx, idx + q.length)}</span>
+    );
+    i = idx + q.length;
+  }
+  return <>{parts}</>;
+};
+
+const getFileKindConfig = (k: string) => {
+  switch (k) {
+    case 'application': return { icon: AppWindow, color: 'text-blue-400', tile: '#3B82F6', label: 'APP' };
+    case 'folder': return { icon: Folder, color: 'text-yellow-400', tile: '#EAB308', label: 'DIR' };
+    case 'image': return { icon: ImageIconLucide, color: 'text-purple-300', tile: '#7A5CFF', label: 'IMG' };
+    case 'video': return { icon: Film, color: 'text-red-400', tile: '#EF4444', label: 'VID' };
+    case 'audio': return { icon: Music, color: 'text-pink-400', tile: '#EC4899', label: 'AUD' };
+    case 'code': return { icon: CodeIcon, color: 'text-emerald-400', tile: '#10B981', label: 'CODE' };
+    case 'archive': return { icon: Archive, color: 'text-orange-400', tile: '#F97316', label: 'ZIP' };
+    case 'document': return { icon: FileText, color: 'text-sky-400', tile: '#0EA5E9', label: 'DOC' };
+    default: return { icon: FileIconLucide, color: 'text-zinc-300', tile: '#525252', label: 'FILE' };
+  }
+};
+
+const FIGMA_ROW_BASE: React.CSSProperties = {
+  height: 48,
+  padding: '6px 8px',
+  background: 'transparent',
+  borderRadius: 8,
+};
+const FIGMA_ROW_PRIMARY: React.CSSProperties = {
+  ...FIGMA_ROW_BASE,
+  background: '#262626',
+};
+const FIGMA_ROW_WITH_ICON: React.CSSProperties = {
+  ...FIGMA_ROW_BASE,
+  padding: '6px 8px 6px 6px',
+};
+const FIGMA_KBD: React.CSSProperties = {
+  padding: '3px 6px',
+  color: '#A3A3A3',
 };
 
 // Helper component for attachments & context
@@ -461,6 +517,13 @@ const InputArea = forwardRef(function InputArea(
   // Ref to track showFileNav inside handleKeyDown (declared later as state)
   const showFileNavRef = useRef(false);
 
+  // Selection state for the search-options dropdown (arrow keys / hover)
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedIndexRef = useRef(0);
+  const selectableItemsRef = useRef<{ key: string; onSelect: () => void }[]>([]);
+  const showSearchOptionsRef = useRef(false);
+  useEffect(() => { selectedIndexRef.current = selectedIndex; }, [selectedIndex]);
+
   // Load index stats on mount
   useEffect(() => {
     const loadIndexStats = async () => {
@@ -530,6 +593,15 @@ const InputArea = forwardRef(function InputArea(
       (w.name || '').toLowerCase().includes(q)
     ).slice(0, 3);
   }, [localWorkflows, query]);
+
+  const matchingBookmarks = React.useMemo(() => {
+    const q = (query || '').toLowerCase().trim();
+    if (!q || q.length < 2) return [] as Bookmark[];
+    return bookmarks.filter(b =>
+      (b.name || '').toLowerCase().includes(q) ||
+      (b.target || '').toLowerCase().includes(q)
+    ).slice(0, 4);
+  }, [bookmarks, query]);
 
 
   // Quick file search by filename — uses unified search (apps + files)
@@ -834,6 +906,16 @@ const InputArea = forwardRef(function InputArea(
         fileNavRef.current.moveSelection(e.key === 'ArrowDown' ? 1 : -1);
         return;
       }
+      if (showSearchOptionsRef.current) {
+        const total = selectableItemsRef.current.length;
+        if (total > 0) {
+          e.preventDefault();
+          const delta = e.key === 'ArrowDown' ? 1 : -1;
+          const next = (selectedIndexRef.current + delta + total) % total;
+          setSelectedIndex(next);
+          return;
+        }
+      }
     }
 
     // Enter to select current item in file nav
@@ -841,6 +923,16 @@ const InputArea = forwardRef(function InputArea(
       e.preventDefault();
       fileNavRef.current.selectCurrent();
       return;
+    }
+
+    // Enter to select highlighted dropdown row when search-options is open
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && showSearchOptionsRef.current) {
+      const item = selectableItemsRef.current[selectedIndexRef.current];
+      if (item) {
+        e.preventDefault();
+        item.onSelect();
+        return;
+      }
     }
 
     // Escape to close dropdowns
@@ -1079,6 +1171,7 @@ const InputArea = forwardRef(function InputArea(
   const currentTextareaHeightRef = useRef(36);
   const [dropdownPlacement, setDropdownPlacement] = useState<'top' | 'bottom'>('top');
   const prevWindowHeightRef = useRef(140);
+  const prevWindowWidthRef = useRef(366);
   const isExpandingRef = useRef(false);
 
   const calculatePlacement = useCallback((): 'top' | 'bottom' => {
@@ -1120,11 +1213,11 @@ const InputArea = forwardRef(function InputArea(
     const extraHeight = Math.max(0, height - baseTextareaHeight);
 
     // Calculate target height
-    // baseHeight should match inputBarHeight (140 + inputBarGap)
+    // Compact native window is 366x62; the visible pill hugs 360x56 inside a 3px safe edge.
     const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
     const attachmentHeight = hasAttachments ? 44 : 0;
-    const baseHeight = 156 + miniHeight + attachmentHeight; // 140 + 16 gap + mini output + attachments
-    const searchDropdownHeight = showWebOptions ? 460 : 400;
+    const baseHeight = (overlayMode === 'compact' ? 62 : 156) + miniHeight + attachmentHeight;
+    const searchDropdownHeight = 480;
     const fileNavDropdownHeight = 400;
     const dropdownHeight = showFileNav
       ? fileNavDropdownHeight
@@ -1134,7 +1227,8 @@ const InputArea = forwardRef(function InputArea(
 
     const targetHeight = needsDropdown ? baseHeight + dropdownHeight : baseHeight;
 
-    const finalHeight = Math.min(Math.max(100, targetHeight + extraHeight), 800);
+    const minWindowHeight = overlayMode === 'compact' ? 62 : 100;
+    const finalHeight = Math.min(Math.max(minWindowHeight, targetHeight + extraHeight), 650);
     const prevHeight = prevWindowHeightRef.current;
     const heightChange = finalHeight - prevHeight;
 
@@ -1148,35 +1242,45 @@ const InputArea = forwardRef(function InputArea(
     const newPlacement = needsOverlay ? calculatePlacement() : dropdownPlacement;
     setDropdownPlacement(newPlacement);
 
-    // Skip if no change
+    // Skip if no height change (width is now fixed in compact mode, so width never changes)
     if (heightChange === 0) return;
 
     prevWindowHeightRef.current = finalHeight;
     isExpandingRef.current = heightChange > 0;
 
     requestAnimationFrame(() => {
+      const currentOuterWidth = Math.round((window as any)?.outerWidth || 520);
+      const targetWidth = overlayMode === 'compact' ? 520 : currentOuterWidth;
+      const widthChange = targetWidth - prevWindowWidthRef.current;
+      prevWindowWidthRef.current = targetWidth;
+
       // When placement is 'top' (dropdown above input), expand separate UPWARD
-      // This keeps the input bar visually anchored at the bottom
+      // This keeps the input bar visually anchored at the bottom.
+      // Also shift X by half the width delta so the centered pill doesn't visually slide.
       if (newPlacement === 'top' && heightChange !== 0) {
-        // Use atomic setBounds to prevent visual jumping (teleportation)
-        const currentOuterWidth = Math.round((window as any)?.outerWidth || 520);
-        const targetWidth = overlayMode === 'compact' ? 520 : currentOuterWidth;
         const currentScreenX = window.screenX;
         const currentScreenY = window.screenY;
-
-        // Calculate new Y position to anchor bottom
         const newY = currentScreenY - heightChange;
+        const newX = currentScreenX - Math.round(widthChange / 2);
 
         window.desktopAPI?.setBounds?.({
-          x: currentScreenX,
+          x: newX,
           y: newY,
           width: targetWidth,
-          height: finalHeight
+          height: finalHeight,
+        });
+      } else if (widthChange !== 0) {
+        // Bottom placement: anchor top, but still recenter horizontally on width change.
+        const currentScreenX = window.screenX;
+        const currentScreenY = window.screenY;
+        const newX = currentScreenX - Math.round(widthChange / 2);
+        window.desktopAPI?.setBounds?.({
+          x: newX,
+          y: currentScreenY,
+          width: targetWidth,
+          height: finalHeight,
         });
       } else {
-        // Standard resize (anchors top-left by default, which is correct for bottom placement)
-        const currentOuterWidth = Math.round((window as any)?.outerWidth || 520);
-        const targetWidth = overlayMode === 'compact' ? 520 : currentOuterWidth;
         window.desktopAPI?.resize?.(targetWidth, finalHeight);
       }
     });
@@ -1258,13 +1362,102 @@ const InputArea = forwardRef(function InputArea(
     }
   }, [query, setQuery, onSend, onToggleExpand, doQuickFileSearch, doSemanticRefine]);
 
+  // Flat selectable items for the search-options dropdown (drives arrow-key + hover selection).
+  // Must mirror the JSX render order so each row's index matches.
+  const dropdownSelection = React.useMemo(() => {
+    const items: { key: string; onSelect: () => void }[] = [];
+    items.push({ key: 'ask-stuard', onSelect: () => handleSearchOption('chat') });
+    items.push({ key: 'web-search', onSelect: () => handleSearchOption('web', activeEngine.id) });
+
+    const appsStart = items.length;
+    appResults.forEach((a: any, idx: number) => {
+      items.push({
+        key: `app-${a.path || a.name || idx}`,
+        onSelect: () => { handleLaunchApp(a.launchTarget || a.path); setQuery(''); },
+      });
+    });
+    const bookmarksStart = items.length;
+    matchingBookmarks.forEach((bm) => {
+      items.push({ key: `bm-${bm.id}`, onSelect: () => executeBookmark(bm) });
+    });
+
+    const filesStart = items.length;
+    const visibleFiles = (Array.isArray(fileResults) ? fileResults : []).slice(0, 6);
+    visibleFiles.forEach((f: any, idx: number) => {
+      items.push({
+        key: `file-${f.id || f.path || idx}`,
+        onSelect: () => {
+          const kind = String(f?.kind || 'other').toLowerCase();
+          if (kind === 'application') {
+            (window as any).desktopAPI?.openPath?.(String(f.path));
+            (window as any).desktopAPI?.hide?.();
+            setQuery('');
+          } else {
+            handleAddFileAsContext(f);
+          }
+        },
+      });
+    });
+
+    const workflowsStart = items.length;
+    filteredLocalWorkflows.forEach((w) => {
+      items.push({
+        key: `wf-${w.id}`,
+        onSelect: async () => {
+          try {
+            await window.desktopAPI?.workflowsRun?.(w.id);
+            window.desktopAPI?.hide?.();
+            (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
+          } catch (e) { console.error(e); }
+        },
+      });
+    });
+    const marketplaceStart = items.length;
+    marketplaceResults.forEach((w) => {
+      items.push({
+        key: `mp-${w.slug}`,
+        onSelect: () => {
+          window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
+          window.desktopAPI?.hide?.();
+        },
+      });
+    });
+
+    return {
+      items,
+      offsets: { askStuard: 0, webSearch: 1, appsStart, bookmarksStart, filesStart, workflowsStart, marketplaceStart },
+    };
+  }, [
+    appResults,
+    matchingBookmarks,
+    fileResults,
+    filteredLocalWorkflows,
+    marketplaceResults,
+    activeEngine.id,
+    handleSearchOption,
+    handleLaunchApp,
+    handleAddFileAsContext,
+    executeBookmark,
+    setQuery,
+  ]);
+
+  // Keep refs in sync so handleKeyDown (memoized) sees fresh values.
+  useEffect(() => { selectableItemsRef.current = dropdownSelection.items; }, [dropdownSelection.items]);
+  useEffect(() => { showSearchOptionsRef.current = showSearchOptions; }, [showSearchOptions]);
+
+  // Reset selection to first item whenever the item list changes or the dropdown reopens.
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [dropdownSelection.items.length, showSearchOptions]);
+
   // Input bar height - must match the actual rendered height of the input section
   // Base: container p-2 (8px) + input card min-h (114px) + extra padding (~18px) = ~140px
   // Add gap for visual separation between dropdown and input bar
-  const inputBarGap = 16;
+  const inputBarGap = 8;
   const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
   const attachmentOffset = hasAttachments ? 44 : 0;
-  const inputBarHeight = 140 + extraInputHeight + inputBarGap + attachmentOffset;
+  const baseInputBarHeight = overlayMode === 'compact' ? 62 : 140;
+  const inputBarHeight = baseInputBarHeight + extraInputHeight + inputBarGap + attachmentOffset;
 
   // Compact Mode
   if (!expanded) {
@@ -1272,19 +1465,19 @@ const InputArea = forwardRef(function InputArea(
     const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
     const isTyping = query.trim().length > 0;
     const miniOpen = miniEnabled && !needsDropdown && !isTyping;
-    const compactSearchDropdownMaxHeight = showWebOptions ? 460 : 400;
-    const compactSearchDropdownScrollHeight = compactSearchDropdownMaxHeight - 16;
+    const compactSearchDropdownMaxHeight = 480;
+    const compactSearchDropdownScrollHeight = compactSearchDropdownMaxHeight;
     const compactFileNavMaxHeight = 400;
     return (
       <div className={clsx(
-        "w-full h-full flex flex-col p-2 relative",
-        dropdownPlacement === 'top' ? "justify-end pb-3" : "justify-start pt-2"
+        "w-full h-full flex flex-col relative p-[3px]",
+        dropdownPlacement === 'top' ? "justify-end" : "justify-start"
       )}>
         {/* Search Options Dropdown - shows when typing */}
         {showSearchOptions && typeof document !== 'undefined' && document.body && createPortal(
           <div
             className={clsx(
-              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[92%] max-w-[480px] animate-in fade-in duration-200",
+              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[96%] max-w-[560px] animate-in fade-in duration-200",
               dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
             )}
             style={{
@@ -1293,349 +1486,324 @@ const InputArea = forwardRef(function InputArea(
             }}
           >
             <div
-              className="bg-theme-bg rounded-[24px] border border-theme/20 overflow-hidden backdrop-blur-3xl shadow-lg shadow-black/10"
-              style={{ maxHeight: compactSearchDropdownMaxHeight }}
+              className="overflow-hidden flex flex-col"
+              style={{
+                maxHeight: compactSearchDropdownMaxHeight,
+                background: '#171717',
+                borderRadius: 12,
+                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.18)',
+              }}
             >
               <div
-                className="p-2 pr-1 space-y-1.5 overflow-y-auto scrollbar-none"
-                style={{ maxHeight: compactSearchDropdownScrollHeight }}
+                className="flex flex-col overflow-y-auto custom-scrollbar"
+                style={{ padding: 16, gap: 12, maxHeight: compactSearchDropdownScrollHeight }}
               >
-                {/* Quick Shortcuts */}
-                <QuickShortcutsGrid
-                  bookmarks={bookmarks}
-                  onExecute={executeBookmark}
-                  onEdit={() => setShowBookmarkEditor(true)}
-                  onAdd={() => setShowBookmarkEditor(true)}
-                  maxVisible={6}
-                  filter={query}
-                />
-                {/* Ask Stuard - Primary */}
-                <button
-                  onClick={() => handleSearchOption('chat')}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-bg border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group relative overflow-hidden"
-                >
-                  <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
-                    <MessageSquare className="w-3.5 h-3.5 text-primary" />
+                {/* QUICK ACTIONS */}
+                <div className="flex flex-col" style={{ gap: 8 }}>
+                  <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
+                    Quick Actions
                   </div>
-                  <div className="flex-1 text-left z-10">
-                    <div className="text-[13px] font-bold text-theme-fg group-hover:text-primary transition-colors">Ask Stuard</div>
-                    <div className="text-[10px] text-theme-muted font-semibold">Get an AI assistant response</div>
-                  </div>
-                  <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">Enter</div>
-                </button>
 
-                {/* App Results — always shown FIRST */}
-                {Array.isArray(appResults) && appResults.length > 0 && (
-                  <div className="space-y-1 mb-1">
-                    <div className="px-3 py-1.5 flex items-center gap-2">
-                      <AppWindow className="w-3.5 h-3.5 text-blue-500" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Applications</span>
-                      {fileLoading && <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />}
-                    </div>
-                    <div className="px-1 space-y-1">
-                      {appResults.map((a: any, idx: number) => {
-                        const iconUrl =
-                          a?.iconDataUrl ||
-                          (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
-                        return (
-                          <button
-                            key={String(a.name || idx)}
-                            onClick={() => {
-                              handleLaunchApp(a.launchTarget || a.path);
-                              setQuery('');
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-blue-500/10 shadow-sm hover:border-blue-500/30 hover:shadow-md transition-all group text-left mb-1"
-                          >
-                            <div
-                              className={clsx(
-                                "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all",
-                                iconUrl
-                                  ? "bg-transparent border-transparent"
-                                  : "border border-blue-500/20 bg-blue-500/10",
-                              )}
-                            >
-                              {iconUrl ? (
-                                <img src={iconUrl} alt="" className="w-5 h-5 object-contain" />
-                              ) : (
-                                <AppWindow className="w-3.5 h-3.5 text-blue-500" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[13px] font-semibold text-theme-fg group-hover:text-blue-500 truncate transition-colors">
-                                {String(a.name || '')}
-                              </div>
-                            </div>
-                            <PlayCircle className="w-3.5 h-3.5 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+                  {/* Ask Stuard */}
+                  {(() => {
+                    const rowIdx = dropdownSelection.offsets.askStuard;
+                    const isSel = selectedIndex === rowIdx;
+                    return (
+                      <button
+                        onMouseEnter={() => setSelectedIndex(rowIdx)}
+                        onClick={() => handleSearchOption('chat')}
+                        className="w-full flex items-center"
+                        style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
+                      >
+                        <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
+                          <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                            &ldquo;{query.trim()}&rdquo;
+                          </div>
+                          <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                            Ask Stuard
+                          </div>
+                        </div>
+                        <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>
+                          Enter
+                        </span>
+                      </button>
+                    );
+                  })()}
 
-                {/* File Results / Search */}
-                {Array.isArray(fileResults) && fileResults.length > 0 ? (
-                  <div className="space-y-1 mb-1">
-                    <div className="px-3 py-1.5 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FolderSearch className="w-3.5 h-3.5 text-emerald-500" />
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Files Found</span>
-                        {fileSemanticLoading && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
-                      </div>
-                      <div className="text-[10px] text-theme-muted font-semibold">
-                        {fileSearchMode === 'hybrid' ? 'Semantic' : 'Quick'}
-                      </div>
-                    </div>
-                    <div className="max-h-[240px] overflow-y-auto custom-scrollbar px-1 space-y-1">
-                      {fileResults.map((f: any, idx: number) => {
-                        if (!f) return null;
+                  {/* Search Engine */}
+                  {(() => {
+                    const rowIdx = dropdownSelection.offsets.webSearch;
+                    const isSel = selectedIndex === rowIdx;
+                    return (
+                      <button
+                        onMouseEnter={() => setSelectedIndex(rowIdx)}
+                        onClick={() => handleSearchOption('web', activeEngine.id)}
+                        className="w-full flex items-center"
+                        style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
+                      >
+                        <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
+                          <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                            &ldquo;{query.trim()}&rdquo;
+                          </div>
+                          <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                            Search {activeEngine.name}
+                          </div>
+                        </div>
+                        <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>
+                          Ctrl + Enter
+                        </span>
+                      </button>
+                    );
+                  })()}
+                </div>
 
-                        const kind = String(f.kind || 'other').toLowerCase();
-                        const getFileKindConfig = (k: string) => {
-                          switch (k) {
-                            case 'application': return { icon: AppWindow, color: 'text-blue-500', bg: 'bg-blue-500/10', label: 'APP' };
-                            case 'folder': return { icon: Folder, color: 'text-yellow-500', bg: 'bg-yellow-500/10', label: 'FOLDER' };
-                            case 'image': return { icon: ImageIconLucide, color: 'text-purple-500', bg: 'bg-purple-500/10', label: 'IMG' };
-                            case 'video': return { icon: Film, color: 'text-red-500', bg: 'bg-red-500/10', label: 'VID' };
-                            case 'audio': return { icon: Music, color: 'text-pink-500', bg: 'bg-pink-500/10', label: 'AUDIO' };
-                            case 'code': return { icon: CodeIcon, color: 'text-emerald-500', bg: 'bg-emerald-500/10', label: 'CODE' };
-                            case 'archive': return { icon: Archive, color: 'text-orange-500', bg: 'bg-orange-500/10', label: 'ZIP' };
-                            case 'document': return { icon: FileText, color: 'text-sky-500', bg: 'bg-sky-500/10', label: 'DOC' };
-                            default: return { icon: FileIconLucide, color: 'text-theme-muted', bg: 'bg-theme-muted/10', label: 'FILE' };
-                          }
-                        };
-
-                        const cfg = getFileKindConfig(kind);
-                        const Icon = cfg.icon;
-                        const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
-                        const isThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
-
-                        return (
-                          <button
-                            key={String(f.id || f.path || idx)}
-                            onClick={() => {
-                              if (kind === 'application') {
-                                (window as any).desktopAPI?.openPath?.(String(f.path));
-                                (window as any).desktopAPI?.hide?.();
-                                setQuery('');
-                              } else {
-                                handleAddFileAsContext(f);
-                              }
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-bg/30 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group text-left mb-1"
-                          >
-                            <div
-                              className={clsx(
-                                "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-all",
-                                iconUrl
-                                  ? "bg-transparent border-transparent"
-                                  : [cfg.bg, cfg.color, "border border-theme/20"],
-                                isThumbnail && "overflow-hidden",
-                              )}
-                            >
-                              {iconUrl ? (
-                                <img src={iconUrl} alt="" className={clsx(isThumbnail ? "w-full h-full object-cover" : "w-5 h-5 object-contain")} />
-                              ) : (
-                                <Icon className="w-4 h-4" />
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <div className={clsx("text-[13px] font-semibold text-theme-fg truncate transition-colors", cfg.color)}>
-                                  {String(f.display_name || f.filename || f.name || '').trim() || String(f.path || '').split(/[/\\]/).pop() || 'Untitled'}
-                                </div>
-                                <div className={clsx("text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider opacity-70", cfg.bg, cfg.color)}>
-                                  {cfg.label}
-                                </div>
-                              </div>
-                              {kind !== 'application' && (
-                                <div className="text-[10px] text-theme-muted truncate font-medium">
-                                  {String(f.path || f.target_path || '')}
-                                </div>
-                              )}
-                            </div>
-                            {kind === 'application' ? (
-                              <PlayCircle className={clsx("w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity", cfg.color)} />
-                            ) : (
-                              <PlusLucide className={clsx("w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity", cfg.color)} />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={() => setQuery('@' + query)}
-                      className="w-full py-2 text-[10px] font-semibold text-theme-muted hover:text-primary transition-colors text-center border-t border-theme/5 mt-1"
-                    >
-                      Browse folders instead →
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handleSearchOption('files')}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-theme-card/50 border border-theme/10 shadow-sm hover:border-primary/30 hover:shadow-md transition-all group"
-                  >
-                    <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50">
-                      <FolderSearch className="w-3.5 h-3.5 text-primary" />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <div className="text-[12px] font-bold text-theme-fg group-hover:text-primary transition-colors">Search Files</div>
-                      <div className="text-[9px] text-theme-muted font-semibold">
-                        {fileLoading || fileSemanticLoading ? 'Searching...' : 'Find apps, docs, folders & more'}
-                      </div>
-                    </div>
-                    <div className="text-[9px] font-bold text-theme-muted bg-theme-hover px-2 py-1 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all">@</div>
-                  </button>
-                )}
-
-                {/* Local Workflows & Marketplace */}
-                {(filteredLocalWorkflows.length > 0 || marketplaceResults.length > 0) && (
-                  <div className="space-y-1 pt-1.5 border-t border-theme/8">
-                    <div className="px-3 py-1.5 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Zap className="w-3.5 h-3.5 text-amber-500" />
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Workflows</span>
-                        {isMarketplaceSearching && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
-                      </div>
-                      <div className="text-[10px] text-theme-muted font-semibold">
-                        Actions
-                      </div>
+                {/* SHORTCUTS — apps + bookmarks */}
+                {(appResults.length > 0 || matchingBookmarks.length > 0) && (
+                  <div className="flex flex-col" style={{ gap: 8 }}>
+                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
+                      Shortcuts
+                      {fileLoading && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
                     </div>
 
-                    <div className="space-y-1">
-                      {/* Local */}
-                      {filteredLocalWorkflows.map(w => (
+                    {appResults.map((a: any, idx: number) => {
+                      const iconUrl = a?.iconDataUrl || (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
+                      const name = String(a.name || '');
+                      const rowIdx = dropdownSelection.offsets.appsStart + idx;
+                      const isSel = selectedIndex === rowIdx;
+                      return (
                         <button
-                          key={w.id}
-                          onClick={async () => {
-                            try {
-                              await window.desktopAPI?.workflowsRun?.(w.id);
-                              window.desktopAPI?.hide?.();
-                              (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
-                            } catch (e) {
-                              console.error(e);
+                          key={`app-${a.path || idx}`}
+                          onMouseEnter={() => setSelectedIndex(rowIdx)}
+                          onClick={() => { handleLaunchApp(a.launchTarget || a.path); setQuery(''); }}
+                          className="w-full flex items-center text-left"
+                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
+                        >
+                          <div
+                            className="flex items-center justify-center shrink-0 overflow-hidden"
+                            style={{ width: 36, height: 36, borderRadius: 4, background: iconUrl ? 'rgba(64, 64, 64, 0.5)' : '#3B82F6' }}
+                          >
+                            {iconUrl ? (
+                              <img src={iconUrl} alt="" className="w-7 h-7 object-contain" />
+                            ) : (
+                              <AppWindow className="w-4 h-4 text-white" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                              <HighlightMatch text={name} query={query} />
+                            </div>
+                            <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                              open {name}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    {matchingBookmarks.map((bm, idx) => {
+                      const cfg = getTypeConfig(bm.type);
+                      const Icon = cfg.icon;
+                      const rowIdx = dropdownSelection.offsets.bookmarksStart + idx;
+                      const isSel = selectedIndex === rowIdx;
+                      return (
+                        <button
+                          key={`bm-${bm.id}`}
+                          onMouseEnter={() => setSelectedIndex(rowIdx)}
+                          onClick={() => executeBookmark(bm)}
+                          className="w-full flex items-center text-left"
+                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
+                        >
+                          <div
+                            className="flex items-center justify-center shrink-0"
+                            style={{ width: 36, height: 36, borderRadius: 4, background: 'rgba(64, 64, 64, 0.5)' }}
+                          >
+                            <Icon className={clsx('w-4 h-4', cfg.color)} />
+                          </div>
+                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                              <HighlightMatch text={bm.name} query={query} />
+                            </div>
+                            <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                              open {bm.name}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* FILES */}
+                {Array.isArray(fileResults) && fileResults.length > 0 && (
+                  <div className="flex flex-col" style={{ gap: 8 }}>
+                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
+                      Files
+                      {fileSemanticLoading && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
+                    </div>
+
+                    {fileResults.slice(0, 6).map((f: any, idx: number) => {
+                      if (!f) return null;
+                      const kind = String(f.kind || 'other').toLowerCase();
+                      const cfg = getFileKindConfig(kind);
+                      const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                      const isThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
+                      const fileName = String(f.display_name || f.filename || f.name || '').trim() ||
+                        String(f.path || '').split(/[/\\]/).pop() || 'Untitled';
+                      const fullPath = String(f.path || f.target_path || '');
+                      const showThumbnail = iconUrl && isThumbnail;
+                      const rowIdx = dropdownSelection.offsets.filesStart + idx;
+                      const isSel = selectedIndex === rowIdx;
+                      return (
+                        <button
+                          key={String(f.id || f.path || idx)}
+                          onMouseEnter={() => setSelectedIndex(rowIdx)}
+                          onClick={() => {
+                            if (kind === 'application') {
+                              (window as any).desktopAPI?.openPath?.(String(f.path));
+                              (window as any).desktopAPI?.hide?.();
+                              setQuery('');
+                            } else {
+                              handleAddFileAsContext(f);
                             }
                           }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-amber-500/30 hover:shadow-md transition-all group text-left"
+                          className="w-full flex items-center text-left"
+                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
                         >
-                          <div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-amber-500/10 text-amber-500 group-hover:scale-105 transition-all">
-                            <Zap className="w-3.5 h-3.5" />
+                          <div
+                            className="flex items-center justify-center shrink-0 overflow-hidden"
+                            style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 4,
+                              background: showThumbnail ? 'rgba(64, 64, 64, 0.5)' : cfg.tile,
+                            }}
+                          >
+                            {showThumbnail ? (
+                              <img src={iconUrl} alt="" className="w-full h-full object-cover" />
+                            ) : iconUrl ? (
+                              <img src={iconUrl} alt="" className="w-7 h-7 object-contain" />
+                            ) : kind === 'folder' ? (
+                              <Folder className="w-5 h-5 text-white" />
+                            ) : (
+                              <span style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 600 }}>
+                                {cfg.label}
+                              </span>
+                            )}
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-amber-500 transition-colors">
-                              {w.name || 'Untitled'}
+                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                              <HighlightMatch text={fileName} query={query} />
                             </div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">
-                              Run Local Workflow
+                            <div className="truncate" style={{ fontSize: 8, lineHeight: '14px', color: '#A3A3A3' }}>
+                              {fullPath}
                             </div>
                           </div>
-                          <PlayCircle className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-amber-500" />
+                          <span
+                            className="shrink-0 flex items-center justify-center"
+                            style={{ padding: '3px 6px', color: '#A3A3A3' }}
+                            title={kind === 'application' ? 'Open' : 'Attach'}
+                          >
+                            {kind === 'application' ? (
+                              <ExternalLink className="w-4 h-4" strokeWidth={1.75} />
+                            ) : (
+                              <Paperclip className="w-4 h-4" strokeWidth={1.75} />
+                            )}
+                          </span>
                         </button>
-                      ))}
-
-                      {/* Marketplace */}
-                      {marketplaceResults.map(w => (
-                        <button
-                          key={w.slug}
-                          onClick={() => {
-                            window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
-                            window.desktopAPI?.hide?.();
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-theme-card border border-theme/10 shadow-sm hover:border-indigo-500/30 hover:shadow-md transition-all group text-left"
-                        >
-                          <div className="w-7 h-7 rounded-lg border border-theme/20 flex items-center justify-center flex-shrink-0 bg-indigo-500/10 text-indigo-500 group-hover:scale-105 transition-all">
-                            <CloudDownload className="w-3.5 h-3.5" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-semibold text-theme-fg truncate group-hover:text-indigo-500 transition-colors">
-                              {w.name}
-                            </div>
-                            <div className="text-[10px] text-theme-muted truncate font-medium">
-                              Marketplace &bull; {w.publisher_name || 'Community'}
-                            </div>
-                          </div>
-                          <Zap className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500" />
-                        </button>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
                 )}
 
-                {/* Web Search - Expandable with multiple engines */}
-                <div className="rounded-2xl overflow-hidden border border-theme/10 pt-1.5 border-t border-theme/8">
-                  <div className="flex items-stretch">
-                    {/* Main Action - Search with Default */}
-                    <button
-                      onClick={() => handleSearchOption('web', activeEngine.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-theme-hover/40 transition-all group text-left rounded-l-xl"
-                    >
-                      <div className={clsx(
-                        "w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-theme-bg/50 group-hover:scale-110",
-                        activeEngine.color
-                      )}>
-                        {activeEngine.icon}
-                      </div>
-                      <div className="flex-1">
-                        <div className={clsx("text-[13px] font-bold transition-colors group-hover:text-theme-fg", activeEngine.color)}>
-                          Search {activeEngine.name}
-                        </div>
-                        <div className="text-[10px] text-theme-muted font-semibold flex items-center gap-1.5">
-                          <span>Ctrl + Enter</span>
-                          <Command className="w-3 h-3 opacity-50" />
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Change Engine Trigger */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setShowWebOptions(!showWebOptions); }}
-                      className={clsx(
-                        "w-10 flex items-center justify-center border-l border-theme/10 hover:bg-theme-hover transition-all rounded-r-xl",
-                        showWebOptions ? "bg-theme-hover/80 text-primary" : "text-theme-muted"
-                      )}
-                      title="Change Default Search Engine"
-                    >
-                      <ChevronDownIcon className={clsx("w-4 h-4 transition-transform duration-300", showWebOptions && "rotate-180")} />
-                    </button>
+                {/* WORKFLOWS — header always present (shows "No workflows" when empty) */}
+                <div className="flex flex-col" style={{ gap: 8 }}>
+                  <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
+                    {(filteredLocalWorkflows.length === 0 && marketplaceResults.length === 0)
+                      ? 'No workflows'
+                      : 'Workflows'}
+                    {isMarketplaceSearching && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
                   </div>
 
-                  {/* Search Engine Options */}
-                  {showWebOptions && (
-                    <div className="p-3 bg-theme-bg/30 border-t border-theme/10 grid grid-cols-5 gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                      {searchEngines.map((engine) => (
-                        <button
-                          key={engine.id}
-                          onClick={() => handleSetDefaultEngine(engine.id)}
-                          className={clsx(
-                            "relative flex flex-col items-center gap-2 p-2 rounded-xl transition-all group/engine overflow-hidden",
-                            engine.id === defaultEngineId ? "bg-theme-active ring-1 ring-primary/50 border-primary/20" : "hover:bg-theme-hover border-transparent hover:border-theme/10",
-                            "hover:scale-105 active:scale-95",
-                            "hover:shadow-lg hover:shadow-black/5"
-                          )}
-                          title={`Search ${engine.name}`}
-                        >
-                          {/* Background Glow */}
-                          <div className={clsx(
-                            "absolute inset-0 opacity-0 group-hover/engine:opacity-20 transition-opacity duration-300",
-                            engine.bg
-                          )} />
+                  {filteredLocalWorkflows.map((w, idx) => {
+                    const rowIdx = dropdownSelection.offsets.workflowsStart + idx;
+                    const isSel = selectedIndex === rowIdx;
+                    return (
+                    <button
+                      key={w.id}
+                      onMouseEnter={() => setSelectedIndex(rowIdx)}
+                      onClick={async () => {
+                        try {
+                          await window.desktopAPI?.workflowsRun?.(w.id);
+                          window.desktopAPI?.hide?.();
+                          (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
+                        } catch (e) { console.error(e); }
+                      }}
+                      className="w-full flex items-center text-left"
+                      style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
+                    >
+                      <div
+                        className="flex items-center justify-center shrink-0"
+                        style={{ width: 36, height: 36, borderRadius: 4, background: '#F59E0B' }}
+                      >
+                        <Zap className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                        <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                          <HighlightMatch text={w.name || 'Untitled'} query={query} />
+                        </div>
+                        <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                          Run local workflow
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 flex items-center justify-center"
+                        style={{ padding: '3px 6px', color: '#A3A3A3' }}
+                        title="Run"
+                      >
+                        <Play className="w-4 h-4" strokeWidth={1.75} />
+                      </span>
+                    </button>
+                    );
+                  })}
 
-                          <div className={clsx(
-                            "w-7 h-7 rounded-lg flex items-center justify-center text-xl shadow-sm transition-all duration-300",
-                            "bg-theme-card border border-theme/10 group-hover/engine:border-transparent",
-                            "group-hover/engine:scale-110 group-hover/engine:shadow-md"
-                          )}>
-                            {engine.icon}
-                          </div>
-                          <span className={clsx(
-                            "text-[9px] font-black uppercase tracking-wider transition-colors",
-                            "text-theme-muted group-hover/engine:text-theme-fg"
-                          )}>{engine.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {marketplaceResults.map((w, idx) => {
+                    const rowIdx = dropdownSelection.offsets.marketplaceStart + idx;
+                    const isSel = selectedIndex === rowIdx;
+                    return (
+                    <button
+                      key={w.slug}
+                      onMouseEnter={() => setSelectedIndex(rowIdx)}
+                      onClick={() => {
+                        window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
+                        window.desktopAPI?.hide?.();
+                      }}
+                      className="w-full flex items-center text-left"
+                      style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
+                    >
+                      <div
+                        className="flex items-center justify-center shrink-0"
+                        style={{ width: 36, height: 36, borderRadius: 4, background: '#6366F1' }}
+                      >
+                        <CloudDownload className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                        <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
+                          <HighlightMatch text={w.name} query={query} />
+                        </div>
+                        <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
+                          Marketplace • {w.publisher_name || 'Community'}
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 flex items-center justify-center"
+                        style={{ padding: '3px 6px', color: '#A3A3A3' }}
+                        title="Install"
+                      >
+                        <Download className="w-4 h-4" strokeWidth={1.75} />
+                      </span>
+                    </button>
+                    );
+                  })}
                 </div>
 
               </div>
@@ -1719,160 +1887,79 @@ const InputArea = forwardRef(function InputArea(
         )}
         <div
           className={clsx(
-            "drag w-full min-h-[114px] h-auto py-3 rounded-[28px] flex flex-col justify-center px-4 gap-2 transition-all duration-300",
-            translucentMode
-              ? "bg-gray-100/80 backdrop-blur-2xl border border-gray-300/50"
-              : "bg-gray-100/90 border border-gray-200"
+            "drag w-full mx-auto min-h-[56px] h-auto rounded-[16px] flex flex-col justify-center transition-all duration-300 relative overflow-hidden isolate",
+            "border-[0.4px] border-[#FF383C]"
           )}
+          style={{
+            zIndex: 1,
+            padding: 10,
+            gap: 8,
+            maxWidth: 360,
+            backgroundColor: "#171717",
+          }}
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
           onDrop={onDrop}
         >
-          {/* Top Row: Status & Actions */}
-          <div className="flex items-center justify-between w-full pl-1">
-            <button
-              type="button"
-              onClick={() => {
-                // Open dashboard with planner tab when status shows a calendar/reminder/task item
-                if (statusIcon === 'calendar' || statusIcon === 'bell' || statusIcon === 'task') {
-                  window.desktopAPI?.openDashboard?.({ tab: 'planner' });
-                }
-              }}
-              className={clsx(
-                "flex items-center gap-2.5 min-w-0 overflow-hidden mr-2 no-drag",
-                (statusIcon === 'calendar' || statusIcon === 'bell' || statusIcon === 'task') && "cursor-pointer hover:opacity-80 transition-opacity"
-              )}
-              title={statusIcon === 'calendar' || statusIcon === 'bell' || statusIcon === 'task' ? 'View in Planner' : undefined}
-            >
-              <div className={clsx(
-                "w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all",
-                conn === 'connecting' ? 'bg-amber-500 animate-pulse' :
-                  (conn === 'disconnected' ? 'bg-theme-muted/50' :
-                    (conn === 'error' ? 'bg-red-500' :
-                      statusUrgency === 'now' ? 'bg-red-500 animate-pulse' :
-                        statusUrgency === 'soon' ? 'bg-amber-500' :
-                          statusIcon === 'calendar' ? 'bg-primary' :
-                            statusIcon === 'bell' ? 'bg-amber-500' :
-                              statusIcon === 'task' ? 'bg-emerald-500' : 'bg-primary'
-                    ))
-              )}>
-                {isConnSpinner ? (
-                  <div className="w-3 h-3 border-2 border-white/90 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  statusIcon === 'calendar' ? <Calendar className="w-3 h-3 text-white" /> :
-                    statusIcon === 'bell' ? <Bell className="w-3 h-3 text-white" /> :
-                      statusIcon === 'task' ? <ListTodo className="w-3 h-3 text-white" /> :
-                        <CheckCircle className="w-3 h-3 text-white" />
-                )}
-              </div>
-              <div className={clsx(
-                "text-[13px] font-medium truncate select-none transition-colors",
-                statusUrgency === 'now' ? 'text-red-600' :
-                  statusUrgency === 'soon' ? 'text-amber-700 dark:text-amber-500' : 'text-theme-fg'
-              )}>
-                {statusText || 'Ready'}
-              </div>
-            </button>
+          {/* Pill content sits above the translucent surface. */}
+          <div className="relative w-full flex flex-col gap-2" style={{ zIndex: 2 }}>
+          {/* Attachments only render when there's something to show */}
+          {(attachments.length > 0 || (contextPaths?.length ?? 0) > 0) && (
+            <AttachmentBar
+              attachments={attachments}
+              contextPaths={contextPaths}
+              onRemoveAttachment={onRemoveAttachment}
+              onRemoveContext={removeContext}
+            />
+          )}
 
-            <div className="flex items-center gap-2 no-drag flex-shrink-0">
-              {/* Layout Menu */}
-              {overlayMode !== 'sidebar' && (
-                <button
-                  type="button"
-                  className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
-                  title="Sidebar"
-                  onClick={() => window.desktopAPI.setMode('sidebar')}
-                >
-                  <PanelRight className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {overlayMode !== 'window' && (
-                <button
-                  type="button"
-                  className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
-                  title="Window"
-                  onClick={() => window.desktopAPI.setMode('window')}
-                >
-                  <AppWindow className="w-3.5 h-3.5" />
-                </button>
-              )}
-
-              {/* Dashboard / Home */}
-              <button
-                type="button"
-                className="w-8 h-8 rounded-[10px] bg-white border border-gray-200 text-theme-fg hover:bg-gray-200/50 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
-                title="Dashboard"
-                onClick={onOpenDashboard}
-              >
-                <HomeIcon className="w-3.5 h-3.5" />
-              </button>
-
-            </div>
-          </div>
-
-          {/* Attachments Bar (Compact Mode) */}
-          <AttachmentBar
-            attachments={attachments}
-            contextPaths={contextPaths}
-            onRemoveAttachment={onRemoveAttachment}
-            onRemoveContext={removeContext}
-          />
-
-          {/* Bottom Row: Input or Voice Strip */}
-          <div className="flex items-center gap-2.5 w-full no-drag">
+          {/* Single row: +, input, voice */}
+          <div className="flex items-center w-full no-drag" style={{ gap: 10, height: 36 }}>
             {!signedIn ? (
               <button
                 onClick={onSignIn}
-                className="no-drag flex-1 flex items-center justify-center gap-2 h-[42px] rounded-full bg-primary text-primary-fg font-semibold text-[14px] hover:opacity-90 transition-all active:scale-95"
+                className="no-drag flex-1 flex items-center justify-center gap-2 h-9 rounded-xl bg-primary text-primary-fg font-semibold text-[12px] hover:opacity-90 transition-all active:scale-95"
               >
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
               </button>
             ) : (
-              <VoiceMorphPill
-                voiceActive={voiceActive}
-                voiceState={voiceState}
-                voiceAudioLevel={voiceAudioLevel}
-                voiceMuted={voiceMuted}
-                voiceTranscripts={voiceTranscripts}
-                voiceActiveTools={voiceActiveTools}
-                voiceLastTool={voiceLastTool}
-                voiceActiveToolName={voiceActiveTool}
-                onVoiceMuteToggle={onVoiceMuteToggle}
-                onToggleVoice={onToggleVoice}
-              >
+              <>
+                {/* + (attach) */}
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="w-8 h-8 rounded-full flex items-center justify-center bg-theme-hover/50 text-theme-fg/70 hover:text-theme-fg hover:bg-theme-hover transition-all active:scale-95 border border-theme/10"
+                      className="w-6 h-6 flex items-center justify-center text-white/90 hover:text-white transition-colors flex-shrink-0"
                       title="Attach"
                     >
-                      <PlusIcon className="w-4 h-4" />
+                      <PlusLucide className="w-6 h-6" strokeWidth={1.5} />
                     </button>
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
-                    <DropdownMenu.Content className="DropdownContent z-[10001] min-w-[160px] bg-gray-50 rounded-xl border border-gray-200 p-1 shadow-2xl" sideOffset={8} align="start" collisionPadding={10}>
+                    <DropdownMenu.Content className="DropdownContent z-[10001] min-w-[160px] bg-[rgb(23,23,23)]/85 backdrop-blur-xl rounded-xl border border-white/10 p-1 shadow-2xl" sideOffset={8} align="start" collisionPadding={10}>
                       <DropdownMenu.Item
                         onSelect={onAttachFiles}
-                        className="group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
+                        className="group text-[13px] text-white/90 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 outline-none cursor-pointer transition-colors"
                       >
-                        <FileIcon className="w-3.5 h-3.5 text-primary opacity-70" />
+                        <FileIcon className="w-3.5 h-3.5 opacity-70" />
                         <span>Attach files</span>
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
                         onSelect={onAttachImages}
-                        className="group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-theme-hover outline-none cursor-pointer transition-colors"
+                        className="group text-[13px] text-white/90 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 outline-none cursor-pointer transition-colors"
                       >
-                        <ImageIcon className="w-3.5 h-3.5 text-primary opacity-70" />
+                        <ImageIcon className="w-3.5 h-3.5 opacity-70" />
                         <span>Attach images</span>
                       </DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
 
-                <div className={clsx(
-                  "flex-1 relative mx-1 transition-all flex items-center min-h-[36px]"
-                )}>
+                {/* Input */}
+                <div
+                  className="flex-1 relative flex items-center justify-center min-h-[36px] rounded-[12px]"
+                  style={{ padding: 6, gap: 4 }}
+                >
                   <TextareaAutosize
                     ref={setTextareaRef}
                     value={query}
@@ -1880,28 +1967,43 @@ const InputArea = forwardRef(function InputArea(
                     onKeyDown={handleKeyDown}
                     onPaste={onPaste}
                     onHeightChange={handleHeightChange}
-                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
+                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Ask next or steer current step" : "Ask anything"}
                     className={clsx(
-                      "w-full bg-transparent outline-none text-[14px] leading-tight py-2 resize-none scrollbar-hidden font-semibold px-1",
-                      "text-theme-fg placeholder:text-theme-muted"
+                      "w-full bg-transparent outline-none text-[12px] leading-4 p-0 resize-none scrollbar-hidden font-normal text-white placeholder:text-white",
+                      query.length > 0 ? "text-left" : "text-center"
                     )}
+                    style={{ fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif" }}
                     minRows={1}
                     maxRows={5}
                   />
                 </div>
+
                 {miniOutputStreaming && onSteer && query.trim() && (
                   <button
                     type="button"
-                    className="w-8 h-8 rounded-full flex items-center justify-center bg-theme-hover/50 text-theme-fg/70 hover:text-theme-fg hover:bg-theme-hover transition-all active:scale-95 border border-theme/10"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-all active:scale-95 flex-shrink-0"
                     title="Steer current step"
                     onClick={onSteer}
                   >
                     <CornerDownRight className="w-4 h-4" />
                   </button>
                 )}
-              </VoiceMorphPill>
-            )}
 
+                {/* Voice */}
+                <button
+                  type="button"
+                  className={clsx(
+                    "w-8 h-8 rounded-[10px] flex items-center justify-center transition-all active:scale-95 flex-shrink-0",
+                    voiceActive ? "bg-white/15 text-white" : "text-white/85 hover:text-white hover:bg-white/10"
+                  )}
+                  title={voiceActive ? "Stop voice" : "Start voice"}
+                  onClick={onToggleVoice}
+                >
+                  <AudioLines className="w-4 h-4" strokeWidth={1.5} />
+                </button>
+              </>
+            )}
+          </div>
           </div>
         </div>
 

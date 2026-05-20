@@ -18,6 +18,7 @@ import { LinkPreview } from './LinkPreview';
 import { GenUIContainer, GenUIErrorBoundary } from './genui';
 import { useFileViewerOptional } from './file-viewer';
 import { Shimmer } from './ai-elements/Shimmer';
+import { useElapsedSeconds, useElapsedSecondsFine } from '../hooks/useSharedTicker';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -69,6 +70,25 @@ const HIDDEN_TOOL_NAMES = new Set([
   'conversation_get_spaces',
   'message_add',
   'message_list',
+  // Project-mode bookkeeping is represented by the active project UI, not
+  // repeated tool pills in the chat trace.
+  'list_projects',
+  'enter_project_mode',
+  'exit_project_mode',
+  'project_create',
+  'project_get',
+  'project_list',
+  'project_update',
+  'project_delete',
+  'conversation_set_project',
+  'journal_add',
+  'journal_list',
+  'journal_delete',
+  'memory_add',
+  'memory_create',
+  'memory_list',
+  'memory_search',
+  'project_search',
   // Agent internal tools
   'agent_todo',
   // Knowledge tools (internal)
@@ -291,23 +311,25 @@ const InlineReasoningBlock: React.FC<{
   const contentRef = useRef<HTMLDivElement>(null);
   const mountTimeRef = useRef(Date.now());
   const autoCollapseRef = useRef<NodeJS.Timeout | null>(null);
-  const [elapsed, setElapsed] = useState(finalDuration || 0);
+  const [frozenElapsed, setFrozenElapsed] = useState<number | null>(
+    finalDuration != null ? finalDuration : null,
+  );
 
-  // Live timer while streaming
-  useEffect(() => {
-    if (!isStreaming || !isLastReasoning || finalDuration) return;
-    const interval = setInterval(() => {
-      setElapsed((Date.now() - mountTimeRef.current) / 1000);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [isStreaming, isLastReasoning, finalDuration]);
+  const tickerActive = Boolean(isStreaming && isLastReasoning && finalDuration == null && frozenElapsed == null);
+  const liveElapsed = useElapsedSecondsFine(mountTimeRef.current, tickerActive);
 
-  // Final elapsed on complete (only if no finalDuration provided)
+  // Once streaming stops, freeze the final elapsed once and stop ticking.
   useEffect(() => {
-    if (!isStreaming && isLastReasoning && !finalDuration) {
-      setElapsed((Date.now() - mountTimeRef.current) / 1000);
+    if (!isStreaming && isLastReasoning && finalDuration == null && frozenElapsed == null) {
+      setFrozenElapsed((Date.now() - mountTimeRef.current) / 1000);
     }
-  }, [isStreaming, isLastReasoning, finalDuration]);
+  }, [isStreaming, isLastReasoning, finalDuration, frozenElapsed]);
+
+  const elapsed = finalDuration != null
+    ? finalDuration
+    : frozenElapsed != null
+      ? frozenElapsed
+      : liveElapsed;
 
   // Auto-collapse after 3s once content starts flowing (only during streaming)
   useEffect(() => {
@@ -466,15 +488,6 @@ const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt })
   const [error, setError] = useState<string | null>(null);
   const imageSrc = toMediaSrc(src || '');
 
-  // Log for debugging
-  useEffect(() => {
-    console.log(`[InlineImage] Loading: "${src}" → "${imageSrc}"`);
-    // Warn about Unix paths on Windows
-    if (src && src.startsWith('/') && !src.startsWith('//')) {
-      console.warn('[InlineImage] WARNING: Unix-style path detected. This may not work on Windows:', src);
-    }
-  }, [src, imageSrc]);
-
   if (error) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-red-500/10 border border-red-500/20 rounded-lg text-red-700 text-xs">
@@ -489,14 +502,8 @@ const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt })
       <img
         src={imageSrc}
         alt={alt || 'Image'}
-        onLoad={() => {
-          console.log(`[InlineImage] Loaded: "${imageSrc}"`);
-          setLoaded(true);
-        }}
-        onError={() => {
-          console.error(`[InlineImage] Failed: "${src}" → "${imageSrc}"`);
-          setError(`${src}`);
-        }}
+        onLoad={() => setLoaded(true)}
+        onError={() => setError(`${src}`)}
         className={clsx(
           "block my-2 max-w-full max-h-[300px] rounded-xl border border-theme/10 shadow-lg object-contain transition-opacity duration-200",
           loaded ? "opacity-100" : "opacity-0"
@@ -515,10 +522,6 @@ const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt })
 const InlineVideo: React.FC<{ src: string }> = memo(({ src }) => {
   const [error, setError] = useState<string | null>(null);
   const videoSrc = toMediaSrc(src || '');
-
-  useEffect(() => {
-    console.log(`[InlineVideo] Loading: "${src}" → "${videoSrc}"`);
-  }, [src, videoSrc]);
 
   if (error) {
     return (
@@ -1524,10 +1527,10 @@ const DelegationCard: React.FC<{
   step: AssistantTraceStepData;
   childSteps: AssistantTraceStepData[];
   isLast: boolean;
-}> = ({ step, childSteps, isLast }) => {
+}> = memo(({ step, childSteps, isLast }) => {
   const tool = step.tool!;
   const status = step.status;
-  const tasks = extractDelegationTasks(tool);
+  const tasks = useMemo(() => extractDelegationTasks(tool), [tool]);
   const isRunning = status === 'active';
   const isError = status === 'error';
   const isComplete = status === 'complete';
@@ -1544,14 +1547,9 @@ const DelegationCard: React.FC<{
     prevRunningRef.current = isRunning;
   }, [isRunning, isError]);
 
-  // Live elapsed ticker while running
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!isRunning) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [isRunning]);
-  const elapsedSec = tool.timestamp ? Math.max(0, Math.floor((now - tool.timestamp) / 1000)) : 0;
+  // Live elapsed ticker while running — backed by the shared ticker bus so N
+  // running delegation cards share a single interval instead of one each.
+  const elapsedSec = useElapsedSeconds(tool.timestamp, isRunning);
 
 
   const agentLabel = tasks.length === 1
@@ -1793,7 +1791,7 @@ const DelegationCard: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -2357,7 +2355,7 @@ const LiveOutputPanel: React.FC<{ output: string; toolName: string }> = ({ outpu
   );
 };
 
-const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
+const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) => {
   if (tool.status === 'error') {
     const errorText =
       typeof tool.error === 'string'
@@ -2433,7 +2431,7 @@ const ToolTraceContent: React.FC<{ tool: ToolCall }> = ({ tool }) => {
   }
 
   return null;
-};
+});
 
 function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
   const plain = content
@@ -2668,25 +2666,11 @@ const AssistantTracePanel: React.FC<{
     return compactReasoningTraceSteps(steps);
   }, [isStreaming, reasoning, streamChunks, toolCalls]);
 
-  if (traceSteps.length === 0) return null;
-
-  const headerLabel = isStreaming
-    ? 'Thinking...'
-    : reasoningDuration
-      ? `Thought for ${formatDuration(reasoningDuration)}`
-      : 'Thought';
-
-  return (
-    <ChainOfThought
-      defaultOpen={Boolean(defaultOpen)}
-      className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]"
-    >
-      <ChainOfThoughtHeader>
-        <span className="text-[13px] text-theme-muted">{headerLabel}</span>
-      </ChainOfThoughtHeader>
-
-      <ChainOfThoughtContent>
-        {(() => {
+  // Build the display tree out of traceSteps in a useMemo so that streaming
+  // ticks (which flip `isStreaming`/timer state in ancestors) don't re-walk
+  // the O(N) DisplayItem/nestGroups graph on every render. Only traceSteps
+  // identity actually controls structure here.
+  const renderedTraceTree = useMemo(() => {
           // Build display items: group consecutive same-tool calls, separate nested vs orchestrator,
           // and wrap delegation tool calls with their subagent children into a single rectangle card.
           type DisplayItem =
@@ -2887,7 +2871,27 @@ const AssistantTracePanel: React.FC<{
 
             return <React.Fragment key={`group-${gIdx}`}>{rendered}</React.Fragment>;
           });
-        })()}
+  }, [traceSteps]);
+
+  if (traceSteps.length === 0) return null;
+
+  const headerLabel = isStreaming
+    ? 'Thinking...'
+    : reasoningDuration
+      ? `Thought for ${formatDuration(reasoningDuration)}`
+      : 'Thought';
+
+  return (
+    <ChainOfThought
+      defaultOpen={Boolean(defaultOpen)}
+      className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]"
+    >
+      <ChainOfThoughtHeader>
+        <span className="text-[13px] text-theme-muted">{headerLabel}</span>
+      </ChainOfThoughtHeader>
+
+      <ChainOfThoughtContent>
+        {renderedTraceTree}
       </ChainOfThoughtContent>
     </ChainOfThought>
   );

@@ -13,19 +13,62 @@ export const calendar_crud = makeLocalTool(
 const _task_crud_base = makeLocalTool(
   'task_crud',
   'Full task management with priorities, due dates, tags for Stuard local tasks.',
-  z.object({ action: z.string(), data: z.any().optional() }),
+  z.object({
+    action: z.string(),
+    data: z.any().optional(),
+    /**
+     * When in Project Mode and creating a task, pass the conversation_id (from
+     * <conversation> in your system prompt) so the wrapper can auto-tag the
+     * task with the active project_id. If the user is not in project mode this
+     * is a no-op.
+     */
+    conversation_id: z.string().optional(),
+  }),
 );
 
-// Wrap task_crud: post-filter list results to respect limit/offset/status
+// Wrap task_crud:
+//  • on create: auto-inject projectId from the active project (if any) when the
+//    caller passed a conversation_id and didn't already set projectId.
+//  • on list: post-filter to respect limit/offset/status, and (when
+//    conversation_id is supplied) prefer same-project results so AI list calls
+//    don't drown in global tasks.
 export const task_crud = createTool({
   id: _task_crud_base.id!,
-  description: _task_crud_base.description! +
-    ' For list action, pass limit (default 20), offset (default 0), and optional status in data to reduce payload.',
+  description:
+    _task_crud_base.description! +
+    ' For list action, pass limit (default 20), offset (default 0), and optional status in data to reduce payload.' +
+    ' When working inside Project Mode, pass `conversation_id` so creates are auto-scoped to the active project and lists prioritize project-scoped tasks.',
   inputSchema: (_task_crud_base as any).inputSchema,
   outputSchema: z.any(),
   execute: async (input, context) => {
-    const result = await (_task_crud_base.execute as any)(input, context);
     const inp = input as any;
+
+    // Resolve active project from conversation if caller provided one.
+    let activeProjectId: string | null = null;
+    if (inp.conversation_id && (inp.action === 'create' || inp.action === 'list')) {
+      try {
+        const convo: any = await execLocalTool(
+          'conversation_get',
+          { conversation_id: inp.conversation_id },
+          undefined as any,
+          5000,
+        );
+        const pid = convo?.conversation?.project_id;
+        if (pid) activeProjectId = String(pid);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    // Inject projectId on create when not already set.
+    if (inp.action === 'create' && activeProjectId) {
+      const data = (inp.data && typeof inp.data === 'object') ? inp.data : {};
+      if (!data.projectId) {
+        inp.data = { ...data, projectId: activeProjectId };
+      }
+    }
+
+    const result = await (_task_crud_base.execute as any)(inp, context);
 
     // Post-filter list results
     if (inp.action === 'list' && result && Array.isArray(result.items)) {
@@ -33,12 +76,20 @@ export const task_crud = createTool({
       const limit = typeof d.limit === 'number' ? Math.min(Math.max(d.limit, 1), 100) : 20;
       const offset = typeof d.offset === 'number' ? Math.max(d.offset, 0) : 0;
       let items = result.items;
-      const total = items.length;
 
       if (d.status) {
         items = items.filter((t: any) => t?.status === d.status);
       }
 
+      // When in project mode, surface that project's tasks first.
+      if (activeProjectId) {
+        const inProject = items.filter((t: any) => t?.projectId === activeProjectId);
+        const others = items.filter((t: any) => t?.projectId !== activeProjectId);
+        items = [...inProject, ...others];
+        result.activeProjectId = activeProjectId;
+      }
+
+      const total = items.length;
       result.items = items.slice(offset, offset + limit);
       result.total = total;
       result.hasMore = offset + limit < items.length;
@@ -75,26 +126,117 @@ const _task_reminders_base = makeLocalTool(
     cloud_notify_method: z.enum(['sms', 'whatsapp', 'both']).optional().describe('Delivery method for cloud notification. Default: "sms".'),
     limit: z.number().int().min(1).max(100).default(20).optional().describe('Max items for list action (default 20).'),
     offset: z.number().int().min(0).default(0).optional().describe('Skip N items for list pagination (default 0).'),
+    conversation_id: z
+      .string()
+      .optional()
+      .describe('In Project Mode, pass the conversation ID so the backing task is created project-scoped and lists prioritize this project.'),
   }),
 );
 
-// Wrap task_reminders: on schedule with cloud_notify, sync to cloud; on list, post-filter with limit/offset
+// Wrap task_reminders:
+//  • Project Mode (conversation_id provided): on schedule without taskId, create a
+//    project-scoped task first via task_crud and schedule against it — keeps the
+//    reminder visible inside the project's tasks tab.
+//  • On schedule with cloud_notify: sync to cloud for offline SMS/WhatsApp.
+//  • On list: post-filter with limit/offset, and when in project mode bubble
+//    reminders attached to project-scoped tasks to the top.
 export const task_reminders = createTool({
   id: _task_reminders_base.id!,
-  description: _task_reminders_base.description!,
+  description:
+    _task_reminders_base.description! +
+    ' When in Project Mode, pass `conversation_id` so new reminders are anchored to a project-scoped task.',
   inputSchema: (_task_reminders_base as any).inputSchema,
   outputSchema: z.any(),
   execute: async (input, context) => {
-    const result = await (_task_reminders_base.execute as any)(input, context);
-
     const inp = input as any;
 
-    // Post-filter list results with limit/offset
+    // Resolve active project from conversation if caller provided one.
+    let activeProjectId: string | null = null;
+    if (inp.conversation_id) {
+      try {
+        const convo: any = await execLocalTool(
+          'conversation_get',
+          { conversation_id: inp.conversation_id },
+          undefined as any,
+          5000,
+        );
+        const pid = convo?.conversation?.project_id;
+        if (pid) activeProjectId = String(pid);
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    // Project-scope a fresh reminder by creating a project-tagged task first.
+    if (
+      inp.action === 'schedule' &&
+      activeProjectId &&
+      !inp.taskId &&
+      typeof inp.message === 'string' &&
+      inp.message.trim().length > 0
+    ) {
+      try {
+        const created: any = await execLocalTool(
+          'task_crud',
+          {
+            action: 'create',
+            data: {
+              title: inp.message,
+              status: 'pending',
+              priority: 'normal',
+              projectId: activeProjectId,
+            },
+          },
+          undefined as any,
+          10000,
+        );
+        const newTaskId = created?.task?.id || created?.item?.id || created?.id;
+        if (newTaskId) {
+          inp.taskId = String(newTaskId);
+        }
+      } catch (e: any) {
+        // Non-fatal — fall through to the default reminder path. The Python
+        // side will auto-create an un-scoped task as a safety net.
+        console.error('[task_reminders] project-scope task pre-create failed:', e?.message);
+      }
+    }
+
+    const result = await (_task_reminders_base.execute as any)(inp, context);
+
+    // Post-filter list results with limit/offset, and surface project-scoped
+    // reminders first when we know the active project.
     if (inp.action === 'list' && result && Array.isArray(result.items)) {
       const limit = typeof inp.limit === 'number' ? Math.min(Math.max(inp.limit, 1), 100) : 20;
       const offset = typeof inp.offset === 'number' ? Math.max(inp.offset, 0) : 0;
-      const total = result.items.length;
-      result.items = result.items.slice(offset, offset + limit);
+      let items = result.items;
+
+      if (activeProjectId) {
+        const projectTaskIds = new Set<string>();
+        try {
+          const taskList: any = await execLocalTool(
+            'task_crud',
+            { action: 'list', data: { limit: 500 } },
+            undefined as any,
+            10000,
+          );
+          for (const t of taskList?.items || []) {
+            if (t?.projectId === activeProjectId && t?.id) {
+              projectTaskIds.add(String(t.id));
+            }
+          }
+        } catch {
+          /* best-effort — fall through to un-prioritized list */
+        }
+        if (projectTaskIds.size > 0) {
+          const inProject = items.filter((r: any) => r?.taskId && projectTaskIds.has(String(r.taskId)));
+          const others = items.filter((r: any) => !(r?.taskId && projectTaskIds.has(String(r.taskId))));
+          items = [...inProject, ...others];
+          result.activeProjectId = activeProjectId;
+        }
+      }
+
+      const total = items.length;
+      result.items = items.slice(offset, offset + limit);
       result.total = total;
       result.hasMore = offset + limit < total;
     }

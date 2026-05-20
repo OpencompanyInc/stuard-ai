@@ -9,6 +9,7 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import type { VoiceProvider, VoiceSession, VoiceSessionConfig, AudioFormat } from './types';
+import { computeElevenLabsCostUsd } from './voice-pricing';
 
 const EL_CONVAI_WS = 'wss://api.elevenlabs.io/v1/convai/conversation';
 
@@ -19,6 +20,8 @@ class ElevenLabsSession implements VoiceSession {
   private audioCallbacks: Array<(audioBase64: string) => void> = [];
   private _active = false;
   private config: VoiceSessionConfig;
+  private startedAtMs = 0;
+  private usageEmitted = false;
 
   constructor(config: VoiceSessionConfig) {
     this.id = `el_${randomUUID().slice(0, 12)}`;
@@ -40,6 +43,7 @@ class ElevenLabsSession implements VoiceSession {
 
       this.ws!.on('open', () => {
         this._active = true;
+        this.startedAtMs = Date.now();
         clearTimeout(timeout);
 
         const initData: Record<string, any> = {
@@ -93,6 +97,10 @@ class ElevenLabsSession implements VoiceSession {
 
       this.ws!.on('close', (_code, reason) => {
         this._active = false;
+        // ElevenLabs doesn't surface token usage on the WS — bill by wall-clock
+        // session duration. Emit before onSessionEnd so the bridge has a chance
+        // to settle before tearing down.
+        this.emitDurationUsage();
         this.config.onSessionEnd?.(reason?.toString() || 'closed');
       });
 
@@ -104,6 +112,23 @@ class ElevenLabsSession implements VoiceSession {
           reject(err);
         }
       });
+    });
+  }
+
+  private emitDurationUsage(): void {
+    if (this.usageEmitted || this.startedAtMs === 0) return;
+    this.usageEmitted = true;
+    const durationMs = Math.max(0, Date.now() - this.startedAtMs);
+    if (durationMs < 1000) return; // ignore connect-and-bail sessions
+    const modelId = this.config.model || 'eleven_turbo_v2_5';
+    const costUsd = computeElevenLabsCostUsd(modelId, durationMs);
+    if (costUsd <= 0) return;
+    this.config.onUsage?.({
+      model: `elevenlabs/${modelId}`,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd,
+      raw: { durationMs, billingMode: 'duration' },
     });
   }
 
@@ -131,6 +156,9 @@ class ElevenLabsSession implements VoiceSession {
 
   close(reason?: string): void {
     this._active = false;
+    // Emit usage before tearing down the socket — once we close, the WS 'close'
+    // handler doesn't fire reliably (especially if we initiated the close).
+    this.emitDurationUsage();
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       this.ws.close(1000, reason || 'session_closed');
     }

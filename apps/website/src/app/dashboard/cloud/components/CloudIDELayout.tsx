@@ -57,11 +57,11 @@ import {
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { useCloudTerminal } from '@/hooks/useCloudTerminal';
 import { useModelRegistry, type ModelMeta } from '@/hooks/useModelRegistry';
-import { PortableMessageBubble } from '../../../../../../../shared/chat-ui/ui';
-import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate, upsertStatusChunk } from '../../../../../../../shared/chat-ui/streamState';
-import { mergeStreamingText } from '../../../../../../../shared/chat-ui/streamMerge';
-import type { Message as ChatMessage, StreamChunk, ToolCall } from '../../../../../../../shared/chat-ui/types';
-import { AskUserPrompt } from '../../../../../../../shared/chat-ui/AskUserPrompt';
+import { PortableMessageBubble } from '@/_chat-ui/ui';
+import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate, upsertStatusChunk } from '@/_chat-ui/streamState';
+import { mergeStreamingText } from '@/_chat-ui/streamMerge';
+import type { Message as ChatMessage, StreamChunk, ToolCall } from '@/_chat-ui/types';
+import { AskUserPrompt } from '@/_chat-ui/AskUserPrompt';
 import { ChatUiBlock } from './ChatUiBlock';
 import { CloudMonitoring } from './CloudMonitoring';
 import { CloudBilling } from './CloudBilling';
@@ -104,7 +104,7 @@ const MODE_STORAGE_KEY = 'cloud:runtime-mode';
 
 const NORMAL_VIEW_ITEMS: ViewItem[] = [
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
-  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'bots', icon: BotIcon, label: 'Agents' },
   { id: 'files', icon: FolderOpen, label: 'Files' },
   { id: 'automations', icon: Zap, label: 'Automations' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings', footer: true },
@@ -115,7 +115,7 @@ const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
   { id: 'monitoring', icon: Activity, label: 'Monitoring' },
-  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'bots', icon: BotIcon, label: 'Agents' },
   { id: 'automations', icon: Zap, label: 'Automations' },
   { id: 'integrations', icon: Link2, label: 'Integrations' },
   { id: 'deploys', icon: Rocket, label: 'Deploys' },

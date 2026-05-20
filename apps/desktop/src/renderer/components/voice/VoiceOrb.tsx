@@ -256,7 +256,7 @@ function lerpC(c: THREE.Color, t: [number, number, number], s: number) {
 export function VoiceOrb({ state, audioLevel = 0, size = 220, className }: VoiceOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
-  const clockRef = useRef(new THREE.Clock());
+  const timerRef = useRef(new THREE.Timer());
   const stateRef = useRef(state);
   const audioRef = useRef(audioLevel);
   stateRef.current = state;
@@ -310,10 +310,14 @@ export function VoiceOrb({ state, audioLevel = 0, size = 220, className }: Voice
     const s = 0.03;
     let currentRotSpeed = STATE_CONFIGS.idle.rotSpeed;
 
-    const animate = () => {
+    const timer = timerRef.current;
+    timer.connect(document);
+
+    const animate = (timestamp?: number) => {
       rafRef.current = requestAnimationFrame(animate);
-      const t = clockRef.current.getElapsedTime();
-      const dt = clockRef.current.getDelta();
+      timer.update(timestamp);
+      const t = timer.getElapsed();
+      const dt = timer.getDelta();
       const cfg = STATE_CONFIGS[stateRef.current];
       const audio = Math.min(1, Math.max(0, audioRef.current));
 
@@ -347,6 +351,8 @@ export function VoiceOrb({ state, audioLevel = 0, size = 220, className }: Voice
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      timer.disconnect();
+      timer.dispose();
       renderer.dispose(); geo.dispose(); mat.dispose(); hGeo.dispose(); hMat.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };

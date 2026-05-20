@@ -165,6 +165,126 @@ function isAiModelArg(toolName: string, argKey: string): boolean {
   return argKey === 'model' && LIVE_MODEL_TOOLS.has(toolName);
 }
 
+function isTranscriptionModelArg(toolName: string, argKey: string): boolean {
+  return toolName === 'ai_inference' && argKey === 'transcriptionModel';
+}
+
+// ─── Live OpenRouter STT models ────────────────────────────────────────────
+// Fetched from the public, unauthenticated OpenRouter models endpoint filtered
+// to transcription-capable models. Cached in localStorage with a 24h TTL so the
+// dropdown is responsive offline / on cold start. ElevenLabs Scribe models are
+// NOT returned by this endpoint (they use a separate direct API) and are merged
+// in from the schema's static fallback list by the consumer.
+
+interface OpenRouterSttApiModel {
+  id: string;
+  name: string;
+  pricing?: { prompt?: string; completion?: string };
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] };
+}
+
+const STT_LS_KEY = 'stuard.transcription_models.v1';
+const STT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h — model lists change rarely
+
+function readSttCache(): { fetchedAtMs: number; models: OpenRouterSttApiModel[] } | null {
+  try {
+    const raw = localStorage.getItem(STT_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.fetchedAtMs !== 'number') return null;
+    if (!Array.isArray(parsed.models)) return null;
+    return parsed as { fetchedAtMs: number; models: OpenRouterSttApiModel[] };
+  } catch {
+    return null;
+  }
+}
+
+function writeSttCache(models: OpenRouterSttApiModel[]) {
+  try {
+    localStorage.setItem(STT_LS_KEY, JSON.stringify({ fetchedAtMs: Date.now(), models }));
+  } catch {}
+}
+
+/**
+ * Format an OpenRouter STT model into a relative cost-tier description.
+ * Billing on our side is in credits — we don't surface raw USD pricing to users.
+ * Instead we bucket OpenRouter's per-minute audio rate into rough tiers so users
+ * can pick between cheap/standard/premium without seeing fiat numbers.
+ *
+ * Tier buckets (per-minute audio, USD as published by OpenRouter — used internally
+ * only, never rendered): cheap < $0.005, standard < $0.05, premium ≥ $0.05.
+ * Token-priced models (GPT-4o transcribe etc.) are surfaced as "premium quality".
+ */
+function formatSttDescription(m: OpenRouterSttApiModel): string {
+  const prompt = parseFloat(m.pricing?.prompt || '0');
+  const completion = parseFloat(m.pricing?.completion || '0');
+  if (completion > 0) {
+    return 'Premium quality · token-priced (GPT-4o-class transcription)';
+  }
+  if (prompt > 0) {
+    if (prompt < 0.005) return 'Cheap — low credit cost';
+    if (prompt < 0.05) return 'Standard cost';
+    return 'Premium — higher credit cost, top accuracy';
+  }
+  return 'OpenRouter STT';
+}
+
+function sttModelsToOptions(models: OpenRouterSttApiModel[]): ArgOption[] {
+  return models
+    .filter((m) => m?.id && typeof m.id === 'string')
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((m): ArgOption => ({
+      value: m.id,
+      // Strip "Provider: " prefix the way the main model registry does for chat models.
+      label: (m.name || m.id).replace(/^[^:]+:\s*/, ''),
+      description: formatSttDescription(m),
+      group: 'OpenRouter STT',
+    }));
+}
+
+/**
+ * Hook: live OpenRouter STT options merged with the schema's static fallback
+ * (which holds ElevenLabs Scribe entries, since those route through a separate API).
+ */
+function useTranscriptionModelOptions(enabled: boolean, fallback: ArgOption[] | undefined): ArgOption[] {
+  const [liveModels, setLiveModels] = useState<OpenRouterSttApiModel[]>(() => readSttCache()?.models ?? []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const cached = readSttCache();
+    const isFresh = cached && Date.now() - cached.fetchedAtMs < STT_CACHE_TTL_MS;
+    if (isFresh) return;
+
+    (async () => {
+      try {
+        const resp = await fetch('https://openrouter.ai/api/v1/models?output_modalities=transcription', { cache: 'no-store' });
+        if (!resp.ok) return;
+        const json = await resp.json() as { data?: OpenRouterSttApiModel[] };
+        if (!Array.isArray(json?.data) || cancelled) return;
+        setLiveModels(json.data);
+        writeSttCache(json.data);
+      } catch {
+        // Best-effort: fall back to whatever's already in state (cached or empty).
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [enabled]);
+
+  return useMemo(() => {
+    const liveOptions = sttModelsToOptions(liveModels);
+    const fallbackList = Array.isArray(fallback) ? fallback : [];
+    if (liveOptions.length === 0) return fallbackList;
+    // Merge: live OpenRouter first, then any non-OpenRouter fallback entries
+    // (i.e. ElevenLabs Scribe, which isn't in the OpenRouter catalog).
+    const liveIds = new Set(liveOptions.map((o) => String(o.value)));
+    const extras = fallbackList.filter((o) => !liveIds.has(String(o.value)));
+    return [...liveOptions, ...extras];
+  }, [liveModels, fallback]);
+}
+
 /**
  * Convert the live OpenRouter-backed model registry into ArgOption[] for SelectInput.
  * Grouped by provider for readability, sorted by category (smart → balanced → fast).
@@ -213,6 +333,8 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   const googleProfileOptions = useGoogleProfileOptions(isGoogleProfile);
   const isAiModel = isAiModelArg(toolName, argKey);
   const liveModelOptions = useLiveModelOptions(isAiModel);
+  const isTranscriptionModel = isTranscriptionModelArg(toolName, argKey);
+  const transcriptionModelOptions = useTranscriptionModelOptions(isTranscriptionModel, argSchema?.options);
 
   // If no schema, infer the best editor from the value type
   if (!argSchema) {
@@ -368,15 +490,26 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
 
       case 'select': {
         // For AI model fields, use the live OpenRouter registry (matches main Stuard chat).
-        // Falls back to the static options when the registry is still loading.
-        const effectiveOptions = isAiModel && liveModelOptions.length > 0 ? liveModelOptions : options;
+        // For transcription model fields, use the live OpenRouter STT registry merged
+        // with ElevenLabs entries from the schema fallback. Both fall back to the
+        // static schema options while the live fetch is in flight.
+        const effectiveOptions = isAiModel && liveModelOptions.length > 0
+          ? liveModelOptions
+          : isTranscriptionModel && transcriptionModelOptions.length > 0
+            ? transcriptionModelOptions
+            : options;
+        const effectivePlaceholder = isAiModel
+          ? 'Search OpenRouter models...'
+          : isTranscriptionModel
+            ? 'Search transcription models...'
+            : placeholder;
         return effectiveOptions ? (
           <SelectInput
             value={value}
             onChange={onChange}
             options={effectiveOptions}
-            placeholder={isAiModel ? 'Search OpenRouter models...' : placeholder}
-            allowFreeform={isAiModel ? true : allowFreeform}
+            placeholder={effectivePlaceholder}
+            allowFreeform={isAiModel || isTranscriptionModel ? true : allowFreeform}
           />
         ) : (
           <TextInputWithVariables

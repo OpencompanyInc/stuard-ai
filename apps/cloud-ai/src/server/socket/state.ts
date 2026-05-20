@@ -66,6 +66,18 @@ export function abortAllRequests(ws: WebSocket) {
   return count;
 }
 
+export function countActiveRequests(ws: WebSocket): number {
+  const controllers = wsAbortControllers.get(ws);
+  return controllers ? controllers.size : 0;
+}
+
+export function getOnlyActiveRequestId(ws: WebSocket): string | undefined {
+  const controllers = wsAbortControllers.get(ws);
+  if (!controllers || controllers.size !== 1) return undefined;
+  const [key] = controllers.keys();
+  return key;
+}
+
 export function enqueueInterjection(ws: WebSocket, requestId: string | undefined, text: string) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return 0;

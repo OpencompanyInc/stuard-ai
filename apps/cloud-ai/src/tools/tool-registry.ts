@@ -38,10 +38,12 @@ const CATEGORY_LOCATION: Record<string, ToolLocation> = {
   Feedback: 'cloud',
   Memory: 'cloud',
   Spaces: 'cloud',
+  Projects: 'device',
   Knowledge: 'cloud',
   Productivity: 'cloud',
   Embeddings: 'cloud',
   AI: 'cloud',
+  Agents: 'compute',
 
   // Compute — file ops, shell, scripts (can run on VM or desktop)
   FileSystem: 'compute',

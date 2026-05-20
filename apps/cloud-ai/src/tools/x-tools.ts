@@ -18,7 +18,7 @@ import {
 } from '../utils/config';
 import { getVMOAuthAccount, storeVMOAuthAccount } from './vm-oauth';
 
-const X_API = 'https://api.twitter.com/2';
+const X_API = 'https://api.x.com/2';
 
 const profileField = z.string().optional().describe(
   'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
@@ -179,11 +179,62 @@ async function xFetch(path: string, profileLabel?: string, init?: RequestInit) {
     if (res.status === 401) {
       throw new Error('X authentication failed. Please reconnect X in Settings → Integrations.');
     }
-    const msg = (body && (body.title || body.detail || body.message || body.error)) || `${res.status} ${res.statusText}`;
+    const msg = formatXError(body, res.status, res.statusText);
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
   }
 
   return { body, userId };
+}
+
+function formatXError(body: any, status: number, statusText: string): string {
+  const errors = Array.isArray(body?.errors)
+    ? body.errors
+        .map((e: any) => e?.message || e?.detail || e?.title || e?.code)
+        .filter(Boolean)
+        .join('; ')
+    : '';
+  const problem = body?.detail || body?.title || body?.message || body?.error || errors;
+  const message = typeof problem === 'string' && problem.trim() ? problem.trim() : `${status} ${statusText}`;
+  const lower = message.toLowerCase();
+  if (status === 403 && (lower.includes('scope') || lower.includes('permission') || lower.includes('forbidden') || lower.includes('unauthorized'))) {
+    return `${message}. X posting requires tweet.write scope and Read/Write app permissions. Reconnect X in Settings → Integrations, then try again.`;
+  }
+  return message;
+}
+
+async function requireXScopes(profileLabel: string | undefined, requiredScopes: string[]) {
+  const userId = requireUserId();
+  const profile = resolveProfile(profileLabel);
+  const acc = await getVMOAuthAccount('x', profile) || await getExternalAccount(userId, 'x', profile);
+  const scopes = Array.isArray(acc?.scopes) ? acc.scopes.map((s: any) => String(s)) : [];
+  if (!scopes.length) return;
+  const missing = requiredScopes.filter(scope => !scopes.includes(scope));
+  if (missing.length) {
+    throw new Error(`x_missing_scope: This X account is missing ${missing.join(', ')}. Reconnect X in Settings → Integrations so Stuard can request posting permissions.`);
+  }
+}
+
+function firstString(...values: any[]): string | undefined {
+  for (const value of values) {
+    const str = String(value || '').trim();
+    if (str) return str;
+  }
+  return undefined;
+}
+
+async function createXPost(input: { text: string; replyToTweetId?: string; profile?: string; opLabel: string }) {
+  const userId = requireUserId();
+  await gateCredits(userId);
+  await requireXScopes(input.profile, ['tweet.write']);
+  const payload: any = { text: input.text };
+  if (input.replyToTweetId) payload.reply = { in_reply_to_tweet_id: String(input.replyToTweetId) };
+  const { body } = await xFetch(`/tweets`, input.profile, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await meterX(userId, input.opLabel, X_PRICE_USD_POST);
+  return body;
 }
 
 function cleanUsername(username?: string): string | undefined {
@@ -553,20 +604,19 @@ export const x_post_tweet = createTool({
   inputSchema: z.object({
     text: z.string().min(1).max(280).describe('Tweet text (max 280 characters)'),
     reply_to_tweet_id: z.string().optional().describe('If set, post this tweet as a reply to the given tweet id.'),
+    post_id: z.string().optional().describe('Alias for reply_to_tweet_id when replying to a post.'),
+    tweet_id: z.string().optional().describe('Alias for reply_to_tweet_id when replying to a tweet.'),
     profile: profileField,
   }),
   execute: async (inputData) => {
-    const { text, reply_to_tweet_id, profile } = inputData as any;
-    const userId = requireUserId();
-    await gateCredits(userId);
-    const payload: any = { text };
-    if (reply_to_tweet_id) payload.reply = { in_reply_to_tweet_id: String(reply_to_tweet_id) };
-    const { body } = await xFetch(`/tweets`, profile, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    const { text, reply_to_tweet_id, post_id, tweet_id, profile } = inputData as any;
+    const replyToTweetId = firstString(reply_to_tweet_id, post_id, tweet_id);
+    const body = await createXPost({
+      text,
+      replyToTweetId,
+      profile,
+      opLabel: replyToTweetId ? 'reply_tweet' : 'post_tweet',
     });
-    await meterX(userId, reply_to_tweet_id ? 'reply_tweet' : 'post_tweet', X_PRICE_USD_POST);
     return {
       id: body?.data?.id || null,
       text: body?.data?.text || text,
@@ -581,27 +631,26 @@ export const x_comment_on_post = createTool({
   id: 'x_comment_on_post',
   description: 'Comment on an X/Twitter post by posting a reply to the post id.',
   inputSchema: z.object({
-    post_id: z.string().min(1).describe('The post id to comment on.'),
+    post_id: z.string().optional().describe('The post id to comment on.'),
+    tweet_id: z.string().optional().describe('Alias for post_id.'),
+    reply_to_tweet_id: z.string().optional().describe('Alias for post_id.'),
     text: z.string().min(1).max(280).describe('Comment text (max 280 characters).'),
     profile: profileField,
   }),
   execute: async (inputData) => {
-    const { post_id, text, profile } = inputData as any;
-    const userId = requireUserId();
-    await gateCredits(userId);
-    const { body } = await xFetch(`/tweets`, profile, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        reply: { in_reply_to_tweet_id: String(post_id) },
-      }),
+    const { post_id, tweet_id, reply_to_tweet_id, text, profile } = inputData as any;
+    const replyToTweetId = firstString(post_id, tweet_id, reply_to_tweet_id);
+    if (!replyToTweetId) throw new Error('post_id_required');
+    const body = await createXPost({
+      text,
+      replyToTweetId,
+      profile,
+      opLabel: 'comment_on_post',
     });
-    await meterX(userId, 'comment_on_post', X_PRICE_USD_POST);
     return {
       id: body?.data?.id || null,
       text: body?.data?.text || text,
-      in_reply_to_tweet_id: String(post_id),
+      in_reply_to_tweet_id: replyToTweetId,
       url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
     };
   },
@@ -613,27 +662,27 @@ export const x_reply_to_comment = createTool({
   id: 'x_reply_to_comment',
   description: 'Reply to an X/Twitter comment/reply by comment id.',
   inputSchema: z.object({
-    comment_id: z.string().min(1).describe('The comment/reply post id to reply to.'),
+    comment_id: z.string().optional().describe('The comment/reply post id to reply to.'),
+    post_id: z.string().optional().describe('Alias for comment_id.'),
+    tweet_id: z.string().optional().describe('Alias for comment_id.'),
+    reply_to_tweet_id: z.string().optional().describe('Alias for comment_id.'),
     text: z.string().min(1).max(280).describe('Reply text (max 280 characters).'),
     profile: profileField,
   }),
   execute: async (inputData) => {
-    const { comment_id, text, profile } = inputData as any;
-    const userId = requireUserId();
-    await gateCredits(userId);
-    const { body } = await xFetch(`/tweets`, profile, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        reply: { in_reply_to_tweet_id: String(comment_id) },
-      }),
+    const { comment_id, post_id, tweet_id, reply_to_tweet_id, text, profile } = inputData as any;
+    const replyToTweetId = firstString(comment_id, post_id, tweet_id, reply_to_tweet_id);
+    if (!replyToTweetId) throw new Error('comment_id_required');
+    const body = await createXPost({
+      text,
+      replyToTweetId,
+      profile,
+      opLabel: 'reply_comment',
     });
-    await meterX(userId, 'reply_comment', X_PRICE_USD_POST);
     return {
       id: body?.data?.id || null,
       text: body?.data?.text || text,
-      in_reply_to_tweet_id: String(comment_id),
+      in_reply_to_tweet_id: replyToTweetId,
       url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
     };
   },

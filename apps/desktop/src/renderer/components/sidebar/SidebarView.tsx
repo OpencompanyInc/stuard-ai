@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { GripVertical, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
+import { FolderKanban, GripVertical, ListTodo, Maximize2, Minimize2, Terminal, X } from 'lucide-react';
 import { XTerminalPanel } from '../XTerminalPanel';
 import { SidebarTodoPanel } from './SidebarTodoPanel';
+import { SidebarProjectsPanel } from './SidebarProjectsPanel';
 
-type SidebarTabId = 'terminal' | 'todo';
+type SidebarTabId = 'terminal' | 'todo' | 'projects';
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
@@ -12,6 +13,7 @@ const SIDEBAR_TABS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: 'todo', label: 'To-Do', icon: ListTodo },
+  { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
 ];
 
@@ -92,6 +94,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
     switch (activeTab) {
       case 'todo':
         return <SidebarTodoPanel className="w-full h-full" />;
+      case 'projects':
+        return <SidebarProjectsPanel className="w-full h-full" />;
       case 'terminal':
         return <XTerminalPanel onClose={onClose} className="w-full h-full" />;
       default:
@@ -136,8 +140,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                   className={clsx(
                     'relative flex items-center justify-center w-full h-10 rounded-xl transition-all duration-200',
                     isActive
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/60'
+                      ? 'bg-theme-hover/70 text-theme-fg'
+                      : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/40'
                   )}
                   title={tab.label}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -155,7 +159,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
 
                   {/* Active indicator bar */}
                   {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-theme-fg/70 rounded-r-full" />
                   )}
                 </button>
 
@@ -208,7 +212,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {currentTab && (
               <>
-                <currentTab.icon className="w-4 h-4 text-primary/70" />
+                <currentTab.icon className="w-4 h-4 text-theme-fg/70" />
                 <span className="text-[13px] font-bold text-theme-fg">{currentTab.label}</span>
               </>
             )}

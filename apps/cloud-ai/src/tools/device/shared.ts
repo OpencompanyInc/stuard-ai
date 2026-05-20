@@ -185,7 +185,7 @@ function injectLocalToolInput(
   inputData: any,
   secrets?: Record<string, any>,
 ) {
-  if (id.startsWith('bot_memory_')) {
+  if (id.startsWith('bot_memory_') || id.startsWith('agent_memory_')) {
     const base = inputData && typeof inputData === 'object' ? { ...(inputData as any) } : {};
     const proactiveBotId = String(base.__proactiveBotId || base.proactiveBotId || secrets?.proactiveBotId || '').trim();
     if (proactiveBotId) {
@@ -265,7 +265,7 @@ async function execViaVM(toolId: string, args: any, timeoutMs: number): Promise<
       userId,
       proactiveBotId: typeof args?.__proactiveBotId === 'string' ? args.__proactiveBotId : undefined,
     });
-    if (toolId.startsWith('bot_memory_')) {
+    if (toolId.startsWith('bot_memory_') || toolId.startsWith('agent_memory_')) {
       const result = await sendVMCommand(userId, toolId, effectiveArgs, timeoutMs);
       if (result.ok && result.result) return result.result;
       if (!result.ok && result.error === 'vm_not_reachable') return null;
@@ -514,12 +514,12 @@ export function makeLocalTool(
         return { ok: false, error: `VM execution requested but the VM agent is not reachable for ${id}.` };
       }
 
-      if (noFallback && id.startsWith('bot_memory_')) {
+      if (noFallback && (id.startsWith('bot_memory_') || id.startsWith('agent_memory_'))) {
         const t = typeof timeoutMs === 'function' ? (timeoutMs as any)(effectiveInput) : timeoutMs;
         const effectiveTimeout = typeof t === 'number' ? t : 15000;
         const vmResult = await execViaVM(id, effectiveInput, effectiveTimeout);
         if (vmResult !== null) return stripNulls(vmResult);
-        return { ok: false, error: `No desktop bridge or VM available. ${id} requires a running Stuard desktop app or deployed VM bot memory store.` };
+        return { ok: false, error: `No desktop bridge or VM available. ${id} requires a running Stuard desktop app or deployed VM agent memory store.` };
       }
 
       if (noFallback && id.startsWith('browser_use_')) {

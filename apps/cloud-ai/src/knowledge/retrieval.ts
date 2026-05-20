@@ -24,6 +24,10 @@ export interface Fact {
   validity: boolean;
   source: string;
   vector?: number[];
+  // Forward-compat for P6 conversation-thread continuity boost. Populated
+  // once `knowledge_search_facts` is updated to return it (see plan B-step).
+  source_conversation_id?: string | null;
+  confidence?: number;
 }
 
 export interface Entity {
@@ -50,14 +54,35 @@ export interface PendingMemory {
 export interface ContextLenses {
   identity: Fact[];
   directives: Fact[];
+  /** First active entity context, kept for backward compat. Equivalent to `activeEntities[0]`. */
   activeEntity?: { entity: Entity; facts: Fact[] };
+  /** P3: up to 2 active entity contexts, so multi-entity queries don't lose half. */
+  activeEntities: Array<{ entity: Entity; facts: Fact[] }>;
   bio: Fact[];
   globalSearch: Array<{ fact: Fact; score: number }>;
   pendingMemories: PendingMemory[];
 }
 
+/** Stable identifiers for each knowledge-context section. The caller applies
+ *  per-key character budgets so highly-stable sections (identity, directives)
+ *  never get truncated when a noisy section (e.g. relevant memories) exceeds
+ *  its budget. */
+export type KnowledgeSectionKey =
+  | 'USER_IDENTITY'
+  | 'PROFILE_DETAILS_NEEDED'
+  | 'SYSTEM_INSTRUCTIONS'
+  | 'CURRENT_CONTEXT'
+  | 'ABOUT_USER'
+  | 'RELEVANT_MEMORIES'
+  | 'RELEVANT_COLLECTIONS'
+  | 'PAST_CONTEXT'
+  | 'PENDING_MEMORIES';
+
 export interface BuiltContext {
+  /** Concatenated section text — kept for legacy callers; new callers should
+   *  prefer `sections` so they can apply per-section budgets. */
   text: string;
+  sections: Array<{ key: KnowledgeSectionKey; text: string }>;
   lenses: ContextLenses;
   detectedEntities: string[];
 }
@@ -234,31 +259,37 @@ export async function searchGlobalFacts(
 
 /**
  * Compute a composite retrieval score from multiple signals.
+ *
+ * Used for both facts and segments — pass `confidence: 1.0` for segments
+ * (segments don't carry per-row confidence). The `conversationBoost` option
+ * adds extra score when the item came from the active conversation (or a
+ * sibling conversation in the same project).
  */
-function computeCompositeScore(
+export function computeCompositeScore(
   cosineSimilarity: number,
-  fact: { created_at?: string; confidence?: number; source?: string },
-  options?: { temporalBoost?: boolean },
+  item: { created_at?: string; confidence?: number; source?: string },
+  options?: { temporalBoost?: boolean; conversationBoost?: number },
 ): number {
   // Recency boost: linearly decays to 0 over 365 days
   let recencyBoost = 0;
   try {
-    const createdMs = Date.parse(String(fact.created_at || ''));
+    const createdMs = Date.parse(String(item.created_at || ''));
     if (Number.isFinite(createdMs)) {
       const daysSince = (Date.now() - createdMs) / (86400 * 1000);
       recencyBoost = Math.max(0, 1 - daysSince / 365);
     }
   } catch {}
 
-  const confidence = typeof fact.confidence === 'number' ? Math.max(0, Math.min(1, fact.confidence)) : 1.0;
-  const sourceBonus = fact.source === 'user_manual' ? 1.0 : 0.0;
+  const confidence = typeof item.confidence === 'number' ? Math.max(0, Math.min(1, item.confidence)) : 1.0;
+  const sourceBonus = item.source === 'user_manual' ? 1.0 : 0.0;
+  const conversationBoost = typeof options?.conversationBoost === 'number' ? options.conversationBoost : 0;
 
-  let score = 0.60 * cosineSimilarity + 0.20 * recencyBoost + 0.15 * confidence + 0.05 * sourceBonus;
+  let score = 0.60 * cosineSimilarity + 0.20 * recencyBoost + 0.15 * confidence + 0.05 * sourceBonus + conversationBoost;
 
-  // Extra boost for recent facts when temporal intent detected
+  // Extra boost for recent items when temporal intent detected
   if (options?.temporalBoost) {
     try {
-      const createdMs = Date.parse(String(fact.created_at || ''));
+      const createdMs = Date.parse(String(item.created_at || ''));
       if (Number.isFinite(createdMs)) {
         const daysSince = (Date.now() - createdMs) / (86400 * 1000);
         if (daysSince <= 30) score *= 1.5;
@@ -273,15 +304,20 @@ function computeCompositeScore(
  * Maximal Marginal Relevance reranking for diversity.
  * Balances relevance with diversity by penalising candidates similar
  * to already-selected results.
+ *
+ * Generic across item types (facts, segments, etc.) — `getItem` projects out
+ * the payload to return. Missing vectors degrade gracefully (no diversity
+ * penalty applies, equivalent to pure score-order top-k).
  */
-function mmrRerank(
-  candidates: Array<{ fact: Fact; score: number; vector?: number[] }>,
+export function mmrRerank<TCandidate extends { score: number; vector?: number[] }, TResult>(
+  candidates: TCandidate[],
   k: number,
-  lambda: number = 0.7,
-): Array<{ fact: Fact; score: number }> {
-  if (candidates.length <= k) return candidates.map((c) => ({ fact: c.fact, score: c.score }));
+  lambda: number,
+  getItem: (candidate: TCandidate) => TResult,
+): Array<{ item: TResult; score: number }> {
+  if (candidates.length <= k) return candidates.map((c) => ({ item: getItem(c), score: c.score }));
 
-  const selected: Array<{ fact: Fact; score: number; vector?: number[] }> = [];
+  const selected: TCandidate[] = [];
   const remaining = [...candidates];
 
   // Pick the highest-scored first
@@ -315,10 +351,10 @@ function mmrRerank(
     selected.push(remaining.splice(bestIdx, 1)[0]);
   }
 
-  return selected.map((c) => ({ fact: c.fact, score: c.score }));
+  return selected.map((c) => ({ item: getItem(c), score: c.score }));
 }
 
-function cosineSim(a: number[], b: number[]): number {
+export function cosineSim(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0,
     normA = 0,
@@ -333,10 +369,69 @@ function cosineSim(a: number[], b: number[]): number {
 }
 
 /** Detect whether the user message expresses temporal intent */
-function hasTemporalIntent(message: string): boolean {
+export function hasTemporalIntent(message: string): boolean {
   const lower = message.toLowerCase();
   const keywords = ['recently', 'lately', 'last week', 'this week', 'this month', 'last month', 'just', 'yesterday', 'today', 'few days ago'];
   return keywords.some((kw) => lower.includes(kw));
+}
+
+/**
+ * Score, dedup, and MMR-rerank a batch of fact search hits. Pulled out of
+ * `buildKnowledgeContext` so the parallel and embed-fallback paths share the
+ * same scoring logic.
+ *
+ * P6: when `activeConversationId` is provided, facts whose
+ * `source_conversation_id` matches get a +0.10 score boost — surfaces facts
+ * the user established in *this* conversation ahead of unrelated ones.
+ */
+function scoreAndRerankFacts(
+  searchResults: Array<{ fact: Fact; score: number }>,
+  entityContextFacts: Fact[],
+  maxResults: number,
+  userMessage: string,
+  activeConversationId?: string | null,
+): Array<{ fact: Fact; score: number }> {
+  const entityFactIds = new Set(entityContextFacts.map((f) => f.id));
+  const filtered = searchResults.filter((r) => !entityFactIds.has(r.fact.id));
+  const temporalBoost = hasTemporalIntent(userMessage);
+
+  const scored = filtered.map((r) => {
+    const conversationBoost = activeConversationId
+      && r.fact.source_conversation_id
+      && String(r.fact.source_conversation_id) === activeConversationId
+      ? 0.10
+      : 0;
+    return {
+      fact: r.fact,
+      score: computeCompositeScore(r.score, {
+        created_at: r.fact.created_at,
+        confidence: r.fact.confidence,
+        source: r.fact.source,
+      }, { temporalBoost, conversationBoost }),
+      vector: r.fact.vector || undefined,
+    };
+  });
+
+  return mmrRerank(scored, maxResults, 0.7, (c) => c.fact)
+    .map(({ item, score }) => ({ fact: item, score }));
+}
+
+/**
+ * Render the `[RELEVANT MEMORIES]` block with provenance.
+ *
+ * P2: each line shows date (YYYY-MM-DD) and a `(user)` marker when the fact
+ * came from explicit user statements. Lets the model say "you mentioned this
+ * on Apr 10" without having to invent the date.
+ */
+function renderRelevantMemoriesBlock(reranked: Array<{ fact: Fact; score: number }>): string {
+  const lines = ['[RELEVANT MEMORIES]'];
+  for (const { fact } of reranked) {
+    const dateStr = String(fact.created_at || '').slice(0, 10);
+    const userMark = fact.source === 'user_manual' ? ' (user)' : '';
+    const prefix = dateStr ? `${dateStr}${userMark}: ` : '';
+    lines.push(`- ${prefix}${fact.text}`);
+  }
+  return lines.join('\n');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +451,11 @@ export async function buildKnowledgeContext(
     maxGlobalFacts?: number;
     detectEntities?: boolean;
     queryEmbedding?: number[];
+    /**
+     * Active conversation id — when set, facts that originated in this
+     * conversation get a small score boost (P6 continuity).
+     */
+    activeConversationId?: string | null;
   }
 ): Promise<BuiltContext> {
   const opts = {
@@ -365,18 +465,23 @@ export async function buildKnowledgeContext(
     includePendingMemories: true,
     maxGlobalFacts: 8,
     detectEntities: true,
+    activeConversationId: null as string | null | undefined,
     ...options,
   };
 
   const lenses: ContextLenses = {
     identity: [],
     directives: [],
+    activeEntities: [],
     bio: [],
     globalSearch: [],
     pendingMemories: [],
   };
 
-  const sections: string[] = [];
+  const sectionList: Array<{ key: KnowledgeSectionKey; text: string }> = [];
+  const pushSection = (key: KnowledgeSectionKey, text: string) => {
+    if (text.trim()) sectionList.push({ key, text });
+  };
 
   // Resolve embedding upfront (needed by searchGlobalFacts in the parallel batch)
   const embeddingVec = opts.queryEmbedding && opts.queryEmbedding.length > 0
@@ -392,16 +497,18 @@ export async function buildKnowledgeContext(
     opts.includeDirectives ? getDirectiveLens() : Promise.resolve([]),
     opts.includeBio ? getBioLens() : Promise.resolve([]),
     opts.includePendingMemories ? getPendingMemoriesLens() : Promise.resolve([]),
-    // Chain: detectEntities → getEntityContext (runs in parallel with everything else)
+    // Chain: detectEntities → getEntityContext (runs in parallel with everything else).
+    // P3: fetch context for up to 2 detected entities (was previously only detected[0]),
+    // so multi-entity queries like "compare A vs B" don't lose half the context.
     opts.detectEntities
-      ? detectEntities(userMessage).then(async (detected): Promise<{ context: Awaited<ReturnType<typeof getEntityContext>> | null; names: string[] }> => {
-          if (detected.length > 0) {
-            const ctx = await getEntityContext(detected[0]);
-            return { context: ctx, names: detected };
-          }
-          return { context: null, names: detected };
-        }).catch(() => ({ context: null, names: [] as string[] }))
-      : Promise.resolve({ context: null, names: [] as string[] }),
+      ? detectEntities(userMessage).then(async (detected): Promise<{ contexts: Array<NonNullable<Awaited<ReturnType<typeof getEntityContext>>>>; names: string[] }> => {
+          const top = detected.slice(0, 2);
+          if (top.length === 0) return { contexts: [], names: detected };
+          const fetched = await Promise.all(top.map((name) => getEntityContext(name).catch(() => null)));
+          const contexts = fetched.filter((c): c is NonNullable<typeof c> => c !== null);
+          return { contexts, names: detected };
+        }).catch(() => ({ contexts: [] as Array<NonNullable<Awaited<ReturnType<typeof getEntityContext>>>>, names: [] as string[] }))
+      : Promise.resolve({ contexts: [] as Array<NonNullable<Awaited<ReturnType<typeof getEntityContext>>>>, names: [] as string[] }),
     // Global semantic search runs in parallel (only needs embedding, not entity results)
     opts.maxGlobalFacts > 0 && embeddingVec
       ? searchGlobalFacts(embeddingVec, fetchLimit, 0.45).catch(() => [] as Awaited<ReturnType<typeof searchGlobalFacts>>)
@@ -428,7 +535,7 @@ export async function buildKnowledgeContext(
       const key = f.attribute_key || 'info';
       lines.push(`${formatKey(key)}: ${f.text}`);
     }
-    sections.push(lines.join('\n'));
+    pushSection('USER_IDENTITY', lines.join('\n'));
   }
 
   if (missingProfileKeys.size > 0) {
@@ -439,7 +546,7 @@ export async function buildKnowledgeContext(
     for (const key of missingProfileKeys) {
       lines.push(`- ${formatKey(key)}`);
     }
-    sections.push(lines.join('\n'));
+    pushSection('PROFILE_DETAILS_NEEDED', lines.join('\n'));
   }
 
   // Layer 2: Directives
@@ -448,22 +555,28 @@ export async function buildKnowledgeContext(
     for (const f of directiveFacts) {
       lines.push(`- ${f.text}`);
     }
-    sections.push(lines.join('\n'));
+    pushSection('SYSTEM_INSTRUCTIONS', lines.join('\n'));
   }
 
-  // Layer 3: Active Focus (entity context — already resolved in parallel)
-  const entityContext = entityResult.context;
+  // Layer 3: Active Focus (entity context — already resolved in parallel).
+  // P3: render up to 2 entity blocks. Each block is capped at 5 facts so two
+  // entities together stay roughly equivalent in size to the old 10-fact
+  // single-entity block.
+  const entityContexts = entityResult.contexts;
   const detectedEntities = entityResult.names;
-  if (entityContext) {
-    lenses.activeEntity = entityContext;
-    const lines = [`[CURRENT CONTEXT: ${entityContext.entity.name}]`];
-    if (entityContext.entity.summary) {
-      lines.push(`Summary: ${entityContext.entity.summary}`);
+  if (entityContexts.length > 0) {
+    lenses.activeEntities = entityContexts;
+    lenses.activeEntity = entityContexts[0]; // backward-compat alias
+    for (const entityContext of entityContexts) {
+      const lines = [`[CURRENT CONTEXT: ${entityContext.entity.name}]`];
+      if (entityContext.entity.summary) {
+        lines.push(`Summary: ${entityContext.entity.summary}`);
+      }
+      for (const f of entityContext.facts.slice(0, 5)) {
+        lines.push(`- ${f.text}`);
+      }
+      pushSection('CURRENT_CONTEXT', lines.join('\n'));
     }
-    for (const f of entityContext.facts.slice(0, 10)) {
-      lines.push(`- ${f.text}`);
-    }
-    sections.push(lines.join('\n'));
   }
 
   // Layer 4: Bio (if requested)
@@ -472,39 +585,23 @@ export async function buildKnowledgeContext(
     for (const f of bioFacts) {
       lines.push(`- ${f.text}`);
     }
-    sections.push(lines.join('\n'));
+    pushSection('ABOUT_USER', lines.join('\n'));
   }
 
   // Layer 5: Global search — results already fetched in parallel, apply scoring + dedup
   if (opts.maxGlobalFacts > 0 && globalSearchResults.length > 0) {
     try {
-      // Filter out facts already shown in entity context
-      const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);
-      const filtered = globalSearchResults.filter(r => !entityFactIds.has(r.fact.id));
-
-      // Apply composite scoring (cosine + recency + confidence + source)
-      const temporalBoost = hasTemporalIntent(userMessage);
-      const scored = filtered.map((r) => ({
-        fact: r.fact,
-        score: computeCompositeScore(r.score, {
-          created_at: r.fact.created_at,
-          confidence: (r.fact as any).confidence,
-          source: r.fact.source,
-        }, { temporalBoost }),
-        vector: r.fact.vector || undefined,
-      }));
-
-      // Apply MMR reranking for diversity
-      const reranked = mmrRerank(scored, opts.maxGlobalFacts, 0.7);
-
+      const reranked = scoreAndRerankFacts(
+        globalSearchResults,
+        lenses.activeEntities.flatMap((ec) => ec.facts),
+        opts.maxGlobalFacts,
+        userMessage,
+        opts.activeConversationId,
+      );
       lenses.globalSearch = reranked;
 
       if (reranked.length > 0) {
-        const lines = ['[RELEVANT MEMORIES]'];
-        for (const { fact } of reranked) {
-          lines.push(`- ${fact.text}`);
-        }
-        sections.push(lines.join('\n'));
+        pushSection('RELEVANT_MEMORIES', renderRelevantMemoriesBlock(reranked));
       }
     } catch (error) {
       writeLog('global_search_embed_error', { error: String(error) });
@@ -517,26 +614,16 @@ export async function buildKnowledgeContext(
         value: userMessage,
       })).embedding;
       const searchResults = await searchGlobalFacts(fallbackVec, fetchLimit, 0.45);
-      const entityFactIds = new Set(lenses.activeEntity?.facts.map(f => f.id) || []);
-      const filtered = searchResults.filter(r => !entityFactIds.has(r.fact.id));
-      const temporalBoost = hasTemporalIntent(userMessage);
-      const scored = filtered.map((r) => ({
-        fact: r.fact,
-        score: computeCompositeScore(r.score, {
-          created_at: r.fact.created_at,
-          confidence: (r.fact as any).confidence,
-          source: r.fact.source,
-        }, { temporalBoost }),
-        vector: r.fact.vector || undefined,
-      }));
-      const reranked = mmrRerank(scored, opts.maxGlobalFacts, 0.7);
+      const reranked = scoreAndRerankFacts(
+        searchResults,
+        lenses.activeEntities.flatMap((ec) => ec.facts),
+        opts.maxGlobalFacts,
+        userMessage,
+        opts.activeConversationId,
+      );
       lenses.globalSearch = reranked;
       if (reranked.length > 0) {
-        const lines = ['[RELEVANT MEMORIES]'];
-        for (const { fact } of reranked) {
-          lines.push(`- ${fact.text}`);
-        }
-        sections.push(lines.join('\n'));
+        pushSection('RELEVANT_MEMORIES', renderRelevantMemoriesBlock(reranked));
       }
     } catch (error) {
       writeLog('global_search_embed_error', { error: String(error) });
@@ -552,11 +639,12 @@ export async function buildKnowledgeContext(
       lines.push(`  → Would ${pm.proposed_action}${pm.proposed_key ? ` (${pm.proposed_key})` : ''}: "${pm.proposed_value}"`);
       lines.push(`  → Uncertain because: ${pm.confidence_reason}`);
     }
-    sections.push(lines.join('\n'));
+    pushSection('PENDING_MEMORIES', lines.join('\n'));
   }
 
   return {
-    text: sections.join('\n\n'),
+    text: sectionList.map((s) => s.text).join('\n\n'),
+    sections: sectionList,
     lenses,
     detectedEntities,
   };

@@ -13,6 +13,7 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import type { VoiceProvider, VoiceSession, VoiceSessionConfig, AudioFormat } from './types';
+import { computeVoiceCostUsd } from './voice-pricing';
 
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 const DEFAULT_MODEL = 'gpt-4o-realtime-preview';
@@ -27,6 +28,7 @@ class OpenAIRealtimeSession implements VoiceSession {
   private _active = false;
   private _responding = false;
   private config: VoiceSessionConfig;
+  private resolvedModelId = '';
 
   constructor(config: VoiceSessionConfig) {
     this.id = `oai_${randomUUID().slice(0, 12)}`;
@@ -38,6 +40,7 @@ class OpenAIRealtimeSession implements VoiceSession {
     if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
     const model = this.config.model || DEFAULT_MODEL;
+    this.resolvedModelId = model;
     const wsUrl = `${OPENAI_REALTIME_URL}?model=${encodeURIComponent(model)}`;
 
     this.ws = new WebSocket(wsUrl, {
@@ -132,6 +135,16 @@ class OpenAIRealtimeSession implements VoiceSession {
 
           if (msg.type === 'response.done' || msg.type === 'response.cancelled') {
             this._responding = false;
+            // response.done carries this turn's usage. Forward to the bridge
+            // so credits debit live; cancelled responses still report partial
+            // usage so we don't bill for tokens the user didn't consume in
+            // a complete way but we also don't drop already-spent tokens.
+            const usage = msg.response?.usage;
+            if (usage) {
+              try { this.emitUsage(usage); } catch (err: any) {
+                console.warn('[openai-realtime] usage emit failed:', err?.message);
+              }
+            }
           }
 
           if (msg.type === 'response.audio_transcript.done') {
@@ -185,6 +198,45 @@ class OpenAIRealtimeSession implements VoiceSession {
           reject(err);
         }
       });
+    });
+  }
+
+  private emitUsage(usage: any): void {
+    const inDetails = usage?.input_token_details || {};
+    const outDetails = usage?.output_token_details || {};
+    const textIn = Math.max(0, Number(inDetails.text_tokens || 0));
+    const audioIn = Math.max(0, Number(inDetails.audio_tokens || 0));
+    const cachedIn = Math.max(0, Number(inDetails.cached_tokens || 0));
+    const textOut = Math.max(0, Number(outDetails.text_tokens || 0));
+    const audioOut = Math.max(0, Number(outDetails.audio_tokens || 0));
+
+    // Fall back to flat totals when token details aren't present (older API
+    // versions, partial responses).
+    let resolvedIn = textIn + audioIn;
+    if (resolvedIn === 0) resolvedIn = Math.max(0, Number(usage?.input_tokens || 0));
+    let resolvedOut = textOut + audioOut;
+    if (resolvedOut === 0) resolvedOut = Math.max(0, Number(usage?.output_tokens || 0));
+    if (resolvedIn + resolvedOut === 0) return;
+
+    const costUsd = computeVoiceCostUsd('openai-realtime', this.resolvedModelId, {
+      textInputTokens: textIn || resolvedIn,
+      audioInputTokens: audioIn,
+      textOutputTokens: textOut,
+      audioOutputTokens: audioOut || resolvedOut,
+      cachedInputTokens: cachedIn,
+    });
+
+    this.config.onUsage?.({
+      model: `openai/${this.resolvedModelId}`,
+      inputTokens: resolvedIn,
+      outputTokens: resolvedOut,
+      cachedInputTokens: cachedIn,
+      inputTextTokens: textIn,
+      inputAudioTokens: audioIn,
+      outputTextTokens: textOut,
+      outputAudioTokens: audioOut,
+      costUsd,
+      raw: usage,
     });
   }
 

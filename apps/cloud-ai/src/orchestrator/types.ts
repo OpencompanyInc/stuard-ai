@@ -18,7 +18,7 @@ export interface SubagentCorrelation {
 
 // ─── Capability Pack ─────────────────────────────────────────────────────────
 
-export type SubagentKind = 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'media' | 'vm' | 'bot' | 'integration' | 'custom';
+export type SubagentKind = 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'media' | 'vm' | 'bot' | 'agent' | 'integration' | 'custom';
 
 export interface CapabilityPack {
   kind: SubagentKind;
@@ -93,6 +93,8 @@ export interface DelegationRequest {
   kind: SubagentKind;
   instruction: string;
   context?: string;
+  targetAgentId?: string;
+  targetAgentName?: string;
   timeoutMs?: number;
   /** Override the default capability pack tool names */
   extraToolNames?: string[];

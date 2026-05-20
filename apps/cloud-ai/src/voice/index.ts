@@ -16,6 +16,7 @@ export type {
   VoiceSession,
   VoiceSessionConfig,
   VoiceToolDefinition,
+  VoiceUsageEvent,
   AudioFormat,
   TelephonyBridgeConfig,
   ActiveCall,

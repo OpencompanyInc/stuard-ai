@@ -317,3 +317,4 @@ e2e-results/
 tmp/
 temp/
 .cache/
+.vercel

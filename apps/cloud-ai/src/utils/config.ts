@@ -39,7 +39,9 @@ export const DEFAULT_EMBEDDER = process.env.MEMORY_EMBEDDER_MODEL || process.env
 
 export const PORT = Number(process.env.PORT || process.env.CLOUD_AI_PORT || 8082);
 export const ENABLE_ROUTING = process.env.ENABLE_ROUTING !== '0';
-export const REQUIRE_AUTH = process.env.REQUIRE_AUTH === '1';
+export const REQUIRE_AUTH = IS_DEVELOPMENT
+  ? process.env.REQUIRE_AUTH === '1'
+  : process.env.REQUIRE_AUTH !== '0';
 export const MAX_STEPS_CAP = Number(process.env.MASTRA_MAX_STEPS_CAP || 50);
 export const DEFAULT_MAX_STEPS = Number(process.env.MASTRA_MAX_STEPS || process.env.MAX_STEPS || 25);
 
@@ -122,8 +124,8 @@ export const LOG_BASENAME = clean(process.env.CLOUD_LOG_BASENAME || 'cloud-ai');
 export const PERPLEXITY_API_KEY = clean(process.env.PERPLEXITY_API_KEY || '');
 export const TAVILY_API_KEY = clean(process.env.TAVILY_API_KEY || '');
 
-// Dev mode bypasses credit/usage checks for local development
-export const DEV_MODE = process.env.DEV_MODE === '1' || process.env.NODE_ENV === 'development';
+// Dev mode bypasses credit/usage checks only for explicit local development.
+export const DEV_MODE = IS_DEVELOPMENT && process.env.DEV_MODE === '1';
 
 // LEGACY: env-based fallback when no DB profile exists.
 // The real sync_accounts preference is read from the user's profile row in Supabase.

@@ -5,6 +5,9 @@ import { getBotAgentForUser } from '../../agents/bot-agent';
 import { getWorkflowAgentForUser } from '../../agents/workflow-agent';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
 import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
+import type { OrchestratorPromptOptions } from '../../orchestrator/orchestrator-agent';
+import { execLocalTool, hasClientBridge } from '../../tools/bridge';
+import type { JournalEntryPayload, ProjectContextPayload } from '../../agents/stuard/prompts';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
 import {
@@ -38,20 +41,34 @@ interface PrepareChatRequestArgs {
 }
 
 function extractBotPromptSummaries(context: any): BotPromptSummary[] {
-  const fromArrays = [
+  const fromBotArrays = [
     context?.runningBots,
     context?.bots,
     context?.availableBots,
     context?.botSummaries,
-  ].flatMap((value) => Array.isArray(value) ? value : []);
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'bot' })) : []);
+
+  const fromAgentArrays = [
+    context?.runningAgents,
+    context?.agents,
+    context?.availableAgents,
+    context?.agentSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'agent' })) : []);
 
   const fromPaths = (Array.isArray(context?.paths) ? context.paths : [])
-    .filter((path: any) => path?.type === 'bot' || String(path?.path || '').startsWith('bot://'))
+    .filter((path: any) => (
+      path?.type === 'bot'
+      || path?.type === 'agent'
+      || String(path?.path || '').startsWith('bot://')
+      || String(path?.path || '').startsWith('agent://')
+    ))
     .map((path: any) => {
       const metadata = path?.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+      const kind = path?.type === 'agent' || String(path?.path || '').startsWith('agent://') ? 'agent' : 'bot';
       return {
-        id: String(metadata.id || path.path || '').replace(/^bot:\/\//, ''),
+        id: String(metadata.id || path.path || '').replace(/^(bot|agent):\/\//, ''),
         name: String(path.name || metadata.name || '').trim(),
+        kind,
         status: metadata.status,
         lastRunAt: metadata.lastRunAt,
         nextRunAt: metadata.nextRunAt,
@@ -60,10 +77,11 @@ function extractBotPromptSummaries(context: any): BotPromptSummary[] {
     });
 
   const seen = new Set<string>();
-  return [...fromArrays, ...fromPaths]
+  return [...fromBotArrays, ...fromAgentArrays, ...fromPaths]
     .map((bot: any) => ({
-      id: String(bot?.id || bot?.botId || '').trim(),
-      name: String(bot?.name || bot?.botName || '').trim(),
+      id: String(bot?.id || bot?.agentId || bot?.botId || '').trim(),
+      name: String(bot?.name || bot?.agentName || bot?.botName || '').trim(),
+      kind: bot?.kind === 'agent' ? 'agent' as const : 'bot' as const,
       status: bot?.status ? String(bot.status) : undefined,
       lastRunAt: bot?.lastRunAt ?? null,
       nextRunAt: bot?.nextRunAt ?? null,
@@ -150,7 +168,7 @@ export async function prepareChatRequest({
     secretBag.__modelId = chosenModelId;
   }
   if (modelSource) {
-    secretBag.__modelSource = modelSource;
+    secretBag.__requestedModelSource = modelSource;
   }
 
   // Surface how the model got picked. We hit a regression where users had a
@@ -221,24 +239,6 @@ export async function prepareChatRequest({
   const contextPathsForMeta = Array.isArray(msg?.context?.paths) ? msg.context.paths : undefined;
   const attachmentDescriptorsForMeta = buildAttachmentMetadata(msg?.attachments);
 
-  const agent = await resolveAgent({
-    agentType,
-    msg,
-    providedMessages,
-    routedTier,
-    chosenModelId,
-    enabledIntegrations,
-    mcpTools,
-    workflowModelId,
-    modelSource,
-    ws,
-    requestId,
-    userId: authUser?.userId || null,
-  });
-  if (!agent) {
-    return null;
-  }
-
   const { conversationId, conversationCreatedNow } = await resolveConversation({
     ws,
     msg,
@@ -255,6 +255,35 @@ export async function prepareChatRequest({
     agentType,
   });
 
+  // Project Mode: if this conversation is already stamped with a project_id,
+  // pull the project + recent journal so the orchestrator prompt can lock onto
+  // it. Skipped for fresh conversations (no project yet) and for bot/workflow
+  // agents which don't run the orchestrator prompt.
+  const promptOptions = await resolveProjectPromptOptions({
+    agentType,
+    conversationId,
+    conversationCreatedNow,
+  });
+
+  const agent = await resolveAgent({
+    agentType,
+    msg,
+    providedMessages,
+    routedTier,
+    chosenModelId,
+    enabledIntegrations,
+    mcpTools,
+    workflowModelId,
+    modelSource,
+    ws,
+    requestId,
+    userId: authUser?.userId || null,
+    promptOptions,
+  });
+  if (!agent) {
+    return null;
+  }
+
   const { resource, thread } = resolveMemoryContext(ws, msg, authUser?.userId || '', conversationId);
   const inputMessages = await buildInputMessages({
     msg,
@@ -264,6 +293,7 @@ export async function prepareChatRequest({
     enabledIntegrations: agentType === 'bot' ? [] : enabledIntegrations,
     agentType,
     agent,
+    conversationId,
   });
 
   if (authUser && conversationId && !conversationCreatedNow) {
@@ -278,6 +308,10 @@ export async function prepareChatRequest({
       });
     } catch { }
   }
+
+  const resolvedModelSource = typeof (agent as any)?.__modelSource === 'string'
+    ? (agent as any).__modelSource
+    : undefined;
 
   return {
     ws,
@@ -307,7 +341,7 @@ export async function prepareChatRequest({
       agentType,
       workflowModelId,
       chosenModelId,
-      modelSource,
+      modelSource: resolvedModelSource,
       modelLabel,
       msg,
     }),
@@ -570,6 +604,72 @@ interface ResolveAgentArgs {
   userId?: string | null;
   ws: WebSocket;
   requestId?: string;
+  promptOptions?: OrchestratorPromptOptions;
+}
+
+async function resolveProjectPromptOptions(args: {
+  agentType: AgentType;
+  conversationId: string | null;
+  conversationCreatedNow: boolean;
+}): Promise<OrchestratorPromptOptions> {
+  const { agentType, conversationId, conversationCreatedNow } = args;
+  const base: OrchestratorPromptOptions = { conversationId: conversationId || null };
+
+  if (agentType !== 'stuard') return base;
+  if (!conversationId) return base;
+  if (!hasClientBridge()) return base;
+  // Brand-new conversations can't have a project yet — skip the bridge round-trip.
+  if (conversationCreatedNow) return base;
+
+  try {
+    const convoResult = await execLocalTool(
+      'conversation_get',
+      { conversation_id: conversationId },
+      undefined,
+      5000,
+      { silent: true },
+    );
+    const projectId: string | undefined = convoResult?.conversation?.project_id;
+    if (!projectId) return base;
+
+    const [projectResult, journalResult] = await Promise.all([
+      execLocalTool('project_get', { project_id: projectId }, undefined, 5000, { silent: true }),
+      execLocalTool('journal_list', { project_id: projectId, limit: 5 }, undefined, 5000, { silent: true }),
+    ]);
+
+    const project = projectResult?.project;
+    if (!project) return base;
+
+    const activeProject: ProjectContextPayload = {
+      id: String(project.id),
+      name: String(project.name || 'Untitled project'),
+      description: project.description ?? null,
+      goals: project.goals ?? null,
+      status: project.status ?? null,
+      tags: Array.isArray(project.tags) ? project.tags : [],
+      pinned_paths: Array.isArray(project.pinned_paths) ? project.pinned_paths : [],
+      digest: project.digest ?? null,
+      icon: project.icon ?? null,
+      color: project.color ?? null,
+    };
+
+    const recentJournal: JournalEntryPayload[] = Array.isArray(journalResult?.entries)
+      ? journalResult.entries.map((entry: any) => ({
+          ts: String(entry?.ts || entry?.created_at || ''),
+          type: String(entry?.type || 'note'),
+          title: String(entry?.title || ''),
+          body: entry?.body ?? null,
+        }))
+      : [];
+
+    return { conversationId, activeProject, recentJournal };
+  } catch (error: any) {
+    writeLog('project_context_resolve_failed', {
+      conversationId,
+      error: error?.message || String(error),
+    });
+    return base;
+  }
 }
 
 async function resolveAgent({
@@ -585,6 +685,7 @@ async function resolveAgent({
   userId,
   ws,
   requestId,
+  promptOptions,
 }: ResolveAgentArgs) {
   if (agentType === 'workflow') {
     return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId, userId, modelSource);
@@ -617,6 +718,7 @@ async function resolveAgent({
     bots,
     userId,
     modelSource,
+    promptOptions,
   );
 }
 

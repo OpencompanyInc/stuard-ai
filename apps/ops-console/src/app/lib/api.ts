@@ -3,8 +3,6 @@
 // No external cloud-ai dependency needed.
 
 function getToken() {
-  // Use env token first (set in .env.local), fall back to localStorage
-  if (process.env.NEXT_PUBLIC_OPS_ACCESS_TOKEN) return process.env.NEXT_PUBLIC_OPS_ACCESS_TOKEN;
   return typeof window !== 'undefined' ? localStorage.getItem('stuard_access_token') : null;
 }
 

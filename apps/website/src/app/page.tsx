@@ -1,16 +1,23 @@
 import HeroSection from '@/components/sections/HeroSection';
-import FeatureScrollSection from '@/components/sections/FeatureScrollSection';
+import BeyondTheChatSection from '@/components/sections/BeyondTheChatSection';
+import ConnectedAppsSection from '@/components/sections/ConnectedAppsSection';
+import HowItWorksIntroSection from '@/components/sections/HowItWorksIntroSection';
+import MarketplacePromoSection from '@/components/sections/MarketplacePromoSection';
+import CloudAgentsSection from '@/components/sections/CloudAgentsSection';
+import PrivacySection from '@/components/sections/PrivacySection';
+import PricingSection from '@/components/sections/PricingSection';
+import ClosingCTASection from '@/components/sections/ClosingCTASection';
 
 export default function Home() {
-  // Organization Schema for Google Knowledge Graph
   const organizationSchema = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: 'Stuard AI',
     alternateName: ['Stuard', 'Steward AI', 'Stuart AI'],
     url: 'https://stuard.ai',
-    logo: 'https://stuard.ai/icon.svg',
-    description: 'A local-first desktop AI assistant that builds tools and automates workflows while keeping your data private.',
+    logo: 'https://stuard.ai/stuard-mark.png',
+    description:
+      'Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.',
     foundingDate: '2024',
     sameAs: [
       'https://twitter.com/stuardai',
@@ -24,14 +31,13 @@ export default function Home() {
     },
   };
 
-  // Software Application Schema
   const softwareSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     name: 'Stuard AI',
     alternateName: ['Stuard', 'Steward AI', 'Stuart AI'],
     applicationCategory: 'ProductivityApplication',
-    operatingSystem: 'Windows 10, Windows 11, macOS, Linux',
+    operatingSystem: 'Windows 10, Windows 11',
     offers: {
       '@type': 'Offer',
       price: '0',
@@ -44,13 +50,14 @@ export default function Home() {
       ratingValue: '4.8',
       ratingCount: '150',
     },
-    description: "Stuard is a local-first desktop assistant that handles computer chores, builds tools, and automates workflows while keeping your data private. It combines the ease of a chatbot with the power of automation.",
+    description:
+      'Stuard is a local-first AI workspace for your PC. Chat, build workflows, install mini-apps, and run proactive agents on your machine — cloud only when you ask.',
     featureList: [
-      'Real desktop automation (clicks, typing, file access)',
-      'Visual workflow builder for custom tools',
-      'Sticky memory that learns your preferences',
-      'Local-first privacy and data storage',
-      'Works with any app or API',
+      'Desktop chat that controls your PC',
+      'Visual workflow builder',
+      'Community mini-app marketplace',
+      'Proactive agents with optional cloud hosting',
+      'Local-first privacy',
     ],
     screenshot: 'https://stuard.ai/og-image.png',
     url: 'https://stuard.ai',
@@ -76,7 +83,14 @@ export default function Home() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
       />
       <HeroSection />
-      <FeatureScrollSection />
+      <BeyondTheChatSection />
+      <ConnectedAppsSection />
+      <HowItWorksIntroSection />
+      <MarketplacePromoSection />
+      <CloudAgentsSection />
+      <PrivacySection />
+      <PricingSection />
+      <ClosingCTASection />
     </>
   );
 }

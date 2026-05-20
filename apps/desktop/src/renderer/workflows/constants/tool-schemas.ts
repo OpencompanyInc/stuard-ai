@@ -514,6 +514,21 @@ const AI_INFERENCE_MODE_OPTIONS: ArgOption[] = [
   { value: 'transcription', label: 'Transcription', description: 'Speech-to-text (Whisper) — audio source → transcript' },
 ];
 
+// Speech-to-text models for `transcription` mode in ai_inference.
+// OpenRouter STT models (everything except `elevenlabs/*`) are fetched live from
+// https://openrouter.ai/api/v1/models?output_modalities=transcription — see
+// useTranscriptionModelOptions() in SmartArgEditor. The hardcoded list below is
+// the fallback shown before the network call resolves AND the source-of-truth for
+// ElevenLabs models, which route through a separate direct API (no Scribe v3 yet
+// — Scribe v2 batch + Scribe v2 Realtime are the latest as of May 2026).
+const TRANSCRIPTION_MODEL_OPTIONS: ArgOption[] = [
+  // ─── Tiny seed list (replaced once the OpenRouter fetch returns) ──────
+  { value: 'openai/whisper-1', label: 'Whisper v1 (OpenAI)', description: 'Multilingual Whisper — full OpenRouter STT catalog loads live', group: 'OpenRouter STT' },
+  // ─── ElevenLabs (direct, requires ELEVENLABS_API_KEY — not on OpenRouter) ──
+  { value: 'elevenlabs/scribe_v2', label: 'Scribe v2 (ElevenLabs)', description: 'Most accurate ElevenLabs STT — 90+ languages, word-level timestamps, diarization', group: 'ElevenLabs (direct)' },
+  { value: 'elevenlabs/scribe_v1', label: 'Scribe v1 (ElevenLabs)', description: 'Original Scribe — 98%+ accuracy across 99 languages', group: 'ElevenLabs (direct)' },
+];
+
 const ANALYZE_MEDIA_MODE_OPTIONS: ArgOption[] = [
   { value: 'fast', label: 'Fast', description: 'Quick analysis, lower cost' },
   { value: 'detailed', label: 'Detailed', description: 'Thorough analysis, higher quality' },
@@ -2432,12 +2447,23 @@ if (TOOL_SCHEMAS['ai_inference']) {
     model: {
       type: 'select',
       label: 'Model',
-      description: 'AI model to use. Pick a vision-capable model when supplying media sources. Embedding mode uses a separate embedding model automatically. Transcription mode uses a Whisper-style STT model (e.g. openai/whisper-1).',
+      description: 'AI model to use. Pick a vision-capable model when supplying media sources. Embedding mode uses a separate embedding model automatically.',
       // Catalog is populated after AGENT_MODEL_OPTIONS is built (see override below).
       options: MODEL_OPTIONS,
       default: 'google/gemini-3.1-pro-preview',
       allowFreeform: true,
       placeholder: 'Search for a model...',
+      showWhen: { field: 'mode', values: ['text', 'json', 'embedding'] },
+    },
+    transcriptionModel: {
+      type: 'select',
+      label: 'Transcription Model',
+      description: 'Speech-to-text model. OpenAI/Google/Mistral/Qwen route via OpenRouter; ElevenLabs Scribe routes through ElevenLabs direct API.',
+      options: TRANSCRIPTION_MODEL_OPTIONS,
+      default: 'openai/whisper-1',
+      allowFreeform: true,
+      placeholder: 'Search transcription models...',
+      showWhen: { field: 'mode', value: 'transcription' },
     },
     language: {
       type: 'string',

@@ -1,6 +1,6 @@
 export { };
 
- type SidebarTabId = 'terminal' | 'todo';
+ type SidebarTabId = 'terminal' | 'todo' | 'projects';
  type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown';
  type MediaSyncMode = 'local-only' | 'mirror-cloud';
  type MediaSyncStatus = 'local-only' | 'pending' | 'synced' | 'cloud-only' | 'failed';
@@ -65,6 +65,7 @@ declare global {
       show: () => Promise<void>;
       hide: () => Promise<void>;
       toggle: () => Promise<void>;
+      startOverlayScreenSnip: (durationMs?: number) => Promise<{ ok: boolean; enabled: boolean; restoreDelay: number; error?: string }>;
       setMode: (mode: 'compact' | 'sidebar' | 'window') => Promise<void>;
       resize: (w: number, h: number, anchor?: 'top' | 'bottom') => Promise<void>;
       setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => Promise<void>;
@@ -120,6 +121,14 @@ declare global {
       onShow: (cb: () => void) => () => void;
       onHide: (cb: () => void) => () => void;
       onWakewordDetected: (cb: (data: any) => void) => () => void;
+      // Voice border (full-screen click-through red ambient frame)
+      showVoiceBorder: () => Promise<void>;
+      hideVoiceBorder: () => Promise<void>;
+      updateVoiceBorder: (payload: any) => void;
+      onVoiceBorderUpdate: (cb: (payload: any) => void) => () => void;
+      sendVoiceBorderControl: (action: 'mute' | 'close' | 'shareScreen') => void;
+      onVoiceBorderControl: (cb: (payload: { action: 'mute' | 'close' | 'shareScreen' }) => void) => () => void;
+      setVoiceBorderInteractive: (interactive: boolean) => void;
       onOpenChat: (cb: (id: string) => void) => void | (() => void);
       onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => () => void;
       onVMStreamEvent: (cb: (data: any) => void) => () => void;

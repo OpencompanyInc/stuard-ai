@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   show: () => ipcRenderer.invoke("overlay:show"),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
+  startOverlayScreenSnip: (durationMs?: number) => ipcRenderer.invoke("overlay:startScreenSnip", durationMs),
   setMode: (mode: 'compact' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
   resize: (w: number, h: number, anchor?: 'top' | 'bottom') => ipcRenderer.invoke('overlay:resize', w, h, anchor),
   setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => ipcRenderer.invoke('overlay:setBounds', bounds),
@@ -57,12 +58,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
   // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
-  openSidebar: (options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  openSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
-  toggleSidebar: (options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
   toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
   isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
-  onSidebarNavigate: (cb: (data: { tab: 'terminal' | 'todo' }) => void) => {
+  onSidebarNavigate: (cb: (data: { tab: 'terminal' | 'todo' | 'projects' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
@@ -546,6 +547,29 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, active: boolean) => cb(Boolean(active));
     ipcRenderer.on('voice:setActive', handler);
     return () => { try { ipcRenderer.off('voice:setActive', handler); } catch { } };
+  },
+  // Voice border â€” full-screen click-through window with the red ambient frame
+  showVoiceBorder: () => ipcRenderer.invoke('voice:showBorder'),
+  hideVoiceBorder: () => ipcRenderer.invoke('voice:hideBorder'),
+  updateVoiceBorder: (payload: any) => {
+    try { ipcRenderer.send('voice:borderUpdate', payload); } catch { }
+  },
+  onVoiceBorderUpdate: (cb: (payload: any) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload || {});
+    ipcRenderer.on('voice:borderUpdate', handler);
+    return () => { try { ipcRenderer.off('voice:borderUpdate', handler); } catch { } };
+  },
+  // Pill controls relayed from the border window back to the main app
+  sendVoiceBorderControl: (action: 'mute' | 'close' | 'shareScreen') => {
+    try { ipcRenderer.send('voice:borderControl', { action }); } catch { }
+  },
+  onVoiceBorderControl: (cb: (payload: { action: 'mute' | 'close' | 'shareScreen' }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload || {});
+    ipcRenderer.on('voice:borderControl', handler);
+    return () => { try { ipcRenderer.off('voice:borderControl', handler); } catch { } };
+  },
+  setVoiceBorderInteractive: (interactive: boolean) => {
+    try { ipcRenderer.send('voice:borderInteractive', !!interactive); } catch { }
   },
   respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
   proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),

@@ -23,10 +23,11 @@ const baseUrl = process.env.NODE_ENV === 'development'
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
   title: {
-    default: "Stuard AI - Desktop AI Assistant That Builds Its Own Tools",
-    template: "%s | Stuard AI",
+    default: "Stuard — The AI workspace for your PC",
+    template: "%s | Stuard",
   },
-  description: "Stuard AI is a local-first desktop assistant that automates workflows, builds custom tools, and replaces your AI subscriptions. Like n8n meets ChatGPT - private, powerful, and personal.",
+  description:
+    "Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first. Download for Windows; join the waitlist for macOS and Linux.",
   applicationName: "Stuard AI",
   appleWebApp: {
     capable: true,
@@ -77,8 +78,9 @@ export const metadata: Metadata = {
     canonical: baseUrl,
   },
   openGraph: {
-    title: "Stuard AI - Your Private Desktop Assistant",
-    description: "Stuard is a local-first desktop assistant that handles computer chores, builds tools, and automates workflows while keeping your data private.",
+    title: "Stuard — The AI workspace for your PC",
+    description:
+      "Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.",
     url: baseUrl,
     siteName: "Stuard AI",
     images: [
@@ -97,11 +99,16 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@stuardai",
     creator: "@stuardai",
-    title: "Stuard AI - Your Private Desktop Assistant",
-    description: "Stuard is a local-first desktop assistant that handles computer chores, builds tools, and automates workflows while keeping your data private.",
+    title: "Stuard — The AI workspace for your PC",
+    description:
+      "Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.",
     images: ["/og-image.png"],
   },
   manifest: '/manifest.json',
+  icons: {
+    icon: [{ url: '/stuard-mark.png', type: 'image/png' }],
+    apple: [{ url: '/stuard-mark.png', type: 'image/png' }],
+  },
   robots: {
     index: true,
     follow: true,
@@ -121,10 +128,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`scroll-smooth ${fontPrimary.variable} ${fontSerif.variable}`}>
+    <html lang="en" className={`${fontPrimary.variable} ${fontSerif.variable}`}>
       <head>
         <meta name="referrer" content="no-referrer" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="apple-touch-icon" href="/stuard-mark.png" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#F3F1EB" />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
@@ -140,7 +147,7 @@ export default function RootLayout({
               "name": "Stuard AI",
               "url": baseUrl,
               "alternateName": ["Stuard", "Steward AI", "Stuart AI"],
-              "description": "The AI Assistant That Builds Its Own Tools. A local-first desktop AI that automates workflows and keeps your data private.",
+              "description": "Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.",
               "potentialAction": {
                 "@type": "SearchAction",
                 "target": {
@@ -154,7 +161,7 @@ export default function RootLayout({
                 "name": "Stuard AI",
                 "logo": {
                   "@type": "ImageObject",
-                  "url": `${baseUrl}/icon.svg`
+                  "url": `${baseUrl}/stuard-mark.png`
                 }
               }
             })

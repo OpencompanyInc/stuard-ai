@@ -69,7 +69,7 @@ type ViewItem = {
 
 const NORMAL_VIEW_ITEMS: ViewItem[] = [
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
-  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'bots', icon: BotIcon, label: 'Agents' },
   { id: 'files', icon: FolderOpen, label: 'Files' },
   { id: 'automations', icon: Zap, label: 'Automations' },
   { id: 'settings', icon: Settings, label: 'Settings' },
@@ -80,7 +80,7 @@ const DEVELOPER_VIEW_ITEMS: ViewItem[] = [
   { id: 'chat', icon: MessageCircle, label: 'Chat' },
   { id: 'overview', icon: Server, label: 'Overview' },
   { id: 'monitoring', icon: Activity, label: 'Monitoring' },
-  { id: 'bots', icon: BotIcon, label: 'Bots' },
+  { id: 'bots', icon: BotIcon, label: 'Agents' },
   { id: 'automations', icon: Zap, label: 'Automations' },
   { id: 'integrations', icon: Link2, label: 'Integrations' },
   { id: 'deploys', icon: Rocket, label: 'Deploys' },

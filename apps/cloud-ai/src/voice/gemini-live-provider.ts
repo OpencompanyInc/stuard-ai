@@ -2,19 +2,29 @@
  * Google Gemini Live API Voice Provider
  *
  * Connects to Gemini's Live API via WebSocket for real-time multimodal
- * voice conversations. Uses a different protocol than OpenAI/Grok.
+ * voice (and optional vision) conversations. Default model is
+ * `gemini-3.1-flash-live-preview` — Google's current audio-to-audio model
+ * (released March 2026) that replaced `gemini-2.5-flash-native-audio-preview-12-2025`.
  *
  * Audio: Gemini expects PCM16 16kHz input and outputs PCM16 24kHz.
  * For telephony (µ-law 8kHz), this provider transcodes in both directions:
  *   Telnyx µ-law 8kHz → PCM16 16kHz → Gemini
  *   Gemini → PCM16 24kHz → µ-law 8kHz → Telnyx
  *
- * Docs: https://ai.google.dev/gemini-api/docs/live
+ * Vision: callers can hand JPEG frames to `sendImage()` and they get
+ * forwarded as `realtimeInput.video` blobs. Google recommends ≤1 FPS;
+ * sessions that mix audio + video are capped at ~2 minutes by Google.
+ *
+ * Protocol: uses the post-2025 `realtimeInput.audio` / `realtimeInput.video`
+ * keys (NOT the legacy `mediaChunks` array, which the new models reject).
+ *
+ * Docs: https://ai.google.dev/gemini-api/docs/live-api
  */
 
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import type { VoiceProvider, VoiceSession, VoiceSessionConfig, AudioFormat } from './types';
+import { computeVoiceCostUsd } from './voice-pricing';
 
 const GEMINI_LIVE_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
@@ -157,6 +167,23 @@ class GeminiLiveSession implements VoiceSession {
   // Gemini requires matching `name` on tool responses, so remember the name
   // registered against each in-flight call id.
   private pendingCallNames = new Map<string, string>();
+  // Transcription events are delta fragments, not cumulative. We buffer per
+  // turn so the client (which replaces non-final lines from the same role)
+  // can keep growing the partial line until generation completes.
+  private inputTranscriptBuffer = '';
+  private outputTranscriptBuffer = '';
+  private framesSent = 0;
+  // Gemini Live `usageMetadata` reports cumulative session totals, not per-turn
+  // deltas. We track the last reported counts so the bridge can settleIncrement
+  // with just the new tokens.
+  private lastUsage = {
+    promptTextTokens: 0,
+    promptAudioTokens: 0,
+    promptCachedTokens: 0,
+    responseTextTokens: 0,
+    responseAudioTokens: 0,
+  };
+  private resolvedModelId = '';
 
   constructor(config: VoiceSessionConfig) {
     this.id = `gem_${randomUUID().slice(0, 12)}`;
@@ -171,7 +198,8 @@ class GeminiLiveSession implements VoiceSession {
     const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
     if (!apiKey) throw new Error('GOOGLE_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, or GEMINI_API_KEY not set');
 
-    const model = this.config.model || process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
+    const model = this.config.model || process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
+    this.resolvedModelId = model;
     const wsUrl = `${GEMINI_LIVE_URL}?key=${encodeURIComponent(apiKey)}`;
 
     this.ws = new WebSocket(wsUrl);
@@ -183,7 +211,11 @@ class GeminiLiveSession implements VoiceSession {
       this.ws!.on('open', () => {
         this._active = true;
 
-        // Gemini Live API setup message
+        // Gemini Live API setup message.
+        // inputAudioTranscription / outputAudioTranscription must live at the
+        // `setup` level (NOT inside generationConfig) and are required for the
+        // server to emit `serverContent.inputTranscription` /
+        // `serverContent.outputTranscription` events that drive our UI text.
         const setupMsg: Record<string, any> = {
           setup: {
             model: `models/${model}`,
@@ -196,6 +228,19 @@ class GeminiLiveSession implements VoiceSession {
                   },
                 },
               },
+            },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            realtimeInputConfig: {
+              automaticActivityDetection: {
+                disabled: false,
+                startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+                endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+                prefixPaddingMs: 200,
+                silenceDurationMs: 300,
+              },
+              activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+              turnCoverage: 'TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO',
             },
           },
         };
@@ -250,25 +295,70 @@ class GeminiLiveSession implements VoiceSession {
             }
           }
 
-          // Gemini sends audio in serverContent.modelTurn.parts[].inlineData
-          if (msg.serverContent?.modelTurn?.parts) {
-            for (const part of msg.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData?.data) {
-                let audioB64 = part.inlineData.data;
+          // A single serverContent event can carry audio chunks AND transcript
+          // partials together — process every field, don't `else if`.
+          const serverContent = msg.serverContent;
+          if (serverContent) {
+            // Audio chunks live in modelTurn.parts[].inlineData
+            if (serverContent.modelTurn?.parts) {
+              for (const part of serverContent.modelTurn.parts) {
+                if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData?.data) {
+                  let audioB64 = part.inlineData.data;
 
-                // Transcode PCM16 24kHz → µ-law 8kHz if needed for telephony
-                if (this.needsTranscoding) {
-                  audioB64 = pcm16_24kToUlaw(audioB64);
+                  // Transcode PCM16 24kHz → µ-law 8kHz if needed for telephony
+                  if (this.needsTranscoding) {
+                    audioB64 = pcm16_24kToUlaw(audioB64);
+                  }
+
+                  for (const cb of this.audioCallbacks) {
+                    cb(audioB64);
+                  }
                 }
 
-                for (const cb of this.audioCallbacks) {
-                  cb(audioB64);
+                // For TEXT-modality sessions a `part.text` still arrives here.
+                if (part.text) {
+                  this.config.onTranscript?.('assistant', part.text, false);
                 }
               }
+            }
 
-              if (part.text) {
-                this.config.onTranscript?.('assistant', part.text, true);
+            // Streamed transcripts (only emitted when inputAudioTranscription /
+            // outputAudioTranscription were enabled in `setup`). Each event is
+            // an incremental delta — buffer locally and emit the *cumulative*
+            // partial so the client can render a growing line.
+            if (serverContent.inputTranscription?.text) {
+              this.inputTranscriptBuffer += serverContent.inputTranscription.text;
+              this.config.onTranscript?.('user', this.inputTranscriptBuffer, false);
+            }
+            if (serverContent.outputTranscription?.text) {
+              this.outputTranscriptBuffer += serverContent.outputTranscription.text;
+              this.config.onTranscript?.('assistant', this.outputTranscriptBuffer, false);
+            }
+
+            // Turn boundary — flush the buffered lines as final and reset.
+            if (serverContent.generationComplete || serverContent.turnComplete) {
+              if (this.inputTranscriptBuffer) {
+                this.config.onTranscript?.('user', this.inputTranscriptBuffer, true);
+                this.inputTranscriptBuffer = '';
               }
+              if (this.outputTranscriptBuffer) {
+                this.config.onTranscript?.('assistant', this.outputTranscriptBuffer, true);
+                this.outputTranscriptBuffer = '';
+              }
+            }
+          }
+
+          // Usage report — cumulative session totals. Compute the delta from
+          // the last reported counts and emit a per-turn usage event with
+          // provider-computed cost (voice models charge audio tokens at much
+          // higher rates than text — recomputing from a flat token count
+          // would underbill).
+          const usageMeta = msg.usageMetadata;
+          if (usageMeta) {
+            try {
+              this.emitUsageDelta(usageMeta);
+            } catch (err: any) {
+              console.warn('[gemini-live] usage emit failed:', err?.message);
             }
           }
 
@@ -317,27 +407,112 @@ class GeminiLiveSession implements VoiceSession {
     });
   }
 
-  sendAudio(audioBase64: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      let pcmB64 = audioBase64;
+  private emitUsageDelta(usageMeta: any): void {
+    const promptDetails = Array.isArray(usageMeta?.promptTokensDetails) ? usageMeta.promptTokensDetails : [];
+    const responseDetails = Array.isArray(usageMeta?.responseTokensDetails) ? usageMeta.responseTokensDetails : [];
 
-      if (this.needsTranscoding) {
-        // µ-law 8kHz → PCM16 16kHz
-        pcmB64 = ulawToPcm16_16k(audioBase64);
-      } else if (this.needsDownsample) {
-        // PCM16 24kHz → PCM16 16kHz (browser sends 24kHz, Gemini expects 16kHz)
-        pcmB64 = pcm16_24kTo16k(audioBase64);
+    const sumByModality = (details: any[], modality: string): number => {
+      let sum = 0;
+      for (const d of details) {
+        const m = String(d?.modality || '').toUpperCase();
+        if (m === modality) sum += Math.max(0, Number(d?.tokenCount || 0));
       }
+      return sum;
+    };
 
-      this.ws.send(JSON.stringify({
-        realtimeInput: {
-          mediaChunks: [{
-            mimeType: 'audio/pcm;rate=16000',
-            data: pcmB64,
-          }],
-        },
-      }));
+    // Prefer per-modality details; fall back to the flat counts so we never
+    // miss a charge when Google omits the breakdown.
+    let promptTextTokens = sumByModality(promptDetails, 'TEXT');
+    let promptAudioTokens = sumByModality(promptDetails, 'AUDIO');
+    if (promptTextTokens + promptAudioTokens === 0) {
+      promptTextTokens = Math.max(0, Number(usageMeta?.promptTokenCount || 0));
     }
+    let responseTextTokens = sumByModality(responseDetails, 'TEXT');
+    let responseAudioTokens = sumByModality(responseDetails, 'AUDIO');
+    if (responseTextTokens + responseAudioTokens === 0) {
+      responseAudioTokens = Math.max(0, Number(usageMeta?.responseTokenCount || 0));
+    }
+    const promptCachedTokens = Math.max(0, Number(usageMeta?.cachedContentTokenCount || 0));
+
+    const deltaPromptText = Math.max(0, promptTextTokens - this.lastUsage.promptTextTokens);
+    const deltaPromptAudio = Math.max(0, promptAudioTokens - this.lastUsage.promptAudioTokens);
+    const deltaPromptCached = Math.max(0, promptCachedTokens - this.lastUsage.promptCachedTokens);
+    const deltaResponseText = Math.max(0, responseTextTokens - this.lastUsage.responseTextTokens);
+    const deltaResponseAudio = Math.max(0, responseAudioTokens - this.lastUsage.responseAudioTokens);
+
+    this.lastUsage = {
+      promptTextTokens,
+      promptAudioTokens,
+      promptCachedTokens,
+      responseTextTokens,
+      responseAudioTokens,
+    };
+
+    if (deltaPromptText + deltaPromptAudio + deltaResponseText + deltaResponseAudio === 0) return;
+
+    const costUsd = computeVoiceCostUsd('gemini-live', this.resolvedModelId, {
+      textInputTokens: deltaPromptText,
+      audioInputTokens: deltaPromptAudio,
+      textOutputTokens: deltaResponseText,
+      audioOutputTokens: deltaResponseAudio,
+      cachedInputTokens: deltaPromptCached,
+    });
+
+    this.config.onUsage?.({
+      model: `google/${this.resolvedModelId}`,
+      inputTokens: deltaPromptText + deltaPromptAudio,
+      outputTokens: deltaResponseText + deltaResponseAudio,
+      cachedInputTokens: deltaPromptCached,
+      inputTextTokens: deltaPromptText,
+      inputAudioTokens: deltaPromptAudio,
+      outputTextTokens: deltaResponseText,
+      outputAudioTokens: deltaResponseAudio,
+      costUsd,
+      raw: usageMeta,
+    });
+  }
+
+  sendAudio(audioBase64: string): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    let pcmB64 = audioBase64;
+
+    if (this.needsTranscoding) {
+      // µ-law 8kHz → PCM16 16kHz
+      pcmB64 = ulawToPcm16_16k(audioBase64);
+    } else if (this.needsDownsample) {
+      // PCM16 24kHz → PCM16 16kHz (browser sends 24kHz, Gemini expects 16kHz)
+      pcmB64 = pcm16_24kTo16k(audioBase64);
+    }
+
+    // Live API v1beta post-2025 protocol: realtimeInput.audio (NOT mediaChunks)
+    this.ws.send(JSON.stringify({
+      realtimeInput: {
+        audio: {
+          mimeType: 'audio/pcm;rate=16000',
+          data: pcmB64,
+        },
+      },
+    }));
+  }
+
+  /**
+   * Send a single video/image frame (JPEG or PNG) to the model.
+   * Gemini Live recommends ≤1 FPS. Caller must base64-encode the frame.
+   */
+  sendImage(imageBase64: string, mimeType: string = 'image/jpeg'): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.framesSent += 1;
+    if (this.framesSent === 1 || this.framesSent % 30 === 0) {
+      console.log(`[gemini-live] vision frames sent so far: ${this.framesSent}`);
+    }
+    this.ws.send(JSON.stringify({
+      realtimeInput: {
+        video: {
+          mimeType,
+          data: imageBase64,
+        },
+      },
+    }));
   }
 
   onAudio(callback: (audioBase64: string) => void): void {
@@ -388,7 +563,19 @@ class GeminiLiveSession implements VoiceSession {
   }
 
   interrupt(): void {
-    // Gemini handles interruptions via barge-in automatically
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    // Automatic VAD handles normal barge-in. For an explicit "stop talking"
+    // control, send clientContent: the Live API treats any clientContent
+    // message as an interruption to current model generation.
+    this.ws.send(JSON.stringify({
+      clientContent: {
+        turns: [{
+          role: 'user',
+          parts: [{ text: '[User interrupted the response. Stop speaking and listen.]' }],
+        }],
+        turnComplete: false,
+      },
+    }));
   }
 
   close(reason?: string): void {

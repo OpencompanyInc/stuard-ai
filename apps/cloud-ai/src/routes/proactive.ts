@@ -28,7 +28,18 @@ import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
 import { search_past_conversations, get_conversation_context } from '../tools/device-tools';
-import { bot_memory_list, bot_memory_create, bot_memory_update, bot_memory_delete, bot_memory_log } from '../tools/bot-memory-tools';
+import {
+  agent_memory_list,
+  agent_memory_create,
+  agent_memory_update,
+  agent_memory_delete,
+  agent_memory_log,
+  bot_memory_list,
+  bot_memory_create,
+  bot_memory_update,
+  bot_memory_delete,
+  bot_memory_log,
+} from '../tools/bot-memory-tools';
 import { upsertSmsUserState } from '../supabase';
 import { buildKnowledgeContext } from '../knowledge/retrieval';
 import { getOrCreateQueryEmbedding } from '../utils/shared-embedding';
@@ -266,14 +277,14 @@ function formatBotAllowedToolsSection(allowedTools: unknown): string {
     : [];
 
   const allowedText = names.length > 0 ? names.join(', ') : '(none added)';
-  return `## BOT TOOL SCOPE
-Added non-internal tools for this bot: ${allowedText}.
+  return `## AGENT TOOL SCOPE
+Added non-internal tools for this agent: ${allowedText}.
 
-${names.length > 0 ? 'All other non-internal tools are not part of this bot.' : 'This bot has no added non-internal tools.'} Do not mention or imply access to tools outside this bot. If the user asks what tools you have, list only:
+${names.length > 0 ? 'All other non-internal tools are not part of this agent.' : 'This agent has no added non-internal tools.'} Do not mention or imply access to tools outside this agent. If the user asks what tools you have, list only:
 - the added non-internal tools above, and
-- your internal bot tools: proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool, get_skill_info.
+- your internal agent tools: proactive_task_*, agent_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool, get_skill_info.
 
-Kanban truth rule: if the user asks you to add, update, move, or delete a card, call the matching bot_memory_* tool and check that it returned ok=true before saying it was done.`;
+Kanban truth rule: if the user asks you to add, update, move, or delete a card, call the matching agent_memory_* tool and check that it returned ok=true before saying it was done.`;
 }
 
 // ─── In-Memory Kanban Tools Factory ──────────────────────────────────────────
@@ -474,7 +485,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
   const path = parsedUrl.pathname;
 
   // CORS preflight
-  if (req.method === 'OPTIONS' && (path.startsWith('/v1/proactive/') || path === '/v1/bot/wakeup')) {
+  if (req.method === 'OPTIONS' && (path.startsWith('/v1/proactive/') || path.startsWith('/v1/bot/') || path.startsWith('/v1/agent/'))) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -485,16 +496,16 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     return true;
   }
 
-  // /v1/bot/wakeup — single-bot wakeup invoked by the VM bot scheduler.
+  // /v1/agent/wakeup — single-agent wakeup invoked by the VM scheduler.
   // Shares the proactive runner; only the request body is reshaped: VM bots
   // nest fields under `config`, have no kanban tasks, and always want
   // notifications delivered (nothing else hears their output).
-  if (req.method === 'POST' && (path === '/v1/proactive/wakeup' || path === '/v1/bot/wakeup')) {
+  if (req.method === 'POST' && (path === '/v1/proactive/wakeup' || path === '/v1/bot/wakeup' || path === '/v1/agent/wakeup')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true; // 401 already sent
 
     const rawBody = await readJsonBody(req);
-    const body = path === '/v1/bot/wakeup' ? normalizeBotWakeupBody(rawBody) : rawBody;
+    const body = (path === '/v1/bot/wakeup' || path === '/v1/agent/wakeup') ? normalizeBotWakeupBody(rawBody) : rawBody;
     const {
       botId = '',
       botName = '',
@@ -514,7 +525,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       sendNotifications = false,
       notificationDigest = [],
     } = body;
-    const isVMOrigin = path === '/v1/bot/wakeup'
+    const isVMOrigin = path === '/v1/bot/wakeup' || path === '/v1/agent/wakeup'
       || !!req.headers['x-vm-user-id']
       || context?.isVM === true
       || String(context?.executionTarget || '').toLowerCase() === 'vm';
@@ -613,16 +624,21 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       },
     });
 
-    // Build this bot's own tool set. It starts with bot-internal tools only;
+    // Build this agent's own tool set. It starts with agent-internal tools only;
     // configured tools are added below by exact name or explicit prefix.
     //   - kanban.tools = the user's task board (proactive_task_*)
-    //   - bot_memory_* = the bot's private kanban (working memory across runs)
+    //   - agent_memory_* = the agent's private kanban (working memory across runs)
     //   - search_past_conversations / get_conversation_context = recall memory
     //   - choose_notification_channel + write_session_summary = bookkeeping
     //   - search_tools / get_tool_schema / execute_tool = lazy-load only this
-    //     bot's added tools, not Stuard's global tool surface.
+    //     agent's added tools, not Stuard's global tool surface.
     const tools: Record<string, any> = {
       ...kanban.tools,
+      agent_memory_list: wrapBotScopedTool('agent_memory_list', agent_memory_list, { botId, userId: auth.userId }),
+      agent_memory_create: wrapBotScopedTool('agent_memory_create', agent_memory_create, { botId, userId: auth.userId }),
+      agent_memory_update: wrapBotScopedTool('agent_memory_update', agent_memory_update, { botId, userId: auth.userId }),
+      agent_memory_delete: wrapBotScopedTool('agent_memory_delete', agent_memory_delete, { botId, userId: auth.userId }),
+      agent_memory_log: wrapBotScopedTool('agent_memory_log', agent_memory_log, { botId, userId: auth.userId }),
       bot_memory_list: wrapBotScopedTool('bot_memory_list', bot_memory_list, { botId, userId: auth.userId }),
       bot_memory_create: wrapBotScopedTool('bot_memory_create', bot_memory_create, { botId, userId: auth.userId }),
       bot_memory_update: wrapBotScopedTool('bot_memory_update', bot_memory_update, { botId, userId: auth.userId }),
@@ -668,23 +684,23 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
     // Build system prompt with user instructions and skill awareness
     let systemPrompt = PROACTIVE_SYSTEM_PROMPT;
 
-    // Always remind the bot which tools belong to it by default. The actual
+    // Always remind the agent which tools belong to it by default. The actual
     // kanban contents arrive separately via `kanbanContext` (or are embedded
     // inside `instructions` for legacy callers); this section is the
     // tool-usage contract — it stays in the prompt even when the kanban is
-    // empty so the bot knows the surface exists.
+    // empty so the agent knows the surface exists.
     systemPrompt += `\n\n## YOUR DEFAULT TOOLKIT (always available, regardless of allowedTools)
 - **proactive_task_*** — manage the USER's task board (tasks they see). Use list/create/update/delete to keep it tidy.
-- **bot_memory_*** — manage YOUR PRIVATE kanban. This is your working memory across runs:
-  * bot_memory_list — see your cards (filter by status when needed).
-  * bot_memory_create({ title, notes?, status? }) — capture a plan, finding, or in-flight work.
-  * bot_memory_update({ id, ... }) — move cards between columns or edit notes.
-  * bot_memory_delete({ id }) — drop a card (prefer "completed" so history sticks).
-  * bot_memory_log({ summary, outcome }) — append a one-line wrap-up after each run.
+- **agent_memory_*** — manage YOUR PRIVATE kanban. This is your working memory across runs:
+  * agent_memory_list — see your cards (filter by status when needed).
+  * agent_memory_create({ title, notes?, status? }) — capture a plan, finding, or in-flight work.
+  * agent_memory_update({ id, ... }) — move cards between columns or edit notes.
+  * agent_memory_delete({ id }) — drop a card (prefer "completed" so history sticks).
+  * agent_memory_log({ summary, outcome }) — append a one-line wrap-up after each run.
 - **search_past_conversations / get_conversation_context** — recall what happened in prior runs / chats.
 - **choose_notification_channel / write_session_summary** — pick how to reach the user, and journal the run.
 
-Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Bots → Kanban tab.`;
+Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Agents → Kanban tab.`;
 
     systemPrompt += `\n\n${formatBotAllowedToolsSection(allowedTools)}`;
 
@@ -978,7 +994,7 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
   // ── Sync skills.json to VM ──────────────────────────────────────────────────
   // Desktop pushes the user's full active skill set so the VM bot scheduler
   // can include the right subset of skills in /v1/bot/wakeup payloads.
-  if (req.method === 'POST' && path === '/v1/bot/skills-sync') {
+  if (req.method === 'POST' && (path === '/v1/bot/skills-sync' || path === '/v1/agent/skills-sync')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
@@ -996,7 +1012,7 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
 
   // Sync deployed bot configs to the VM's multi-bot scheduler. The desktop is
   // the source of truth for bot identity/config; the VM owns runtime state.
-  if (req.method === 'POST' && path === '/v1/bot/sync') {
+  if (req.method === 'POST' && (path === '/v1/bot/sync' || path === '/v1/agent/sync')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
@@ -1010,7 +1026,7 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
     try {
       const result = await sendVMCommand(
         auth.userId,
-        'bots_sync',
+        'agents_sync',
         { bots, timezone: timezone || undefined },
         15_000,
       );
@@ -1029,15 +1045,15 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
   // Runtime snapshot for the VM-owned bot scheduler. The desktop uses this
   // after manual triggers so the UI can show "running" immediately instead of
   // waiting for a completed run-log entry.
-  if (req.method === 'POST' && path === '/v1/bot/status') {
+  if (req.method === 'POST' && (path === '/v1/bot/status' || path === '/v1/agent/status')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
     const body = await readJsonBody(req);
-    const botId = String(body?.botId || body?.id || '').trim();
+    const botId = String(body?.agentId || body?.agent_id || body?.botId || body?.id || '').trim();
 
     try {
-      const result = await sendVMCommand(auth.userId, 'bots_status', {}, 10_000);
+      const result = await sendVMCommand(auth.userId, 'agents_status', {}, 10_000);
       const status = result.result || {};
       const bots = Array.isArray(status?.bots) ? status.bots : [];
       writeJson(res, 200, {
@@ -1054,19 +1070,19 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
 
   // Pull the VM-local private kanban/run-log for a bot so the desktop UI can
   // show memory written while the laptop was offline.
-  if (req.method === 'POST' && path === '/v1/bot/memory/export') {
+  if (req.method === 'POST' && (path === '/v1/bot/memory/export' || path === '/v1/agent/memory/export')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
     const body = await readJsonBody(req);
-    const botId = String(body?.botId || body?.id || '').trim();
+    const botId = String(body?.agentId || body?.agent_id || body?.botId || body?.id || '').trim();
     if (!botId) {
-      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      writeJson(res, 400, { ok: false, error: 'agent_id_required' });
       return true;
     }
 
     try {
-      const result = await sendVMCommand(auth.userId, 'bot_memory_export', { botId }, 15_000);
+      const result = await sendVMCommand(auth.userId, 'agent_memory_export', { botId }, 15_000);
       writeJson(res, 200, {
         ok: result.ok,
         ...(result.result || {}),
@@ -1082,19 +1098,45 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
   // desktop's "Run Once" action when the bot has been deployed to VM —
   // routes the wake-up there instead of executing locally so behavior is
   // consistent with scheduled runs.
-  if (req.method === 'POST' && path === '/v1/bot/run') {
+  if (req.method === 'POST' && (path === '/v1/bot/run' || path === '/v1/agent/run')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
     const body = await readJsonBody(req);
-    const botId = String(body?.botId || body?.id || '').trim();
+    const botId = String(body?.agentId || body?.agent_id || body?.botId || body?.id || '').trim();
     if (!botId) {
-      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      writeJson(res, 400, { ok: false, error: 'agent_id_required' });
       return true;
     }
 
     try {
-      const result = await sendVMCommand(auth.userId, 'bots_run', { id: botId }, 30_000);
+      const result = await sendVMCommand(auth.userId, 'agents_run', { id: botId }, 30_000);
+      writeJson(res, 200, {
+        ok: result.ok,
+        ...(result.result || {}),
+        error: result.error || result.result?.error,
+      });
+    } catch (e: any) {
+      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
+    }
+    return true;
+  }
+
+  // Delete a single deployed agent from the VM scheduler and remove its VM-local
+  // memory. This does not mutate the desktop's local agent config.
+  if (req.method === 'POST' && (path === '/v1/bot/delete' || path === '/v1/agent/delete')) {
+    const auth = await requireProactiveAuth(req, res);
+    if (!auth) return true;
+
+    const body = await readJsonBody(req);
+    const agentId = String(body?.agentId || body?.agent_id || body?.botId || body?.id || '').trim();
+    if (!agentId) {
+      writeJson(res, 400, { ok: false, error: 'agent_id_required' });
+      return true;
+    }
+
+    try {
+      const result = await sendVMCommand(auth.userId, 'agents_delete', { id: agentId }, 15_000);
       writeJson(res, 200, {
         ok: result.ok,
         ...(result.result || {}),
@@ -1107,19 +1149,19 @@ Use bot_memory_* aggressively. The kanban is HOW you stay coherent across wake-u
   }
 
   // Push the desktop's latest bot memory snapshot to the VM after user edits.
-  if (req.method === 'POST' && path === '/v1/bot/memory/replace') {
+  if (req.method === 'POST' && (path === '/v1/bot/memory/replace' || path === '/v1/agent/memory/replace')) {
     const auth = await requireProactiveAuth(req, res);
     if (!auth) return true;
 
     const body = await readJsonBody(req);
-    const botId = String(body?.botId || body?.id || '').trim();
+    const botId = String(body?.agentId || body?.agent_id || body?.botId || body?.id || '').trim();
     if (!botId) {
-      writeJson(res, 400, { ok: false, error: 'bot_id_required' });
+      writeJson(res, 400, { ok: false, error: 'agent_id_required' });
       return true;
     }
 
     try {
-      const result = await sendVMCommand(auth.userId, 'bot_memory_replace', {
+      const result = await sendVMCommand(auth.userId, 'agent_memory_replace', {
         botId,
         memory: body?.memory || {},
       }, 15_000);

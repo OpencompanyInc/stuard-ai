@@ -42,6 +42,13 @@ SpaceType = Literal['project', 'topic', 'research', 'reference', 'custom']
 SpaceItemType = Literal['note', 'source', 'link', 'file', 'fact', 'snippet', 'folder']
 AddedBy = Literal['user', 'ai']
 
+# Project Mode types — successor to Spaces. See backfill_spaces_to_projects.py.
+ProjectStatus = Literal['active', 'paused', 'archived']
+MemoryType = Literal['note', 'snippet', 'link', 'fact', 'file', 'user', 'feedback', 'project', 'reference']
+MemorySource = Literal['chat', 'manual', 'tool', 'journal']
+JournalEntryType = Literal['decision', 'finding', 'blocker', 'edit', 'chat_summary', 'task', 'milestone', 'note', 'question', 'hypothesis']
+JournalEntrySource = Literal['auto-chat', 'auto-git', 'auto-fs', 'manual', 'ai-tool']
+
 
 def _get_user_data_dir() -> str:
     """Get platform-appropriate user data directory."""
@@ -208,6 +215,76 @@ class SharedSpaceInfo:
         }
 
 
+@dataclass
+class Project:
+    id: str
+    name: str
+    description: Optional[str] = None
+    goals: Optional[str] = None
+    status: ProjectStatus = 'active'
+    tags: List[str] = field(default_factory=list)
+    pinned_paths: List[str] = field(default_factory=list)
+    digest: Optional[str] = None
+    digest_updated_at: Optional[str] = None
+    icon: str = '📁'
+    color: str = '#6366f1'
+    archived: bool = False
+    embedding: Optional[List[float]] = None
+    created_at: str = ''
+    updated_at: str = ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d['embedding'] = None
+        return d
+
+
+@dataclass
+class Memory:
+    """Atomic memory entry — replaces space_items in project mode.
+
+    `project_ids` is a JSON array. Empty list = global (cross-project).
+    """
+    id: str
+    type: MemoryType
+    content: str
+    title: Optional[str] = None
+    project_ids: List[str] = field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = None
+    url: Optional[str] = None
+    source: MemorySource = 'manual'
+    added_by: AddedBy = 'user'
+    pinned: bool = False
+    embedding: Optional[List[float]] = None
+    created_at: str = ''
+    updated_at: str = ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d['embedding'] = None
+        return d
+
+
+@dataclass
+class JournalEntry:
+    """Timestamped event in a project's timeline. Auto-written + manually addable."""
+    id: str
+    project_id: str
+    ts: str
+    type: JournalEntryType
+    title: str
+    body: Optional[str] = None
+    source: JournalEntrySource = 'manual'
+    source_ref: Optional[Dict[str, Any]] = None  # { conversation_id?, commit_sha?, file_paths?, task_id? }
+    embedding: Optional[List[float]] = None
+    created_at: str = ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d['embedding'] = None
+        return d
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATABASE HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -351,7 +428,15 @@ class MemoryDB:
                 cur.execute("UPDATE conversations SET source = 'stuard' WHERE source IS NULL OR TRIM(source) = ''")
             except sqlite3.OperationalError:
                 pass
-            
+
+            # B1: track the highest turn index already fed through knowledge
+            # extraction so subsequent turns only re-extract incremental content.
+            # 0 = never extracted (default for existing rows).
+            try:
+                cur.execute("ALTER TABLE conversations ADD COLUMN last_extracted_turn_index INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
             # Messages
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -486,6 +571,71 @@ class MemoryDB:
                     share_password_hash TEXT
                 )
             """)
+
+            # ─── Project Mode (successor to Spaces) ────────────────────────────
+            # Projects — top-level scope. Replaces `spaces` (project|topic|research|
+            # reference|custom collapses to a single Project entity with tags).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    name_enc TEXT NOT NULL,
+                    description_enc TEXT,
+                    goals_enc TEXT,
+                    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
+                    tags_json TEXT,
+                    pinned_paths_json TEXT,
+                    digest_enc TEXT,
+                    digest_updated_at TEXT,
+                    icon TEXT DEFAULT '📁',
+                    color TEXT DEFAULT '#6366f1',
+                    archived INTEGER DEFAULT 0,
+                    embedding BLOB,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            # Memories — atomic facts/notes/snippets/etc with embeddings.
+            # `project_ids_json` is a JSON array; empty array = global (cross-project).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL CHECK(type IN ('note','snippet','link','fact','file','user','feedback','project','reference')),
+                    title_enc TEXT,
+                    content_enc TEXT NOT NULL,
+                    metadata_enc TEXT,
+                    url_enc TEXT,
+                    project_ids_json TEXT NOT NULL DEFAULT '[]',
+                    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('chat','manual','tool','journal')),
+                    added_by TEXT NOT NULL DEFAULT 'user' CHECK(added_by IN ('user','ai')),
+                    pinned INTEGER DEFAULT 0,
+                    embedding BLOB,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            # Journal entries — timestamped project events. Auto + manual.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS journal_entries (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    ts TEXT NOT NULL,
+                    type TEXT NOT NULL CHECK(type IN ('decision','finding','blocker','edit','chat_summary','task','milestone','note')),
+                    title_enc TEXT NOT NULL,
+                    body_enc TEXT,
+                    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('auto-chat','auto-git','auto-fs','manual','ai-tool')),
+                    source_ref_enc TEXT,
+                    embedding BLOB,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            # Conversations get a project_id link (nullable = unscoped chat).
+            try:
+                cur.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             
             # Migration: Add parent_id and position columns if they don't exist
             try:
@@ -577,6 +727,15 @@ class MemoryDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_items_space ON space_items(space_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_items_parent ON space_items(parent_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_items_position ON space_items(space_id, parent_id, position)")
+
+            # Project Mode indexes
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status, archived)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned, updated_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_journal_project_ts ON journal_entries(project_id, ts DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_journal_type ON journal_entries(project_id, type)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)")
 
             conn.commit()
     
@@ -804,7 +963,40 @@ class MemoryDB:
         
         self._queue_sync('conversations', conversation_id, 'upsert')
         return self.get_conversation(conversation_id)
-    
+
+    def get_extraction_offset(self, conversation_id: str) -> int:
+        """B1: highest turn index already fed through knowledge extraction.
+
+        Returns 0 when the conversation has never been extracted (or doesn't
+        exist) so callers can treat it as "start from the beginning".
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT last_extracted_turn_index FROM conversations WHERE id = ?",
+                (conversation_id,)
+            ).fetchone()
+        if not row:
+            return 0
+        value = row['last_extracted_turn_index']
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_extraction_offset(self, conversation_id: str, turn_index: int) -> bool:
+        """B1: advance the per-conversation extraction watermark. Never moves
+        backwards — passing a lower value is a no-op."""
+        idx = max(0, int(turn_index or 0))
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                """UPDATE conversations
+                   SET last_extracted_turn_index = ?
+                   WHERE id = ? AND COALESCE(last_extracted_turn_index, 0) < ?""",
+                (idx, conversation_id, idx)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
     def search_conversations(
         self,
         query_vector: List[float],
@@ -857,15 +1049,28 @@ class MemoryDB:
         self,
         query_vector: List[float],
         limit: int = 10,
-        threshold: float = 0.6
+        threshold: float = 0.6,
+        project_id: Optional[str] = None,
     ) -> List[Tuple[ConversationSegment, float]]:
-        """Search conversation segments by embedding similarity."""
+        """Search conversation segments by embedding similarity.
+
+        When `project_id` is provided, results are constrained to segments whose
+        conversation is stamped with that project_id (project-scoped search).
+        """
         query_np = np.array(query_vector, dtype=np.float32)
-        
+
         with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM conversation_segments WHERE embedding IS NOT NULL"
-            ).fetchall()
+            if project_id:
+                rows = conn.execute(
+                    """SELECT cs.* FROM conversation_segments cs
+                       JOIN conversations c ON cs.conversation_id = c.id
+                       WHERE cs.embedding IS NOT NULL AND c.project_id = ?""",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM conversation_segments WHERE embedding IS NOT NULL"
+                ).fetchall()
         
         results = []
         for row in rows:
@@ -2143,9 +2348,391 @@ class MemoryDB:
             conn.commit()
     
     # ═══════════════════════════════════════════════════════════════════════════
+    # PROJECTS (Project Mode — successor to Spaces)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _row_to_project(self, row: sqlite3.Row) -> Project:
+        return Project(
+            id=row["id"],
+            name=_decrypt_content(row["name_enc"], self._crypto),
+            description=_decrypt_content(row["description_enc"], self._crypto) if row["description_enc"] else None,
+            goals=_decrypt_content(row["goals_enc"], self._crypto) if row["goals_enc"] else None,
+            status=row["status"],
+            tags=json.loads(row["tags_json"]) if row["tags_json"] else [],
+            pinned_paths=json.loads(row["pinned_paths_json"]) if row["pinned_paths_json"] else [],
+            digest=_decrypt_content(row["digest_enc"], self._crypto) if row["digest_enc"] else None,
+            digest_updated_at=row["digest_updated_at"],
+            icon=row["icon"] or "📁",
+            color=row["color"] or "#6366f1",
+            archived=bool(row["archived"]),
+            embedding=_deserialize_vector(row["embedding"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def create_project(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        goals: Optional[str] = None,
+        status: ProjectStatus = "active",
+        tags: Optional[List[str]] = None,
+        pinned_paths: Optional[List[str]] = None,
+        icon: str = "📁",
+        color: str = "#6366f1",
+        embedding: Optional[List[float]] = None,
+        project_id: Optional[str] = None,
+    ) -> Project:
+        pid = project_id or str(uuid.uuid4())
+        now = _now_iso()
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO projects
+                   (id, name_enc, description_enc, goals_enc, status, tags_json,
+                    pinned_paths_json, digest_enc, digest_updated_at, icon, color,
+                    archived, embedding, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?, ?)""",
+                (
+                    pid,
+                    _encrypt_content(name, self._crypto),
+                    _encrypt_content(description, self._crypto) if description else None,
+                    _encrypt_content(goals, self._crypto) if goals else None,
+                    status,
+                    json.dumps(tags or []),
+                    json.dumps(pinned_paths or []),
+                    icon,
+                    color,
+                    _serialize_vector(embedding),
+                    now, now,
+                ),
+            )
+            conn.commit()
+        return Project(
+            id=pid, name=name, description=description, goals=goals, status=status,
+            tags=tags or [], pinned_paths=pinned_paths or [], icon=icon, color=color,
+            embedding=embedding, created_at=now, updated_at=now,
+        )
+
+    def get_project(self, project_id: str) -> Optional[Project]:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        return self._row_to_project(row) if row else None
+
+    def list_projects(
+        self,
+        status: Optional[ProjectStatus] = None,
+        include_archived: bool = False,
+        limit: int = 100,
+    ) -> List[Project]:
+        with self._get_conn() as conn:
+            query = "SELECT * FROM projects WHERE 1=1"
+            params: List[Any] = []
+            if not include_archived:
+                query += " AND archived = 0"
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            query += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_project(r) for r in rows]
+
+    def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        goals: Optional[str] = None,
+        status: Optional[ProjectStatus] = None,
+        tags: Optional[List[str]] = None,
+        pinned_paths: Optional[List[str]] = None,
+        digest: Optional[str] = None,
+        icon: Optional[str] = None,
+        color: Optional[str] = None,
+        archived: Optional[bool] = None,
+        embedding: Optional[List[float]] = None,
+    ) -> Optional[Project]:
+        updates = ["updated_at = ?"]
+        values: List[Any] = [_now_iso()]
+        if name is not None:
+            updates.append("name_enc = ?")
+            values.append(_encrypt_content(name, self._crypto))
+        if description is not None:
+            updates.append("description_enc = ?")
+            values.append(_encrypt_content(description, self._crypto) if description else None)
+        if goals is not None:
+            updates.append("goals_enc = ?")
+            values.append(_encrypt_content(goals, self._crypto) if goals else None)
+        if status is not None:
+            updates.append("status = ?")
+            values.append(status)
+        if tags is not None:
+            updates.append("tags_json = ?")
+            values.append(json.dumps(tags))
+        if pinned_paths is not None:
+            updates.append("pinned_paths_json = ?")
+            values.append(json.dumps(pinned_paths))
+        if digest is not None:
+            updates.append("digest_enc = ?")
+            updates.append("digest_updated_at = ?")
+            values.append(_encrypt_content(digest, self._crypto) if digest else None)
+            values.append(_now_iso())
+        if icon is not None:
+            updates.append("icon = ?")
+            values.append(icon)
+        if color is not None:
+            updates.append("color = ?")
+            values.append(color)
+        if archived is not None:
+            updates.append("archived = ?")
+            values.append(1 if archived else 0)
+        if embedding is not None:
+            updates.append("embedding = ?")
+            values.append(_serialize_vector(embedding))
+        values.append(project_id)
+        with self._get_conn() as conn:
+            conn.execute(f"UPDATE projects SET {', '.join(updates)} WHERE id = ?", tuple(values))
+            conn.commit()
+        return self.get_project(project_id)
+
+    def delete_project(self, project_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MEMORIES (atomic facts/notes/snippets with embeddings, project-tagged)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _row_to_memory(self, row: sqlite3.Row) -> Memory:
+        return Memory(
+            id=row["id"],
+            type=row["type"],
+            title=_decrypt_content(row["title_enc"], self._crypto) if row["title_enc"] else None,
+            content=_decrypt_content(row["content_enc"], self._crypto),
+            metadata=_decrypt_json(row["metadata_enc"], self._crypto),
+            url=_decrypt_content(row["url_enc"], self._crypto) if row["url_enc"] else None,
+            project_ids=json.loads(row["project_ids_json"]) if row["project_ids_json"] else [],
+            source=row["source"],
+            added_by=row["added_by"],
+            pinned=bool(row["pinned"]),
+            embedding=_deserialize_vector(row["embedding"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def create_memory(
+        self,
+        type: MemoryType,
+        content: str,
+        title: Optional[str] = None,
+        project_ids: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        url: Optional[str] = None,
+        source: MemorySource = "manual",
+        added_by: AddedBy = "user",
+        pinned: bool = False,
+        embedding: Optional[List[float]] = None,
+        memory_id: Optional[str] = None,
+    ) -> Memory:
+        mid = memory_id or str(uuid.uuid4())
+        now = _now_iso()
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO memories
+                   (id, type, title_enc, content_enc, metadata_enc, url_enc,
+                    project_ids_json, source, added_by, pinned, embedding,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    mid, type,
+                    _encrypt_content(title, self._crypto) if title else None,
+                    _encrypt_content(content, self._crypto),
+                    _encrypt_json(metadata, self._crypto),
+                    _encrypt_content(url, self._crypto) if url else None,
+                    json.dumps(project_ids or []),
+                    source, added_by, 1 if pinned else 0,
+                    _serialize_vector(embedding),
+                    now, now,
+                ),
+            )
+            conn.commit()
+        return Memory(
+            id=mid, type=type, content=content, title=title,
+            project_ids=project_ids or [], metadata=metadata, url=url,
+            source=source, added_by=added_by, pinned=pinned, embedding=embedding,
+            created_at=now, updated_at=now,
+        )
+
+    def get_memory(self, memory_id: str) -> Optional[Memory]:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        return self._row_to_memory(row) if row else None
+
+    def list_memories(
+        self,
+        project_id: Optional[str] = None,
+        type: Optional[MemoryType] = None,
+        pinned_only: bool = False,
+        limit: int = 100,
+    ) -> List[Memory]:
+        """List memories. `project_id` filters to memories tagged with that project
+        (uses JSON LIKE — fine at desktop scale). Pass None to include all."""
+        with self._get_conn() as conn:
+            query = "SELECT * FROM memories WHERE 1=1"
+            params: List[Any] = []
+            if project_id:
+                query += " AND project_ids_json LIKE ?"
+                params.append(f'%"{project_id}"%')
+            if type:
+                query += " AND type = ?"
+                params.append(type)
+            if pinned_only:
+                query += " AND pinned = 1"
+            query += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    def search_memories(
+        self,
+        query_embedding: List[float],
+        project_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Tuple[Memory, float]]:
+        """Cosine-similarity search over memory embeddings. Returns (memory, score)."""
+        if not query_embedding:
+            return []
+        q_vec = np.array(query_embedding, dtype=np.float32)
+        q_norm = float(np.linalg.norm(q_vec))
+        if q_norm == 0:
+            return []
+
+        with self._get_conn() as conn:
+            sql = "SELECT * FROM memories WHERE embedding IS NOT NULL"
+            params: List[Any] = []
+            if project_id:
+                sql += " AND project_ids_json LIKE ?"
+                params.append(f'%"{project_id}"%')
+            rows = conn.execute(sql, tuple(params)).fetchall()
+
+        scored: List[Tuple[Memory, float]] = []
+        for row in rows:
+            vec = _deserialize_vector(row["embedding"])
+            if not vec:
+                continue
+            v = np.array(vec, dtype=np.float32)
+            v_norm = float(np.linalg.norm(v))
+            if v_norm == 0:
+                continue
+            score = float(np.dot(q_vec, v) / (q_norm * v_norm))
+            scored.append((self._row_to_memory(row), score))
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored[:limit]
+
+    def delete_memory(self, memory_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # JOURNAL ENTRIES (project timeline)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _row_to_journal_entry(self, row: sqlite3.Row) -> JournalEntry:
+        return JournalEntry(
+            id=row["id"],
+            project_id=row["project_id"],
+            ts=row["ts"],
+            type=row["type"],
+            title=_decrypt_content(row["title_enc"], self._crypto),
+            body=_decrypt_content(row["body_enc"], self._crypto) if row["body_enc"] else None,
+            source=row["source"],
+            source_ref=_decrypt_json(row["source_ref_enc"], self._crypto),
+            embedding=_deserialize_vector(row["embedding"]),
+            created_at=row["created_at"],
+        )
+
+    def create_journal_entry(
+        self,
+        project_id: str,
+        type: JournalEntryType,
+        title: str,
+        body: Optional[str] = None,
+        source: JournalEntrySource = "manual",
+        source_ref: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None,
+        ts: Optional[str] = None,
+    ) -> JournalEntry:
+        jid = str(uuid.uuid4())
+        now = _now_iso()
+        ts = ts or now
+        with self._get_conn() as conn:
+            conn.execute(
+                """INSERT INTO journal_entries
+                   (id, project_id, ts, type, title_enc, body_enc, source, source_ref_enc, embedding, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    jid, project_id, ts, type,
+                    _encrypt_content(title, self._crypto),
+                    _encrypt_content(body, self._crypto) if body else None,
+                    source,
+                    _encrypt_json(source_ref, self._crypto),
+                    _serialize_vector(embedding),
+                    now,
+                ),
+            )
+            # Bump project updated_at so it surfaces in recently-active lists.
+            conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now, project_id))
+            conn.commit()
+        return JournalEntry(
+            id=jid, project_id=project_id, ts=ts, type=type, title=title, body=body,
+            source=source, source_ref=source_ref, embedding=embedding, created_at=now,
+        )
+
+    def list_journal_entries(
+        self,
+        project_id: str,
+        type: Optional[JournalEntryType] = None,
+        limit: int = 50,
+    ) -> List[JournalEntry]:
+        with self._get_conn() as conn:
+            query = "SELECT * FROM journal_entries WHERE project_id = ?"
+            params: List[Any] = [project_id]
+            if type:
+                query += " AND type = ?"
+                params.append(type)
+            query += " ORDER BY ts DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_journal_entry(r) for r in rows]
+
+    def delete_journal_entry(self, entry_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.execute("DELETE FROM journal_entries WHERE id = ?", (entry_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONVERSATIONS x PROJECTS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def set_conversation_project(self, conversation_id: str, project_id: Optional[str]) -> bool:
+        """Stamp a conversation with a project (or clear it). Returns True if updated."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE conversations SET project_id = ?, updated_at = ? WHERE id = ?",
+                (project_id, _now_iso(), conversation_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # SHARED SPACES
     # ═══════════════════════════════════════════════════════════════════════════
-    
+
     def get_shared_space_info(self, space_id: str) -> Optional[SharedSpaceInfo]:
         """Get shared space info for a local space."""
         with self._get_conn() as conn:

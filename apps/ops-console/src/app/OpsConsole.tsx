@@ -43,16 +43,11 @@ const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'access', label: 'Access Control', icon: Shield },
 ];
 
-// ─── Auth: auto-bypass if NEXT_PUBLIC_OPS_ACCESS_TOKEN is set in .env.local ──
-const ENV_TOKEN = process.env.NEXT_PUBLIC_OPS_ACCESS_TOKEN || '';
-
+// Auth gate: token is kept client-side only and sent as a Bearer token.
 function LoginGate({ children }: { children: React.ReactNode }) {
   const storedToken = typeof window !== 'undefined' ? localStorage.getItem('stuard_access_token') : null;
-  const [token, setToken] = useState<string | null>(ENV_TOKEN || storedToken);
+  const [token, setToken] = useState<string | null>(storedToken);
   const [input, setInput] = useState('');
-
-  // If env token is set, skip login entirely
-  if (ENV_TOKEN) return <>{children}</>;
 
   const handleLogin = () => {
     const t = input.trim();
@@ -347,7 +342,10 @@ export default function OpsConsole() {
     setLoading(true);
     setMessage(type === 'run-checks' ? 'Running checks...' : 'Processing...');
     try {
-      const res = await fetch('/api/actions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, payload }) });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const opsToken = localStorage.getItem('stuard_access_token');
+      if (opsToken) headers.Authorization = `Bearer ${opsToken}`;
+      const res = await fetch('/api/actions', { method: 'POST', headers, body: JSON.stringify({ type, payload }) });
       const data = await res.json();
       if (res.ok) {
         setMessage(data.message || 'Done');

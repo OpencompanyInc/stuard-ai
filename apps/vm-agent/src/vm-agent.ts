@@ -397,19 +397,34 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'proactive_task_delete':
       return handleProactiveTaskDelete(args);
 
-    // ── Bot Commands (multi-bot scheduler) ───────────────────────────
+    // ── Agent Commands (multi-agent scheduler; legacy bots_* aliases kept) ─
+    case 'agents_status':
     case 'bots_status':
       return handleBotsStatus();
+    case 'agents_sync':
     case 'bots_sync':
       return handleBotsSync(args);
     case 'set_user_timezone':
       return handleSetUserTimezone(args);
     case 'get_user_timezone':
       return handleGetUserTimezone();
+    case 'agents_run':
     case 'bots_run':
       return await handleBotsRun(args);
+    case 'agents_list':
     case 'bots_list':
       return handleBotsList();
+    case 'agents_delete':
+    case 'bots_delete':
+      return handleBotsDelete(args);
+    case 'agent_memory_list':
+    case 'agent_memory_create':
+    case 'agent_memory_update':
+    case 'agent_memory_delete':
+    case 'agent_memory_log':
+    case 'agent_memory_export':
+    case 'agent_memory_replace':
+    case 'agent_memory_merge':
     case 'bot_memory_list':
     case 'bot_memory_create':
     case 'bot_memory_update':
@@ -1309,6 +1324,12 @@ function handleBotsRun(args: any): any {
 
 function handleBotsList(): any {
   return { ok: true, bots: getVMBotScheduler().listBots() };
+}
+
+function handleBotsDelete(args: any): any {
+  const id = String(args?.id || args?.agentId || args?.agent_id || args?.botId || args?.bot_id || '').trim();
+  if (!id) return { ok: false, error: 'missing id' };
+  return getVMBotScheduler().deleteBot(id);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

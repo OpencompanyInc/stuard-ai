@@ -14,9 +14,8 @@ import 'simplebar-react/dist/simplebar.min.css';
 import './scrollbar.css';
 import { supabase } from './lib/supabaseClient';
 import { startBrowserSignIn } from './auth/browserSignIn';
-import OnboardingFlow from './components/onboarding/OnboardingFlow';
+import { InteractiveTour } from './components/onboarding/InteractiveTour';
 import { OnboardingProvider, OnboardingTooltipContainer } from './components/onboarding';
-import EnvironmentBadge from './components/EnvironmentBadge';
 import { WorkflowOverlay } from './components/WorkflowOverlay/WorkflowOverlay';
 import { NotificationProvider, NotificationController } from './components/NotificationSystem';
 import {
@@ -32,6 +31,9 @@ import { useVoiceMode } from './hooks/useVoiceMode';
 import { usePlannerData } from './hooks/usePlannerData';
 import { LauncherView } from './components/LauncherView';
 import { ChatView } from './components/ChatView';
+import { useActiveProject } from './hooks/useActiveProject';
+import { setConversationProject } from './hooks/useProjects';
+import { ActiveProjectChip, ExitProjectToast } from './components/chat-view/ActiveProjectBar';
 import {
   Mic,
   Plus,
@@ -333,6 +335,77 @@ export default function App() {
       setVoiceActive(false);
     }
   }, [voice]);
+
+  // Show/hide the full-screen click-through voice border window when voice
+  // mode toggles. Also hide the compact overlay window while voice is on so
+  // its input bar / old UI doesn't render behind the new voice surface.
+  const compactWasVisibleBeforeVoiceRef = useRef(false);
+  useEffect(() => {
+    const api: any = (window as any).desktopAPI;
+    if (!api) return;
+    if (voiceActive) {
+      try { api.showVoiceBorder?.(); } catch { }
+      // Remember whether compact was visible so we can restore it on exit.
+      try { compactWasVisibleBeforeVoiceRef.current = !!overlayVisible; } catch { compactWasVisibleBeforeVoiceRef.current = false; }
+      try { api.hide?.(); } catch { }
+    } else {
+      try { api.hideVoiceBorder?.(); } catch { }
+      if (compactWasVisibleBeforeVoiceRef.current) {
+        try { api.show?.(); } catch { }
+      }
+      compactWasVisibleBeforeVoiceRef.current = false;
+    }
+  }, [voiceActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  // `voice.sharingScreen` is the source of truth — the hook owns the capture
+  // pump and toggling it routes JPEG frames into the Gemini Live vision channel.
+  //
+  // Performance: the audio level updates ~60×/sec via rAF. Sending a full IPC
+  // payload (with the entire transcripts array) at that rate caused noticeable
+  // lag and motion stutter in the border window. We split the update path:
+  //   - audioLevel is throttled to ~30 Hz and sent as its own minimal payload;
+  //   - the heavier state/transcript payload only flushes when those change,
+  //     and we only forward the latest transcript line to the border (it only
+  //     ever displays `transcripts[transcripts.length - 1]`).
+  const lastAudioLevelSendRef = useRef(0);
+  useEffect(() => {
+    if (!voiceActive) return;
+    const api: any = (window as any).desktopAPI;
+    if (!api?.updateVoiceBorder) return;
+    const now = performance.now();
+    if (now - lastAudioLevelSendRef.current < 33) return; // ~30 Hz
+    lastAudioLevelSendRef.current = now;
+    try { api.updateVoiceBorder({ audioLevel: voice.audioLevel }); } catch { }
+  }, [voiceActive, voice.audioLevel]);
+  useEffect(() => {
+    if (!voiceActive) return;
+    const api: any = (window as any).desktopAPI;
+    if (!api?.updateVoiceBorder) return;
+    const latest = voice.transcripts[voice.transcripts.length - 1];
+    try {
+      api.updateVoiceBorder({
+        state: voice.state,
+        muted: voice.muted,
+        sharingScreen: voice.sharingScreen,
+        activeTool: voice.activeTool,
+        transcripts: latest ? [latest] : [],
+      });
+    } catch { }
+  }, [voiceActive, voice.state, voice.muted, voice.sharingScreen, voice.activeTool, voice.transcripts]);
+  // Listen for pill control messages relayed from the border window
+  useEffect(() => {
+    const api: any = (window as any).desktopAPI;
+    if (!api?.onVoiceBorderControl) return;
+    const cleanup = api.onVoiceBorderControl((payload: { action?: 'mute' | 'close' | 'shareScreen' }) => {
+      if (payload?.action === 'mute') {
+        try { voice.toggleMute(); } catch { }
+      } else if (payload?.action === 'close') {
+        stopVoiceSession();
+      } else if (payload?.action === 'shareScreen') {
+        try { voice.toggleScreenShare(); } catch { }
+      }
+    });
+    return () => { try { cleanup?.(); } catch { } };
+  }, [voice, stopVoiceSession]);
   const startVoiceSession = useCallback(async () => {
     if (!signedIn) {
       try { await startBrowserSignIn(); } catch { }
@@ -378,12 +451,6 @@ export default function App() {
 
   const handleWakewordDetected = useCallback(async () => {
     try {
-      window.desktopAPI.show();
-      setShowMiniOutput(false);
-      setOverlayMode('compact');
-      window.desktopAPI.setMode('compact');
-      setTimeout(() => inputRef.current?.focus(), 0);
-
       if (!voiceActive) {
         await startVoiceSession();
       }
@@ -397,19 +464,26 @@ export default function App() {
     return () => { cleanup?.(); };
   }, [handleWakewordDetected]);
 
-  // Hold-to-voice: main process sends voice:setActive when the global hotkey
-  // is held past the hold threshold; release sends false.
+  // Hold-to-toggle voice: each hold past the hold threshold fires
+  // voice:setActive(true), which we interpret as a toggle â€” voice stays on
+  // after release until the user toggles again or clicks the pill X.
   useEffect(() => {
     const cleanup = (window as any).desktopAPI?.onVoiceSetActive?.(async (active: boolean) => {
-      holdActiveRef.current = active;
       if (active) {
-        if (!voiceActive) {
-          await startVoiceSession();
-        }
-      } else {
+        // Toggle on/off based on current state
         if (voiceActive) {
           stopVoiceSession();
+        } else {
+          holdActiveRef.current = true;
+          try {
+            await startVoiceSession();
+          } finally {
+            holdActiveRef.current = false;
+          }
         }
+      } else {
+        // Explicit deactivate (rare â€” main no longer auto-fires this on release)
+        if (voiceActive) stopVoiceSession();
       }
     });
     return () => { cleanup?.(); };
@@ -896,7 +970,7 @@ export default function App() {
   };
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'terminal' | 'todo'>('todo');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'terminal' | 'todo' | 'projects'>('projects');
 
   useEffect(() => {
     if (chatMenuOpen) fetchConversations();
@@ -1367,7 +1441,7 @@ export default function App() {
     }
     setInternalSidebarOpen(false);
   }, [overlayMode]);
-  const handleSwitchSidebarTab = useCallback((tab: 'terminal' | 'todo') => setActiveSidebarTab(tab), []);
+  const handleSwitchSidebarTab = useCallback((tab: 'terminal' | 'todo' | 'projects') => setActiveSidebarTab(tab), []);
 
   // Auto-open sidebar in window mode when an agent runs a terminal command
   // or creates a to-do list. The sidebar opens to the relevant tab.
@@ -1428,6 +1502,32 @@ export default function App() {
     const p = (ai?.phase || '').toString().toLowerCase();
     return p === 'routing' || p === 'responding' || p === 'tool';
   }, [ai]);
+
+  // Project Mode — resolve the project stamped on the current conversation
+  // and surface it as a chat lock-in (accent border + sticky bar + chip).
+  const { project: activeProject, refresh: refreshActiveProject } = useActiveProject(
+    conversationId,
+    isStreaming,
+  );
+  const [exitedProject, setExitedProject] = useState<typeof activeProject>(null);
+  const handleExitProjectMode = useCallback(async () => {
+    if (!conversationId || !activeProject) return;
+    const snapshot = activeProject;
+    await setConversationProject(conversationId, null);
+    setExitedProject(snapshot);
+    window.dispatchEvent(new CustomEvent('project-mode-changed'));
+  }, [conversationId, activeProject]);
+  const handleUndoExit = useCallback(async () => {
+    if (!conversationId || !exitedProject) return;
+    await setConversationProject(conversationId, exitedProject.id);
+    setExitedProject(null);
+    window.dispatchEvent(new CustomEvent('project-mode-changed'));
+  }, [conversationId, exitedProject]);
+  const handleOpenProjectHome = useCallback(() => {
+    try {
+      (window as any).desktopAPI?.openSidebar?.({ tab: 'projects', expanded: true });
+    } catch { /* ignore */ }
+  }, []);
 
   const inputStatusText = useMemo(() => {
     if (isRecording) return 'Recording...';
@@ -1509,6 +1609,15 @@ export default function App() {
       { id: 'toggle-spaces', title: 'Spaces', description: 'Toggle spaces sidebar', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.toggleSpaces() },
       { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
       { id: 'attach-images', title: 'Attach images', description: 'Upload images', icon: <Image className="w-5 h-5" />, run: handleAttachImages },
+      {
+        id: 'start-screen-snip',
+        title: 'Start screen snip',
+        description: 'Open Windows screen snip',
+        icon: <Image className="w-5 h-5" />,
+        run: async () => {
+          await window.desktopAPI.startOverlayScreenSnip?.();
+        }
+      },
       { id: 'show-hotkeys', title: 'Show hotkeys', description: 'View keyboard shortcuts', icon: <Keyboard className="w-5 h-5" />, shortcut: 'F1', run: () => setShowHotkeys(true) },
       { id: 'rerun-onboarding', title: 'Rerun onboarding', description: 'Start the welcome tour again', icon: <RefreshCw className="w-5 h-5" />, run: () => { setOnboardingComplete(false); setTourComplete(false); } },
       { id: 'hide-overlay', title: 'Hide overlay', description: 'Close Stuard window', icon: <Power className="w-5 h-5" />, shortcut: 'Esc', run: () => window.desktopAPI.hide() },
@@ -1629,6 +1738,13 @@ export default function App() {
   return (
     <NotificationProvider>
       <NotificationController subscribeProgress={subscribeProgress} />
+      {exitedProject && (
+        <ExitProjectToast
+          project={exitedProject}
+          onUndo={handleUndoExit}
+          onDismiss={() => setExitedProject(null)}
+        />
+      )}
       <div className={`overlay-window-shell ${overlayVisible ? 'overlay-window-shell-visible' : 'overlay-window-shell-hidden'} w-full h-full text-sans overflow-hidden relative`}>
         {/* Resize handles for user-resizable window - invisible but draggable edges */}
         {showResizeGrips && (
@@ -1696,9 +1812,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Environment Badge */}
-                <EnvironmentBadge variant="overlay" className="absolute top-14 right-3 z-50 pointer-events-none" />
-
                 {/* Error Notifications */}
                 {lastError?.code === 'monthly_credit_limit_exceeded' && (
                   <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
@@ -1748,7 +1861,7 @@ export default function App() {
                     onCollapse={handleShowCompact}
                     onOpenDashboard={handleOpenDashboard}
                     onNewChat={handleNewChat}
-                    voiceActive={voiceActive}
+                    voiceActive={false}
                     onToggleVoice={handleToggleVoice}
                     voiceState={voice.state}
                     voiceAudioLevel={voice.audioLevel}
@@ -1810,6 +1923,10 @@ export default function App() {
                     onToggleInternalSidebar={handleToggleInternalSidebar}
                     onCloseInternalSidebar={handleCloseInternalSidebar}
                     onSwitchSidebarTab={handleSwitchSidebarTab}
+                    activeProject={activeProject}
+                    activeConversationId={conversationId}
+                    onExitProjectMode={handleExitProjectMode}
+                    onOpenProjectHome={handleOpenProjectHome}
                   />
                 ) : (
                   <LauncherView
@@ -1826,7 +1943,7 @@ export default function App() {
                     isRecording={isRecording}
                     accessToken={accessToken}
                     overlayMode={overlayMode}
-                    voiceActive={voiceActive}
+                    voiceActive={false}
                     onToggleVoice={handleToggleVoice}
                     voiceState={voice.state}
                     voiceAudioLevel={voice.audioLevel}
@@ -1867,8 +1984,11 @@ export default function App() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col relative">
-              {/* Environment Badge - compact mode (top-right) */}
-              <EnvironmentBadge variant="minimal" className="absolute top-1 right-1 z-50" />
+              {activeProject && (
+                <div className="absolute top-1 left-2 z-50 max-w-[calc(100%-5.5rem)]">
+                  <ActiveProjectChip project={activeProject} onClick={handleShowWindow} />
+                </div>
+              )}
               <InputArea
                 ref={inputRef}
                 query={query}
@@ -1905,7 +2025,7 @@ export default function App() {
                 onCancelQueuedMessage={cancelQueuedMessage}
                 isRecording={isRecording}
                 onMicClick={handleMicClick}
-                voiceActive={voiceActive}
+                voiceActive={false}
                 onToggleVoice={handleToggleVoice}
                 voiceState={voice.state}
                 voiceAudioLevel={voice.audioLevel}
@@ -1939,12 +2059,15 @@ export default function App() {
           />
           <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
 
-          {/* Spotlight tour after wizard */}
+          {/* Interactive tour — floats hints over the real UI and listens
+              for the user to actually do each action. */}
           {showTour && (
-            <OnboardingFlow
-              startAtTour={true}
-              expanded={overlayMode === 'sidebar' || overlayMode === 'window'}
-              onExpand={handleShowWindow}
+            <InteractiveTour
+              onMount={() => {
+                if (overlayMode !== 'sidebar' && overlayMode !== 'window') {
+                  handleShowWindow();
+                }
+              }}
               onComplete={() => setTourComplete(true)}
             />
           )}

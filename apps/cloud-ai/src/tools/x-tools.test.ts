@@ -27,7 +27,7 @@ vi.mock('./vm-oauth', () => ({
   storeVMOAuthAccount: (...args: any[]) => storeVMOAuthAccountMock(...args),
 }));
 
-import { x_list_dms } from './x-tools';
+import { x_list_dms, x_reply_to_comment } from './x-tools';
 
 function jsonResponse(body: any, init: Partial<Response> = {}) {
   return {
@@ -140,5 +140,86 @@ describe('x_list_dms', () => {
     const dmsUrl = decodeURIComponent((global.fetch as any).mock.calls[1][0]);
     expect(dmsUrl).toContain('/dm_conversations/with/222/dm_events?');
     expect(dmsUrl).toContain('pagination_token=PAGE123456789012');
+  });
+});
+
+describe('x_reply_to_comment', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getVMOAuthAccountMock.mockResolvedValue(null);
+    getExternalAccountMock.mockResolvedValue({
+      access_token: 'x-access-token',
+      refresh_token: null,
+      scopes: ['tweet.read', 'tweet.write', 'users.read'],
+      profile_label: 'default',
+      account_email: '@self',
+      meta: {},
+    });
+    checkAccessMock.mockResolvedValue({ allowed: true });
+    logUsageEventMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('creates replies with the documented X API v2 payload', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      data: { id: 'reply-123', text: 'Thanks!' },
+    })) as any;
+
+    const result = await x_reply_to_comment.execute?.({
+      comment_id: 'tweet-456',
+      text: 'Thanks!',
+    }, {} as any);
+
+    expect(result).toMatchObject({
+      id: 'reply-123',
+      text: 'Thanks!',
+      in_reply_to_tweet_id: 'tweet-456',
+      url: 'https://twitter.com/i/status/reply-123',
+    });
+    const [url, request] = (global.fetch as any).mock.calls[0];
+    expect(url).toBe('https://api.x.com/2/tweets');
+    expect(request.method).toBe('POST');
+    expect(request.headers.Authorization).toBe('Bearer x-access-token');
+    expect(JSON.parse(request.body)).toEqual({
+      text: 'Thanks!',
+      reply: { in_reply_to_tweet_id: 'tweet-456' },
+    });
+  });
+
+  it('accepts tweet_id as an alias for comment_id', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      data: { id: 'reply-789', text: 'Alias works' },
+    })) as any;
+
+    await x_reply_to_comment.execute?.({
+      tweet_id: 'tweet-999',
+      text: 'Alias works',
+    }, {} as any);
+
+    const request = (global.fetch as any).mock.calls[0][1];
+    expect(JSON.parse(request.body).reply.in_reply_to_tweet_id).toBe('tweet-999');
+  });
+
+  it('fails before posting when the stored token is missing tweet.write', async () => {
+    getExternalAccountMock.mockResolvedValue({
+      access_token: 'x-access-token',
+      refresh_token: null,
+      scopes: ['tweet.read', 'like.write', 'users.read'],
+      profile_label: 'default',
+      account_email: '@self',
+      meta: {},
+    });
+    global.fetch = vi.fn() as any;
+
+    await expect(x_reply_to_comment.execute?.({
+      comment_id: 'tweet-456',
+      text: 'Thanks!',
+    }, {} as any)).rejects.toThrow('x_missing_scope');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

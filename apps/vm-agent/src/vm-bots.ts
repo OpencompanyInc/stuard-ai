@@ -22,7 +22,7 @@ import os from 'os';
 import { mintVMToken } from './lib/vm-token-mint';
 import { buildVMMemoryContext } from './vm-agent-ws';
 import { getActiveSkillsForBot } from './vm-skills';
-import { appendVMBotRunLog, formatVMBotMemoryForPrompt, mergeVMBotMemory } from './vm-bot-memory';
+import { appendVMBotRunLog, deleteVMBotMemory, formatVMBotMemoryForPrompt, mergeVMBotMemory } from './vm-bot-memory';
 
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { /* optional — interval triggers still work */ }
@@ -242,6 +242,19 @@ export class VMBotScheduler {
 
   getBot(id: string): VMBot | null {
     return this.bots.get(id) || null;
+  }
+
+  deleteBot(id: string): { ok: boolean; error?: string; bot?: VMBot } {
+    const bot = this.bots.get(id);
+    if (!bot) return { ok: false, error: 'agent_not_found' };
+
+    this.unregisterBotCronJobs(id);
+    this.inFlight.delete(id);
+    this.bots.delete(id);
+    this.save();
+    deleteVMBotMemory(id);
+    this.log(`Deleted agent ${id} (${bot.name})`);
+    return { ok: true, bot };
   }
 
   /** Status snapshot suitable for shipping back to the desktop. */

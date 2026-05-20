@@ -16,7 +16,7 @@ function cleanString(value: any): string {
 }
 
 function stripBotProtocol(value: string): string {
-  return value.replace(/^bot:\/\//i, '').replace(/^@+/, '').trim();
+  return value.replace(/^(bot|agent):\/\//i, '').replace(/^@+/, '').trim();
 }
 
 function normalizeBotName(value: any): string {
@@ -81,7 +81,7 @@ function summarizeConfig(config: BotConfig): Record<string, any> {
 }
 
 function resolveBot(args: any): Bot | null {
-  const id = stripBotProtocol(String(args?.bot_id || args?.botId || args?.id || '').trim());
+  const id = stripBotProtocol(String(args?.agent_id || args?.agentId || args?.bot_id || args?.botId || args?.id || '').trim());
   if (id) {
     const byId = botService.get(id);
     if (byId) return byId;
@@ -99,7 +99,7 @@ function botNotFound(args: any): Record<string, any> {
     error: 'bot_not_found',
     availableBots: botService.list().map((bot) => ({ id: bot.id, name: bot.name, status: bot.status })),
     requested: {
-      bot_id: args?.bot_id || args?.botId || args?.id || null,
+      agent_id: args?.agent_id || args?.agentId || args?.bot_id || args?.botId || args?.id || null,
       name: args?.name || args?.bot_name || args?.mention || null,
     },
   };
@@ -359,6 +359,34 @@ export async function execBotPause(args: any, _ctx: RouterContext): Promise<any>
     bot: summarizeBot(latest, botService.resolveConfig(latest.id)),
     vmStop,
     error: vmStop && !vmStop.ok ? vmStop.error : undefined,
+  };
+}
+
+export async function execBotDelete(args: any, _ctx: RouterContext): Promise<any> {
+  const bot = resolveBot(args);
+  if (!bot) return botNotFound(args);
+
+  const target = String(args?.target || 'all').trim().toLowerCase();
+  const deleteLocal = target === 'local' || target === 'both' || target === 'all';
+  const deleteVm = target === 'vm' || target === 'both' || target === 'all' || args?.delete_vm === true || args?.deleteVm === true;
+  let vmDelete: any = undefined;
+
+  if (deleteVm && bot.vmDeployedAt) {
+    vmDelete = await stopBotOnVm(bot.id);
+  }
+
+  let localDelete: any = { ok: true, skipped: true };
+  if (deleteLocal || !deleteVm) {
+    localDelete = botService.delete(bot.id);
+    try { syncBotTriggers(bot.id); } catch { /* best effort */ }
+  }
+
+  return {
+    ok: !!localDelete.ok && (!vmDelete || !!vmDelete.ok),
+    deleted: !!localDelete.ok && !localDelete.skipped,
+    bot: summarizeBot(bot, botService.resolveConfig(bot.id)),
+    vmDelete,
+    error: localDelete.error || (vmDelete && !vmDelete.ok ? vmDelete.error : undefined),
   };
 }
 

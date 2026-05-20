@@ -13,6 +13,7 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 import type { VoiceProvider, VoiceSession, VoiceSessionConfig, AudioFormat } from './types';
+import { computeVoiceCostUsd } from './voice-pricing';
 
 const GROK_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
 
@@ -26,6 +27,7 @@ class GrokRealtimeSession implements VoiceSession {
   private _active = false;
   private _responding = false;
   private config: VoiceSessionConfig;
+  private resolvedModelId = '';
 
   constructor(config: VoiceSessionConfig) {
     this.id = `grok_${randomUUID().slice(0, 12)}`;
@@ -35,6 +37,9 @@ class GrokRealtimeSession implements VoiceSession {
   async connect(): Promise<void> {
     const apiKey = process.env.XAI_API_KEY || '';
     if (!apiKey) throw new Error('XAI_API_KEY not set');
+    // xAI doesn't pin the model in the WS URL; record what we asked for so
+    // the usage event carries the right id.
+    this.resolvedModelId = this.config.model || 'grok-3';
 
     this.ws = new WebSocket(GROK_REALTIME_URL, {
       headers: {
@@ -113,6 +118,12 @@ class GrokRealtimeSession implements VoiceSession {
 
           if (msg.type === 'response.done' || msg.type === 'response.cancelled') {
             this._responding = false;
+            const usage = msg.response?.usage;
+            if (usage) {
+              try { this.emitUsage(usage); } catch (err: any) {
+                console.warn('[grok-realtime] usage emit failed:', err?.message);
+              }
+            }
           }
 
           if (msg.type === 'response.audio_transcript.done') {
@@ -164,6 +175,43 @@ class GrokRealtimeSession implements VoiceSession {
           reject(err);
         }
       });
+    });
+  }
+
+  private emitUsage(usage: any): void {
+    const inDetails = usage?.input_token_details || {};
+    const outDetails = usage?.output_token_details || {};
+    const textIn = Math.max(0, Number(inDetails.text_tokens || 0));
+    const audioIn = Math.max(0, Number(inDetails.audio_tokens || 0));
+    const cachedIn = Math.max(0, Number(inDetails.cached_tokens || 0));
+    const textOut = Math.max(0, Number(outDetails.text_tokens || 0));
+    const audioOut = Math.max(0, Number(outDetails.audio_tokens || 0));
+
+    let resolvedIn = textIn + audioIn;
+    if (resolvedIn === 0) resolvedIn = Math.max(0, Number(usage?.input_tokens || 0));
+    let resolvedOut = textOut + audioOut;
+    if (resolvedOut === 0) resolvedOut = Math.max(0, Number(usage?.output_tokens || 0));
+    if (resolvedIn + resolvedOut === 0) return;
+
+    const costUsd = computeVoiceCostUsd('grok-realtime', this.resolvedModelId, {
+      textInputTokens: textIn || resolvedIn,
+      audioInputTokens: audioIn,
+      textOutputTokens: textOut,
+      audioOutputTokens: audioOut || resolvedOut,
+      cachedInputTokens: cachedIn,
+    });
+
+    this.config.onUsage?.({
+      model: `xai/${this.resolvedModelId}`,
+      inputTokens: resolvedIn,
+      outputTokens: resolvedOut,
+      cachedInputTokens: cachedIn,
+      inputTextTokens: textIn,
+      inputAudioTokens: audioIn,
+      outputTextTokens: textOut,
+      outputAudioTokens: audioOut,
+      costUsd,
+      raw: usage,
     });
   }
 

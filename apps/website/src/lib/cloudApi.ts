@@ -489,7 +489,7 @@ export async function setVmPermissions(config: VmPermissionsConfig) {
   });
 }
 
-// ── Bots (proactive agents — runtime status from the VM scheduler) ─────────
+// ── Agents (runtime status from the VM scheduler) ──────────────────────────
 
 export interface VmBotTrigger {
   id: string;
@@ -533,10 +533,10 @@ export interface VmBot {
 }
 
 export async function getVmBotsStatus() {
-  // POST /v1/bot/status -> { ok, bots: [...] } (no botId returns the full list).
+  // POST /v1/agent/status -> { ok, bots: [...] } (no agentId returns the full list).
   // The status endpoint returns runtime info only; for full bot config use
   // `listVmBots()` below.
-  return apiFetch<{ bots?: VmBot[] }>('/v1/bot/status', {
+  return apiFetch<{ bots?: VmBot[] }>('/v1/agent/status', {
     method: 'POST',
     body: JSON.stringify({}),
     timeoutMs: 15_000,
@@ -544,21 +544,34 @@ export async function getVmBotsStatus() {
 }
 
 /**
- * Pull the full deployed-bot list (including instructions, triggers, config)
- * directly from the VM scheduler via the relay. The `/v1/bot/status` endpoint
- * only returns a runtime snapshot — this command returns the configured bots.
+ * Pull the full deployed-agent list (including instructions, triggers, config)
+ * directly from the VM scheduler via the relay. The `/v1/agent/status` endpoint
+ * only returns a runtime snapshot — this command returns configured agents.
  */
 export async function listVmBots() {
-  return sendVmCommand('bots_list', {}, 15_000);
+  return sendVmCommand('agents_list', {}, 15_000);
 }
 
 export async function runVmBot(botId: string) {
-  return apiFetch('/v1/bot/run', {
+  return apiFetch('/v1/agent/run', {
     method: 'POST',
-    body: JSON.stringify({ botId }),
+    body: JSON.stringify({ agentId: botId }),
     timeoutMs: 30_000,
   });
 }
+
+export async function deleteVmBot(botId: string) {
+  return apiFetch('/v1/agent/delete', {
+    method: 'POST',
+    body: JSON.stringify({ agentId: botId }),
+    timeoutMs: 20_000,
+  });
+}
+
+export const getVmAgentsStatus = getVmBotsStatus;
+export const listVmAgents = listVmBots;
+export const runVmAgent = runVmBot;
+export const deleteVmAgent = deleteVmBot;
 
 export interface VmBotMemoryEntry {
   id?: string;
@@ -570,19 +583,21 @@ export interface VmBotMemoryEntry {
   [key: string]: any;
 }
 
-/** Pull the VM-local kanban / memory snapshot for a single bot. */
+/** Pull the VM-local kanban / memory snapshot for a single agent. */
 export async function exportVmBotMemory(botId: string) {
   return apiFetch<{
     memory?: { facts?: VmBotMemoryEntry[]; runs?: VmBotMemoryEntry[]; tasks?: VmBotMemoryEntry[] };
     facts?: VmBotMemoryEntry[];
     runs?: VmBotMemoryEntry[];
     tasks?: VmBotMemoryEntry[];
-  }>('/v1/bot/memory/export', {
+  }>('/v1/agent/memory/export', {
     method: 'POST',
-    body: JSON.stringify({ botId }),
+    body: JSON.stringify({ agentId: botId }),
     timeoutMs: 20_000,
   });
 }
+
+export const exportVmAgentMemory = exportVmBotMemory;
 
 // ── Sync prefs (cloud → VM data sync settings) ─────────────────────────────
 

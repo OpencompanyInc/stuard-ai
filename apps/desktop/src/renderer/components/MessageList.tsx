@@ -1,24 +1,10 @@
-
-import React, { useRef, useLayoutEffect, useState, useEffect, useCallback, useMemo, memo } from 'react';
-import SimpleBar from 'simplebar-react';
+import React, { useRef, useEffect, useMemo, memo, useState, useCallback } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { motion } from 'framer-motion';
 import MessageBubble from './MessageBubble';
-import 'simplebar-react/dist/simplebar.min.css';
-import { ChevronUp, CornerDownRight, Loader2 } from 'lucide-react';
+import { CornerDownRight } from 'lucide-react';
 import type { ToolCall, StreamChunk } from '../hooks/useAgent';
-import { Shimmer } from './ai-elements/Shimmer';
-import {
-  ChainOfThought,
-  ChainOfThoughtContent,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-} from './ai-elements/ChainOfThought';
 import type { ChatAttachment } from '../utils/attachments';
-
-// Performance constants
-const INITIAL_MESSAGES_TO_RENDER = 10; // Start with last 10 messages
-const MESSAGES_TO_LOAD_ON_SCROLL = 10; // Load 10 more when scrolling up
-const AUTO_SCROLL_BOTTOM_THRESHOLD = 80;
 
 interface ContextPath {
   path: string;
@@ -58,109 +44,129 @@ interface MessageListProps {
   onRedoFiles?: (messageId: string) => void;
 }
 
-// Format seconds to human readable
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}m ${secs}s`;
+// Sentinel id used for the live streaming bubble item. Kept stable so
+// Virtuoso doesn't unmount/remount it across token ticks.
+const STREAMING_ITEM_ID = '__streaming__';
+
+interface VirtuosoItem {
+  id: string;
+  kind: 'message' | 'streaming';
+  message?: Message;
+  isSteer?: boolean;
+  isNewSteer?: boolean;
 }
 
-// Chain-of-thought thinking indicator (matches window mode format)
-const ThinkingIndicator: React.FC<{
-  startTime?: number;
-  reasoning?: string;
-}> = memo(({ startTime, reasoning }) => {
-  const [elapsed, setElapsed] = useState(0);
-  const internalStartRef = useRef<number | null>(null);
+// Memoized item renderer — Virtuoso calls this for each visible item. We pull
+// the heavy MessageBubble work inside, and avoid recreating callbacks per
+// render via a stable handlers prop.
+interface ItemHandlers {
+  onSubmitToolOutput?: (id: string, result: any) => void;
+  onGenUIResponse?: (component: string, result: any) => void;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  onRevertFiles?: (messageId: string) => void;
+  onRedoFiles?: (messageId: string) => void;
+}
 
-  const hasReasoning = reasoning && reasoning.trim().length > 0;
+const MessageItem = memo(function MessageItem({
+  item,
+  streamingProps,
+  handlers,
+}: {
+  item: VirtuosoItem;
+  streamingProps?: {
+    currentResponse?: string;
+    currentReasoning?: string;
+    currentToolCalls?: ToolCall[];
+    currentStreamChunks?: StreamChunk[];
+  };
+  handlers: ItemHandlers;
+}) {
+  if (item.kind === 'streaming') {
+    return (
+      <MessageBubble
+        role="assistant"
+        text={streamingProps?.currentResponse || ''}
+        reasoning={streamingProps?.currentReasoning}
+        toolCalls={streamingProps?.currentToolCalls}
+        streamChunks={streamingProps?.currentStreamChunks}
+        isStreaming
+        onSubmitToolOutput={handlers.onSubmitToolOutput}
+        onGenUIResponse={handlers.onGenUIResponse}
+      />
+    );
+  }
 
-  useEffect(() => {
-    if (!internalStartRef.current) {
-      internalStartRef.current = startTime || Date.now();
-    }
-    const interval = setInterval(() => {
-      const start = internalStartRef.current || Date.now();
-      setElapsed((Date.now() - start) / 1000);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [startTime]);
+  const m = item.message!;
+  const bubble = (
+    <MessageBubble
+      role={m.role}
+      text={m.text}
+      reasoning={m.reasoning}
+      reasoningDuration={m.reasoningDuration}
+      toolCalls={m.toolCalls}
+      streamChunks={m.streamChunks}
+      contextPaths={m.contextPaths}
+      attachments={m.attachments}
+      onSubmitToolOutput={handlers.onSubmitToolOutput}
+      onGenUIResponse={handlers.onGenUIResponse}
+      messageId={m.id}
+      onEditMessage={handlers.onEditMessage}
+      modifiedFiles={m.modifiedFiles}
+      checkpointId={m.checkpointId}
+      reverted={m.reverted}
+      onRevertFiles={handlers.onRevertFiles}
+      onRedoFiles={handlers.onRedoFiles}
+    />
+  );
+
+  if (!item.isSteer) return bubble;
 
   return (
-    <ChainOfThought defaultOpen className="mb-3 mr-auto w-full max-w-[85%] md:max-w-[60%]">
-      <ChainOfThoughtHeader>
-        <Shimmer as="span" className="text-[13px] text-theme-muted" duration={1.8} spread={3}>
-          Thinking… {formatDuration(elapsed)}
-        </Shimmer>
-      </ChainOfThoughtHeader>
-      {hasReasoning && (
-        <ChainOfThoughtContent>
-          <ChainOfThoughtStep
-            label={
-              <Shimmer as="span" duration={2} spread={3}>Reasoning</Shimmer>
-            }
-            status="active"
-            isLast
-          >
-            <div
-              className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
-              style={{
-                backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
-                color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
-              }}
-            >
-              {reasoning}
-              <span className="inline-block w-[2px] h-3 bg-violet-300 ml-0.5 animate-[blink_1s_step-end_infinite] align-middle rounded-full" />
-            </div>
-          </ChainOfThoughtStep>
-        </ChainOfThoughtContent>
+    <motion.div
+      initial={item.isNewSteer ? { opacity: 0, y: 36, scale: 0.96 } : false}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={item.isNewSteer
+        ? { type: 'spring', stiffness: 380, damping: 28, mass: 0.9 }
+        : { duration: 0 }}
+    >
+      {!m.subagentTarget && (
+        <div className="flex justify-end mb-1 pr-1">
+          <span className="inline-flex items-center gap-1 text-[9.5px] font-black uppercase tracking-widest text-primary/70">
+            <CornerDownRight className="w-3 h-3" />
+            Steered
+          </span>
+        </div>
       )}
-    </ChainOfThought>
+      {bubble}
+    </motion.div>
   );
-});
+}, (prev, next) => {
+  // Both items must point at the same logical row.
+  if (prev.item.id !== next.item.id) return false;
+  if (prev.item.kind !== next.item.kind) return false;
 
-// Memoized MessageBubble wrapper to prevent unnecessary re-renders
-const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
-  // Only re-render if these props actually changed
+  // Streaming bubble: re-render whenever any of the streaming inputs change,
+  // since the assistant is mid-stream and content turns over per token.
+  if (next.item.kind === 'streaming') {
+    return (
+      prev.streamingProps?.currentResponse === next.streamingProps?.currentResponse &&
+      prev.streamingProps?.currentReasoning === next.streamingProps?.currentReasoning &&
+      prev.streamingProps?.currentToolCalls === next.streamingProps?.currentToolCalls &&
+      prev.streamingProps?.currentStreamChunks === next.streamingProps?.currentStreamChunks &&
+      prev.handlers === next.handlers
+    );
+  }
+
+  // Historical message: rely on the immutable Message object identity inside
+  // tab.messages — when nothing about this row changed, the reference stays
+  // stable and we can skip the bubble's reconciliation entirely.
   return (
-    prevProps.text === nextProps.text &&
-    prevProps.role === nextProps.role &&
-    prevProps.reasoning === nextProps.reasoning &&
-    prevProps.reasoningDuration === nextProps.reasoningDuration &&
-    prevProps.isStreaming === nextProps.isStreaming &&
-    prevProps.toolCalls === nextProps.toolCalls &&
-    prevProps.streamChunks === nextProps.streamChunks &&
-    prevProps.attachments === nextProps.attachments &&
-    prevProps.reverted === nextProps.reverted &&
-    prevProps.messageId === nextProps.messageId
+    prev.item.message === next.item.message &&
+    prev.item.isSteer === next.item.isSteer &&
+    prev.item.isNewSteer === next.item.isNewSteer &&
+    prev.handlers === next.handlers
   );
 });
-
-// Load more button component
-const LoadMoreButton: React.FC<{
-  hiddenCount: number;
-  onLoadMore: () => void;
-  isLoading?: boolean;
-}> = memo(({ hiddenCount, onLoadMore, isLoading }) => (
-  <button
-    onClick={onLoadMore}
-    disabled={isLoading}
-    className="flex items-center justify-center gap-2 w-full py-3 px-4 mb-3 rounded-xl bg-theme-hover/50 hover:bg-theme-hover border border-theme/20 text-theme-muted hover:text-theme-fg transition-all text-[12px] font-bold uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
-  >
-    {isLoading ? (
-      <Loader2 className="w-4 h-4 animate-spin" />
-    ) : (
-      <ChevronUp className="w-4 h-4" />
-    )}
-    <span>
-      {isLoading ? 'Loading...' : `Load ${Math.min(hiddenCount, MESSAGES_TO_LOAD_ON_SCROLL)} more messages`}
-    </span>
-    {!isLoading && hiddenCount > MESSAGES_TO_LOAD_ON_SCROLL && (
-      <span className="text-[10px] opacity-60">({hiddenCount} hidden)</span>
-    )}
-  </button>
-));
 
 const MessageList: React.FC<MessageListProps> = ({
   messages,
@@ -168,7 +174,6 @@ const MessageList: React.FC<MessageListProps> = ({
   currentReasoning,
   currentToolCalls,
   currentStreamChunks,
-  thinkingStartTime,
   className,
   onSubmitToolOutput,
   onGenUIResponse,
@@ -176,204 +181,110 @@ const MessageList: React.FC<MessageListProps> = ({
   onRevertFiles,
   onRedoFiles,
 }) => {
-  const endRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const topAnchorRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
-  // Track how many messages to render (start from most recent)
-  const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES_TO_RENDER);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
-  const prevScrollHeightRef = useRef<number>(0);
-  const isLoadingMoreRef = useRef(false);
-
-  // Calculate which messages to show (last N messages)
-  const { visibleMessages, hiddenCount, startIndex } = useMemo(() => {
-    const total = messages.length;
-    const count = Math.min(visibleCount, total);
-    const start = Math.max(0, total - count);
-    return {
-      visibleMessages: messages.slice(start),
-      hiddenCount: start,
-      startIndex: start,
-    };
-  }, [messages, visibleCount]);
-
-  // Reset visible count when switching conversations (detected by message IDs changing)
-  const firstMessageId = messages[0]?.id;
-  useEffect(() => {
-    setVisibleCount(INITIAL_MESSAGES_TO_RENDER);
-    setShouldAutoScroll(true);
-  }, [firstMessageId]);
-
-  // Track which steering messages have already been rendered so only newly arriving
-  // ones fly up — historical steers (e.g. when loading a saved conversation) appear instantly.
+  // Track which steering messages have already been rendered so only newly
+  // arriving ones fly up; historical steers (e.g. loading a saved
+  // conversation) appear instantly.
   const seenIdsRef = useRef<Set<string>>(new Set());
+  const firstMessageId = messages[0]?.id;
   const lastFirstIdRef = useRef<string | undefined>(undefined);
   if (lastFirstIdRef.current !== firstMessageId) {
     seenIdsRef.current = new Set(messages.map(m => m.id));
     lastFirstIdRef.current = firstMessageId;
   }
-  useEffect(() => {
-    visibleMessages.forEach(m => seenIdsRef.current.add(m.id));
-  });
 
-  // Load more messages handler
-  const handleLoadMore = useCallback(() => {
-    if (isLoadingMoreRef.current || hiddenCount === 0) return;
+  // Bundle handlers so MessageItem's memo can compare a single ref.
+  const handlers = useMemo<ItemHandlers>(() => ({
+    onSubmitToolOutput,
+    onGenUIResponse,
+    onEditMessage,
+    onRevertFiles,
+    onRedoFiles,
+  }), [onSubmitToolOutput, onGenUIResponse, onEditMessage, onRevertFiles, onRedoFiles]);
 
-    setIsLoadingMore(true);
-    isLoadingMoreRef.current = true;
+  const showStreaming = Boolean(
+    currentResponse ||
+    currentReasoning ||
+    (currentStreamChunks && currentStreamChunks.length > 0),
+  );
 
-    // Store current scroll height before loading more
-    const scrollEl = scrollContainerRef.current?.querySelector('.simplebar-content-wrapper');
-    if (scrollEl) {
-      prevScrollHeightRef.current = scrollEl.scrollHeight;
-    }
-
-    // Small delay to show loading state
-    requestAnimationFrame(() => {
-      setVisibleCount(prev => prev + MESSAGES_TO_LOAD_ON_SCROLL);
-      setIsLoadingMore(false);
-      isLoadingMoreRef.current = false;
+  const items = useMemo<VirtuosoItem[]>(() => {
+    const list: VirtuosoItem[] = messages.map((m) => {
+      const isSteer = m.kind === 'steer'
+        || (typeof m.id === 'string' && m.id.startsWith('steer-'));
+      const isNewSteer = isSteer && !seenIdsRef.current.has(m.id);
+      return {
+        id: m.id,
+        kind: 'message' as const,
+        message: m,
+        isSteer,
+        isNewSteer,
+      };
     });
-  }, [hiddenCount]);
-
-  // Preserve scroll position when loading more messages
-  useEffect(() => {
-    if (prevScrollHeightRef.current > 0) {
-      const scrollEl = scrollContainerRef.current?.querySelector('.simplebar-content-wrapper');
-      if (scrollEl) {
-        const newScrollHeight = scrollEl.scrollHeight;
-        const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
-        scrollEl.scrollTop += scrollDiff;
-        prevScrollHeightRef.current = 0;
-      }
+    if (showStreaming) {
+      list.push({ id: STREAMING_ITEM_ID, kind: 'streaming' });
     }
-  }, [visibleMessages.length]);
+    return list;
+  }, [messages, showStreaming]);
+
+  // After rendering, mark newly seen ids so they don't replay the animation.
+  useEffect(() => {
+    messages.forEach((m) => seenIdsRef.current.add(m.id));
+  }, [messages]);
 
   // Keep auto-scroll pinned only while the user stays near the bottom.
-  useEffect(() => {
-    const scrollEl = scrollContainerRef.current?.querySelector('.simplebar-content-wrapper');
-    if (!scrollEl) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollEl as HTMLElement;
-      const isNearBottom =
-        scrollHeight - scrollTop - clientHeight <= AUTO_SCROLL_BOTTOM_THRESHOLD;
-      setShouldAutoScroll(isNearBottom);
-    };
-
-    handleScroll();
-    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
-    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  // Virtuoso's atBottomStateChange is our source of truth.
+  const handleAtBottomStateChange = useCallback((isAtBottom: boolean) => {
+    setAtBottom(isAtBottom);
   }, []);
 
-  // Auto-scroll on new content only while the user is still following the live output.
-  useLayoutEffect(() => {
-    if (shouldAutoScroll) {
-      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-    }
-  }, [
-    messages.length,
-    currentResponse,
-    currentReasoning,
-    currentToolCalls,
-    currentStreamChunks,
-    shouldAutoScroll,
-  ]);
+  const followOutput = useCallback(
+    () => (atBottom ? 'auto' as const : false),
+    [atBottom],
+  );
 
-  // Also auto-scroll when new message arrives (last message changes)
-  const lastMessageId = messages[messages.length - 1]?.id;
-  useEffect(() => {
-    if (shouldAutoScroll && lastMessageId) {
-      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-    }
-  }, [lastMessageId, shouldAutoScroll]);
+  const streamingProps = useMemo(
+    () => ({ currentResponse, currentReasoning, currentToolCalls, currentStreamChunks }),
+    [currentResponse, currentReasoning, currentToolCalls, currentStreamChunks],
+  );
+
+  const itemContent = useCallback(
+    (_index: number, item: VirtuosoItem) => (
+      <div className="pb-1">
+        <MessageItem
+          item={item}
+          streamingProps={item.kind === 'streaming' ? streamingProps : undefined}
+          handlers={handlers}
+        />
+      </div>
+    ),
+    [streamingProps, handlers],
+  );
+
+  const computeItemKey = useCallback(
+    (_index: number, item: VirtuosoItem) => item.id,
+    [],
+  );
+
+  const scrollerClass = `${className || 'h-full no-drag custom-scrollbar px-3 py-2 select-text'} min-w-0 overflow-x-hidden`;
 
   return (
-    <div className="relative h-full" ref={scrollContainerRef}>
-      <SimpleBar className={className || "h-full no-drag custom-scrollbar px-3 py-2 select-text"}>
-        <div className="flex flex-col pb-4 space-y-1">
-          {/* Load more button when there are hidden messages */}
-          {hiddenCount > 0 && (
-            <LoadMoreButton
-              hiddenCount={hiddenCount}
-              onLoadMore={handleLoadMore}
-              isLoading={isLoadingMore}
-            />
-          )}
-
-          {/* Anchor for scroll position preservation */}
-          <div ref={topAnchorRef} className="h-px" />
-
-          {/* Only render visible messages */}
-          {visibleMessages.map((m) => {
-            const isSteer = m.kind === 'steer'
-              || (typeof m.id === 'string' && m.id.startsWith('steer-'));
-            const bubble = (
-              <MemoizedMessageBubble
-                role={m.role}
-                text={m.text}
-                reasoning={m.reasoning}
-                reasoningDuration={m.reasoningDuration}
-                toolCalls={m.toolCalls}
-                streamChunks={m.streamChunks}
-                contextPaths={m.contextPaths}
-                attachments={m.attachments}
-                onSubmitToolOutput={onSubmitToolOutput}
-                onGenUIResponse={onGenUIResponse}
-                messageId={m.id}
-                onEditMessage={onEditMessage}
-                modifiedFiles={m.modifiedFiles}
-                checkpointId={m.checkpointId}
-                reverted={m.reverted}
-                onRevertFiles={onRevertFiles}
-                onRedoFiles={onRedoFiles}
-              />
-            );
-            if (!isSteer) {
-              return <React.Fragment key={m.id}>{bubble}</React.Fragment>;
-            }
-            const isNewSteer = !seenIdsRef.current.has(m.id);
-            return (
-              <motion.div
-                key={m.id}
-                initial={isNewSteer ? { opacity: 0, y: 36, scale: 0.96 } : false}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={isNewSteer
-                  ? { type: 'spring', stiffness: 380, damping: 28, mass: 0.9 }
-                  : { duration: 0 }}
-              >
-                {!m.subagentTarget && (
-                  <div className="flex justify-end mb-1 pr-1">
-                    <span className="inline-flex items-center gap-1 text-[9.5px] font-black uppercase tracking-widest text-primary/70">
-                      <CornerDownRight className="w-3 h-3" />
-                      Steered
-                    </span>
-                  </div>
-                )}
-                {bubble}
-              </motion.div>
-            );
-          })}
-          {/* Streaming response with interleaved content (also triggers on reasoning for chain-of-thought) */}
-          {(currentResponse || currentReasoning || (currentStreamChunks && currentStreamChunks.length > 0)) && (
-            <MessageBubble
-              key="streaming-response"
-              role="assistant"
-              text={currentResponse || ''}
-              reasoning={currentReasoning}
-              toolCalls={currentToolCalls}
-              streamChunks={currentStreamChunks}
-              isStreaming
-              onSubmitToolOutput={onSubmitToolOutput}
-              onGenUIResponse={onGenUIResponse}
-            />
-          )}
-          <div ref={endRef} className="h-px" />
-        </div>
-      </SimpleBar>
+    <div className="relative h-full min-w-0 overflow-x-hidden">
+      <Virtuoso
+        ref={virtuosoRef}
+        data={items}
+        itemContent={itemContent}
+        computeItemKey={computeItemKey}
+        followOutput={followOutput}
+        atBottomStateChange={handleAtBottomStateChange}
+        initialTopMostItemIndex={Math.max(0, items.length - 1)}
+        overscan={{ main: 600, reverse: 200 }}
+        increaseViewportBy={{ top: 400, bottom: 200 }}
+        className={scrollerClass}
+        style={{ height: '100%', overflowX: 'hidden' }}
+      />
     </div>
   );
 };

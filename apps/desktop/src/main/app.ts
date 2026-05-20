@@ -1,4 +1,4 @@
-import { app, globalShortcut, protocol } from "electron";
+import { app, globalShortcut, protocol, session, desktopCapturer } from "electron";
 import fs from "node:fs";
 import path from "path";
 import { Readable } from "node:stream";
@@ -269,6 +269,36 @@ try {
     logger.info("Stuards autostart done");
   } catch (e) {
     logger.error("Failed stuards autostart:", e);
+  }
+
+  // Allow the renderer to call `navigator.mediaDevices.getDisplayMedia(...)`.
+  // Used by voice-mode screen-share: we hand back the primary display so the
+  // GPU-accelerated DXGI capture pipeline does the work, instead of the old
+  // approach where we polled `desktopCapturer.getSources().toJPEG()` from main
+  // (that froze the cursor at ~5 FPS while voice mode was on).
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          // We do not need thumbnails, so pass 0x0 and let Electron skip the
+          // expensive per-source bitmap render at request time.
+          thumbnailSize: { width: 0, height: 0 },
+        });
+        if (!sources.length) {
+          // Per Electron docs, calling callback() with no args denies the request.
+          (callback as any)();
+          return;
+        }
+        callback({ video: sources[0] });
+      } catch (err) {
+        logger.warn('[displayMedia] handler failed:', err);
+        (callback as any)();
+      }
+    });
+    logger.info("Display-media request handler installed");
+  } catch (e) {
+    logger.error("Failed to install display-media handler:", e);
   }
 
   try {

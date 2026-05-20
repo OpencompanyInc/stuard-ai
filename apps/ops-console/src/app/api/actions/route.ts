@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import simpleGit from 'simple-git';
 import fs from 'fs';
 import path from 'path';
+import { verifyOpsToken } from '../../lib/supabase-server';
 
 function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -309,6 +310,10 @@ async function pushOriginWithRetry(opts: {
 }
 
 export async function POST(req: Request) {
+  if (!verifyOpsToken(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
   try {
     const { type, payload = {} } = await req.json();
 
@@ -657,4 +662,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

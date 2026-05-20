@@ -1,5 +1,5 @@
 ﻿
-import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen, powerMonitor } from "electron";
+import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen, powerMonitor, shell } from "electron";
 import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
@@ -10,12 +10,12 @@ import { initOverlayHotkey } from "./overlay-hotkey";
 let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
 let workflowsWin: BrowserWindow | null = null;
-let hudWin: BrowserWindow | null = null;
 let sidebarWin: BrowserWindow | null = null;
 let spacesWin: BrowserWindow | null = null; // Legacy alias
 let dashboardWin: BrowserWindow | null = null;
 let notificationWin: BrowserWindow | null = null;
 let voiceTestWin: BrowserWindow | null = null;
+let voiceBorderWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidebarExpanded = false;
 
@@ -27,8 +27,8 @@ const SIDEBAR_EXPANDED_HEIGHT = 700;
 const INTERNAL_SIDEBAR_WIDTH = 320;
 
 // Keep a stable record of the intended content size to prevent drift from DPI rounding
-let baseContentWidth = 520;
-let baseContentHeight = 100;
+let baseContentWidth = 400;
+let baseContentHeight = 56;
 // Also keep the stable OUTER window size (pixel bounds) to fully lock size while moving
 let baseOuterWidth = 0;
 let baseOuterHeight = 0;
@@ -257,7 +257,6 @@ function updateLastActiveWindowHandle(source: string) {
   const handle = captureForegroundWindowHandle([
     overlayHandle,
     getNativeWindowHandleString(spacesWin),
-    getNativeWindowHandleString(hudWin),
     getNativeWindowHandleString(onboardingWin),
   ]);
   if (!handle) return;
@@ -274,13 +273,13 @@ interface ModeSizePrefs {
 
 // Default sizes for each mode
 const DEFAULT_MODE_SIZES: ModeSizePrefs = {
-  compact: { width: 520, height: 140 },  // Compact is a small pill-shaped input bar
+  compact: { width: 520, height: 62 },  // 360x56 visible pill centered in a transparent 520-wide window so the dropdown can extend beyond the pill without resizing on type
   window: { width: 800, height: 600 },
 };
 
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
-  compact: { minW: 400, maxW: 800, minH: 100, maxH: 800 },  // Increased to 800 to avoid cut-off
+  compact: { minW: 520, maxW: 800, minH: 62, maxH: 650 },
   sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 },  // Allow for internal sidebar (320px)
   window: { minW: 500, maxW: 1400, minH: 400, maxH: 1000 },
 };
@@ -357,7 +356,7 @@ export function getPreloadPath() {
   return fallback;
 }
 
-export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "hud-test" | "spaces" | "sidebar" | "notification" | "voicetest" = "index") {
+export function getRendererUrl(entry: "index" | "dashboard" | "onboarding" | "board" | "workflows" | "sidebar" | "notification" | "voicetest" | "voice-border" = "index") {
   if (isDev) return `http://localhost:5173/${entry}.html`;
   return `file://${path.join(__dirname, `../../renderer/${entry}.html`)}`;
 }
@@ -453,15 +452,15 @@ function updateSizeConstraints(mode: OverlayMode) {
 
 // Get current overlay size info for renderer
 export function getOverlaySize() {
-  if (!win) return { width: 520, height: 130, mode: 'compact' };
+  if (!win) return { width: 520, height: 62, mode: 'compact' };
   const b = win.getBounds();
   return { width: b.width, height: b.height, mode: currentMode };
 }
 
 export function createWindow() {
   logger.info("Creating overlay window...");
-  const WIDTH = 520;
-  const HEIGHT = 140; // compact height by default
+  const WIDTH = 520; // pill is 360px wide centered; the wider window holds the dropdown so typing doesn't resize horizontally
+  const HEIGHT = 62; // compact pill is 56px tall; +3px per side keeps borders from clipping
 
   const preloadPath = getPreloadPath();
   logger.info("Preload path:", preloadPath);
@@ -500,9 +499,7 @@ export function createWindow() {
 
   logger.info("BrowserWindow created");
   win.setMenu(null);
-  if (screenCaptureInvisibleEnabled) {
-    try { win.setContentProtection(true); } catch {}
-  }
+  applyOverlayContentProtection();
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   centerTopWithContentSize(win, WIDTH, HEIGHT);
   // Initialize stable content size baseline
@@ -751,6 +748,10 @@ export function openOnboardingWindow() {
   if (screenCaptureInvisibleEnabled) {
     try { onboardingWin.setContentProtection(true); } catch {}
   }
+
+  // Default to click-through so the OS shows through transparent areas. The
+  // renderer flips this off when the cursor enters an interactive element.
+  try { onboardingWin.setIgnoreMouseEvents(true, { forward: true }); } catch {}
 
   // Show when ready for smoother appearance
   onboardingWin.once('ready-to-show', () => {
@@ -1034,7 +1035,7 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workfl
 }
 
 // Standalone Sidebar Window (Spaces, Canvas, Terminal) - always opens as standalone window
-export function openSidebarWindow(options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) {
+export function openSidebarWindow(options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) {
   // Always open as standalone expanded window (ignore expanded flag, always expanded)
 
   if (sidebarWin && !sidebarWin.isDestroyed()) {
@@ -1135,7 +1136,7 @@ export function closeSidebarWindow() {
   try { sidebarWin?.close(); } catch { }
 }
 
-export function toggleSidebarWindow(options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) {
+export function toggleSidebarWindow(options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) {
   if (!sidebarWin || sidebarWin.isDestroyed()) {
     openSidebarWindow(options);
     return;
@@ -1182,28 +1183,31 @@ export function toggleSpacesWindow() {
   toggleSidebarWindow({ tab: 'todo' });
 }
 
-// HUD Window - 3D Curved Launcher
-export function openHudWindow() {
-  if (hudWin && !hudWin.isDestroyed()) {
-    hudWin.show();
-    hudWin.focus();
-    hudWin.moveTop();
+// Voice Border Window â€” transparent click-through full-screen overlay that
+// renders the red ambient frame around the user's monitor while voice mode
+// is active.
+export function showVoiceBorderWindow() {
+  if (voiceBorderWin && !voiceBorderWin.isDestroyed()) {
+    try { voiceBorderWin.showInactive(); } catch { try { voiceBorderWin.show(); } catch { } }
+    try { voiceBorderWin.moveTop(); } catch { }
     return;
   }
-  const { workArea } = screen.getPrimaryDisplay();
-  const width = workArea.width;
-  const height = 450; // Increased height for better 3D visibility
+  // Use the display the main overlay is currently on (falls back to primary)
+  // so the border ring + pill follow the user across monitors.
+  const mainBounds = (() => {
+    try { return win?.getBounds?.() || null; } catch { return null; }
+  })();
+  const targetDisplay = mainBounds
+    ? screen.getDisplayMatching(mainBounds)
+    : screen.getPrimaryDisplay();
+  const { x, y, width, height } = targetDisplay.bounds;
 
-  hudWin = new BrowserWindow({
-    width,
-    height,
-    x: workArea.x,
-    y: workArea.y + workArea.height - height, // Position at bottom
-    show: true,
+  voiceBorderWin = new BrowserWindow({
+    x, y, width, height,
+    show: false,
     frame: false,
     transparent: true,
     hasShadow: false,
-    icon: APP_ICON_PATH,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -1211,7 +1215,8 @@ export function openHudWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    focusable: true,
+    focusable: false,
+    acceptFirstMouse: false,
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -1221,48 +1226,46 @@ export function openHudWindow() {
     },
     backgroundColor: "#00000000",
   });
-  hudWin.setMenu(null);
-  hudWin.setIgnoreMouseEvents(false);
 
-  // Try to set always on top with screen-saver level
-  try { hudWin.setAlwaysOnTop(true, 'screen-saver'); } catch { }
+  voiceBorderWin.setMenu(null);
+  // Click-through so the user can still interact with their desktop.
+  try { voiceBorderWin.setIgnoreMouseEvents(true, { forward: true }); } catch { }
+  try { voiceBorderWin.setAlwaysOnTop(true, "screen-saver"); } catch { }
+  try { voiceBorderWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { }
+
+  voiceBorderWin.once("ready-to-show", () => {
+    try { voiceBorderWin?.showInactive(); } catch { try { voiceBorderWin?.show(); } catch { } }
+  });
 
   if (isDev) {
-    hudWin.loadURL(getRendererUrl("hud-test"));
+    voiceBorderWin.loadURL(getRendererUrl("voice-border"));
   } else {
     const candidates = [
-      path.join(__dirname, "../renderer/hud-test.html"),
-      path.join(__dirname, "../../renderer/hud-test.html"),
+      path.join(__dirname, "../renderer/voice-border.html"),
+      path.join(__dirname, "../../renderer/voice-border.html"),
     ];
     for (const p of candidates) {
       if (fs.existsSync(p)) {
-        hudWin.loadFile(p);
+        voiceBorderWin.loadFile(p);
         break;
       }
     }
   }
 
-  hudWin.on('closed', () => { hudWin = null; });
-  hudWin.on('blur', () => {
-    // Hide when focus is lost
-    try { hudWin?.hide(); } catch { }
-  });
+  voiceBorderWin.on("closed", () => { voiceBorderWin = null; });
 }
 
-export function hideHudWindow() {
-  try { hudWin?.hide(); } catch { }
+export function hideVoiceBorderWindow() {
+  try { voiceBorderWin?.hide(); } catch { }
 }
 
-export function toggleHudWindow() {
-  if (!hudWin || hudWin.isDestroyed()) {
-    openHudWindow();
-  } else if (hudWin.isVisible()) {
-    hideHudWindow();
-  } else {
-    hudWin.show();
-    hudWin.focus();
-    hudWin.moveTop();
-  }
+export function closeVoiceBorderWindow() {
+  try { voiceBorderWin?.close(); } catch { }
+  voiceBorderWin = null;
+}
+
+export function getVoiceBorderWindow(): BrowserWindow | null {
+  return voiceBorderWin;
 }
 
 let wasHidden = true;
@@ -1539,7 +1542,6 @@ export function setOverlayMode(mode: OverlayMode) {
         capturedHandle = captureForegroundWindowHandle([
           overlayHandle,
           getNativeWindowHandleString(spacesWin),
-          getNativeWindowHandleString(hudWin),
           getNativeWindowHandleString(onboardingWin),
         ]);
         if (capturedHandle) lastActiveWindowHandle = capturedHandle;
@@ -1684,6 +1686,12 @@ function flushPendingMove() {
   pendingMoveDx = 0;
   pendingMoveDy = 0;
   if (dx === 0 && dy === 0) return;
+  // Mark this as a programmatic resize so the resize listener doesn't
+  // call handleUserResize and overwrite our baseline. Without this, DPI
+  // rounding in setBounds drifts the size by 1-2px per move; the resize
+  // event then reads the drifted size and saves it as the new baseline,
+  // so the window grows by a pixel or two on every Ctrl+Arrow frame.
+  resizingProgrammatically = true;
   try {
     const outer = win.getBounds();
     const display = screen.getDisplayMatching({ x: outer.x, y: outer.y, width: outer.width, height: outer.height });
@@ -1699,6 +1707,12 @@ function flushPendingMove() {
     if (targetOuterX === outer.x && targetOuterY === outer.y && outer.width === lockedW && outer.height === lockedH) return;
     win.setBounds({ x: targetOuterX, y: targetOuterY, width: lockedW, height: lockedH });
   } catch { }
+  finally {
+    // Release the flag on the next tick — after the synchronous setBounds
+    // returns, the resize event hasn't fired yet. setImmediate runs after
+    // the resize event listener so the flag is still set when it checks.
+    setImmediate(() => { resizingProgrammatically = false; });
+  }
 }
 
 export function moveOverlayBy(dx: number, dy: number) {
@@ -1831,7 +1845,7 @@ export function registerGlobalShortcuts() {
     try { globalShortcut.unregister(a); } catch { }
   }
 
-  // Also unregister HUD legacy shortcut just in case
+  // Also unregister the old legacy shortcut just in case.
   try { globalShortcut.unregister("Control+Alt+Space"); } catch { }
 
   let registered = false;
@@ -1904,22 +1918,18 @@ export function registerGlobalShortcuts() {
           handleOverlayHotkey();
         },
         onHoldStart: () => {
-          logger.info("Hotkey HOLD START:", activeAccel);
-          // Make sure the window is visible so the user can see voice mode
+          logger.info("Hotkey HOLD: toggle voice mode");
+          // Voice mode now lives in its own full-screen border window; do not
+          // pop the compact overlay on hold. Just send the toggle request to
+          // the main window's renderer (it owns the voice hook).
           try {
             if (win && !win.isDestroyed()) {
-              if (!win.isVisible()) showWindow();
-              try { win.webContents.send("voice:setActive", true); } catch (e) { logger.warn("voice:setActive(true) send failed", e); }
+              try { win.webContents.send("voice:setActive", true); } catch (e) { logger.warn("voice:setActive toggle send failed", e); }
             }
-          } catch (e) { logger.warn("HOLD START handler failed", e); }
+          } catch (e) { logger.warn("HOLD handler failed", e); }
         },
         onHoldEnd: () => {
-          logger.info("Hotkey HOLD END:", activeAccel);
-          try {
-            if (win && !win.isDestroyed()) {
-              try { win.webContents.send("voice:setActive", false); } catch (e) { logger.warn("voice:setActive(false) send failed", e); }
-            }
-          } catch (e) { logger.warn("HOLD END handler failed", e); }
+          // No-op: release no longer toggles voice (hold-to-toggle semantics).
         },
       });
     } catch (e) {
@@ -1935,17 +1945,6 @@ export function registerGlobalShortcuts() {
   try { globalShortcut.register("Control+/", () => openWorkflowsWindow()); } catch { }
   try { globalShortcut.register("CommandOrControl+Shift+/", () => openWorkflowsWindow()); } catch { }
   try { globalShortcut.register("CommandOrControl+Divide", () => openWorkflowsWindow()); } catch { }
-
-  // HUD Window: Control+Alt+Space
-  try {
-    globalShortcut.register("Control+Alt+Space", () => {
-      logger.info("Ctrl+Alt+Space pressed - toggling HUD");
-      toggleHudWindow();
-    });
-    logger.info("HUD shortcut Control+Alt+Space registered");
-  } catch (e) {
-    logger.warn("Failed to register Control+Alt+Space for HUD:", e);
-  }
 
   logger.info("Global shortcuts registration complete");
 }
@@ -2222,23 +2221,44 @@ export function getMainWindow() {
 // Track global screen capture invisibility state
 let screenCaptureInvisibleEnabled = false;
 
+function shouldProtectWindow(w: BrowserWindow): boolean {
+  if (w === win) return false;
+  return screenCaptureInvisibleEnabled;
+}
+
+function applyOverlayContentProtection() {
+  if (win && !win.isDestroyed()) {
+    try { win.setContentProtection(false); } catch {}
+  }
+}
+
+function applyContentProtectionToAllWindows() {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w && !w.isDestroyed()) {
+      try { w.setContentProtection(shouldProtectWindow(w)); } catch {}
+    }
+  }
+}
+
 export function getScreenCaptureInvisible(): boolean {
   return screenCaptureInvisibleEnabled;
 }
 
 export function setScreenCaptureInvisible(enabled: boolean) {
   screenCaptureInvisibleEnabled = enabled;
-  const allWindows = [win, dashboardWin, workflowsWin, onboardingWin, sidebarWin, hudWin, notificationWin];
-  for (const w of allWindows) {
-    if (w && !w.isDestroyed()) {
-      try { w.setContentProtection(enabled); } catch {}
-    }
-  }
-  // Also apply to all BrowserWindows (catches custom_ui windows)
-  for (const w of BrowserWindow.getAllWindows()) {
-    try { w.setContentProtection(enabled); } catch {}
-  }
+  applyContentProtectionToAllWindows();
   logger.info(`Screen capture invisibility ${enabled ? 'enabled' : 'disabled'} for all windows`);
+}
+
+export function startOverlayScreenSnip() {
+  applyOverlayContentProtection();
+  try {
+    void shell.openExternal("ms-screenclip:");
+  } catch (error) {
+    logger.warn("Failed to launch Windows screen snip", error);
+  }
+
+  return { ok: true, enabled: false, restoreDelay: 0 };
 }
 
 export function openNotificationWindow() {

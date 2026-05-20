@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, getMainWindow } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -281,6 +281,7 @@ export function setupIpc() {
   ipcMain.handle("overlay:moveBy", (_e, dx: number, dy: number) => moveOverlayBy(dx, dy));
   ipcMain.handle("overlay:getSize", () => getOverlaySize());
   ipcMain.handle("overlay:getMode", () => getOverlayMode());
+  ipcMain.handle("overlay:startScreenSnip", () => startOverlayScreenSnip());
 
   // Internal sidebar (rendered inside overlay window, expands window width)
   ipcMain.handle("overlay:toggleInternalSidebar", (_e, open?: boolean) => toggleInternalSidebar(open));
@@ -293,6 +294,36 @@ export function setupIpc() {
   ipcMain.handle("system:closeOnboarding", () => closeOnboardingWindow());
   ipcMain.handle("system:openVoiceTest", () => openVoiceTestWindow());
   ipcMain.handle("system:closeVoiceTest", () => closeVoiceTestWindow());
+
+  // Voice border (full-screen click-through red ambient frame while voice mode is active)
+  ipcMain.handle("voice:showBorder", () => { showVoiceBorderWindow(); });
+  ipcMain.handle("voice:hideBorder", () => { hideVoiceBorderWindow(); });
+  ipcMain.on("voice:borderUpdate", (_e, payload: any) => {
+    const w = getVoiceBorderWindow();
+    if (w && !w.isDestroyed()) {
+      try { w.webContents.send("voice:borderUpdate", payload); } catch { }
+    }
+  });
+  // Control messages from the pill in the border window back to the main app
+  ipcMain.on("voice:borderControl", (_e, payload: { action: 'mute' | 'close' | 'shareScreen' }) => {
+    const main = getMainWindow();
+    if (main && !main.isDestroyed()) {
+      try { main.webContents.send("voice:borderControl", payload); } catch { }
+    }
+  });
+  // Toggle click-through on the border window when the cursor enters or leaves
+  // the pill region in the renderer.
+  ipcMain.on("voice:borderInteractive", (_e, interactive: boolean) => {
+    const w = getVoiceBorderWindow();
+    if (!w || w.isDestroyed()) return;
+    try {
+      if (interactive) {
+        w.setIgnoreMouseEvents(false);
+      } else {
+        w.setIgnoreMouseEvents(true, { forward: true });
+      }
+    } catch { }
+  });
 
   // Spaces window (legacy - redirects to sidebar)
   ipcMain.handle('spaces:open', () => openSpacesWindow());

@@ -2,8 +2,10 @@
  * Overlay hotkey hold-detector.
  *
  * Tap (press + release within HOLD_THRESHOLD_MS): summon/toggle overlay.
- * Hold (still pressed past HOLD_THRESHOLD_MS): voice mode while held;
- * exit voice mode on release.
+ * Hold (still pressed past HOLD_THRESHOLD_MS): fires onHoldStart once as a
+ * TOGGLE request â€” the renderer decides whether to start or stop voice
+ * mode based on its own state. Voice does NOT auto-stop on release; the
+ * user closes it via the pill or by holding again.
  *
  * Uses uiohook-napi for OS-level keyup detection. globalShortcut still
  * registers the accelerator to consume the key from the foreground app.
@@ -25,14 +27,15 @@ interface HoldState {
   pressed: boolean;
   pressedAt: number;
   holdTimer: NodeJS.Timeout | null;
-  voiceActive: boolean;
+  /** True once the hold-threshold fired for this press, so we don't fire twice. */
+  holdFired: boolean;
 }
 
 const state: HoldState = {
   pressed: false,
   pressedAt: 0,
   holdTimer: null,
-  voiceActive: false,
+  holdFired: false,
 };
 
 const activeMods = new Set<string>();
@@ -64,22 +67,6 @@ function buildKeyMap() {
   }
 }
 
-function setVoiceActive(active: boolean) {
-  if (state.voiceActive === active) return;
-  state.voiceActive = active;
-  try {
-    if (active) {
-      logger.info("[OverlayHotkey] hold START — entering voice mode");
-      onHoldStart?.();
-    } else {
-      logger.info("[OverlayHotkey] hold END — exiting voice mode");
-      onHoldEnd?.();
-    }
-  } catch (e) {
-    logger.warn("[OverlayHotkey] hold callback threw", e);
-  }
-}
-
 function clearHoldTimer() {
   if (state.holdTimer) {
     clearTimeout(state.holdTimer);
@@ -99,30 +86,31 @@ function handlePress() {
   if (state.pressed) return;
   state.pressed = true;
   state.pressedAt = Date.now();
+  state.holdFired = false;
   clearHoldTimer();
   logger.info("[OverlayHotkey] PRESS detected (waiting for hold/release)");
   state.holdTimer = setTimeout(() => {
     state.holdTimer = null;
-    if (state.pressed) {
-      setVoiceActive(true);
+    if (state.pressed && !state.holdFired) {
+      state.holdFired = true;
+      logger.info("[OverlayHotkey] hold threshold reached â€” sending toggle request");
+      try { onHoldStart?.(); } catch (e) { logger.warn("[OverlayHotkey] onHoldStart threw", e); }
     }
   }, HOLD_THRESHOLD_MS);
 }
 
 function handleRelease() {
   if (!state.pressed) return;
-  const wasVoice = state.voiceActive;
   const heldMs = Date.now() - state.pressedAt;
+  const wasHold = state.holdFired;
   state.pressed = false;
+  state.holdFired = false;
   clearHoldTimer();
-  logger.info(`[OverlayHotkey] RELEASE after ${heldMs}ms (voice=${wasVoice})`);
+  logger.info(`[OverlayHotkey] RELEASE after ${heldMs}ms (wasHold=${wasHold})`);
 
-  if (wasVoice) {
-    setVoiceActive(false);
-    return;
-  }
-
-  if (heldMs < HOLD_THRESHOLD_MS) {
+  // Hold-toggled voice mode stays on after release â€” no auto-deactivate.
+  // Only fire onTap when the press was short (didn't reach the hold threshold).
+  if (!wasHold && heldMs < HOLD_THRESHOLD_MS) {
     try { onTap?.(); } catch (e) { logger.warn("[OverlayHotkey] onTap threw", e); }
   }
 }

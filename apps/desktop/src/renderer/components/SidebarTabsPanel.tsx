@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { clsx } from "clsx";
-import { ArrowLeft, ListTodo, Maximize2, Terminal, X } from "lucide-react";
+import { ArrowLeft, FolderKanban, ListTodo, Maximize2, Terminal, X } from "lucide-react";
 import { XTerminalPanel } from "./XTerminalPanel";
 import { SidebarTodoPanel } from "./sidebar/SidebarTodoPanel";
+import { SidebarProjectsPanel } from "./sidebar/SidebarProjectsPanel";
 
-type SidebarTabId = "terminal" | "todo";
+type SidebarTabId = "terminal" | "todo" | "projects";
 
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
@@ -13,6 +14,7 @@ const SIDEBAR_TABS: Array<{
   desc: string;
 }> = [
   { id: "todo", label: "To-Do", icon: ListTodo, desc: "Agent task list" },
+  { id: "projects", label: "Projects", icon: FolderKanban, desc: "Project mode dashboard" },
   { id: "terminal", label: "Terminal", icon: Terminal, desc: "Shell access" },
 ];
 
@@ -105,6 +107,8 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
     switch (activeTab) {
       case "todo":
         return <SidebarTodoPanel className="w-full h-full" />;
+      case "projects":
+        return <SidebarProjectsPanel className="w-full h-full" />;
       case "terminal":
         return <XTerminalPanel onClose={onClose} className="w-full h-full" />;
       default:
@@ -145,15 +149,6 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
         )}
         style={{ background: innerBackground }}
       >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(circle at top, color-mix(in srgb, var(--primary) 8%, transparent) 0%, transparent 45%)",
-          }}
-        />
-
         {/* Header Bar — matches chat header padding */}
         <div className="relative flex items-center gap-1 px-2 py-2 shrink-0 border-b border-theme">
           <button
@@ -161,7 +156,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
             className={clsx(
               "w-8 h-8 rounded-lg flex items-center justify-center transition-colors border border-theme/10",
               showTabPicker
-                ? "bg-primary/10 text-primary border-primary/20"
+                ? "bg-theme-hover/80 text-theme-fg border-theme/30"
                 : "bg-theme-card/80 text-theme-muted hover:bg-theme-hover hover:text-theme-fg"
             )}
             title="Switch tab"
@@ -177,7 +172,7 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
           <div className="flex items-center gap-2 flex-1 min-w-0 px-1">
             {currentTab && (
               <>
-                <currentTab.icon className="w-3.5 h-3.5 text-primary/80 shrink-0" />
+                <currentTab.icon className="w-3.5 h-3.5 text-theme-fg/80 shrink-0" />
                 <span className="text-[12px] font-semibold text-theme-fg truncate">
                   {currentTab.label}
                 </span>
@@ -230,18 +225,18 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
                   className={clsx(
                     "relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-left group border",
                     isActive
-                      ? "bg-primary/10 text-primary border-primary/20"
-                      : "text-theme-fg border-transparent hover:bg-theme-hover/70 hover:border-theme/20"
+                      ? "bg-theme-hover/70 text-theme-fg border-theme/20"
+                      : "text-theme-fg border-transparent hover:bg-theme-hover/40 hover:border-theme/15"
                   )}
                 >
                   {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-theme-fg/70 rounded-r-full" />
                   )}
 
                   <div
                     className={clsx(
                       "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-200",
-                      isActive ? "bg-primary/15" : "bg-theme-hover/40 group-hover:bg-theme-hover/70"
+                      isActive ? "bg-theme-card" : "bg-theme-hover/40 group-hover:bg-theme-hover/70"
                     )}
                   >
                     <Icon className="w-[18px] h-[18px]" />

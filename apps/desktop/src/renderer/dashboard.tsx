@@ -1347,7 +1347,7 @@ function DashboardApp() {
       key: 'intelligence',
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
-        { id: 'bots', label: 'Bots', icon: Sparkles },
+        { id: 'bots', label: 'Agents', icon: Sparkles },
       ],
     },
     {
@@ -1372,7 +1372,7 @@ function DashboardApp() {
     history: { title: 'History', subtitle: 'Review recent activity, conversations, and usage.' },
     planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
-    bots: { title: 'Bots', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
+    bots: { title: 'Agents', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
     memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },

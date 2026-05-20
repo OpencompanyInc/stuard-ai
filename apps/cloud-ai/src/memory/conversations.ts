@@ -174,32 +174,65 @@ export async function generateConversationEmbedding(
  * - 'correction': Typo fix or minor clarification - update previous segment
  * - 'same_topic': Same topic, no meaningful new info - do nothing
  * - 'skip': Conversation has no lasting recall value - don't create a memory
+ * - 'update_prior': Topic reentry — extend a *prior* (not just last) segment.
+ *   B6: handles oscillation like react → auth → react where the latter react
+ *   turn should join the earlier react segment instead of creating a third.
  */
-type AnalysisAction = 'new' | 'topic_change' | 'correction' | 'same_topic' | 'skip';
+type AnalysisAction = 'new' | 'topic_change' | 'correction' | 'same_topic' | 'skip' | 'update_prior';
 
 const SegmentSchema = z.object({
-  action: z.enum(['new', 'topic_change', 'correction', 'same_topic', 'skip']).describe(
-    'What action to take: "new" for first/unrelated topic, "topic_change" for significant shift, "correction" for typo fixes, "same_topic" if nothing meaningful changed, "skip" if the conversation has no lasting recall value'
+  action: z.enum(['new', 'topic_change', 'correction', 'same_topic', 'skip', 'update_prior']).describe(
+    'What action to take. "new" for first/unrelated topic. "topic_change" for significant shift. "correction" for typo fixes that should update the immediately-prior segment. "update_prior" when the conversation has CIRCLED BACK to a topic from one of the older (non-last) segments — extend that older segment, do not create a new one. "same_topic" if nothing meaningful changed. "skip" if no lasting recall value.'
   ),
   summary: z.string().describe('The actual substance/content/answer — not a meta-description of what happened'),
   topics: z.array(z.string()).describe('2-5 topic tags for this segment'),
   reason: z.string().describe('Brief reason for the chosen action'),
+  /** B6: when action is "update_prior", which segment to extend (1-based index
+   *  into the priorSegments list, where 1 is the most-recent of the priors).
+   *  Required for update_prior; ignored otherwise. */
+  priorIndex: z.number().int().min(1).optional().describe('1-based index into priorSegments for update_prior'),
 });
+
+export interface PriorSegmentContext {
+  summary: string;
+  topics: string[];
+}
 
 export async function analyzeConversationSegment(
   messages: Array<{ role: string; content: any }>,
   previousSummary?: string,
-  previousTopics?: string[]
-): Promise<{ action: AnalysisAction; summary: string; topics: string[]; reason: string }> {
+  previousTopics?: string[],
+  /** B6: optional additional prior segments (most recent first, excluding the
+   *  immediately-prior one which is `previousSummary`). When provided the
+   *  analyzer can choose `update_prior` to extend an older segment that the
+   *  conversation has circled back to. */
+  olderPriorSegments?: PriorSegmentContext[],
+): Promise<{ action: AnalysisAction; summary: string; topics: string[]; reason: string; priorIndex?: number }> {
   try {
     const conversationText = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${normalizeConversationContent(m.content)}`)
       .join('\n\n');
 
-    const previousContext = previousSummary
-      ? `Previous summary: "${previousSummary}"\nPrevious topics: ${previousTopics?.join(', ') || 'none'}`
-      : 'This is a new conversation with no previous segments.';
+    let previousContext: string;
+    if (previousSummary) {
+      const lines = [
+        `Previous summary (most recent segment): "${previousSummary}"`,
+        `Previous topics: ${previousTopics?.join(', ') || 'none'}`,
+      ];
+      if (olderPriorSegments && olderPriorSegments.length > 0) {
+        lines.push('', 'Older prior segments (most recent first, 1-indexed for "update_prior"):');
+        olderPriorSegments.forEach((seg, i) => {
+          const idx = i + 1;
+          const topics = seg.topics?.join(', ') || 'none';
+          const summaryClip = (seg.summary || '').slice(0, 160);
+          lines.push(`  ${idx}. [${topics}] ${summaryClip}`);
+        });
+      }
+      previousContext = lines.join('\n');
+    } else {
+      previousContext = 'This is a new conversation with no previous segments.';
+    }
 
     const modelId = getDefaultModelForCategory('fast');
     const model = buildProviderModel(modelId);
@@ -215,7 +248,8 @@ ${previousContext}
 - "skip": The conversation is a one-off Q&A, generic help, or has NO lasting recall value for the user. Examples: homework help, simple factual lookups, troubleshooting a one-time error, casual chitchat.
 - "new": First segment OR completely unrelated to previous — create a new memory.
 - "topic_change": Significant topic shift — create a new segment, keep old.
-- "correction": Typo fix or minor clarification — update previous segment.
+- "correction": Typo fix or minor clarification — update IMMEDIATELY-PREVIOUS segment.
+- "update_prior": Conversation has CIRCLED BACK to a topic from one of the *older* prior segments (not the immediately-previous one). Set priorIndex to that segment's 1-based index in "Older prior segments". Prefer this over "new" when the latest user turn clearly relates to an earlier (non-last) topic — keeps the topic timeline consolidated.
 - "same_topic": Same topic, no meaningful new info — do nothing.
 
 ## CRITICAL: SUMMARY FORMAT
@@ -1067,12 +1101,21 @@ export async function processConversationTurn(
     // Get existing segments
     const segments = await getSegments(conversationId);
     const lastSegment = segments[segments.length - 1];
+    // B6: feed up to 3 older priors (most recent first, excluding the immediately-prior one)
+    // so the analyzer can detect topic reentry and pick update_prior.
+    const OLDER_PRIOR_LOOKBACK = 3;
+    const olderPriors = segments.slice(0, -1).slice(-OLDER_PRIOR_LOOKBACK).reverse();
+    const olderPriorPayload: PriorSegmentContext[] = olderPriors.map((s) => ({
+      summary: s.summary || '',
+      topics: Array.isArray(s.topics) ? s.topics : [],
+    }));
 
     // AI analyzes the conversation to decide what action to take
     const analysis = await analyzeConversationSegment(
       messages.map(m => ({ role: m.role, content: m.content })),
       lastSegment?.summary,
-      lastSegment?.topics
+      lastSegment?.topics,
+      olderPriorPayload,
     );
 
     // Normalize topics to prevent fragmentation (React.js -> React, etc.)
@@ -1174,19 +1217,74 @@ export async function processConversationTurn(
 
       case 'same_topic': {
         // Do nothing - topic is the same with no meaningful new info
-        writeLog('segment_unchanged', { 
-          conversationId, 
-          reason: analysis.reason 
+        writeLog('segment_unchanged', {
+          conversationId,
+          reason: analysis.reason
         });
         break;
       }
 
       case 'skip': {
         // Conversation has no lasting recall value - don't create a memory
-        writeLog('segment_skipped', { 
-          conversationId, 
-          reason: analysis.reason 
+        writeLog('segment_skipped', {
+          conversationId,
+          reason: analysis.reason
         });
+        break;
+      }
+
+      case 'update_prior': {
+        // B6: conversation circled back to an older topic — extend that
+        // segment's range and merge the new summary/topics. Falls back to
+        // 'new' if the index is missing or out of range (analyzer was wrong).
+        const idx = analysis.priorIndex;
+        const target = (idx && idx >= 1 && idx <= olderPriors.length) ? olderPriors[idx - 1] : null;
+        if (target) {
+          // Merge topics and union with existing, preserving order
+          const mergedTopics = Array.from(new Set([...(target.topics || []), ...analysis.topics]));
+          const mergedSummary = analysis.summary; // analyzer is told to produce the merged substance
+          const segmentText = `${mergedSummary} Topics: ${mergedTopics.join(', ')}`;
+          const segmentEmbedding = await generateEmbedding(segmentText);
+
+          await updateSegment(target.id, {
+            summary: mergedSummary,
+            topics: mergedTopics,
+            end_turn: turnCount,
+            embedding: segmentEmbedding.length > 0 ? segmentEmbedding : undefined,
+          });
+
+          const embedding = await generateConversationEmbedding(messages.slice(-50));
+          if (embedding.length > 0) {
+            await updateConversation(conversationId, { embedding });
+          }
+
+          writeLog('segment_updated_prior', {
+            conversationId,
+            segmentId: target.id,
+            priorIndex: idx,
+            topics: mergedTopics,
+          });
+        } else {
+          // Bad index — fall back to creating a new segment.
+          const segmentText = `${analysis.summary} Topics: ${analysis.topics.join(', ')}`;
+          const segmentEmbedding = await generateEmbedding(segmentText);
+          if (lastSegment) {
+            await updateSegment(lastSegment.id, { end_turn: turnCount - 1 });
+          }
+          const newSegment = await createSegment(
+            conversationId,
+            lastSegment ? turnCount : 0,
+            analysis.summary,
+            analysis.topics,
+            { embedding: segmentEmbedding }
+          );
+          writeLog('segment_update_prior_fallback', {
+            conversationId,
+            segmentId: newSegment?.id,
+            reason: 'invalid priorIndex',
+            priorIndex: idx,
+          });
+        }
         break;
       }
     }

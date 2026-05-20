@@ -11,11 +11,12 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
 import { detectRetryableToolError } from '../routes/proactive-utils';
+import { getBotAgent, getBotAgentForUser } from '../agents/bot-agent';
 import { getWorkflowAgent, getWorkflowAgentForUser } from '../agents/workflow-agent';
 import { getModel, getModelForUser } from '../agents/stuard/models';
 import type { ModelSourcePreference } from '../utils/models';
 import { writeLog } from '../utils/logger';
-import { getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
+import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
 import { mirrorToDesktop } from '../services/vm-stream-mirror';
 import {
   withActiveBridgeContext,
@@ -471,7 +472,7 @@ async function buildSubagent(
   const agent = new Agent({
     id: `subagent-${pack.kind}-${correlation.subagentId.slice(0, 8)}`,
     name: `${pack.label} Subagent`,
-    instructions: pack.systemPrompt,
+    instructions: `${pack.systemPrompt}\n\n## Delegation Identity\n\nYour delegated subagent id is ${correlation.subagentId}. If you need missing user or orchestrator context, call ask_orchestrator; it automatically includes this id for correlation.`,
     model: selectedModel as any,
     tools,
   });
@@ -704,6 +705,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     ffmpeg: 'FFmpeg Agent',
     vm: 'VM Agent',
     bot: 'Bot Agent',
+    agent: 'Agent Subagent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
   const parentConversationId =
@@ -716,8 +718,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   // call is already paid for by the user, so subagents must not double-charge.
   const billingExcluded =
     !!(agent as any)?.__billingExcluded ||
-    inheritedModelSource === 'api_key' ||
-    inheritedModelSource === 'subscription';
+    bridgeSecrets?.__billingExcluded === true;
   const billingTracker = new LiveUsageBillingTracker({
     userId: inheritedUserId ?? bridgeSecrets?.userId,
     conversationId: parentConversationId,

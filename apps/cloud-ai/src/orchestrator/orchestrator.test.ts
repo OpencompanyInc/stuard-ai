@@ -128,6 +128,17 @@ describe('Capability Packs', () => {
     expect(KNOWN_SUBAGENT_NAMES).toContain('vm');
   });
 
+  it('agent and bot packs route status/ask work without list tools', async () => {
+    const { AGENT_PACK, BOT_PACK, KNOWN_SUBAGENT_NAMES } = await import('./capability-packs');
+    expect(AGENT_PACK.kind).toBe('agent');
+    expect(AGENT_PACK.toolNames).toContain('ask_agent');
+    expect(AGENT_PACK.toolNames).toContain('agent_get_status');
+    expect(AGENT_PACK.toolNames).not.toContain('agent_list');
+    expect(BOT_PACK.toolNames).toContain('ask_bot');
+    expect(BOT_PACK.toolNames).not.toContain('bot_list');
+    expect(KNOWN_SUBAGENT_NAMES).toContain('agent');
+  });
+
   it('resolveIntegrationTools returns matching tools by prefix', async () => {
     const { resolveIntegrationTools } = await import('./capability-packs');
     const allTools = [

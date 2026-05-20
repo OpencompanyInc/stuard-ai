@@ -461,7 +461,6 @@ export const VM_PACK: CapabilityPack = {
 // ─── Proactive Bots ─────────────────────────────────────────────────────────
 
 const BOT_TOOLS = [
-  'bot_list',
   'bot_get_status',
   'ask_bot',
   'bot_ask',
@@ -471,13 +470,12 @@ const BOT_TOOLS = [
 ] as const;
 
 const BOT_SYSTEM_PROMPT = `You are the Bot Subagent for StuardAI.
-You handle configured proactive bots: listing them, checking status, asking a bot for details, creating/deploying bots when requested, and starting manual bot wake-ups.
+You handle a configured proactive bot when the orchestrator delegates a target bot id or name to you. Check status, ask the bot for details, create/deploy bots when requested, and start manual bot wake-ups.
 
 ## Core Tools
 
 | Tool | When to Use |
 |------|-------------|
-| bot_list | List configured bots and get ids/names/statuses when no exact target is known |
 | bot_get_status | Get a status snapshot for one bot: active tasks, recent wake-ups, and memory |
 | ask_bot | Ask a bot by id or name for status/details; set run_now=true only when the user wants a manual wake-up |
 | bot_create | Create a new proactive bot |
@@ -487,7 +485,7 @@ You handle configured proactive bots: listing them, checking status, asking a bo
 ## Rules
 
 1. If the task context includes Target bot id/name, use it directly.
-2. If the target is unclear, call bot_list before guessing.
+2. If the target is unclear, call ask_orchestrator and ask for the missing bot id/name before guessing.
 3. Prefer ask_bot for user-facing "ask @bot", "what is this bot doing?", or "get an update from the bot" requests.
 4. Only set run_now=true when the user asks to run, wake, trigger, or ask the bot to do fresh work now.
 5. When done, call return_control with a concise answer and include the bot id/name used.`;
@@ -497,6 +495,46 @@ export const BOT_PACK: CapabilityPack = {
   label: 'Bot',
   toolNames: [...BOT_TOOLS],
   systemPrompt: BOT_SYSTEM_PROMPT,
+  maxSteps: 25,
+};
+
+// ─── Proactive Agents ────────────────────────────────────────────────────────
+
+const AGENT_TOOLS = [
+  'agent_get_status',
+  'ask_agent',
+  'agent_ask',
+  'agent_create',
+  'agent_deploy',
+  'agent_pause',
+] as const;
+
+const AGENT_SYSTEM_PROMPT = `You are the Agent Subagent for StuardAI.
+You handle a configured proactive agent when the orchestrator delegates a target agent id or name to you. Check status, ask the agent for details, create/deploy agents when requested, and start manual agent wake-ups.
+
+## Core Tools
+
+| Tool | When to Use |
+|------|-------------|
+| agent_get_status | Get a status snapshot for one agent: active tasks, recent wake-ups, and memory |
+| ask_agent | Ask an agent by id or name for status/details; set run_now=true only when the user wants a manual wake-up |
+| agent_create | Create a new proactive agent |
+| agent_deploy | Start/deploy an existing agent locally or to VM |
+| agent_pause | Pause/stop an existing agent |
+
+## Rules
+
+1. If the task context includes Target agent id/name, use it directly.
+2. If the target is unclear, call ask_orchestrator and ask for the missing agent id/name before guessing.
+3. Prefer ask_agent for user-facing "ask @agent", "what is this agent doing?", or "get an update from the agent" requests.
+4. Only set run_now=true when the user asks to run, wake, trigger, or ask the agent to do fresh work now.
+5. When done, call return_control with a concise answer and include the agent id/name used.`;
+
+export const AGENT_PACK: CapabilityPack = {
+  kind: 'agent',
+  label: 'Agent',
+  toolNames: [...AGENT_TOOLS],
+  systemPrompt: AGENT_SYSTEM_PROMPT,
   maxSteps: 25,
 };
 
@@ -590,6 +628,7 @@ const PACKS: Record<string, CapabilityPack> = {
   ffmpeg: FFMPEG_PACK,
   vm: VM_PACK,
   bot: BOT_PACK,
+  agent: AGENT_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -602,7 +641,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot', 'agent'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

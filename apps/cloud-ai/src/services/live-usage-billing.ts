@@ -158,6 +158,10 @@ export class LiveUsageBillingTracker {
     return { ...this.settledTotals };
   }
 
+  setBillingExcluded(excluded: boolean): void {
+    this.options.billingExcluded = excluded;
+  }
+
   async settleIncrement(input: any, meta: { trigger: string; stepNumber?: number; partial?: boolean }):
     Promise<LiveUsageSettlementSummary> {
     const usageInput = this.options.billingExcluded ? { ...toUsageLike(input), billingExcluded: true } : input;

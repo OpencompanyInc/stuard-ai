@@ -283,6 +283,29 @@ fn should_skip_path(path: &Path, name: &str) -> bool {
     false
 }
 
+fn common_folder_priority(name: &str) -> Option<(i32, f64)> {
+    match name.trim().to_lowercase().as_str() {
+        "downloads" => Some((0, 0.30)),
+        "documents" | "my documents" => Some((1, 0.27)),
+        "desktop" => Some((2, 0.25)),
+        "projects" | "project" | "code" | "development" | "dev" | "source" | "src" | "repos"
+        | "repositories" | "github" | "gitlab" | "work" | "workspace" | "workspaces" => {
+            Some((3, 0.23))
+        }
+        "pictures" | "photos" | "images" | "camera roll" | "screenshots" => Some((4, 0.20)),
+        "videos" | "movies" => Some((5, 0.18)),
+        "music" | "audio" => Some((6, 0.17)),
+        "onedrive" | "dropbox" | "google drive" | "icloud drive" | "icloud" => Some((7, 0.16)),
+        _ => None,
+    }
+}
+
+fn scan_dir_priority(name: &str) -> i32 {
+    common_folder_priority(name)
+        .map(|(rank, _)| rank)
+        .unwrap_or(100)
+}
+
 fn filetime_ms(meta: &fs::Metadata) -> i64 {
     meta.modified()
         .ok()
@@ -626,10 +649,7 @@ fn cmd_update_root(
     if sets.is_empty() {
         return Ok(OkOut { ok: true });
     }
-    let sql = format!(
-        "UPDATE indexed_roots SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE indexed_roots SET {} WHERE id = ?", sets.join(", "));
     vals.push(Box::new(root_id.to_string()));
     let params_refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|v| v.as_ref()).collect();
     conn.execute(&sql, params_refs.as_slice())?;
@@ -789,6 +809,7 @@ fn worker(
 
         match fs::read_dir(&job.path) {
             Ok(read_dir) => {
+                let mut child_dirs: Vec<(PathBuf, String, i32)> = Vec::new();
                 for child in read_dir.flatten() {
                     let path = child.path();
                     let name = child.file_name().to_string_lossy().to_string();
@@ -813,13 +834,17 @@ fn worker(
                     let is_dir = meta.is_dir();
                     if is_dir {
                         pending_dirs.fetch_add(1, Ordering::AcqRel);
-                        let _ = dirs_tx.send(DirJob { path: path.clone() });
+                        child_dirs.push((path.clone(), name.clone(), scan_dir_priority(&name)));
                         counters.lock().unwrap().total_dirs += 1;
                     }
                     let row = make_entry(&root_id, path, meta, is_dir, scan_id, &created_at);
                     if entries_tx.send(row).is_err() {
                         break;
                     }
+                }
+                child_dirs.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.cmp(&b.1)));
+                for (path, _, _) in child_dirs {
+                    let _ = dirs_tx.send(DirJob { path });
                 }
             }
             Err(err) => {
@@ -851,8 +876,11 @@ fn cmd_scan(
 
     // If caller didn't tell us which path to scan, look it up from the root_id.
     let root_path = if root_path.as_os_str().is_empty() {
-        let p: String =
-            conn.query_row("SELECT path FROM indexed_roots WHERE id = ?", params![root_id], |r| r.get(0))?;
+        let p: String = conn.query_row(
+            "SELECT path FROM indexed_roots WHERE id = ?",
+            params![root_id],
+            |r| r.get(0),
+        )?;
         PathBuf::from(p)
     } else {
         root_path
@@ -997,8 +1025,7 @@ fn resolve_lnk_target(lnk_path: &str) -> Option<String> {
         let end = offset + link_info_size.min(data.len() - offset);
         let link_info = &data[offset..end];
         if link_info.len() >= 28 {
-            let local_base_offset =
-                u32::from_le_bytes(link_info[16..20].try_into().ok()?) as usize;
+            let local_base_offset = u32::from_le_bytes(link_info[16..20].try_into().ok()?) as usize;
             if local_base_offset > 0 && local_base_offset < link_info.len() {
                 let tail = &link_info[local_base_offset..];
                 let end_pos = tail.iter().position(|b| *b == 0).unwrap_or(tail.len());
@@ -1019,10 +1046,18 @@ fn resolve_lnk_target(lnk_path: &str) -> Option<String> {
     None
 }
 
-fn build_file_result(row: &rusqlite::Row, score: f64, match_type: &str) -> rusqlite::Result<FileResult> {
+fn build_file_result(
+    row: &rusqlite::Row,
+    score: f64,
+    match_type: &str,
+) -> rusqlite::Result<FileResult> {
     let filename: String = row.get("filename")?;
-    let extension: String = row.get::<_, Option<String>>("extension")?.unwrap_or_default();
-    let kind: String = row.get::<_, Option<String>>("kind")?.unwrap_or_else(|| "other".to_string());
+    let extension: String = row
+        .get::<_, Option<String>>("extension")?
+        .unwrap_or_default();
+    let kind: String = row
+        .get::<_, Option<String>>("kind")?
+        .unwrap_or_else(|| "other".to_string());
     let path: String = row.get("path")?;
 
     let ext_lower = extension.to_lowercase();
@@ -1113,7 +1148,62 @@ fn score_filename(filename: &str, query_norm: &str) -> f64 {
     0.5
 }
 
-/// Escape a token for use inside an FTS5 phrase ("…") and strip chars that
+fn path_segments(path: &str) -> Vec<String> {
+    path.replace('/', "\\")
+        .split('\\')
+        .filter_map(|segment| {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_lowercase())
+            }
+        })
+        .collect()
+}
+
+fn location_score(path: &str) -> f64 {
+    let segments = path_segments(path);
+    if segments.is_empty() {
+        return 0.0;
+    }
+
+    let mut best = 0.0f64;
+    for (idx, segment) in segments.iter().enumerate() {
+        if let Some((_, base)) = common_folder_priority(segment) {
+            let depth_after = segments.len().saturating_sub(idx + 1) as f64;
+            let near_profile_bonus = if idx <= 3 { 0.04 } else { 0.0 };
+            let depth_decay = (depth_after * 0.025).min(0.16);
+            best = best.max(base + near_profile_bonus - depth_decay);
+        }
+    }
+
+    let normalized = segments.join("\\");
+    let random_penalty = if normalized.contains("\\appdata\\")
+        || normalized.contains("\\temp\\")
+        || normalized.contains("\\tmp\\")
+        || normalized.contains("\\cache\\")
+        || normalized.contains("\\logs\\")
+        || normalized.contains("\\packages\\")
+    {
+        0.18
+    } else {
+        0.0
+    };
+    let depth_penalty = ((segments.len().saturating_sub(6)) as f64 * 0.018).min(0.22);
+
+    best - random_penalty - depth_penalty
+}
+
+fn score_search_result(filename: &str, path: &str, kind: &str, query_norm: &str) -> f64 {
+    let mut score = score_filename(filename, query_norm) + location_score(path);
+    if kind == "folder" {
+        score += 0.03;
+    }
+    score.max(0.0)
+}
+
+/// Escape a token for use inside an FTS5 phrase ("...") and strip chars that
 /// would break the parser.
 fn sanitize_fts_token(tok: &str) -> String {
     tok.chars()
@@ -1139,6 +1229,20 @@ fn build_fts_match(tokens: &[String]) -> Option<String> {
     }
 }
 
+fn location_order_sql() -> &'static str {
+    "CASE
+       WHEN LOWER(path) LIKE '%\\downloads\\%' THEN 0
+       WHEN LOWER(path) LIKE '%\\documents\\%' OR LOWER(path) LIKE '%\\my documents\\%' THEN 1
+       WHEN LOWER(path) LIKE '%\\desktop\\%' THEN 2
+       WHEN LOWER(path) LIKE '%\\projects\\%' OR LOWER(path) LIKE '%\\code\\%' OR LOWER(path) LIKE '%\\development\\%' OR LOWER(path) LIKE '%\\dev\\%' OR LOWER(path) LIKE '%\\source\\%' OR LOWER(path) LIKE '%\\repos\\%' OR LOWER(path) LIKE '%\\github\\%' OR LOWER(path) LIKE '%\\work\\%' THEN 3
+       WHEN LOWER(path) LIKE '%\\pictures\\%' OR LOWER(path) LIKE '%\\photos\\%' OR LOWER(path) LIKE '%\\images\\%' THEN 4
+       WHEN LOWER(path) LIKE '%\\videos\\%' OR LOWER(path) LIKE '%\\movies\\%' THEN 5
+       WHEN LOWER(path) LIKE '%\\music\\%' OR LOWER(path) LIKE '%\\audio\\%' THEN 6
+       WHEN LOWER(path) LIKE '%\\onedrive\\%' OR LOWER(path) LIKE '%\\dropbox\\%' OR LOWER(path) LIKE '%\\google drive\\%' OR LOWER(path) LIKE '%\\icloud\\%' THEN 7
+       ELSE 20
+     END"
+}
+
 fn cmd_search(
     db_path: &str,
     query: &str,
@@ -1160,7 +1264,7 @@ fn cmd_search(
 
     let q_norm = normalize_search_text(query);
     let tokens: Vec<String> = q_norm.split_whitespace().map(|s| s.to_string()).collect();
-    let fetch_limit = (limit * 6).max(60).min(2000);
+    let fetch_limit = (limit * 10).max(120).min(2000);
 
     let mut collected: Vec<FileResult> = Vec::new();
 
@@ -1188,7 +1292,11 @@ fn cmd_search(
                     rusqlite::params_from_iter(params_vec.iter().map(|s| s.as_str())),
                     |row| {
                         let filename: String = row.get("filename")?;
-                        let score = score_filename(&filename, &q_norm);
+                        let path: String = row.get("path")?;
+                        let kind: String = row
+                            .get::<_, Option<String>>("kind")?
+                            .unwrap_or_else(|| "other".to_string());
+                        let score = score_search_result(&filename, &path, &kind, &q_norm);
                         build_file_result(row, score, "fts")
                     },
                 );
@@ -1209,7 +1317,8 @@ fn cmd_search(
         let mut where_parts: Vec<String> = vec!["status != 'deleted'".to_string()];
         let mut params_vec: Vec<String> = Vec::new();
         for tok in &tokens {
-            where_parts.push("(instr(LOWER(filename), ?) > 0 OR instr(LOWER(path), ?) > 0)".to_string());
+            where_parts
+                .push("(instr(LOWER(filename), ?) > 0 OR instr(LOWER(path), ?) > 0)".to_string());
             let pat = tok.to_lowercase();
             params_vec.push(pat.clone());
             params_vec.push(pat);
@@ -1223,8 +1332,9 @@ fn cmd_search(
             params_vec.push(rid.to_string());
         }
         let sql = format!(
-            "SELECT * FROM indexed_files WHERE {} LIMIT {}",
+            "SELECT * FROM indexed_files WHERE {} ORDER BY {}, mtime_ms DESC LIMIT {}",
             where_parts.join(" AND "),
+            location_order_sql(),
             fetch_limit
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -1232,7 +1342,11 @@ fn cmd_search(
             rusqlite::params_from_iter(params_vec.iter().map(|s| s.as_str())),
             |row| {
                 let filename: String = row.get("filename")?;
-                let score = score_filename(&filename, &q_norm);
+                let path: String = row.get("path")?;
+                let kind: String = row
+                    .get::<_, Option<String>>("kind")?
+                    .unwrap_or_else(|| "other".to_string());
+                let score = score_search_result(&filename, &path, &kind, &q_norm);
                 build_file_result(row, score, "like")
             },
         )?;
@@ -1241,7 +1355,13 @@ fn cmd_search(
         }
     }
 
-    collected.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    collected.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.mtime_ms.cmp(&a.mtime_ms))
+            .then_with(|| a.path.cmp(&b.path))
+    });
     collected.truncate(limit);
     let count = collected.len();
     Ok(SearchOut {
@@ -1274,7 +1394,9 @@ fn cmd_list_folder(
             limit
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![prefix_any], |row| build_file_result(row, 1.0, "folder"))?;
+        let rows = stmt.query_map(params![prefix_any], |row| {
+            build_file_result(row, 1.0, "folder")
+        })?;
         for r in rows {
             results.push(r?);
         }
@@ -1295,7 +1417,11 @@ fn cmd_list_folder(
     }
 
     let count = results.len();
-    Ok(SearchOut { ok: true, results, count })
+    Ok(SearchOut {
+        ok: true,
+        results,
+        count,
+    })
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1453,7 +1579,13 @@ fn dispatch_daemon_cmd(
             let limit = as_i64("limit").unwrap_or(50) as usize;
             let kind = as_str("kind");
             let root_id = as_str("root_id").or_else(|| as_str("root-id"));
-            let out = cmd_search(db_path, &query, limit.clamp(1, 500), kind.as_deref(), root_id.as_deref())?;
+            let out = cmd_search(
+                db_path,
+                &query,
+                limit.clamp(1, 500),
+                kind.as_deref(),
+                root_id.as_deref(),
+            )?;
             Ok(serde_json::to_value(out)?)
         }
         "stats" => Ok(serde_json::to_value(cmd_stats(db_path)?)?),
@@ -1465,7 +1597,12 @@ fn dispatch_daemon_cmd(
                 .get("recursive")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            Ok(serde_json::to_value(cmd_list_folder(db_path, &folder, recursive, limit.clamp(1, 2000))?)?)
+            Ok(serde_json::to_value(cmd_list_folder(
+                db_path,
+                &folder,
+                recursive,
+                limit.clamp(1, 2000),
+            )?)?)
         }
         "ping" => Ok(serde_json::json!({ "ok": true, "pong": true })),
         other => Err(format!("unknown_daemon_cmd: {}", other).into()),
@@ -1475,6 +1612,54 @@ fn dispatch_daemon_cmd(
 // ─────────────────────────────────────────────────────────
 // CLI dispatch
 // ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_prioritizes_common_user_folders() {
+        assert!(scan_dir_priority("Downloads") < scan_dir_priority("RandomFolder"));
+        assert!(scan_dir_priority("Documents") < scan_dir_priority("RandomFolder"));
+        assert!(scan_dir_priority("Projects") < scan_dir_priority("RandomFolder"));
+    }
+
+    #[test]
+    fn search_score_prefers_common_folders_for_similar_matches() {
+        let query = normalize_search_text("budget");
+        let downloads_score = score_search_result(
+            "budget.xlsx",
+            "C:\\Users\\solar\\Downloads\\budget.xlsx",
+            "document",
+            &query,
+        );
+        let random_score = score_search_result(
+            "budget.xlsx",
+            "C:\\Users\\solar\\RandomStuff\\deep\\archive\\budget.xlsx",
+            "document",
+            &query,
+        );
+        assert!(downloads_score > random_score);
+    }
+
+    #[test]
+    fn exact_filename_match_still_beats_common_folder_prefix_match() {
+        let query = normalize_search_text("budget");
+        let exact_random_score = score_search_result(
+            "budget.xlsx",
+            "C:\\Users\\solar\\RandomStuff\\budget.xlsx",
+            "document",
+            &query,
+        );
+        let prefix_downloads_score = score_search_result(
+            "budget draft.xlsx",
+            "C:\\Users\\solar\\Downloads\\budget draft.xlsx",
+            "document",
+            &query,
+        );
+        assert!(exact_random_score > prefix_downloads_score);
+    }
+}
 
 struct ArgMap {
     flags: HashMap<String, String>,
@@ -1517,11 +1702,7 @@ fn main() {
 
     // Back-compat: if the first arg isn't a subcommand, assume legacy `scan` invocation
     // (old CLI: --db ... --root-id ... --root-path ... --workers ...).
-    let subcommand = if args
-        .first()
-        .map(|s| s.starts_with("--"))
-        .unwrap_or(true)
-    {
+    let subcommand = if args.first().map(|s| s.starts_with("--")).unwrap_or(true) {
         "scan".to_string()
     } else {
         args.remove(0)
@@ -1558,15 +1739,12 @@ fn main() {
         }
         "scan" => {
             let id = get("root-id").unwrap_or_else(|| print_err("missing --root-id"));
-            let root_path = get("root-path")
-                .map(PathBuf::from)
-                .unwrap_or_default();
+            let root_path = get("root-path").map(PathBuf::from).unwrap_or_default();
             let workers = get("workers")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or_else(|| num_cpus::get().saturating_mul(2).clamp(4, 24))
                 .clamp(1, 64);
-            cmd_scan(&db_path, &id, root_path, workers)
-                .map(|v| serde_json::to_value(v).unwrap())
+            cmd_scan(&db_path, &id, root_path, workers).map(|v| serde_json::to_value(v).unwrap())
         }
         "search" => {
             let query = get("query").unwrap_or_else(|| print_err("missing --query"));

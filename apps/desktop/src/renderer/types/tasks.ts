@@ -58,6 +58,7 @@ export interface UnifiedTask {
   // Categorization
   tags?: string[];
   color?: string;
+  projectId?: string | null; // Project Mode: null/undefined = unscoped, otherwise FK to projects.id
   
   // Metadata
   createdAt: string;

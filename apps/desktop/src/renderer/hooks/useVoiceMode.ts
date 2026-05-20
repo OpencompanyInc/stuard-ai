@@ -62,6 +62,10 @@ export interface VoiceModeReturn {
   activeTools: VoiceToolEvent[];
   /** Most recently completed tool, briefly held for "Just did X" UI. */
   lastTool: VoiceToolEvent | null;
+  /** Whether screen-share (vision) is currently streaming frames to the model. */
+  sharingScreen: boolean;
+  /** Toggle screen-share. Only works on providers that accept video frames (Gemini Live). */
+  toggleScreenShare: () => void;
   /** Start a voice session */
   start: () => Promise<void>;
   /** End the voice session */
@@ -101,6 +105,17 @@ function float32ToInt16(input: Float32Array): ArrayBuffer {
   return buf;
 }
 
+/** ArrayBuffer to base64, chunked so a large JPEG does not blow the call stack. */
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  const CHUNK = 0x8000;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)) as any);
+  }
+  return btoa(bin);
+}
+
 /** Compute RMS audio level from Float32 samples, returns 0-1 */
 function computeRMS(samples: Float32Array): number {
   let sum = 0;
@@ -120,6 +135,7 @@ class AudioChunkPlayer {
   private gainNode: GainNode;
   private analyser: AnalyserNode;
   private _lastLevel = 0;
+  private sources = new Set<AudioBufferSourceNode>();
 
   constructor(ctx: AudioContext) {
     this.ctx = ctx;
@@ -142,9 +158,14 @@ class AudioChunkPlayer {
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(this.gainNode);
+    source.onended = () => {
+      this.sources.delete(source);
+      try { source.disconnect(); } catch {}
+    };
 
     const now = this.ctx.currentTime;
     const startAt = Math.max(now, this.nextTime);
+    this.sources.add(source);
     source.start(startAt);
     this.nextTime = startAt + buffer.duration;
   }
@@ -163,7 +184,13 @@ class AudioChunkPlayer {
   }
 
   flush() {
-    this.nextTime = 0;
+    this.nextTime = this.ctx.currentTime;
+    for (const source of this.sources) {
+      try { source.stop(); } catch {}
+      try { source.disconnect(); } catch {}
+    }
+    this.sources.clear();
+    this._lastLevel = 0;
   }
 }
 
@@ -189,8 +216,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [activeTools, setActiveTools] = useState<VoiceToolEvent[]>([]);
   const [lastTool, setLastTool] = useState<VoiceToolEvent | null>(null);
+  const [sharingScreen, setSharingScreen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastToolTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Screen share via navigator.mediaDevices.getDisplayMedia (hardware-accelerated
+  // DXGI capture on Windows). We hold the MediaStream + a hidden <video> + a
+  // reusable canvas, and pump JPEG snapshots at ~1 FPS into the Gemini Live
+  // vision channel. The previous main-process desktopCapturer poll froze the
+  // cursor at ~5 FPS while voice mode was on.
+  const screenShareIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const screenShareInflightRef = useRef(false);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Refs for mutable session state
   const wsRef = useRef<WebSocket | null>(null);
@@ -204,6 +242,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
   const levelRafRef = useRef(0);
   const smoothedInputLevel = useRef(0);
   const smoothedOutputLevel = useRef(0);
+  const dropProviderAudioUntilRef = useRef(0);
 
   // Keep refs in sync
   mutedRef.current = muted;
@@ -233,9 +272,32 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     }
   }, []);
 
+  const stopScreenShare = useCallback(() => {
+    if (screenShareIntervalRef.current) {
+      clearInterval(screenShareIntervalRef.current);
+      screenShareIntervalRef.current = null;
+    }
+    screenShareInflightRef.current = false;
+    if (screenStreamRef.current) {
+      try { screenStreamRef.current.getTracks().forEach(t => t.stop()); } catch {}
+      screenStreamRef.current = null;
+    }
+    if (screenVideoRef.current) {
+      try {
+        screenVideoRef.current.pause();
+        screenVideoRef.current.srcObject = null;
+        screenVideoRef.current.remove();
+      } catch {}
+      screenVideoRef.current = null;
+    }
+    screenCanvasRef.current = null;
+    setSharingScreen(false);
+  }, []);
+
   const cleanup = useCallback(() => {
     stopMic();
     stopLevelMeter();
+    stopScreenShare();
     if (wsRef.current) {
       try { wsRef.current.close(); } catch {}
       wsRef.current = null;
@@ -256,7 +318,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     }
     smoothedInputLevel.current = 0;
     smoothedOutputLevel.current = 0;
-  }, [stopMic, stopLevelMeter]);
+  }, [stopMic, stopLevelMeter, stopScreenShare]);
 
   // ─── Audio level metering loop ─────────────────────────────────────────
 
@@ -337,6 +399,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     setError(null);
     setTranscripts([]);
     setActiveTool(null);
+    // Make sure no stale screen-share interval survives a quick stop → start
+    // cycle: this also guarantees the toggle visibly starts in the "off"
+    // position on every session.
+    stopScreenShare();
     setState('connecting');
 
     // Get auth token
@@ -363,6 +429,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
       // Binary = audio from provider
       if (ev.data instanceof Blob) {
         ev.data.arrayBuffer().then((buf) => {
+          if (Date.now() < dropProviderAudioUntilRef.current) return;
           if (playerRef.current) {
             playerRef.current.play(buf);
           }
@@ -423,6 +490,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
 
         if (msg.type === 'interruption') {
           // User interrupted the agent
+          dropProviderAudioUntilRef.current = Date.now() + 500;
           playerRef.current?.flush();
           setState('listening');
         }
@@ -493,7 +561,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
         cleanup();
       }
     };
-  }, [options.wsUrl, options.provider, options.agentId, options.systemPrompt, options.initialMessage, startMic, cleanup]);
+  }, [options.wsUrl, options.provider, options.agentId, options.systemPrompt, options.initialMessage, startMic, cleanup, stopScreenShare]);
 
   // ─── Stop voice session ────────────────────────────────────────────────
 
@@ -510,13 +578,133 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     setMuted(m => !m);
   }, []);
 
+  // ─── Screen share (Gemini Live vision channel) ─────────────────────────
+
+  const startScreenShare = useCallback(async () => {
+    if (screenShareIntervalRef.current || screenStreamRef.current) return;
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setError('Screen sharing is not supported in this build.');
+      return;
+    }
+
+    // Request the OS-level screen capture. In Electron this is fulfilled by
+    // session.setDisplayMediaRequestHandler (registered in main/app.ts), which
+    // returns the primary display source and lets Chromium run hardware-
+    // accelerated DXGI capture instead of CPU bitblt. That fixes the
+    // mouse-lag-at-5-FPS regression from the old IPC poll.
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          // Caps that don't hurt quality for an LLM that only sees 1 FPS JPEGs
+          // but keep encoder/scaler cheap on the GPU side.
+          frameRate: { ideal: 5, max: 10 },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+        } as MediaTrackConstraints,
+        audio: false,
+      });
+    } catch (err: any) {
+      console.warn('[voice] getDisplayMedia failed:', err?.message || err);
+      setError(`Screen share denied: ${err?.message || 'unknown'}`);
+      return;
+    }
+
+    screenStreamRef.current = stream;
+
+    // If the user stops sharing from the OS overlay, tear our state down too.
+    stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+      stopScreenShare();
+    });
+
+    // Hidden <video> sink. Required because `MediaStream` doesn't expose
+    // frames directly in stable Chromium; we let the video element drive the
+    // pipeline and snapshot via canvas at our own cadence.
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    video.style.position = 'fixed';
+    video.style.left = '-9999px';
+    video.style.top = '-9999px';
+    video.style.width = '1px';
+    video.style.height = '1px';
+    video.style.opacity = '0';
+    video.style.pointerEvents = 'none';
+    document.body.appendChild(video);
+    screenVideoRef.current = video;
+    try { await video.play(); } catch { /* autoplay should be fine for muted/programmatic */ }
+
+    const canvas = document.createElement('canvas');
+    screenCanvasRef.current = canvas;
+
+    setSharingScreen(true);
+    console.log('[voice] screen share enabled; pumping frames at ~1 FPS');
+
+    // ~1 FPS pump. Snapshot the current video frame to JPEG, base64, then WS.
+    const pump = async () => {
+      if (screenShareInflightRef.current) return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const v = screenVideoRef.current;
+      const c = screenCanvasRef.current;
+      if (!v || !c) return;
+      if (v.readyState < 2 || v.videoWidth === 0) return; // not ready yet
+
+      screenShareInflightRef.current = true;
+      try {
+        // Resize the capture down. The model gains nothing from a full 4K frame
+        // and Gemini happily accepts ~1280px wide.
+        const maxW = 1280;
+        const scale = v.videoWidth > maxW ? maxW / v.videoWidth : 1;
+        const w = Math.max(1, Math.round(v.videoWidth * scale));
+        const h = Math.max(1, Math.round(v.videoHeight * scale));
+        if (c.width !== w) c.width = w;
+        if (c.height !== h) c.height = h;
+        const ctx = c.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(v, 0, 0, w, h);
+
+        const blob: Blob | null = await new Promise(resolve =>
+          c.toBlob(b => resolve(b), 'image/jpeg', 0.7),
+        );
+        if (!blob) return;
+        const buf = await blob.arrayBuffer();
+        const data = arrayBufferToBase64(buf);
+        ws.send(JSON.stringify({
+          type: 'video_frame',
+          data,
+          mimeType: 'image/jpeg',
+        }));
+      } catch (err) {
+        console.warn('[voice] frame snapshot threw:', err);
+      } finally {
+        screenShareInflightRef.current = false;
+      }
+    };
+
+    // Wait one tick before the first pump so the video has a frame queued.
+    setTimeout(() => { void pump(); }, 250);
+    screenShareIntervalRef.current = setInterval(() => { void pump(); }, 1000);
+  }, [stopScreenShare]);
+
+  const toggleScreenShare = useCallback(() => {
+    if (screenShareIntervalRef.current) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
+    }
+  }, [startScreenShare, stopScreenShare]);
+
   // ─── Interrupt ─────────────────────────────────────────────────────────
 
   const interrupt = useCallback(() => {
+    dropProviderAudioUntilRef.current = Date.now() + 700;
+    playerRef.current?.flush();
+    setState('listening');
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'interrupt' }));
     }
-    playerRef.current?.flush();
   }, []);
 
   // ─── Cleanup on unmount ────────────────────────────────────────────────
@@ -538,6 +726,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     activeTool,
     activeTools,
     lastTool,
+    sharingScreen,
+    toggleScreenShare,
     start,
     stop,
     toggleMute,

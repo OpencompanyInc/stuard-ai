@@ -408,12 +408,16 @@ Object.values(deviceTools).forEach(t => {
         // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
     } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
         registerTool(t, 'AI');
-    } else if (['bot_list', 'bot_get_status', 'bot_create', 'bot_deploy', 'bot_pause', 'ask_bot', 'bot_ask'].includes(name)) {
-        registerTool(t, 'Bots');
+    } else if (['agent_list', 'agent_get_status', 'agent_create', 'agent_deploy', 'agent_pause', 'agent_delete', 'ask_agent', 'agent_ask'].includes(name)) {
+        registerTool(t, 'Agents');
+    } else if (['bot_list', 'bot_get_status', 'bot_create', 'bot_deploy', 'bot_pause', 'bot_delete', 'ask_bot', 'bot_ask'].includes(name)) {
+        registerTool(t, 'Agents');
     } else if (['search_local_workflows', 'list_local_stuards', 'show_json_workflow_code', 'import_workflow', 'run_automation', 'stop_automation', 'create_workflow', 'workflow_modify', 'retrieve_tool_format', 'run_workflow', 'execute_workflow', 'invoke_workflow'].includes(name)) {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
         registerTool(t, 'Memory');
+    } else if (['list_projects', 'create_project', 'update_project', 'delete_project', 'enter_project_mode', 'exit_project_mode', 'journal_add', 'memory_add', 'project_search'].includes(name)) {
+        registerTool(t, 'Projects');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         registerTool(t, 'Knowledge');
     } else if (['calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items'].includes(name)) {

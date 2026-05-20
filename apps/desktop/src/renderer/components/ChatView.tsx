@@ -28,6 +28,8 @@ import { useSubagentDashboard } from "../hooks/useSubagentDashboard";
 import { buildContextUsageMetrics } from "../utils/contextUsage";
 import { useFileNavigator } from "../hooks/useFileNavigator";
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../hooks/useVoiceMode";
+import { ActiveProjectBar } from "./chat-view/ActiveProjectBar";
+import type { Project } from "../hooks/useProjects";
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
@@ -158,10 +160,16 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
-  activeSidebarTab?: "terminal" | "todo";
+  activeSidebarTab?: "terminal" | "todo" | "projects";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "terminal" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "terminal" | "todo" | "projects") => void;
+
+  // Project Mode lock-in
+  activeProject?: Project | null;
+  activeConversationId?: string | null;
+  onExitProjectMode?: () => void;
+  onOpenProjectHome?: () => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -244,10 +252,15 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   // Internal Sidebar
   internalSidebarOpen = false,
-  activeSidebarTab = "todo",
+  activeSidebarTab = "projects",
   onToggleInternalSidebar,
   onCloseInternalSidebar,
   onSwitchSidebarTab,
+  // Project Mode lock-in
+  activeProject,
+  activeConversationId,
+  onExitProjectMode,
+  onOpenProjectHome,
 }) => {
   // Responsive layout based on overlay mode
   const isSidebarMode = overlayMode === "sidebar";
@@ -449,12 +462,20 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
         {overlayMode === "window" || overlayMode === "sidebar" ? (
           <div
             className={clsx(
-              "flex-1 min-w-0 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border border-theme/10",
+              "flex-1 min-w-0 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border transition-colors duration-200",
+              activeProject ? "border-theme/10" : "border-theme/10",
               // Seamless sidebar: no left rounding when sidebar is open
               internalSidebarOpen
                 ? "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden"
                 : "rounded-[28px] overflow-hidden",
             )}
+            style={
+              activeProject
+                ? {
+                    borderColor: `${activeProject.color}22`,
+                  }
+                : undefined
+            }
           >
             {/* Top Card: Header & Messages */}
             <div
@@ -491,6 +512,16 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onDeleteConversation={onDeleteConversation}
                 />
               </div>
+
+              {/* Project Mode lock-in bar */}
+              {activeProject && (
+                <ActiveProjectBar
+                  project={activeProject}
+                  conversationId={activeConversationId}
+                  onExit={onExitProjectMode}
+                  onOpenHome={onOpenProjectHome}
+                />
+              )}
 
               {/* Pending memories (overlay-only; compact UI) */}
               {viewMode === "chat" &&
@@ -578,7 +609,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       currentToolCalls={currentToolCalls}
                       currentStreamChunks={currentStreamChunks}
                       thinkingStartTime={thinkingStartTime}
-                      className="h-full px-4 py-3 scrollbar-hidden"
+                      className="h-full px-4 py-3 scrollbar-hidden overflow-x-hidden"
                       onSubmitToolOutput={onSubmitToolOutput}
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}
@@ -667,6 +698,13 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
                   : "bg-theme-card border border-theme/50",
               )}
+              style={
+                activeProject
+                  ? {
+                      borderColor: `${activeProject.color}22`,
+                    }
+                  : undefined
+              }
             >
               {/* Top Header */}
               <div className="flex items-center justify-between px-2 py-2 border-b border-black/5 bg-white/40 backdrop-blur-sm w-full min-w-0">
@@ -693,6 +731,16 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onDeleteConversation={onDeleteConversation}
                 />
               </div>
+
+              {/* Project Mode lock-in bar */}
+              {activeProject && (
+                <ActiveProjectBar
+                  project={activeProject}
+                  conversationId={activeConversationId}
+                  onExit={onExitProjectMode}
+                  onOpenHome={onOpenProjectHome}
+                />
+              )}
 
               {/* Pending memories (overlay-only; compact UI) */}
               {viewMode === "chat" &&
@@ -780,7 +828,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       currentToolCalls={currentToolCalls}
                       currentStreamChunks={currentStreamChunks}
                       thinkingStartTime={thinkingStartTime}
-                      className="h-full px-5 py-4 scrollbar-hidden"
+                      className="h-full px-5 py-4 scrollbar-hidden overflow-x-hidden"
                       onSubmitToolOutput={onSubmitToolOutput}
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}

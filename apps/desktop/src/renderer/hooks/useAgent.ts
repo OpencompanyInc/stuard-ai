@@ -70,6 +70,26 @@ const HIDDEN_TOOL_NAMES = new Set([
   'message_list',
   'memory_stats',
 
+  // Project-mode bookkeeping is surfaced by the project bar / project home,
+  // not as chat trace pills.
+  'list_projects',
+  'enter_project_mode',
+  'exit_project_mode',
+  'project_create',
+  'project_get',
+  'project_list',
+  'project_update',
+  'project_delete',
+  'conversation_set_project',
+  'journal_add',
+  'journal_list',
+  'journal_delete',
+  'memory_add',
+  'memory_create',
+  'memory_list',
+  'memory_search',
+  'project_search',
+
   // Low-level binary I/O helpers used internally by analyze_media, OCR tools,
   // cloud-storage tools, etc. Their base64 payloads are huge and noisy in the
   // chain-of-thought trace.
@@ -586,7 +606,14 @@ export function useAgent(options?: string | UseAgentOptions) {
   const deltaBufferRef = useRef<string>('');
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
   const streamingRef = useRef<boolean>(false);
-  const stoppedRef = useRef<boolean>(false); // Track if user explicitly stopped - ignore further chunks until final
+  // Tabs the user has explicitly stopped — ignore further chunks for these
+  // until the next outgoing request for that tab. Per-tab (not global) so
+  // stopping tab A does not silently drop tab B's chunks on the shared WS.
+  const stoppedTabsRef = useRef<Set<string>>(new Set());
+  const isTabStopped = (tabId: string | undefined | null): boolean => !!tabId && stoppedTabsRef.current.has(tabId);
+  const markTabStopped = (tabId: string | undefined | null) => { if (tabId) stoppedTabsRef.current.add(tabId); };
+  const clearTabStopped = (tabId: string | undefined | null) => { if (tabId) stoppedTabsRef.current.delete(tabId); };
+  const clearAllStopped = () => { stoppedTabsRef.current.clear(); };
   const streamingConversationIdRef = useRef<string | null>(null); // Track which conversation we're streaming to
   const streamingTabIdRef = useRef<string | null>(null); // Track which tab initiated the stream
   const pendingResponseTabsRef = useRef<string[]>([]); // Queue of tabs waiting for responses (FIFO) - legacy
@@ -828,7 +855,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       markRequestLocallyStopped(targetRequestId);
 
       streamingRef.current = false;
-      stoppedRef.current = true;
+      markTabStopped(targetTabId);
       if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
       deltaBufferRef.current = '';
 
@@ -1057,7 +1084,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       // Add requestId to payload for server to echo back
       const payload = { ...next.payload, requestId };
 
-      stoppedRef.current = false;
+      clearTabStopped(targetTabId);
       lastStreamActivityRef.current = Date.now();
       try { wsRef.current.send(JSON.stringify(payload)); } catch { }
 
@@ -1381,7 +1408,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     modifiedFilesRef.current = new Set();
     turnCheckpointIdRef.current = null;
     streamingRef.current = false;
-    stoppedRef.current = false;
+    clearTabStopped(tabId);
 
     setTabs(prev => prev.map(t => {
       if (t.id !== tabId) return t;
@@ -1516,9 +1543,8 @@ export function useAgent(options?: string | UseAgentOptions) {
           if (incomingRequestId && isRequestLocallyStopped(incomingRequestId)) {
             if (msg.type === 'stopped') {
               streamingRef.current = false;
-              if (runningTabsRef.current.size === 0) {
-                stoppedRef.current = false;
-              }
+              const stoppedTabId = requestIdToTabRef.current.get(incomingRequestId);
+              clearTabStopped(stoppedTabId);
               if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
               deltaBufferRef.current = '';
               return;
@@ -1814,8 +1840,10 @@ export function useAgent(options?: string | UseAgentOptions) {
               // Reasoning ended
               console.log('[agent] Reasoning ended');
             } else if (evt.event === 'tool_event') {
-              // Ignore tool events if we've explicitly stopped
-              if (stoppedRef.current) {
+              // Ignore tool events for tabs the user has explicitly stopped.
+              // Scope is per-tab so stopping one tab does not silently drop
+              // tool events for other tabs sharing this WebSocket.
+              if (isTabStopped(getTargetTabId())) {
                 console.log('[agent] Ignoring tool_event after stop');
                 return;
               }
@@ -2014,6 +2042,25 @@ export function useAgent(options?: string | UseAgentOptions) {
               // Track chat_ui's AI SDK tool call id so tool_request can map it to the bridge id
               if (tool === 'chat_ui' && (normalizedStatus === 'called' || normalizedStatus === 'started') && evt.data?.toolCallId) {
                 chatUiLastTcIdRef.current = evt.data.toolCallId;
+              }
+
+              if (
+                (normalizedStatus === 'completed' || normalizedStatus === 'error' || normalizedStatus === 'failed') &&
+                (tool === 'enter_project_mode' || tool === 'exit_project_mode' || tool === 'conversation_set_project')
+              ) {
+                try {
+                  const result = evt.data?.result || {};
+                  const args = evt.data?.args || {};
+                  window.dispatchEvent(new CustomEvent('project-mode-changed', {
+                    detail: {
+                      tool,
+                      status: normalizedStatus,
+                      conversationId: args.conversation_id || result.conversation_id,
+                      projectId: args.project_id ?? result.project_id ?? result.project?.id ?? null,
+                      project: result.project,
+                    },
+                  }));
+                } catch {}
               }
 
               // Track tool calls in currentToolCalls array AND currentStreamChunks
@@ -2266,8 +2313,9 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }
               }
             } else if (evt.event === 'delta') {
-              // Ignore deltas if we've explicitly stopped - the abort signal was sent
-              if (stoppedRef.current) {
+              // Ignore deltas for tabs the user has explicitly stopped - the
+              // abort signal was sent. Per-tab so other tabs keep streaming.
+              if (isTabStopped(getTargetTabId())) {
                 console.log('[agent] Ignoring delta after stop');
                 return;
               }
@@ -2450,7 +2498,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
               deltaBufferRef.current = '';
               streamingRef.current = true;
-              stoppedRef.current = false;
+              clearTabStopped(completedTabId);
               reasoningStartTimeRef.current = null;
               lastStreamActivityRef.current = Date.now();
               deferredDelegatedFinalsRef.current.set(completedTabId, {
@@ -2484,7 +2532,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
             streamingRef.current = false;
-            stoppedRef.current = false; // Reset stopped flag for next request
+            clearTabStopped(completedTabId); // Reset stopped flag for this tab's next request
             reasoningStartTimeRef.current = null; // Reset for next message
 
             // Capture modified files and checkpoint before committing
@@ -2543,7 +2591,7 @@ export function useAgent(options?: string | UseAgentOptions) {
             const stoppedRequestId = typeof msg.requestId === 'string' ? msg.requestId : undefined;
             const stoppedTabId = getTargetTabId();
             streamingRef.current = false;
-            stoppedRef.current = false;
+            clearTabStopped(stoppedTabId);
             if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
             deltaBufferRef.current = '';
             if (stoppedRequestId && requestIdToTabRef.current.has(stoppedRequestId)) {
@@ -2580,7 +2628,9 @@ export function useAgent(options?: string | UseAgentOptions) {
               setTabLastError(stoppedTabId, null);
             }
           } else if (msg.type === 'subagent_event') {
-            if (stoppedRef.current) return;
+            // Drop subagent events only for the tab that was stopped, not
+            // globally — other tabs may still be running on the shared WS.
+            if (isTabStopped(getTargetTabId())) return;
             // Subagent events are sent directly by the runtime. If one arrives
             // after its parent turn has finalized, do not let it fall back to
             // the active tab and appear as a fresh orchestrator stream.
@@ -3204,7 +3254,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
         deltaBufferRef.current = '';
         streamingRef.current = false;
-        stoppedRef.current = false;
+        clearAllStopped();
         runningTabsRef.current.clear();
         pendingResponseTabsRef.current = [];
         waitingQueuedStartRef.current = false;
@@ -3741,7 +3791,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       console.log('[agent] Watchdog: stale stream detected, committing partial state');
       lastStreamActivityRef.current = 0;
       streamingRef.current = false;
-      stoppedRef.current = false;
+      clearAllStopped();
       if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
       deltaBufferRef.current = '';
 
@@ -3817,7 +3867,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       requestIdToTabRef.current.delete(reqId);
     }
     streamingRef.current = false;
-    stoppedRef.current = false;
+    clearAllStopped();
   }, []);
 
   return {

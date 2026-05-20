@@ -1,22 +1,64 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import { motion } from "framer-motion";
 import "./styles.css";
 import { OnboardingProvider } from "./components/onboarding";
-import { InteractiveWelcome } from "./components/onboarding/InteractiveWelcome";
+import { ConversationalOnboarding } from "./components/onboarding/ConversationalOnboarding";
 import { usePreferences } from "./hooks/usePreferences";
+
+// Toggle the Electron click-through state based on whether the cursor is over
+// an element we want to be interactive. Elements opt in by carrying
+// `data-interactive="true"`. Everything else lets mouse events pass to the OS.
+function useClickThroughTracker() {
+  const ignoringRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api?.setIgnoreMouseEvents) return;
+
+    const setIgnore = (ignore: boolean) => {
+      if (ignoringRef.current === ignore) return;
+      ignoringRef.current = ignore;
+      if (ignore) api.setIgnoreMouseEvents(true, { forward: true });
+      else api.setIgnoreMouseEvents(false);
+    };
+
+    const INTERACTIVE_TAGS = new Set(['BUTTON', 'INPUT', 'TEXTAREA', 'A', 'SELECT', 'LABEL']);
+    const isInteractive = (el: Element | null): boolean => {
+      let cur: Element | null = el;
+      while (cur && cur !== document.body && cur !== document.documentElement) {
+        if (INTERACTIVE_TAGS.has(cur.tagName)) return true;
+        if ((cur as HTMLElement).dataset?.interactive === 'true') return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+
+    const onMove = (e: MouseEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      setIgnore(!isInteractive(el));
+    };
+
+    window.addEventListener('mousemove', onMove);
+    setIgnore(true);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, []);
+}
 
 function OnboardingApp() {
   const { setOnboardingComplete, setTourComplete } = usePreferences();
+  useClickThroughTracker();
 
+  // "Open Stuard" — finish onboarding but leave the in-app tour to run.
   const handleComplete = () => {
     setOnboardingComplete(true);
-    setTourComplete(true);
     try { (window as any).desktopAPI.closeOnboarding(); } catch {}
   };
 
+  // Skip → skip everything including the tour.
   const handleSkip = () => {
     setOnboardingComplete(true);
+    setTourComplete(true);
     try { (window as any).desktopAPI.closeOnboarding(); } catch {}
   };
 
@@ -25,10 +67,21 @@ function OnboardingApp() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 1.4, ease: 'easeOut' }}
-      className="fixed inset-0 z-[10000] overflow-hidden bg-transparent text-white font-stuard"
+      className="onboarding-overlay fixed inset-0 z-[10000] overflow-hidden bg-transparent text-white font-stuard pointer-events-none"
     >
+      <style>{`
+        .onboarding-overlay button,
+        .onboarding-overlay input,
+        .onboarding-overlay textarea,
+        .onboarding-overlay select,
+        .onboarding-overlay a,
+        .onboarding-overlay label,
+        .onboarding-overlay [data-interactive="true"] {
+          pointer-events: auto;
+        }
+      `}</style>
       <div className="h-full w-full">
-        <InteractiveWelcome
+        <ConversationalOnboarding
           onComplete={handleComplete}
           onSkip={handleSkip}
         />

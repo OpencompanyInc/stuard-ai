@@ -613,6 +613,39 @@ def _read_text_like_file(path: str) -> Dict[str, Any]:
 class CheckpointManager:
     _active_id: str | None = None
     _redo_stack: list[str] = []
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    @classmethod
+    def _is_child_path(cls, path: str, parent: str) -> bool:
+        try:
+            norm_path = cls._normalize_path(path)
+            norm_parent = cls._normalize_path(parent)
+            return (
+                norm_path != norm_parent
+                and os.path.commonpath([norm_path, norm_parent]) == norm_parent
+            )
+        except Exception:
+            return False
+
+    @classmethod
+    def _is_directory_entry(cls, entry: Dict[str, Any]) -> bool:
+        return entry.get("entry_type") == "dir" or entry.get("backup_type") == "dir"
+
+    @classmethod
+    def _has_covering_directory_entry(cls, files: Dict[str, Any], file_path: str) -> bool:
+        for tracked_path, entry in files.items():
+            if cls._is_directory_entry(entry) and cls._is_child_path(file_path, tracked_path):
+                return True
+        return False
+
+    @classmethod
+    def _drop_child_entries(cls, files: Dict[str, Any], directory_path: str) -> None:
+        for tracked_path in list(files.keys()):
+            if cls._is_child_path(tracked_path, directory_path):
+                files.pop(tracked_path, None)
     
     @classmethod
     def set_active(cls, id: str):
@@ -718,13 +751,21 @@ class CheckpointManager:
             return
 
         file_path = os.path.abspath(file_path)
+        files = manifest.setdefault("files", {})
         
-        if file_path in manifest["files"]:
+        if file_path in files:
+            return
+
+        if cls._has_covering_directory_entry(files, file_path):
             return
             
-        entry = {"action": operation, "path": file_path}
+        is_create_dir = operation == "create_dir"
+        action = "create" if is_create_dir else operation
+        entry = {"action": action, "path": file_path}
+        if is_create_dir:
+            entry["entry_type"] = "dir"
         
-        if os.path.exists(file_path) and operation != "create":
+        if os.path.exists(file_path) and operation not in ("create", "create_dir"):
             backup_name = base64.urlsafe_b64encode(file_path.encode()).decode()
             backup_file = os.path.join(cp_path, backup_name)
             try:
@@ -741,10 +782,12 @@ class CheckpointManager:
             except Exception as e:
                 print(f"Failed to backup {file_path}: {e}")
                 return
-        elif operation == "create":
+        elif action == "create":
             entry["action"] = "create" 
 
-        manifest["files"][file_path] = entry
+        files[file_path] = entry
+        if cls._is_directory_entry(entry):
+            cls._drop_child_entries(files, file_path)
         
         with open(manifest_path, "w") as f:
             json.dump(manifest, f)
@@ -1469,7 +1512,7 @@ async def create_directory(args: Dict[str, Any]) -> Dict[str, Any]:
 
     # Checkpoint
     if not os.path.exists(p):
-        CheckpointManager.record_change(p, "create")
+        CheckpointManager.record_change(p, "create_dir")
 
     os.makedirs(p, exist_ok=True)
     return {"ok": True}

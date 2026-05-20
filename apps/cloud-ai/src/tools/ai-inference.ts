@@ -239,6 +239,10 @@ export const aiInferenceTool = createTool({
       .string()
       .default('openai/gpt-4.1-mini')
       .describe('Model selection: any OpenRouter model ID, e.g. "openai/gpt-4.1-mini", "google/gemini-3.1-pro-preview", "anthropic/claude-sonnet-4-20250514". Pick a vision-capable model when supplying sources.'),
+    transcriptionModel: z
+      .string()
+      .optional()
+      .describe('Speech-to-text model used when mode="transcription" (routed via OpenRouter STT). Examples: "openai/whisper-1", "openai/gpt-4o-transcribe", "elevenlabs/scribe_v1". Falls back to DEFAULT_STT_MODEL when omitted.'),
     temperature: z
       .number()
       .min(0)
@@ -293,6 +297,7 @@ export const aiInferenceTool = createTool({
       mode,
       schema,
       model: modelId,
+      transcriptionModel,
       temperature,
       systemPrompt,
       stream: streamMode = false,
@@ -306,6 +311,7 @@ export const aiInferenceTool = createTool({
       mode: 'text' | 'json' | 'embedding' | 'transcription';
       schema?: Record<string, any>;
       model: string;
+      transcriptionModel?: string;
       temperature: number;
       systemPrompt?: string;
       stream?: boolean;
@@ -364,9 +370,14 @@ export const aiInferenceTool = createTool({
 
     if (mode === 'transcription') {
       // Dedicated audio → text via OpenRouter /audio/transcriptions.
-      // Use the user's model if it looks like an STT slug (contains "whisper"),
-      // otherwise fall back to the default Whisper model.
-      const sttModel = /whisper/i.test(modelId) ? modelId : DEFAULT_STT_MODEL;
+      // Prefer the dedicated `transcriptionModel` field from the workflow UI.
+      // Fall back to `modelId` only when it looks like an STT slug, else default.
+      const sttModel =
+        (typeof transcriptionModel === 'string' && transcriptionModel.trim())
+          ? transcriptionModel.trim()
+          : /whisper|transcribe|scribe/i.test(modelId)
+            ? modelId
+            : DEFAULT_STT_MODEL;
 
       if (!Array.isArray(sources) || sources.length === 0) {
         const err = 'transcription mode requires at least one audio source';

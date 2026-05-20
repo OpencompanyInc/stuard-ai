@@ -4,7 +4,7 @@
 /* Make Tailwind v4 scan the shared chat-ui package so its utility classes
    (chevron rotate-90, padding/gap classes, group-hover, animate-pulse, etc.)
    actually get generated for the cloud IDE. */
-@source "../../../../shared/chat-ui";
+@source "../_chat-ui";
 
 :root {
   /* Force light mode regardless of system preference */
@@ -44,6 +44,48 @@ body {
   color: #111827;
   font-family: var(--font-primary);
   position: relative;
+}
+
+/* ── Hide scrollbars site-wide (keep scroll functionality) ────────────── */
+html,
+body {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE / legacy Edge */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;                /* Chromium / WebKit */
+}
+
+/* Apply the same treatment to any internal scroll containers
+   that don't explicitly opt into `.custom-scrollbar`. */
+*:not(.custom-scrollbar):not(.ide-file-tree) {
+  scrollbar-width: none;
+}
+*:not(.custom-scrollbar):not(.ide-file-tree)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* ── Lenis smooth scroll integration ─────────────────────────────────── */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
 }
 
 body.dashboard-shell [data-site-header-nav] {
@@ -107,9 +149,30 @@ body.grid-faded::after {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  opacity: 0.65;
+  opacity: 1;
   pointer-events: none;
   z-index: 0;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+@media (min-width: 1024px) {
+  .hero-section .hero-bg {
+    background-size: 100% 100%;
+  }
+}
+
+/* Shared auth-page background */
+.auth-bg {
+  background-image: url('/authbg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+@media (min-width: 1024px) {
+  .auth-bg {
+    background-size: 100% 100%;
+  }
 }
 
 .hero-section .hero-vignette {
@@ -118,12 +181,111 @@ body.grid-faded::after {
   background:
     radial-gradient(
       ellipse at center,
-      rgba(10, 10, 11, 0) 0%,
-      rgba(10, 10, 11, 0.35) 55%,
-      rgba(10, 10, 11, 0.85) 100%
+      rgba(10, 10, 11, 0) 40%,
+      rgba(10, 10, 11, 0.45) 100%
     );
   pointer-events: none;
   z-index: 1;
+}
+
+/* Waitlist card — animated red glow traveling around the border */
+.waitlist-glow-border {
+  --waitlist-glow-red: #ff383c;
+  --waitlist-glow-red-soft: #ff6b6b;
+  position: relative;
+  width: 100%;
+  border-radius: 1rem;
+  padding: 2px;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.waitlist-glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -120%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 250deg,
+    var(--waitlist-glow-red-soft) 280deg,
+    var(--waitlist-glow-red) 310deg,
+    #ff9a9a 330deg,
+    var(--waitlist-glow-red) 350deg,
+    transparent 360deg
+  );
+  animation: waitlist-border-spin 3.5s linear infinite;
+  filter: blur(10px);
+  opacity: 0.95;
+}
+
+.waitlist-glow-border::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 248deg,
+    var(--waitlist-glow-red) 300deg,
+    #ff9a9a 330deg,
+    var(--waitlist-glow-red) 350deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: waitlist-border-spin 3.5s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.waitlist-glow-border__inner {
+  position: relative;
+  z-index: 1;
+  border-radius: calc(1rem - 2px);
+  background: rgba(10, 10, 11, 0.92);
+  box-shadow:
+    0 0 24px rgba(255, 56, 60, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+@keyframes waitlist-border-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waitlist-glow-border::before,
+  .waitlist-glow-border::after {
+    animation: none;
+    transform: none;
+  }
+
+  .waitlist-glow-border::after {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 56, 60, 0.55),
+      rgba(255, 56, 60, 0.2) 50%,
+      rgba(255, 56, 60, 0.55)
+    );
+    -webkit-mask: none;
+    mask: none;
+    padding: 0;
+    border: 1px solid rgba(255, 56, 60, 0.45);
+  }
+
+  .waitlist-glow-border::before {
+    opacity: 0.35;
+    inset: -20%;
+    filter: blur(16px);
+  }
 }
 
 /* Utilities */
@@ -525,6 +687,70 @@ body.grid-faded::after {
   flex-shrink: 0;
 }
 .ide-status-dot-green { background: #22c55e; }
+
+/* ── Pricing slider (transparent track, visible thumb) ──────────────────── */
+
+.pricing-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+}
+
+.pricing-slider::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 100%;
+  border: none;
+}
+
+.pricing-slider::-moz-range-track {
+  background: transparent;
+  height: 100%;
+  border: none;
+}
+
+.pricing-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 3px solid #D31519;
+  cursor: pointer;
+  margin-top: -6px;
+  box-shadow: 0 2px 8px rgba(211, 21, 25, 0.45);
+  transition: transform 0.15s ease;
+}
+
+.pricing-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.08);
+}
+
+.pricing-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 3px solid #D31519;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(211, 21, 25, 0.45);
+  transition: transform 0.15s ease;
+}
+
+.pricing-slider::-moz-range-thumb:hover {
+  transform: scale(1.08);
+}
+
+.pricing-slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid #FF383C;
+  outline-offset: 2px;
+}
+
+.pricing-slider:focus-visible::-moz-range-thumb {
+  outline: 2px solid #FF383C;
+  outline-offset: 2px;
+}
 
 /* Custom subtle scrollbar (used inside chat) */
 .custom-scrollbar::-webkit-scrollbar { width: 8px; }

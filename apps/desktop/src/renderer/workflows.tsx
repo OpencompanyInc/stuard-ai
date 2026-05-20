@@ -29,6 +29,7 @@ import type { DesignerModel } from "./workflows/types";
 import { calculateAutoLayout } from "./workflows/utils/alignment";
 import { WorkflowMainContent } from "./workflows/layout/WorkflowMainContent";
 import { WorkflowOverlays } from "./workflows/layout/WorkflowOverlays";
+import { IntegrationBuilderModal } from "./workflows/components/IntegrationBuilderModal";
 import { PanelErrorBoundary } from "./workflows/layout/PanelErrorBoundary";
 import { WorkflowHeader } from "./workflows/layout/WorkflowHeader";
 import type { OpenFileTab, RightPanel, WorkflowContextMenu, WorkspaceInfo } from "./workflows/layout/types";
@@ -494,6 +495,9 @@ function WorkflowsApp() {
     handleUpdateWorkflow,
     executeWorkflowUpdate,
   } = useWorkflowMarketplace({ selectedId, refresh, load });
+
+  // Custom-integration builder (test phase — drafts in localStorage, executor on cloud-ai)
+  const [showIntegrationBuilder, setShowIntegrationBuilder] = useState(false);
 
   const {
     showDeployPanel,
@@ -1301,6 +1305,18 @@ function WorkflowsApp() {
           onShowPublished={() => setShowMyPublished(true)}
           onDashboard={() => (window as any).desktopAPI?.openDashboard?.()}
           onReplayTour={onboarding.replay}
+          onIntegrationBuilder={() => setShowIntegrationBuilder(true)}
+        />
+
+        <IntegrationBuilderModal
+          open={showIntegrationBuilder}
+          onClose={() => setShowIntegrationBuilder(false)}
+          selectedModelId={workflowChatModelId}
+          onSelectModel={setWorkflowChatModelId}
+          modelSource={modelSource}
+          onModelSourceChange={setModelSource}
+          reasoningLevel={workflowReasoningLevel}
+          onReasoningLevelChange={setWorkflowReasoningLevel}
         />
 
         {onboarding.phase === "welcome" && (

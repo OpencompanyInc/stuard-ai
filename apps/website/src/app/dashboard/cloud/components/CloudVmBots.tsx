@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Cloud VM — Bots view.
+ * Cloud VM — Agents view.
  *
  * Faithfully mirrors the desktop's `BotsView` component used inside the Cloud
  * Engine workspace (scope='vm') from
@@ -9,12 +9,12 @@
  *
  * Layout summary:
  * - List view (no selection):
- *   • Header: "Bots on VM" + subtitle, refresh action.
+ *   • Header: "Agents on VM" + subtitle, refresh action.
  *   • "Overview" StatCard grid: On VM / Running / Local-only / Errored.
- *     (We omit "Local only" since the website only sees VM bots; we surface
+ *     (We omit "Local only" since the website only sees VM agents; we surface
  *     "Last run" instead.)
  *   • "Deployed to VM" card grid (1/2/3 cols) with `BotCard`s.
- * - Detail view (a bot is selected):
+ * - Detail view (an agent is selected):
  *   • Header: back arrow, emoji tile, name, Run Now + status badge.
  *   • Two-column body:
  *     - Aside: Overview (Next check-in, Active tasks, Total runs),
@@ -23,7 +23,7 @@
  *
  * Editing (create / update / delete / pause-resume / change schedule, tools,
  * triggers …) is intentionally *not* exposed here. Those operations require
- * mutating the bot file from the desktop's local store and re-syncing to the
+ * mutating the agent file from the desktop's local store and re-syncing to the
  * VM. The view links out to the desktop app for mutation.
  */
 
@@ -53,12 +53,14 @@ import {
   Settings2,
   Sparkles,
   Terminal,
+  Trash2,
   Wrench,
   XCircle,
   Zap,
 } from 'lucide-react';
 import {
   exportVmBotMemory,
+  deleteVmAgent,
   getVmBotsStatus,
   listVmBots,
   runVmBot,
@@ -248,15 +250,15 @@ export function CloudVmBots({ engine, className }: Props) {
         setStatusBots(((statusRes as any).bots || []) as VmBot[]);
         setError(null);
       } else {
-        setError(statusRes.error || 'Failed to fetch bots');
+        setError(statusRes.error || 'Failed to fetch agents');
       }
-      // bots_list returns { ok, result: { ok, bots: [...] } } via the relay.
+      // agents_list returns { ok, result: { ok, bots: [...] } } via the relay.
       const listResult = (listRes as any)?.result || listRes;
       if (listResult?.ok && Array.isArray(listResult.bots)) {
         setConfigBots(listResult.bots as VmBot[]);
       }
     } catch (e: any) {
-      setError(e?.message || 'Failed to fetch bots');
+      setError(e?.message || 'Failed to fetch agents');
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -267,7 +269,7 @@ export function CloudVmBots({ engine, className }: Props) {
     void refresh();
   }, [refresh]);
 
-  // Re-fetch every 10s — same cadence as desktop's BotsView.
+  // Re-fetch every 10s — same cadence as desktop's Agents view.
   useEffect(() => {
     if (!isRunning) return;
     pollRef.current = window.setInterval(() => void refresh(), 10_000);
@@ -287,6 +289,28 @@ export function CloudVmBots({ engine, className }: Props) {
     }
   }, [refresh]);
 
+  const handleDelete = useCallback(async (bot: VmBot) => {
+    const label = bot.name || bot.id;
+    if (!window.confirm(`Delete ${label} from this VM? This removes its VM schedule and VM memory.`)) return;
+
+    setActionLoading(`delete-${bot.id}`);
+    try {
+      const res = await deleteVmAgent(bot.id);
+      if (!res.ok) {
+        setError(res.error || 'Failed to delete agent');
+        return;
+      }
+      setSelectedBotId((current) => (current === bot.id ? null : current));
+      setStatusBots((current) => current.filter((item) => item.id !== bot.id));
+      setConfigBots((current) => current.filter((item) => item.id !== bot.id));
+      window.setTimeout(() => void refresh(), 500);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to delete agent');
+    } finally {
+      setActionLoading(null);
+    }
+  }, [refresh]);
+
   const selectedBot = useMemo(
     () => (selectedBotId ? bots.find((b) => b.id === selectedBotId) || null : null),
     [selectedBotId, bots],
@@ -297,7 +321,7 @@ export function CloudVmBots({ engine, className }: Props) {
     return (
       <div className={clsx('flex h-full items-center justify-center gap-3', className)}>
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        <span className="text-sm text-theme-muted">Loading bots…</span>
+        <span className="text-sm text-theme-muted">Loading agents…</span>
       </div>
     );
   }
@@ -310,7 +334,9 @@ export function CloudVmBots({ engine, className }: Props) {
         engineRunning={isRunning}
         onBack={() => setSelectedBotId(null)}
         onRun={() => void handleRun(selectedBot.id)}
+        onDelete={() => void handleDelete(selectedBot)}
         running={actionLoading === `run-${selectedBot.id}`}
+        deleting={actionLoading === `delete-${selectedBot.id}`}
         className={className}
       />
     );
@@ -330,18 +356,18 @@ export function CloudVmBots({ engine, className }: Props) {
       <div className="mb-6 flex flex-shrink-0 items-start justify-between gap-4 px-1">
         <div className="min-w-0">
           <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">
-            Bots on VM
+            Agents on VM
           </h1>
           <p className="mt-2 flex items-center gap-2 text-[13px] text-theme-muted">
             <Cloud className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-            <span>Bots running 24/7 on your cloud VM — independent of whether your laptop is open.</span>
+            <span>Agents running 24/7 on your cloud VM — independent of whether your laptop is open.</span>
           </p>
         </div>
         <button
           onClick={() => void refresh()}
           disabled={refreshing}
           className="inline-flex items-center gap-2 rounded-full border border-theme/30 bg-theme-card/50 px-3.5 py-2 text-[12px] font-semibold text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:opacity-60"
-          title="Refresh bots"
+          title="Refresh agents"
         >
           <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
           Refresh
@@ -350,7 +376,7 @@ export function CloudVmBots({ engine, className }: Props) {
 
       {!isRunning && (
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
-          Engine is paused. Resume the engine to view bot status.
+          Engine is paused. Resume the engine to view agent status.
         </div>
       )}
 
@@ -374,7 +400,7 @@ export function CloudVmBots({ engine, className }: Props) {
             </div>
           </section>
 
-          {/* Bots grid */}
+          {/* Agents grid */}
           <section>
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="text-[15px] font-semibold text-theme-fg">Deployed to VM</h2>
@@ -387,9 +413,9 @@ export function CloudVmBots({ engine, className }: Props) {
                   <Cloud className="h-5 w-5" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-[15px] font-semibold text-theme-fg">No bots on this VM yet</h3>
+                  <h3 className="text-[15px] font-semibold text-theme-fg">No agents on this VM yet</h3>
                   <p className="max-w-sm text-[12px] text-theme-muted">
-                    Open any bot in the Stuard desktop app and choose &ldquo;Deploy to VM&rdquo; so it keeps
+                    Open any agent in the Stuard desktop app and choose &ldquo;Deploy to VM&rdquo; so it keeps
                     running even when your laptop is closed.
                   </p>
                 </div>
@@ -401,6 +427,8 @@ export function CloudVmBots({ engine, className }: Props) {
                     key={bot.id}
                     bot={bot}
                     onClick={() => setSelectedBotId(bot.id)}
+                    onDelete={() => void handleDelete(bot)}
+                    deleting={actionLoading === `delete-${bot.id}`}
                   />
                 ))}
               </div>
@@ -414,14 +442,26 @@ export function CloudVmBots({ engine, className }: Props) {
 
 // ─── Bot card (mirrors desktop BotCard) ──────────────────────────────────────
 
-function BotCard({ bot, onClick }: { bot: VmBot; onClick: () => void }) {
+function BotCard({
+  bot,
+  onClick,
+  onDelete,
+  deleting,
+}: {
+  bot: VmBot;
+  onClick: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+}) {
   const status = statusInfo(bot.status);
 
   return (
-    <button
-      onClick={onClick}
-      className="group relative flex flex-col gap-3 rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-5 text-left transition hover:bg-theme-hover/30"
-    >
+    <div className="group relative rounded-2xl border border-theme/30 bg-zinc-500/10 transition hover:bg-theme-hover/30 dark:border-transparent">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full flex-col gap-3 p-5 text-left"
+      >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-theme-card text-xl shadow-sm">
@@ -440,7 +480,9 @@ function BotCard({ bot, onClick }: { bot: VmBot; onClick: () => void }) {
             </div>
           </div>
         </div>
-        <DashboardBadge label="On VM" tone="primary" icon={Cloud} />
+        <div className="flex items-center gap-2">
+          <DashboardBadge label="On VM" tone="primary" icon={Cloud} />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -462,7 +504,21 @@ function BotCard({ bot, onClick }: { bot: VmBot; onClick: () => void }) {
           <span className="line-clamp-2">{bot.lastError}</span>
         </div>
       )}
-    </button>
+      </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete();
+        }}
+        disabled={deleting}
+        className="absolute right-4 top-14 inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-500/20 bg-red-500/5 text-red-400 opacity-0 transition hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100 focus:opacity-100 disabled:opacity-50"
+        title="Delete agent from VM"
+        aria-label="Delete agent from VM"
+      >
+        {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+      </button>
+    </div>
   );
 }
 
@@ -475,14 +531,18 @@ function BotDetailView({
   engineRunning,
   onBack,
   onRun,
+  onDelete,
   running,
+  deleting,
   className,
 }: {
   bot: VmBot;
   engineRunning: boolean;
   onBack: () => void;
   onRun: () => void;
+  onDelete: () => void;
   running: boolean;
+  deleting: boolean;
   className?: string;
 }) {
   const [tab, setTab] = useState<DetailTab>('activity');
@@ -507,10 +567,10 @@ function BotDetailView({
           tasks: payload.tasks || [],
         });
       } else {
-        setMemError(res.error || 'Could not load bot memory');
+        setMemError(res.error || 'Could not load agent memory');
       }
     } catch (e: any) {
-      setMemError(e?.message || 'Could not load bot memory');
+      setMemError(e?.message || 'Could not load agent memory');
     } finally {
       setMemLoading(false);
     }
@@ -520,7 +580,7 @@ function BotDetailView({
     void loadMemory();
   }, [loadMemory]);
 
-  // Re-pull memory while bot is actively running so freshly-completed runs
+  // Re-pull memory while the agent is actively running so freshly-completed runs
   // surface in the Activity tab without a manual refresh.
   useEffect(() => {
     if (!engineRunning) return;
@@ -581,7 +641,7 @@ function BotDetailView({
           <button
             onClick={onBack}
             className="rounded-full p-1.5 text-theme-muted transition hover:bg-theme-hover/40 hover:text-theme-fg"
-            title="Back to bots"
+            title="Back to agents"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -615,11 +675,21 @@ function BotDetailView({
           <a
             href="/download"
             className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90"
-            title="Edit this bot in Stuard Desktop"
+            title="Edit this agent in Stuard Desktop"
           >
             <ExternalLink className="h-3.5 w-3.5" />
             Edit in Desktop
           </a>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting}
+            className="inline-flex items-center gap-2 rounded-full border border-red-500/25 bg-red-500/5 px-4 py-2 text-[13px] font-semibold text-red-400 shadow-sm transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Delete this agent from the VM"
+          >
+            {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            Delete
+          </button>
         </div>
       </div>
 
@@ -787,7 +857,7 @@ function ActivityTab({
         ) : tasks.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              No active kanban cards — the bot will add some as it works.
+              No active kanban cards — the agent will add some as it works.
             </div>
           </div>
         ) : (
@@ -913,7 +983,7 @@ function MemoryTab({
     <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-4 space-y-6">
       <ConfigRow
         label="Memory tool"
-        description="Inject recent runs and stored facts into the bot's prompt at runtime so it remembers across runs."
+        description="Inject recent runs and stored facts into the agent's prompt at runtime so it remembers across runs."
         control={
           <span
             className={clsx(
@@ -946,7 +1016,7 @@ function MemoryTab({
         {facts.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              No durable facts yet — the bot will store useful findings here as it works.
+              No durable facts yet — the agent will store useful findings here as it works.
             </div>
           </div>
         ) : (
@@ -977,7 +1047,7 @@ function MemoryTab({
         {summaries.length === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
             <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-              Memory will populate after the bot runs a few times.
+              Memory will populate after the agent runs a few times.
             </div>
           </div>
         ) : (
@@ -1025,7 +1095,7 @@ function SettingsTab({
       <div className="flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2.5 text-[12px] text-blue-600 dark:text-blue-300">
         <Cloud className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div>
-          This bot lives on your VM. Settings are <span className="font-semibold">read-only</span> here —
+          This agent lives on your VM. Settings are <span className="font-semibold">read-only</span> here —
           {' '}
           <a className="underline" href="/download">
             open Stuard Desktop
@@ -1071,7 +1141,7 @@ function SettingsTab({
         <h3 className="mb-3 text-[15px] font-semibold text-theme-fg">Triggers</h3>
         {triggers.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-6 text-center text-[12px] text-theme-muted">
-            No triggers configured. The bot will only run when you click &ldquo;Run Now&rdquo;.
+            No triggers configured. The agent will only run when you click &ldquo;Run Now&rdquo;.
           </div>
         ) : (
           <ul className="space-y-2">
@@ -1118,7 +1188,7 @@ function SettingsTab({
         </h3>
         {tools.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-theme/40 px-4 py-6 text-center text-[12px] text-theme-muted">
-            Default bot tools only.
+            Default agent tools only.
           </div>
         ) : (
           <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card p-3 shadow-sm">

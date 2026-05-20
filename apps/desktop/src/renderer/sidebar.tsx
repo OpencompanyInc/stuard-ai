@@ -5,7 +5,7 @@ import './scrollbar.css';
 import { usePreferences } from './hooks/usePreferences';
 import { SidebarView } from './components/sidebar/SidebarView';
 
-type SidebarTabId = 'terminal' | 'todo';
+type SidebarTabId = 'terminal' | 'todo' | 'projects';
 
 function SidebarApp() {
   const { translucentMode, themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
@@ -14,7 +14,7 @@ function SidebarApp() {
   const urlParams = new URLSearchParams(window.location.search);
   const rawTab = urlParams.get('tab') as SidebarTabId | null;
   const initialTab: SidebarTabId =
-    rawTab === 'terminal' || rawTab === 'todo' ? rawTab : 'todo';
+    rawTab === 'terminal' || rawTab === 'todo' || rawTab === 'projects' ? rawTab : 'projects';
   const initialExpanded = urlParams.get('expanded') === 'true';
 
   const [activeTab, setActiveTab] = useState<SidebarTabId>(initialTab);

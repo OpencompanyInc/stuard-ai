@@ -19,6 +19,9 @@ from ..storage.memory_db import (
     ConversationSegment,
     Space,
     SpaceItem,
+    Project,
+    Memory,
+    JournalEntry,
 )
 from ..storage.crypto import hash_password, verify_password
 
@@ -51,16 +54,53 @@ async def conversation_get(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id") or args.get("id")
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
-        
+
         db = get_memory_db()
         conv = db.get_conversation(conversation_id)
-        
+
         if not conv:
             return {"ok": False, "error": "not_found"}
-        
+
         return {"ok": True, "conversation": conv.to_dict()}
     except Exception as e:
         logger.exception("conversation_get failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def conversation_get_extraction_offset(args: Dict[str, Any]) -> Dict[str, Any]:
+    """B1: return the highest turn index already extracted for this conversation.
+
+    Returns `{"ok": True, "offset": <int>}`. Offset is 0 when the conversation
+    has never been extracted (or doesn't exist), so callers can treat the
+    response uniformly without special-casing.
+    """
+    try:
+        conversation_id = args.get("conversation_id") or args.get("id")
+        if not conversation_id:
+            return {"ok": False, "error": "missing conversation_id"}
+        db = get_memory_db()
+        offset = db.get_extraction_offset(str(conversation_id))
+        return {"ok": True, "offset": offset}
+    except Exception as e:
+        logger.exception("conversation_get_extraction_offset failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def conversation_set_extraction_offset(args: Dict[str, Any]) -> Dict[str, Any]:
+    """B1: advance the per-conversation extraction watermark. Never moves
+    backwards (a lower turn_index is silently ignored)."""
+    try:
+        conversation_id = args.get("conversation_id") or args.get("id")
+        turn_index = args.get("turn_index")
+        if not conversation_id:
+            return {"ok": False, "error": "missing conversation_id"}
+        if turn_index is None:
+            return {"ok": False, "error": "missing turn_index"}
+        db = get_memory_db()
+        updated = db.set_extraction_offset(str(conversation_id), int(turn_index))
+        return {"ok": True, "updated": updated}
+    except Exception as e:
+        logger.exception("conversation_set_extraction_offset failed")
         return {"ok": False, "error": str(e)}
 
 
@@ -327,20 +367,27 @@ async def segment_list_recent(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def segment_search(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Search conversation segments by embedding similarity."""
+    """Search conversation segments by embedding similarity.
+
+    Optional `project_id` constrains results to segments belonging to
+    conversations stamped with that project (project-scoped memory search).
+    """
     try:
         embedding = args.get("embedding")
         if not embedding or not isinstance(embedding, list):
             return {"ok": False, "error": "missing embedding vector"}
-        
+
         db = get_memory_db()
         limit = min(int(args.get("limit", 10)), 50)
         threshold = float(args.get("threshold", 0.6))
-        
+        project_id = args.get("project_id")
+        project_id = str(project_id) if project_id else None
+
         results = db.search_segments(
             query_vector=embedding,
             limit=limit,
-            threshold=threshold
+            threshold=threshold,
+            project_id=project_id,
         )
         
         return {
@@ -1465,4 +1512,263 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                 _os.unlink(output_path)
         except Exception:
             pass
+        return {"ok": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROJECT MODE HANDLERS (successor to Spaces — see memory_db.py PROJECTS section)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def project_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new project. A project is a scoped container for memories,
+    journal entries, tasks, and pinned files."""
+    try:
+        name = args.get("name")
+        if not name:
+            return {"ok": False, "error": "missing name"}
+        db = get_memory_db()
+        project = db.create_project(
+            name=name,
+            description=args.get("description"),
+            goals=args.get("goals"),
+            status=args.get("status", "active"),
+            tags=args.get("tags"),
+            pinned_paths=args.get("pinned_paths"),
+            icon=args.get("icon", "📁"),
+            color=args.get("color", "#71717a"),
+            embedding=args.get("embedding"),
+            project_id=args.get("project_id"),
+        )
+        return {"ok": True, "project": project.to_dict()}
+    except Exception as e:
+        logger.exception("project_create failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def project_get(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = args.get("project_id") or args.get("id")
+        if not pid:
+            return {"ok": False, "error": "missing project_id"}
+        db = get_memory_db()
+        project = db.get_project(pid)
+        if not project:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, "project": project.to_dict()}
+    except Exception as e:
+        logger.exception("project_get failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def project_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        db = get_memory_db()
+        projects = db.list_projects(
+            status=args.get("status"),
+            include_archived=bool(args.get("include_archived", False)),
+            limit=min(int(args.get("limit", 100)), 500),
+        )
+        return {"ok": True, "projects": [p.to_dict() for p in projects], "count": len(projects)}
+    except Exception as e:
+        logger.exception("project_list failed")
+        return {"ok": False, "error": str(e), "projects": []}
+
+
+async def project_update(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = args.get("project_id") or args.get("id")
+        if not pid:
+            return {"ok": False, "error": "missing project_id"}
+        db = get_memory_db()
+        project = db.update_project(
+            project_id=pid,
+            name=args.get("name"),
+            description=args.get("description"),
+            goals=args.get("goals"),
+            status=args.get("status"),
+            tags=args.get("tags"),
+            pinned_paths=args.get("pinned_paths"),
+            digest=args.get("digest"),
+            icon=args.get("icon"),
+            color=args.get("color"),
+            archived=args.get("archived"),
+            embedding=args.get("embedding"),
+        )
+        if not project:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, "project": project.to_dict()}
+    except Exception as e:
+        logger.exception("project_update failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def project_delete(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = args.get("project_id") or args.get("id")
+        if not pid:
+            return {"ok": False, "error": "missing project_id"}
+        db = get_memory_db()
+        deleted = db.delete_project(pid)
+        return {"ok": True, "deleted": deleted}
+    except Exception as e:
+        logger.exception("project_delete failed")
+        return {"ok": False, "error": str(e)}
+
+
+# ── Memories ─────────────────────────────────────────────────────────────────
+
+async def memory_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new memory entry. Tag with project_ids to scope, or leave empty
+    for a global (cross-project) memory."""
+    try:
+        content = args.get("content")
+        if not content:
+            return {"ok": False, "error": "missing content"}
+        db = get_memory_db()
+        mem = db.create_memory(
+            type=args.get("type", "note"),
+            content=content,
+            title=args.get("title"),
+            project_ids=args.get("project_ids") or [],
+            metadata=args.get("metadata"),
+            url=args.get("url"),
+            source=args.get("source", "manual"),
+            added_by=args.get("added_by", "user"),
+            pinned=bool(args.get("pinned", False)),
+            embedding=args.get("embedding"),
+            memory_id=args.get("memory_id"),
+        )
+        return {"ok": True, "memory": mem.to_dict()}
+    except Exception as e:
+        logger.exception("memory_create failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def memory_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        db = get_memory_db()
+        memories = db.list_memories(
+            project_id=args.get("project_id"),
+            type=args.get("type"),
+            pinned_only=bool(args.get("pinned_only", False)),
+            limit=min(int(args.get("limit", 100)), 500),
+        )
+        return {"ok": True, "memories": [m.to_dict() for m in memories], "count": len(memories)}
+    except Exception as e:
+        logger.exception("memory_list failed")
+        return {"ok": False, "error": str(e), "memories": []}
+
+
+async def memory_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Cosine-similarity search over memory embeddings. Caller supplies the
+    query embedding; embedding generation lives in cloud-ai."""
+    try:
+        query_embedding = args.get("query_embedding") or args.get("embedding")
+        if not query_embedding or not isinstance(query_embedding, list):
+            return {"ok": False, "error": "missing query_embedding"}
+        db = get_memory_db()
+        results = db.search_memories(
+            query_embedding=query_embedding,
+            project_id=args.get("project_id"),
+            limit=min(int(args.get("limit", 10)), 50),
+        )
+        return {
+            "ok": True,
+            "results": [
+                {"memory": m.to_dict(), "score": score}
+                for m, score in results
+            ],
+            "count": len(results),
+        }
+    except Exception as e:
+        logger.exception("memory_search failed")
+        return {"ok": False, "error": str(e), "results": []}
+
+
+async def memory_delete(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        mid = args.get("memory_id") or args.get("id")
+        if not mid:
+            return {"ok": False, "error": "missing memory_id"}
+        db = get_memory_db()
+        return {"ok": True, "deleted": db.delete_memory(mid)}
+    except Exception as e:
+        logger.exception("memory_delete failed")
+        return {"ok": False, "error": str(e)}
+
+
+# ── Journal entries ──────────────────────────────────────────────────────────
+
+async def journal_add(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Add an entry to a project's journal/timeline."""
+    try:
+        project_id = args.get("project_id")
+        title = args.get("title")
+        if not project_id or not title:
+            return {"ok": False, "error": "missing project_id or title"}
+        db = get_memory_db()
+        entry = db.create_journal_entry(
+            project_id=project_id,
+            type=args.get("type", "note"),
+            title=title,
+            body=args.get("body"),
+            source=args.get("source", "manual"),
+            source_ref=args.get("source_ref"),
+            embedding=args.get("embedding"),
+            ts=args.get("ts"),
+        )
+        return {"ok": True, "entry": entry.to_dict()}
+    except Exception as e:
+        logger.exception("journal_add failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def journal_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        project_id = args.get("project_id")
+        if not project_id:
+            return {"ok": False, "error": "missing project_id"}
+        db = get_memory_db()
+        entries = db.list_journal_entries(
+            project_id=project_id,
+            type=args.get("type"),
+            limit=min(int(args.get("limit", 50)), 500),
+        )
+        return {"ok": True, "entries": [e.to_dict() for e in entries], "count": len(entries)}
+    except Exception as e:
+        logger.exception("journal_list failed")
+        return {"ok": False, "error": str(e), "entries": []}
+
+
+async def journal_delete(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        eid = args.get("entry_id") or args.get("id")
+        if not eid:
+            return {"ok": False, "error": "missing entry_id"}
+        db = get_memory_db()
+        return {"ok": True, "deleted": db.delete_journal_entry(eid)}
+    except Exception as e:
+        logger.exception("journal_delete failed")
+        return {"ok": False, "error": str(e)}
+
+
+# ── Conversation x Project linkage ───────────────────────────────────────────
+
+async def conversation_set_project(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Stamp a conversation with a project_id (or clear it via project_id=null).
+    This is the backbone of enter_project_mode / exit_project_mode — the
+    conversation row IS the session state for project mode."""
+    try:
+        cid = args.get("conversation_id")
+        if not cid:
+            return {"ok": False, "error": "missing conversation_id"}
+        # Pass-through None to clear; treat empty string as None.
+        pid = args.get("project_id")
+        if pid == "":
+            pid = None
+        db = get_memory_db()
+        updated = db.set_conversation_project(cid, pid)
+        return {"ok": True, "updated": updated, "project_id": pid}
+    except Exception as e:
+        logger.exception("conversation_set_project failed")
         return {"ok": False, "error": str(e)}

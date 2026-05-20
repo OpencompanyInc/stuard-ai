@@ -11,12 +11,33 @@ import os from 'node:os';
 import { getModel, getModelForUser, getAgentName } from '../agents/stuard/models';
 import type { ModelSourcePreference } from '../utils/models';
 import { buildAvailableSkillsPromptSection, type SkillSummary } from '../tools/skill-tools';
+import {
+  buildConversationBlock,
+  buildProjectContextBlock,
+  buildProjectModeSystemPrompt,
+  PROJECT_MODE_GUIDANCE,
+  type ProjectContextPayload,
+  type JournalEntryPayload,
+} from '../agents/stuard/prompts';
 import type { ModelChoice } from '../router/model-router';
 import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
 import { wrapToolWithBridge } from './subagent-runtime';
 
 // Re-use meta tools from the existing registry
 import { search_tools, get_tool_schema, execute_tool, chatUiTool } from '../tools/meta-tools';
+import {
+  list_projects,
+  create_project,
+  update_project,
+  delete_project,
+  enter_project_mode,
+  exit_project_mode,
+  journal_add,
+  memory_add,
+  project_search,
+  search_project_conversations,
+} from '../tools/device/projects';
+import { task_crud, task_reminders } from '../tools/device/productivity';
 import { ask_user } from '../tools/ask-user';
 import { waitTool } from '../tools/wait';
 import { web_search } from '../tools/perplexity-tools';
@@ -33,13 +54,6 @@ import {
   agent_todo,
   search_local_workflows,
   run_workflow,
-  bot_list,
-  bot_get_status,
-  bot_create,
-  bot_deploy,
-  bot_pause,
-  ask_bot,
-  bot_ask,
 } from '../tools/device-tools';
 import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
 
@@ -55,47 +69,93 @@ const DEFAULT_USER_HOME_DIR = (() => {
   return envHome.replace(/\\/g, '/');
 })();
 
+const DELEGATED_AGENT_TOOL_NAMES = new Set([
+  'bot_list',
+  'agent_list',
+  'ask_bot',
+  'ask_agent',
+  'bot_ask',
+  'agent_ask',
+  'bot_get_status',
+  'agent_get_status',
+]);
+
+function withoutDelegatedAgentTools(tools: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(tools).filter(([name]) => !DELEGATED_AGENT_TOOL_NAMES.has(name)),
+  );
+}
+
 export interface BotPromptSummary {
   id?: string;
   name?: string;
+  kind?: 'bot' | 'agent';
   status?: string;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
   vmDeployedAt?: string | null;
 }
 
-function formatBotRosterSection(bots: BotPromptSummary[] = []): string {
-  const lines = bots
-    .map((bot) => {
-      const name = String(bot?.name || '').trim();
-      const id = String(bot?.id || '').trim();
+function formatAgentRosterSection(agents: BotPromptSummary[] = []): string {
+  const lines = agents
+    .map((entry) => {
+      const name = String(entry?.name || '').trim();
+      const id = String(entry?.id || '').trim();
       if (!name && !id) return '';
+      const kind = entry?.kind === 'agent' ? 'agent' : 'bot';
       const details = [
+        `type=${kind}`,
         id ? `id=${id}` : '',
-        bot?.status ? `status=${bot.status}` : '',
-        bot?.lastRunAt ? `lastRunAt=${bot.lastRunAt}` : '',
-        bot?.nextRunAt ? `nextRunAt=${bot.nextRunAt}` : '',
-        bot?.vmDeployedAt ? 'vm=deployed' : '',
+        entry?.status ? `status=${entry.status}` : '',
+        entry?.lastRunAt ? `lastRunAt=${entry.lastRunAt}` : '',
+        entry?.nextRunAt ? `nextRunAt=${entry.nextRunAt}` : '',
+        entry?.vmDeployedAt ? 'vm=deployed' : '',
       ].filter(Boolean).join(', ');
       return `- @${name || id}${details ? ` (${details})` : ''}`;
     })
     .filter(Boolean);
 
   const roster = lines.length > 0
-    ? `\n\nCurrently known/running bots from context:\n${lines.join('\n')}`
+    ? `\n\nKnown configured agents/bots from context (use these ids when delegating):\n${lines.join('\n')}`
     : '';
 
-  return `\n\n## Bots — ask_bot / bot Delegation
+  return `\n\n## Configured Agents - Delegated Status / Ask
 
-Use \`bot_create\` when the user asks for a new bot/background agent. Give it a clear objective, structured instructions, a focused \`allowed_tools\` list, notification channels, schedule, memory setting, and deploy target when requested.
-Use \`ask_bot\` to ask a configured bot for status/details, memory, recent runs, or to optionally trigger a manual wake-up. Use \`bot_list\` first when the user asks what bots exist or you do not know the target bot id/name. Use \`delegate\` with subagent \`bot\` for multi-step bot work or when you need a focused bot specialist.${roster}`;
+The top-level orchestrator does not call ask_bot/ask_agent or list bots directly.
+- To ask a configured agent or get its status/details, call \`delegate\` with subagent \`agent\` and pass \`agent_id\` or \`agent_name\`.
+- For legacy bot entries, call \`delegate\` with subagent \`bot\` and pass \`bot_id\` or \`bot_name\`.
+- To create, deploy, pause, or wake a proactive agent/bot, delegate that workflow to \`agent\` or \`bot\`.
+- If no matching id/name is present in the roster or user context, ask the user which agent they mean instead of calling a list tool.${roster}`;
+
+}
+
+export interface OrchestratorPromptOptions {
+  conversationId?: string | null;
+  activeProject?: ProjectContextPayload | null;
+  recentJournal?: JournalEntryPayload[];
 }
 
 function buildOrchestratorPrompt(
   enabledIntegrations: string[] = [],
   skills: SkillSummary[] = [],
   bots: BotPromptSummary[] = [],
+  promptOptions: OrchestratorPromptOptions = {},
 ): string {
+  // When Project Mode is active, fully take over the system prompt with a
+  // research-lab persona that knows the project's native tool surface and
+  // disciplines (journal types, memory, scoped search). The generic orchestrator
+  // voice would otherwise bleed through.
+  if (promptOptions.activeProject) {
+    return buildProjectModeSystemPrompt(promptOptions.activeProject, {
+      conversationId: promptOptions.conversationId,
+      recentJournal: promptOptions.recentJournal,
+      enabledIntegrations,
+      skills,
+      bots: bots.map((b) => ({ id: b.id, name: b.name, kind: b.kind, status: b.status })),
+      homeDir: DEFAULT_USER_HOME_DIR,
+    });
+  }
+
   const now = new Date().toLocaleString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
@@ -106,12 +166,16 @@ function buildOrchestratorPrompt(
 
   const skillsSection = buildAvailableSkillsPromptSection(skills);
   const skillLine = skillsSection ? `\n\n${skillsSection}` : '';
-  const botSection = formatBotRosterSection(bots);
+  const botSection = formatAgentRosterSection(bots);
+
+  const conversationBlock = buildConversationBlock(promptOptions.conversationId);
+  const projectBlock = '';
+  const projectModeIntroLine = '';
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
 **Date/Time**: ${now}
-**System**: Windows | Home: ${DEFAULT_USER_HOME_DIR}${integrationLine}
+**System**: Windows | Home: ${DEFAULT_USER_HOME_DIR}${integrationLine}${conversationBlock}${projectBlock}${projectModeIntroLine}
 
 ## How You Work
 
@@ -125,7 +189,8 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
 | ffmpeg      | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames |
 | vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
-| bot         | Proactive bot lookup/status/ask workflows, including bot ids/names and manual wake-ups |
+| agent       | Proactive agent status/ask workflows, including agent ids/names and manual wake-ups |
+| bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
 | outlook     | Outlook mail & calendar |
 | github      | Repos, issues, PRs, branches, actions |
@@ -176,6 +241,8 @@ User-authored Stuard workflows act as custom tools. When a request matches somet
 - \`search_local_workflows({ query?, limit? })\` — list/filter local workflows. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
 - \`run_workflow({ id | name, args?, timeoutMs? })\` — execute a workflow synchronously. Match \`args\` keys to the workflow's \`inputSchema\` names.
 - Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+
+${PROJECT_MODE_GUIDANCE}
 ${botSection}
 
 ## Rules
@@ -197,7 +264,10 @@ ${botSection}
  * The lean tool set the orchestrator LLM actually sees.
  * Much smaller than the full Stuard tool surface.
  */
-function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<string, any> {
+function getOrchestratorActiveTools(
+  mcpTools: Record<string, any> = {},
+  promptOptions: OrchestratorPromptOptions = {},
+): Record<string, any> {
   const tools: Record<string, any> = {
     // Delegation tools (the core of the orchestrator)
     ...ORCHESTRATOR_DELEGATION_TOOLS,
@@ -241,13 +311,27 @@ function getOrchestratorActiveTools(mcpTools: Record<string, any> = {}): Record<
     tools.chat_ui = chatUiTool;
     tools.search_local_workflows = search_local_workflows;
     tools.run_workflow = run_workflow;
-    tools.bot_list = bot_list;
-    tools.bot_get_status = bot_get_status;
-    tools.bot_create = bot_create;
-    tools.bot_deploy = bot_deploy;
-    tools.bot_pause = bot_pause;
-    tools.ask_bot = ask_bot;
-    tools.bot_ask = bot_ask;
+    // Project Mode tools — desktop-only, always native so the AI can enter/exit
+    // without going through the search_tools discovery dance.
+    tools.list_projects = list_projects;
+    tools.create_project = create_project;
+    tools.update_project = update_project;
+    tools.delete_project = delete_project;
+    tools.enter_project_mode = enter_project_mode;
+    tools.exit_project_mode = exit_project_mode;
+    tools.journal_add = journal_add;
+    tools.memory_add = memory_add;
+    tools.project_search = project_search;
+
+    // When Project Mode is **active**, surface task management and project-scoped
+    // conversation search natively. These are technically available via the
+    // discovery dance, but lifting them inline matches the research-lab framing
+    // ("capture a finding, file a task, search prior work" should be one tool call).
+    if (promptOptions.activeProject) {
+      tools.task_crud = task_crud;
+      tools.task_reminders = task_reminders;
+      tools.search_project_conversations = search_project_conversations;
+    }
   }
 
   return tools;
@@ -262,10 +346,11 @@ export function getOrchestratorAgent(
   modelId?: string,
   skills: SkillSummary[] = [],
   bots: BotPromptSummary[] = [],
+  promptOptions: OrchestratorPromptOptions = {},
 ): Agent {
-  const activeTools = getOrchestratorActiveTools(mcpTools);
+  const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
   // Full execution universe so meta-tools (execute_tool) still work
-  const executionTools = { ...getExecutionToolsLazy(mcpTools), ...activeTools };
+  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
   const selectedModel = getModel(model, modelId);
   const name = getAgentName(model);
 
@@ -284,7 +369,7 @@ export function getOrchestratorAgent(
   const instructions = [
     {
       role: 'system',
-      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots),
+      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots, promptOptions),
       providerOptions: {
         anthropic: { cacheControl: { type: 'ephemeral' } },
       },
@@ -317,9 +402,10 @@ export async function getOrchestratorAgentForUser(
   bots: BotPromptSummary[] = [],
   userId?: string | null,
   modelSource?: ModelSourcePreference | string | null,
+  promptOptions: OrchestratorPromptOptions = {},
 ): Promise<Agent> {
-  const activeTools = getOrchestratorActiveTools(mcpTools);
-  const executionTools = { ...getExecutionToolsLazy(mcpTools), ...activeTools };
+  const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
+  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
   const selectedModel = await getModelForUser(model, modelId, userId, modelSource);
   const name = getAgentName(model);
 
@@ -334,7 +420,7 @@ export async function getOrchestratorAgentForUser(
   const instructions = [
     {
       role: 'system',
-      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots),
+      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots, promptOptions),
       providerOptions: {
         anthropic: { cacheControl: { type: 'ephemeral' } },
       },

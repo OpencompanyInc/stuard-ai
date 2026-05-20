@@ -122,6 +122,7 @@ class PendingMemory:
     entity_name: Optional[str]  # Related entity if any
     created_at: str
     status: str = 'pending'  # 'pending' | 'confirmed' | 'rejected'
+    expires_at: Optional[str] = None  # B4: TTL; NULL for legacy rows pre-migration
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -229,6 +230,14 @@ def init() -> None:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # B4: TTL for pending memories. Default 14 days from `created_at` —
+        # `pending_memory_expire` deletes any pending row past expiry. Stored
+        # as ISO text for sortability and consistency with `created_at`.
+        try:
+            cur.execute("ALTER TABLE pending_memories ADD COLUMN expires_at TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # Indexes for efficient retrieval
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category)")
@@ -239,6 +248,7 @@ def init() -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_memories(status)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_source_conv ON facts(source_conversation_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_confidence ON facts(confidence)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_memories(expires_at)")
 
         conn.commit()
 
@@ -518,38 +528,48 @@ def upsert_core_fact(
     confidence: float = 1.0,
     source_conversation_id: Optional[str] = None,
 ) -> Fact:
-    """Upsert a core profile fact (overwrite behavior)."""
+    """Upsert a core profile fact (overwrite-by-supersession).
+
+    B3: instead of mutating the existing row (which destroyed history), this
+    inserts a new fact row and marks the prior fact's `validity = 0` with a
+    `supersedes_id` chain. Active retrieval filters by `validity = 1` so the
+    user-visible behavior is identical, but we can now answer "what was the
+    user's OS before they switched?" and let B2 dedup/consolidation walk the
+    chain.
+    """
     with get_conn() as conn:
-        # Check if exists
+        # Look up the *active* (validity=1) fact matching this key. There
+        # should be at most one — older entries have already been superseded.
         row = conn.execute(
             """SELECT id FROM facts
-               WHERE category = 'personal' AND subtype = 'core' AND attribute_key = ?""",
+               WHERE category = 'personal' AND subtype = 'core'
+                 AND attribute_key = ? AND validity = 1""",
             (attribute_key,)
         ).fetchone()
 
-        now = _now_iso()
         confidence = max(0.0, min(1.0, float(confidence)))
 
-        if row:
-            old_id = row['id']
-            # Update existing — record supersession
-            conn.execute(
-                """UPDATE facts SET text = ?, vector = ?, created_at = ?, validity = 1,
-                   source = ?, confidence = ?, source_conversation_id = ?,
-                   last_confirmed_at = ?
-                   WHERE id = ?""",
-                (text, _serialize_vector(vector), now, source, confidence,
-                 source_conversation_id, now, old_id)
-            )
-            conn.commit()
-            return get_fact(old_id)  # type: ignore
-        else:
-            # Insert new
+        if not row:
+            # First fact for this key — no supersession needed.
             return create_fact(
                 category='personal', subtype='core', text=text,
                 attribute_key=attribute_key, vector=vector, source=source,
                 confidence=confidence, source_conversation_id=source_conversation_id,
             )
+
+        old_id = row['id']
+        # Mark the old row invalid so it stops showing up in active retrieval,
+        # but keep it around so the supersession chain is traversable.
+        conn.execute("UPDATE facts SET validity = 0 WHERE id = ?", (old_id,))
+        conn.commit()
+
+    # Create the new fact pointing back at the one it replaces.
+    return create_fact(
+        category='personal', subtype='core', text=text,
+        attribute_key=attribute_key, vector=vector, source=source,
+        confidence=confidence, source_conversation_id=source_conversation_id,
+        supersedes_id=old_id,
+    )
 
 
 def upsert_procedural_fact(
@@ -857,6 +877,10 @@ def build_context_block(
 # PENDING MEMORIES OPERATIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+PENDING_MEMORY_TTL_DAYS = 14
+PENDING_MEMORY_MAX = 20
+
+
 def create_pending_memory(
     original_text: str,
     proposed_action: str,
@@ -866,17 +890,20 @@ def create_pending_memory(
     entity_name: Optional[str] = None
 ) -> PendingMemory:
     """Create a new pending memory that needs user confirmation."""
+    from datetime import timedelta
     pid = str(uuid.uuid4())
-    now = _now_iso()
+    now_dt = datetime.now().astimezone()
+    now = now_dt.isoformat()
+    expires_at = (now_dt + timedelta(days=PENDING_MEMORY_TTL_DAYS)).isoformat()
 
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO pending_memories
                (id, original_text, proposed_action, proposed_key, proposed_value,
-                confidence_reason, entity_name, created_at, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                confidence_reason, entity_name, created_at, status, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
             (pid, original_text, proposed_action, proposed_key, proposed_value,
-             confidence_reason, entity_name, now)
+             confidence_reason, entity_name, now, expires_at)
         )
         conn.commit()
 
@@ -884,7 +911,18 @@ def create_pending_memory(
         id=pid, original_text=original_text, proposed_action=proposed_action,
         proposed_key=proposed_key, proposed_value=proposed_value,
         confidence_reason=confidence_reason, entity_name=entity_name,
-        created_at=now, status='pending'
+        created_at=now, status='pending', expires_at=expires_at,
+    )
+
+
+def _row_to_pending(r) -> PendingMemory:
+    keys = r.keys() if hasattr(r, 'keys') else []
+    return PendingMemory(
+        id=r['id'], original_text=r['original_text'],
+        proposed_action=r['proposed_action'], proposed_key=r['proposed_key'],
+        proposed_value=r['proposed_value'], confidence_reason=r['confidence_reason'],
+        entity_name=r['entity_name'], created_at=r['created_at'], status=r['status'],
+        expires_at=(r['expires_at'] if 'expires_at' in keys else None),
     )
 
 
@@ -898,15 +936,7 @@ def get_pending_memories(limit: int = 20) -> List[PendingMemory]:
             (limit,)
         ).fetchall()
 
-    return [
-        PendingMemory(
-            id=r['id'], original_text=r['original_text'],
-            proposed_action=r['proposed_action'], proposed_key=r['proposed_key'],
-            proposed_value=r['proposed_value'], confidence_reason=r['confidence_reason'],
-            entity_name=r['entity_name'], created_at=r['created_at'], status=r['status']
-        )
-        for r in rows
-    ]
+    return [_row_to_pending(r) for r in rows]
 
 
 def get_pending_memory(pending_id: str) -> Optional[PendingMemory]:
@@ -917,12 +947,7 @@ def get_pending_memory(pending_id: str) -> Optional[PendingMemory]:
         ).fetchone()
         if not row:
             return None
-        return PendingMemory(
-            id=row['id'], original_text=row['original_text'],
-            proposed_action=row['proposed_action'], proposed_key=row['proposed_key'],
-            proposed_value=row['proposed_value'], confidence_reason=row['confidence_reason'],
-            entity_name=row['entity_name'], created_at=row['created_at'], status=row['status']
-        )
+        return _row_to_pending(row)
 
 
 def confirm_pending_memory(pending_id: str) -> bool:
@@ -967,6 +992,153 @@ def clear_old_pending_memories(days: int = 7) -> int:
         )
         conn.commit()
         return cur.rowcount
+
+
+def supersede_fact(old_id: str, new_id: str) -> bool:
+    """B2/B3 primitive: mark `old_id` as superseded by `new_id`.
+
+    Sets the old fact's validity=0 and the new fact's supersedes_id=old_id.
+    No-op (returns False) if either fact doesn't exist.
+    """
+    with get_conn() as conn:
+        old_row = conn.execute("SELECT id FROM facts WHERE id = ?", (old_id,)).fetchone()
+        new_row = conn.execute("SELECT id FROM facts WHERE id = ?", (new_id,)).fetchone()
+        if not old_row or not new_row:
+            return False
+        conn.execute("UPDATE facts SET validity = 0 WHERE id = ?", (old_id,))
+        conn.execute("UPDATE facts SET supersedes_id = ? WHERE id = ?", (old_id, new_id))
+        conn.commit()
+        return True
+
+
+def consolidate_facts(
+    category: FactCategory,
+    subtype: FactSubtype,
+    days_back: int = 30,
+    threshold: float = 0.92,
+) -> Dict[str, int]:
+    """B2 stage 1: pairwise vector dedup for facts in the given (category, subtype).
+
+    Considers only `validity=1` rows from the last `days_back` days. For each
+    pair with cosine similarity >= threshold, marks the OLDER fact superseded
+    by the NEWER one (newer = larger `created_at`). Returns count of pairs
+    consolidated. Pure SQL + numpy — no LLM call.
+
+    Skips rows without vectors. Skips pairs where one already supersedes the
+    other to avoid touching already-resolved chains.
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now().astimezone() - timedelta(days=days_back)).isoformat()
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, vector, created_at, supersedes_id FROM facts
+               WHERE category = ? AND subtype = ? AND validity = 1
+                 AND vector IS NOT NULL AND length(vector) > 0
+                 AND created_at >= ?
+               ORDER BY created_at DESC""",
+            (category, subtype, cutoff)
+        ).fetchall()
+
+    if len(rows) < 2:
+        return {"consolidated": 0, "scanned": len(rows)}
+
+    # Pre-deserialize all vectors as numpy arrays for fast pairwise cosine.
+    items = []
+    for r in rows:
+        vec = _deserialize_vector(r['vector'])
+        if not vec:
+            continue
+        arr = np.array(vec, dtype=np.float32)
+        norm = float(np.linalg.norm(arr))
+        if norm == 0:
+            continue
+        items.append({
+            "id": r['id'],
+            "created_at": r['created_at'],
+            "supersedes_id": r['supersedes_id'],
+            "arr": arr,
+            "norm": norm,
+        })
+
+    # Track which ids are already invalidated this pass so we don't supersede
+    # twice in the same run.
+    invalidated: set[str] = set()
+    pairs_to_supersede: List[Tuple[str, str]] = []  # (old_id, new_id)
+
+    for i in range(len(items)):
+        if items[i]['id'] in invalidated:
+            continue
+        for j in range(i + 1, len(items)):
+            if items[j]['id'] in invalidated:
+                continue
+            a, b = items[i], items[j]
+            dot = float(np.dot(a['arr'], b['arr']))
+            cos = dot / (a['norm'] * b['norm'])
+            if cos < threshold:
+                continue
+            # Newer wins. Items are sorted DESC, so i (smaller index) is newer.
+            new_fact, old_fact = a, b
+            pairs_to_supersede.append((old_fact['id'], new_fact['id']))
+            invalidated.add(old_fact['id'])
+
+    for old_id, new_id in pairs_to_supersede:
+        supersede_fact(old_id, new_id)
+
+    return {"consolidated": len(pairs_to_supersede), "scanned": len(items)}
+
+
+def expire_and_cap_pending_memories(max_active: int = PENDING_MEMORY_MAX) -> Dict[str, int]:
+    """B4: TTL + cap hygiene for pending memories.
+
+    1. Delete rows where `expires_at < now` (status='pending'). Rows created
+       before the `expires_at` migration use `created_at + TTL` as the implicit
+       expiry.
+    2. If more than `max_active` rows remain in 'pending' status, drop oldest
+       first until cap is met.
+
+    Returns counts of expired/dropped for logging.
+    """
+    from datetime import timedelta
+    now_dt = datetime.now().astimezone()
+    now_iso = now_dt.isoformat()
+    legacy_cutoff = (now_dt - timedelta(days=PENDING_MEMORY_TTL_DAYS)).isoformat()
+
+    expired = 0
+    dropped = 0
+    with get_conn() as conn:
+        # Expire by TTL (covers both explicit expires_at and legacy NULL rows)
+        cur = conn.execute(
+            """DELETE FROM pending_memories
+               WHERE status = 'pending'
+                 AND (
+                   (expires_at IS NOT NULL AND expires_at < ?)
+                   OR (expires_at IS NULL AND created_at < ?)
+                 )""",
+            (now_iso, legacy_cutoff)
+        )
+        expired = cur.rowcount
+
+        # Cap: keep only the newest `max_active`, drop the rest.
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM pending_memories WHERE status = 'pending'"
+        ).fetchone()
+        active_count = row['n'] if row else 0
+        if active_count > max_active:
+            cur = conn.execute(
+                """DELETE FROM pending_memories WHERE id IN (
+                       SELECT id FROM pending_memories
+                       WHERE status = 'pending'
+                       ORDER BY created_at ASC
+                       LIMIT ?
+                   )""",
+                (active_count - max_active,)
+            )
+            dropped = cur.rowcount
+
+        conn.commit()
+
+    return {"expired": expired, "dropped": dropped}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

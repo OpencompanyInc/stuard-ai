@@ -102,7 +102,7 @@ export function CloudVmSettings({ engine, onRefresh, className }: Props) {
           Advanced configuration
         </h3>
         <p className="text-[13px] text-theme-muted">
-          Memory sync rules, browser profiles, model preferences and bot definitions live in the
+          Memory sync rules, browser profiles, model preferences and agent definitions live in the
           Stuard desktop app. Changes there sync to the VM automatically while it&apos;s running.
         </p>
         <a

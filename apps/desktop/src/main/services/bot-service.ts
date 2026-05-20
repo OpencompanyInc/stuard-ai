@@ -311,20 +311,12 @@ function buildInitialBotsFile(): BotsFile {
 
 /**
  * Returns the bots file, migrating from the legacy single-config layout if
- * this is the first run after upgrade. Always returns a file containing at
- * least the default bot.
+ * this is the first run after upgrade. Once bots.json exists, even an empty
+ * list is intentional because the legacy default agent can now be deleted.
  */
 function getOrInitBotsFile(): BotsFile {
   const existing = loadBotsFile();
-  if (existing && existing.bots.length > 0) {
-    // Self-heal: ensure the default bot still exists.
-    if (!existing.bots.some(b => b.id === DEFAULT_BOT_ID)) {
-      const seeded = buildInitialBotsFile();
-      existing.bots.unshift(seeded.bots[0]);
-      saveBotsFile(existing);
-    }
-    return existing;
-  }
+  if (existing) return existing;
   const fresh = buildInitialBotsFile();
   saveBotsFile(fresh);
   logger.info('[bot-service] Initialized bots.json with default bot from legacy proactive config');
@@ -422,14 +414,12 @@ export const botService = {
   },
 
   delete(id: string): { ok: boolean; error?: string } {
-    if (id === DEFAULT_BOT_ID) {
-      return { ok: false, error: 'Cannot delete the default bot' };
-    }
     const file = getOrInitBotsFile();
     const before = file.bots.length;
     file.bots = file.bots.filter(b => b.id !== id);
-    if (file.bots.length === before) return { ok: false, error: 'Bot not found' };
+    if (file.bots.length === before) return { ok: false, error: 'Agent not found' };
     saveBotsFile(file);
+    try { proactiveService.deleteBotData(id); } catch (e) { logger.warn('[bot-service] Failed to delete proactive bot data:', e); }
     return { ok: true };
   },
 

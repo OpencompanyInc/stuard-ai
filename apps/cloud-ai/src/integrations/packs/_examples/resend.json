@@ -1,0 +1,97 @@
+{
+  "slug": "resend",
+  "name": "Resend",
+  "description": "Send transactional email via the Resend API.",
+  "icon": "✉️",
+  "category": "Email",
+  "version": "0.1.0",
+
+  "auth": {
+    "strategy": { "type": "bearer", "tokenField": "api_key" },
+    "fields": [
+      {
+        "name": "api_key",
+        "label": "API Key",
+        "secret": true,
+        "required": true,
+        "placeholder": "re_...",
+        "hint": "Resend dashboard → API Keys"
+      }
+    ]
+  },
+
+  "outbound_hosts": ["api.resend.com"],
+
+  "ping": {
+    "method": "GET",
+    "urlTemplate": "https://api.resend.com/domains"
+  },
+
+  "tools": [
+    {
+      "name": "send_email",
+      "description": "Send a single email.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "from":    { "type": "string", "description": "From address — must be on a verified domain" },
+          "to":      { "type": "array", "items": { "type": "string" }, "description": "One or more recipient emails" },
+          "subject": { "type": "string" },
+          "html":    { "type": "string", "description": "HTML body (omit if using text)" },
+          "text":    { "type": "string", "description": "Plaintext body (omit if using html)" },
+          "reply_to": { "type": "string" },
+          "cc": { "type": "array", "items": { "type": "string" } },
+          "bcc": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["from", "to", "subject"]
+      },
+      "request": {
+        "method": "POST",
+        "urlTemplate": "https://api.resend.com/emails",
+        "body": {
+          "kind": "json",
+          "value": {
+            "from":     "{{args.from}}",
+            "to":       "{{args.to}}",
+            "subject":  "{{args.subject}}",
+            "html":     "{{args.html}}",
+            "text":     "{{args.text}}",
+            "reply_to": "{{args.reply_to}}",
+            "cc":       "{{args.cc}}",
+            "bcc":      "{{args.bcc}}"
+          }
+        }
+      },
+      "errorMap": {
+        "401": "Resend rejected the API key — check INT_RESEND_API_KEY.",
+        "422": "Resend validation error: {{response.message}}"
+      }
+    },
+
+    {
+      "name": "get_email",
+      "description": "Look up the delivery status of a previously sent email.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "email_id": { "type": "string", "description": "Email id returned by send_email" }
+        },
+        "required": ["email_id"]
+      },
+      "request": {
+        "method": "GET",
+        "urlTemplate": "https://api.resend.com/emails/{{args.email_id}}"
+      }
+    },
+
+    {
+      "name": "list_domains",
+      "description": "List verified sending domains on this Resend account.",
+      "args": { "type": "object", "properties": {} },
+      "request": {
+        "method": "GET",
+        "urlTemplate": "https://api.resend.com/domains"
+      }
+    }
+  ]
+}

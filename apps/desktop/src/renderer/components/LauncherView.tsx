@@ -121,9 +121,9 @@ interface LauncherViewProps {
   onAddTab?: () => void;
 
   // Internal Sidebar
-  activeSidebarTab?: "terminal" | "todo";
+  activeSidebarTab?: "terminal" | "todo" | "projects";
   onCloseInternalSidebar?: () => void;
-  onSwitchSidebarTab?: (tab: "terminal" | "todo") => void;
+  onSwitchSidebarTab?: (tab: "terminal" | "todo" | "projects") => void;
 
   // Voice Mode
   voiceActive?: boolean;
@@ -285,7 +285,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onAddTab,
 
   // Internal Sidebar
-  activeSidebarTab = "todo",
+  activeSidebarTab = "projects",
   onCloseInternalSidebar,
   onSwitchSidebarTab,
 

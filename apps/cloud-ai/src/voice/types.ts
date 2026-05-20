@@ -18,6 +18,41 @@ export interface VoiceToolDefinition {
   parameters: Record<string, any>; // JSON Schema
 }
 
+/**
+ * Per-turn (or per-session) usage report from a voice provider.
+ *
+ * Providers emit one event per turn whenever the upstream WebSocket carries
+ * a usage payload (Gemini Live's `usageMetadata`, OpenAI/Grok Realtime's
+ * `response.done.response.usage`). ElevenLabs has no per-turn usage so it
+ * emits a single synthetic event on close.
+ *
+ * `costUsd` (when set by the provider) is authoritative — voice models price
+ * audio tokens very differently from text, and the central pricing.ts table
+ * doesn't model audio rates. The billing tracker prefers explicit cost over
+ * recomputing from token counts.
+ */
+export interface VoiceUsageEvent {
+  /** Logical model id used for the cost calculation / log row. */
+  model: string;
+  /** Total input tokens (text + audio combined). */
+  inputTokens: number;
+  /** Total output tokens (text + audio combined). */
+  outputTokens: number;
+  /** Cached input tokens (counted within inputTokens). */
+  cachedInputTokens?: number;
+  /** Optional per-modality breakdown for audit/logs. */
+  inputTextTokens?: number;
+  inputAudioTokens?: number;
+  outputTextTokens?: number;
+  outputAudioTokens?: number;
+  /** Optional reasoning/thinking tokens (counted within outputTokens). */
+  reasoningTokens?: number;
+  /** Provider-computed USD cost (preferred over token-derived estimate). */
+  costUsd?: number;
+  /** Raw provider payload, kept for debugging. */
+  raw?: any;
+}
+
 export interface VoiceSessionConfig {
   providerId: string;
   agentId?: string;
@@ -39,6 +74,8 @@ export interface VoiceSessionConfig {
   onInterruption?: () => void;
   /** Callback when the voice AI wants to call a function/tool */
   onFunctionCall?: (callId: string, name: string, args: string) => void;
+  /** Callback when the provider reports token/audio usage for a turn. */
+  onUsage?: (event: VoiceUsageEvent) => void;
 }
 
 export interface VoiceSession {
@@ -48,6 +85,11 @@ export interface VoiceSession {
   sendAudio(audioBase64: string): void;
   /** Receive audio from provider - emitted via callback */
   onAudio(callback: (audioBase64: string) => void): void;
+  /**
+   * Send a single image/video frame (base64) to providers that support
+   * realtime vision. Gemini Live: JPEG/PNG, ≤1 FPS recommended.
+   */
+  sendImage?(imageBase64: string, mimeType?: string): void;
   /** Send a text message to inject into the conversation */
   sendText?(text: string): void;
   /** Send a function call result back to the voice AI */

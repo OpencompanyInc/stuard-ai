@@ -258,6 +258,27 @@ def _collect_path_snapshot(root: str, max_entries: int = COMMAND_CHECKPOINT_MAX_
     return {"root": root_abs, "files": files, "dirs": dirs, "truncated": truncated}
 
 
+def _is_child_path(path: str, parent: str) -> bool:
+    try:
+        norm_path = os.path.normcase(os.path.abspath(path))
+        norm_parent = os.path.normcase(os.path.abspath(parent))
+        return (
+            norm_path != norm_parent
+            and os.path.commonpath([norm_path, norm_parent]) == norm_parent
+        )
+    except Exception:
+        return False
+
+
+def _created_directory_roots(created_dirs: set[str]) -> list[str]:
+    roots: list[str] = []
+    for directory in sorted(created_dirs, key=lambda p: (len(os.path.abspath(p)), os.path.abspath(p))):
+        if any(_is_child_path(directory, root) for root in roots):
+            continue
+        roots.append(directory)
+    return roots
+
+
 def _start_command_checkpoint(cwd: Optional[str]) -> Optional[Dict[str, Any]]:
     if not isinstance(cwd, str) or not cwd.strip():
         return None
@@ -302,6 +323,7 @@ def _finish_command_checkpoint(before: Optional[Dict[str, Any]]) -> None:
         before_dirs = set(before.get("dirs", set()))
         after_dirs = set(after.get("dirs", set()))
         created_dirs = after_dirs - before_dirs
+        created_dir_roots = _created_directory_roots(created_dirs)
 
         modified_files = set()
         for fp in before_files & after_files:
@@ -323,15 +345,17 @@ def _finish_command_checkpoint(before: Optional[Dict[str, Any]]) -> None:
             except Exception:
                 continue
 
-        for fp in created_files:
+        for dp in created_dir_roots:
             try:
-                CheckpointManager.record_change(fp, "create")
+                CheckpointManager.record_change(dp, "create_dir")
             except Exception:
                 continue
 
-        for dp in sorted(created_dirs, key=len, reverse=True):
+        for fp in created_files:
+            if any(_is_child_path(fp, dp) for dp in created_dir_roots):
+                continue
             try:
-                CheckpointManager.record_change(dp, "create")
+                CheckpointManager.record_change(fp, "create")
             except Exception:
                 continue
     except Exception as e:

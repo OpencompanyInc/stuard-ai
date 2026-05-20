@@ -64,6 +64,7 @@ function buildBotSystemPrompt(args: {
   botId?: string;
   botName?: string;
   allowedTools?: unknown;
+  promptAddendum?: string;
 }): string {
   const botName = String(args.botName || 'Stuard bot').trim();
   const addedTools = cleanToolNames(args.allowedTools);
@@ -77,7 +78,7 @@ Your tools are an addition set:
 - Internal bot tools: proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, get_skill_info.
 - Added non-internal tools for this bot: ${addedText}.
 
-All other tools are not part of this bot. If the user asks what tools you have, answer only from the two lists above. If the user asks you to change your kanban, call bot_memory_* and only claim success after the tool returns ok=true.`;
+All other tools are not part of this bot. If the user asks what tools you have, answer only from the two lists above. If the user asks you to change your kanban, call bot_memory_* and only claim success after the tool returns ok=true.${args.promptAddendum ? `\n\n${args.promptAddendum}` : ''}`;
 }
 
 export function getBotAgent(args: {
@@ -87,11 +88,13 @@ export function getBotAgent(args: {
   modelId?: string;
   allowedTools?: unknown;
   mcpTools?: Record<string, any>;
+  extraTools?: Record<string, any>;
+  promptAddendum?: string;
 }): Agent {
   const safeBotId = String(args.botId || args.botName || 'bot')
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .slice(0, 80) || 'bot';
-  const selectedTools = buildBotToolSet(args);
+  const selectedTools = { ...buildBotToolSet(args), ...(args.extraTools || {}) };
   const agent = new Agent({
     id: `stuard-bot-${safeBotId}`,
     name: args.botName ? `Stuard Bot: ${String(args.botName).slice(0, 80)}` : `Stuard Bot ${safeBotId}`,
@@ -116,11 +119,13 @@ export async function getBotAgentForUser(args: {
   userId?: string | null;
   allowedTools?: unknown;
   mcpTools?: Record<string, any>;
+  extraTools?: Record<string, any>;
+  promptAddendum?: string;
 }): Promise<Agent> {
   const safeBotId = String(args.botId || args.botName || 'bot')
     .replace(/[^a-zA-Z0-9_-]+/g, '-')
     .slice(0, 80) || 'bot';
-  const selectedTools = buildBotToolSet(args);
+  const selectedTools = { ...buildBotToolSet(args), ...(args.extraTools || {}) };
   const model = await getModelForUser(args.model, args.modelId, args.userId, args.modelSource);
   const instructions = [{ role: 'system', content: buildBotSystemPrompt(args) }] as any;
   const agent = new Agent({

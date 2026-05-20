@@ -15,7 +15,7 @@ function broadcastMemoryChanged(botId: string): void {
 function requireBotId(ctx: RouterContext): { ok: false; error: string } | { ok: true; botId: string } {
   const botId = (ctx?.proactiveBotId || '').trim();
   if (!botId) {
-    return { ok: false, error: 'bot_memory tools are only available during a proactive bot run (no proactiveBotId in context).' };
+    return { ok: false, error: 'agent_memory tools are only available during a proactive agent run (no proactiveBotId in context).' };
   }
   return { ok: true, botId };
 }

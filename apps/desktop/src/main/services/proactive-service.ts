@@ -373,6 +373,60 @@ export const proactiveService = {
     return { ok: true, logs: logs.slice(0, limit) };
   },
 
+  deleteBotData(botId: string): {
+    ok: true;
+    tasksDeleted: number;
+    wakeUpLogsDeleted: number;
+    sessionSummariesDeleted: number;
+    notificationsDeleted: number;
+  } {
+    const id = effectiveBotId(botId);
+    const data = loadData();
+    const beforeTasks = data.tasks.length;
+    const beforeLogs = data.wakeUpLog.length;
+    data.tasks = data.tasks.filter(t => effectiveBotId(t.botId) !== id);
+    data.wakeUpLog = data.wakeUpLog.filter(l => effectiveBotId(l.botId) !== id);
+    if (id === DEFAULT_BOT_ID) {
+      data.config = {
+        ...data.config,
+        enabled: false,
+        lastWakeUpAt: null,
+        nextWakeUpAt: null,
+      };
+    }
+    saveData(data);
+
+    let sessionSummariesDeleted = 0;
+    try {
+      const p = sessionSummariesPath();
+      const existing = loadSessionSummaries();
+      const next = existing.filter(s => effectiveBotId(s.botId) !== id);
+      sessionSummariesDeleted = existing.length - next.length;
+      if (sessionSummariesDeleted > 0) fs.writeFileSync(p, JSON.stringify(next, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('[proactive] Failed to delete bot session summaries:', e);
+    }
+
+    let notificationsDeleted = 0;
+    try {
+      const p = notificationLogPath();
+      const existing = loadNotificationLog();
+      const next = existing.filter(n => effectiveBotId(n.botId) !== id);
+      notificationsDeleted = existing.length - next.length;
+      if (notificationsDeleted > 0) fs.writeFileSync(p, JSON.stringify(next, null, 2), 'utf-8');
+    } catch (e) {
+      logger.warn('[proactive] Failed to delete bot notifications:', e);
+    }
+
+    return {
+      ok: true,
+      tasksDeleted: beforeTasks - data.tasks.length,
+      wakeUpLogsDeleted: beforeLogs - data.wakeUpLog.length,
+      sessionSummariesDeleted,
+      notificationsDeleted,
+    };
+  },
+
   setNextWakeUp(nextAt: string | null): void {
     const data = loadData();
     data.config.nextWakeUpAt = nextAt;

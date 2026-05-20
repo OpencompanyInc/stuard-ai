@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import { supabase } from '../../lib/supabaseClient';
@@ -6,6 +6,8 @@ import { startBrowserSignIn } from '../../auth/browserSignIn';
 import { getValidAccessToken } from '../../auth/authManager';
 import { getCloudAiHttp, getMarketplaceApi, type MarketplaceWorkflow } from '../../utils/cloud';
 import { usePreferences, type TonePreset } from '../../hooks/usePreferences';
+import { useVoiceMode } from '../../hooks/useVoiceMode';
+import { VoiceModeOverlay } from '../../views/VoiceModeOverlay';
 import {
   ArrowRight,
   Bell,
@@ -20,6 +22,8 @@ import {
   Gamepad2,
   Keyboard,
   Loader2,
+  Mic,
+  MicOff,
   MessageSquare,
   Palette,
   Phone,
@@ -234,7 +238,6 @@ function RedSkyBackground() {
 function AuroraBackground() {
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-[#060608]" />
       <motion.div
         className="absolute rounded-full"
         style={{ width: '55vw', height: '55vw', top: '-20%', left: '-12%', background: 'radial-gradient(circle, rgba(56,168,255,0.07) 0%, transparent 60%)' }}
@@ -253,8 +256,6 @@ function AuroraBackground() {
         animate={{ x: [0, -25, 0], y: [0, 30, 0] }}
         transition={{ duration: 20, repeat: Infinity, ease: 'easeInOut' }}
       />
-      <div className="absolute inset-0 opacity-[0.025]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`, backgroundSize: '128px 128px' }} />
-      <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse 70% 60% at 50% 50%, transparent 0%, rgba(0,0,0,0.45) 100%)' }} />
     </div>
   );
 }
@@ -322,6 +323,38 @@ function SkipButton({ onClick }: { onClick: () => void }) {
   return (
     <Fade delay={1.5} className="absolute top-10 right-10 z-20">
       <button onClick={onClick} className="text-[12px] tracking-wide text-white/30 transition-colors duration-300 hover:text-white/50">Skip</button>
+    </Fade>
+  );
+}
+
+// Voice-tour toggle — appears in the top-right next to Skip. When active, the
+// user is in a live voice session and Stuard narrates / answers about the
+// current onboarding page.
+function VoiceTourToggle({ active, connecting, disabled, onToggle }: {
+  active: boolean; connecting: boolean; disabled?: boolean; onToggle: () => void;
+}) {
+  return (
+    <Fade delay={1.4} className="absolute top-9 right-24 z-20">
+      <button
+        onClick={onToggle}
+        disabled={disabled}
+        title={disabled ? 'Sign in to try voice mode' : active ? 'Stop voice tour' : 'Start voice tour'}
+        className={clsx(
+          'inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[12px] tracking-wide transition-colors duration-300 disabled:opacity-30 disabled:cursor-not-allowed',
+          active
+            ? 'border-rose-400/30 bg-rose-500/[0.10] text-rose-200/90 hover:bg-rose-500/[0.16]'
+            : 'border-white/[0.10] bg-white/[0.03] text-white/55 hover:text-white/80 hover:border-white/[0.18]',
+        )}
+      >
+        {connecting ? (
+          <Loader2 size={12} className="animate-spin" />
+        ) : active ? (
+          <MicOff size={12} strokeWidth={1.8} />
+        ) : (
+          <Mic size={12} strokeWidth={1.8} />
+        )}
+        {connecting ? 'Connecting…' : active ? 'Voice on' : 'Voice tour'}
+      </button>
     </Fade>
   );
 }
@@ -1133,6 +1166,31 @@ interface InteractiveWelcomeProps {
   onSkip?: () => void;
 }
 
+const PAGE_TOUR_CONTEXT: Record<number, string> = {
+  0: 'the welcome splash',
+  1: 'the four-capabilities overview (chat, proactive, workflows, integrations)',
+  5: 'the sign-in step (optional, syncs settings across devices)',
+  6: 'the role-selection step (developer / student / creator / business / hobbyist)',
+  7: 'the features setup step (proactive agent toggle and phone-number verification)',
+  8: 'the marketplace step — picking pre-built workflows to install',
+  9: 'the tone-and-persona step',
+  10: 'the global-hotkey step — the keystroke that summons Stuard from anywhere',
+  11: 'the completion screen — Connect Apps or Try the Hotkey',
+};
+
+function buildVoiceTourPrompt(page: number, role: string): string {
+  const where = PAGE_TOUR_CONTEXT[page] ?? 'the onboarding flow';
+  const roleLine = role ? ` The user identifies as: ${role}.` : '';
+  return [
+    "You are Stuard giving a quick voice tour of the desktop app during first-run onboarding.",
+    `The user is currently on ${where}.${roleLine}`,
+    "Be warm, conversational, and very brief — two short sentences max per turn.",
+    "Explain what's on this page, what the buttons do, and answer any questions about Stuard's capabilities (chat, proactive agent, workflows, integrations, voice, hotkey).",
+    "If they ask to do something, remind them they can click the buttons themselves; the tour is hands-on.",
+    "Never repeat the same explanation twice. Wait for them to talk back.",
+  ].join(' ');
+}
+
 export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomeProps) {
   const [page, setPage] = useState(0);
   const [signedIn, setSignedIn] = useState(false);
@@ -1140,6 +1198,44 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
   const [signingIn, setSigningIn] = useState(false);
   const [userRole, setUserRole] = useState('');
   const [fadingOut, setFadingOut] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+
+  const voiceSystemPrompt = useMemo(() => buildVoiceTourPrompt(page, userRole), [page, userRole]);
+  const voiceInitialMessage = useMemo(
+    () => "Hey — I'm Stuard. Ask me anything about what's on screen, or just tell me what you're trying to set up.",
+    [],
+  );
+
+  const voice = useVoiceMode({
+    systemPrompt: voiceSystemPrompt,
+    initialMessage: voiceInitialMessage,
+  });
+
+  const startVoiceRef = useRef(voice.start);
+  const stopVoiceRef = useRef(voice.stop);
+  useEffect(() => { startVoiceRef.current = voice.start; stopVoiceRef.current = voice.stop; });
+
+  const handleVoiceToggle = useCallback(() => {
+    if (voiceActive) {
+      try { stopVoiceRef.current(); } catch {}
+      setVoiceActive(false);
+    } else {
+      setVoiceActive(true);
+      void startVoiceRef.current();
+    }
+  }, [voiceActive]);
+
+  // Stop voice when onboarding closes
+  useEffect(() => () => { try { stopVoiceRef.current(); } catch {} }, []);
+
+  // If voice errors out (e.g. not signed in, network), drop back to "off" so
+  // the toggle isn't stuck in the connecting state.
+  useEffect(() => {
+    if (voiceActive && voice.error) setVoiceActive(false);
+  }, [voiceActive, voice.error]);
+
+  const voiceConnecting = voiceActive && voice.state === 'connecting';
+  const voiceShowing = voiceActive && voice.state !== 'idle';
 
   useEffect(() => {
     let active = true;
@@ -1201,6 +1297,14 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
       transition={{ duration: 0.6, ease: 'easeOut' }}
     >
       {page === 0 ? <RedSkyBackground /> : <AuroraBackground />}
+      {page > 0 && page < 11 && (
+        <VoiceTourToggle
+          active={voiceActive}
+          connecting={voiceConnecting}
+          disabled={!signedIn}
+          onToggle={handleVoiceToggle}
+        />
+      )}
       {onSkip && page > 0 && page < 11 && <SkipButton onClick={onSkip} />}
       <div className="relative z-10 h-full w-full">
         <AnimatePresence mode="wait">
@@ -1215,6 +1319,18 @@ export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomePro
           {page === 11 && <CompletionPage onConnectApps={handleConnectApps} onTryHotkey={handleTryHotkey} />}
         </AnimatePresence>
       </div>
+      <VoiceModeOverlay
+        visible={voiceShowing}
+        state={voice.state}
+        audioLevel={voice.audioLevel}
+        muted={voice.muted}
+        transcripts={voice.transcripts}
+        activeTool={voice.activeTool}
+        sharingScreen={voice.sharingScreen}
+        onMuteToggle={voice.toggleMute}
+        onShareScreen={voice.toggleScreenShare}
+        onClose={handleVoiceToggle}
+      />
     </motion.div>
   );
 }

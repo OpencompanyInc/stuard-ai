@@ -15,7 +15,7 @@ export function getSupabase(): SupabaseClient | null {
 
 /** Verify the bearer token matches the local OPS_ACCESS_TOKEN */
 export function verifyOpsToken(req: Request): boolean {
-  if (!OPS_TOKEN) return true; // No token configured = open (dev mode)
+  if (!OPS_TOKEN) return false;
   const auth = req.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) return false;
   return auth.slice(7) === OPS_TOKEN;

@@ -172,20 +172,34 @@ function send(ws: WebSocket, data: unknown) {
 }
 
 function extractBotPromptSummaries(context: any): BotPromptSummary[] {
-  const fromArrays = [
+  const fromBotArrays = [
     context?.runningBots,
     context?.bots,
     context?.availableBots,
     context?.botSummaries,
-  ].flatMap((value) => Array.isArray(value) ? value : []);
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'bot' })) : []);
+
+  const fromAgentArrays = [
+    context?.runningAgents,
+    context?.agents,
+    context?.availableAgents,
+    context?.agentSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'agent' })) : []);
 
   const fromPaths = (Array.isArray(context?.paths) ? context.paths : [])
-    .filter((path: any) => path?.type === 'bot' || String(path?.path || '').startsWith('bot://'))
+    .filter((path: any) => (
+      path?.type === 'bot'
+      || path?.type === 'agent'
+      || String(path?.path || '').startsWith('bot://')
+      || String(path?.path || '').startsWith('agent://')
+    ))
     .map((path: any) => {
       const metadata = path?.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+      const kind = path?.type === 'agent' || String(path?.path || '').startsWith('agent://') ? 'agent' : 'bot';
       return {
-        id: String(metadata.id || path.path || '').replace(/^bot:\/\//, ''),
+        id: String(metadata.id || path.path || '').replace(/^(bot|agent):\/\//, ''),
         name: String(path.name || metadata.name || '').trim(),
+        kind,
         status: metadata.status,
         lastRunAt: metadata.lastRunAt,
         nextRunAt: metadata.nextRunAt,
@@ -194,10 +208,11 @@ function extractBotPromptSummaries(context: any): BotPromptSummary[] {
     });
 
   const seen = new Set<string>();
-  return [...fromArrays, ...fromPaths]
+  return [...fromBotArrays, ...fromAgentArrays, ...fromPaths]
     .map((bot: any) => ({
-      id: String(bot?.id || bot?.botId || '').trim(),
-      name: String(bot?.name || bot?.botName || '').trim(),
+      id: String(bot?.id || bot?.agentId || bot?.botId || '').trim(),
+      name: String(bot?.name || bot?.agentName || bot?.botName || '').trim(),
+      kind: bot?.kind === 'agent' ? 'agent' as const : 'bot' as const,
       status: bot?.status ? String(bot.status) : undefined,
       lastRunAt: bot?.lastRunAt ?? null,
       nextRunAt: bot?.nextRunAt ?? null,
@@ -317,7 +332,6 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       ? message.modelId.trim()
       : pickDefaultModelId(message.modelConfig, model);
   const modelSource = typeof message.modelSource === 'string' ? message.modelSource.trim() : undefined;
-  const billingExcluded = modelSource === 'api_key' || modelSource === 'subscription';
   const _bStart = Date.now();
   const budget = computeBudget(chosenModelId || model);
   pruneToolOutputs(history as any[], budget);
@@ -358,7 +372,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       sourceRef: `agent:${requestId || conversationId || Date.now()}`,
       sourceType: 'inference',
       sourceLabel,
-      billingExcluded,
+      billingExcluded: false,
       onSettlement: (summary) => {
         send(ws, {
           type: 'progress',
@@ -411,13 +425,30 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 allowedTools: Array.isArray(context?.allowedTools) ? context.allowedTools : [],
               })
             : await getOrchestratorAgentForUser(model as ModelChoice, integrations, {}, chosenModelId, skills, bots, userId, modelSource);
+      const billingExcluded = !!(agent as any)?.__billingExcluded;
+      billingTracker.setBillingExcluded(billingExcluded);
+      const bridgeSecrets = getBridgeSecrets();
+      if (bridgeSecrets) {
+        bridgeSecrets.__modelSource = (agent as any)?.__modelSource;
+        bridgeSecrets.__billingExcluded = billingExcluded;
+      }
       console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
 
       // Build context prefix for paths
       let contextPrefix = '';
       if (context.paths && context.paths.length > 0) {
-        const botRefs = context.paths.filter(p => p.type === 'bot' || String(p.path || '').startsWith('bot://'));
-        const fileRefs = context.paths.filter(p => !(p.type === 'bot' || String(p.path || '').startsWith('bot://')));
+        const botRefs = context.paths.filter(p => (
+          p.type === 'bot'
+          || p.type === 'agent'
+          || String(p.path || '').startsWith('bot://')
+          || String(p.path || '').startsWith('agent://')
+        ));
+        const fileRefs = context.paths.filter(p => !(
+          p.type === 'bot'
+          || p.type === 'agent'
+          || String(p.path || '').startsWith('bot://')
+          || String(p.path || '').startsWith('agent://')
+        ));
         const parts: string[] = [];
         if (fileRefs.length > 0) {
           const pathsList = fileRefs.map(p =>
@@ -428,10 +459,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         if (botRefs.length > 0) {
           const botList = botRefs.map(p => {
             const metadata = p.metadata && typeof p.metadata === 'object' ? p.metadata : {};
-            const id = String(metadata.id || p.path || '').replace(/^bot:\/\//, '');
-            return `- [BOT] @${p.name} id=${id}${metadata.status ? ` status=${metadata.status}` : ''}${metadata.vmDeployedAt ? ' vm=deployed' : ''}`;
+            const kind = p.type === 'agent' || String(p.path || '').startsWith('agent://') ? 'AGENT' : 'BOT';
+            const id = String(metadata.id || p.path || '').replace(/^(bot|agent):\/\//, '');
+            return `- [${kind}] @${p.name} id=${id}${metadata.status ? ` status=${metadata.status}` : ''}${metadata.vmDeployedAt ? ' vm=deployed' : ''}`;
           }).join('\n');
-          parts.push(`User added this as context (bots — use ask_bot or bot_get_status before answering status/detail questions):\n${botList}`);
+          parts.push(`User added this as context (configured agents/bots - delegate to the agent or bot subagent with this id before answering status/detail questions):\n${botList}`);
         }
         contextPrefix = parts.length > 0 ? `${parts.join('\n\n')}\n\n` : '';
       }

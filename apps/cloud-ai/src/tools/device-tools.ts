@@ -314,17 +314,31 @@ export {
 
 // Bot management tools (desktop-backed, available in normal chat)
 export {
+  agent_list,
+  agent_get_status,
+  agent_create,
+  agent_deploy,
+  agent_pause,
+  agent_delete,
+  ask_agent,
+  agent_ask,
   bot_list,
   bot_get_status,
   bot_create,
   bot_deploy,
   bot_pause,
+  bot_delete,
   ask_bot,
   bot_ask,
 } from './bot-tools';
 
 // Bot's private kanban + run-log tools (desktop-backed, scoped to running bot)
 export {
+  agent_memory_list,
+  agent_memory_create,
+  agent_memory_update,
+  agent_memory_delete,
+  agent_memory_log,
   bot_memory_list,
   bot_memory_create,
   bot_memory_update,
@@ -353,6 +367,19 @@ export {
   get_collection_detail,
   synthesize_collection,
 } from './device/memory';
+
+// Project Mode tools (successor to Spaces)
+export {
+  list_projects,
+  create_project,
+  update_project,
+  delete_project,
+  enter_project_mode,
+  exit_project_mode,
+  journal_add,
+  memory_add,
+  project_search,
+} from './device/projects';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AGENT TODO TOOLS

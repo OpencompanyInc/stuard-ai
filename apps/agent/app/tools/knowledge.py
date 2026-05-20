@@ -521,6 +521,50 @@ async def pending_memory_delete(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+async def knowledge_consolidate_facts(args: Dict[str, Any]) -> Dict[str, Any]:
+    """B2 stage 1: pairwise vector dedup for a (category, subtype) slice.
+
+    Runs entirely in the Python process — no vectors crossing the bridge.
+    Triggered periodically from the cloud post-response pipeline. Safe to call
+    even when there's nothing to do (returns scanned=0/consolidated=0).
+    """
+    try:
+        category = str(args.get("category") or "personal")
+        subtype = str(args.get("subtype") or "bio")
+        days_back = int(args.get("days_back", 30))
+        threshold = float(args.get("threshold", 0.92))
+        stats = kdb.consolidate_facts(
+            category=category,  # type: ignore
+            subtype=subtype,  # type: ignore
+            days_back=days_back,
+            threshold=threshold,
+        )
+        return {"ok": True, "category": category, "subtype": subtype, **stats}
+    except Exception as e:
+        logger.error(f"[knowledge] consolidate_facts error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def pending_memory_expire(args: Dict[str, Any]) -> Dict[str, Any]:
+    """B4: TTL + cap hygiene for pending memories.
+
+    Deletes any pending row whose `expires_at` has passed (or whose `created_at`
+    is older than the TTL window for legacy NULL rows), then caps the active
+    set at `max_active` (default 20), dropping oldest first. Cheap — called
+    per-turn from the post-response pipeline.
+
+    Args (all optional):
+      - max_active: override the default cap of 20.
+    """
+    try:
+        max_active = int(args.get("max_active", kdb.PENDING_MEMORY_MAX))
+        stats = kdb.expire_and_cap_pending_memories(max_active=max_active)
+        return {"ok": True, **stats}
+    except Exception as e:
+        logger.error(f"[knowledge] pending_memory_expire error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 async def knowledge_get_graph(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get the knowledge graph (nodes and edges)."""
     limit = int(args.get("limit", 100))

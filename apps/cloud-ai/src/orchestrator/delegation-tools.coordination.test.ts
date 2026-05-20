@@ -187,6 +187,36 @@ describe('Delegation question coordination', () => {
     expect(request.context).toContain('Conversation context goes here.');
   });
 
+  it('passes target agent ids into the delegated agent subagent context', async () => {
+    runSubagentMock.mockResolvedValue({
+      ok: true,
+      subagentId: 'sa-agent',
+      result: 'Agent answered.',
+      durationMs: 18,
+    });
+
+    const { delegate } = await import('./delegation-tools');
+
+    const result = await (delegate as any).execute({
+      tasks: [{
+        subagent: 'agent',
+        instruction: 'Ask this configured agent for an update.',
+        agent_id: 'agent_research',
+        agent_name: 'Research',
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runSubagentMock).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        kind: 'agent',
+        context: expect.stringContaining('Target agent id: agent_research'),
+      }),
+    }));
+    const [{ request }] = runSubagentMock.mock.calls[0];
+    expect(request.context).toContain('Target agent name: Research');
+  });
+
   it('returns an error when the requested skill is not available', async () => {
     getBridgeSecretsMock.mockReturnValue({
       __skills: [

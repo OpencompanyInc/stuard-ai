@@ -107,22 +107,22 @@ export function KanbanTab({
   return (
     <div className="space-y-4">
       {/* Heading */}
-      <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-4">
+      <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-4 py-3.5 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
-              <LayoutGrid className="h-4 w-4" /> Bot's kanban
+              <LayoutGrid className="h-4 w-4" /> Agent kanban
               <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                 <BotIcon className="h-2.5 w-2.5" /> Private
               </span>
             </h3>
             <p className="mt-1 text-[12px] leading-5 text-theme-muted">
-              The bot's own working memory — separate from your task board.
+              The agent's own working memory — separate from your task board.
               {totalActive > 0
-                ? <> {totalActive} active card{totalActive === 1 ? '' : 's'} loaded into the bot's prompt next run.</>
+                ? <> {totalActive} active card{totalActive === 1 ? '' : 's'} loaded into the agent's prompt next run.</>
                 : cards.length > 0
-                  ? <> All cards completed or stuck — bot will see history but has nothing active.</>
-                  : <> Empty for now. The bot will fill it as it works, or you can seed it.</>}
+                  ? <> All cards completed or stuck — agent will see history but has nothing active.</>
+                  : <> Empty for now. The agent will fill it as it works, or you can seed it.</>}
             </p>
           </div>
           <button
@@ -137,15 +137,15 @@ export function KanbanTab({
 
       {/* Empty state */}
       {isEmpty && (
-        <div className="rounded-xl border border-dashed border-theme/40 p-8 text-center">
+        <div className="rounded-2xl border border-dashed border-theme/40 bg-theme-card/60 p-8 text-center">
           <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
             <LayoutGrid className="h-4 w-4" />
           </div>
           <div className="mx-auto max-w-md text-[13px] leading-6 text-theme-fg/90">
-            Once the bot starts running, it will plan, work, and reflect right here.
+            Once the agent starts running, it will plan, work, and reflect right here.
           </div>
           <p className="mx-auto mt-1 max-w-md text-[12px] leading-5 text-theme-muted">
-            You can also seed the bot with intent up-front by adding a card — it'll see it on the next run.
+            You can also seed the agent with intent up-front by adding a card — it'll see it on the next run.
           </p>
           <button
             onClick={() => setCreatingInColumn('queued')}
@@ -159,18 +159,20 @@ export function KanbanTab({
 
       {/* Board — wider columns now that the tab takes full width. */}
       {!isEmpty && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {KANBAN_COLUMNS.map(col => (
-            <KanbanColumn
-              key={col.id}
-              column={col}
-              cards={grouped[col.id]}
-              onAdd={() => setCreatingInColumn(col.id)}
-              onCardClick={(c) => setEditingCard(c)}
-              onMove={handleMove}
-              onDelete={handleDelete}
-            />
-          ))}
+        <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-3">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {KANBAN_COLUMNS.map(col => (
+              <KanbanColumn
+                key={col.id}
+                column={col}
+                cards={grouped[col.id]}
+                onAdd={() => setCreatingInColumn(col.id)}
+                onCardClick={(c) => setEditingCard(c)}
+                onMove={handleMove}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -209,8 +211,8 @@ function KanbanColumn({
 }) {
   const Icon = column.icon;
   return (
-    <div className="flex flex-col rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-3">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="flex min-h-[220px] flex-col rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card p-3 shadow-sm">
+      <div className="mb-3 flex items-center justify-between border-b border-theme/15 pb-2.5">
         <div className="flex items-center gap-2">
           <span className={clsx('inline-flex h-6 w-6 items-center justify-center rounded-md', column.iconBg)}>
             <Icon className="h-3.5 w-3.5" />
@@ -220,7 +222,7 @@ function KanbanColumn({
               {column.label}
               <span className="rounded-md bg-theme-hover/60 px-1.5 py-px text-[10px] font-medium text-theme-muted">{cards.length}</span>
             </div>
-            <div className="text-[10px] text-theme-muted">{column.sub}</div>
+            <div className="text-[10px] leading-4 text-theme-muted">{column.sub}</div>
           </div>
         </div>
         <button
@@ -236,7 +238,7 @@ function KanbanColumn({
         {cards.length === 0 ? (
           <button
             onClick={onAdd}
-            className="rounded-lg border border-dashed border-theme/30 px-3 py-4 text-[11px] text-theme-muted/70 transition hover:border-theme/60 hover:text-theme-muted"
+            className="rounded-xl border border-dashed border-theme/30 bg-zinc-500/5 px-3 py-4 text-[11px] text-theme-muted/70 transition hover:border-theme/60 hover:text-theme-muted"
           >
             Empty — click to add
           </button>
@@ -275,7 +277,7 @@ function KanbanCardItem({
     <div
       onClick={onClick}
       className={clsx(
-        'group relative cursor-pointer rounded-lg border border-theme/40 dark:border-transparent bg-theme-card p-2.5 shadow-sm transition hover:ring-2',
+        'group relative cursor-pointer rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-3 shadow-sm transition hover:bg-theme-hover/25 hover:ring-2',
         column.ringTone,
       )}
     >
@@ -297,13 +299,13 @@ function KanbanCardItem({
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-theme-muted">
-        <span title={`Last edited by ${card.lastEditedBy === 'bot' ? 'bot' : 'you'}`}
+        <span title={`Last edited by ${card.lastEditedBy === 'bot' ? 'agent' : 'you'}`}
               className={clsx(
                 'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5',
                 card.lastEditedBy === 'bot' ? 'bg-primary/10 text-primary' : 'bg-theme-hover/50 text-theme-muted',
               )}>
           {card.lastEditedBy === 'bot' ? <BotIcon className="h-2.5 w-2.5" /> : <UserIcon className="h-2.5 w-2.5" />}
-          <span>{card.lastEditedBy === 'bot' ? 'bot' : 'you'}</span>
+          <span>{card.lastEditedBy === 'bot' ? 'agent' : 'you'}</span>
         </span>
         <span title={new Date(card.updatedAt).toLocaleString()}>{timeAgo(card.updatedAt)}</span>
       </div>
@@ -343,18 +345,18 @@ function KanbanCardItem({
 
 function RunLogSection({ runLog }: { runLog: KanbanRunEntry[] }) {
   return (
-    <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-4">
+    <div className="rounded-2xl border border-theme/40 dark:border-transparent bg-theme-card px-4 py-3.5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
           <Activity className="h-4 w-4" /> Run log
           <span className="text-[12px] font-normal text-theme-muted">({runLog.length})</span>
         </h3>
-        <p className="hidden text-[11px] text-theme-muted sm:block">What the bot remembers from past runs</p>
+        <p className="hidden text-[11px] text-theme-muted sm:block">What the agent remembers from past runs</p>
       </div>
       {runLog.length === 0 ? (
-        <div className="flex items-center justify-center rounded-lg border border-dashed border-theme/40 p-6 text-center">
+        <div className="flex items-center justify-center rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 p-6 text-center">
           <div className="max-w-sm text-[12px] leading-5 text-theme-muted">
-            Empty for now. After each run the bot will leave a one-line note here for its future self to read.
+            Empty for now. After each run the agent will leave a one-line note here for its future self to read.
           </div>
         </div>
       ) : (
@@ -370,7 +372,7 @@ function RunLogSection({ runLog }: { runLog: KanbanRunEntry[] }) {
                 <span className={clsx('absolute -left-[22px] top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-2', tone)}>
                   <Icon className="h-2.5 w-2.5" />
                 </span>
-                <div className="rounded-lg border border-theme/30 dark:border-transparent bg-theme-card px-3 py-2 shadow-sm">
+                <div className="rounded-xl border border-theme/30 dark:border-transparent bg-zinc-500/10 px-3 py-2 shadow-sm">
                   <div className="flex items-start justify-between gap-2 text-[10px] text-theme-muted">
                     <span>{timeAgo(entry.at)}</span>
                     <span className="uppercase tracking-wide">{entry.outcome}</span>
@@ -444,7 +446,7 @@ function KanbanCardEditModal({
                 )}
               >
                 {initialCard.lastEditedBy === 'bot' ? <BotIcon className="h-2.5 w-2.5" /> : <UserIcon className="h-2.5 w-2.5" />}
-                Last edited by {initialCard.lastEditedBy === 'bot' ? 'bot' : 'you'}
+                Last edited by {initialCard.lastEditedBy === 'bot' ? 'agent' : 'you'}
               </span>
             )}
           </div>
@@ -470,7 +472,7 @@ function KanbanCardEditModal({
               rows={5}
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="Context for the bot's future self — links, what was tried, what to revisit."
+              placeholder="Context for the agent's future self — links, what was tried, what to revisit."
               className="w-full resize-none rounded-xl border border-theme/30 dark:border-transparent bg-theme-card/60 px-3 py-2.5 text-[13px] leading-6 text-theme-fg outline-none transition focus:border-primary/60"
             />
           </div>

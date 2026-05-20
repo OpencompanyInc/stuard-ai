@@ -100,6 +100,7 @@ function buildVoiceSystemPrompt(opts: {
     '- Be concise and conversational — this is a phone call, not a text chat.',
     '- Use natural speech patterns. Avoid bullet points, markdown, or overly structured responses.',
     '- Confirm understanding before taking actions.',
+    '- Live vision: the user can share their screen with you in real time by tapping the screen-share button in the voice pill. When that\'s on you receive their screen as ~1 FPS video frames and can describe / answer about it directly. When it\'s off you cannot see their screen. If they ask "what do you see?" or "look at this", and you don\'t already have live frames, ask them to enable screen-share rather than reaching for a screenshot tool.',
   );
 
   if (enableTools) {
@@ -128,12 +129,12 @@ function buildVoiceSystemPrompt(opts: {
       '- A subagent can ask back via ask_orchestrator. When that happens delegate returns with a questionId — ask the caller verbally, then call reply_to_subagent.',
       '',
       'Quick direct tools (no subagent needed):',
-      '- ask_bot / bot_list / bot_get_status — ask configured bots for status/details or list available bots.',
+      '- For configured agents/bots, use delegate with the agent or bot subagent and a known id/name; do not call ask_bot/ask_agent or list bots directly.',
       '- search_tools / get_tool_schema / execute_tool — discover and run any single tool from the full Stuard surface.',
       '- web_search / scrape_url — quick web research.',
       '- search_memory / search_past_conversations / get_conversation_context — recall prior context.',
       '- search_local_workflows / run_workflow — discover and run the user\'s saved automations as custom tools.',
-      '- analyze_media — describe an image, screenshot, or media file (use captureScreen:true to grab the user\'s screen).',
+      '- analyze_media — describe a saved image, document, or media file the user references. **Do NOT use captureScreen:true to look at the user\'s current screen during voice mode.** If the user asks you to look at what they\'re doing right now, ask them to tap the screen-share button in the voice pill — that streams their screen to you in real time at ~1 FPS via the live vision channel. Once they enable it you\'ll start seeing frames automatically; don\'t call analyze_media for "look at my screen" requests.',
       '- deploy_headless_agent / get_headless_agent_status / list_headless_agent_tasks / stop_headless_agent — long-running background agents.',
       '- get_skill_info — look up a user-defined skill (guidance playbook).',
       '- agent_todo — track multi-step tasks during the call.',

@@ -219,6 +219,15 @@ export function deleteVMBotCard(botId: string, cardId: string): boolean {
   return true;
 }
 
+export function deleteVMBotMemory(botId: string): boolean {
+  if (!botId) return false;
+  const file = loadFile();
+  if (!file.bots[botId]) return false;
+  delete file.bots[botId];
+  saveFile(file);
+  return true;
+}
+
 export function appendVMBotRunLog(
   botId: string,
   entry: { summary: string; outcome?: BotRunLogEntry['outcome']; cardIds?: string[]; notes?: string },
@@ -355,8 +364,9 @@ export function formatVMBotMemoryForPrompt(botId: string, opts: { runLogLimit?: 
 export function handleVMBotMemoryCommand(command: string, args: any): any {
   const botId = resolveBotId(args);
   if (!botId) return { ok: false, error: 'missing_bot_id' };
+  const normalizedCommand = command.replace(/^agent_memory_/, 'bot_memory_');
 
-  switch (command) {
+  switch (normalizedCommand) {
     case 'bot_memory_list': {
       const status = STATUS_VALUES.includes(args?.status) ? args.status as BotKanbanStatus : undefined;
       return { ok: true, cards: listVMBotCards(botId, status) };

@@ -222,6 +222,7 @@ describe('prepareChatRequest', () => {
       [],
       null,
       undefined,
+      { conversationId: null },
     );
     expect(buildInputMessagesMock).toHaveBeenCalledWith(expect.objectContaining({ agent }));
     expect(secretBag.__modelTier).toBe('balanced');
