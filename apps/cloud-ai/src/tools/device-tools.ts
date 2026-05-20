@@ -79,6 +79,16 @@ export {
   terminal_destroy,
 } from './device/terminal';
 
+// Coding-agent CLI delegation (Codex, Cursor Agent, Antigravity, Claude Code)
+export {
+  cli_agent_detect,
+  cli_agent_start,
+  cli_agent_send,
+  cli_agent_read,
+  cli_agent_status,
+  cli_agent_stop,
+} from './device/cli-agent';
+
 // Python Runtime Management
 export {
   python_status,

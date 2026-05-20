@@ -202,7 +202,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'ollama_embeddings', category: 'ollama', kind: 'local', description: 'Generate vector embeddings using a local model for semantic search and RAG.', argsTemplate: { model: 'nomic-embed-text', input: '' }, outputSchema: { ok: 'boolean', model: 'string', embeddings: 'any[]', dimensions: 'number', count: 'number', error: 'string' } },
   { id: 'ollama_models', category: 'ollama', kind: 'local', description: 'Manage local Ollama models: list, pull, delete, show details, see running, or copy.', argsTemplate: { action: 'list', model: '' }, outputSchema: { ok: 'boolean', action: 'string', models: 'any[]', count: 'number', model: 'string', status: 'string', deleted: 'boolean', error: 'string' } },
 
-  { id: 'generate_image', category: 'vision', kind: 'cloud', description: 'Generate images from text or reference images using AI. Supports OpenAI (GPT Image, DALL-E), Google (Nano Banana, Imagen), and xAI (Grok Imagine).', argsTemplate: { prompt: '', input_images: [], model: 'gpt-image-1', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' }, outputSchema: { ok: 'boolean', images: 'any[]', model: 'string', provider: 'string', error: 'string' } },
+  { id: 'generate_image', category: 'vision', kind: 'cloud', description: 'Generate images from text or reference images using AI. Supports OpenAI (GPT Image, DALL-E), Google (Nano Banana, Imagen), and xAI (Grok Imagine).', argsTemplate: { prompt: '', input_images: [], model: 'gemini-3.1-flash-image-preview', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' }, outputSchema: { ok: 'boolean', images: 'any[]', model: 'string', provider: 'string', error: 'string' } },
   { id: 'text_to_speech', category: 'vision', kind: 'cloud', description: 'Convert text to speech audio using ElevenLabs TTS with language support', argsTemplate: { text: '', voice_id: 'JBFqnCBsd6RMkjVDRZzb', model_id: 'eleven_multilingual_v2', language_code: '', speed: 1.0, format: 'mp3', save: true, play: false, outputPath: '' }, outputSchema: { ok: 'boolean', filePath: 'string', format: 'string', voice_id: 'string', textLength: 'number', played: 'boolean', error: 'string' } },
   { id: 'list_tts_voices', category: 'vision', kind: 'cloud', description: 'List all available ElevenLabs text-to-speech voices', argsTemplate: {}, outputSchema: { ok: 'boolean', voices: 'any[]' } },
   { id: 'get_tts_models', category: 'vision', kind: 'cloud', description: 'List available ElevenLabs TTS models', argsTemplate: {}, outputSchema: { ok: 'boolean', models: 'any[]' } },
@@ -2941,23 +2941,27 @@ if (TOOL_SCHEMAS['generate_image']) {
       type: 'select',
       label: 'Model',
       description: 'AI model for image generation. You can also type a custom model ID.',
-      default: 'gpt-image-1',
+      default: 'gemini-3.1-flash-image-preview',
       allowFreeform: true,
       options: [
         // OpenAI
-        { value: 'gpt-image-1.5', label: 'GPT Image 1.5', description: 'Latest & best quality (OpenAI)', group: 'OpenAI' },
+        { value: 'gpt-image-2', label: 'GPT Image 2', description: 'Latest & best quality (OpenAI)', group: 'OpenAI' },
+        { value: 'gpt-image-1.5', label: 'GPT Image 1.5', description: 'Previous generation (OpenAI)', group: 'OpenAI' },
         { value: 'gpt-image-1', label: 'GPT Image 1', description: 'High quality (OpenAI)', group: 'OpenAI' },
         { value: 'gpt-image-1-mini', label: 'GPT Image 1 Mini', description: 'Fast & cheap (OpenAI)', group: 'OpenAI' },
         { value: 'dall-e-3', label: 'DALL-E 3', description: 'Legacy (OpenAI)', group: 'OpenAI' },
         // Google — Nano Banana family
         { value: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2', description: 'Latest — fast + high quality (Google)', group: 'Google' },
-        { value: 'gemini-3.0-pro-image-preview', label: 'Nano Banana Pro', description: 'Pro quality, up to 4K (Google)', group: 'Google' },
+        { value: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro', description: 'Pro quality, up to 4K (Google)', group: 'Google' },
         { value: 'gemini-2.5-flash-image', label: 'Nano Banana', description: 'Fast & efficient (Google)', group: 'Google' },
         // Google — Imagen family
         { value: 'imagen-4.0-generate-001', label: 'Imagen 4', description: 'Dedicated image model (Google)', group: 'Google' },
+        { value: 'imagen-4.0-ultra-generate-001', label: 'Imagen 4 Ultra', description: 'Highest-quality Imagen 4 variant (Google)', group: 'Google' },
+        { value: 'imagen-4.0-fast-generate-001', label: 'Imagen 4 Fast', description: 'Faster Imagen 4 variant (Google)', group: 'Google' },
         { value: 'imagen-3.0-generate-002', label: 'Imagen 3', description: 'Previous gen (Google)', group: 'Google' },
         // xAI / Grok
-        { value: 'grok-imagine-image', label: 'Grok Imagine', description: 'Aurora-powered, wide style range (xAI)', group: 'xAI' },
+        { value: 'grok-imagine-image-quality', label: 'Grok Imagine Quality', description: 'Recommended for new xAI image generation', group: 'xAI' },
+        { value: 'grok-imagine-image', label: 'Grok Imagine', description: 'Legacy xAI image model alias', group: 'xAI' },
         { value: 'grok-2-image', label: 'Grok 2 Image', description: 'Legacy (xAI)', group: 'xAI' },
       ],
     },

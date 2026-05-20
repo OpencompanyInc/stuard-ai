@@ -136,6 +136,12 @@ const FILE_OPS_TOOLS = [
   'terminal_send_keys',
   'terminal_wait_for',
   'terminal_destroy',
+  'cli_agent_detect',
+  'cli_agent_start',
+  'cli_agent_send',
+  'cli_agent_read',
+  'cli_agent_status',
+  'cli_agent_stop',
   'list_terminals',
   'read_terminal',
 ] as const;
@@ -194,6 +200,7 @@ Use run_command only for one-shot commands that the dedicated file/search tools 
 | terminal_wait_for | Pause until PTY output contains text | sessionId, text, timeoutMs? |
 | terminal_send_keys / terminal_send_raw | Only when plain text input is not enough | sessionId, keys OR data |
 | terminal_list / terminal_get / terminal_destroy | Inspect or close PTY sessions | sessionId? |
+| cli_agent_detect/start/send/read/status/stop | Delegate coding work to installed CLIs (Codex, Cursor Agent, Antigravity, Claude Code) | provider?, cliSessionId?, lineCount?, lineOffsetFromBottom? |
 | list_terminals / read_terminal | Legacy polling for run_command background sessions | terminalId, sinceSeq? |
 
 ## Rules
@@ -461,34 +468,27 @@ export const VM_PACK: CapabilityPack = {
 // ─── Proactive Bots ─────────────────────────────────────────────────────────
 
 const BOT_TOOLS = [
-  'bot_get_status',
-  'ask_bot',
-  'bot_ask',
   'bot_create',
   'bot_deploy',
   'bot_pause',
 ] as const;
 
 const BOT_SYSTEM_PROMPT = `You are the Bot Subagent for StuardAI.
-You handle a configured proactive bot when the orchestrator delegates a target bot id or name to you. Check status, ask the bot for details, create/deploy bots when requested, and start manual bot wake-ups.
+You handle proactive bot create/deploy/pause workflows. Existing configured bots run through the bot's own runtime when delegated.
 
 ## Core Tools
 
 | Tool | When to Use |
 |------|-------------|
-| bot_get_status | Get a status snapshot for one bot: active tasks, recent wake-ups, and memory |
-| ask_bot | Ask a bot by id or name for status/details; set run_now=true only when the user wants a manual wake-up |
 | bot_create | Create a new proactive bot |
 | bot_deploy | Start/deploy an existing bot locally or to VM |
 | bot_pause | Pause/stop an existing bot |
 
 ## Rules
 
-1. If the task context includes Target bot id/name, use it directly.
+1. If the task is to ask an existing bot for updates/status, this pack is bypassed and the configured bot itself runs as the delegated subagent.
 2. If the target is unclear, call ask_orchestrator and ask for the missing bot id/name before guessing.
-3. Prefer ask_bot for user-facing "ask @bot", "what is this bot doing?", or "get an update from the bot" requests.
-4. Only set run_now=true when the user asks to run, wake, trigger, or ask the bot to do fresh work now.
-5. When done, call return_control with a concise answer and include the bot id/name used.`;
+3. When done, call return_control with a concise answer and include the bot id/name used.`;
 
 export const BOT_PACK: CapabilityPack = {
   kind: 'bot',
@@ -501,34 +501,27 @@ export const BOT_PACK: CapabilityPack = {
 // ─── Proactive Agents ────────────────────────────────────────────────────────
 
 const AGENT_TOOLS = [
-  'agent_get_status',
-  'ask_agent',
-  'agent_ask',
   'agent_create',
   'agent_deploy',
   'agent_pause',
 ] as const;
 
 const AGENT_SYSTEM_PROMPT = `You are the Agent Subagent for StuardAI.
-You handle a configured proactive agent when the orchestrator delegates a target agent id or name to you. Check status, ask the agent for details, create/deploy agents when requested, and start manual agent wake-ups.
+You handle proactive agent create/deploy/pause workflows. Existing configured agents run through the agent's own runtime when delegated.
 
 ## Core Tools
 
 | Tool | When to Use |
 |------|-------------|
-| agent_get_status | Get a status snapshot for one agent: active tasks, recent wake-ups, and memory |
-| ask_agent | Ask an agent by id or name for status/details; set run_now=true only when the user wants a manual wake-up |
 | agent_create | Create a new proactive agent |
 | agent_deploy | Start/deploy an existing agent locally or to VM |
 | agent_pause | Pause/stop an existing agent |
 
 ## Rules
 
-1. If the task context includes Target agent id/name, use it directly.
+1. If the task is to ask an existing agent for updates/status, this pack is bypassed and the configured agent itself runs as the delegated subagent.
 2. If the target is unclear, call ask_orchestrator and ask for the missing agent id/name before guessing.
-3. Prefer ask_agent for user-facing "ask @agent", "what is this agent doing?", or "get an update from the agent" requests.
-4. Only set run_now=true when the user asks to run, wake, trigger, or ask the agent to do fresh work now.
-5. When done, call return_control with a concise answer and include the agent id/name used.`;
+3. When done, call return_control with a concise answer and include the agent id/name used.`;
 
 export const AGENT_PACK: CapabilityPack = {
   kind: 'agent',

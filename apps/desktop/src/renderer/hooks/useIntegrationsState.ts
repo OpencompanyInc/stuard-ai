@@ -44,6 +44,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [browserUseStatus, setBrowserUseStatus] = useState<any | null>(null);
   const [browserUseChecking, setBrowserUseChecking] = useState<boolean>(false);
   const [browserUseSetupProgress, setBrowserUseSetupProgress] = useState<string | null>(null);
+  const [cliAgentStatus, setCliAgentStatus] = useState<any | null>(null);
+  const [cliAgentChecking, setCliAgentChecking] = useState<boolean>(false);
   const [telnyxPhones, setTelnyxPhones] = useState<Array<{phone: string, slot: number}>>([]);
   const [telnyxVerifying, setTelnyxVerifying] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         if (prev.mediapipe) next.mediapipe = true;
         if (prev.ollama) next.ollama = true;
         if (prev.browser_use) next.browser_use = true;
+        if (prev['agent-cli']) next['agent-cli'] = true;
 
         for (const [slug, connected] of Object.entries(serverConnected)) {
           if (connected === true) {
@@ -184,6 +187,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
       { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
       { slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true },
+      { slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true },
       { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
       { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
@@ -392,6 +396,35 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     (async () => {
       try {
         await refreshOllamaStatus();
+      } catch {}
+    })();
+  }, []);
+
+  const refreshCliAgentStatus = async () => {
+    setCliAgentChecking(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('cli_agent_detect', {});
+      if (res && typeof res === 'object') setCliAgentStatus(res);
+
+      const anyAvailable = !!(res && (res as any).anyAvailable);
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (anyAvailable) next['agent-cli'] = true;
+        else delete next['agent-cli'];
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {
+    } finally {
+      setCliAgentChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshCliAgentStatus();
       } catch {}
     })();
   }, []);
@@ -1011,6 +1044,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "agent-cli") {
+      try {
+        await refreshCliAgentStatus();
+      } catch {}
+      return;
+    }
+
     if (slug === "telnyx") {
       await refreshTelnyxStatus();
       return;
@@ -1207,6 +1247,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
+    cliAgentStatus,
+    cliAgentChecking,
     telnyxPhones,
     telnyxVerifying,
     whatsappPhone,
@@ -1232,6 +1274,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     refreshOllamaStatus,
     startOllama,
     refreshBrowserUseStatus,
+    refreshCliAgentStatus,
     setupBrowserUse,
     startBrowserUse,
     stopBrowserUse,

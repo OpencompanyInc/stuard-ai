@@ -11,7 +11,6 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
 import { detectRetryableToolError } from '../routes/proactive-utils';
-import { getBotAgent, getBotAgentForUser } from '../agents/bot-agent';
 import { getWorkflowAgent, getWorkflowAgentForUser } from '../agents/workflow-agent';
 import { getModel, getModelForUser } from '../agents/stuard/models';
 import type { ModelSourcePreference } from '../utils/models';
@@ -292,6 +291,55 @@ function makeReportProgressTool(correlation: SubagentCorrelation) {
 
 // ─── Build subagent ──────────────────────────────────────────────────────────
 
+function makeGetOwnStatusTool(
+  correlation: SubagentCorrelation,
+  targetKind: 'agent' | 'bot',
+  targetId?: string,
+  targetName?: string,
+) {
+  return createTool({
+    id: 'get_own_status',
+    description:
+      'Inspect your own proactive agent/bot status snapshot: scheduler status, recent wake-ups, task queue, private kanban cards, and run log. ' +
+      'This is self-inspection for the delegated agent, not asking another bot.',
+    inputSchema: z.object({
+      task_limit: z.number().int().min(1).max(50).optional().default(12),
+      wake_limit: z.number().int().min(1).max(20).optional().default(8),
+      memory_limit: z.number().int().min(1).max(50).optional().default(20),
+      pull_vm_memory: z.boolean().optional().default(true),
+    }),
+    execute: async ({ task_limit, wake_limit, memory_limit, pull_vm_memory }) => {
+      const args: Record<string, any> = {
+        task_limit,
+        wake_limit,
+        memory_limit,
+        pull_vm_memory,
+      };
+      if (targetKind === 'agent') {
+        if (targetId) args.agent_id = targetId;
+      } else if (targetId) {
+        args.bot_id = targetId;
+      }
+      if (targetName) args.name = targetName;
+
+      writeLog('subagent_get_own_status', {
+        subagentId: correlation.subagentId,
+        targetKind,
+        targetId,
+        targetName,
+      });
+
+      return execLocalTool(
+        targetKind === 'agent' ? 'agent_get_status' : 'bot_get_status',
+        args,
+        undefined,
+        30_000,
+        { noFallback: true },
+      );
+    },
+  });
+}
+
 /**
  * Wrap a tool's execute function so it re-enters the bridge ALS context.
  *
@@ -376,6 +424,7 @@ async function buildSubagent(
   onQuestion?: (question: SubagentQuestion) => Promise<SubagentAnswer>,
   userId?: string | null,
   modelSource?: ModelSourcePreference | string | null,
+  request?: DelegationRequest,
 ): Promise<Agent> {
   const executionTools = getExecutionToolsLazy();
   const selectedModel = (userId && modelSource)
@@ -385,6 +434,110 @@ async function buildSubagent(
   const askTool = makeAskOrchestratorTool(correlation, onQuestion);
   const returnTool = makeReturnControlTool(correlation);
   const progressTool = makeReportProgressTool(correlation);
+
+  if (pack.kind === 'agent' || pack.kind === 'bot') {
+    const targetKind = pack.kind;
+    const targetId = String(request?.targetAgentId || '').trim();
+    const targetName = String(request?.targetAgentName || '').trim();
+    const statusArgs: Record<string, any> = {
+      task_limit: 12,
+      wake_limit: 8,
+      memory_limit: 20,
+      pull_vm_memory: true,
+    };
+    if (targetKind === 'agent') {
+      if (targetId) statusArgs.agent_id = targetId;
+    } else if (targetId) {
+      statusArgs.bot_id = targetId;
+    }
+    if (targetName) statusArgs.name = targetName;
+
+    let statusSnapshot: any = null;
+    try {
+      statusSnapshot = await execLocalTool(
+        targetKind === 'agent' ? 'agent_get_status' : 'bot_get_status',
+        statusArgs,
+        undefined,
+        30_000,
+        { noFallback: true },
+      );
+    } catch (error: any) {
+      statusSnapshot = { ok: false, error: error?.message || String(error) };
+    }
+
+    const botInfo = statusSnapshot?.bot && typeof statusSnapshot.bot === 'object' ? statusSnapshot.bot : {};
+    const config = botInfo?.config && typeof botInfo.config === 'object' ? botInfo.config : {};
+    const resolvedBotId = String(botInfo?.id || targetId || '').trim() || undefined;
+    const resolvedBotName = String(botInfo?.name || targetName || '').trim() || undefined;
+    const configuredModel = String(config?.modelMode || '').trim().toLowerCase();
+    const delegatedModel = configuredModel === 'fast' || configuredModel === 'balanced' || configuredModel === 'smart'
+      ? configuredModel as ModelChoice
+      : model;
+    const delegatedModelId = typeof config?.modelId === 'string' && config.modelId.trim()
+      ? config.modelId.trim()
+      : modelId;
+    const promptAddendum = [
+      botInfo?.systemPrompt ? `## Configured Agent System Prompt\n${String(botInfo.systemPrompt).trim()}` : '',
+      botInfo?.storedFacts ? `## Configured Agent Stored Facts\n${String(botInfo.storedFacts).trim()}` : '',
+      '## Delegated Orchestrator Run',
+      `You are running as a delegated subagent under the orchestrator. Your delegated subagent id is ${correlation.subagentId}.`,
+      'Do exactly what the orchestrator asks in this run. Treat the user request as coming through the orchestrator, not as a scheduler wake-up.',
+      'For status/update requests, call get_own_status first and summarize from your own status, queue, private kanban, recent wake-ups, and run log. Do not call ask_bot or ask_agent.',
+      'Use your configured added tools and private kanban tools normally. If you need user-only information or a decision, call ask_orchestrator.',
+      'When finished, call return_control with the concise answer the orchestrator should show the user.',
+      config?.instructions ? `\n## Configured Agent Instructions\n${String(config.instructions).trim()}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const { getBotAgent, getBotAgentForUser } = await import('../agents/bot-agent');
+    const extraTools = {
+      ask_orchestrator: askTool,
+      return_control: returnTool,
+      report_progress: progressTool,
+      get_own_status: wrapToolWithBridge(
+        makeGetOwnStatusTool(correlation, targetKind, resolvedBotId, resolvedBotName),
+        bridgeWs,
+        bridgeSecrets,
+      ),
+    };
+    const botAgent = (userId && modelSource)
+      ? await getBotAgentForUser({
+          botId: resolvedBotId,
+          botName: resolvedBotName,
+          model: delegatedModel,
+          modelId: delegatedModelId,
+          modelSource,
+          userId,
+          allowedTools: Array.isArray(config?.allowedTools) ? config.allowedTools : [],
+          extraTools,
+          promptAddendum,
+        })
+      : getBotAgent({
+          botId: resolvedBotId,
+          botName: resolvedBotName,
+          model: delegatedModel,
+          modelId: delegatedModelId,
+          allowedTools: Array.isArray(config?.allowedTools) ? config.allowedTools : [],
+          extraTools,
+          promptAddendum,
+        });
+
+    const toolNames = (botAgent as any).__activeToolNames || Object.keys((botAgent as any).tools || {});
+    writeLog('subagent_build', {
+      subagentId: correlation.subagentId,
+      kind: pack.kind,
+      model: delegatedModel,
+      modelId: delegatedModelId || '(default)',
+      targetId: resolvedBotId,
+      targetName: resolvedBotName,
+      statusResolved: !!statusSnapshot?.ok,
+      statusError: statusSnapshot?.ok === false ? statusSnapshot?.error : undefined,
+      toolCount: toolNames.length,
+      resolvedTools: toolNames,
+      usesConfiguredBotAgent: true,
+    });
+
+    return botAgent;
+  }
 
   if (pack.kind === 'workflow') {
     const workflowAgent = (userId && modelSource)
@@ -639,6 +792,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     onQuestion,
     inheritedUserId,
     inheritedModelSource,
+    request,
   );
   const timeoutMs = request.timeoutMs ?? pack.timeoutMs ?? 0;
 

@@ -13,21 +13,24 @@ import { mediaGalleryDir } from '../utils/platform';
 
 const PROVIDER_MODELS: Record<string, string[]> = {
   openai: [
-    'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini',
+    'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini',
     'dall-e-3', 'dall-e-2',
   ],
   google: [
     // Nano Banana family (Gemini native image gen)
     'gemini-3.1-flash-image-preview',  // Nano Banana 2 (latest)
-    'gemini-3.0-pro-image-preview',    // Nano Banana Pro
+    'gemini-3-pro-image-preview',      // Nano Banana Pro
     'gemini-2.5-flash-image',          // Nano Banana (original)
     'gemini-2.5-flash-preview-native-audio-dialog',
     // Imagen family (dedicated image models)
     'imagen-4.0-generate-001',         // Imagen 4
+    'imagen-4.0-ultra-generate-001',   // Imagen 4 Ultra
+    'imagen-4.0-fast-generate-001',    // Imagen 4 Fast
     'imagen-3.0-generate-002',         // Imagen 3
   ],
   xai: [
-    'grok-imagine-image',              // Grok Imagine (Aurora-powered)
+    'grok-imagine-image-quality',      // Grok Imagine quality model
+    'grok-imagine-image',              // Grok Imagine legacy alias
     'grok-2-image',                    // Grok 2 Image (legacy)
   ],
 };
@@ -127,7 +130,7 @@ export function getImageInputSupport(model: string): { supported: boolean; reaso
   }
 
   if (provider === 'openai') {
-    // All GPT Image models support images.edit (gpt-image-1.5, gpt-image-1, gpt-image-1-mini)
+    // All GPT Image models support images.edit.
     if (model.startsWith('gpt-image')) return { supported: true };
     if (model.startsWith('dall-e-')) {
       return {
@@ -140,10 +143,10 @@ export function getImageInputSupport(model: string): { supported: boolean; reaso
 
   if (provider === 'xai') {
     // Grok Imagine supports multi-reference image editing via /v1/images/edits
-    if (model === 'grok-imagine-image') return { supported: true };
+    if (model.startsWith('grok-imagine-image')) return { supported: true };
     return {
       supported: false,
-      reason: `input_images are not supported for ${model}. Use grok-imagine-image instead.`,
+      reason: `input_images are not supported for ${model}. Use grok-imagine-image-quality instead.`,
     };
   }
 
@@ -302,7 +305,7 @@ async function generateWithXAI(params: {
   if (!apiKey) throw new Error('XAI_API_KEY is required for xAI image generation');
 
   // xAI image editing uses JSON endpoint, NOT OpenAI SDK multipart
-  if (params.inputImages?.length && params.model === 'grok-imagine-image') {
+  if (params.inputImages?.length && params.model.startsWith('grok-imagine-image')) {
     const imageRefs = params.inputImages.map((img) => ({
       url: `data:${img.mimeType};base64,${img.b64}`,
       type: 'image_url' as const,
@@ -505,19 +508,19 @@ export const generate_image = createTool({
   id: 'generate_image',
   description:
     'Generate images from a text prompt or reference images using AI. Supports multiple providers and models:\n' +
-    '- OpenAI: gpt-image-1.5 (latest), gpt-image-1, gpt-image-1-mini, dall-e-3\n' +
-    '- Google: gemini-3.1-flash-image-preview (Nano Banana 2), gemini-3.0-pro-image-preview (Nano Banana Pro), gemini-2.5-flash-image (Nano Banana), imagen-4.0-generate-001 (Imagen 4)\n' +
-    '- xAI: grok-imagine-image (Aurora), grok-2-image\n' +
-    'Choose model based on need: gpt-image-1.5 or Nano Banana Pro for best quality, gpt-image-1-mini or Nano Banana 2 for speed, grok-imagine-image for style variety.',
+    '- OpenAI: gpt-image-2 (latest), gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3\n' +
+    '- Google: gemini-3.1-flash-image-preview (Nano Banana 2), gemini-3-pro-image-preview (Nano Banana Pro), gemini-2.5-flash-image (Nano Banana), imagen-4.0-generate-001, imagen-4.0-ultra-generate-001, imagen-4.0-fast-generate-001\n' +
+    '- xAI: grok-imagine-image-quality, grok-imagine-image\n' +
+    'Choose model based on need: gpt-image-2 or Nano Banana Pro for best quality, gpt-image-1-mini or Nano Banana 2 for speed, grok-imagine-image-quality for xAI image generation.',
   inputSchema: z.object({
     prompt: z.string().min(1).max(4000).describe('Text description of the image to generate. Be detailed and specific.'),
     input_images: z.array(INPUT_IMAGE_SCHEMA).optional().describe(
       'Optional input/reference images for image-to-image or editing workflows. ' +
-      'Supported by: all GPT Image models (gpt-image-1.5, gpt-image-1, gpt-image-1-mini), ' +
-      'Gemini image-preview models, and grok-imagine-image (up to 3 images). ' +
+      'Supported by: all GPT Image models (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini), ' +
+      'Gemini image-preview models, and Grok Imagine models (up to 3 images). ' +
       'NOT supported by: DALL-E, Imagen, or grok-2-image.'
     ),
-    model: z.string().default('gpt-image-1').describe(
+    model: z.string().default('gemini-3.1-flash-image-preview').describe(
       `Image model to use. Known models: ${allModels.join(', ')}. ` +
       'You can also pass any new model ID — the provider is auto-detected from the prefix.'
     ),

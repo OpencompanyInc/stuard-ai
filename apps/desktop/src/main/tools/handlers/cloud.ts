@@ -7,6 +7,12 @@ import { TOOL_REGISTRY } from '../registry';
 import { resolveRedactedFilePath } from './redacted-path';
 import { getMediaLibrarySourceDir } from '../../services/media-library';
 
+const DEFAULT_CLOUD_AI_URL = 'http://localhost:8082';
+
+function getCloudAiUrl(ctx: RouterContext): string {
+  return String(ctx.cloudAiUrl || DEFAULT_CLOUD_AI_URL).trim().replace(/\/+$/, '') || DEFAULT_CLOUD_AI_URL;
+}
+
 /**
  * Execute a tool via Cloud AI HTTP endpoint
  */
@@ -53,7 +59,8 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
       return execCloudStorageUpload(args, ctx);
     }
     
-    const url = `${ctx.cloudAiUrl}${endpoint}`;
+    const cloudAiUrl = getCloudAiUrl(ctx);
+    const url = `${cloudAiUrl}${endpoint}`;
 
     // Agent tools use the bridged WS path so they can call local tools
     const isAgentTool = tool === 'agent_node' || tool === 'agent_decision' || tool === 'agent_extract';
@@ -127,7 +134,7 @@ async function execAgentToolBridged(tool: string, args: any, ctx: RouterContext)
   ctx.logFn(`🤖 AI Agent: ${tool} (model=${model}${mode ? ', mode=' + mode : ''})`);
 
   // Convert HTTP URL to WS URL
-  let wsUrl = ctx.cloudAiUrl.replace(/\/+$/, '');
+  let wsUrl = getCloudAiUrl(ctx);
   if (wsUrl.startsWith('https://')) wsUrl = 'wss://' + wsUrl.slice('https://'.length);
   else if (wsUrl.startsWith('http://')) wsUrl = 'ws://' + wsUrl.slice('http://'.length);
   wsUrl += '/ws';
@@ -359,7 +366,7 @@ async function execCloudAiVision(args: any, ctx: RouterContext): Promise<any> {
       headers.Authorization = `Bearer ${ctx.accessToken}`;
     }
 
-    const resp = await net.fetch(`${ctx.cloudAiUrl}/inference/ai/vision-structured`, {
+    const resp = await net.fetch(`${getCloudAiUrl(ctx)}/inference/ai/vision-structured`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -495,7 +502,7 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
       return { ok: false, error: 'no_valid_media_files' };
     }
     
-    const url = `${ctx.cloudAiUrl}/inference/ai/analyze-media`;
+    const url = `${getCloudAiUrl(ctx)}/inference/ai/analyze-media`;
     ctx.logFn(`analyze_media: Calling Gemini...`);
     
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -628,7 +635,7 @@ async function execAiInference(args: any, ctx: RouterContext): Promise<any> {
       sources: enrichedSources.length > 0 ? enrichedSources : undefined,
     };
 
-    const url = `${ctx.cloudAiUrl}/tools/ai_inference`;
+    const url = `${getCloudAiUrl(ctx)}/tools/ai_inference`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (ctx.accessToken) {
       headers['Authorization'] = `Bearer ${ctx.accessToken}`;
@@ -695,7 +702,7 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     ctx.logFn(`TTS: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}" (voice_id=${voiceId}, model=${modelId}${languageCode ? ', lang=' + languageCode : ''})`);
     
     // Call cloud to generate audio
-    const url = `${ctx.cloudAiUrl}/tools/text_to_speech`;
+    const url = `${getCloudAiUrl(ctx)}/tools/text_to_speech`;
     const ttsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (ctx.accessToken) {
       ttsHeaders['Authorization'] = `Bearer ${ctx.accessToken}`;
@@ -790,7 +797,7 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
 async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
   try {
     const prompt = String(args?.prompt || '').trim();
-    const model = args?.model || 'gpt-image-1';
+    const model = args?.model || 'gemini-3.1-flash-image-preview';
     const format = args?.format || 'png';
 
     if (!prompt) {
@@ -831,7 +838,7 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
     }
 
     // Call cloud to generate image
-    const url = `${ctx.cloudAiUrl}/tools/generate_image`;
+    const url = `${getCloudAiUrl(ctx)}/tools/generate_image`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (ctx.accessToken) {
       headers['Authorization'] = `Bearer ${ctx.accessToken}`;
@@ -947,7 +954,7 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
 
     // Upload via proxy endpoint using JSON+base64 to avoid Electron net.fetch
     // binary body issues (net::ERR_INVALID_ARGUMENT with raw Uint8Array/Buffer)
-    const uploadUrl = `${ctx.cloudAiUrl}/v1/cloud-storage/upload`;
+    const uploadUrl = `${getCloudAiUrl(ctx)}/v1/cloud-storage/upload`;
     const uploadHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
     };

@@ -86,6 +86,23 @@ describe('Tool Registry - Extended Tests', () => {
     }
   });
 
+  describe('getToolKind - CLI agent tools', () => {
+    const cliAgentTools = [
+      'cli_agent_detect',
+      'cli_agent_start',
+      'cli_agent_send',
+      'cli_agent_read',
+      'cli_agent_status',
+      'cli_agent_stop',
+    ];
+
+    for (const tool of cliAgentTools) {
+      it(`should return 'electron' for ${tool}`, () => {
+        expect(getToolKind(tool)).toBe('electron');
+      });
+    }
+  });
+
   describe('getToolKind - orchestration tools', () => {
     const orchestrationTools = [
       'run_sequential',

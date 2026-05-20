@@ -32,6 +32,12 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   terminal_create: ['terminal', 'shell', 'cli', 'interactive'],
   terminal_send_input: ['terminal', 'shell', 'cli', 'interactive'],
   terminal_read: ['terminal', 'shell', 'cli', 'interactive'],
+  cli_agent_detect: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate'],
+  cli_agent_start: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'sub-agent'],
+  cli_agent_send: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'input'],
+  cli_agent_read: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'status'],
+  cli_agent_status: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'status'],
+  cli_agent_stop: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'stop'],
 
   // Browser automation
   browser_use_navigate: ['browser', 'website', 'web automation', 'scrape'],
@@ -42,6 +48,7 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   browser_use_scroll: ['browser', 'web automation'],
 
   // FFmpeg / media processing
+  generate_image: ['image generation', 'generate image', 'create image', 'ai image', 'picture', 'visual mockup'],
   ffmpeg_run: ['ffmpeg', 'video', 'audio', 'media processing', 'convert'],
   ffmpeg_convert_media: ['ffmpeg', 'video', 'audio', 'convert', 'transcode'],
   ffmpeg_extract_audio: ['ffmpeg', 'audio', 'extract audio'],
@@ -352,6 +359,12 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   terminal_create: ['new terminal', 'open terminal', 'start shell'],
   terminal_list: ['list terminals', 'active shells'],
   terminal_send_input: ['terminal input', 'shell command'],
+  cli_agent_detect: ['detect codex cursor antigravity claude code cli', 'installed coding agents', 'available cli agents'],
+  cli_agent_start: ['delegate to codex', 'delegate to cursor agent', 'delegate to antigravity', 'delegate to claude code', 'start coding subagent cli'],
+  cli_agent_send: ['send command to coding cli', 'follow up delegated cli agent', 'talk to codex cursor claude antigravity'],
+  cli_agent_read: ['read cli agent output from bottom', 'inspect delegated agent output', 'tail codex cursor claude antigravity'],
+  cli_agent_status: ['coding cli status', 'delegated agent status', 'list cli agent sessions'],
+  cli_agent_stop: ['stop coding cli agent', 'cancel delegated cli session'],
   list_terminals: ['active terminals', 'background processes'],
   read_terminal: ['terminal output', 'shell output'],
 

@@ -7,6 +7,7 @@ import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execAskUserInApp } from './handlers/ask-user-inapp';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
+import { execCliAgentDetect, execCliAgentStart, execCliAgentSend, execCliAgentRead, execCliAgentStatus, execCliAgentStop } from './handlers/cli-agent';
 import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execReadLocalWorkflow, execDeployLocalWorkflow, execListLocalStuards } from './handlers/workflow';
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
@@ -242,6 +243,14 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'terminal_read') return execTerminalRead(args, ctx);
       if (toolName === 'terminal_wait_for') return execTerminalWaitFor(args, ctx);
       if (toolName === 'terminal_destroy') return execTerminalDestroy(args, ctx);
+
+      // Coding-agent CLI integrations
+      if (toolName === 'cli_agent_detect') return execCliAgentDetect();
+      if (toolName === 'cli_agent_start') return execCliAgentStart(args, ctx);
+      if (toolName === 'cli_agent_send') return execCliAgentSend(args, ctx);
+      if (toolName === 'cli_agent_read') return execCliAgentRead(args);
+      if (toolName === 'cli_agent_status') return execCliAgentStatus(args);
+      if (toolName === 'cli_agent_stop') return execCliAgentStop(args, ctx);
 
       // Ollama (Local AI) tools
       if (toolName === 'ollama_status') return execOllamaStatus(args, ctx);

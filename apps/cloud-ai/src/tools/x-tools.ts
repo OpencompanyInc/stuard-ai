@@ -24,7 +24,7 @@ const profileField = z.string().optional().describe(
   'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
 );
 
-const tweetFields = 'author_id,created_at,public_metrics,lang,referenced_tweets,conversation_id,in_reply_to_user_id';
+const tweetFields = 'author_id,created_at,public_metrics,lang,referenced_tweets,conversation_id,in_reply_to_user_id,reply_settings,entities';
 const userFields = 'username,name,verified,profile_image_url';
 const dmEventFields = 'id,text,created_at,sender_id,event_type,dm_conversation_id,attachments,referenced_tweets';
 
@@ -196,6 +196,14 @@ function formatXError(body: any, status: number, statusText: string): string {
   const problem = body?.detail || body?.title || body?.message || body?.error || errors;
   const message = typeof problem === 'string' && problem.trim() ? problem.trim() : `${status} ${statusText}`;
   const lower = message.toLowerCase();
+  if (status === 403 && (
+    lower.includes('restricted who can reply') ||
+    lower.includes('not allowed to reply') ||
+    lower.includes('cannot reply') ||
+    lower.includes('reply to this tweet')
+  )) {
+    return `${message}. X's self-serve API can reject replies even when the logged-in web UI can comment. API replies are only permitted when the original author @mentions the authenticated account or quotes one of its posts.`;
+  }
   if (status === 403 && (lower.includes('scope') || lower.includes('permission') || lower.includes('forbidden') || lower.includes('unauthorized'))) {
     return `${message}. X posting requires tweet.write scope and Read/Write app permissions. Reconnect X in Settings → Integrations, then try again.`;
   }
@@ -227,7 +235,12 @@ async function createXPost(input: { text: string; replyToTweetId?: string; profi
   await gateCredits(userId);
   await requireXScopes(input.profile, ['tweet.write']);
   const payload: any = { text: input.text };
-  if (input.replyToTweetId) payload.reply = { in_reply_to_tweet_id: String(input.replyToTweetId) };
+  if (input.replyToTweetId) {
+    payload.reply = {
+      in_reply_to_tweet_id: String(input.replyToTweetId),
+      auto_populate_reply_metadata: true,
+    };
+  }
   const { body } = await xFetch(`/tweets`, input.profile, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -293,6 +306,11 @@ function formatTweet(t: any, usersById: Map<string, any>) {
     in_reply_to_user_id: t.in_reply_to_user_id,
     in_reply_to_tweet_id: firstRepliedToId(t),
     referenced: t.referenced_tweets || [],
+    reply_settings: t.reply_settings || null,
+    mentions: (t.entities?.mentions || []).map((m: any) => ({
+      username: m.username,
+      id: m.id,
+    })),
     url: author ? `https://twitter.com/${author.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
   };
 }
@@ -308,7 +326,7 @@ async function getAuthenticatedXUser(profile?: string): Promise<{ id: string; us
 
 export const x_search_tweets = createTool({
   id: 'x_search_tweets',
-  description: 'Search recent tweets/posts on X/Twitter matching a query. Returns up to 100 results from the last 7 days.',
+  description: 'Search recent tweets/posts on X/Twitter matching a query. Returns up to 100 results from the last 7 days. Results include reply_settings and mentions, but open reply settings do not guarantee the X self-serve API can reply unless the post @mentions the authenticated account or quotes one of its posts.',
   inputSchema: z.object({
     query: z.string().min(1).describe('Search query (supports operators like from:user, has:images, lang:en)'),
     max_results: z.number().int().min(10).max(100).default(20),
@@ -321,7 +339,7 @@ export const x_search_tweets = createTool({
     const params = new URLSearchParams({
       query,
       max_results: String(max_results || 20),
-      'tweet.fields': 'author_id,created_at,public_metrics,lang',
+      'tweet.fields': 'author_id,created_at,public_metrics,lang,reply_settings,entities',
       'expansions': 'author_id',
       'user.fields': 'username,name',
     });
@@ -338,6 +356,11 @@ export const x_search_tweets = createTool({
         created_at: t.created_at,
         metrics: t.public_metrics,
         lang: t.lang,
+        reply_settings: t.reply_settings || null,
+        mentions: (t.entities?.mentions || []).map((m: any) => ({
+          username: m.username,
+          id: m.id,
+        })),
         url: u ? `https://twitter.com/${u.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
       };
     });
@@ -350,7 +373,7 @@ export const x_search_tweets = createTool({
 
 export const x_get_comments = createTool({
   id: 'x_get_comments',
-  description: 'Get X/Twitter comments/replies with filters. For a post, pass post_id. For account mentions, pass username or user_id. Supports filters like from_username, to_username, mentioned_username, lang, since_id, date range, and minimum engagement.',
+  description: 'Get X/Twitter comments/replies with filters. For a post, pass post_id. For account mentions, pass username or user_id. Supports filters like from_username, to_username, mentioned_username, lang, since_id, date range, and minimum engagement. Open reply settings do not guarantee the X self-serve API can reply unless the post @mentions the authenticated account or quotes one of its posts.',
   inputSchema: z.object({
     post_id: z.string().optional().describe('Post/comment id whose reply thread should be searched. With only_direct_replies=true, returns direct replies to this id.'),
     conversation_id: z.string().optional().describe('Conversation/root post id. Use this when you already know the conversation id.'),
@@ -542,7 +565,7 @@ export const x_get_user_timeline = createTool({
     if (exclude_retweets) exclude.push('retweets');
     const params = new URLSearchParams({
       max_results: String(max_results || 20),
-      'tweet.fields': 'created_at,public_metrics,lang,referenced_tweets',
+      'tweet.fields': 'created_at,public_metrics,lang,referenced_tweets,reply_settings,entities',
     });
     if (exclude.length) params.set('exclude', exclude.join(','));
 
@@ -554,6 +577,11 @@ export const x_get_user_timeline = createTool({
       metrics: t.public_metrics,
       lang: t.lang,
       referenced: t.referenced_tweets || [],
+      reply_settings: t.reply_settings || null,
+      mentions: (t.entities?.mentions || []).map((m: any) => ({
+        username: m.username,
+        id: m.id,
+      })),
     }));
     await meterX(userId, 'get_user_timeline', X_PRICE_USD_READ);
     return { user_id: targetId, items, count: items.length, next_token: body?.meta?.next_token || null };
@@ -574,7 +602,7 @@ export const x_get_tweet = createTool({
     const userId = requireUserId();
     await gateCredits(userId);
     const params = new URLSearchParams({
-      'tweet.fields': 'author_id,created_at,public_metrics,lang,referenced_tweets',
+      'tweet.fields': 'author_id,created_at,public_metrics,lang,referenced_tweets,reply_settings,entities',
       'expansions': 'author_id',
       'user.fields': 'username,name',
     });
@@ -591,6 +619,11 @@ export const x_get_tweet = createTool({
       metrics: t.public_metrics,
       lang: t.lang,
       referenced: t.referenced_tweets || [],
+      reply_settings: t.reply_settings || null,
+      mentions: (t.entities?.mentions || []).map((m: any) => ({
+        username: m.username,
+        id: m.id,
+      })),
       url: author ? `https://twitter.com/${author.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
     } : null;
   },
@@ -600,7 +633,7 @@ export const x_get_tweet = createTool({
 
 export const x_post_tweet = createTool({
   id: 'x_post_tweet',
-  description: 'Post a new tweet/post on X/Twitter. Optionally reply to an existing tweet by passing reply_to_tweet_id.',
+  description: 'Post a new tweet/post on X/Twitter. Optionally reply to an existing tweet by passing reply_to_tweet_id. X self-serve API accounts can only reply when the original author @mentions the authenticated account or quotes one of its posts, even if the web UI allows manual replies.',
   inputSchema: z.object({
     text: z.string().min(1).max(280).describe('Tweet text (max 280 characters)'),
     reply_to_tweet_id: z.string().optional().describe('If set, post this tweet as a reply to the given tweet id.'),
@@ -629,7 +662,7 @@ export const x_post_tweet = createTool({
 
 export const x_comment_on_post = createTool({
   id: 'x_comment_on_post',
-  description: 'Comment on an X/Twitter post by posting a reply to the post id.',
+  description: 'Comment on an X/Twitter post by posting a reply to the post id. X self-serve API accounts can only reply when the original author @mentions the authenticated account or quotes one of its posts, even if the web UI allows manual replies.',
   inputSchema: z.object({
     post_id: z.string().optional().describe('The post id to comment on.'),
     tweet_id: z.string().optional().describe('Alias for post_id.'),
@@ -660,7 +693,7 @@ export const x_comment_on_post = createTool({
 
 export const x_reply_to_comment = createTool({
   id: 'x_reply_to_comment',
-  description: 'Reply to an X/Twitter comment/reply by comment id.',
+  description: 'Reply to an X/Twitter comment/reply by comment id. X self-serve API accounts can only reply when the original author @mentions the authenticated account or quotes one of its posts, even if the web UI allows manual replies.',
   inputSchema: z.object({
     comment_id: z.string().optional().describe('The comment/reply post id to reply to.'),
     post_id: z.string().optional().describe('Alias for comment_id.'),

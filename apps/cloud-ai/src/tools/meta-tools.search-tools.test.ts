@@ -142,6 +142,24 @@ describe('search_tools Supabase-backed discovery', () => {
     ]);
   });
 
+  it('merges local registry keyword matches when vector results are stale', async () => {
+    const rpcMock = vi.fn(async () => ({
+      data: [],
+      error: null,
+    }));
+
+    getSupabaseServiceMock.mockReturnValue({
+      from: vi.fn(),
+      rpc: rpcMock,
+    });
+    resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
+    embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
+
+    const result = await (search_tools as any).execute({ query: 'image generation', limit: 5 });
+
+    expect(result.tools.some((tool: any) => tool.name === 'generate_image')).toBe(true);
+  });
+
   it('returns schema-enriched workflow node search results in one call', async () => {
     const rpcMock = vi.fn(async () => ({
       data: [

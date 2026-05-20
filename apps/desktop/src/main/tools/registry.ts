@@ -124,6 +124,14 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'terminal_wait_for': { kind: 'electron' },    // Wait until output contains a substring
   'terminal_destroy': { kind: 'electron' },
 
+  // Coding-agent CLI integrations (Codex, Cursor Agent, Antigravity, Claude Code)
+  'cli_agent_detect': { kind: 'electron' },
+  'cli_agent_start': { kind: 'electron' },
+  'cli_agent_send': { kind: 'electron' },
+  'cli_agent_read': { kind: 'electron' },
+  'cli_agent_status': { kind: 'electron' },
+  'cli_agent_stop': { kind: 'electron' },
+
   // Orchestration tools (handled inline by engine)
   'run_sequential': { kind: 'orchestration' },
   'run_parallel': { kind: 'orchestration' },

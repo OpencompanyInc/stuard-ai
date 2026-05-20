@@ -93,7 +93,7 @@ export default function CommandPalette({ open, onClose, commands, onQueryChange,
       if (e.key === "Enter") {
         e.preventDefault();
         const cmd = grouped.flat[index];
-        if (cmd) { onClose(); setTimeout(() => cmd.run(), 0); }
+        if (cmd) { cmd.run(); onClose(); }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -171,7 +171,7 @@ export default function CommandPalette({ open, onClose, commands, onQueryChange,
                           return (
                             <button
                               key={c.id}
-                              onClick={() => { onClose(); setTimeout(() => c.run(), 0); }}
+                              onClick={() => { c.run(); onClose(); }}
                               onMouseEnter={() => setIndex(globalIndex)}
                               className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center justify-between transition-all duration-150 group relative
                                 ${isSelected

@@ -23,6 +23,7 @@ import * as vmTools from './vm-tools';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
+import { generate_image } from './image-gen';
 import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
@@ -55,6 +56,46 @@ export function initToolRegistry(): void {
   if (_initialized) return;
   _initialized = true;
   // Tools are registered during module load via registerTool() calls below
+}
+
+const BINARY_PAYLOAD_KEYS = new Set([
+    '_b64',
+    'b64',
+    'base64',
+    'base64Data',
+    'data',
+    'imageB64',
+    'audioData',
+    'content',
+]);
+
+export function sanitizeToolResultForModel(value: any): any {
+    if (typeof value === 'string') {
+        if (value.length > 2000 && /^[A-Za-z0-9+/=_-]+$/.test(value.slice(0, 2000))) {
+            return `[redacted base64 payload: ${value.length} chars]`;
+        }
+        if (value.startsWith('data:') && value.length > 2000) {
+            return `[redacted data URL: ${value.length} chars]`;
+        }
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => sanitizeToolResultForModel(item));
+    }
+
+    if (!value || typeof value !== 'object') return value;
+
+    const sanitized: Record<string, any> = {};
+    for (const [key, child] of Object.entries(value)) {
+        if (BINARY_PAYLOAD_KEYS.has(key) && typeof child === 'string' && child.length > 2000) {
+            sanitized[key] = `[redacted binary payload: ${child.length} chars]`;
+            sanitized[`${key}Bytes`] = Math.ceil((child.length * 3) / 4);
+            continue;
+        }
+        sanitized[key] = sanitizeToolResultForModel(child);
+    }
+    return sanitized;
 }
 
 export async function ensureToolEmbeddings() {
@@ -444,6 +485,7 @@ Object.values(deviceTools).forEach(t => {
 // Integration Tools
 registerTool(analyzeMediaTool, 'AI');
 registerTool(aiInferenceTool, 'AI');
+registerTool(generate_image, 'AI');
 registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
 
@@ -595,13 +637,20 @@ export const search_tools = createTool({
                     enabled_only: true,
                 });
                 if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
-                return {
-                    tools: (data as any[]).map((r) => ({
-                        name: r.name,
-                        description: r.description ?? '',
-                        category: r.category ?? '',
-                    })),
-                };
+                const tools = (data as any[]).map((r) => ({
+                    name: r.name,
+                    description: r.description ?? '',
+                    category: r.category ?? '',
+                }));
+                const localMatches = keywordFallback().tools;
+                const seen = new Set(tools.map((tool) => tool.name));
+                for (const tool of localMatches) {
+                    if (!seen.has(tool.name)) {
+                        tools.push(tool);
+                        seen.add(tool.name);
+                    }
+                }
+                return { tools: typeof limit === 'number' ? tools.slice(0, limit) : tools };
             } catch (e) {
                 console.warn('Vector search failed, falling back to keyword search', e);
                 return keywordFallback();
@@ -782,7 +831,7 @@ export const execute_tool = createTool({
             }
             try {
                 const result = await tool.execute(toolArgs, runCtx);
-                return { success: true, tool: tool_name, result };
+                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
@@ -795,7 +844,7 @@ export const execute_tool = createTool({
                 if (result && typeof result === 'object' && (result as any).error === 'unknown_tool') {
                     return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
                 }
-                return { success: true, tool: tool_name, result };
+                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }

@@ -4,6 +4,7 @@ import { buildGeminiNativeRequestBody, getImageInputSupport } from './image-gen'
 
 describe('getImageInputSupport', () => {
   it('supports all GPT Image models', () => {
+    expect(getImageInputSupport('gpt-image-2')).toEqual({ supported: true });
     expect(getImageInputSupport('gpt-image-1')).toEqual({ supported: true });
     expect(getImageInputSupport('gpt-image-1.5')).toEqual({ supported: true });
     expect(getImageInputSupport('gpt-image-1-mini')).toEqual({ supported: true });
@@ -11,11 +12,12 @@ describe('getImageInputSupport', () => {
 
   it('supports Gemini image-preview models', () => {
     expect(getImageInputSupport('gemini-3.1-flash-image-preview')).toEqual({ supported: true });
-    expect(getImageInputSupport('gemini-3.0-pro-image-preview')).toEqual({ supported: true });
+    expect(getImageInputSupport('gemini-3-pro-image-preview')).toEqual({ supported: true });
     expect(getImageInputSupport('gemini-2.5-flash-image')).toEqual({ supported: true });
   });
 
-  it('supports grok-imagine-image', () => {
+  it('supports Grok Imagine image models', () => {
+    expect(getImageInputSupport('grok-imagine-image-quality')).toEqual({ supported: true });
     expect(getImageInputSupport('grok-imagine-image')).toEqual({ supported: true });
   });
 

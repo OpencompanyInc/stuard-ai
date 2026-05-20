@@ -55,6 +55,8 @@ function summarizeBot(bot: Bot, config?: BotConfig | null): Record<string, any> 
     id: bot.id,
     name: bot.name,
     emoji: bot.emoji,
+    systemPrompt: bot.systemPrompt || '',
+    storedFacts: bot.storedFacts || '',
     status: bot.status,
     lastRunAt: bot.lastRunAt ?? null,
     nextRunAt: bot.nextRunAt ?? null,

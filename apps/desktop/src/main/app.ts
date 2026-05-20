@@ -342,7 +342,7 @@ try {
       process.env.CLOUD_AI_HTTP ||
       process.env.CLOUD_PUBLIC_URL ||
       process.env.VITE_CLOUD_AI_URL ||
-      ''
+      'http://localhost:8082'
     ).trim().replace(/\/+$/, '');
 
     initCustomUiIpc(() => ({

@@ -198,7 +198,7 @@ export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'find_text', label: 'Find Text', args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
   { k: 'cloud.tool', t: 'find_and_click_text', label: 'Find & Click Text', args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
   { k: 'cloud.tool', t: 'google_cloud_ocr', label: 'OCR (Image or Screen)', args: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: false, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'document', languageHints: [], includeWordBoxes: true } },
-  { k: 'cloud.tool', t: 'generate_image', label: 'Generate Image', args: { prompt: '', model: 'gpt-image-1', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' } },
+  { k: 'cloud.tool', t: 'generate_image', label: 'Generate Image', args: { prompt: '', model: 'gemini-3.1-flash-image-preview', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' } },
 
   // Web search
   { k: 'cloud.tool', t: 'web_search', label: 'Web Search', args: { query: 'latest AI news' } },

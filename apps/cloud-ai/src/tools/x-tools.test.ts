@@ -187,7 +187,10 @@ describe('x_reply_to_comment', () => {
     expect(request.headers.Authorization).toBe('Bearer x-access-token');
     expect(JSON.parse(request.body)).toEqual({
       text: 'Thanks!',
-      reply: { in_reply_to_tweet_id: 'tweet-456' },
+      reply: {
+        in_reply_to_tweet_id: 'tweet-456',
+        auto_populate_reply_metadata: true,
+      },
     });
   });
 
@@ -221,5 +224,20 @@ describe('x_reply_to_comment', () => {
       text: 'Thanks!',
     }, {} as any)).rejects.toThrow('x_missing_scope');
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('explains X self-serve API reply restrictions separately from web UI replies', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      detail: 'The original Tweet author restricted who can reply to this Tweet.',
+    }, {
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+    })) as any;
+
+    await expect(x_reply_to_comment.execute?.({
+      comment_id: 'tweet-456',
+      text: 'Thanks!',
+    }, {} as any)).rejects.toThrow('web UI can comment');
   });
 });

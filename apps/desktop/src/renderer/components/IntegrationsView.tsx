@@ -83,6 +83,9 @@ interface IntegrationsViewProps {
   browserUseUpdateInfo?: any;
   browserUseUpdating?: boolean;
   updateBrowserUse?: () => Promise<void> | void;
+  cliAgentStatus?: any;
+  cliAgentChecking?: boolean;
+  refreshCliAgentStatus?: () => Promise<void> | void;
   mpLocalStatus?: any;
   mpUpdateInfo?: any;
   mpUpdating?: boolean;
@@ -119,6 +122,7 @@ function getIntegrationIcon(slug: string, size = "w-5 h-5") {
     case 'ffmpeg': return <Film className={size} />;
     case 'mediapipe': return <ScanFace className={size} />;
     case 'ollama': return <Bot className={size} />;
+    case 'agent-cli': return <Terminal className={size} />;
     case 'browser': return <Globe className={size} />;
     case 'browser-use': return <Globe className={size} />;
     case 'outlook': return <Mail className={size} />;
@@ -1134,6 +1138,9 @@ interface StandardCardProps {
   browserUseUpdateInfo?: any;
   browserUseUpdating?: boolean;
   updateBrowserUse?: () => Promise<void> | void;
+  cliAgentStatus?: any;
+  cliAgentChecking?: boolean;
+  refreshCliAgentStatus?: () => Promise<void> | void;
 }
 
 const StandardCard: React.FC<StandardCardProps> = ({
@@ -1154,6 +1161,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
   browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
   browserUseLocalStatus, browserUseUpdateInfo, browserUseUpdating, updateBrowserUse,
+  cliAgentStatus, cliAgentChecking, refreshCliAgentStatus,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
@@ -1164,6 +1172,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const isMediapipe = i.slug === 'mediapipe';
   const isOllama = i.slug === 'ollama';
   const isBrowserUse = i.slug === 'browser-use';
+  const isAgentCli = i.slug === 'agent-cli';
   const isOAuth = isOAuthSlug(i.slug);
   const provider = slugToProvider(i.slug);
   const cardProfiles = isOAuth && provider ? profiles.filter(p => p.provider === provider) : [];
@@ -1175,6 +1184,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const ollamaInstalled = !!(ollamaStatus && (ollamaStatus as any).installed);
   const ollamaRunning = !!(ollamaStatus && (ollamaStatus as any).running);
   const ollamaModels: any[] = (ollamaStatus as any)?.models || [];
+  const cliProviders: any[] = Array.isArray((cliAgentStatus as any)?.providers) ? (cliAgentStatus as any).providers : [];
+  const availableCliProviders = cliProviders.filter((provider: any) => !!provider?.available);
   const confirmAddProfile = async () => {
     const label = newProfileName.trim();
     if (!label) return;
@@ -1705,6 +1716,44 @@ const StandardCard: React.FC<StandardCardProps> = ({
         </div>
       )}
 
+      {/* Agent CLI details */}
+      {isAgentCli && (
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
+          {cliAgentChecking && !cliAgentStatus ? (
+            <div className="flex items-center gap-2 text-[11px]">
+              <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+              <span className="font-semibold text-theme-fg">Scanning installed CLIs...</span>
+            </div>
+          ) : cliProviders.length > 0 ? (
+            <div className="space-y-2">
+              {cliProviders.map((provider: any) => (
+                <div key={provider.id} className="flex items-center gap-2 text-[11px] min-w-0">
+                  {provider.available ? (
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-theme-muted/40 flex-shrink-0" />
+                  )}
+                  <span className={clsx("font-semibold truncate", provider.available ? "text-emerald-400" : "text-theme-fg")}>
+                    {provider.label || provider.id}
+                  </span>
+                  <span className="text-theme-muted ml-auto text-[10px] truncate">
+                    {provider.available ? (provider.version || provider.command || 'Ready') : 'Not found'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-[11px]">
+              <AlertCircle className="w-3.5 h-3.5 text-theme-muted" />
+              <span className="font-semibold text-theme-fg">No supported CLI detected</span>
+            </div>
+          )}
+          <p className="text-[10px] text-theme-muted leading-relaxed">
+            Stuard can start a delegated CLI session, send follow-up input, check status, and read recent output from the bottom up.
+          </p>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="pt-3 mt-auto border-t border-theme border-dashed flex items-center gap-2">
         {i.available ? (
@@ -1732,6 +1781,32 @@ const StandardCard: React.FC<StandardCardProps> = ({
               >
                 {browserUseChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                 {browserUseChecking ? 'Setting up...' : browserUseStatus?.error ? 'Try Again' : 'Set Up'}
+              </button>
+            )
+          ) : isAgentCli ? (
+            isConnected ? (
+              <>
+                <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  {availableCliProviders.length} CLI{availableCliProviders.length !== 1 ? 's' : ''} detected
+                </div>
+                <button
+                  onClick={refreshCliAgentStatus}
+                  disabled={cliAgentChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Scan"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", cliAgentChecking && "animate-spin")} />
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={refreshCliAgentStatus}
+                disabled={cliAgentChecking}
+                className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-primary text-primary-fg text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50 hover:opacity-90"
+              >
+                {cliAgentChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {cliAgentChecking ? 'Scanning...' : 'Scan'}
               </button>
             )
           ) : isOllama ? (
@@ -1938,6 +2013,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     browserUseUpdateInfo,
     browserUseUpdating,
     updateBrowserUse,
+    cliAgentStatus,
+    cliAgentChecking,
+    refreshCliAgentStatus,
     mpLocalStatus,
     mpUpdateInfo,
     mpUpdating,
@@ -1997,6 +2075,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
         Promise.resolve(refreshMediapipeStatus()),
         Promise.resolve(refreshOllamaStatus()),
         Promise.resolve(refreshBrowserUseStatus?.()),
+        Promise.resolve(refreshCliAgentStatus?.()),
         Promise.resolve(refreshTelnyxStatus()),
         Promise.resolve(refreshWhatsAppStatus()),
       ]);
@@ -2114,8 +2193,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
 
               {nonGoogleIntegrations.map((i: any) => {
                 const isBrowserUseSlug = i.slug === 'browser-use';
+                const isAgentCliSlug = i.slug === 'agent-cli';
                 const isConnected = isBrowserUseSlug
                   ? !!(browserUseStatus?.running || browserUseStatus?.installed)
+                  : isAgentCliSlug
+                    ? !!cliAgentStatus?.anyAvailable
                   : !!connectedMap[i.slug];
 
                 return (
@@ -2161,6 +2243,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     browserUseUpdateInfo={browserUseUpdateInfo}
                     browserUseUpdating={browserUseUpdating}
                     updateBrowserUse={updateBrowserUse}
+                    cliAgentStatus={cliAgentStatus}
+                    cliAgentChecking={cliAgentChecking}
+                    refreshCliAgentStatus={refreshCliAgentStatus}
                   />
                 );
               })}

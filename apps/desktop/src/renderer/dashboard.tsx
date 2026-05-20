@@ -242,6 +242,7 @@ function DashboardApp() {
     return "overview";
   });
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState<any | null>(null);
@@ -314,6 +315,9 @@ function DashboardApp() {
     stopBrowserUse,
     uninstallBrowserUse,
     updateBrowserUse,
+    cliAgentStatus,
+    cliAgentChecking,
+    refreshCliAgentStatus,
     setupPython,
     installPython,
     runPython,
@@ -405,6 +409,7 @@ function DashboardApp() {
     (async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
+      setSessionLoaded(true);
       unsub = supabase.auth.onAuthStateChange((_e: AuthChangeEvent, s: Session | null) => {
         setSession(s);
       }).data?.subscription;
@@ -1462,13 +1467,21 @@ function DashboardApp() {
                   </button>
                 </div>
               </div>
-            ) : (
+            ) : sessionLoaded ? (
               <button
                 onClick={signInViaBrowser}
                 className="dashboard-button-primary w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold hover:opacity-95 transition-all"
               >
                 Sign in to Stuard
               </button>
+            ) : (
+              <div className="dashboard-sidebar-section flex items-center gap-3 p-3 opacity-60">
+                <div className="h-9 w-9 rounded-xl bg-theme-card/40 border border-theme animate-pulse" />
+                <div className="flex-1 min-w-0">
+                  <div className="h-3 w-20 rounded bg-theme-card/40 animate-pulse" />
+                  <div className="h-2.5 w-14 rounded bg-theme-card/30 mt-1.5 animate-pulse" />
+                </div>
+              </div>
             )}
           </div>
         </aside>
@@ -1491,7 +1504,9 @@ function DashboardApp() {
             ) : (
               <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
                 <div className="h-full">
-                  {!userEmail && tab !== 'planner' ? (
+                  {!sessionLoaded && tab !== 'planner' ? (
+                    <div className="flex flex-col items-center justify-center h-[70vh]" aria-hidden="true" />
+                  ) : !userEmail && tab !== 'planner' ? (
                     <div className="flex flex-col items-center justify-center h-[70vh] text-center space-y-8 animate-in fade-in zoom-in duration-700">
                       <div className="h-32 w-32 rounded-[2.5rem] bg-theme-card/50 flex items-center justify-center mb-4 shadow-2xl border border-theme backdrop-blur-xl relative group">
                         <div className="absolute inset-0 bg-primary/20 rounded-[2.5rem] blur-2xl group-hover:blur-3xl transition-all duration-500 opacity-50" />
@@ -1715,6 +1730,9 @@ function DashboardApp() {
                                 browserUseUpdateInfo={browserUseUpdateInfo}
                                 browserUseUpdating={browserUseUpdating}
                                 updateBrowserUse={updateBrowserUse}
+                                cliAgentStatus={cliAgentStatus}
+                                cliAgentChecking={cliAgentChecking}
+                                refreshCliAgentStatus={refreshCliAgentStatus}
                                 mpLocalStatus={mpLocalStatus}
                                 mpUpdateInfo={mpUpdateInfo}
                                 mpUpdating={mpUpdating}
