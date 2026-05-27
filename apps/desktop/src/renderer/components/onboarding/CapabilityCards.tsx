@@ -34,8 +34,8 @@ const CAPABILITIES: CapabilityItem[] = [
   {
     id: 'proactive',
     icon: Bell,
-    label: 'Proactive Agent',
-    description: "Never forget a deadline or miss a follow-up again. I watch your back, even when you're not looking.",
+    label: 'Scout, your proactive agent',
+    description: "Never forget a deadline or miss a follow-up again. Scout watches your back, checks in on a schedule, and asks before anything destructive.",
     cta: 'Turn it on',
     color: 'amber',
     featured: true,

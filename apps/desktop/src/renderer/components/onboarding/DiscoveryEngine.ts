@@ -135,14 +135,14 @@ const TIP_POOL: DiscoveryTip[] = [
     priority: 72,
   },
 
-  // --- PROACTIVE AGENT (HIGH PRIORITY) ---
+  // --- SCOUT / PROACTIVE AGENT (HIGH PRIORITY) ---
   {
     id: 'pa-enable',
     category: 'proactive',
-    title: 'Stuard can work without being asked',
-    description: 'Enable proactive mode and Stuard will check in on your tasks, PRs, and schedule in the background.',
+    title: 'Meet Scout, your proactive agent',
+    description: 'Turn Scout on and it checks in on your tasks, PRs, and schedule in the background — asking first before anything destructive.',
     actionLabel: 'Enable',
-    actionRoute: 'proactive',
+    actionRoute: 'bots',
     priority: 100,
     requiresUnexplored: 'proactive',
   },
@@ -150,8 +150,8 @@ const TIP_POOL: DiscoveryTip[] = [
     id: 'pa-monitoring',
     category: 'proactive',
     title: 'Background monitoring',
-    description: 'Stuard can monitor GitHub PRs, calendar changes, file updates, and notify you when something needs attention.',
-    actionRoute: 'proactive',
+    description: 'Scout can monitor GitHub PRs, calendar changes, and file updates, and notify you when something needs attention.',
+    actionRoute: 'bots',
     priority: 95,
     requiresUnexplored: 'proactive',
   },
@@ -159,30 +159,30 @@ const TIP_POOL: DiscoveryTip[] = [
     id: 'pa-checkins',
     category: 'proactive',
     title: 'Automated check-ins',
-    description: 'Set up recurring check-ins. Stuard will remind you, summarize progress, or trigger actions at set times.',
-    actionRoute: 'proactive',
+    description: 'Set up recurring check-ins. Scout will remind you, summarize progress, or tee up actions at set times.',
+    actionRoute: 'bots',
     priority: 88,
   },
   {
     id: 'pa-reminders',
     category: 'proactive',
     title: 'Smart reminders',
-    description: 'Ask Stuard to remind you about anything. It remembers context and can act on reminders, not just notify.',
+    description: 'Ask Scout to remind you about anything. It remembers context and can act on reminders, not just notify.',
     priority: 82,
   },
   {
     id: 'pa-wake-log',
     category: 'proactive',
-    title: 'See what Stuard did while you were away',
-    description: 'Check the proactive wake-up log to see actions taken, checks completed, and insights gathered.',
-    actionRoute: 'proactive',
+    title: 'See what Scout did while you were away',
+    description: "Check Scout's activity log to see actions taken, checks completed, and insights gathered.",
+    actionRoute: 'bots',
     priority: 70,
   },
   {
     id: 'pa-tools',
     category: 'proactive',
-    title: 'Proactive tools',
-    description: 'Stuard can use your integrations proactively -- send messages, create tasks, update calendars, all on autopilot.',
+    title: 'Agent tools',
+    description: 'Scout can use your integrations to send messages, create tasks, and update calendars — proposing destructive actions for your approval first.',
     priority: 75,
   },
 
@@ -409,11 +409,11 @@ const PROMPT_POOL: SuggestedPrompt[] = [
   { id: 'p-file-monitor', text: 'Watch a folder and alert me on new files', category: 'workflows', icon: 'FolderSearch', paths: ['automation', 'operator'] },
   { id: 'p-build-workflow', text: 'I want to automate something', category: 'workflows', icon: 'Zap', paths: null },
 
-  // Proactive prompts
+  // Scout (proactive agent) prompts
   { id: 'p-standup-reminder', text: 'Set up a daily standup reminder', category: 'proactive', icon: 'Bell', paths: ['workspace', 'operator'] },
   { id: 'p-monitor-prs', text: 'Monitor my GitHub PRs', category: 'proactive', icon: 'GitPullRequest', paths: ['operator', 'automation'] },
   { id: 'p-proactive-checkin', text: 'Check in on me every afternoon', category: 'proactive', icon: 'Clock', paths: ['operator'] },
-  { id: 'p-proactive-enable', text: 'What can proactive mode do?', category: 'proactive', icon: 'Sparkles', paths: null },
+  { id: 'p-proactive-enable', text: 'What can Scout do?', category: 'proactive', icon: 'Telescope', paths: null },
 
   // Integration prompts
   { id: 'p-calendar-today', text: 'What meetings do I have today?', category: 'integrations', icon: 'Calendar', paths: ['assistant', 'workspace'] },

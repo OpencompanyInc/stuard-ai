@@ -18,6 +18,7 @@ import {
   Monitor,
   Workflow,
   GitPullRequest,
+  Telescope,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useDiscovery } from '../../hooks/useDiscovery';
@@ -42,6 +43,7 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   Monitor,
   Workflow,
   GitPullRequest,
+  Telescope,
 };
 
 // Category badge colors

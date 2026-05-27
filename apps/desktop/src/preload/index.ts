@@ -606,8 +606,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     try { ipcRenderer.send('voice:borderInteractive', !!interactive); } catch { }
   },
   respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
-  proactiveGetConfig: () => ipcRenderer.invoke('proactive:getConfig'),
-  proactiveUpdateConfig: (updates: any) => ipcRenderer.invoke('proactive:updateConfig', updates),
   proactiveListTasks: () => ipcRenderer.invoke('proactive:listTasks'),
   proactiveAddTask: (task: any) => ipcRenderer.invoke('proactive:addTask', task),
   proactiveUpdateTask: (taskId: string, updates: any) => ipcRenderer.invoke('proactive:updateTask', taskId, updates),

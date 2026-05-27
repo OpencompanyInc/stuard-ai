@@ -637,8 +637,11 @@ function RolePage({ onNext, onBack, onSelect }: { onNext: () => void; onBack: ()
 // PAGE 7: FEATURES SETUP — proactive agent, phone number, connect more apps
 // =============================================================================
 
+// The agent Stuard ships with — Scout, the default proactive bot.
+const SCOUT_BOT_ID = 'bot_default';
+
 function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack: () => void; signedIn: boolean }) {
-  // Proactive
+  // Scout (the default proactive agent) — toggling = running/pausing the bot.
   const [proactiveOn, setProactiveOn] = useState(false);
   const [proactiveLoading, setProactiveLoading] = useState(false);
 
@@ -646,9 +649,9 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
     let cancelled = false;
     void (async () => {
       try {
-        const res = await (window as any).desktopAPI?.proactiveGetConfig?.();
-        if (!cancelled && res?.config) {
-          setProactiveOn(!!res.config.enabled);
+        const bot = await (window as any).desktopAPI?.botsGet?.(SCOUT_BOT_ID);
+        if (!cancelled && bot) {
+          setProactiveOn(bot.status === 'running');
         }
       } catch { }
     })();
@@ -668,7 +671,7 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
     setProactiveLoading(true);
     try {
       const next = !proactiveOn;
-      await (window as any).desktopAPI.proactiveUpdateConfig({ enabled: next });
+      await (window as any).desktopAPI.botsSetStatus(SCOUT_BOT_ID, next ? 'running' : 'paused');
       setProactiveOn(next);
     } catch {} finally { setProactiveLoading(false); }
   };
@@ -725,8 +728,8 @@ function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack
                 <Bell className="w-5 h-5 text-amber-400" strokeWidth={1.5} />
               </div>
               <div className="flex-1">
-                <span className="text-[14px] font-normal text-white/90">Proactive Agent</span>
-                <p className="text-[12px] text-white/55 mt-0.5">I'll remember things so you don't have to — reminders, follow-ups, check-ins.</p>
+                <span className="text-[14px] font-normal text-white/90">Scout</span>
+                <p className="text-[12px] text-white/55 mt-0.5">Your proactive agent — checks in on a schedule, sets reminders, and catches what would slip. Asks before anything destructive.</p>
               </div>
               <button
                 onClick={() => void toggleProactive()}
@@ -1171,7 +1174,7 @@ const PAGE_TOUR_CONTEXT: Record<number, string> = {
   1: 'the four-capabilities overview (chat, proactive, workflows, integrations)',
   5: 'the sign-in step (optional, syncs settings across devices)',
   6: 'the role-selection step (developer / student / creator / business / hobbyist)',
-  7: 'the features setup step (proactive agent toggle and phone-number verification)',
+  7: 'the features setup step (Scout proactive-agent toggle and phone-number verification)',
   8: 'the marketplace step — picking pre-built workflows to install',
   9: 'the tone-and-persona step',
   10: 'the global-hotkey step — the keystroke that summons Stuard from anywhere',
@@ -1185,7 +1188,7 @@ function buildVoiceTourPrompt(page: number, role: string): string {
     "You are Stuard giving a quick voice tour of the desktop app during first-run onboarding.",
     `The user is currently on ${where}.${roleLine}`,
     "Be warm, conversational, and very brief — two short sentences max per turn.",
-    "Explain what's on this page, what the buttons do, and answer any questions about Stuard's capabilities (chat, proactive agent, workflows, integrations, voice, hotkey).",
+    "Explain what's on this page, what the buttons do, and answer any questions about Stuard's capabilities (chat, Scout the proactive agent, workflows, integrations, voice, hotkey).",
     "If they ask to do something, remind them they can click the buttons themselves; the tour is hands-on.",
     "Never repeat the same explanation twice. Wait for them to talk back.",
   ].join(' ');

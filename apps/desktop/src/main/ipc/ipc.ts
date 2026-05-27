@@ -1348,9 +1348,8 @@ export function setupIpc() {
     return { ok: true, settings: updateBrowserUseChromeSyncSettingsLocal(updates || {}) };
   });
 
-  // Proactive agent controls
-  ipcMain.handle('proactive:getConfig', () => proactiveService.getConfig());
-  ipcMain.handle('proactive:updateConfig', (_e, updates: any) => proactiveService.updateConfig(updates || {}));
+  // Proactive task board + activity log (the single-config get/updateConfig
+  // pair was retired with the default agent now being a normal bot — Scout).
   ipcMain.handle('proactive:listTasks', () => proactiveService.listTasks({ limit: 500 }));
   ipcMain.handle('proactive:addTask', (_e, task: any) => proactiveService.addTask(task || {}));
   ipcMain.handle('proactive:updateTask', (_e, taskId: string, updates: any) =>

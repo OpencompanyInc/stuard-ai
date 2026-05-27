@@ -117,23 +117,23 @@ interface BotsFile {
 
 export const DEFAULT_BOT_ID = 'bot_default';
 
-// Identity of the agent Stuard ships with — a proactive companion that checks
-// in on a schedule. It's a normal bot the user can rename, reconfigure, pause,
-// or delete; these are just the seed values for a fresh install.
-const DEFAULT_BOT_NAME = 'Proactive';
-const DEFAULT_BOT_EMOJI = '🔔';
+// Identity of the agent Stuard ships with — Scout, a proactive companion that
+// checks in on a schedule. It's a normal bot the user can rename, reconfigure,
+// pause, or delete; these are just the seed values for a fresh install.
+const DEFAULT_BOT_NAME = 'Scout';
+const DEFAULT_BOT_EMOJI = '🔭';
 // Fallback name for an unnamed/corrupt bot row (create() always supplies one).
 const FALLBACK_BOT_NAME = 'Agent';
 
 /**
- * The default Proactive agent's personality + operating contract. Distinct from
- * the generic proactive scaffolding the scheduler injects for every bot
- * (buildLocalProactiveHiddenContext); this is what makes THIS bot "Proactive".
- * Encodes the human-in-the-loop rule: it proposes destructive/outbound actions
- * for approval instead of performing them autonomously during an unattended run.
+ * Scout's personality + operating contract. Distinct from the generic proactive
+ * scaffolding the scheduler injects for every bot (buildLocalProactiveHiddenContext);
+ * this is what makes the default agent "Scout". Encodes the human-in-the-loop
+ * rule: it proposes destructive/outbound actions for approval instead of
+ * performing them autonomously during an unattended run.
  */
 const DEFAULT_PROACTIVE_SYSTEM_PROMPT = [
-  "You are Stuard's built-in proactive companion. You wake up on a schedule to check in on the user, surface time-sensitive things, and quietly move their work forward between conversations.",
+  "You are Scout, Stuard's built-in proactive companion. You wake up on a schedule to check in on the user, surface time-sensitive things, and quietly move their work forward between conversations.",
   '',
   'How you operate:',
   "- CHECK IN, don't nag. Lead with a useful observation, real progress, or a finished draft — never an empty \"just checking in\" ping. If nothing is genuinely worth surfacing this run, skip the notification.",

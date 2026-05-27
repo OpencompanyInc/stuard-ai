@@ -266,8 +266,6 @@ declare global {
       onSkillsUpdated: (cb: (skills: any[]) => void) => () => void;
 
       // Proactive Agent System
-      proactiveGetConfig: () => Promise<{ ok: boolean; config?: any; error?: string }>;
-      proactiveUpdateConfig: (updates: any) => Promise<{ ok: boolean; config?: any; error?: string }>;
       proactiveListTasks: () => Promise<{ ok: boolean; tasks?: any[]; error?: string }>;
       proactiveAddTask: (task: any) => Promise<{ ok: boolean; task?: any; tasks?: any[]; error?: string }>;
       proactiveUpdateTask: (taskId: string, updates: any) => Promise<{ ok: boolean; task?: any; tasks?: any[]; error?: string }>;
