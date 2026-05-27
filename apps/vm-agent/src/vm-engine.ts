@@ -41,6 +41,22 @@ import type {
 } from '@stuardai/workflow-core/runtime';
 export type { LoopConfig, StreamWireConfig, StuardEdge, StuardStep, StuardSpec };
 
+// Shared runtime helpers — safe expression parser, path resolution, template
+// interpolation, JSONLogic + guard evaluation. Canonical impls live in
+// @stuardai/workflow-core so the desktop + VM engines evaluate workflows
+// identically. The VM passes no $vars resolver, so `$vars.X` reads from the
+// per-run ctx.$vars proxy (deploy-scoped variables).
+import {
+  evaluateSafe,
+  getAtPath,
+  interpolateForTool,
+  deepMerge,
+  jsonLogic,
+  evalIfGuard,
+  summarizeOutput,
+  safeStuardId,
+} from '@stuardai/workflow-core/runtime';
+
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
 export interface RouterContext {
   agentWsUrl: string;
@@ -371,268 +387,11 @@ function resolveVarName(rawName: string | undefined, scope?: string): string {
   return name;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Expression Parser (safe, sandboxed — ported from desktop)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function evaluateSafe(expr: string, ctx: any): any {
-  try {
-    // Simple expression evaluator: supports comparisons, arithmetic, booleans
-    const trimmed = expr.trim();
-
-    // Boolean literals
-    if (trimmed === 'true') return true;
-    if (trimmed === 'false') return false;
-    if (trimmed === 'null' || trimmed === 'undefined') return null;
-
-    // Number literals
-    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-
-    // String literals
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-      return trimmed.slice(1, -1);
-    }
-
-    // Comparison operators
-    for (const op of ['===', '!==', '==', '!=', '>=', '<=', '>', '<']) {
-      const idx = trimmed.indexOf(op);
-      if (idx > 0) {
-        const left = evaluateSafe(trimmed.slice(0, idx), ctx);
-        const right = evaluateSafe(trimmed.slice(idx + op.length), ctx);
-        switch (op) {
-          case '===': return left === right;
-          case '!==': return left !== right;
-          case '==': return left == right;
-          case '!=': return left != right;
-          case '>=': return left >= right;
-          case '<=': return left <= right;
-          case '>': return left > right;
-          case '<': return left < right;
-        }
-      }
-    }
-
-    // Logical operators
-    if (trimmed.includes('&&')) {
-      const parts = trimmed.split('&&');
-      return parts.every(p => !!evaluateSafe(p, ctx));
-    }
-    if (trimmed.includes('||')) {
-      const parts = trimmed.split('||');
-      return parts.some(p => !!evaluateSafe(p, ctx));
-    }
-
-    // Negation
-    if (trimmed.startsWith('!')) {
-      return !evaluateSafe(trimmed.slice(1), ctx);
-    }
-
-    // Variable lookup
-    return getAtPath(ctx, trimmed);
-  } catch {
-    return undefined;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utility functions (ported from desktop engine/utils.ts)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function safeStuardId(id: string): string {
-  return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
-}
-
-function summarizeOutput(output: any): string {
-  if (output === undefined || output === null) return '';
-  if (typeof output === 'string') return output.length > 100 ? output.slice(0, 100) + '...' : output;
-  if (typeof output === 'number' || typeof output === 'boolean') return String(output);
-  if (output.ok !== undefined) {
-    if (output.ok === false) return `error: ${output.error || 'failed'}`;
-    if (output.message) return output.message;
-    if (output.result) return summarizeOutput(output.result);
-  }
-  const keys = Object.keys(output);
-  if (keys.length === 0) return '{}';
-  if (keys.length <= 3) return `{${keys.join(', ')}}`;
-  return `{${keys.slice(0, 3).join(', ')}... +${keys.length - 3} more}`;
-}
-
-function getAtPath(obj: any, pathStr: string, defaultVal?: any): any {
-  try {
-    const normalized = String(pathStr || '')
-      .replace(/\[(\d+)\]/g, '.$1')
-      .replace(/\[['"]([^'"]+)['"]\]/g, '.$1');
-    const parts = normalized.split('.').filter(Boolean);
-
-    // Helper: resolve array-friendly accessors (first/last/count)
-    const resolveArrayPart = (cur: any, part: string): any => {
-      if (Array.isArray(cur)) {
-        if (part === 'first') return cur[0];
-        if (part === 'last') return cur[cur.length - 1];
-        if (part === 'count' || part === 'length') return cur.length;
-      }
-      return cur[part];
-    };
-
-    // $vars.varName — lookup via ctx.$vars proxy (deploy-scoped)
-    if (parts[0] === '$vars' && parts.length >= 2 && obj?.$vars) {
-      const varValue = obj.$vars[parts[1]];
-      if (varValue === undefined) return defaultVal;
-      if (parts.length > 2) {
-        let cur: any = varValue;
-        for (let i = 2; i < parts.length; i++) {
-          if (cur == null) return defaultVal;
-          cur = resolveArrayPart(cur, parts[i]);
-        }
-        return cur === undefined ? defaultVal : cur;
-      }
-      return varValue;
-    }
-
-    // $workspace paths
-    if (parts[0] === '$workspace' && obj?.$workspace) {
-      const ws = obj.$workspace;
-      if (parts.length === 1) return ws;
-      const field = parts[1];
-      if (['path', 'data', 'scripts', 'assets'].includes(field)) return ws[field];
-      if (field === 'file' && parts.length >= 3) {
-        return ws.path ? ws.path + '/' + parts.slice(2).join('/') : parts.slice(2).join('/');
-      }
-      return ws[field] !== undefined ? ws[field] : defaultVal;
-    }
-
-    // Smart path resolution: try progressive prefix matching for step IDs with dots
-    if (obj && typeof obj === 'object') {
-      for (let i = parts.length - 1; i >= 1; i--) {
-        const potentialStepId = parts.slice(0, i).join('.');
-        if (potentialStepId in obj) {
-          let cur: any = obj[potentialStepId];
-          for (let j = i; j < parts.length; j++) {
-            if (cur == null) return defaultVal;
-            if (typeof cur === 'string' && (cur.trim().startsWith('{') || cur.trim().startsWith('['))) {
-              try { cur = JSON.parse(cur); } catch { }
-            }
-            cur = resolveArrayPart(cur, parts[j]);
-          }
-          return cur === undefined ? defaultVal : cur;
-        }
-      }
-    }
-
-    // Simple dot traversal
-    let cur: any = obj;
-    for (const p of parts) {
-      if (cur == null) return defaultVal;
-      if (typeof cur === 'string' && (cur.trim().startsWith('{') || cur.trim().startsWith('['))) {
-        try { cur = JSON.parse(cur); } catch { }
-      }
-      cur = resolveArrayPart(cur, p);
-    }
-    return cur === undefined ? defaultVal : cur;
-  } catch {
-    return defaultVal;
-  }
-}
-
-function interpolateForTool(input: any, ctx: any, toolName: string): any {
-  const templ = (s: string): string => {
-    let result = s;
-    let maxIterations = 10;
-    while (maxIterations-- > 0) {
-      const prev = result;
-      result = result.replace(/\{\{([^{}]+)\}\}/g, (_m, g1) => {
-        const expr = String(g1 || '').trim();
-        const v = getAtPath(ctx, expr, undefined);
-        if (v == null) return '';
-        if (typeof v === 'object') return JSON.stringify(v);
-        return String(v);
-      });
-      if (result === prev) break;
-    }
-    return result;
-  };
-
-  const walk = (v: any, p: string): any => {
-    if (typeof v === 'string') {
-      // Check if the entire string is a single template expression
-      const singleMatch = v.match(/^\{\{([^{}]+)\}\}$/);
-      if (singleMatch) {
-        const resolved = getAtPath(ctx, singleMatch[1].trim());
-        if (resolved != null) return resolved;
-        return v;
-      }
-      return templ(v);
-    }
-    if (Array.isArray(v)) return v.map((x, i) => walk(x, `${p}[${i}]`));
-    if (v && typeof v === 'object') {
-      const o: any = {};
-      for (const k of Object.keys(v)) o[k] = walk(v[k], p ? `${p}.${k}` : k);
-      return o;
-    }
-    return v;
-  };
-
-  return walk(input, '');
-}
-
-function deepMerge(base: any, patch: any): any {
-  if (patch == null) return base;
-  if (base == null) return patch;
-  if (Array.isArray(base) && Array.isArray(patch)) return patch.slice();
-  if (typeof base === 'object' && typeof patch === 'object') {
-    const out: any = { ...base };
-    for (const k of Object.keys(patch)) out[k] = deepMerge(base[k], patch[k]);
-    return out;
-  }
-  return patch;
-}
-
-function jsonLogic(logic: any, data: any): any {
-  if (logic == null || typeof logic !== 'object' || Array.isArray(logic)) return logic;
-  const key = Object.keys(logic)[0];
-  const val = (logic as any)[key];
-  const a = (x: any) => jsonLogic(x, data);
-
-  switch (key) {
-    case 'var': {
-      if (typeof val === 'string') return getAtPath(data, val);
-      if (Array.isArray(val)) return getAtPath(data, String(val[0] || ''), val[1]);
-      return undefined;
-    }
-    case '==': return a(val[0]) == a(val[1]);
-    case '===': return a(val[0]) === a(val[1]);
-    case '!=': return a(val[0]) != a(val[1]);
-    case '!==': return a(val[0]) !== a(val[1]);
-    case '>': return a(val[0]) > a(val[1]);
-    case '<': return a(val[0]) < a(val[1]);
-    case '>=': return a(val[0]) >= a(val[1]);
-    case '<=': return a(val[0]) <= a(val[1]);
-    case 'and': return (val || []).every((x: any) => !!a(x));
-    case 'or': return (val || []).some((x: any) => !!a(x));
-    case '!': case 'not': return !a(val);
-    case 'in': {
-      const needle = a(val[0]);
-      const hay = a(val[1]);
-      if (typeof hay === 'string') return hay.includes(String(needle));
-      if (Array.isArray(hay)) return hay.includes(needle);
-      return false;
-    }
-    default: return undefined;
-  }
-}
-
-function evalIfGuard(logic: any, ctx: any): boolean {
-  try {
-    if (typeof logic === 'string') {
-      const expr = logic.trim().replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
-      return !!evaluateSafe(expr, ctx);
-    }
-    return !!jsonLogic(logic, ctx);
-  } catch {
-    return false;
-  }
-}
+// Expression parser, getAtPath, interpolateForTool, deepMerge, jsonLogic, and
+// evalIfGuard now come from @stuardai/workflow-core/runtime (imported above) so
+// the desktop and VM engines evaluate workflows identically. This also upgrades
+// the VM to the real recursive-descent expression parser and the richer
+// JSONLogic (empty/not_empty, null-vs-boolean coercion).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool Executors
