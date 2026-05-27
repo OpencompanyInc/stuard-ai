@@ -254,7 +254,7 @@ export async function handleVMRelayRoutes(
     }
 
     // Agent/chat paths need longer timeouts
-    const isLongRunning = vmPath.startsWith('/agent/') || vmPath === '/proactive/wakeup';
+    const isLongRunning = vmPath.startsWith('/agent/');
     const defaultTimeout = isLongRunning ? 180_000 : 30_000;
     const maxTimeout = isLongRunning ? 300_000 : 120_000;
     const timeoutMs = Math.min(Number(body.timeoutMs) || defaultTimeout, maxTimeout);

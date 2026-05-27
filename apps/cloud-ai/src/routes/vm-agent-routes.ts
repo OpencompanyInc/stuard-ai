@@ -380,20 +380,5 @@ export async function handleVMAgentRoutes(
     return true;
   }
 
-  // ── POST /v1/vm/agent/proactive/wakeup — Trigger proactive wakeup on VM ──
-  if (method === 'POST' && path === '/v1/vm/agent/proactive/wakeup') {
-    const user = await authenticate(req, res);
-    if (!user) return true;
-    if (!await requireRunningEngine(user.userId, res)) return true;
-
-    try {
-      const result = await sendVMCommand(user.userId, 'proactive_wakeup', {}, 180_000);
-      json(res, 200, { ok: true, ...result.result });
-    } catch (e: any) {
-      json(res, 500, { ok: false, error: e?.message || 'proactive_wakeup_failed' });
-    }
-    return true;
-  }
-
   return false;
 }

@@ -59,26 +59,6 @@ function intervalFromBotTriggers(bot: Bot, fallback: string): string {
   return intervalTrigger ? String(intervalTrigger.args?.every || fallback) : fallback;
 }
 
-async function callVmConfig(payload: Record<string, any>): Promise<DeployResult> {
-  const token = await getAuthToken();
-  if (!token) return { ok: false, error: 'not_authenticated' };
-  const cloud = getCloudAiHttp();
-  try {
-    const resp = await net.fetch(`${cloud}/v1/proactive/vm-config`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json() as any;
-    if (!resp.ok || data?.ok === false) {
-      return { ok: false, error: String(data?.error || `http_${resp.status}`) };
-    }
-    return { ok: true, config: data?.config };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message || 'vm_unreachable') };
-  }
-}
-
 async function callBotEndpoint(path: string, payload: Record<string, any>): Promise<DeployResult & Record<string, any>> {
   const token = await getAuthToken();
   if (!token) return { ok: false, error: 'not_authenticated' };
@@ -186,7 +166,6 @@ export async function deployBotToVm(botId: string): Promise<DeployResult & { bot
     logger.warn(`[bot-vm-deploy] Deploy failed for ${botId}: ${result.error}`);
     return result;
   }
-  callVmConfig({ enabled: false }).catch(() => {});
 
   // Push the user's active skills alongside the config so the VM bot scheduler
   // can include the right subset on each wakeup. Non-fatal if it fails — the
@@ -207,14 +186,12 @@ export async function stopBotOnVm(botId: string): Promise<DeployResult & { bot?:
   const bot = botService.get(botId);
   if (!bot) return { ok: false, error: 'bot_not_found' };
   // Re-sync the deployed bot set without this bot; an empty set stops the VM
-  // multi-bot loop. The legacy proactive scheduler is disabled below as a
-  // best-effort cleanup for older VM configs.
+  // multi-bot loop.
   const result = await syncDeployedBotsToVm({ excludeBotId: botId });
   if (!result.ok) {
     logger.warn(`[bot-vm-deploy] Stop-on-VM failed for ${botId}: ${result.error}`);
     return result;
   }
-  callVmConfig({ enabled: false }).catch(() => {});
   const updated = botService.update(botId, { vmDeployedAt: null });
   logger.info(`[bot-vm-deploy] Stopped bot ${botId} on VM`);
   return { ...result, bot: updated || undefined };

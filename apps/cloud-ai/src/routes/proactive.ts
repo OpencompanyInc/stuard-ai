@@ -21,7 +21,6 @@ import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, expandProactiveAllowedToolNames, generateWithToolRecovery, isProactiveToolAllowed } from './proactive-utils';
-import { SCHEDULE_INTERVAL_MS } from '@stuardai/bots-core';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -954,45 +953,6 @@ Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake
     return true;
   }
 
-  // ── Sync proactive config to VM ─────────────────────────────────────────────
-  // Desktop calls this when executionTarget changes to 'cloud' to enable
-  // the VM's own standalone proactive scheduler.
-  if (req.method === 'POST' && path === '/v1/proactive/vm-config') {
-    const auth = await requireProactiveAuth(req, res);
-    if (!auth) return true;
-
-    const body = await readJsonBody(req);
-    const {
-      enabled,
-      interval,
-      modelMode,
-      instructions,
-      notificationChannels,
-    } = body;
-
-    // Map desktop config shape to the legacy VM ProactiveConfig shape. Base
-    // intervals come from the shared @stuardai/bots-core table; 'random' is a
-    // fixed 20m here because the legacy single-config scheduler uses a plain
-    // setInterval and can't redraw a per-fire delay (the multi-bot path does).
-    const intervalMap: Record<string, number> = { ...SCHEDULE_INTERVAL_MS, random: 20 * 60_000 };
-
-    const vmUpdates: Record<string, any> = {};
-    if (typeof enabled === 'boolean') vmUpdates.enabled = enabled;
-    if (typeof interval === 'string' && intervalMap[interval]) {
-      vmUpdates.intervalMs = intervalMap[interval];
-    }
-    if (typeof modelMode === 'string') vmUpdates.modelMode = modelMode;
-    if (Array.isArray(notificationChannels)) vmUpdates.channels = notificationChannels.filter((c: any) => c !== 'app');
-    if (typeof instructions === 'string') vmUpdates.instructions = instructions;
-
-    try {
-      const result = await sendVMCommand(auth.userId, 'proactive_config', { updates: vmUpdates }, 15_000);
-      writeJson(res, 200, { ok: result.ok, config: result.result?.config, error: result.error });
-    } catch (e: any) {
-      writeJson(res, 200, { ok: false, error: e?.message || 'vm_unreachable' });
-    }
-    return true;
-  }
 
   // ── Sync skills.json to VM ──────────────────────────────────────────────────
   // Desktop pushes the user's full active skill set so the VM bot scheduler
