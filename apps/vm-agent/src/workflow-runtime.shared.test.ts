@@ -6,7 +6,20 @@ import {
   jsonLogic,
   evalIfGuard,
   deepMerge,
+  decideNext,
+  isCatchAllGuard,
+  type StuardStep,
+  type StuardSpec,
 } from '@stuardai/workflow-core/runtime';
+
+const SPEC: StuardSpec = { id: 'wf', steps: [] };
+const noAi = async () => ({ ok: false, error: 'no_ai' });
+const hooks = (over: Partial<Parameters<typeof decideNext>[3]> = {}) => ({
+  logFn: () => {},
+  aiDecideNext: noAi,
+  ...over,
+});
+const step = (next: any[]): StuardStep => ({ id: 's', tool: 'noop', next });
 
 /**
  * Locks the behavior of the shared workflow runtime that the VM engine now
@@ -109,5 +122,79 @@ describe('deepMerge', () => {
   it('merges nested objects and replaces arrays', () => {
     expect(deepMerge({ a: { x: 1 }, list: [1, 2] }, { a: { y: 2 }, list: [9] }))
       .toEqual({ a: { x: 1, y: 2 }, list: [9] });
+  });
+});
+
+describe('decideNext (shared edge-selection — canonical desktop semantics)', () => {
+  const tos = (r: { edges: Array<{ to: string }> }) => r.edges.map(e => e.to);
+
+  it('classifies catch-all guards', () => {
+    expect(isCatchAllGuard(undefined)).toBe(true);
+    expect(isCatchAllGuard('always')).toBe(true);
+    expect(isCatchAllGuard({ if: true })).toBe(true);
+    expect(isCatchAllGuard({ if: { '==': [1, 1] } })).toBe(false);
+  });
+
+  it('always includes stream edges in parallel with flow edges', async () => {
+    const r = await decideNext(SPEC, step([
+      { to: 'consumer', stream: { sourceField: 'out' } },
+      { to: 'next' },
+    ]), {}, hooks());
+    expect(tos(r).sort()).toEqual(['consumer', 'next']);
+  });
+
+  it('is first-match-wins for conditionals, and always-edges still fire', async () => {
+    const r = await decideNext(SPEC, step([
+      { to: 'a', guard: { if: { '==': [{ var: 'x' }, 1] } } },
+      { to: 'b', guard: { if: { '==': [{ var: 'x' }, 1] } } }, // also true, but skipped (first wins)
+      { to: 'sideEffect' }, // always — fires regardless
+    ]), { x: 1 }, hooks());
+    expect(tos(r)).toEqual(['a', 'sideEffect']);
+  });
+
+  it('prioritizes a loop edge among multiple unconditional edges', async () => {
+    const r = await decideNext(SPEC, step([
+      { to: 'body', loop: { type: 'forEach', items: '{{items}}' } },
+      { to: 'after', loopBreak: true },
+    ]), {}, hooks());
+    expect(tos(r)).toEqual(['body']);
+  });
+
+  it('runs multiple plain unconditional edges in parallel', async () => {
+    const r = await decideNext(SPEC, step([{ to: 'a' }, { to: 'b' }]), {}, hooks());
+    expect(tos(r).sort()).toEqual(['a', 'b']);
+  });
+
+  it('falls back to step.fallback when nothing matches', async () => {
+    const s = { ...step([{ to: 'a', guard: { if: { '==': [{ var: 'x' }, 99] } } }]), fallback: { to: 'fb' } };
+    const r = await decideNext(SPEC, s, { x: 1 }, hooks());
+    expect(tos(r)).toEqual(['fb']);
+  });
+
+  it('AI routing picks one target and applies argsPatch', async () => {
+    const ctx: any = {};
+    const r = await decideNext(SPEC, step([
+      { to: 'a', guard: { ai: { instruction: 'pick' } } },
+      { to: 'b', guard: { ai: { instruction: 'pick' } } },
+    ]), ctx, hooks({
+      aiDecideNext: async () => ({ ok: true, next: 'b', argsPatch: { tone: 'warm' } }),
+    }));
+    expect(tos(r)).toEqual(['b']);
+    expect(ctx.__argsPatch.b).toEqual({ tone: 'warm' });
+  });
+
+  it('AI routing failure uses fallback when present', async () => {
+    const s = { ...step([{ to: 'a', guard: { ai: {} } }]), fallback: { to: 'fb' } };
+    const r = await decideNext(SPEC, s, {}, hooks({ aiDecideNext: async () => ({ ok: false, error: 'boom' }) }));
+    expect(r.ok).toBe(true);
+    expect(tos(r)).toEqual(['fb']);
+  });
+
+  it('AI routing failure with no fallback returns ok:false', async () => {
+    const r = await decideNext(SPEC, step([{ to: 'a', guard: { ai: {} } }]), {}, hooks({
+      aiDecideNext: async () => ({ ok: false, error: 'boom' }),
+    }));
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('boom');
   });
 });

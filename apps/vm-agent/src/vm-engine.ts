@@ -55,6 +55,7 @@ import {
   evalIfGuard,
   summarizeOutput,
   safeStuardId,
+  decideNext,
 } from '@stuardai/workflow-core/runtime';
 
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
@@ -1435,82 +1436,23 @@ async function executeStep(
       return { ok: false, error: String(result?.error || `${toolName}_failed`), ctx, edges: [] };
     }
 
-    // Decide next edges
-    const activeEdges = await decideNext(spec, step, ctx, engineCtx);
-    return { ok: true, ctx, edges: activeEdges };
+    // Decide next edges — shared edge-selection (same semantics as desktop).
+    // VM passes no pathOpts (so `$vars` reads from the ctx proxy) and adapts its
+    // own aiDecideNext (which omits the `spec` arg) to the hook signature.
+    const decided = await decideNext(spec, step, ctx, {
+      logFn: engineCtx.logFn,
+      aiDecideNext: (_spec, st, c, options, aiCfg) => aiDecideNext(st, c, options, aiCfg, engineCtx),
+    });
+    return { ok: decided.ok, error: decided.error, ctx: decided.ctx, edges: decided.edges };
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'step_failed'), ctx, edges: [] };
   }
 }
 
-function isCatchAllGuard(g: any): boolean {
-  if (!g || g === 'always') return true;
-  if (g && typeof g === 'object' && g.if === true) return true;
-  return false;
-}
-
-async function decideNext(
-  spec: StuardSpec,
-  step: StuardStep,
-  ctx: any,
-  engineCtx: EngineContext
-): Promise<StuardEdge[]> {
-  const rawEdges: StuardEdge[] = Array.isArray(step.next) ? step.next : [];
-  const activeEdges: StuardEdge[] = [];
-
-  // Stream edges are always active
-  const streamEdges = rawEdges.filter(e => e.stream);
-  const flowEdges = rawEdges.filter(e => !e.stream);
-  activeEdges.push(...streamEdges);
-
-  // Separate unconditional from conditional
-  const unconditionalEdges = flowEdges.filter(e => isCatchAllGuard(e.guard));
-  const conditionalEdges = flowEdges.filter(e => !isCatchAllGuard(e.guard));
-
-  if (conditionalEdges.length === 0) {
-    activeEdges.push(...unconditionalEdges);
-    return activeEdges;
-  }
-
-  // Check for AI routing
-  const aiEdges = conditionalEdges.filter(e => e.guard?.ai);
-  if (aiEdges.length > 0) {
-    const allOptions = conditionalEdges.map(e => ({ to: e.to, label: e.label || e.to }));
-    const aiCfg = aiEdges[0].guard.ai;
-    const aiResult = await aiDecideNext(step, ctx, allOptions, aiCfg, engineCtx);
-    if (aiResult.ok && aiResult.next) {
-      if (aiResult.argsPatch) {
-        ctx.__argsPatch = ctx.__argsPatch || {};
-        Object.assign(ctx.__argsPatch, aiResult.argsPatch);
-      }
-      const chosen = rawEdges.find(e => e.to === aiResult.next);
-      if (chosen) activeEdges.push(chosen);
-      return activeEdges;
-    }
-    // AI failed — fall through to unconditional
-    engineCtx.logFn(`[${step.id}] AI routing failed: ${aiResult.error}, using fallback`);
-    if (unconditionalEdges.length > 0) activeEdges.push(unconditionalEdges[0]);
-    return activeEdges;
-  }
-
-  // Evaluate JSONLogic / expression guards
-  let anyMatched = false;
-  for (const edge of conditionalEdges) {
-    const guard = edge.guard?.if || edge.guard;
-    const passed = evalIfGuard(guard, ctx);
-    if (passed) {
-      activeEdges.push(edge);
-      anyMatched = true;
-    }
-  }
-
-  // If no conditional matched, use unconditional fallback
-  if (!anyMatched && unconditionalEdges.length > 0) {
-    activeEdges.push(...unconditionalEdges);
-  }
-
-  return activeEdges;
-}
+// Edge selection (isCatchAllGuard + decideNext) now lives in
+// @stuardai/workflow-core/runtime (imported above) and is shared with the
+// desktop engine. The VM adapts its aiDecideNext to the hook signature at the
+// call site in executeStep.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Orchestration — run_sequential, run_parallel

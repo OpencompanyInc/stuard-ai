@@ -26,7 +26,12 @@ export { deepMerge, summarizeOutput, safeStuardId };
 // executing flow (flowId is read from ctx.$flowId by the shared resolver).
 const resolveVar = (name: string, flowId: string | undefined): any =>
   getVariable(name, undefined, flowId);
-const PATH_OPTS: PathResolveOptions = { resolveVar };
+
+/** Desktop's `$vars` resolver, exported so the shared edge-selection
+ *  (decideNext) and any other shared runtime can resolve variables the same
+ *  way the desktop engine does. */
+export const pathResolveOptions: PathResolveOptions = { resolveVar };
+const PATH_OPTS = pathResolveOptions;
 
 export function getAtPath(obj: any, pathStr: string, defaultVal?: any): any {
   return coreGetAtPath(obj, pathStr, defaultVal, PATH_OPTS);

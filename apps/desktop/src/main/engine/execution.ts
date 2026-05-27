@@ -1,17 +1,12 @@
 import { execTool, getToolKind } from '../tool-router';
 import { EngineContext, StuardSpec, StuardStep, StuardEdge, LoopConfig, StreamWireConfig } from './types';
-import { interpolateForTool, deepMerge, evalIfGuard } from './utils';
+import { interpolateForTool, deepMerge, pathResolveOptions } from './utils';
 import { aiDecideNext } from './ai';
 import { execRunSequential, execRunParallel, execLoopExecutor } from './orchestration';
 import { executeFromTrigger } from './function-call';
+import { decideNext as coreDecideNext, type DecideNextResult } from '@stuardai/workflow-core/runtime';
 
-/** Result type for decideNext - returns all active edges to take */
-export interface DecideNextResult {
-  edges: StuardEdge[];
-  ctx: any;
-  ok: boolean;
-  error?: string;
-};
+export type { DecideNextResult };
 
 /** Result type for executeStep - includes edges from decideNext */
 export interface ExecuteStepResult {
@@ -133,9 +128,14 @@ export async function executeStep(
       }
     }
 
-    // Decide next step
-    const decideResult = await decideNext(spec, step, ctx, engineCtx);
-    
+    // Decide next step — shared edge-selection (single-sourced with the VM
+    // engine). Desktop injects its store-backed $vars resolver + AI routing.
+    const decideResult = await coreDecideNext(spec, step, ctx, {
+      logFn: engineCtx.logFn,
+      pathOpts: pathResolveOptions,
+      aiDecideNext: (sp, st, c, options, aiCfg) => aiDecideNext(sp, st, c, options, aiCfg, engineCtx),
+    });
+
     // Derive legacy fields from edges for backward compatibility
     const flowEdges = decideResult.edges.filter(e => !e.stream);
     const streamEdges = decideResult.edges.filter(e => e.stream);
@@ -185,173 +185,8 @@ export async function executeStep(
   }
 }
 
-function isCatchAllGuard(g: any): boolean {
-  if (!g || g === 'always') return true;
-  if (g && typeof g === 'object' && g.if === true) return true;
-  return false;
-}
-
-async function decideNext(
-  spec: StuardSpec,
-  step: StuardStep,
-  ctx: any,
-  engineCtx: EngineContext
-): Promise<DecideNextResult> {
-  const rawEdges: StuardEdge[] = Array.isArray(step.next) ? step.next : [];
-  
-  // Collect all active edges to return
-  const activeEdges: StuardEdge[] = [];
-  
-  // Separate stream edges from flow edges — stream edges are ALWAYS active (parallel by nature)
-  const streamEdges = rawEdges.filter(e => e.stream);
-  const flowEdges = rawEdges.filter(e => !e.stream);
-  
-  // Always include all stream edges — they run in parallel with flow edges
-  activeEdges.push(...streamEdges);
-  if (streamEdges.length > 0) {
-    engineCtx.logFn(`[${step.id}] ${streamEdges.length} stream edge(s) detected`);
-  }
-
-  // Separate unconditional flow edges from conditional ones
-  const unconditionalFlowEdges: StuardEdge[] = [];
-  const conditionalFlowEdges: StuardEdge[] = [];
-
-  for (const edge of flowEdges) {
-    if (isCatchAllGuard(edge.guard)) {
-      unconditionalFlowEdges.push(edge);
-    } else {
-      conditionalFlowEdges.push(edge);
-    }
-  }
-
-  // If there are multiple unconditional flow edges, check for loop/loopBreak relationships
-  if (unconditionalFlowEdges.length > 1) {
-    // Separate loop edges from loopBreak edges and regular edges
-    const loopEdges = unconditionalFlowEdges.filter(e => e.loop && e.loop.type);
-    const loopBreakEdges = unconditionalFlowEdges.filter(e => e.loopBreak);
-    const regularEdges = unconditionalFlowEdges.filter(e => !e.loop?.type && !e.loopBreak);
-
-    // If there's a loop edge, prioritize it - loopBreak edges execute after loop completes
-    if (loopEdges.length > 0) {
-      const loopEdge = loopEdges[0];
-      engineCtx.logFn(`[${step.id}] Loop edge detected → ${loopEdge.to} (loopBreak edges will run after loop)`);
-      activeEdges.push(loopEdge);
-      return { ok: true, edges: activeEdges, ctx };
-    }
-
-    // If there are only regular edges (no loops), run them in parallel
-    // But exclude loopBreak edges from parallel execution (they should only run after a loop)
-    const parallelEdges = regularEdges.length > 0 ? regularEdges : unconditionalFlowEdges.filter(e => !e.loopBreak);
-    if (parallelEdges.length > 1) {
-      engineCtx.logFn(`[${step.id}] Parallel branches: ${parallelEdges.map(e => e.to).join(', ')}`);
-      activeEdges.push(...parallelEdges);
-      return { ok: true, edges: activeEdges, ctx };
-    }
-
-    // Single edge remaining
-    if (parallelEdges.length === 1) {
-      activeEdges.push(parallelEdges[0]);
-      return { ok: true, edges: activeEdges, ctx };
-    }
-  }
-
-  // ── Edge evaluation ──
-  // Unconditional "always" edges ALWAYS fire — they represent side-effects
-  // (e.g., UI updates) that must run regardless of which conditional branch is taken.
-  // Among conditional edges, the first matching guard wins (if/else semantics).
-  // Both sets are unioned into active edges for parallel execution.
-  //
-  // This enables stream consumer patterns like:
-  //   hand_pose → set_variable (always)   ← fires every frame to update UI
-  //   hand_pose → calc_cursor  (if: ...)  ← fires only when hands detected
-
-  // Check for AI routing — use exclusive first-match behavior for AI-routed edges
-  const hasAiRouting = conditionalFlowEdges.some(
-    e => e.guard && typeof e.guard === 'object' && e.guard.ai
-  );
-
-  if (hasAiRouting) {
-    // AI routing: original exclusive behavior — AI picks the single target
-    const sortedFlowEdges = [...flowEdges].sort((a, b) => {
-      const aIsDefault = isCatchAllGuard(a.guard);
-      const bIsDefault = isCatchAllGuard(b.guard);
-      if (aIsDefault && !bIsDefault) return 1;
-      if (!aIsDefault && bIsDefault) return -1;
-      return 0;
-    });
-
-    for (const edge of sortedFlowEdges) {
-      const g = edge.guard;
-      if (!g || g === 'always') {
-        activeEdges.push(edge);
-        return { ok: true, edges: activeEdges, ctx };
-      }
-      if (g && typeof g === 'object' && g.if) {
-        try {
-          if (g.if === true || evalIfGuard(g.if, ctx)) {
-            activeEdges.push(edge);
-            return { ok: true, edges: activeEdges, ctx };
-          }
-        } catch { }
-      }
-      if (g && typeof g === 'object' && g.ai) {
-        const options = sortedFlowEdges.filter(e => e.to).map(e => ({ to: e.to, label: e.label }));
-        const out = await aiDecideNext(spec, step, ctx, options, g.ai, engineCtx);
-        if (!out.ok) {
-          const fb = step.fallback?.to;
-          if (fb) {
-            engineCtx.logFn(`${step.id}: AI routing failed, using fallback`);
-            activeEdges.push({ to: fb });
-            return { ok: true, edges: activeEdges, ctx };
-          }
-          return { ok: false, error: out.error || 'ai_routing_failed', ctx, edges: [] };
-        }
-        if (out.argsPatch && out.next) {
-          if (!ctx.__argsPatch) ctx.__argsPatch = {};
-          ctx.__argsPatch[out.next] = deepMerge(ctx.__argsPatch[out.next] || {}, out.argsPatch);
-        }
-        const matchedEdge = sortedFlowEdges.find(e => e.to === out.next);
-        if (matchedEdge) {
-          activeEdges.push(matchedEdge);
-        } else {
-          activeEdges.push({ to: out.next! });
-        }
-        return { ok: true, edges: activeEdges, ctx };
-      }
-    }
-  } else {
-    // Standard guard evaluation:
-    // - "always" edges fire unconditionally (parallel side-effects)
-    // - Conditional edges: first match wins (if/else among conditionals)
-
-    // Evaluate conditional edges — first match wins
-    for (const edge of conditionalFlowEdges) {
-      const g = edge.guard;
-      if (g && typeof g === 'object' && g.if) {
-        try {
-          if (g.if === true || evalIfGuard(g.if, ctx)) {
-            activeEdges.push(edge);
-            break;
-          }
-        } catch { }
-      }
-    }
-
-    // Always include unconditional edges — they fire regardless of conditional results
-    for (const edge of unconditionalFlowEdges) {
-      if (!activeEdges.some(e => e.to === edge.to)) {
-        activeEdges.push(edge);
-      }
-    }
-  }
-
-  // No edges matched at all — check fallback
-  if (activeEdges.length === 0 && step.fallback?.to) {
-    activeEdges.push({ to: step.fallback.to });
-    return { ok: true, edges: activeEdges, ctx };
-  }
-
-  // Return whatever we have (may just be stream edges, or empty = end of flow)
-  return { ok: true, edges: activeEdges, ctx };
-}
+// isCatchAllGuard + decideNext now live in @stuardai/workflow-core/runtime
+// (imported as coreDecideNext) and are shared with the VM engine. Desktop
+// injects its store-backed $vars resolver (pathResolveOptions) and AI routing
+// (aiDecideNext) via hooks at the call site in executeStep above.
 
