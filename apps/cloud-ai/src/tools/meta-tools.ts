@@ -17,6 +17,7 @@ import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
 import * as telnyxTools from './telnyx-tools';
 import * as whatsappTools from './whatsapp-tools';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 import * as metaSocialTools from './meta-social-tools';
 import * as cloudStorageTools from './cloud-storage-tools';
 import * as vmTools from './vm-tools';
@@ -342,41 +343,60 @@ COMPONENT FIELD:
 
   - Standard React JSX: <div className="p-4">{expr}</div>
   - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - Tailwind CSS classes available (dark mode via dark: prefix)
+  - Tailwind utility classes for layout/spacing/typography are available (flex, grid, gap-*, p-*, text-sm/lg/xl, font-*, rounded-*, etc.)
   - stuard.submit(data) — submit data back to the agent (resolves blocking)
   - stuard.close() — dismiss the UI without data
+  - stuard.openExternal(url) — open an http(s) URL in the user's browser for pages that cannot safely run inside chat_ui
+
+THEME — CRITICAL: DO NOT HARDCODE COLORS.
+  The user's app theme can be light, dark, OR a custom color, and they switch freely. A fixed color (bg-white, text-black, bg-slate-900, bg-gray-100) looks broken under the wrong theme, and "dark:" variants only cover two fixed palettes — they still break on custom themes. So never use literal color utilities or dark: variants for surfaces, text, or borders.
+
+  Instead style EVERYTHING with these theme tokens. They are injected live and automatically follow the user's current theme:
+    Backgrounds:  bg-theme-bg  bg-theme-card  bg-theme-input  bg-theme-hover  bg-theme-active  bg-theme-muted  bg-theme-primary
+    Text:         text-theme-fg  text-theme-muted  text-theme-primary  text-theme-primary-fg
+    Borders:      border-theme  border-theme-primary   (combine with Tailwind's \`border\`)
+    Radius:       rounded-theme-card  rounded-theme-button
+    Hover:        hover:bg-theme-hover  hover:bg-theme-active  hover:border-theme  hover:text-theme-fg
+    Prebuilt:     theme-card (padded surface w/ border+radius)  theme-btn-primary  theme-btn-secondary  divide-theme
+
+  Text inputs, textareas, and selects are auto-styled to the theme — leave them unstyled unless you need layout (w-full, etc.).
+
+  For anything not covered by a class, read the CSS variables directly via style:
+    --chat-ui-background  --chat-ui-foreground  --chat-ui-card  --chat-ui-card-foreground
+    --chat-ui-primary  --chat-ui-primary-foreground  --chat-ui-muted  --chat-ui-muted-foreground
+    --chat-ui-border  --chat-ui-input  --chat-ui-hover  --chat-ui-active
+    e.g. style={{ boxShadow: '0 0 0 1px var(--chat-ui-border)' }}
+         style={{ background: 'color-mix(in srgb, var(--chat-ui-primary) 12%, transparent)' }}  // subtle primary tint
+
+  Semantic accents (danger/success/warning): use mid-tone text colors that read on any background — text-red-500, text-amber-500, text-emerald-500. For a tinted fill use the color-mix style trick above; do NOT use solid light fills like bg-red-100.
+
+  Also available for programmatic use: a global \`designScheme\` object —
+    designScheme.mode   — 'dark' | 'light'
+    designScheme.colors — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input, hover, active }
+    designScheme.radius — { card, button }
 
 BLOCKING vs NON-BLOCKING:
   - blocking: true  → Agent pauses until the user interacts (submit/close). Use for forms, confirmations, selections.
   - blocking: false → Agent continues immediately. UI stays rendered in chat as display-only. Use for dashboards, status displays, rich content.
 
-DESIGN SCHEME (auto-injected):
-  A \`designScheme\` object is available globally in your component:
-    designScheme.mode    — 'dark' | 'light'
-    designScheme.colors  — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input }
-
-  The <body> has class "dark" when in dark mode. Use Tailwind dark: classes for styling:
-    <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-
-  By default, background and text colors already match the host app — only override when needed.
-
 RULES:
   1. EVERY action button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit buttons.
   2. initialData is available globally, seeded from the data arg.
-  3. Use JSX style objects: style={{color: 'red'}} NOT style="color: red".
+  3. Use JSX style objects: style={{ color: 'var(--chat-ui-primary)' }} NOT style="color: red".
   4. The component renders in a sandboxed iframe — no access to parent window or Node.js APIs.
+  5. Standard iframe embeds are allowed for display-only external content such as maps and videos, but the embedded page stays isolated.
+  6. Do not try to embed full third-party web apps that require login, cookies, localStorage, or origin-sensitive script loading. Show a button that calls stuard.openExternal(url) instead.
 
 EXAMPLE (blocking form):
   component: \`
     function App() {
       const [name, setName] = useState(initialData.name || '');
       return (
-        <div className="p-4 space-y-3">
-          <h2 className="text-lg font-semibold">What's your name?</h2>
-          <input className="w-full px-3 py-2 rounded border dark:bg-slate-800 dark:border-slate-600"
-            value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
-          <button onClick={() => stuard.submit({ name })}
-            className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">
+        <div className="theme-card p-4 space-y-3">
+          <h2 className="text-lg font-semibold text-theme-fg">What's your name?</h2>
+          <input className="w-full" value={name}
+            onChange={e => setName(e.target.value)} placeholder="Enter name" />
+          <button className="theme-btn-primary" onClick={() => stuard.submit({ name })}>
             Submit
           </button>
         </div>
@@ -388,9 +408,9 @@ EXAMPLE (non-blocking display):
   component: \`
     function App() {
       return (
-        <div className="p-4">
-          <div className="text-sm text-slate-500 dark:text-slate-400">Status</div>
-          <div className="text-2xl font-bold">{initialData.status}</div>
+        <div className="theme-card p-4">
+          <div className="text-sm text-theme-muted">Status</div>
+          <div className="text-2xl font-bold text-theme-fg">{initialData.status}</div>
         </div>
       );
     }
@@ -429,7 +449,7 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         registerTool(t, 'FileSearch');
-    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
+    } else if (['run_command', 'run_system_command', 'list_terminals', 'read_terminal', 'launch_application_or_uri', 'list_open_windows', 'bring_window_to_foreground', 'get_window_info', 'smart_bring_window_to_foreground', 'set_window_bounds', 'python_status', 'python_setup', 'python_list_packages', 'python_install', 'run_python_script', 'run_node_script'].includes(name)) {
         registerTool(t, 'System');
     } else if (['describe_desktop_control_capabilities', 'get_desktop_wallpaper', 'set_desktop_wallpaper', 'get_system_volume', 'set_system_volume', 'list_bluetooth_devices', 'connect_bluetooth_device', 'disconnect_bluetooth_device', 'get_display_brightness', 'set_display_brightness', 'get_power_status'].includes(name)) {
         registerTool(t, 'Desktop');
@@ -441,6 +461,8 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Media');
     } else if (['ffmpeg_status', 'ffmpeg_setup', 'ffmpeg_run', 'ffmpeg_convert_media', 'ffmpeg_extract_audio', 'ffmpeg_trim_media', 'ffmpeg_probe_media', 'ffmpeg_extract_frames'].includes(name)) {
         registerTool(t, 'Media');
+    } else if (['data_analysis_status', 'data_analysis_setup', 'data_analysis_uninstall', 'data_load', 'describe_data', 'correlate_data', 'plot_line', 'plot_bar', 'plot_scatter', 'plot_hist', 'plot_pie', 'plot_heatmap', 'plot_box', 'run_data_python'].includes(name)) {
+        registerTool(t, 'DataAnalysis');
     } else if (['mediapipe_status', 'mediapipe_setup', 'mediapipe_pose', 'mediapipe_hands', 'mediapipe_face_detection', 'mediapipe_face_mesh', 'mediapipe_segmentation', 'mediapipe_holistic', 'mediapipe_process_video'].includes(name)) {
         registerTool(t, 'MediaPipe');
     } else if (['stream_create', 'stream_close', 'stream_list', 'stream_get_status'].includes(name)) {
@@ -457,7 +479,7 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Workflow');
     } else if (['search_past_conversations', 'get_conversation_context'].includes(name)) {
         registerTool(t, 'Memory');
-    } else if (['list_projects', 'create_project', 'update_project', 'delete_project', 'enter_project_mode', 'exit_project_mode', 'journal_add', 'memory_add', 'project_search'].includes(name)) {
+    } else if (['list_projects', 'create_project', 'update_project', 'delete_project', 'enter_project_mode', 'exit_project_mode', 'journal_add', 'memory_add', 'project_search', 'add_project_context', 'pin_file', 'unpin_file'].includes(name)) {
         registerTool(t, 'Projects');
     } else if (['knowledge_add_instruction', 'knowledge_remember_about_user', 'knowledge_update_profile', 'knowledge_add_project_fact', 'knowledge_stats'].includes(name)) {
         registerTool(t, 'Knowledge');
@@ -534,9 +556,11 @@ Object.values(httpTools).forEach(t => {
 Object.values(telnyxTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'Telnyx');
 });
+if (WHATSAPP_INTEGRATION_ENABLED) {
 Object.values(whatsappTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'WhatsApp');
 });
+}
 Object.values(metaSocialTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'MetaSocial');
 });
@@ -549,15 +573,28 @@ Object.values(vmTools).forEach(t => {
 
 // 2. Meta Tools
 
+const SEARCH_TOOL_RESULT_LIMIT = 8;
+const SEARCH_TOOL_DESCRIPTION_LIMIT = 240;
+
+function compactToolSearchEntry(entry: {
+    name?: unknown;
+    description?: unknown;
+    category?: unknown;
+}) {
+    return {
+        name: String(entry.name ?? ''),
+        description: String(entry.description ?? '').slice(0, SEARCH_TOOL_DESCRIPTION_LIMIT),
+        category: String(entry.category ?? ''),
+    };
+}
+
 export const search_tools = createTool({
     id: 'search_tools',
-    description: 'Search for available tools by category, free-text query, or list all categories. Backed by the Supabase tool_embeddings table (with pgvector-powered semantic search for free-text queries).',
+    description: 'Search for available tools with a required free-text query. Optionally narrow by category or kind. Returns up to 8 compact results.',
     inputSchema: z.object({
-        query: z.string().optional().describe('Free-text query for semantic search.'),
+        query: z.string().min(1).describe('Required free-text query for semantic tool search.'),
         category: z.string().optional().describe('Filter results to a specific tool category.'),
         kind: z.string().optional().describe('Filter results to a specific tool kind (local, cloud, orchestration).'),
-        list_categories: z.boolean().optional().describe('If true, returns the distinct list of tool categories instead of individual tools.'),
-        limit: z.number().int().positive().optional().describe('Maximum number of results to return.'),
     }),
     outputSchema: z.object({
         tools: z.array(z.object({
@@ -567,20 +604,23 @@ export const search_tools = createTool({
         })),
     }),
     execute: async (inputData) => {
-        const { query, category, kind, list_categories, limit } = inputData as {
+        const { query, category, kind } = inputData as {
             query?: string;
             category?: string;
             kind?: string;
-            list_categories?: boolean;
-            limit?: number;
         };
+        const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+        if (!normalizedQuery) {
+            throw new Error('search_tools requires a non-empty query');
+        }
         const supabase = getSupabaseService();
 
         const keywordFallback = () => {
             const registry = getToolRegistry();
             const categories = getToolCategories();
-            const results: Array<{ name: string; description: string; category: string }> = [];
-            const q = (query || '').toLowerCase();
+            const results: Array<{ name: string; description: string; category: string; score: number }> = [];
+            const q = normalizedQuery.toLowerCase();
+            const tokens = Array.from(new Set(q.split(/[^a-z0-9_]+/i).map((part) => part.trim()).filter((part) => part.length >= 3)));
 
             for (const [cat, names] of categories.entries()) {
                 if (category && cat !== category) continue;
@@ -588,102 +628,46 @@ export const search_tools = createTool({
                     const tool = registry.get(name);
                     if (!tool) continue;
                     const desc = tool.description || '';
-                    if (q && !name.toLowerCase().includes(q) && !desc.toLowerCase().includes(q)) continue;
-                    results.push({ name, description: desc, category: cat });
+                    const haystack = `${name} ${cat} ${desc}`.toLowerCase();
+                    const exact = q && haystack.includes(q) ? 4 : 0;
+                    const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+                    if (q && exact === 0 && tokenScore === 0) continue;
+                    results.push({ ...compactToolSearchEntry({ name, description: desc, category: cat }), score: exact + tokenScore });
                 }
             }
 
-            const sliced = typeof limit === 'number' ? results.slice(0, limit) : results;
-            return { tools: sliced };
+            return { tools: results.sort((a, b) => b.score - a.score).slice(0, SEARCH_TOOL_RESULT_LIMIT).map(({ score: _score, ...entry }) => entry) };
         };
 
-        // Mode 1: list distinct categories from tool_embeddings
-        if (list_categories) {
-            if (!supabase) {
-                const cats = Array.from(getToolCategories().keys()).sort();
-                return { tools: cats.map((c) => ({ name: c, description: '', category: c })) };
-            }
-            try {
-                const { data, error } = await supabase
-                    .from('tool_embeddings')
-                    .select('category')
-                    .eq('enabled', true);
-                if (error || !data) return { tools: [] };
-                const unique = Array.from(
-                    new Set((data as any[]).map((r) => r.category).filter(Boolean))
-                ).sort() as string[];
-                return { tools: unique.map((c) => ({ name: c, description: '', category: c })) };
-            } catch {
-                return { tools: [] };
-            }
-        }
+        if (!supabase) return keywordFallback();
+        try {
+            const { embedder } = await resolveEmbedder();
+            const { embeddings } = await embedMany({ model: embedder as any, values: [normalizedQuery] });
+            const queryEmbedding = embeddings[0];
 
-        const hasQuery = typeof query === 'string' && query.trim().length > 0;
-
-        // Mode 2: free-text semantic search via pgvector RPC
-        if (hasQuery) {
-            if (!supabase) return keywordFallback();
-            try {
-                const { embedder } = await resolveEmbedder();
-                const { embeddings } = await embedMany({ model: embedder as any, values: [query as string] });
-                const queryEmbedding = embeddings[0];
-
-                const { data, error } = await supabase.rpc('search_tools', {
-                    query_embedding: queryEmbedding,
-                    match_threshold: 0.25,
-                    match_count: typeof limit === 'number' ? limit : 10,
-                    filter_category: category ?? null,
-                    filter_kind: kind ?? null,
-                    enabled_only: true,
-                });
-                if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
-                const tools = (data as any[]).map((r) => ({
-                    name: r.name,
-                    description: r.description ?? '',
-                    category: r.category ?? '',
-                }));
-                const localMatches = keywordFallback().tools;
-                const seen = new Set(tools.map((tool) => tool.name));
-                for (const tool of localMatches) {
-                    if (!seen.has(tool.name)) {
-                        tools.push(tool);
-                        seen.add(tool.name);
-                    }
+            const { data, error } = await supabase.rpc('search_tools', {
+                query_embedding: queryEmbedding,
+                match_threshold: 0.25,
+                match_count: SEARCH_TOOL_RESULT_LIMIT,
+                filter_category: category ?? null,
+                filter_kind: kind ?? null,
+                enabled_only: true,
+            });
+            if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
+            const tools = (data as any[]).map(compactToolSearchEntry);
+            const localMatches = keywordFallback().tools;
+            const seen = new Set(tools.map((tool) => tool.name));
+            for (const tool of localMatches) {
+                if (!seen.has(tool.name)) {
+                    tools.push(tool);
+                    seen.add(tool.name);
                 }
-                return { tools: typeof limit === 'number' ? tools.slice(0, limit) : tools };
-            } catch (e) {
-                console.warn('Vector search failed, falling back to keyword search', e);
-                return keywordFallback();
             }
+            return { tools: tools.slice(0, SEARCH_TOOL_RESULT_LIMIT) };
+        } catch (e) {
+            console.warn('Vector search failed, falling back to keyword search', e);
+            return keywordFallback();
         }
-
-        // Mode 3: category / catalog listing from tool_embeddings
-        if (supabase) {
-            try {
-                let builder: any = supabase
-                    .from('tool_embeddings')
-                    .select('name, description, category')
-                    .eq('enabled', true);
-                if (category) builder = builder.eq('category', category);
-                builder = builder.order('name', { ascending: true });
-                if (typeof limit === 'number') builder = builder.limit(limit);
-
-                const { data, error } = await builder;
-                if (!error && data) {
-                    return {
-                        tools: (data as any[]).map((r) => ({
-                            name: r.name,
-                            description: r.description ?? '',
-                            category: r.category ?? '',
-                        })),
-                    };
-                }
-            } catch (e) {
-                console.warn('Category listing failed, falling back to keyword search', e);
-            }
-        }
-
-        return keywordFallback();
     },
 });
 
@@ -691,11 +675,10 @@ export const search_workflow_nodes = createTool({
     id: 'search_workflow_nodes',
     description: 'Search workflow node/tool types by semantic query or filters and return category, runtime type, and input/output schemas in one call.',
     inputSchema: z.object({
-        query: z.string().optional().describe('Free-text query for semantic node search.'),
+        query: z.string().min(1).describe('Required free-text query for semantic node search.'),
         category: z.string().optional().describe('Filter nodes to a specific category.'),
         kind: z.string().optional().describe('Filter nodes to a specific kind (local, cloud, orchestration).'),
-        limit: z.number().int().positive().max(3).default(3).optional().describe('Maximum number of nodes to return (capped at 3).'),
-        includeSchema: z.boolean().default(true).optional().describe('Whether to include input/output schema details.'),
+        includeSchema: z.boolean().default(true).optional().describe('Whether to include input/output schema details. Defaults true so workflow-node discovery can return actionable schemas in one call.'),
     }),
     outputSchema: z.object({
         nodes: z.array(z.object({
@@ -709,15 +692,14 @@ export const search_workflow_nodes = createTool({
         })),
     }),
     execute: async (inputData) => {
-        const { query, category, kind, limit, includeSchema = true } = inputData as {
+        const { query, category, kind, includeSchema = true } = inputData as {
             query?: string;
             category?: string;
             kind?: string;
-            limit?: number;
             includeSchema?: boolean;
         };
 
-        const result = await (search_tools as any).execute({ query, category, kind, limit });
+        const result = await (search_tools as any).execute({ query, category, kind });
         const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
         const registry = getToolRegistry();
 

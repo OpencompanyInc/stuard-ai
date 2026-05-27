@@ -43,15 +43,36 @@ function normalizeBrowserUseSessionId(value: any): string {
   return safe || 'default';
 }
 
-function getBrowserUseSessionId(args: any): string {
-  return normalizeBrowserUseSessionId(args?.session_id || args?._browserUseSessionId || 'default');
+function getBrowserUseRuntimeSessionId(args: any): string {
+  return normalizeBrowserUseSessionId(
+    args?._browserUseSessionId
+      || args?.browser_server_session_id
+      || args?.browserServerSessionId
+      || 'default',
+  );
 }
 
 function getStatusSessionId(args: any): string {
   if (args?.follow_last_active) {
-    return normalizeBrowserUseSessionId(lastActiveBrowserUseSessionId || args?.session_id || args?._browserUseSessionId || 'default');
+    return normalizeBrowserUseSessionId(lastActiveBrowserUseSessionId || getBrowserUseRuntimeSessionId(args));
   }
-  return getBrowserUseSessionId(args);
+  return getBrowserUseRuntimeSessionId(args);
+}
+
+function getBrowserUseTabRouting(args: any): Record<string, any> {
+  const routing: Record<string, any> = {};
+  const tabSessionId = String(args?.session_id || args?.sessionId || '').trim();
+  if (tabSessionId) routing.session_id = tabSessionId;
+
+  const rawTabIndex = args?.tab_index ?? args?.tabIndex;
+  if (typeof rawTabIndex !== 'undefined') {
+    const tabIndex = Number(rawTabIndex);
+    if (Number.isInteger(tabIndex) && tabIndex >= 0) {
+      routing.tab_index = tabIndex;
+    }
+  }
+
+  return routing;
 }
 
 function getBrowserUseHost(runtime: BrowserUseRuntime): string {
@@ -904,7 +925,7 @@ async function withServer<T>(
   args: any,
   fn: (sessionId: string) => Promise<T>,
 ): Promise<T | { ok: false; error: string }> {
-  const sessionId = getBrowserUseSessionId(args);
+  const sessionId = getBrowserUseRuntimeSessionId(args);
   const ready = await ensureReady(sessionId);
   if (!ready.ok) return { ok: false, error: `Browser not available: ${ready.error || 'setup failed'}` };
   try {
@@ -1020,6 +1041,7 @@ export async function execBrowserUseExecuteScript(args: any, ctx: RouterContext)
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         script,
         args: scriptArgs && typeof scriptArgs === 'object' && !Array.isArray(scriptArgs) ? scriptArgs : undefined,
         wait_for_selector: args?.wait_for_selector,
@@ -1047,6 +1069,7 @@ export async function execBrowserUseNavigate(args: any, _ctx: RouterContext): Pr
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         url,
         wait_until: args?.wait_until || 'domcontentloaded',
         timeout: navTimeout,
@@ -1068,6 +1091,7 @@ export async function execBrowserUseClick(args: any, _ctx: RouterContext): Promi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text,
@@ -1089,6 +1113,7 @@ export async function execBrowserUseType(args: any, _ctx: RouterContext): Promis
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text ?? '',
@@ -1113,6 +1138,7 @@ export async function execBrowserUsePressKey(args: any, _ctx: RouterContext): Pr
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         key,
         elementId: args?.elementId,
         selector: args?.selector,
@@ -1131,7 +1157,7 @@ export async function execBrowserUseScreenshot(args: any, _ctx: RouterContext): 
     const resp = await browserUseFetch('/screenshot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ full_page: args?.full_page }),
+      body: JSON.stringify({ ...getBrowserUseTabRouting(args), full_page: args?.full_page }),
       timeoutMs: 15000,
     }, sessionId);
     if (!resp.ok) {
@@ -1148,6 +1174,7 @@ export async function execBrowserUseContent(args: any, _ctx: RouterContext): Pro
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         mode: args?.mode,
         max_length: args?.max_length,
         viewport_only: args?.viewport_only,
@@ -1169,6 +1196,7 @@ export async function execBrowserUseScroll(args: any, _ctx: RouterContext): Prom
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         direction: args?.direction,
         amount: args?.amount,
         selector: args?.selector,
@@ -1188,6 +1216,7 @@ export async function execBrowserUseTabs(args: any, _ctx: RouterContext): Promis
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         action: args?.action,
         index: args?.index,
         url: args?.url,
@@ -1207,6 +1236,7 @@ export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Pro
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         action: args?.action,
         cookies: args?.cookies,
         urls: args?.urls,
@@ -1227,6 +1257,7 @@ export async function execBrowserUseHover(args: any, _ctx: RouterContext): Promi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         elementId: args?.elementId,
         selector: args?.selector,
         text: args?.text,
@@ -1247,6 +1278,7 @@ export async function execBrowserUseSelectOption(args: any, _ctx: RouterContext)
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         elementId: args?.elementId,
         selector: args?.selector,
         value: args?.value,
@@ -1270,6 +1302,7 @@ export async function execBrowserUseGetDropdownOptions(args: any, _ctx: RouterCo
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         elementId: args?.elementId,
         selector: args?.selector,
         timeout: args?.timeout,
@@ -1289,6 +1322,7 @@ export async function execBrowserUseGetInteractiveElements(args: any, _ctx: Rout
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         wait_for_selector: args?.wait_for_selector,
         wait_timeout: args?.wait_timeout,
         viewport_only: args?.viewport_only,
@@ -1321,6 +1355,7 @@ export async function execBrowserUseFillForm(args: any, _ctx: RouterContext): Pr
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         fields: normalizedFields,
         submit: args?.submit,
         form_selector: args?.form_selector,
@@ -1349,6 +1384,7 @@ export async function execBrowserUseUploadFile(args: any, _ctx: RouterContext): 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         selector: args?.selector,
         file_path: resolvedPath,
         timeout: args?.timeout,
@@ -1371,6 +1407,7 @@ export async function execBrowserUseWaitFor(args: any, _ctx: RouterContext): Pro
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...getBrowserUseTabRouting(args),
         selector: args?.selector,
         text: args?.text,
         url_pattern: args?.url_pattern,
@@ -1534,7 +1571,7 @@ export async function browserMirrorScroll(
 }
 
 export async function execBrowserUseClose(args: any, _ctx: RouterContext): Promise<any> {
-  const sessionId = getBrowserUseSessionId(args);
+  const sessionId = getBrowserUseRuntimeSessionId(args);
   if (!(await isBrowserUseAlive(sessionId))) return { ok: true, closed: true };
   try {
     const resp = await browserUseFetch('/close', {

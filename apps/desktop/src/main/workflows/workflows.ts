@@ -348,17 +348,65 @@ function getCloudAiHttpBase(): string {
 }
 
 const WEBHOOK_CONSUMERS_METADATA_KEY = 'stuardConsumers';
+const WEBHOOK_ENDPOINTS_METADATA_KEY = 'stuardEndpoints';
 
-function getDesktopTriggerSourceId(flowId: string, triggerId?: string): string {
-  return `desktop:${flowId}:${triggerId || 'default'}`;
+function getDesktopTriggerSourceId(flowId: string, triggerId?: string, mode: 'cloud' | 'local' = 'cloud'): string {
+  const prefix = mode === 'local' ? 'desktop-local' : 'desktop';
+  return `${prefix}:${flowId}:${triggerId || 'default'}`;
+}
+
+function buildWebhookSyncMetadata(
+  existingMetadata: any,
+  consumerId: string,
+  flowId: string,
+  triggerId: string | undefined,
+  mode: 'cloud' | 'local'
+) {
+  const metadata = existingMetadata && typeof existingMetadata === 'object' ? { ...existingMetadata } : {};
+  const rawConsumers = Array.isArray(metadata[WEBHOOK_CONSUMERS_METADATA_KEY])
+    ? metadata[WEBHOOK_CONSUMERS_METADATA_KEY]
+    : [];
+  const consumers = Array.from(new Set(rawConsumers.map((v: any) => String(v || '').trim()).filter(Boolean).concat(consumerId)));
+  metadata[WEBHOOK_CONSUMERS_METADATA_KEY] = consumers;
+
+  const endpoints = metadata[WEBHOOK_ENDPOINTS_METADATA_KEY] && typeof metadata[WEBHOOK_ENDPOINTS_METADATA_KEY] === 'object'
+    ? { ...metadata[WEBHOOK_ENDPOINTS_METADATA_KEY] }
+    : {};
+
+  if (mode === 'local') {
+    const localBase = `http://127.0.0.1:${localWebhookPort}`;
+    endpoints.local = {
+      triggerUrl: `${localBase}/webhooks/incoming/${flowId}`,
+      callUrl: `${localBase}/webhooks/call/${flowId}${triggerId ? `?triggerId=${encodeURIComponent(triggerId)}` : ''}`,
+      triggerId: triggerId || null,
+      responseMode: 'return_value',
+      supportsCallResponse: true,
+      syncedAt: new Date().toISOString(),
+    };
+  } else {
+    const cloudBase = getCloudAiHttpBase();
+    endpoints.cloud = {
+      triggerUrl: `${cloudBase}/webhooks/incoming/${flowId}`,
+      triggerId: triggerId || null,
+      syncedAt: new Date().toISOString(),
+    };
+  }
+
+  metadata[WEBHOOK_ENDPOINTS_METADATA_KEY] = endpoints;
+  metadata.stuardWebhookModes = Array.from(new Set([
+    ...Object.keys(endpoints),
+    mode,
+  ]));
+  return { metadata, consumers };
 }
 
 /**
- * Ensure a cloud webhook entry exists for a workflow so the incoming URL works.
- * Uses the flowId as the slug. Silently succeeds if already created.
+ * Ensure a Supabase webhook entry exists for a workflow.
+ * Cloud mode activates the public incoming URL; local mode syncs metadata/history
+ * without exposing a public cloud endpoint for local-only workflows.
  */
-async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: string) {
-  const consumerId = getDesktopTriggerSourceId(flowId, triggerId);
+async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: string, mode: 'cloud' | 'local' = 'cloud') {
+  const consumerId = getDesktopTriggerSourceId(flowId, triggerId, mode);
   try {
     const token = await getRendererAccessToken();
     if (!token) return;
@@ -371,27 +419,25 @@ async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: 
       const listBody = await listRes.json() as any;
       const existing = (listBody?.webhooks || []).find((w: any) => w.slug === flowId);
       if (existing) {
-        const rawConsumers = Array.isArray(existing?.metadata?.[WEBHOOK_CONSUMERS_METADATA_KEY])
-          ? existing.metadata[WEBHOOK_CONSUMERS_METADATA_KEY]
-          : [];
-        const consumers = Array.from(new Set(rawConsumers.map((v: any) => String(v || '').trim()).filter(Boolean).concat(consumerId)));
+        const { metadata, consumers } = buildWebhookSyncMetadata(existing.metadata, consumerId, flowId, triggerId, mode);
+        const hasCloudEndpoint = !!metadata?.[WEBHOOK_ENDPOINTS_METADATA_KEY]?.cloud;
+        const shouldBeActive = mode === 'cloud' || (existing.is_active && hasCloudEndpoint);
+        const rawConsumers = Array.isArray(existing?.metadata?.[WEBHOOK_CONSUMERS_METADATA_KEY]) ? existing.metadata[WEBHOOK_CONSUMERS_METADATA_KEY] : [];
         if (
-          !existing.is_active ||
+          existing.is_active !== shouldBeActive ||
           existing.target_workflow_id !== flowId ||
           existing.target_workflow_trigger_id !== (triggerId || null) ||
-          consumers.length !== rawConsumers.length
+          consumers.length !== rawConsumers.length ||
+          JSON.stringify(existing.metadata || {}) !== JSON.stringify(metadata)
         ) {
           await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              is_active: true,
+              is_active: shouldBeActive,
               target_workflow_id: flowId,
               target_workflow_trigger_id: triggerId || null,
-              metadata: {
-                ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
-                [WEBHOOK_CONSUMERS_METADATA_KEY]: consumers,
-              },
+              metadata,
             }),
           }).catch(() => {});
         }
@@ -408,19 +454,18 @@ async function ensureCloudWebhook(flowId: string, flowName: string, triggerId?: 
         type: 'workflow',
         workflowId: flowId,
         triggerId: triggerId || undefined,
-        metadata: {
-          [WEBHOOK_CONSUMERS_METADATA_KEY]: [consumerId],
-        },
+        isActive: mode === 'cloud',
+        metadata: buildWebhookSyncMetadata(undefined, consumerId, flowId, triggerId, mode).metadata,
       }),
     });
-    console.log(`[Workflows] Cloud webhook registered for ${flowId}`);
+    console.log(`[Workflows] ${mode === 'cloud' ? 'Cloud' : 'Local'} webhook synced for ${flowId}`);
   } catch (e: any) {
-    console.warn(`[Workflows] Failed to register cloud webhook for ${flowId}:`, e?.message);
+    console.warn(`[Workflows] Failed to sync ${mode} webhook for ${flowId}:`, e?.message);
   }
 }
 
-async function removeCloudWebhook(flowId: string, triggerId?: string) {
-  const consumerId = getDesktopTriggerSourceId(flowId, triggerId);
+async function removeCloudWebhook(flowId: string, triggerId?: string, mode: 'cloud' | 'local' = 'cloud') {
+  const consumerId = getDesktopTriggerSourceId(flowId, triggerId, mode);
   try {
     const token = await getRendererAccessToken();
     if (!token) return;
@@ -450,13 +495,80 @@ async function removeCloudWebhook(flowId: string, triggerId?: string) {
 
     const nextMetadata = { ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}) } as Record<string, any>;
     nextMetadata[WEBHOOK_CONSUMERS_METADATA_KEY] = consumers;
+    if (nextMetadata[WEBHOOK_ENDPOINTS_METADATA_KEY] && typeof nextMetadata[WEBHOOK_ENDPOINTS_METADATA_KEY] === 'object') {
+      const endpoints = { ...nextMetadata[WEBHOOK_ENDPOINTS_METADATA_KEY] };
+      delete endpoints[mode];
+      nextMetadata[WEBHOOK_ENDPOINTS_METADATA_KEY] = endpoints;
+      nextMetadata.stuardWebhookModes = Object.keys(endpoints);
+    }
     await net.fetch(`${base}/v1/webhooks/${existing.id}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ metadata: nextMetadata }),
+      body: JSON.stringify({ metadata: nextMetadata, is_active: mode === 'cloud' ? false : existing.is_active }),
     }).catch(() => {});
   } catch (e: any) {
-    console.warn(`[Workflows] Failed to remove cloud webhook for ${flowId}:`, e?.message);
+    console.warn(`[Workflows] Failed to remove ${mode} webhook for ${flowId}:`, e?.message);
+  }
+}
+
+function collectWebhookRequestHeaders(req: http.IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(req.headers || {})) {
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey === 'authorization' || normalizedKey === 'cookie') continue;
+    if (typeof value === 'string') out[key] = value;
+    else if (Array.isArray(value) && value.length > 0) out[key] = value[0];
+  }
+  return out;
+}
+
+function collectWebhookQueryParams(url: URL): Record<string, string> {
+  const out: Record<string, string> = {};
+  url.searchParams.forEach((value, key) => { out[key] = value; });
+  return out;
+}
+
+async function logLocalWebhookEventToSupabase(input: {
+  flowId: string;
+  triggerId?: string;
+  mode: 'local.trigger' | 'local.call';
+  request: {
+    method: string;
+    path: string;
+    headers: Record<string, string>;
+    queryParams: Record<string, string>;
+    body: any;
+    rawBody: string;
+    sourceIp?: string;
+  };
+  response: { status: number; body: any };
+  ok: boolean;
+  error?: string;
+}) {
+  try {
+    const safe = safeFlowId(input.flowId);
+    if (!safe) return;
+    const token = await getRendererAccessToken();
+    if (!token) return;
+    const model = readWorkflowModel(safe);
+    await ensureCloudWebhook(safe, model?.name || safe, input.triggerId, 'local');
+    const base = getCloudAiHttpBase();
+    await net.fetch(`${base}/v1/webhooks/local-event`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slug: safe,
+        workflowId: safe,
+        triggerId: input.triggerId,
+        mode: input.mode,
+        ok: input.ok,
+        error: input.error,
+        request: input.request,
+        response: input.response,
+      }),
+    }).catch(() => {});
+  } catch (e: any) {
+    console.warn(`[Workflows] Failed to sync local webhook event for ${input.flowId}:`, e?.message);
   }
 }
 
@@ -558,6 +670,7 @@ export type FlowRuntime = {
   intervals: any[];
   procs: Array<ChildProcess | null>;
   googleNativeTriggers: Array<{ type: 'gmail.new_email' | 'drive.new_file'; triggerId: string }>;
+  webhookTriggers: Array<{ mode: 'cloud' | 'local'; triggerId?: string }>;
   cloudWebhookTriggerId?: string;
   lastOutlookCalendarStamp?: string;
 };
@@ -895,50 +1008,39 @@ export function emitFlowExecutionState(flowId: string, isRunning: boolean) {
   } catch (e) { console.error('[Workflows] emitFlowExecutionState error:', e); }
 }
 
-/**
- * Execute a workflow from a trigger (cron, file watch, webhook, etc.)
- * @param triggerId - Optional trigger ID to execute only the path connected to that specific trigger
- */
-export async function executeWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
-  console.log('[Workflows] executeWorkflowFromTrigger called:', flowId, origin, 'triggerId:', triggerId);
+async function runWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
+  console.log('[Workflows] runWorkflowFromTrigger called:', flowId, origin, 'triggerId:', triggerId);
+  const safe = safeFlowId(flowId);
+  if (!safe) return { ok: false, error: 'invalid_workflow_id' };
+
+  const model = readWorkflowModel(safe);
+  if (!model) {
+    console.error('[Workflows] Workflow not found:', safe);
+    return { ok: false, error: 'workflow_not_found' };
+  }
+
+  // Ensure workflow variables are registered and available for this run.
+  // We do not reset values here because deployed workflows may use persistent
+  // state across trigger invocations.
+  if (Array.isArray(model.variables) && model.variables.length > 0) {
+    initializeWorkflowVariables(safe, model.variables, false);
+  }
+
+  logFlow(safe, `Triggered (${origin})`);
+  emitFlowExecutionState(safe, true);
+
   try {
-    const safe = safeFlowId(flowId);
-    if (!safe) return;
-
-    const model = readWorkflowModel(safe);
-    if (!model) {
-      console.error('[Workflows] Workflow not found:', safe);
-      return;
-    }
-
-    // Ensure workflow variables are registered and available for this run
-    // Note: We don't reset here since startFlowRuntime already initialized them
-    // This just ensures the registry is up to date for any late-registered variables
-    if (Array.isArray(model.variables) && model.variables.length > 0) {
-      initializeWorkflowVariables(safe, model.variables, false);
-    }
-
-    // Log trigger
-    logFlow(safe, `Triggered (${origin})`);
-    emitFlowExecutionState(safe, true);
-
-    // Convert workflow to stuard spec, passing triggerId to use only that trigger's start node
+    // Convert workflow to stuard spec, passing triggerId to use only that trigger's start node.
     const spec = designerModelToStuardSpec(model, triggerId);
-
-    // IMPORTANT: Set autostart to false when saving for execution
-    // This prevents the legacy stuards system from registering hotkeys/triggers
-    // which would conflict with the workflows system
     spec.autostart = false;
 
-    // Save as stuard for execution
     const saveRes = stuards_save({ id: safe, content: JSON.stringify(spec, null, 2) });
     if (!saveRes?.ok) {
       console.error('[Workflows] Failed to save as stuard:', saveRes?.error);
-      emitFlowExecutionState(safe, false);
-      return;
+      logFlow(safe, `Error: ${saveRes?.error || 'save_failed'}`);
+      return { ok: false, error: saveRes?.error || 'save_failed' };
     }
 
-    // Build engine context
     const stuardsDir = path.join(app.getPath('userData'), 'stuards');
     const triggerAccessToken = await getRendererAccessToken();
 
@@ -951,19 +1053,33 @@ export async function executeWorkflowFromTrigger(flowId: string, origin: string,
       sourceLabel: `Workflow: ${model.name || safe}`,
     };
 
-    // Actually execute the workflow
-    runStuardEngine(safe, payload, engineCtx).then(() => {
-      console.log('[Workflows] Trigger execution completed:', safe);
-      logFlow(safe, 'Run completed');
-      emitFlowExecutionState(safe, false);
-    }).catch((e: any) => {
-      console.error('[Workflows] Trigger execution error:', e);
-      logFlow(safe, `Error: ${e?.message || 'execution_failed'}`);
-      emitFlowExecutionState(safe, false);
-    });
+    const runRes: any = await runStuardEngine(safe, payload, engineCtx);
+    console.log('[Workflows] Trigger execution completed:', safe);
+    logFlow(safe, 'Run completed');
+    return {
+      ok: true,
+      workflowId: safe,
+      result: runRes?.returnValue,
+      returned: Object.prototype.hasOwnProperty.call(runRes || {}, 'returnValue'),
+    };
   } catch (e: any) {
-    console.error('[Workflows] executeWorkflowFromTrigger error:', e);
+    console.error('[Workflows] Trigger execution error:', e);
+    logFlow(safe, `Error: ${e?.message || 'execution_failed'}`);
+    return { ok: false, workflowId: safe, error: e?.message || 'execution_failed' };
+  } finally {
+    emitFlowExecutionState(safe, false);
   }
+}
+
+/**
+ * Execute a workflow from a trigger (cron, file watch, webhook, etc.)
+ * @param triggerId - Optional trigger ID to execute only the path connected to that specific trigger
+ */
+export async function executeWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
+  console.log('[Workflows] executeWorkflowFromTrigger called:', flowId, origin, 'triggerId:', triggerId);
+  void runWorkflowFromTrigger(flowId, origin, payload, triggerId).catch((e: any) => {
+    console.error('[Workflows] executeWorkflowFromTrigger error:', e);
+  });
 }
 
 export function handleCloudWebhookEvent(msg: any) {
@@ -1023,10 +1139,102 @@ export function startLocalWebhookServer() {
             res.writeHead(204, {
               'Access-Control-Allow-Origin': '*',
               'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-              'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+              'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Stuard-Local-Token, X-Stuard-Request-Id',
               'Access-Control-Max-Age': '600',
             });
             res.end();
+            return;
+          }
+          // Request/response workflow call:
+          // - /webhooks/call/:id       (waits for return_value and returns it)
+          if (method === 'POST' && pathname.startsWith('/webhooks/call/')) {
+            const topicId = pathname.split('/').slice(3).join('/').replace(/^\/+|\/+$/g, '');
+            if (!topicId) {
+              const body = JSON.stringify({ ok: false, error: 'missing_workflow_id' });
+              res.writeHead(400, {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Access-Control-Allow-Origin': '*',
+              });
+              res.end(body);
+              return;
+            }
+
+            const chunks: Buffer[] = [];
+            (req as any).on('data', (c: any) => { try { chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)); } catch { } });
+            (req as any).on('end', async () => {
+              const raw = Buffer.concat(chunks).toString('utf8');
+              let json: any = null;
+              try { json = raw ? JSON.parse(raw) : {}; } catch { json = { raw }; }
+
+              const safe = safeFlowId(topicId);
+              const requestedTriggerId = String(u.searchParams.get('triggerId') || '').trim();
+              const triggerId = requestedTriggerId || webhookEnabledFlows.get(safe) || cloudWebhookEnabledFlows.get(safe);
+              if (!safe) {
+                const body = JSON.stringify({ ok: false, error: 'invalid_workflow_id' });
+                res.writeHead(400, {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+                  'Access-Control-Allow-Origin': '*',
+                });
+                res.end(body);
+                return;
+              }
+
+              try {
+                const result = await runWorkflowFromTrigger(safe, 'webhook.local.call', json, triggerId);
+                const status = result.ok ? 200 : 500;
+                const body = JSON.stringify(result);
+                res.writeHead(status, {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+                  'Access-Control-Allow-Origin': '*',
+                });
+                res.end(body);
+                void logLocalWebhookEventToSupabase({
+                  flowId: safe,
+                  triggerId,
+                  mode: 'local.call',
+                  ok: !!result.ok,
+                  error: result.ok ? undefined : result.error,
+                  request: {
+                    method,
+                    path: pathname,
+                    headers: collectWebhookRequestHeaders(req),
+                    queryParams: collectWebhookQueryParams(u),
+                    body: json,
+                    rawBody: raw,
+                    sourceIp: req.socket?.remoteAddress || '127.0.0.1',
+                  },
+                  response: { status, body: result },
+                });
+              } catch (e: any) {
+                const body = JSON.stringify({ ok: false, workflowId: safe, error: e?.message || 'execution_failed' });
+                res.writeHead(500, {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+                  'Access-Control-Allow-Origin': '*',
+                });
+                res.end(body);
+                void logLocalWebhookEventToSupabase({
+                  flowId: safe,
+                  triggerId,
+                  mode: 'local.call',
+                  ok: false,
+                  error: e?.message || 'execution_failed',
+                  request: {
+                    method,
+                    path: pathname,
+                    headers: collectWebhookRequestHeaders(req),
+                    queryParams: collectWebhookQueryParams(u),
+                    body: json,
+                    rawBody: raw,
+                    sourceIp: req.socket?.remoteAddress || '127.0.0.1',
+                  },
+                  response: { status: 500, body: { ok: false, workflowId: safe, error: e?.message || 'execution_failed' } },
+                });
+              }
+            });
             return;
           }
           // Accept both:
@@ -1079,6 +1287,26 @@ export function startLocalWebhookServer() {
                 });
               } catch { }
               try { res.end(body); } catch { }
+              if (topicId) {
+                const safe = safeFlowId(topicId);
+                const triggerId = webhookEnabledFlows.get(safe);
+                void logLocalWebhookEventToSupabase({
+                  flowId: safe,
+                  triggerId,
+                  mode: 'local.trigger',
+                  ok: true,
+                  request: {
+                    method,
+                    path: pathname,
+                    headers: collectWebhookRequestHeaders(req),
+                    queryParams: collectWebhookQueryParams(u),
+                    body: json,
+                    rawBody: raw,
+                    sourceIp: req.socket?.remoteAddress || '127.0.0.1',
+                  },
+                  response: { status: 200, body: { ok: true, delivered } },
+                });
+              }
             });
             return;
           }
@@ -1127,6 +1355,7 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
     intervals: [],
     procs: [],
     googleNativeTriggers: [],
+    webhookTriggers: [],
   };
 
   // Initialize workflow variables before starting any triggers
@@ -1210,11 +1439,16 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
                           String(args?.mode || 'cloud');
       if (webhookMode === 'local') {
         webhookEnabledFlows.set(safe, triggerId);
+        rt.webhookTriggers.push({ mode: 'local', triggerId });
+        // Sync local endpoint metadata to Supabase so the workflow's webhook
+        // exists in the same registry/history as cloud webhooks.
+        ensureCloudWebhook(safe, model?.name || safe, triggerId, 'local').catch(() => {});
       } else {
         cloudWebhookEnabledFlows.set(safe, triggerId);
         rt.cloudWebhookTriggerId = triggerId;
+        rt.webhookTriggers.push({ mode: 'cloud', triggerId });
         // Auto-register cloud webhook endpoint so the URL works
-        ensureCloudWebhook(safe, model?.name || safe, triggerId).catch(() => {});
+        ensureCloudWebhook(safe, model?.name || safe, triggerId, 'cloud').catch(() => {});
       }
       started++;
     } else if (type === 'hotkey') {
@@ -1447,8 +1681,8 @@ export function stopFlowRuntime(id: string) {
     }
   } catch { }
   try {
-    if (rt.cloudWebhookTriggerId) {
-      void removeCloudWebhook(safe, rt.cloudWebhookTriggerId);
+    for (const w of rt.webhookTriggers || []) {
+      void removeCloudWebhook(safe, w.triggerId, w.mode);
     }
   } catch { }
   try { for (const p of rt.procs) { try { if (p && !p.killed) { if (process.platform === 'win32') { try { process.kill((p as any).pid); } catch { } } else { try { p.kill('SIGTERM'); } catch { } } } } catch { } } } catch { }
@@ -2334,7 +2568,10 @@ export function workflows_getWorkspaceInfo(id: string) {
 }
 
 /** List files in a workspace subpath */
-export function workflows_listWorkspaceFiles(id: string, subpath?: string) {
+const WORKSPACE_LIST_DEFAULT_LIMIT = 500;
+const WORKSPACE_LIST_MAX_LIMIT = 2000;
+
+export function workflows_listWorkspaceFiles(id: string, subpath?: string, options?: { limit?: number; offset?: number }) {
   try {
     const safe = safeFlowId(String(id || ''));
     if (!safe) return { ok: false, error: 'invalid_id' };
@@ -2347,8 +2584,15 @@ export function workflows_listWorkspaceFiles(id: string, subpath?: string) {
     if (!fs.existsSync(targetDir)) return { ok: false, error: 'subpath_not_found' };
 
     const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+    const limit = Math.min(
+      Math.max(1, options?.limit ?? WORKSPACE_LIST_DEFAULT_LIMIT),
+      WORKSPACE_LIST_MAX_LIMIT,
+    );
+    const offset = Math.max(0, options?.offset ?? 0);
+
     const files: WorkspaceFileEntry[] = [];
-    for (const e of entries) {
+    const sliced = entries.slice(offset, offset + limit);
+    for (const e of sliced) {
       const fullPath = path.join(targetDir, e.name);
       if (e.isDirectory()) {
         files.push({ name: e.name, path: subpath ? `${subpath}/${e.name}` : e.name, type: 'directory' });
@@ -2363,7 +2607,17 @@ export function workflows_listWorkspaceFiles(id: string, subpath?: string) {
         });
       }
     }
-    return { ok: true, files };
+    const truncated = (offset + sliced.length) < entries.length;
+    const result: { ok: true; files: WorkspaceFileEntry[]; count: number; truncated: boolean; total?: number } = {
+      ok: true,
+      files,
+      count: files.length,
+      truncated,
+    };
+    if (truncated || offset > 0) {
+      result.total = entries.length;
+    }
+    return result;
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
   }

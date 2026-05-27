@@ -425,6 +425,10 @@ class IndexerDaemon {
     });
   }
 
+  isAlive(): boolean {
+    return !!this.child && !this.child.killed;
+  }
+
   shutdown() {
     const child = this.child;
     this.cleanup(new Error("shutdown"));
@@ -551,10 +555,21 @@ export async function searchFiles(
   if (options.kind) args.kind = options.kind;
   if (options.rootId) args.root_id = options.rootId;
 
+  // The daemon now holds a long-lived SQLite connection and caps FTS token
+  // count, so queries that previously timed out at 5s now complete in under
+  // 100ms. 8s leaves headroom for the very first cold-cache query on a
+  // multi-million-row index without making typo'd searches feel laggy.
   try {
-    const res = await daemon.call<{ ok: boolean; results: FileSearchResult[] }>("search", args, 5000);
+    const res = await daemon.call<{ ok: boolean; results: FileSearchResult[] }>("search", args, 8000);
     return res?.results || [];
   } catch (err) {
+    // Only fall back to a one-shot spawn if the daemon is actually broken —
+    // not just slow. Spawning re-pays the ~800ms Windows cold-start tax, and
+    // when the daemon is alive-but-busy the redundant spawn doubles load.
+    if (daemon.isAlive()) {
+      logger.warn("[rust-file-indexer] daemon search timed out (alive); returning empty:", err);
+      return [];
+    }
     logger.warn("[rust-file-indexer] search via daemon failed, falling back to spawn:", err);
     try {
       const res = await runIndexer<{ ok: boolean; results: FileSearchResult[] }>("search", {

@@ -14,6 +14,7 @@ Individual tools:
 from __future__ import annotations
 
 import os
+import sys
 import sqlite3
 import json
 import logging
@@ -25,16 +26,48 @@ logger = logging.getLogger("agent")
 
 
 def _get_user_data_dir() -> str:
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    elif os.uname().sysname == "Darwin":
+    """Get platform-appropriate user data directory (matches other agent DB modules)."""
+    if os.getenv("AGENT_DATA_DIR"):
+        return os.getenv("AGENT_DATA_DIR")
+
+    if sys.platform == "win32":
+        base = os.getenv("APPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
         base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
     else:
         base = os.getenv("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+
     return os.path.join(base, "StuardAI", "agent")
 
 
-DB_PATH = os.path.join(_get_user_data_dir(), "workflow.db")
+DB_PATH = os.path.abspath(os.path.join(_get_user_data_dir(), "workflow.db"))
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+
+def _maybe_migrate_legacy_db_path() -> None:
+    """One-time migration: workflow.db previously used LOCALAPPDATA on Windows."""
+    if sys.platform != "win32" or os.getenv("AGENT_DATA_DIR") or os.path.exists(DB_PATH):
+        return
+    legacy = os.path.join(
+        os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local"),
+        "StuardAI", "agent", "workflow.db",
+    )
+    if not os.path.exists(legacy):
+        return
+    try:
+        import shutil
+        shutil.copy2(legacy, DB_PATH)
+        logger.info("Migrated workflow.db from legacy LOCALAPPDATA path to APPDATA")
+    except Exception:
+        logger.warning("Failed to migrate workflow.db from legacy path", exc_info=True)
+
+
+_maybe_migrate_legacy_db_path()
+
+
+def _query_returns_rows(cursor: sqlite3.Cursor) -> bool:
+    """True when the statement produces result columns (SELECT, WITH ... SELECT, PRAGMA, etc.)."""
+    return cursor.description is not None
 
 
 def _get_conn():
@@ -76,13 +109,11 @@ async def db_query(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         with _get_conn() as conn:
             cursor = conn.execute(query, params)
-            upper = query.strip().upper()
-            if upper.startswith("SELECT") or upper.startswith("PRAGMA") or "RETURNING" in upper:
+            if _query_returns_rows(cursor):
                 rows = [dict(row) for row in cursor.fetchall()]
                 return {"ok": True, "results": rows, "count": len(rows)}
-            else:
-                conn.commit()
-                return {"ok": True, "affected_rows": cursor.rowcount}
+            conn.commit()
+            return {"ok": True, "affected_rows": cursor.rowcount}
     except Exception as e:
         logger.exception("db_query error")
         return {"ok": False, "error": str(e)}

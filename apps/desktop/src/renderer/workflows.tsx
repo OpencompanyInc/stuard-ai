@@ -20,6 +20,10 @@ import { useWorkflowUiState } from "./workflows/hooks/useWorkflowUiState";
 import { useWorkflows } from "./workflows/hooks/useWorkflows";
 import { useWorkflowCanvasInteractions } from "./workflows/hooks/useWorkflowCanvasInteractions";
 import { useWorkflowKeyboardShortcuts } from "./workflows/hooks/useWorkflowKeyboardShortcuts";
+import { useWorkflowGroups, type NodeGroup } from "./workflows/hooks/useWorkflowGroups";
+import { buildGroupRender, computeCanvasSize, computeContentBBox } from "./workflows/utils/groupGeometry";
+import { useWorkflowZoom } from "./workflows/hooks/useWorkflowZoom";
+import { WorkflowGroupsProvider, type WorkflowGroupsContextValue } from "./workflows/WorkflowGroupsContext";
 import { useWorkflowMarketplace } from "./workflows/hooks/useWorkflowMarketplace";
 import { useWorkflowDeploy } from "./workflows/hooks/useWorkflowDeploy";
 import { useWorkflowRuntime } from "./workflows/hooks/useWorkflowRuntime";
@@ -62,12 +66,51 @@ import {
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
+type LauncherView = 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills';
+
+function parseLauncherView(value: string | null | undefined): LauncherView | undefined {
+  if (value === 'workflows' || value === 'deployed' || value === 'shared' || value === 'marketplace' || value === 'skills') {
+    return value;
+  }
+  return undefined;
+}
+
 function WorkflowsApp() {
-  const { themeMode, modelSource, setModelSource } = usePreferences();
+  const { themeMode, modelSource, setModelSource, themeDarkShade, themeLightShade, themeText } = usePreferences();
   const isDark = themeMode === 'dark' || themeMode === 'custom';
+
+  // Workflows is a separate BrowserWindow — sync app theme tokens so theme-* utilities
+  // (ModelSelector, etc.) are readable on wf dark surfaces.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (themeMode === 'dark' || themeMode === 'custom') {
+      root.setAttribute('data-theme', 'dark');
+      root.classList.add('dark');
+    } else {
+      root.setAttribute('data-theme', 'light');
+      root.classList.remove('dark');
+    }
+    if (themeMode === 'custom') {
+      root.style.setProperty('--custom-gradient-start', themeDarkShade);
+      root.style.setProperty('--custom-gradient-end', themeLightShade);
+      root.style.setProperty('--custom-text-color', themeText === 'white' ? '#ffffff' : '#000000');
+    } else {
+      root.style.removeProperty('--custom-gradient-start');
+      root.style.removeProperty('--custom-gradient-end');
+      root.style.removeProperty('--custom-text-color');
+    }
+  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
   const { items, folders, loading, refresh, updates } = useWorkflows();
   const { logs, setLogs, executionState, runningIds, setRunningIds } = useWorkflowRuntime();
   const [selectedId, setSelectedId] = useState("");
+  const [launcherView, setLauncherView] = useState<LauncherView>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return parseLauncherView(params.get('view')) || 'workflows';
+    } catch {
+      return 'workflows';
+    }
+  });
   const [model, setModel] = useState<DesignerModel | null>(null);
   const [dirty, setDirty] = useState(false);
 
@@ -92,7 +135,6 @@ function WorkflowsApp() {
   } = useWorkflowUiState();
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1);
   const [showLogs, setShowLogs] = useState(false);
   const [showRunMenu, setShowRunMenu] = useState(false);
 
@@ -263,16 +305,29 @@ function WorkflowsApp() {
       setHistory(prev => {
         // Truncate any future history (redo states) when making a new change
         const newHistory = prev.slice(0, historyIndex + 1);
-        // Add current state to history (limit to 50 states)
-        const trimmed = [...newHistory, model].slice(-50);
+        // Keep undo useful without retaining dozens of full workflow snapshots.
+        const trimmed = [...newHistory, model].slice(-20);
         return trimmed;
       });
-      setHistoryIndex(prev => Math.min(prev + 1, 49));
+      setHistoryIndex(prev => Math.min(prev + 1, 19));
     }
 
     setModel(m);
     setDirty(true);
   }, [model, historyIndex]);
+
+  // ── Editor-only visual node groups (sidecar; never sent to engine/AI) ──
+  const groupsApi = useWorkflowGroups(selectedId, model);
+
+  const getContentBBox = useCallback(() => {
+    if (!model) return null;
+    return computeContentBBox(model, buildGroupRender(groupsApi.groups, model));
+  }, [model, groupsApi.groups]);
+
+  const { zoom, zoomIn, zoomOut, zoomReset, fitToView, bindWheelTarget } = useWorkflowZoom({
+    canvasRef,
+    getContentBBox,
+  });
 
   const {
     selectedNodeId,
@@ -428,9 +483,15 @@ function WorkflowsApp() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialId = params.get('workflowId');
+    const initialView = parseLauncherView(params.get('view'));
     if (initialId) pendingDeepLinkRef.current = initialId;
+    if (initialView) setLauncherView(initialView);
 
     const unsub = (window as any).desktopAPI?.onWorkflowsNavigate?.((d: any) => {
+      if (d?.view) {
+        const nextView = parseLauncherView(String(d.view));
+        if (nextView) setLauncherView(nextView);
+      }
       if (d?.workflowId) {
         pendingDeepLinkRef.current = String(d.workflowId);
         if (items.some((it: any) => it.id === d.workflowId)) {
@@ -653,10 +714,10 @@ function WorkflowsApp() {
 
     setHistory(prev => {
       const newHistory = prev.slice(0, historyIndex + 1);
-      const trimmed = [...newHistory, model].slice(-50);
+      const trimmed = [...newHistory, model].slice(-20);
       return trimmed;
     });
-    setHistoryIndex(prev => Math.min(prev + 1, 49));
+    setHistoryIndex(prev => Math.min(prev + 1, 19));
     setModel({
       ...model,
       nodes: model.nodes.filter(n => !toDelete.has(n.id)),
@@ -1043,6 +1104,26 @@ function WorkflowsApp() {
     setSelectedWireIndex(null);
   }, [model, updateModel, setSelectedNodeIds, setSelectedNodeId, setSelectedWireIndex]);
 
+  const moveGroupBy = useCallback((groupId: string, dx: number, dy: number) => {
+    if (!model) return;
+    const g = groupsApi.groups.find((x) => x.id === groupId);
+    if (!g) return;
+    const ids = new Set(g.memberIds);
+    updateModel({
+      ...model,
+      triggers: model.triggers.map((t) => (ids.has(t.id) ? { ...t, position: { x: t.position.x + dx, y: t.position.y + dy } } : t)),
+      nodes: model.nodes.map((n) => (ids.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n)),
+    });
+  }, [model, groupsApi.groups, updateModel]);
+  const selectGroupMembers = useCallback((g: NodeGroup) => {
+    setSelectedNodeIds(new Set(g.memberIds));
+    setSelectedNodeId(g.memberIds[0] || "");
+  }, [setSelectedNodeIds, setSelectedNodeId]);
+  const groupCtxValue = useMemo<WorkflowGroupsContextValue>(
+    () => ({ ...groupsApi, moveGroupBy, selectGroup: selectGroupMembers }),
+    [groupsApi, moveGroupBy, selectGroupMembers],
+  );
+
   useWorkflowKeyboardShortcuts({
     save,
     undo,
@@ -1067,27 +1148,92 @@ function WorkflowsApp() {
     selectedWireIndex,
     setSelectedWireIndex,
     setConnectingFrom,
+    onGroup: () => {
+      if (selectedNodeIds.size < 2) return;
+      const id = groupsApi.createGroup(Array.from(selectedNodeIds));
+      if (id) groupsApi.setCollapsed(id, true);
+    },
+    onUngroup: () => {
+      const g = groupsApi.groups.find(
+        (gr) => gr.memberIds.length === selectedNodeIds.size && gr.memberIds.every((m) => selectedNodeIds.has(m)),
+      );
+      if (g) groupsApi.ungroup(g.id);
+    },
+    onZoomIn: zoomIn,
+    onZoomOut: zoomOut,
+    onZoomReset: zoomReset,
+    onZoomFit: fitToView,
   });
 
-  // Zoom controls
-  const zoomIn = useCallback(() => setZoom(z => Math.min(2, z + 0.1)), []);
-  const zoomOut = useCallback(() => setZoom(z => Math.max(0.25, z - 0.1)), []);
-  const zoomReset = useCallback(() => setZoom(1), []);
-
-  // Auto-organize layout
+  // Auto-organize layout. Group-aware: each visual group is laid out as a SINGLE
+  // proxy node (so collapsed members don't scatter and blow up the group's
+  // bounding box), then members are placed back relative to the proxy.
   const autoOrganize = useCallback(() => {
     if (!model) return;
-    updateModel(applyAutoLayoutToModel(model));
-  }, [model, updateModel, applyAutoLayoutToModel]);
-
-  // Handle mouse wheel zoom on canvas
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoom(z => Math.min(2, Math.max(0.25, z + delta)));
+    const groups = groupsApi.groups.filter((g) => g.memberIds.length >= 2);
+    if (groups.length === 0) {
+      updateModel(applyAutoLayoutToModel(model));
+      return;
     }
-  }, []);
+
+    const NODE_W = 256;
+    const ROW_GAP = 40;
+
+    const memberToGroup = new Map<string, NodeGroup>();
+    for (const g of groups) for (const id of g.memberIds) memberToGroup.set(id, g);
+    const proxyId = (g: NodeGroup) => `__grp_${g.id}`;
+    const eff = (id: string) => {
+      const g = memberToGroup.get(id);
+      return g ? proxyId(g) : id;
+    };
+
+    const triggerIdSet = new Set(model.triggers.map((t) => t.id));
+
+    // Contracted graph: ungrouped items as-is + one proxy per group.
+    const cTriggers = model.triggers.filter((t) => !memberToGroup.has(t.id)).map((t) => ({ id: t.id, position: t.position }));
+    const cNodes = model.nodes.filter((n) => !memberToGroup.has(n.id)).map((n) => ({ id: n.id, position: n.position }));
+    for (const g of groups) {
+      const allTriggers = g.memberIds.every((id) => triggerIdSet.has(id));
+      const proxy = { id: proxyId(g), position: { x: 0, y: 0 } };
+      if (allTriggers) cTriggers.push(proxy);
+      else cNodes.push(proxy);
+    }
+
+    // Contracted wires: remap endpoints to proxies, drop internal wires, dedup.
+    const seen = new Set<string>();
+    const cWires: Array<{ from: string; to: string; stream?: any }> = [];
+    for (const w of model.wires) {
+      const from = eff(w.from);
+      const to = eff(w.to);
+      if (from === to) continue;
+      const key = `${from}->${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cWires.push({ from, to, stream: (w as any).stream });
+    }
+
+    const result = calculateAutoLayout(cTriggers, cNodes, cWires);
+    const posById = new Map<string, { x: number; y: number }>();
+    for (const r of result.triggers) posById.set(r.id, r.position);
+    for (const r of result.nodes) posById.set(r.id, r.position);
+
+    const place = (id: string, fallback: { x: number; y: number }) => {
+      const g = memberToGroup.get(id);
+      if (!g) return posById.get(id) ?? fallback;
+      const base = posById.get(proxyId(g)) ?? fallback;
+      // Collapsed: stack members at the proxy spot so the tile stays compact.
+      if (g.collapsed) return { x: base.x, y: base.y };
+      // Expanded: lay members out in a compact row anchored at the proxy.
+      const idx = Math.max(0, g.memberIds.indexOf(id));
+      return { x: base.x + idx * (NODE_W + ROW_GAP), y: base.y };
+    };
+
+    updateModel({
+      ...model,
+      triggers: model.triggers.map((t) => ({ ...t, position: place(t.id, t.position) })),
+      nodes: model.nodes.map((n) => ({ ...n, position: place(n.id, n.position) })),
+    });
+  }, [model, groupsApi.groups, updateModel, applyAutoLayoutToModel]);
 
   const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1122,17 +1268,10 @@ function WorkflowsApp() {
   }, [model, updateModel]);
 
   const size = useMemo(() => {
-    const all = [...(model?.triggers || []), ...(model?.nodes || [])];
-    const NODE_W = 256;
-    const NODE_H = 80;
-    const PADDING = 600; // generous padding so nodes never get cut off at edges
-    let mx = 3000, my = 2000; // large base canvas for an infinite-feel workspace
-    for (const i of all) {
-      mx = Math.max(mx, (i.position?.x || 0) + NODE_W + PADDING);
-      my = Math.max(my, (i.position?.y || 0) + NODE_H + PADDING);
-    }
-    return { w: mx, h: my };
-  }, [model]);
+    if (!model) return { w: 4000, h: 3000 };
+    const gr = buildGroupRender(groupsApi.groups, model);
+    return computeCanvasSize(model, gr);
+  }, [model, groupsApi.groups]);
 
   const isRunning = runningIds[selectedId];
 
@@ -1273,12 +1412,14 @@ function WorkflowsApp() {
   if (!selectedId || !model) {
     return (
       <WorkflowThemeContext.Provider value={{ isDark }}>
-      <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen flex flex-col overflow-hidden font-sans wf-bg wf-fg">
+      <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen font-sans wf-bg wf-fg flex flex-col">
+        <div className="flex-1 min-h-0 overflow-hidden">
         <WorkflowLauncherV2
           items={items}
           loading={loading}
           runningIds={runningIds}
           updates={updates}
+          initialView={launcherView}
           onSelect={load}
           onCreate={() => {
             setCreateTemplateId("blank");
@@ -1393,6 +1534,7 @@ function WorkflowsApp() {
           onClosePendingUpdate={() => setPendingUpdate(null)}
           onApplyPendingUpdate={executeWorkflowUpdate}
         />
+        </div>
       </div>
       </WorkflowThemeContext.Provider>
     );
@@ -1400,7 +1542,9 @@ function WorkflowsApp() {
 
   return (
     <WorkflowThemeContext.Provider value={{ isDark }}>
-    <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen relative overflow-hidden font-sans wf-bg wf-fg">
+    <WorkflowGroupsProvider value={groupCtxValue}>
+    <div data-wf-theme={isDark ? 'dark' : 'light'} className="h-screen w-screen font-sans wf-bg wf-fg flex flex-col">
+      <div className="flex-1 min-h-0 relative overflow-hidden">
       <div className="absolute inset-0">
         {/* Main Content Area */}
         <WorkflowMainContent
@@ -1446,10 +1590,11 @@ function WorkflowsApp() {
           onCloseFileTab={closeFileTab}
           onClearLogs={() => setLogs([])}
           onCanvasMouseDown={handleCanvasMouseDown}
-          onWheel={handleWheel}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onZoomReset={zoomReset}
+          onZoomFit={fitToView}
+          bindWheelTarget={bindWheelTarget}
           onAutoOrganize={autoOrganize}
           onDragOver={handleCanvasDragOver}
           onDrop={handleDrop}
@@ -1790,7 +1935,9 @@ function WorkflowsApp() {
           isReplay={onboarding.seen}
         />
       )}
+      </div>
     </div>
+    </WorkflowGroupsProvider>
     </WorkflowThemeContext.Provider>
   );
 }

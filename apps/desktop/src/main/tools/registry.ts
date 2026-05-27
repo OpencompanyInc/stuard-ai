@@ -29,7 +29,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'workspace_create_folder': { kind: 'electron' },
   'workspace_get_info': { kind: 'electron' },
   'test_run_steps': { kind: 'electron' },  // Test run workflow steps
-  'list_local_workflows': { kind: 'electron' },  // List saved workflows
+  'search_local_workflows': { kind: 'electron' },  // Search saved workflows
   'read_local_workflow': { kind: 'electron' },  // Read a saved workflow's JSON
   'deploy_local_workflow': { kind: 'electron' },  // Deploy/undeploy a saved workflow locally
   'list_local_stuards': { kind: 'electron' },  // List saved stuards
@@ -130,6 +130,8 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'cli_agent_send': { kind: 'electron' },
   'cli_agent_read': { kind: 'electron' },
   'cli_agent_status': { kind: 'electron' },
+  'cli_agent_wait_for': { kind: 'electron' },
+  'cli_agent_wait_idle': { kind: 'electron' },
   'cli_agent_stop': { kind: 'electron' },
 
   // Orchestration tools (handled inline by engine)
@@ -290,13 +292,13 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'x_list_followers': { kind: 'cloud' },
   'x_list_following': { kind: 'cloud' },
 
-  // WhatsApp
-  'whatsapp_status': { kind: 'cloud' },
-  'whatsapp_send_message': { kind: 'cloud' },
-  'whatsapp_send_media': { kind: 'cloud' },
-  'whatsapp_send_reaction': { kind: 'cloud' },
-  'whatsapp_mark_read': { kind: 'cloud' },
-  'whatsapp_upload_media': { kind: 'cloud' },
+  // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+  // 'whatsapp_status': { kind: 'cloud' },
+  // 'whatsapp_send_message': { kind: 'cloud' },
+  // 'whatsapp_send_media': { kind: 'cloud' },
+  // 'whatsapp_send_reaction': { kind: 'cloud' },
+  // 'whatsapp_mark_read': { kind: 'cloud' },
+  // 'whatsapp_upload_media': { kind: 'cloud' },
 
   // Telnyx (SMS / Voice)
   'telnyx_send_sms': { kind: 'cloud' },
@@ -359,6 +361,42 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'embed_text': { kind: 'cloud' },
   'vector_similarity': { kind: 'cloud' },
   'embed_and_store': { kind: 'cloud' },
+
+  // Local Python tools that proactive agents should be able to discover/select.
+  // getToolKind already defaults unknown tools to local, but the agent builder
+  // sends this registry as an allow-list to cloud inference. Keep important
+  // local capabilities explicit here so blueprint generation cannot filter them
+  // out before the model or deterministic harness can choose them.
+  'capture_media': { kind: 'local' },
+  'stop_capture': { kind: 'local' },
+  'describe_media_capture_capabilities': { kind: 'local' },
+  'capture_screen': { kind: 'local' },
+  'stop_screen_capture': { kind: 'local' },
+  'capture_system_audio': { kind: 'local' },
+  'stop_system_audio': { kind: 'local' },
+  'describe_system_audio_capabilities': { kind: 'local' },
+  'ffmpeg_status': { kind: 'local' },
+  'ffmpeg_setup': { kind: 'local' },
+  'ffmpeg_run': { kind: 'local' },
+  'ffmpeg_convert_media': { kind: 'local' },
+  'ffmpeg_extract_audio': { kind: 'local' },
+  'ffmpeg_trim_media': { kind: 'local' },
+  'ffmpeg_probe_media': { kind: 'local' },
+  'ffmpeg_extract_frames': { kind: 'local' },
+  'list_directory': { kind: 'local' },
+  'read_file': { kind: 'local' },
+  'write_file': { kind: 'local' },
+  'open_file': { kind: 'local' },
+  'move_file': { kind: 'local' },
+  'copy_file': { kind: 'local' },
+  'file_search': { kind: 'local' },
+  'file_search_by_filename': { kind: 'local' },
+  'file_search_by_kind': { kind: 'local' },
+  'file_search_recent': { kind: 'local' },
+  'semantic_file_search': { kind: 'local' },
+  'folder_permission_check': { kind: 'local' },
+  'folder_permission_add': { kind: 'local' },
+  'get_datetime': { kind: 'local' },
 
   // Everything else goes to local Python agent
   // (default if not in registry)

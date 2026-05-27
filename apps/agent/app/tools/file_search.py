@@ -320,6 +320,7 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
         mode: 'quick' (FTS only), 'semantic' (vector only), 'hybrid' (both)
         kind: Filter by file kind (document, image, video, etc.)
         root_id: Filter by indexed root
+        path_scopes: Optional list of exact files or folders to limit results to
         limit: Max results (default 20)
     
     Returns:
@@ -330,6 +331,9 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
     mode = args.get("mode", "hybrid")
     kind = args.get("kind")
     root_id = args.get("root_id")
+    path_scopes = args.get("path_scopes") or args.get("paths")
+    if path_scopes is not None and not isinstance(path_scopes, list):
+        path_scopes = [str(path_scopes)]
     limit = int(args.get("limit", 20))
     
     if not query and not vector:
@@ -341,7 +345,7 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
         # FTS-only search
         if query:
             # Search with extra capacity for deduplication
-            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id)
+            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id, path_scopes=path_scopes)
             for i, f in enumerate(fts_results):
                 score = 1.0 - (i / max(len(fts_results), 1))
                 score = _boost_application_score(f, query, score)
@@ -352,28 +356,28 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
         if not vector:
             return {"ok": False, "error": "Vector required for semantic search"}
         
-        vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id)
+        vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id, path_scopes=path_scopes)
         for f, score in vec_results:
             results.append(format_file_result(f, score, 'vector'))
     
     else:  # hybrid
         if query and vector:
             hybrid_results = db.hybrid_search(
-                query, vector, limit=limit * 2, kind=kind, root_id=root_id
+                query, vector, limit=limit * 2, kind=kind, root_id=root_id, path_scopes=path_scopes
             )
             for f, score, match_type in hybrid_results:
                 score = _boost_application_score(f, query, score)
                 results.append(format_file_result(f, score, match_type))
         elif query:
             # Fall back to FTS if no vector
-            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id)
+            fts_results = db.search_fts(query, limit=limit * 3, kind=kind, root_id=root_id, path_scopes=path_scopes)
             for i, f in enumerate(fts_results):
                 score = 1.0 - (i / max(len(fts_results), 1))
                 score = _boost_application_score(f, query, score)
                 results.append(format_file_result(f, score, 'fts'))
         elif vector:
             # Vector only
-            vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id)
+            vec_results = db.search_vector(vector, limit=limit * 2, kind=kind, root_id=root_id, path_scopes=path_scopes)
             for f, score in vec_results:
                 results.append(format_file_result(f, score, 'vector'))
 
@@ -383,7 +387,11 @@ async def search_files(args: Dict[str, Any]) -> Dict[str, Any]:
             for result in results
             if result.get("path")
         }
-        for root_result in _search_root_folders(query, limit=max(limit, 8), root_id=root_id):
+        if not path_scopes:
+            root_results = _search_root_folders(query, limit=max(limit, 8), root_id=root_id)
+        else:
+            root_results = []
+        for root_result in root_results:
             normalized_path = os.path.normcase(os.path.normpath(str(root_result.get("path") or "")))
             if normalized_path and normalized_path in existing_paths:
                 continue

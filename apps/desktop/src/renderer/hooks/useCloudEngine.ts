@@ -1,109 +1,39 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  computeSyncState,
+  createCloudClient,
+  createDirectTransport,
+  detectBrowserTimezone,
+  mapBillingResponse,
+  mapEngineResponse,
+  type CloudBilling,
+  type CloudDeployment,
+  type CloudEngine,
+  type CloudFileEntry,
+  type CloudMetrics,
+  type CloudSnapshot,
+  type CloudSyncStatus,
+  type DeployKind,
+  type DeployStatus,
+  type ProvisionStep,
+  type SyncState,
+} from '@stuardai/cloud-client';
+import { getCloudAiHttp } from '../utils/cloud';
 import { supabase } from '../lib/supabaseClient';
 
-const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
-
-export type ProvisionStep = 'vm_creating' | 'vm_created' | 'waiting_ip' | 'waiting_agent' | 'restoring_data' | 'syncing_agent' | 'syncing_integrations' | 'finalizing';
-
-export interface CloudEngine {
-  id: string;
-  user_id: string;
-  instance_name: string;
-  zone: string;
-  tier: string;
-  status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'terminated' | 'error';
-  disk_size_gb: number;
-  vcpus?: number;
-  ram_gb?: number;
-  created_at: string;
-  last_heartbeat_at?: string;
-  health_status?: string;
-  external_ip?: string;
-  provision_step?: ProvisionStep | null;
-}
-
-export interface CloudMetrics {
-  cpu: number;
-  ram_used: number;
-  ram_total: number;
-  disk_used: number;
-  disk_total: number;
-  net_rx: number;
-  net_tx: number;
-}
-
-export interface CloudSnapshot {
-  id: string;
-  name: string;
-  description?: string;
-  status: string;
-  size_bytes?: number;
-  created_at: string;
-}
-
-export interface CloudBilling {
-  total_credits_used: number;
-  compute_credits: number;
-  storage_credits: number;
-  current_tier?: string;
-  engine_status?: string;
-  hours_this_month?: number;
-}
-
-export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
-
-export interface CloudSyncStatus {
-  state: SyncState;
-  lastSyncAt: string | null;
-  vm: {
-    memories: number;
-    conversations: number;
-    topics: number;
-    diskBytes: number;
-    byOrigin?: { cloud_vm: number; desktop: number } | null;
-  } | null;
-  desktop: {
-    conversations: number;
-    messages: number;
-    spaces: number;
-    spaceItems: number;
-    segments: number;
-  } | null;
-}
-
-export interface CloudFileEntry {
-  name: string;
-  path: string;
-  type: 'file' | 'directory' | 'symlink' | 'other';
-  size: number;
-  modified: string;
-}
-
-export type DeployKind = 'workflow' | 'script' | 'project';
-export type DeployStatus = 'pending' | 'uploading' | 'deploying' | 'running' | 'stopped' | 'failed' | 'completed';
-
-export interface CloudDeployment {
-  id: string;
-  name: string;
-  kind: DeployKind;
-  description: string | null;
-  status: DeployStatus;
-  auto_restart: boolean;
-  schedule: string | null;
-  pid: number | null;
-  logs_tail?: string | null;
-  source_workflow_id?: string | null;
-  trigger_bindings?: Array<{ triggerId: string; type: string; mode?: string | null; args?: Record<string, any> }>;
-  timezone?: string | null;
-  run_count?: number;
-  last_run_at?: string | null;
-  last_completed_at?: string | null;
-  last_trigger_source?: string | null;
-  error_message: string | null;
-  started_at: string | null;
-  stopped_at: string | null;
-  created_at: string;
-}
+export type {
+  ProvisionStep,
+  CloudEngine,
+  CloudMetrics,
+  CloudSnapshot,
+  CloudBilling,
+  SyncState,
+  CloudSyncStatus,
+  CloudFileEntry,
+  DeployKind,
+  DeployStatus,
+  CloudDeployment,
+};
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -114,47 +44,14 @@ async function getAuthToken(): Promise<string | null> {
   }
 }
 
-async function cloudFetch(path: string, opts?: RequestInit & { timeoutMs?: number }) {
-  const token = await getAuthToken();
-  const headers: Record<string, string> = {
-    ...(opts?.headers as Record<string, string> || {}),
-  };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  if (opts?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-
-  const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const mergedSignal = opts?.signal
-    ? AbortSignal.any([opts.signal, controller.signal])
-    : controller.signal;
-
-  try {
-    const resp = await fetch(`${CLOUD_AI_HTTP}${path}`, { ...opts, headers, signal: mergedSignal });
-    clearTimeout(timer);
-
-    const text = await resp.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      if (!resp.ok) return { ok: false, error: `server_error_${resp.status}`, message: text.slice(0, 200) || `HTTP ${resp.status}` };
-      return { ok: false, error: 'invalid_response', message: 'Server returned non-JSON response' };
-    }
-  } catch (e: any) {
-    clearTimeout(timer);
-    if (e?.name === 'AbortError') return { ok: false, error: 'timeout', message: 'Request timed out' };
-    throw e;
-  }
-}
-
-// ── Module-level cache so tab re-mounts are instant ──────────────────
-function detectBrowserTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
+export const cloudClient = createCloudClient({
+  transport: createDirectTransport({
+    resolveBaseUrl: getCloudAiHttp,
+    getAccessToken: getAuthToken,
+    defaultTimeoutMs: 180_000,
+  }),
+  getAccessToken: getAuthToken,
+});
 
 interface EngineCache {
   engine: CloudEngine | null;
@@ -163,36 +60,10 @@ interface EngineCache {
   syncStatus: CloudSyncStatus | null;
   snapshots: CloudSnapshot[];
   deployments: CloudDeployment[];
-  ts: number; // last update timestamp
+  ts: number;
 }
 let _cache: EngineCache | null = null;
-const CACHE_MAX_AGE_MS = 60_000; // consider stale after 60s
-
-/** Compute sync state from VM + desktop memory stats and last sync time */
-function computeSyncState(
-  syncData: { lastSyncAt: string | null; vm: any; desktop: any } | null,
-  isSyncing: boolean,
-): CloudSyncStatus {
-  if (isSyncing) {
-    return { state: 'syncing', lastSyncAt: syncData?.lastSyncAt ?? null, vm: syncData?.vm ?? null, desktop: syncData?.desktop ?? null };
-  }
-  if (!syncData || (!syncData.vm && !syncData.desktop)) {
-    return { state: 'unknown', lastSyncAt: syncData?.lastSyncAt ?? null, vm: null, desktop: null };
-  }
-  // If we have both VM and desktop stats, compare them
-  if (syncData.vm && syncData.desktop) {
-    // Check staleness: if last sync was more than 10 minutes ago, consider out of sync
-    const lastSync = syncData.lastSyncAt ? new Date(syncData.lastSyncAt).getTime() : 0;
-    const staleThresholdMs = 10 * 60 * 1000; // 10 minutes
-    const isStale = !syncData.lastSyncAt || (Date.now() - lastSync > staleThresholdMs);
-    if (isStale) {
-      return { state: 'out_of_sync', lastSyncAt: syncData.lastSyncAt, vm: syncData.vm, desktop: syncData.desktop };
-    }
-    return { state: 'synced', lastSyncAt: syncData.lastSyncAt, vm: syncData.vm, desktop: syncData.desktop };
-  }
-  // Only one side has data — out of sync
-  return { state: 'out_of_sync', lastSyncAt: syncData.lastSyncAt ?? null, vm: syncData.vm ?? null, desktop: syncData.desktop ?? null };
-}
+const CACHE_MAX_AGE_MS = 60_000;
 
 export function useCloudEngine() {
   const [engine, setEngine] = useState<CloudEngine | null>(_cache?.engine ?? null);
@@ -207,10 +78,8 @@ export function useCloudEngine() {
   const [deployments, setDeployments] = useState<CloudDeployment[]>(_cache?.deployments ?? []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible');
-  // Track the last status we synced timezone for so we only fire on a real
-  // transition into 'running' (not on every poll). The main-process service
-  // also throttles, but skipping IPC roundtrips here keeps the polling cheap.
   const lastTzSyncedStatusRef = useRef<string | null>(null);
+  const viewSessionRef = useRef<{ sid: string; expiresAt: number } | null>(null);
 
   useEffect(() => {
     const onVisibilityChange = () => setDocumentVisible(document.visibilityState === 'visible');
@@ -220,57 +89,33 @@ export function useCloudEngine() {
 
   const fetchEngine = useCallback(async () => {
     try {
-      const data = await cloudFetch('/v1/cloud-engine/status');
+      const data = await cloudClient.getCloudEngineStatus();
       if (data.ok && data.engine) {
-        // Map camelCase server response to our snake_case interface
-        const e = data.engine;
-        const mapped: CloudEngine = {
-          id: e.id || '',
-          user_id: e.user_id || e.userId || '',
-          instance_name: e.instance_name || e.instanceName || '',
-          zone: e.zone || '',
-          tier: e.tier || e.machineType || '',
-          status: e.status || 'stopped',
-          disk_size_gb: e.disk_size_gb ?? e.diskSizeGb ?? 0,
-          vcpus: e.vcpus,
-          ram_gb: e.ram_gb ?? e.ramGb,
-          created_at: e.created_at || e.createdAt || '',
-          last_heartbeat_at: e.last_heartbeat_at || e.lastHeartbeat || e.lastHeartbeatAt,
-          health_status: e.health_status || e.healthStatus,
-          external_ip: e.external_ip || e.externalIp,
-          provision_step: e.provision_step || e.provisionStep || null,
-        };
+        const mapped = mapEngineResponse(data.engine)!;
         setEngine(mapped);
-        // Extract billing from status response
-        let mappedBilling: CloudBilling | null = null;
-        if (data.billing) {
-          mappedBilling = {
-            total_credits_used: data.billing.total_credits_used ?? data.billing.totalCreditsUsed ?? 0,
-            compute_credits: data.billing.compute_credits ?? data.billing.computeCredits ?? 0,
-            storage_credits: data.billing.storage_credits ?? data.billing.storageCredits ?? 0,
-            current_tier: data.billing.current_tier ?? data.billing.currentTier ?? e.tier,
-            engine_status: e.status,
-            hours_this_month: data.billing.hours_this_month ?? data.billing.hoursThisMonth ?? 0,
-          };
-          setBilling(mappedBilling);
-        }
-        // Extract sync status from response
+        const mappedBilling = mapBillingResponse(data.billing, mapped);
+        if (mappedBilling) setBilling(mappedBilling);
+
         let mappedSync: CloudSyncStatus | null = null;
         if (data.sync) {
           mappedSync = computeSyncState(data.sync, isSyncingRef.current);
           setSyncStatus(mappedSync);
         }
 
-        // Update module cache
-        _cache = { ...(_cache || { snapshots: [], deployments: [], syncStatus: null }), engine: mapped, billing: mappedBilling ?? _cache?.billing ?? null, syncStatus: mappedSync ?? _cache?.syncStatus ?? null, metrics: _cache?.metrics ?? null, snapshots: _cache?.snapshots ?? [], deployments: _cache?.deployments ?? [], ts: Date.now() };
+        _cache = {
+          ...(_cache || { snapshots: [], deployments: [], syncStatus: null }),
+          engine: mapped,
+          billing: mappedBilling ?? _cache?.billing ?? null,
+          syncStatus: mappedSync ?? _cache?.syncStatus ?? null,
+          metrics: _cache?.metrics ?? null,
+          snapshots: _cache?.snapshots ?? [],
+          deployments: _cache?.deployments ?? [],
+          ts: Date.now(),
+        };
         setError(null);
 
-        // Push the desktop's timezone whenever the VM is reachable. Fires
-        // once per status transition into 'running' — the main-process
-        // service additionally throttles same-tz repeats, so the cost is
-        // basically a no-op when nothing has changed.
         if (mapped.status === 'running' && lastTzSyncedStatusRef.current !== 'running') {
-          (window as any).desktopAPI?.vmSyncTimezone?.().catch(() => { /* best-effort */ });
+          (window as any).desktopAPI?.vmSyncTimezone?.().catch(() => {});
         }
         lastTzSyncedStatusRef.current = mapped.status;
       } else if (data.ok && !data.engine) {
@@ -282,7 +127,7 @@ export function useCloudEngine() {
       } else {
         setError(data.message || data.error || 'Could not load cloud engine status');
       }
-    } catch (e: any) {
+    } catch {
       setError('Unable to connect to Stuard Cloud. Check your internet connection.');
     } finally {
       setLoading(false);
@@ -291,21 +136,19 @@ export function useCloudEngine() {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const data = await cloudFetch('/v1/cloud-engine/metrics');
+      const data = await cloudClient.getMetrics();
       if (data.ok && data.metrics) {
         setMetrics(data.metrics);
         if (_cache) { _cache.metrics = data.metrics; _cache.ts = Date.now(); }
       }
     } catch {
-      // Silently fail — metrics are optional
+      // optional
     }
   }, []);
 
   const provision = useCallback(async (tier: string, diskSizeGb: number, vcpus?: number, ramGb?: number) => {
     setLoading(true);
     setError(null);
-    // Flip the sync indicator on — provision pushes desktop chat titles,
-    // history, and memories to GCS so the new VM boots with the user's data.
     setIsSyncing(true);
     isSyncingRef.current = true;
     setSyncStatus(prev => ({
@@ -315,14 +158,11 @@ export function useCloudEngine() {
       desktop: prev?.desktop ?? null,
     }));
     try {
-      // Upload agent databases (knowledge.db, memory.db, tasks.db, vault.db, lancedb)
-      // — this includes conversations, messages, titles, and memories — to GCS
-      // BEFORE provisioning so the VM starts with the user's full chat history.
       try {
         const token = await getAuthToken();
         if (token && window.desktopAPI?.uploadAgentData) {
           console.log('[cloud-engine] Uploading chat titles, history, and memories for VM sync...');
-          const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+          const uploadResult = await window.desktopAPI.uploadAgentData(getCloudAiHttp(), token);
           if (uploadResult?.ok) {
             if (uploadResult.skipped) {
               console.log('[cloud-engine] Agent data upload skipped:', uploadResult.reason);
@@ -340,26 +180,19 @@ export function useCloudEngine() {
         console.error('[cloud-engine] Agent data upload error (non-fatal):', e);
       }
 
-      const body: any = { tier, diskSizeGb, timezone: detectBrowserTimezone() };
-      if (vcpus) body.vcpus = vcpus;
-      if (ramGb) body.ramGb = ramGb;
-      const data = await cloudFetch('/v1/cloud-engine/provision', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+      const data = await cloudClient.provisionCloudEngine(
+        tier,
+        diskSizeGb,
+        vcpus,
+        ramGb,
+        detectBrowserTimezone(),
+      );
       if (data.ok) {
-        // After the VM is up, push the agent bundle into the VM. This MUST
-        // succeed for prior chat history + titles to appear on the VM. Retry
-        // a couple of times because the VM may not have finished its boot
-        // handshake the instant /provision returns.
         let pushOk = false;
         for (let attempt = 0; attempt < 3 && !pushOk; attempt++) {
           if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
           try {
-            const pushResult = await cloudFetch('/v1/cloud-engine/push-agent-data', {
-              method: 'POST',
-              timeoutMs: 10 * 60_000,
-            });
+            const pushResult = await cloudClient.pushAgentData();
             pushOk = !!pushResult?.ok;
             if (!pushOk) {
               console.warn(`[cloud-engine] push-agent-data attempt ${attempt + 1} failed:`, pushResult?.error || pushResult?.message);
@@ -371,14 +204,13 @@ export function useCloudEngine() {
         if (!pushOk) {
           console.error('[cloud-engine] push-agent-data exhausted retries — VM may show empty chat history until next manual sync');
         }
-        // OAuth + browser profile are independent; keep them best-effort.
-        cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
-        cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
+        cloudClient.syncOAuthToVm().catch(() => {});
+        cloudClient.syncBrowserProfileToVm().catch(() => {});
         await fetchEngine();
       } else {
         setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
       }
-    } catch (e: any) {
+    } catch {
       setError('Unable to reach Stuard Cloud. Please check your internet and try again.');
     } finally {
       setIsSyncing(false);
@@ -389,49 +221,50 @@ export function useCloudEngine() {
 
   const start = useCallback(async () => {
     setError(null);
-    // Optimistic update so UI immediately shows "Starting..."
     setEngine(prev => prev ? { ...prev, status: 'starting' } : prev);
     if (_cache?.engine) { _cache.engine = { ..._cache.engine, status: 'starting' }; _cache.ts = Date.now(); }
 
     try {
-      // Upload latest agent data before starting so it's available for restore
       try {
         const token = await getAuthToken();
         if (token && window.desktopAPI?.uploadAgentData) {
           console.log('[cloud-engine] Uploading agent data before start...');
-          await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+          await window.desktopAPI.uploadAgentData(getCloudAiHttp(), token);
         }
       } catch (e) {
         console.warn('[cloud-engine] Pre-start agent data upload failed:', e);
       }
 
-      const data = await cloudFetch('/v1/cloud-engine/start', { method: 'POST', timeoutMs: 300_000 });
+      const data = await cloudClient.startCloudEngine();
       if (data.ok) {
         await fetchEngine();
       } else if (data.error === 'timeout') {
         await fetchEngine();
       } else {
         setError(data.message || data.error || 'Failed to start engine');
-        // Re-fetch actual status without overwriting our specific error
-        try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
+        try {
+          const s = await cloudClient.getCloudEngineStatus();
+          if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev);
+        } catch {}
       }
     } catch {
       setError('Unable to reach Stuard Cloud. Check your connection and try again.');
-      try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
+      try {
+        const s = await cloudClient.getCloudEngineStatus();
+        if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev);
+      } catch {}
     }
   }, [fetchEngine]);
 
-  /** Manually sync local agent data (memories, knowledge) to the running VM */
   const syncData = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     setIsSyncing(true);
     isSyncingRef.current = true;
     setSyncStatus(prev => prev ? { ...prev, state: 'syncing' } : { state: 'syncing', lastSyncAt: null, vm: null, desktop: null });
     try {
-      // 1. Upload latest agent databases to GCS
       const token = await getAuthToken();
       if (token && window.desktopAPI?.uploadAgentData) {
         console.log('[cloud-engine] Uploading agent data for sync...');
-        const uploadResult = await window.desktopAPI.uploadAgentData(CLOUD_AI_HTTP, token);
+        const uploadResult = await window.desktopAPI.uploadAgentData(getCloudAiHttp(), token);
         if (!uploadResult?.ok && !uploadResult?.skipped) {
           setIsSyncing(false);
           isSyncingRef.current = false;
@@ -440,24 +273,18 @@ export function useCloudEngine() {
         }
       }
 
-      // 2. Tell VM to download agent data from GCS
-      const syncResult = await cloudFetch('/v1/cloud-engine/sync-agent-data', {
-        method: 'POST',
-      });
-
+      const syncResult = await cloudClient.syncAgentData();
       if (syncResult.ok) {
         console.log('[cloud-engine] Agent data synced to VM');
       } else {
         console.warn('[cloud-engine] Agent data sync failed:', syncResult.error);
       }
 
-      // 3. Also sync OAuth tokens and browser cookies
-      cloudFetch('/v1/cloud-engine/sync-oauth-to-vm', { method: 'POST' }).catch(() => {});
-      cloudFetch('/v1/cloud-engine/sync-browser-profile-to-vm', { method: 'POST' }).catch(() => {});
+      cloudClient.syncOAuthToVm().catch(() => {});
+      cloudClient.syncBrowserProfileToVm().catch(() => {});
 
       setIsSyncing(false);
       isSyncingRef.current = false;
-      // Refresh status to get updated sync data
       await fetchEngine();
       return syncResult;
     } catch (e: any) {
@@ -474,36 +301,49 @@ export function useCloudEngine() {
     if (_cache?.engine) { _cache.engine = { ..._cache.engine, status: 'stopping' }; _cache.ts = Date.now(); }
 
     try {
-      const data = await cloudFetch('/v1/cloud-engine/stop', { method: 'POST', timeoutMs: 300_000 });
+      const data = await cloudClient.stopCloudEngine();
       if (data.ok) {
         await fetchEngine();
       } else if (data.error === 'timeout') {
         await fetchEngine();
       } else {
         setError(data.message || data.error || 'Failed to pause engine');
-        try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
+        try {
+          const s = await cloudClient.getCloudEngineStatus();
+          if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev);
+        } catch {}
       }
     } catch {
       setError('Unable to reach Stuard Cloud. Check your connection and try again.');
-      try { const s = await cloudFetch('/v1/cloud-engine/status'); if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev); } catch {}
+      try {
+        const s = await cloudClient.getCloudEngineStatus();
+        if (s.ok && s.engine) setEngine(prev => prev ? { ...prev, status: s.engine.status || prev.status } : prev);
+      } catch {}
     }
   }, [fetchEngine]);
 
   const destroy = useCallback(async () => {
     setError(null);
     try {
-      const data = await cloudFetch('/v1/cloud-engine', { method: 'DELETE', timeoutMs: 300_000 });
-      if (data.ok) { setEngine(null); setMetrics(null); setBilling(null); setSnapshots([]); setError(null); _cache = null; }
-      else setError(data.message || data.error || 'Failed to delete engine');
+      const data = await cloudClient.deleteCloudEngine();
+      if (data.ok) {
+        setEngine(null);
+        setMetrics(null);
+        setBilling(null);
+        setSnapshots([]);
+        setError(null);
+        _cache = null;
+      } else {
+        setError(data.message || data.error || 'Failed to delete engine');
+      }
     } catch {
       setError('Unable to reach Stuard Cloud. Check your connection and try again.');
     }
   }, []);
 
-  // Snapshot ops
   const fetchSnapshots = useCallback(async () => {
     try {
-      const data = await cloudFetch('/v1/cloud-engine/snapshots');
+      const data = await cloudClient.listSnapshots();
       if (data.ok) {
         const snaps = data.snapshots || [];
         setSnapshots(snaps);
@@ -513,150 +353,60 @@ export function useCloudEngine() {
   }, []);
 
   const createSnapshot = useCallback(async (name: string, description?: string) => {
-    const data = await cloudFetch('/v1/cloud-engine/snapshots', {
-      method: 'POST',
-      body: JSON.stringify({ name, description }),
-    });
+    const data = await cloudClient.createSnapshot(name, description);
     if (data.ok) await fetchSnapshots();
     return data;
   }, [fetchSnapshots]);
 
   const restoreSnapshot = useCallback(async (id: string) => {
-    const data = await cloudFetch(`/v1/cloud-engine/snapshots/${id}/restore`, { method: 'POST' });
+    const data = await cloudClient.restoreSnapshot(id);
     if (data.ok) await fetchSnapshots();
     return data;
   }, [fetchSnapshots]);
 
   const deleteSnapshot = useCallback(async (id: string) => {
-    const data = await cloudFetch(`/v1/cloud-engine/snapshots/${id}`, { method: 'DELETE' });
+    const data = await cloudClient.deleteSnapshot(id);
     if (data.ok) await fetchSnapshots();
     return data;
   }, [fetchSnapshots]);
 
-  // File ops
   const listFiles = useCallback(async (path: string): Promise<CloudFileEntry[]> => {
-    const data = await cloudFetch(`/v1/cloud-engine/files?path=${encodeURIComponent(path)}`);
+    const data = await cloudClient.listFiles(path);
     return data.ok ? (data.entries || []) : [];
   }, []);
 
   const readFile = useCallback(async (path: string): Promise<string | null> => {
-    const data = await cloudFetch(`/v1/cloud-engine/files/read?path=${encodeURIComponent(path)}`);
-    return data.ok ? data.content : null;
+    const data = await cloudClient.readFile(path);
+    return data.ok ? (data.content ?? null) : null;
   }, []);
 
-  /** Like readFile but returns the full payload including base64 encoding for
-   *  binary files, so callers can render images / video / audio / PDFs. */
   const readFileFull = useCallback(async (
     path: string,
   ): Promise<{ content: string; encoding: 'utf-8' | 'base64'; size: number } | null> => {
-    const data = await cloudFetch(`/v1/cloud-engine/files/read?path=${encodeURIComponent(path)}`);
+    const data = await cloudClient.readFile(path);
     if (!data.ok) return null;
     return {
-      content: data.content,
+      content: data.content || '',
       encoding: data.encoding === 'base64' ? 'base64' : 'utf-8',
       size: typeof data.size === 'number' ? data.size : 0,
     };
   }, []);
 
-  // Cached view-session for the HTML/preview iframe path. Re-mints when the
-  // existing sid is within 30s of expiry so a long-open preview still works.
-  const viewSessionRef = useRef<{ sid: string; expiresAt: number } | null>(null);
-
   const getServeUrl = useCallback(async (path: string): Promise<string | null> => {
-    const now = Date.now();
-    const cur = viewSessionRef.current;
-    let sess = cur && cur.expiresAt - now > 30_000 ? cur : null;
-    if (!sess) {
-      const data = await cloudFetch('/v1/cloud-engine/files/view-session', { method: 'POST' });
-      if (!data?.ok || !data.sid) return null;
-      sess = { sid: data.sid as string, expiresAt: Number(data.expiresAt) || (now + 5 * 60_000) };
-      viewSessionRef.current = sess;
-    }
-    // The iframe URL keeps the path mostly intact so relative resolution works
-    // naturally — encode each segment but keep the slashes literal.
-    const segments = path.split('/').map(encodeURIComponent).join('/');
-    return `${CLOUD_AI_HTTP}/v1/cloud-engine/files/serve/${sess.sid}/${segments}`;
+    return cloudClient.getServeUrl(path, viewSessionRef);
   }, []);
 
-  /** Mints a short-lived preview session for a localhost dev server in the
-   *  VM (Next.js, Vite, etc.) and returns the URL the iframe should load. */
-  const getPreviewUrl = useCallback(async (
-    port: number,
-  ): Promise<{ url: string; sid: string; port: number; expiresAt: number } | null> => {
-    if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
-    const data = await cloudFetch('/v1/cloud-engine/preview/start', {
-      method: 'POST',
-      body: JSON.stringify({ port }),
-    });
-    if (!data?.ok || !data.sid) return null;
-    const path: string = data.url || `/v1/cloud-engine/preview/${data.sid}/${port}/`;
-    return {
-      url: `${CLOUD_AI_HTTP}${path}`,
-      sid: String(data.sid),
-      port: Number(data.port) || port,
-      expiresAt: Number(data.expiresAt) || (Date.now() + 5 * 60_000),
-    };
-  }, []);
+  const getPreviewUrl = useCallback(async (port: number) => cloudClient.getPreviewUrl(port), []);
 
-  const writeFile = useCallback(async (path: string, content: string): Promise<{ ok: boolean; error?: string }> => {
-    return await cloudFetch('/v1/cloud-engine/files/write', {
-      method: 'POST',
-      body: JSON.stringify({ path, content }),
-    });
-  }, []);
+  const writeFile = useCallback(async (path: string, content: string) => cloudClient.writeFile(path, content), []);
+  const deleteFile = useCallback(async (path: string) => cloudClient.deleteFile(path), []);
+  const renameFile = useCallback(async (oldPath: string, newPath: string) => cloudClient.renameFile(oldPath, newPath), []);
+  const createDirectory = useCallback(async (path: string) => cloudClient.createDirectory(path), []);
+  const uploadFileToVm = useCallback(async (targetPath: string, file: File) => cloudClient.uploadFileToVm(targetPath, file), []);
 
-  const deleteFile = useCallback(async (path: string): Promise<{ ok: boolean; error?: string }> => {
-    return await cloudFetch(`/v1/cloud-engine/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
-  }, []);
-
-  const renameFile = useCallback(async (oldPath: string, newPath: string): Promise<{ ok: boolean; error?: string }> => {
-    return await cloudFetch('/v1/cloud-engine/files/rename', {
-      method: 'POST',
-      body: JSON.stringify({ oldPath, newPath }),
-    });
-  }, []);
-
-  const createDirectory = useCallback(async (path: string): Promise<{ ok: boolean; error?: string }> => {
-    return await cloudFetch('/v1/cloud-engine/files/mkdir', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    });
-  }, []);
-
-  /**
-   * Upload a binary/text File from the renderer to the VM workspace.
-   * Reads the File, base64-encodes it in chunks, and POSTs to the
-   * cloud-ai files/upload endpoint which writes it on the VM.
-   */
-  const uploadFileToVm = useCallback(async (
-    targetPath: string,
-    file: File,
-  ): Promise<{ ok: boolean; error?: string; path?: string; size?: number }> => {
-    try {
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      const CHUNK = 0x8000;
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)) as any);
-      }
-      const contentBase64 = typeof btoa === 'function'
-        ? btoa(binary)
-        : Buffer.from(binary, 'binary').toString('base64');
-      return await cloudFetch('/v1/cloud-engine/files/upload', {
-        method: 'POST',
-        body: JSON.stringify({ path: targetPath, contentBase64 }),
-        timeoutMs: 5 * 60_000,
-      });
-    } catch (e: any) {
-      return { ok: false, error: e?.message || 'upload_failed' };
-    }
-  }, []);
-
-  // ── Deploy ops ───────────────────────────────────────────────────────────
   const fetchDeployments = useCallback(async () => {
     try {
-      const data = await cloudFetch('/v1/cloud-engine/deploys');
+      const data = await cloudClient.listCloudDeployments();
       if (data.ok) {
         const deps = data.deployments || [];
         setDeployments(deps);
@@ -674,55 +424,46 @@ export function useCloudEngine() {
     autoRestart?: boolean;
     schedule?: string;
   }) => {
-    const data = await cloudFetch('/v1/cloud-engine/deploys', {
-      method: 'POST',
-      body: JSON.stringify(opts),
-    });
+    const data = await cloudClient.createCloudDeployment(opts);
     if (data.ok) await fetchDeployments();
     return data;
   }, [fetchDeployments]);
 
   const stopDeployment = useCallback(async (id: string) => {
-    const data = await cloudFetch(`/v1/cloud-engine/deploys/${id}/stop`, { method: 'POST' });
+    const data = await cloudClient.stopCloudDeployment(id);
     if (data.ok) await fetchDeployments();
     return data;
   }, [fetchDeployments]);
 
   const restartDeployment = useCallback(async (id: string) => {
-    const data = await cloudFetch(`/v1/cloud-engine/deploys/${id}/restart`, { method: 'POST' });
+    const data = await cloudClient.restartCloudDeployment(id);
     if (data.ok) await fetchDeployments();
     return data;
   }, [fetchDeployments]);
 
   const deleteDeployment = useCallback(async (id: string) => {
-    const data = await cloudFetch(`/v1/cloud-engine/deploys/${id}`, { method: 'DELETE' });
+    const data = await cloudClient.deleteCloudDeployment(id);
     if (data.ok) await fetchDeployments();
     return data;
   }, [fetchDeployments]);
 
   const getDeployLogs = useCallback(async (id: string, lines = 200): Promise<string> => {
-    const data = await cloudFetch(`/v1/cloud-engine/deploys/${id}/logs?lines=${lines}`);
+    const data = await cloudClient.getCloudDeploymentLogs(id, lines);
     return data.ok ? (data.logs || '') : '';
   }, []);
 
-  // Initial load + polling
   useEffect(() => {
     if (!documentVisible) {
       setLoading(false);
       return;
     }
-
     const cacheIsFresh = _cache && (Date.now() - _cache.ts) < CACHE_MAX_AGE_MS;
-    if (!cacheIsFresh) {
-      fetchEngine();
-    } else {
-      setLoading(false);
-    }
+    if (!cacheIsFresh) fetchEngine();
+    else setLoading(false);
   }, [documentVisible, fetchEngine]);
 
   useEffect(() => {
     if (!documentVisible) return;
-
     const status = engine?.status;
     if (!status) return;
 
@@ -732,23 +473,18 @@ export function useCloudEngine() {
 
     if (isRunning && !isBooting) fetchMetrics();
 
-    // Poll faster during transitional states or when agent is still booting (5s)
     const interval = (isTransitional || isBooting) ? 5_000 : 30_000;
-
     if (isRunning || isTransitional) {
       pollRef.current = setInterval(() => {
         fetchEngine();
         if (isRunning && !isBooting) fetchMetrics();
       }, interval);
     }
-
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [documentVisible, engine?.status, engine?.health_status, fetchEngine, fetchMetrics]);
 
-  // Load snapshots + deployments when engine is running (not during provisioning/starting)
   useEffect(() => {
     if (!documentVisible) return;
-
     if (engine && engine.status === 'running') {
       fetchSnapshots();
       fetchDeployments();

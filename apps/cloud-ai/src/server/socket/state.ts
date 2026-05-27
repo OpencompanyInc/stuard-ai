@@ -9,6 +9,14 @@ export const wsAlive = new WeakMap<WebSocket, boolean>();
 const wsAbortControllers = new WeakMap<WebSocket, Map<string, AbortController>>();
 const wsInterjections = new WeakMap<WebSocket, Map<string, Array<{ text: string; timestamp: number }>>>();
 
+function abortWithReason(controller: AbortController, reason: string) {
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch { }
+  }
+}
+
 function getAbortKey(requestId: string | undefined) {
   return requestId || '__default__';
 }
@@ -36,14 +44,14 @@ export function deleteAbortController(ws: WebSocket, requestId: string | undefin
   }
 }
 
-export function abortAndCleanup(ws: WebSocket, requestId: string | undefined) {
+export function abortAndCleanup(ws: WebSocket, requestId: string | undefined, reason = 'client_stop') {
   const controllers = wsAbortControllers.get(ws);
   if (!controllers) return false;
 
   const controller = controllers.get(getAbortKey(requestId));
   if (!controller) return false;
 
-  controller.abort();
+  abortWithReason(controller, reason);
   controllers.delete(getAbortKey(requestId));
   if (controllers.size === 0) {
     wsAbortControllers.delete(ws);
@@ -51,15 +59,13 @@ export function abortAndCleanup(ws: WebSocket, requestId: string | undefined) {
   return true;
 }
 
-export function abortAllRequests(ws: WebSocket) {
+export function abortAllRequests(ws: WebSocket, reason = 'request_cleanup') {
   const controllers = wsAbortControllers.get(ws);
   if (!controllers || controllers.size === 0) return 0;
 
   const count = controllers.size;
   for (const [, controller] of controllers) {
-    try {
-      controller.abort();
-    } catch { }
+    abortWithReason(controller, reason);
   }
   controllers.clear();
   wsAbortControllers.delete(ws);
@@ -108,8 +114,8 @@ export function drainInterjections(ws: WebSocket, requestId: string | undefined)
   return queue;
 }
 
-export function cleanupSocketState(ws: WebSocket) {
-  abortAllRequests(ws);
+export function cleanupSocketState(ws: WebSocket, reason = 'socket_cleanup') {
+  abortAllRequests(ws, reason);
   conversations.delete(ws);
   wsConversations.delete(ws);
   anonResources.delete(ws);

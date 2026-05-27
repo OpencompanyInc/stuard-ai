@@ -137,7 +137,17 @@ app.whenReady().then(async () => {
                           ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
                             ext === '.gif' ? 'image/gif' :
                               ext === '.webp' ? 'image/webp' :
-                                'application/octet-stream';
+                                ext === '.bmp' ? 'image/bmp' :
+                                  ext === '.svg' ? 'image/svg+xml; charset=utf-8' :
+                                    ext === '.pdf' ? 'application/pdf' :
+                                      ext === '.json' || ext === '.jsonl' || ext === '.ndjson' ? 'application/json; charset=utf-8' :
+                                        ext === '.txt' || ext === '.md' || ext === '.log' || ext === '.csv' || ext === '.tsv' ? 'text/plain; charset=utf-8' :
+                                          ext === '.html' || ext === '.htm' ? 'text/html; charset=utf-8' :
+                                            ext === '.css' ? 'text/css; charset=utf-8' :
+                                              ext === '.js' || ext === '.mjs' || ext === '.cjs' ? 'text/javascript; charset=utf-8' :
+                                                ext === '.xml' ? 'application/xml; charset=utf-8' :
+                                                  ext === '.yaml' || ext === '.yml' ? 'text/yaml; charset=utf-8' :
+                                                    'application/octet-stream';
 
     try {
       const stat = await fs.promises.stat(filePath);

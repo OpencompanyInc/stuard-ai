@@ -26,11 +26,10 @@ describe('workflow palette categories', () => {
     expect(getToolColor('generate_image')).toBe('fuchsia');
   });
 
-  it('includes Meta and WhatsApp integration categories in the toolbox', () => {
+  it('includes Meta integration categories in the toolbox', () => {
     const facebookCategory = PALETTE_CATEGORIES.find((category) => category.id === 'facebook');
     const instagramCategory = PALETTE_CATEGORIES.find((category) => category.id === 'instagram');
     const threadsCategory = PALETTE_CATEGORIES.find((category) => category.id === 'threads');
-    const whatsappCategory = PALETTE_CATEGORIES.find((category) => category.id === 'whatsapp');
 
     expect(facebookCategory?.items).toEqual(
       expect.arrayContaining([
@@ -45,11 +44,6 @@ describe('workflow palette categories', () => {
     expect(threadsCategory?.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ t: 'threads_publish_post' }),
-      ])
-    );
-    expect(whatsappCategory?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ t: 'whatsapp_send_message' }),
       ])
     );
   });

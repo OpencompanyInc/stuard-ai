@@ -16,6 +16,7 @@ import * as fs from "fs";
 import { app, BrowserWindow } from "electron";
 import { warmDiscoveredAppIconCache } from "./icon-cache";
 import { prewarmWindowsAppIcons } from "./app-icon-extractor";
+import { prewarmWin32AppIcons } from "./win32-icon-extractor";
 import logger from "../utils/logger";
 
 const execAsync = promisify(exec);
@@ -92,7 +93,6 @@ export async function getInstalledApps(forceRefresh = false): Promise<Discovered
 export async function refreshAppCache(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
 
-  // Publish the refreshed list only after icon hints and icon data are warmed.
   refreshInFlight = (async () => {
     let discovered: DiscoveredApp[] = [];
     try {
@@ -103,12 +103,30 @@ export async function refreshAppCache(): Promise<void> {
       return;
     }
 
+    // Publish the bare app list immediately. The previous code held it back
+    // until both the PowerShell AppxManifest scan AND every per-app icon
+    // resolution finished — a 5–10s blackout on launcher search after every
+    // cold start during which apps like a freshly-installed Stuard AI didn't
+    // appear in results. Renderer subscribers re-fetch when iconsReady fires.
+    cachedApps = discovered;
+    cacheTimestamp = Date.now();
     notifyAppsUpdated({ count: discovered.length, iconsReady: false });
 
     try {
       await prewarmWindowsAppIcons(discovered);
     } catch (e: any) {
-      logger.warn("[app-discovery] Shell COM icon prewarm failed:", e?.message);
+      logger.warn("[app-discovery] UWP icon prewarm failed:", e?.message);
+    }
+
+    // Extract proper icons for Win32 apps via [System.Drawing.Icon]::
+    // ExtractAssociatedIcon — Electron's app.getFileIcon returns a generic
+    // shell-document placeholder for some signed exes (Stuard AI's own exe
+    // is the canonical repro). After this runs, iconHint for Win32 apps
+    // points at a freshly-extracted PNG that nativeImage handles cleanly.
+    try {
+      await prewarmWin32AppIcons(discovered);
+    } catch (e: any) {
+      logger.warn("[app-discovery] Win32 icon prewarm failed:", e?.message);
     }
 
     try {
@@ -117,7 +135,6 @@ export async function refreshAppCache(): Promise<void> {
       logger.warn("[app-discovery] Electron icon cache warm failed:", e?.message);
     }
 
-    cachedApps = discovered;
     cacheTimestamp = Date.now();
     notifyAppsUpdated({ count: cachedApps.length, iconsReady: true });
   })().finally(() => {

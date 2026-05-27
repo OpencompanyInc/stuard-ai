@@ -16,8 +16,9 @@ import { z } from 'zod';
 import { writeLog } from '../utils/logger';
 import { KNOWN_SUBAGENT_NAMES, type SubagentName } from './capability-packs';
 import type { DelegationResult, SubagentQuestion, SubagentAnswer } from './types';
-import { getBridgeWs, getBridgeSecrets, withClientBridge } from '../tools/bridge';
+import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge } from '../tools/bridge';
 import { buildSkillContextSection, findSkillInContext, getSkillsFromContext } from '../tools/skill-tools';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 // ─── Background subagent coordination ────────────────────────────────────────
 
@@ -31,10 +32,43 @@ interface SubagentCoordinator {
   questionPending: boolean;
 }
 
+type DelegateTaskStatus = 'running' | 'awaiting_reply' | 'completed' | 'failed';
+
+interface StartedDelegateTask {
+  index: number;
+  subagent: SubagentName;
+  coordinator: SubagentCoordinator;
+  invocationPromise: Promise<void>;
+}
+
+interface ParallelTaskState extends StartedDelegateTask {
+  status: DelegateTaskStatus;
+  response?: any;
+  currentQuestionId?: string;
+}
+
+interface ParallelQuestionItem {
+  group: ParallelGroup;
+  task: ParallelTaskState;
+  coordinator: SubagentCoordinator;
+  question: SubagentQuestion;
+}
+
+interface ParallelGroup {
+  groupId: string;
+  tasks: ParallelTaskState[];
+  activeQuestion?: ParallelQuestionItem;
+  questionQueue: ParallelQuestionItem[];
+  waiters: Set<() => void>;
+  finished: boolean;
+}
+
 const activeCoordinators = new Map<string, SubagentCoordinator>();
 
 /** Secondary index: subagentId → { questionId, coordinator } for fallback lookup */
 const coordinatorsBySubagent = new Map<string, { questionId: string; coordinator: SubagentCoordinator }>();
+const parallelGroupsByQuestion = new Map<string, ParallelGroup>();
+const parallelQuestionItemsByQuestion = new Map<string, ParallelQuestionItem>();
 
 /** Cache of recently answered questions — prevents double-reply errors when the LLM calls reply_to_subagent twice */
 const answeredCache = new Map<string, any>();
@@ -100,6 +134,135 @@ function buildQuestionResponse(question: SubagentQuestion) {
   };
 }
 
+function buildRunningResponse(task: ParallelTaskState) {
+  return {
+    ok: true,
+    index: task.index,
+    subagent: task.subagent,
+    subagentId: task.coordinator.subagentId || undefined,
+    status: task.status,
+    completed: false,
+    awaitingReply: task.status === 'awaiting_reply',
+    questionId: task.currentQuestionId,
+  };
+}
+
+function buildParallelTaskSnapshot(task: ParallelTaskState) {
+  if (task.response) {
+    return {
+      index: task.index,
+      subagent: task.subagent,
+      status: task.status,
+      ...task.response,
+    };
+  }
+
+  return buildRunningResponse(task);
+}
+
+function buildParallelSummary(group: ParallelGroup) {
+  const completed = group.tasks.filter(t => t.status === 'completed' || t.status === 'failed').length;
+  const awaiting = group.tasks.filter(t => t.status === 'awaiting_reply').length;
+  return `${completed}/${group.tasks.length} tasks completed${awaiting > 0 ? `, ${awaiting} awaiting reply` : ''}`;
+}
+
+function buildParallelCompletionResponse(group: ParallelGroup) {
+  return {
+    ok: true,
+    results: group.tasks.map(buildParallelTaskSnapshot),
+    summary: buildParallelSummary(group),
+  };
+}
+
+function buildParallelQuestionResponse(item: ParallelQuestionItem) {
+  const base = buildQuestionResponse(item.question);
+  return {
+    ...base,
+    results: item.group.tasks.map(buildParallelTaskSnapshot),
+    summary: `${buildParallelSummary(item.group)} (use reply_to_subagent with the questionId)`,
+  };
+}
+
+function wakeParallelGroup(group: ParallelGroup) {
+  const waiters = Array.from(group.waiters);
+  group.waiters.clear();
+  for (const wake of waiters) wake();
+}
+
+function allParallelTasksTerminal(group: ParallelGroup) {
+  return group.tasks.every(t => t.status === 'completed' || t.status === 'failed');
+}
+
+function registerActiveQuestion(item: ParallelQuestionItem) {
+  const { question, coordinator, group } = item;
+  activeCoordinators.set(question.questionId, coordinator);
+  coordinatorsBySubagent.set(coordinator.subagentId || question.subagentId, {
+    questionId: question.questionId,
+    coordinator,
+  });
+  parallelGroupsByQuestion.set(question.questionId, group);
+  parallelQuestionItemsByQuestion.set(question.questionId, item);
+}
+
+function unregisterActiveQuestion(questionId: string, coordinator: SubagentCoordinator) {
+  activeCoordinators.delete(questionId);
+  if (coordinator.subagentId) {
+    coordinatorsBySubagent.delete(coordinator.subagentId);
+  }
+  parallelGroupsByQuestion.delete(questionId);
+  parallelQuestionItemsByQuestion.delete(questionId);
+}
+
+function surfaceNextParallelQuestion(group: ParallelGroup) {
+  if (group.activeQuestion || group.questionQueue.length === 0) return undefined;
+  const next = group.questionQueue.shift();
+  if (!next) return undefined;
+  group.activeQuestion = next;
+  registerActiveQuestion(next);
+  return next;
+}
+
+function cleanupParallelGroup(group: ParallelGroup) {
+  group.finished = true;
+  if (group.activeQuestion) {
+    unregisterActiveQuestion(group.activeQuestion.question.questionId, group.activeQuestion.coordinator);
+  }
+  for (const item of group.questionQueue) {
+    parallelGroupsByQuestion.delete(item.question.questionId);
+    parallelQuestionItemsByQuestion.delete(item.question.questionId);
+  }
+  group.questionQueue = [];
+  group.activeQuestion = undefined;
+  wakeParallelGroup(group);
+}
+
+function getParallelReadyResponse(group: ParallelGroup): any | undefined {
+  if (group.activeQuestion) {
+    return buildParallelQuestionResponse(group.activeQuestion);
+  }
+
+  const queued = surfaceNextParallelQuestion(group);
+  if (queued) {
+    return buildParallelQuestionResponse(queued);
+  }
+
+  if (allParallelTasksTerminal(group)) {
+    const response = buildParallelCompletionResponse(group);
+    cleanupParallelGroup(group);
+    return response;
+  }
+
+  return undefined;
+}
+
+async function waitForParallelGroupNext(group: ParallelGroup): Promise<any> {
+  for (;;) {
+    const ready = getParallelReadyResponse(group);
+    if (ready) return ready;
+    await new Promise<void>(resolve => group.waiters.add(resolve));
+  }
+}
+
 interface DelegateTaskInput {
   subagent: string;
   instruction: string;
@@ -159,10 +322,35 @@ function buildTargetContext(task: DelegateTaskInput, targetKind: 'bot' | 'agent'
   ].filter(Boolean).join('\n');
 }
 
+export function assignBrowserDelegateTabIndexes(tasks: Array<{ subagent: string }>): Array<number | undefined> {
+  let nextBrowserTabIndex = 0;
+  return tasks.map((task) => {
+    const name = task.subagent.trim().toLowerCase();
+    if (name !== 'browser') return undefined;
+    const tabIndex = nextBrowserTabIndex;
+    nextBrowserTabIndex += 1;
+    return tabIndex;
+  });
+}
+
+export function buildDelegateBridgeSecrets(
+  kind: string,
+  bridgeSecrets: Record<string, any> | undefined,
+  runId: string,
+  browserTabIndex?: number,
+): Record<string, any> | undefined {
+  if (kind !== 'browser') return bridgeSecrets;
+  return {
+    ...(bridgeSecrets || {}),
+    browserUseSessionId: `browser-${runId}`,
+    ...(typeof browserTabIndex === 'number' ? { browserUseTabIndex: browserTabIndex } : {}),
+  };
+}
+
 // ─── The one delegation tool ─────────────────────────────────────────────────
 
-/** Shared logic: spin up one subagent task, race completion vs question */
-async function runDelegateTask(
+/** Shared logic: spin up one subagent task. */
+function startDelegateTask(
   task: PreparedDelegateTask,
   index: number,
   bridgeWs: any,
@@ -170,15 +358,38 @@ async function runDelegateTask(
   parentModelTier: string | undefined,
   parentModelId: string | undefined,
   chatWs: any,
-) {
+  browserTabIndex?: number,
+  onQuestionCreated?: (started: StartedDelegateTask, question: SubagentQuestion) => void,
+  runSubagentImpl?: (args: any) => Promise<DelegationResult>,
+): StartedDelegateTask {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'workflow', 'reminders', 'ffmpeg', 'vm', 'bot', 'agent'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'vm' | 'bot' | 'agent';
+    : name as 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'vm' | 'bot' | 'agent';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const parentAbortSignal = bridgeSecrets?.__abortSignal;
+  const isBrowserSubagent = kind === 'browser';
+  const taskBridgeSecrets = buildDelegateBridgeSecrets(kind, bridgeSecrets, runId, browserTabIndex);
+
+  const releaseBrowserSession = async () => {
+    const sessionId = typeof taskBridgeSecrets?.browserUseSessionId === 'string'
+      ? taskBridgeSecrets.browserUseSessionId
+      : '';
+    if (!isBrowserSubagent || !sessionId) return;
+    const release = () => execLocalTool('browser_use_tabs', {
+      action: 'release',
+      session_id: sessionId,
+    }).catch(() => undefined);
+    try {
+      if (bridgeWs && (bridgeWs as any).readyState === 1) {
+        await withClientBridge(bridgeWs as any, release, taskBridgeSecrets);
+      } else {
+        await release();
+      }
+    } catch {}
+  };
 
   writeLog('delegate_start', {
     subagent: name,
@@ -200,6 +411,9 @@ async function runDelegateTask(
     answerResolvers: new Map(),
     questionPending: false,
   };
+  let invocationResolve!: () => void;
+  const invocationPromise = new Promise<void>(resolve => { invocationResolve = resolve; });
+  const started: StartedDelegateTask = { index, subagent: name, coordinator, invocationPromise };
 
   const onQuestion = async (question: SubagentQuestion): Promise<SubagentAnswer> => {
     if (coordinator.questionPending) {
@@ -233,7 +447,11 @@ async function runDelegateTask(
     });
     console.log(`[delegation] ❓ QUESTION from ${name} | subagentId=${question.subagentId} questionId=${question.questionId} | "${question.question.slice(0, 100)}"`);
 
-    coordinator.questionResolve(question);
+    if (onQuestionCreated) {
+      queueMicrotask(() => onQuestionCreated(started, question));
+    } else {
+      coordinator.questionResolve(question);
+    }
 
     return new Promise<SubagentAnswer>((resolve) => {
       coordinator.answerResolvers.set(question.questionId, {
@@ -252,39 +470,73 @@ async function runDelegateTask(
   };
 
   const startSubagent = async () => {
-    const { runSubagent } = await import('./subagent-runtime');
-    return runSubagent({
-      request: {
-        kind,
-        instruction: task.instruction,
-        targetAgentId: name === 'agent' ? task.agent_id?.trim() : task.bot_id?.trim(),
-        targetAgentName: name === 'agent' ? task.agent_name?.trim() : task.bot_name?.trim(),
-        context: joinContextSections(
-          isIntegration ? `Integration group: ${name}` : undefined,
-          name === 'bot' || name === 'agent' ? buildTargetContext(task, name) : undefined,
-          task.skillContext,
-          task.context,
-        ),
-      },
-      runId,
-      parentRunId: runId,
-      model: (parentModelTier as any) || 'balanced',
-      modelId: parentModelId,
-      bridgeWs: bridgeWs as any,
-      bridgeSecrets,
-      chatWs,
-      abortSignal: parentAbortSignal && typeof parentAbortSignal === 'object' && 'aborted' in parentAbortSignal
-        ? parentAbortSignal as AbortSignal
-        : undefined,
-      onQuestion,
-    });
+    try {
+      const runSubagent = runSubagentImpl || (await import('./subagent-runtime')).runSubagent;
+      const result = runSubagent({
+        request: {
+          kind,
+          instruction: task.instruction,
+          targetAgentId: name === 'agent' ? task.agent_id?.trim() : task.bot_id?.trim(),
+          targetAgentName: name === 'agent' ? task.agent_name?.trim() : task.bot_name?.trim(),
+          context: joinContextSections(
+            isIntegration ? `Integration group: ${name}` : undefined,
+            name === 'bot' || name === 'agent' ? buildTargetContext(task, name) : undefined,
+            task.skillContext,
+            task.context,
+          ),
+        },
+        runId,
+        parentRunId: runId,
+        model: (parentModelTier as any) || 'balanced',
+        modelId: parentModelId,
+        bridgeWs: bridgeWs as any,
+        bridgeSecrets: taskBridgeSecrets,
+        chatWs,
+        abortSignal: parentAbortSignal && typeof parentAbortSignal === 'object' && 'aborted' in parentAbortSignal
+          ? parentAbortSignal as AbortSignal
+          : undefined,
+        onQuestion,
+      });
+      invocationResolve();
+      return result;
+    } catch (error) {
+      invocationResolve();
+      throw error;
+    }
   };
 
   coordinator.resultPromise = bridgeWs && (bridgeWs as any).readyState === 1
-    ? withClientBridge(bridgeWs as any, startSubagent, bridgeSecrets) as Promise<DelegationResult>
+    ? withClientBridge(bridgeWs as any, startSubagent, taskBridgeSecrets) as Promise<DelegationResult>
     : startSubagent();
 
+  coordinator.resultPromise.finally(releaseBrowserSession).catch(() => {});
   coordinator.resultPromise.catch(() => {});
+
+  return started;
+}
+
+/** Shared logic: spin up one subagent task, race completion vs question */
+async function runDelegateTask(
+  task: PreparedDelegateTask,
+  index: number,
+  bridgeWs: any,
+  bridgeSecrets: Record<string, any> | undefined,
+  parentModelTier: string | undefined,
+  parentModelId: string | undefined,
+  chatWs: any,
+  browserTabIndex?: number,
+) {
+  const started = startDelegateTask(
+    task,
+    index,
+    bridgeWs,
+    bridgeSecrets,
+    parentModelTier,
+    parentModelId,
+    chatWs,
+    browserTabIndex,
+  );
+  const { coordinator, subagent: name } = started;
 
   const race = await raceCompletionOrQuestion(coordinator);
 
@@ -311,6 +563,161 @@ async function runDelegateTask(
   return { index, subagent: name, ...buildQuestionResponse(race.question) };
 }
 
+function completeParallelTask(group: ParallelGroup, task: ParallelTaskState, result: DelegationResult) {
+  if (task.status === 'completed' || task.status === 'failed') return;
+  task.status = result.ok ? 'completed' : 'failed';
+  task.currentQuestionId = undefined;
+  task.response = buildCompletionResponse(result);
+  wakeParallelGroup(group);
+}
+
+function handleParallelQuestion(group: ParallelGroup, task: ParallelTaskState, question: SubagentQuestion) {
+  task.status = 'awaiting_reply';
+  task.currentQuestionId = question.questionId;
+
+  const item: ParallelQuestionItem = {
+    group,
+    task,
+    coordinator: task.coordinator,
+    question,
+  };
+
+  if (group.activeQuestion) {
+    group.questionQueue.push(item);
+  } else {
+    group.activeQuestion = item;
+    registerActiveQuestion(item);
+  }
+
+  writeLog('delegate_parallel_question', {
+    groupId: group.groupId,
+    subagent: task.subagent,
+    questionId: question.questionId,
+    queued: group.activeQuestion !== item,
+  });
+  wakeParallelGroup(group);
+}
+
+async function runParallelDelegateTasks(
+  preparedTasks: PreparedDelegateTask[],
+  bridgeWs: any,
+  bridgeSecrets: Record<string, any> | undefined,
+  parentModelTier: string | undefined,
+  parentModelId: string | undefined,
+  chatWs: any,
+) {
+  const group: ParallelGroup = {
+    groupId: `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    tasks: [],
+    questionQueue: [],
+    waiters: new Set(),
+    finished: false,
+  };
+
+  const browserTabIndexes = assignBrowserDelegateTabIndexes(preparedTasks);
+  const { runSubagent } = await import('./subagent-runtime');
+
+  for (const [index, task] of preparedTasks.entries()) {
+    let taskState!: ParallelTaskState;
+    const started = startDelegateTask(
+      task,
+      index,
+      bridgeWs,
+      bridgeSecrets,
+      parentModelTier,
+      parentModelId,
+      chatWs,
+      browserTabIndexes[index],
+      (_started, question) => handleParallelQuestion(group, taskState, question),
+      runSubagent,
+    );
+
+    taskState = {
+      ...started,
+      status: 'running',
+    };
+    group.tasks.push(taskState);
+
+    started.coordinator.resultPromise
+      .then(result => completeParallelTask(group, taskState, result))
+      .catch(err => completeParallelTask(group, taskState, {
+        ok: false,
+        subagentId: started.coordinator.subagentId,
+        error: err?.message || 'Subagent failed',
+        durationMs: 0,
+      }));
+  }
+
+  await Promise.all(group.tasks.map(task => task.invocationPromise));
+  return waitForParallelGroupNext(group);
+}
+
+function resolveCoordinatorAnswer(
+  coordinator: SubagentCoordinator,
+  effectiveQuestionId: string,
+  answer: string,
+): { ok: true } | { ok: false; error: string } {
+  let resolver = coordinator.answerResolvers.get(effectiveQuestionId);
+  let resolverKey = effectiveQuestionId;
+  if (!resolver && coordinator.answerResolvers.size > 0) {
+    const first = Array.from(coordinator.answerResolvers.entries())[0];
+    if (first) {
+      [resolverKey, resolver] = [first[0], first[1]];
+    }
+  }
+
+  if (!resolver) {
+    return { ok: false, error: `Answer resolver not found for "${effectiveQuestionId}". The subagent may have already received an answer.` };
+  }
+
+  resolver.resolve(answer);
+  coordinator.answerResolvers.delete(resolverKey);
+
+  for (const [dupId, dupResolver] of coordinator.answerResolvers) {
+    dupResolver.resolve(answer);
+    coordinator.answerResolvers.delete(dupId);
+  }
+
+  return { ok: true };
+}
+
+function cacheAnsweredQuestion(questionId: string, effectiveQuestionId: string, result: any) {
+  answeredCache.set(questionId, result);
+  if (effectiveQuestionId !== questionId) {
+    answeredCache.set(effectiveQuestionId, result);
+  }
+  setTimeout(() => {
+    answeredCache.delete(questionId);
+    answeredCache.delete(effectiveQuestionId);
+  }, 30_000);
+}
+
+async function replyToParallelQuestion(
+  group: ParallelGroup,
+  item: ParallelQuestionItem,
+  effectiveQuestionId: string,
+  questionId: string,
+  answer: string,
+) {
+  unregisterActiveQuestion(effectiveQuestionId, item.coordinator);
+  if (group.activeQuestion?.question.questionId === effectiveQuestionId) {
+    group.activeQuestion = undefined;
+  }
+
+  item.task.status = 'running';
+  item.task.currentQuestionId = undefined;
+
+  const resolved = resolveCoordinatorAnswer(item.coordinator, effectiveQuestionId, answer);
+  if (!resolved.ok) return resolved;
+
+  writeLog('reply_to_subagent_answered', { questionId: effectiveQuestionId, answerLength: answer.length, parallelGroupId: group.groupId });
+  console.log(`[delegation] âœ‰ ANSWER SENT to parallel subagent | subagentId=${item.coordinator.subagentId} questionId=${effectiveQuestionId} | waiting for batch completion or next question...`);
+
+  const result = await waitForParallelGroupNext(group);
+  cacheAnsweredQuestion(questionId, effectiveQuestionId, result);
+  return result;
+}
+
 export const delegate = createTool({
   id: 'delegate',
   description:
@@ -320,6 +727,7 @@ export const delegate = createTool({
     'Available subagents:\n' +
     '  browser     — web browsing, form filling, page scraping, screenshots\n' +
     '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
+    '  cli_agent   — drive installed coding-agent CLIs (Codex, Cursor, Antigravity, Claude Code) for codebase Q&A and agentic coding work — uses the user\'s subscription\n' +
     '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
     '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
     '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
@@ -329,13 +737,14 @@ export const delegate = createTool({
     '  outlook     — Outlook mail & calendar\n' +
     '  github      — repos, issues, PRs, branches, actions\n' +
     '  meta        — Facebook, Instagram, Threads\n' +
-    '  whatsapp    — WhatsApp messaging\n' +
+    (WHATSAPP_INTEGRATION_ENABLED ? '  whatsapp    — WhatsApp messaging\n' : '') +
     '  telnyx      — SMS, voice calls\n' +
     '  reddit      — subreddits, posts, comments\n' +
     '  discord     — Discord bot operations\n' +
     '  x           — X/Twitter tweets, timelines, users, DMs\n\n' +
     'A subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
-    'this tool returns with the question and a questionId. Use reply_to_subagent to answer.',
+    'this tool returns with the question and a questionId. If the user must decide or confirm, ' +
+    'call ask_user first, then reply_to_subagent with the user\'s answer. Otherwise reply_to_subagent directly.',
   inputSchema: z.object({
     tasks: z.array(z.object({
       subagent: z
@@ -415,14 +824,18 @@ export const delegate = createTool({
     });
     console.log(`[delegation] ▶▶ DELEGATE PARALLEL | ${preparedTasks.length} tasks | subagents=[${preparedTasks.map(t => t.subagent).join(', ')}]`);
 
-    const results = await Promise.all(
-      preparedTasks.map((task, index) =>
-        runDelegateTask(task, index, bridgeWs, bridgeSecrets, parentModelTier, parentModelId, chatWs),
-      ),
+    const response = await runParallelDelegateTasks(
+      preparedTasks,
+      bridgeWs,
+      bridgeSecrets,
+      parentModelTier,
+      parentModelId,
+      chatWs,
     );
 
-    const completed = results.filter(r => r.completed);
-    const pending = results.filter(r => !r.completed);
+    const results = Array.isArray(response?.results) ? response.results : [];
+    const completed = results.filter((r: any) => r.completed);
+    const pending = results.filter((r: any) => !r.completed);
 
     console.log(`[delegation] 🏁 DELEGATE PARALLEL DONE | ${completed.length} completed, ${pending.length} awaiting replies`);
     writeLog('delegate_multi_complete', {
@@ -431,11 +844,7 @@ export const delegate = createTool({
       pendingQuestions: pending.length,
     });
 
-    return {
-      ok: true,
-      results,
-      summary: `${completed.length}/${preparedTasks.length} tasks completed${pending.length > 0 ? `, ${pending.length} awaiting reply (use reply_to_subagent with the questionId)` : ''}`,
-    };
+    return response;
   },
 });
 
@@ -446,8 +855,8 @@ export const replyToSubagent = createTool({
   description:
     'Reply to a question from a running subagent. ' +
     'When a subagent asks a question, the delegate tool returns with the question and a top-level questionId. ' +
-    'Pass that questionId here to send your answer. This tool will wait for the subagent to ' +
-    'either complete its task or ask another question, then return the result.',
+    'If the answer requires user input or confirmation, call ask_user first, then pass the user\'s response here. ' +
+    'Pass the questionId from delegate. This tool waits for the subagent to complete or ask another question.',
   inputSchema: z.object({
     questionId: z.string().describe('The questionId from the delegate tool response (top-level questionId field).'),
     answer: z.string().describe('Your answer to the subagent question.'),
@@ -498,6 +907,12 @@ export const replyToSubagent = createTool({
             : 'No active questions — the subagent may have timed out or already completed.'
         }`,
       };
+    }
+
+    const parallelGroup = parallelGroupsByQuestion.get(effectiveQuestionId);
+    const parallelItem = parallelQuestionItemsByQuestion.get(effectiveQuestionId);
+    if (parallelGroup && parallelItem) {
+      return replyToParallelQuestion(parallelGroup, parallelItem, effectiveQuestionId, questionId, answer);
     }
 
     // Remove from lookup maps

@@ -200,6 +200,12 @@ function injectLocalToolInput(
   if (injectedSessionId) {
     base.session_id = injectedSessionId;
   }
+  if (typeof base.tab_index === 'undefined' && typeof secrets?.browserUseTabIndex !== 'undefined') {
+    const tabIndex = Number(secrets.browserUseTabIndex);
+    if (Number.isInteger(tabIndex) && tabIndex >= 0) {
+      base.tab_index = tabIndex;
+    }
+  }
   return base;
 }
 

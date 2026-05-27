@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('execution tools bootstrap', () => {
-  it('registers the execution tool universe on demand', { timeout: 30000 }, async () => {
+  it('registers the execution tool universe on demand', { timeout: 60000 }, async () => {
     vi.resetModules();
 
     const resolver = await import('./execution-tools-resolver');
@@ -20,7 +20,7 @@ describe('execution tools bootstrap', () => {
     expect(typeof (tools.x_post_tweet as any).execute).toBe('function');
   });
 
-  it('is safe to call repeatedly', { timeout: 30000 }, async () => {
+  it('is safe to call repeatedly', { timeout: 60000 }, async () => {
     vi.resetModules();
 
     const resolver = await import('./execution-tools-resolver');

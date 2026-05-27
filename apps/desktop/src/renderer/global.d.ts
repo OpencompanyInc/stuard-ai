@@ -68,17 +68,27 @@ declare global {
       startOverlayScreenSnip: (durationMs?: number) => Promise<{ ok: boolean; enabled: boolean; restoreDelay: number; error?: string }>;
       setMode: (mode: 'compact' | 'sidebar' | 'window') => Promise<void>;
       resize: (w: number, h: number, anchor?: 'top' | 'bottom') => Promise<void>;
-      setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => Promise<void>;
+      setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) => Promise<void>;
+      setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
       moveBy: (dx: number, dy: number) => Promise<void>;
       getSize: () => Promise<{ width: number; height: number; mode: string }>;
       getMode: () => Promise<string>;
+      overlayMinimize: () => Promise<void>;
+      overlayToggleMaximize: () => Promise<void>;
+      overlayIsMaximized: () => Promise<boolean>;
+      onOverlayMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => () => void;
+      windowMinimize: () => Promise<void>;
+      windowToggleMaximize: () => Promise<void>;
+      windowIsMaximized: () => Promise<boolean>;
+      windowClose: () => Promise<void>;
+      onWindowMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => () => void;
       // Resize events
       onResizing: (cb: (data: { width: number; height: number }) => void) => () => void;
       onResized: (cb: (data: { width: number; height: number; mode: string }) => void) => () => void;
       onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string }) => void) => () => void;
       openDashboard: (options?: { tab?: string }) => Promise<void>;
       openOnboarding: () => Promise<void>;
-      openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string }) => Promise<void>;
+      openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => Promise<void>;
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
@@ -134,7 +144,7 @@ declare global {
       onVMStreamEvent: (cb: (data: any) => void) => () => void;
       onRunStateSync: (cb: (data: { pendingApprovals: Array<{ id: string; tool: string; args?: Record<string, any>; description?: string; createdAt: number }>; terminals: Array<{ requestId: string; result: { text: string; finishReason: string; aborted?: boolean; error?: boolean; model?: string; conversationId?: string } }>; activePhases: Array<{ requestId: string; phase: string }> }) => void) => () => void;
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
-      onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string }) => void) => () => void;
+      onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
       customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
@@ -240,6 +250,8 @@ declare global {
       terminalAiWrite: (sessionId: string, input: string) => Promise<{ ok: boolean; error?: string }>;
       onTerminalData: (cb: (data: { sessionId: string; data: string }) => void) => () => void;
       onTerminalExit: (cb: (data: { sessionId: string; exitCode: number }) => void) => () => void;
+      onCliAgentSessionStarted: (cb: (data: { id: string; terminalSessionId: string; provider: string; label: string; cwd: string; mode: string; createdAt: number }) => void) => () => void;
+      onCliAgentSessionStopped: (cb: (data: { id: string; terminalSessionId: string }) => void) => () => void;
 
       // File Icons
       getFilePreview: (filePath: string, options?: { size?: 'small' | 'normal' | 'large'; preferThumbnail?: boolean }) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
@@ -290,6 +302,12 @@ declare global {
       botsUpdateTrigger: (id: string, triggerId: string, patch: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;
       botsRemoveTrigger: (id: string, triggerId: string) => Promise<{ ok: boolean; error?: string }>;
       botsGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
+      botsTestSetup: (input: any) => Promise<{ ok: boolean; summary?: string; checks?: any[]; error?: string }>;
+      botsRunPreflightProbe: (payload: {
+        request: { probe: string; args?: Record<string, any> };
+        cloudHttpBase: string;
+        authToken: string | null;
+      }) => Promise<{ ok: boolean; status: 'pass' | 'fail' | 'warn' | 'unsupported'; detail: string }>;
       botsDeployToVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
       botsStopOnVm: (id: string) => Promise<{ ok: boolean; bot?: any; config?: any; error?: string }>;
       // Bot kanban + run log (private bot-owned memory, separate from user tasks)

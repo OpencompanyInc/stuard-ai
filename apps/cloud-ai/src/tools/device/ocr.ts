@@ -287,7 +287,7 @@ async function locateTextOnScreen(
   }
 
   // 2. Read the screenshot as base64
-  const bin = await execLocalTool('read_file_binary', { path: filePath }, writer);
+  const bin = await execLocalTool('read_file_binary', { path: filePath, inline: true }, writer);
   const imageData = bin?.data as string | undefined;
 
   if (!imageData) {

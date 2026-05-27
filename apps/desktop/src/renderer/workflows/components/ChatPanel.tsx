@@ -736,7 +736,7 @@ export const ToolCallItem = ({ evt }: { evt: ToolEvent }) => {
     }
     
     // Search/list operations
-    if (toolName === 'list_workflows' || toolName === 'list_local_workflows') {
+    if (toolName === 'search_workflows' || toolName === 'search_local_workflows') {
       const count = result?.workflows?.length || 0;
       return `Found ${count} workflow${count !== 1 ? 's' : ''}`;
     }
@@ -1029,7 +1029,7 @@ export function ChatPanel({
                           <div className="bg-white/[0.06] px-4 py-2 border-b border-white/[0.08] flex items-center justify-between">
                             <span className="text-xs text-white/50 font-mono uppercase tracking-wider">{className.replace('language-', '') || 'code'}</span>
                           </div>
-                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
+                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-black/20">
                             <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
                           </div>
                         </div>
@@ -1128,7 +1128,7 @@ export function ChatPanel({
                           <div className="bg-white/[0.06] px-4 py-2 border-b border-white/[0.08] flex items-center justify-between">
                             <span className="text-xs text-white/50 font-mono uppercase tracking-wider">{className.replace('language-', '') || 'code'}</span>
                           </div>
-                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-slate-50/50">
+                          <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 bg-black/20">
                             <code className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-white/90 whitespace-pre tab-4")} {...childProps}>{codeContent}</code>
                           </div>
                         </div>

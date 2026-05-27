@@ -3,16 +3,16 @@ import { clsx } from 'clsx';
 import {
   Search,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react';
 
 import { TopicsView } from './memories/TopicsView';
 import { StickyNotes } from './memories/StickyNotes';
+import { ProjectsGalleryView } from './memories/ProjectsGalleryView';
 import { MemoryLockGate } from './MemoryLockGate';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
-type MemoriesTab = 'topics' | 'notes';
+type MemoriesTab = 'topics' | 'notes' | 'projects';
 
 interface Fact {
   id: string;
@@ -160,6 +160,7 @@ function MemoriesContent() {
   const tabs: { id: MemoriesTab; label: string }[] = [
     { id: 'topics', label: 'Collections' },
     { id: 'notes', label: 'My Context' },
+    { id: 'projects', label: 'Projects' },
   ];
 
   return (
@@ -170,10 +171,9 @@ function MemoriesContent() {
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-2">
                 <h1 className="text-2xl font-semibold tracking-tight text-theme-fg md:text-[1.65rem]">Memories</h1>
-                <div className="flex items-center gap-2 text-[13px] text-theme-muted">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  <span>Review and organize the information Stuard uses to personalize your experience.</span>
-                </div>
+                <p className="text-[13px] text-theme-muted">
+                  Review and organize the information Stuard uses to personalize your experience — collections, context, and projects.
+                </p>
               </div>
 
               <button
@@ -220,6 +220,13 @@ function MemoriesContent() {
               activeTab === 'notes' ? 'translate-y-0 opacity-100 z-10' : 'pointer-events-none translate-y-3 opacity-0 z-0'
             )}>
               {activeTab === 'notes' && <NotesTab key={`notes-${refreshNonce}`} />}
+            </div>
+
+            <div className={clsx(
+              'absolute inset-0 transition-all duration-300 ease-out',
+              activeTab === 'projects' ? 'translate-y-0 opacity-100 z-10' : 'pointer-events-none translate-y-3 opacity-0 z-0'
+            )}>
+              {activeTab === 'projects' && <ProjectsGalleryView refreshNonce={refreshNonce} />}
             </div>
           </div>
         </div>

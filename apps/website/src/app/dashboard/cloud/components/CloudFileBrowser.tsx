@@ -52,7 +52,7 @@ export function CloudFileBrowser({ engine }: CloudFileBrowserProps) {
       if (entry.size < 1024 * 1024) { // Only preview files < 1MB
         const data = await readFile(entry.path);
         if (data.ok) {
-          setFileContent(data.content);
+          setFileContent(data.content ?? null);
         }
       }
     }

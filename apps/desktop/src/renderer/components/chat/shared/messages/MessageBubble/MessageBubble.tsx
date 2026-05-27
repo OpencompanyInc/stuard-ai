@@ -34,6 +34,7 @@ import { FILE_PATH_RE, IMAGE_EXTS, AUDIO_EXTS, getFileExt, isFilePath, extractFi
 import { humanizeToolName, getQueryFromArgs, getAnalyzeMediaTarget } from './helpers/toolLabels';
 import { InlineImage } from './inline/InlineImage';
 import { InlineVideo } from './inline/InlineVideo';
+import { InlineFilePreview } from './inline/InlineFilePreview';
 import { InlineReasoningBlock } from './inline/InlineReasoningBlock';
 import { YouTubeEmbed } from './inline/YouTubeEmbed';
 
@@ -171,11 +172,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
     )))
   );
   const shouldRenderTextBubble = compact || role !== 'user' || isEditing || Boolean(text.trim()) || segments.length > 0;
-  const inlineChatUiBubbleClass = "w-full max-w-[85%] mr-auto";
+  const inlineChatUiBubbleClass = "w-full max-w-[560px] mr-auto";
 
   return (
     <div className={clsx(
-      "flex flex-col w-full mb-5 group/msg"
+      "flex flex-col w-full min-w-0 max-w-full mb-5 group/msg"
     )}>
       {role === 'assistant' && hasTraceSteps && (
         <AssistantTracePanel
@@ -190,7 +191,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
 
 
       {attachments && attachments.length > 0 && (
-        <div className={clsx("mb-2 flex", role === 'user' ? 'justify-end' : 'justify-start')}>
+        <div className={clsx(
+          "mb-2 flex",
+          role === 'user' ? 'justify-end pr-1' : 'justify-start pl-1',
+        )}>
           <AttachmentPreviewStrip
             attachments={attachments}
             layout="wrap"
@@ -200,7 +204,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
       )}
 
       {/* Main message content - renders streamChunks inline if available */}
-      <div className="w-full flex flex-col space-y-2">
+      <div className="w-full min-w-0 flex flex-col space-y-2">
         {role === 'assistant' && streamChunks && streamChunks.length > 0 ? (
           <>
             {/* Render interleaved stream chunks */}
@@ -252,10 +256,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   <div
                     key={`txt-${idx}`}
                     className={clsx(
-                      "w-fit",
-                      "rounded-[22px] px-5 py-3.5 backdrop-blur-md text-[16px] leading-relaxed transition-all",
-                      "bg-gray-100 text-gray-900 rounded-tl-sm",
-                      "max-w-[85%]"
+                      "w-fit max-w-[85%] text-[15px] leading-relaxed text-theme-fg font-normal px-0 py-1",
                     )}
                   >
                     <div className="select-text whitespace-pre-wrap font-medium break-words">
@@ -315,6 +316,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                         if (seg.kind === 'audio') {
                           return <AudioPlayer key={`aud-${idx}-${segIdx}`} src={toMediaSrc(seg.src)} />;
                         }
+                        if (seg.kind === 'file') {
+                          return <InlineFilePreview key={`file-${idx}-${segIdx}`} src={seg.src} />;
+                        }
                         if (seg.kind === 'youtube') {
                           return <YouTubeEmbed key={`yt-${idx}-${segIdx}`} videoId={seg.videoId} url={seg.url} />;
                         }
@@ -347,7 +351,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               <div className="flex items-center gap-2 mt-1 opacity-0 group-hover/bubble:opacity-100 transition-opacity ml-1">
                 <button
                   onClick={handleCopy}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-theme-hover/50 hover:bg-theme-hover text-[10px] text-theme-muted hover:text-theme-fg transition-all font-bold uppercase tracking-widest border border-theme/10"
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-theme-hover/50 hover:bg-theme-hover text-[10px] text-theme-muted hover:text-theme-fg transition-all font-bold uppercase tracking-widest"
                   title="Copy response"
                 >
                   {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
@@ -358,20 +362,23 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
           </>
         ) : (
           // Fallback to single bubble for user messages or when no streamChunks
-          shouldRenderTextBubble ? (
-            <div className={clsx(
+          shouldRenderTextBubble ? (() => {
+            const bubbleClassName = clsx(
               "text-[15px] relative group/bubble leading-relaxed transition-colors",
               compact
                 ? "w-full max-w-full bg-transparent px-4 py-3 text-theme-fg"
                 : clsx(
-                  "rounded-2xl px-5 py-3.5",
+                  "min-w-0 max-w-[85%]",
                   role === 'user'
                     ? (isEditing
-                      ? "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-full max-w-[85%] font-semibold"
-                      : "bg-primary text-primary-fg border-primary shadow-primary/5 ml-auto w-fit max-w-[85%] min-w-[56px] font-semibold")
-                    : "bg-gray-100 text-gray-900 mr-auto w-fit max-w-[85%] font-medium"
-                )
-            )}>
+                      ? "rounded-2xl px-4 py-3 bg-theme-input text-theme-fg w-full font-medium"
+                      : "rounded-2xl px-5 py-3.5 bg-theme-active text-theme-fg w-fit font-medium mr-2")
+                    : "bg-transparent text-theme-fg w-fit font-normal px-0 py-1 ml-2",
+                ),
+            );
+
+            const bubble = (
+            <div className={bubbleClassName}>
             {/* Edit mode for user messages */}
             {role === 'user' && isEditing ? (
               <div className="flex flex-col gap-2 w-full min-w-0">
@@ -380,14 +387,14 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   onKeyDown={handleEditKeyDown}
-                  className="w-full bg-white/20 text-primary-fg rounded-xl px-3 py-2.5 text-[14px] font-medium leading-relaxed outline-none border border-white/30 focus:border-white/50 focus:ring-2 focus:ring-white/20 placeholder:text-primary-fg/50 resize-none min-h-[112px] max-h-[260px] overflow-y-auto scrollbar-minimal"
+                  className="w-full bg-theme-bg text-theme-fg rounded-xl px-3 py-2.5 text-[14px] font-medium leading-relaxed outline-none border border-theme/20 focus:border-theme/40 focus:ring-2 focus:ring-theme/10 placeholder:text-theme-muted resize-none min-h-[112px] max-h-[260px] overflow-y-auto scrollbar-minimal"
                   rows={4}
                   placeholder="Edit your message..."
                 />
                 <div className="flex items-center gap-2 justify-end">
                   <button
                     onClick={handleEditCancel}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-primary-fg/70 hover:text-primary-fg hover:bg-white/10 transition-colors"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover/50 transition-colors"
                   >
                     <X className="w-3 h-3" />
                     Cancel
@@ -395,7 +402,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   <button
                     onClick={handleEditSubmit}
                     disabled={!editText.trim() || editText.trim() === text.trim()}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white/20 hover:bg-white/30 text-primary-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-theme-hover hover:bg-theme-active text-theme-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Send className="w-3 h-3" />
                     Send
@@ -404,7 +411,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               </div>
             ) : (
               <div
-                className="select-text whitespace-pre-wrap break-words"
+                className="select-text whitespace-pre-wrap break-words min-w-0 overflow-x-auto"
                 aria-live={role === 'assistant' && isStreaming ? "polite" : "off"}
               >
                 {segments.length === 0 ? (
@@ -473,6 +480,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     if (seg.kind === 'audio') {
                       return <AudioPlayer key={`aud-${idx}`} src={toMediaSrc(seg.src)} />;
                     }
+                    if (seg.kind === 'file') {
+                      return <InlineFilePreview key={`file-${idx}`} src={seg.src} />;
+                    }
                     if (seg.kind === 'youtube') {
                       return <YouTubeEmbed key={`yt-${idx}`} videoId={seg.videoId} url={seg.url} />;
                     }
@@ -503,7 +513,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/bubble:opacity-100 transition-opacity">
                 <button
                   onClick={handleCopy}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-theme-hover/50 hover:bg-theme-hover text-[10px] text-theme-muted hover:text-theme-fg transition-all font-bold uppercase tracking-widest border border-theme/10"
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-theme-hover/50 hover:bg-theme-hover text-[10px] text-theme-muted hover:text-theme-fg transition-all font-bold uppercase tracking-widest"
                   title="Copy response"
                 >
                   {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
@@ -513,7 +523,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   <button
                     onClick={handleRevert}
                     disabled={isReverting}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-[10px] text-amber-700 hover:text-amber-800 transition-all font-bold uppercase tracking-widest border border-amber-200 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-all font-bold uppercase tracking-widest disabled:opacity-50"
                     title={`Revert ${modifiedFiles.length} file change(s)`}
                   >
                     {isReverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
@@ -522,7 +532,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 )}
                 {reverted && modifiedFiles && modifiedFiles.length > 0 && checkpointId && (
                   <div className="flex items-center gap-1.5">
-                    <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-[10px] text-emerald-700 font-bold uppercase tracking-widest border border-emerald-200">
+                    <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400 font-bold uppercase tracking-widest">
                       <CheckCircle className="w-3 h-3" />
                       <span>Reverted</span>
                     </span>
@@ -530,7 +540,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                       <button
                         onClick={handleRedo}
                         disabled={isRedoing}
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-[10px] text-blue-700 hover:text-blue-800 transition-all font-bold uppercase tracking-widest border border-blue-200 disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-500/10 hover:bg-blue-500/15 text-[10px] text-blue-700 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-all font-bold uppercase tracking-widest disabled:opacity-50"
                         title={`Re-apply ${modifiedFiles.length} file change(s)`}
                       >
                         {isRedoing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Redo2 className="w-3 h-3" />}
@@ -547,8 +557,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     className={clsx(
                       "flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold",
                       actionFeedback.type === 'reverted'
-                        ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
-                        : "bg-blue-50 text-blue-600 border border-blue-200"
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
                     )}
                   >
                     {actionFeedback.type === 'reverted' ? <Undo2 className="w-3 h-3" /> : <Redo2 className="w-3 h-3" />}
@@ -558,11 +568,30 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               </div>
             )}
             </div>
-          ) : null
+            );
+
+            if (role === 'user' && !compact) {
+              return (
+                <div className="flex justify-end w-full min-w-0 pr-2">
+                  {bubble}
+                </div>
+              );
+            }
+
+            if (role === 'assistant' && !compact) {
+              return (
+                <div className="flex justify-start w-full min-w-0 pl-1">
+                  {bubble}
+                </div>
+              );
+            }
+
+            return bubble;
+          })() : null
         )}
         {/* Edit icon for user messages — outside bubble, in the gap */}
         {role === 'user' && !isEditing && !isStreaming && messageId && onEditMessage && (
-          <div className="flex justify-end mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
+          <div className="flex justify-end mt-1 pr-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150">
             <button
               onClick={() => { setEditText(text); setIsEditing(true); }}
               className="relative group/edit p-1 rounded-md text-theme-muted/50 hover:text-theme-fg hover:bg-theme-hover/50 transition-all active:scale-90"
@@ -578,20 +607,22 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         )}
         {/* Context indicator for user messages — subtle, right-aligned */}
         {role === 'user' && contextPaths && contextPaths.length > 0 && (
-          <div className="flex flex-wrap gap-1 justify-end mt-1.5 max-w-[85%] ml-auto">
-            {contextPaths.map((ctx, i) => {
-              const Icon = ctx.isDirectory ? Folder : FileText;
-              return (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
-                  title={ctx.path}
-                >
-                  <Icon className="w-3 h-3 shrink-0" strokeWidth={2} />
-                  <span className="truncate">{ctx.name}</span>
-                </span>
-              );
-            })}
+          <div className="flex justify-end w-full min-w-0 mt-1.5 pr-1">
+            <div className="flex flex-wrap gap-1 justify-end max-w-[85%] min-w-0">
+              {contextPaths.map((ctx, i) => {
+                const Icon = ctx.isDirectory ? Folder : FileText;
+                return (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
+                    title={ctx.path}
+                  >
+                    <Icon className="w-3 h-3 shrink-0" strokeWidth={2} />
+                    <span className="truncate">{ctx.name}</span>
+                  </span>
+                );
+              })}
+            </div>
           </div>
         )}
         {/* Modified files indicator */}
@@ -603,10 +634,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                 <span
                   key={i}
                   className={clsx(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border transition-colors",
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] transition-colors",
                     reverted
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-600 line-through decoration-emerald-400/50"
-                      : "bg-amber-50 border-amber-200 text-amber-700"
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 line-through decoration-emerald-400/50"
+                      : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
                   )}
                   title={reverted ? `${f} (reverted)` : f}
                 >

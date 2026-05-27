@@ -181,7 +181,7 @@ export default function BlogPage() {
             </div>
             <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-8">
               {featuredPosts.map((post) => (
-                <BlogCard key={post.id} post={post} featured />
+                <BlogCard key={post.slug} post={post} featured />
               ))}
             </div>
           </section>
@@ -249,7 +249,7 @@ export default function BlogPage() {
               {filteredPosts.length > 0 ? (
                 <div className="grid md:grid-cols-2 gap-8">
                   {filteredPosts.map((post) => (
-                    <BlogCard key={post.id} post={post} />
+                    <BlogCard key={post.slug} post={post} />
                   ))}
                 </div>
               ) : (

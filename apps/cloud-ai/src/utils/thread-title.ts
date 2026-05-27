@@ -22,3 +22,23 @@ export function normalizeThreadTitle(raw: unknown, maxLen = 80): string {
   title = title.replace(/[\.\!?]+$/g, '').trim();
   return title.slice(0, maxLen);
 }
+
+/**
+ * Derive a sensible immediate title from the user's first message so we never
+ * persist an "Untitled" conversation while the LLM title is still being
+ * generated. The LLM-generated title (when it arrives) overwrites this.
+ */
+export function fallbackTitleFromMessage(message: unknown, maxWords = 6, maxLen = 60): string {
+  const cleaned = String(message ?? '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  const words = cleaned.split(' ');
+  let title = words.slice(0, maxWords).join(' ');
+  if (words.length > maxWords) title += '…';
+  if (title.length > maxLen) title = title.slice(0, maxLen - 1).trimEnd() + '…';
+  title = title.replace(/[\.\!?,;:]+(?=…?$)/, '').trim();
+  return title;
+}

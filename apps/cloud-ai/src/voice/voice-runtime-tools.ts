@@ -13,6 +13,7 @@ import { agent_todo, search_local_workflows, run_workflow } from '../tools/devic
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
 import { runWithSecrets, withClientBridge } from '../tools/bridge';
 import { sendVMCommand } from '../services/vm-command';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 import { search_past_conversations, get_conversation_context } from '../tools/device/memory';
 import {
   getConversationMessages,
@@ -151,11 +152,8 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
           type: 'string',
           description: 'Optional category filter such as System, Memory, Google, GitHub, or Workflow.',
         },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of tools to return. Use 1-10.',
-        },
       },
+      required: ['query'],
     },
   ),
   makeFunctionTool(
@@ -192,7 +190,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
   makeFunctionTool(
     'delegate',
-    'Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta, whatsapp, telnyx, reddit, discord, x. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.',
+    `Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx, reddit, discord, x. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.`,
     {
       type: 'object',
       properties: {
@@ -204,7 +202,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
             properties: {
               subagent: {
                 type: 'string',
-                description: 'Subagent name: browser, file_ops, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta, whatsapp, telnyx, reddit, discord, or x.',
+                description: `Subagent name: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx, reddit, discord, or x.`,
               },
               instruction: {
                 type: 'string',
@@ -401,11 +399,12 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
   makeFunctionTool(
     'search_local_workflows',
-    'List or search the user\'s saved Stuard workflows. Use this before run_workflow to find a matching automation and check what arguments it needs.',
+    'Search the user\'s saved Stuard workflows semantically or lexically. Use this before run_workflow to find a matching automation and check what arguments it needs.',
     {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Optional name/description filter.' },
+        query: { type: 'string', description: 'Optional name, description, or natural-language search query.' },
+        mode: { type: 'string', enum: ['semantic', 'lexical'], description: 'Search mode. Default semantic.' },
         limit: { type: 'number', description: 'Max results (1-50). Default 10.' },
       },
     },
@@ -870,8 +869,6 @@ async function dispatchVoiceTool(
         (metaSearchTools as any).execute?.({
           query: args.query,
           category: args.category,
-          list_categories: !!args.list_categories,
-          limit: coerceLimit(args.limit, 5, 10),
         }, {} as any),
       );
 
@@ -1023,6 +1020,7 @@ async function dispatchVoiceTool(
       return bridge(async () =>
         (search_local_workflows as any).execute?.({
           query: typeof args.query === 'string' ? args.query : undefined,
+          mode: args.mode === 'lexical' ? 'lexical' : 'semantic',
           limit: coerceLimit(args.limit, 10, 50),
         }, {} as any),
       );

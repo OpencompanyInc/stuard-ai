@@ -5,7 +5,7 @@ import { useAgent } from './hooks/useAgent';
 import CommandPalette, { type CommandItem } from './components/CommandPalette';
 import HotkeysHelp from './components/HotkeysHelp';
 import { PermissionDialog } from './components/PermissionDialog';
-import { AskUserPrompt } from './components/chat/modes/window/parts/AskUserPrompt';
+import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
 import InputArea from './components/chat/shared/input/InputArea';
 import type { ContextItem } from './components/FileNavigator';
 import { usePreferences } from './hooks/usePreferences';
@@ -22,6 +22,7 @@ import { NotificationProvider, NotificationController } from './components/Notif
 import {
   buildAttachmentMessageText,
   createClipboardDocumentAttachment,
+  getChatAttachmentKind,
   normalizeChatAttachment,
   shouldConvertPasteToDocumentAttachment,
   type ChatAttachment,
@@ -31,7 +32,14 @@ import { useSpeechToText } from './hooks/useSpeechToText';
 import { usePlannerData } from './hooks/usePlannerData';
 import { LauncherView } from './components/chat/modes/launcher/LauncherView';
 import { ChatView } from './components/chat/modes/window/ChatView';
+import { ToolBrandStack } from './components/chat/shared/input/ToolBrandStack';
+import type { StatusItem } from './hooks/useStatusCarousel';
 import { useActiveProject } from './hooks/useActiveProject';
+import {
+  INTERNAL_SIDEBAR_WIDTH_MAX,
+  INTERNAL_SIDEBAR_WIDTH_MIN,
+  useInternalSidebarWidth,
+} from './hooks/useInternalSidebarWidth';
 import { setConversationProject } from './hooks/useProjects';
 import { ActiveProjectChip, ExitProjectToast } from './components/chat/modes/window/parts/ActiveProjectBar';
 import {
@@ -60,11 +68,56 @@ import {
 
 import { useWorkflows } from './workflows/hooks/useWorkflows';
 import { getMarketplaceApi } from './utils/cloud';
+import { filterCompactMarketplaceResults } from './utils/marketplaceSearch';
 
 function dismissApprovalNotification(id: string) {
   try {
     (window as any).desktopAPI?.dismissNotification?.(id);
   } catch { }
+}
+
+const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
+const MONTHLY_CREDIT_LIMIT_EXCEEDED = 'monthly_credit_limit_exceeded';
+const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
+
+const ATTACHMENT_MIME_BY_EXT: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  opus: 'audio/opus',
+  m4a: 'audio/mp4',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+};
+
+function inferAttachmentMimeType(name: string, fallback?: string): string {
+  const cleanFallback = String(fallback || '').trim();
+  if (cleanFallback && cleanFallback !== 'application/octet-stream') return cleanFallback;
+  const ext = String(name || '').split('.').pop()?.toLowerCase() || '';
+  return ATTACHMENT_MIME_BY_EXT[ext] || cleanFallback || 'application/octet-stream';
+}
+
+function summarizeAttachmentNames(files: Array<{ name?: string }>): string {
+  const names = files.map((file) => String(file?.name || '').trim()).filter(Boolean);
+  if (names.length === 0) return 'attachment';
+  if (names.length === 1) return names[0];
+  return `${names.length} files`;
+}
+
+function formatAttachmentSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function getConversationRankTime(conversation: any): number {
+  return new Date(conversation?.updated_at || conversation?.created_at || 0).getTime();
+}
+
+function sortConversationsByActivity(conversations: any[]): any[] {
+  return [...conversations].sort((a, b) => getConversationRankTime(b) - getConversationRankTime(a));
 }
 
 export function useAppController() {
@@ -120,7 +173,8 @@ export function useAppController() {
         const res = await api.search({ query: q, limit: 5 });
 
         if (res.ok && res.results) {
-          const items: CommandItem[] = res.results.map(w => ({
+          const filtered = filterCompactMarketplaceResults(res.results, q, { max: 5 });
+          const items: CommandItem[] = filtered.map(w => ({
             id: `market-${w.slug}`,
             title: w.name,
             description: w.description,
@@ -157,6 +211,24 @@ export function useAppController() {
   const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
   const [overlayVisible, setOverlayVisible] = useState(true);
 
+  const showAttachmentStatus = (message: string, notify = false) => {
+    setUpdateState(prev => ({
+      ...prev,
+      info: { ...(prev.info || {}), attachmentStatus: message },
+    }));
+    if (notify) {
+      try { (window as any).desktopAPI?.notify?.('Attachment', message); } catch { }
+    }
+    if (message) {
+      window.setTimeout(() => {
+        setUpdateState(prev => {
+          if (prev.info?.attachmentStatus !== message) return prev;
+          return { ...prev, info: { ...(prev.info || {}), attachmentStatus: '' } };
+        });
+      }, 3500);
+    }
+  };
+
   // Track whether the main window is focused/active
   const windowFocusedRef = useRef(document.hasFocus());
   useEffect(() => {
@@ -177,7 +249,7 @@ export function useAppController() {
     return () => { cleanup?.(); };
   }, []);
 
-  const [showMiniOutput, setShowMiniOutput] = useState(true);
+  const [showMiniOutput, setShowMiniOutput] = useState(false);
 
   const overlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
   const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
@@ -207,23 +279,40 @@ export function useAppController() {
         return prev.map(c => String(c.id) === String(cid) ? { ...c, title } : c);
       } else {
         // Add new conversation to the top of the list
-        return [{ id: cid, title, created_at: new Date().toISOString() }, ...prev];
+        const timestamp = new Date().toISOString();
+        return [{ id: cid, title, created_at: timestamp, updated_at: timestamp }, ...prev];
       }
     });
     setConversationTitle(title);
   }, []);
 
+  const handleConversationActivity = useCallback((cid: string, updatedAt?: string) => {
+    const timestamp = updatedAt || new Date().toISOString();
+    setConvList(prev => {
+      const existing = prev.find(c => String(c.id) === String(cid));
+      const next = existing
+        ? { ...existing, updated_at: timestamp }
+        : { id: cid, title: conversationTitle?.trim() || 'New conversation', created_at: timestamp, updated_at: timestamp };
+      return [next, ...prev.filter(c => String(c.id) !== String(cid))].slice(0, 20);
+    });
+  }, [conversationTitle]);
+
   // Agent Hook
   const {
     messages, state, ai, currentResponse, currentReasoning, currentToolCalls, currentStreamChunks,
     sendMessage, steerMessage, steerSubagent, activeSubagentsByTab, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
-    subscribeProgress, queueDepth, queuedMessages, cancelQueuedMessage, respondToApproval, lastError, execLocalTool, submitToolOutput,
+    subscribeProgress, queueDepth, queuedMessages, cancelQueuedMessage, respondToApproval, lastError, clearLastError, execLocalTool, submitToolOutput,
     tabs, activeTabId, addTab, closeTab, switchTab,
     chatMode, setChatMode, chatModels, setChatModels,
     pendingMemories, confirmPendingMemory, rejectPendingMemory,
     editMessage, revertFiles, redoFiles,
     reconcileTerminalState,
-  } = useAgent({ onTitleUpdate: handleTitleUpdate, initialChatMode: defaultChatMode, initialChatModels: defaultChatModels }) as any;
+  } = useAgent({
+    onTitleUpdate: handleTitleUpdate,
+    onConversationActivity: handleConversationActivity,
+    initialChatMode: defaultChatMode,
+    initialChatModels: defaultChatModels,
+  }) as any;
 
   // Selected target for the next steer message in the main composer. 'orchestrator'
   // (the default) routes through queueSteeringMessage; any other value is a
@@ -375,10 +464,10 @@ export function useAppController() {
           // If conversation already exists, bump it to the top
           const existing = prev.find(c => String(c.id) === String(event.conversationId));
           if (existing) {
-            return [{ ...existing, created_at: event.timestamp || existing.created_at }, ...prev.filter(c => String(c.id) !== String(event.conversationId))];
+            return [{ ...existing, updated_at: event.timestamp || existing.updated_at || existing.created_at }, ...prev.filter(c => String(c.id) !== String(event.conversationId))];
           }
-          // New conversation â€” prepend it
-          return [{ id: event.conversationId, title: event.data?.title || 'New conversation', created_at: event.timestamp }, ...prev].slice(0, 20);
+          // New conversation - prepend it
+          return [{ id: event.conversationId, title: event.data?.title || 'New conversation', created_at: event.timestamp, updated_at: event.timestamp }, ...prev].slice(0, 20);
         });
       } else if (event.action === 'title_update' && event.data?.title) {
         setConvList(prev => prev.map(c =>
@@ -422,12 +511,19 @@ export function useAppController() {
       if (data.mode === 'compact') {
         setInternalSidebarOpen(false);
       }
+      // Window/sidebar modes are fully interactive (not click-through overlay)
+      if (data.mode === 'window' || data.mode === 'sidebar') {
+        try { window.desktopAPI?.setIgnoreMouseEvents?.(false); } catch { }
+      }
     });
 
     // Listen for internal sidebar state changes from main process
-    const unsubInternalSidebar = (window.desktopAPI as any)?.onInternalSidebarChanged?.((data: { open: boolean; width: number }) => {
+    const unsubInternalSidebar = (window.desktopAPI as any)?.onInternalSidebarChanged?.((data: { open: boolean; width: number; panelWidth?: number }) => {
       setInternalSidebarOpen(data.open);
       setWindowSize(prev => ({ ...prev, width: data.width }));
+      if (typeof data.panelWidth === 'number' && Number.isFinite(data.panelWidth)) {
+        setInternalSidebarWidth(data.panelWidth);
+      }
     });
 
     // Get initial size
@@ -777,12 +873,19 @@ export function useAppController() {
       if (json.ok && Array.isArray(json.conversations)) {
         const convs = json.conversations
           .filter((c: any) => !['workflow', 'skill', 'proactive', 'bot'].includes(String(c.source || '').toLowerCase()))
-          .map((c: any) => ({ id: c.id || c.conversation_id, title: c.title, created_at: c.created_at || c.updated_at }))
-          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+          .map((c: any) => ({
+            id: c.id || c.conversation_id,
+            title: c.title,
+            created_at: c.created_at || c.updated_at,
+            updated_at: c.updated_at || c.created_at,
+          }))
+          .sort((a: any, b: any) => getConversationRankTime(b) - getConversationRankTime(a))
           .slice(0, 20);
-        setConvList(convs);
-        setLoadingConvs(false);
-        return;
+        if (convs.length > 0 || !signedIn) {
+          setConvList(convs);
+          setLoadingConvs(false);
+          return;
+        }
       }
     } catch {
       // Agent not running, fall through
@@ -790,26 +893,62 @@ export function useAppController() {
     // Fallback: try Supabase if signed in
     try {
       if (signedIn) {
-        const { data, error } = await supabase
+        let { data, error } = await supabase
           .from('conversations')
-          .select('id, title, created_at')
+          .select('id, title, created_at, updated_at')
           .not('source', 'in', '("workflow","skill","proactive","bot")')
-          .order('created_at', { ascending: false })
+          .order('updated_at', { ascending: false })
           .limit(20);
-        if (!error) { setConvList(Array.isArray(data) ? data : []); }
+
+        if (error) {
+          const legacy = await supabase
+            .from('conversations')
+            .select('id, title, created_at')
+            .not('source', 'in', '("workflow","skill","proactive","bot")')
+            .order('created_at', { ascending: false })
+            .limit(20);
+          data = (legacy.data || []).map((row: { id: string; title?: string; created_at: string; updated_at?: string }) => ({
+            id: row.id,
+            title: row.title || 'Untitled',
+            created_at: row.created_at,
+            updated_at: row.updated_at ?? row.created_at,
+          }));
+          error = legacy.error;
+        }
+
+        if (error) {
+          const oldestSchema = await supabase
+            .from('conversations')
+            .select('id, title, created_at')
+            .order('created_at', { ascending: false })
+            .limit(20);
+          data = (oldestSchema.data || []).map((row: { id: string; title?: string; created_at: string; updated_at?: string }) => ({
+            id: row.id,
+            title: row.title || 'Untitled',
+            created_at: row.created_at,
+            updated_at: row.updated_at ?? row.created_at,
+          }));
+          error = oldestSchema.error;
+        }
+
+        if (!error) { setConvList(Array.isArray(data) ? sortConversationsByActivity(data) : []); }
       }
     } catch { }
     setLoadingConvs(false);
   };
+
+  useEffect(() => {
+    if (chatMenuOpen) {
+      void fetchConversations();
+    }
+  }, [chatMenuOpen, signedIn]);
+
   // --- Sidebar & Tabs State ---
   const [internalSidebarOpen, setInternalSidebarOpen] = useState(false);
   const [activeSidebarTab, setActiveSidebarTab] = useState<'terminal' | 'todo' | 'projects'>('projects');
-
-  useEffect(() => {
-    if (chatMenuOpen) fetchConversations();
-  }, [chatMenuOpen]);
-
-  // --- Handlers (memoized to prevent unnecessary re-renders) ---
+  const { width: internalSidebarWidth, setWidth: setInternalSidebarWidth } = useInternalSidebarWidth();
+  const internalSidebarWidthRef = useRef(internalSidebarWidth);
+  internalSidebarWidthRef.current = internalSidebarWidth;
 
   const handleSignIn = useCallback(async () => await startBrowserSignIn(), []);
 
@@ -870,6 +1009,29 @@ export function useAppController() {
     if (!signedIn) { handleSignIn(); return; }
     const text = (typeof overrideText === 'string' ? overrideText : query).trim();
     if (!text && attachments.length === 0 && contextPaths.length === 0) return;
+
+    const unreadableAttachment = attachments.find((attachment) => !attachment.data || !String(attachment.data).trim());
+    if (unreadableAttachment) {
+      showAttachmentStatus(`Couldn't send ${unreadableAttachment.name}: file data is missing`, true);
+      return;
+    }
+
+    const tooLargeAttachment = attachments.find((attachment) => {
+      const data = typeof attachment.data === 'string' ? attachment.data : '';
+      return data.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3);
+    });
+    if (tooLargeAttachment) {
+      showAttachmentStatus(`Couldn't send ${tooLargeAttachment.name}: max file size is 65 MB`, true);
+      return;
+    }
+
+    if (attachments.some((attachment) => getChatAttachmentKind(attachment) === 'audio')) {
+      showAttachmentStatus('Sending audio attachment...');
+    }
+
+    if (lastError?.code === MONTHLY_CREDIT_LIMIT_EXCEEDED) {
+      clearLastError?.();
+    }
 
     const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
     const isAuto = selected === 'auto';
@@ -940,7 +1102,7 @@ export function useAppController() {
       .then((res: any) => (res?.skills || []).filter((s: any) => s.isActive !== false))
       .catch(() => [])
       .then((skills: any[]) => doSend(skills));
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, modelSource, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, modelSource, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript, lastError, clearLastError]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
@@ -1087,11 +1249,11 @@ export function useAppController() {
         try {
           const result = String(reader.result || '');
           let base64 = '';
-          let mimeType = file.type || '';
+          let mimeType = inferAttachmentMimeType(file.name, file.type || '');
           if (result.startsWith('data:')) {
             const comma = result.indexOf(',');
             const header = result.slice(5, result.indexOf(';'));
-            if (!mimeType) mimeType = header || 'application/octet-stream';
+            mimeType = inferAttachmentMimeType(file.name, mimeType || header || 'application/octet-stream');
             base64 = comma >= 0 ? result.slice(comma + 1) : '';
           } else {
             base64 = result;
@@ -1113,36 +1275,69 @@ export function useAppController() {
     });
   };
 
-  const MAX_ATTACHMENT_BYTES = 65 * 1024 * 1024; // 65 MB
-
   const addAttachmentsFromFiles = useCallback(async (
     files: File[] | FileList,
     source: ChatAttachment['source'] = 'clipboard-file',
   ) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
+    showAttachmentStatus(`Attaching ${summarizeAttachmentNames(arr)}...`);
     const tooLarge = arr.filter(f => f.size > MAX_ATTACHMENT_BYTES);
+    const valid = arr.filter(f => f.size <= MAX_ATTACHMENT_BYTES);
     if (tooLarge.length > 0) {
-      const names = tooLarge.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`).join(', ');
-      alert(`File too large (max 65 MB): ${names}`);
-      const valid = arr.filter(f => f.size <= MAX_ATTACHMENT_BYTES);
+      const names = tooLarge.map(f => `${f.name} (${formatAttachmentSize(f.size)})`).join(', ');
+      showAttachmentStatus(`Skipped large file${tooLarge.length === 1 ? '' : 's'}: max 65 MB`, true);
+      try { alert(`File too large (max 65 MB): ${names}`); } catch { }
       if (valid.length === 0) return;
-      const atts = await Promise.all(valid.map((file) => fileToAttachment(file, source)));
-      setAttachments((prev) => [...prev, ...atts]);
-      return;
     }
-    const atts = await Promise.all(arr.map((file) => fileToAttachment(file, source)));
-    setAttachments((prev) => [...prev, ...atts]);
+    const results = await Promise.allSettled(valid.map((file) => fileToAttachment(file, source)));
+    const atts = results
+      .filter((result): result is PromiseFulfilledResult<ChatAttachment> => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const failed = results.length - atts.length;
+    if (atts.length > 0) {
+      setAttachments((prev) => [...prev, ...atts]);
+      showAttachmentStatus(`Attached ${summarizeAttachmentNames(atts)}`);
+    }
+    if (failed > 0) {
+      showAttachmentStatus(`Couldn't attach ${failed} file${failed === 1 ? '' : 's'}`, true);
+    }
   }, []);
 
   const handleAttachFiles = useCallback(async () => {
-    const files = await window.desktopAPI.selectFiles();
-    if (files) setAttachments(prev => [...prev, ...files.map(f => normalizeChatAttachment({ type: 'file' as const, ...f }))]);
+    try {
+      showAttachmentStatus('Opening file picker...');
+      const files = await window.desktopAPI.selectFiles();
+      if (!files || files.length === 0) {
+        showAttachmentStatus('');
+        return;
+      }
+      const normalized = files.map(f => normalizeChatAttachment({
+        type: 'file' as const,
+        ...f,
+        mimeType: inferAttachmentMimeType(f.name, f.mimeType),
+      }));
+      setAttachments(prev => [...prev, ...normalized]);
+      showAttachmentStatus(`Attached ${summarizeAttachmentNames(normalized)}`);
+    } catch (error: any) {
+      showAttachmentStatus(`Couldn't attach file: ${String(error?.message || 'unknown error')}`, true);
+    }
   }, []);
 
   const handleAttachImages = useCallback(async () => {
-    const images = await window.desktopAPI.selectImages();
-    if (images) setAttachments(prev => [...prev, ...images.map(i => normalizeChatAttachment({ type: 'image' as const, ...i }))]);
+    try {
+      showAttachmentStatus('Opening image picker...');
+      const images = await window.desktopAPI.selectImages();
+      if (!images || images.length === 0) {
+        showAttachmentStatus('');
+        return;
+      }
+      const normalized = images.map(i => normalizeChatAttachment({ type: 'image' as const, ...i }));
+      setAttachments(prev => [...prev, ...normalized]);
+      showAttachmentStatus(`Attached ${summarizeAttachmentNames(normalized)}`);
+    } catch (error: any) {
+      showAttachmentStatus(`Couldn't attach image: ${String(error?.message || 'unknown error')}`, true);
+    }
   }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
@@ -1208,7 +1403,9 @@ export function useAppController() {
       // Fall back to file handling
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) await addAttachmentsFromFiles(files, 'drop');
-    } catch { }
+    } catch (error: any) {
+      showAttachmentStatus(`Drop failed: ${String(error?.message || 'could not read file')}`, true);
+    }
   }, [addAttachmentsFromFiles]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1227,12 +1424,57 @@ export function useAppController() {
       if (shouldConvertPasteToDocumentAttachment(text)) {
         e.preventDefault();
         setAttachments((prev) => [...prev, createClipboardDocumentAttachment(text)]);
+        showAttachmentStatus('Attached pasted text');
       }
-    } catch { }
+    } catch (error: any) {
+      showAttachmentStatus(`Paste failed: ${String(error?.message || 'could not read clipboard')}`, true);
+    }
   }, [addAttachmentsFromFiles]);
 
   // Memoized callbacks for child components to prevent re-renders
   const handleOpenDashboard = useCallback(() => window.desktopAPI.openDashboard(), []);
+  const handleOpenBilling = useCallback(() => {
+    try {
+      window.desktopAPI.openDashboard({ tab: 'settings' });
+    } catch {
+      try {
+        (window as any).desktopAPI?.openExternal?.('https://stuard.ai/dashboard/billing');
+      } catch { }
+    }
+  }, []);
+
+  const showCreditsLimitNotice = lastError?.code === MONTHLY_CREDIT_LIMIT_EXCEEDED;
+  const handleDismissCreditsLimitNotice = useCallback(() => {
+    clearLastError?.();
+  }, [clearLastError]);
+
+  const refreshCreditsAndClearNotice = useCallback(async () => {
+    if (!showCreditsLimitNotice) return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const resp = await fetch(`${String(CLOUD_AI_HTTP).replace(/\/$/, '')}/v1/credits`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await resp.json();
+      if (j?.ok && (j.unlimited || (Number(j.remaining) || 0) > 0)) {
+        clearLastError?.();
+      }
+    } catch { }
+  }, [showCreditsLimitNotice, clearLastError]);
+
+  useEffect(() => {
+    if (!showCreditsLimitNotice) return;
+    const onFocus = () => { void refreshCreditsAndClearNotice(); };
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(() => { void refreshCreditsAndClearNotice(); }, 15000);
+    void refreshCreditsAndClearNotice();
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
+    };
+  }, [showCreditsLimitNotice, refreshCreditsAndClearNotice]);
   const handleToggleSpaces = useCallback(() => window.desktopAPI.toggleSpaces(), []);
   const handleRemoveContext = useCallback((idx: number) => setContextPaths(prev => prev.filter((_, i) => i !== idx)), []);
   const handleAddContext = useCallback((item: ContextItem) => setContextPaths(prev => prev.some(p => p.path === item.path) ? prev : [...prev, item]), []);
@@ -1245,9 +1487,12 @@ export function useAppController() {
     if (overlayMode === 'sidebar' || overlayMode === 'window') {
       // Let the main process handle window width expansion/contraction
       try {
-        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(nextState);
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(nextState, internalSidebarWidthRef.current);
         if (result) {
           setInternalSidebarOpen(result.open);
+          if (typeof result.panelWidth === 'number') {
+            setInternalSidebarWidth(result.panelWidth);
+          }
           return;
         }
       } catch (e) {
@@ -1257,13 +1502,13 @@ export function useAppController() {
 
     // Fallback: just toggle state without window resize
     setInternalSidebarOpen(nextState);
-  }, [internalSidebarOpen, overlayMode]);
+  }, [internalSidebarOpen, overlayMode, setInternalSidebarWidth]);
 
   const handleCloseInternalSidebar = useCallback(async () => {
     // Contract window width when closing sidebar
     if (overlayMode === 'sidebar' || overlayMode === 'window') {
       try {
-        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(false);
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(false, internalSidebarWidthRef.current);
         if (result) {
           setInternalSidebarOpen(result.open);
           return;
@@ -1274,18 +1519,32 @@ export function useAppController() {
     }
     setInternalSidebarOpen(false);
   }, [overlayMode]);
+
+  const handleInternalSidebarResize = useCallback((delta: number) => {
+    const next = Math.max(
+      INTERNAL_SIDEBAR_WIDTH_MIN,
+      Math.min(INTERNAL_SIDEBAR_WIDTH_MAX, internalSidebarWidthRef.current + delta),
+    );
+    if (next === internalSidebarWidthRef.current) return;
+
+    setInternalSidebarWidth(next);
+
+    if (internalSidebarOpen && (overlayMode === 'sidebar' || overlayMode === 'window')) {
+      void (window.desktopAPI as any).resizeInternalSidebar?.(next);
+    }
+  }, [internalSidebarOpen, overlayMode, setInternalSidebarWidth]);
   const handleSwitchSidebarTab = useCallback((tab: 'terminal' | 'todo' | 'projects') => setActiveSidebarTab(tab), []);
 
-  // Auto-open sidebar in window mode when an agent runs a terminal command
-  // or creates a to-do list. The sidebar opens to the relevant tab.
+  // Auto-open sidebar when an agent runs a terminal command, starts a headed
+  // CLI session, or creates a to-do list. The sidebar opens to the relevant tab.
   useEffect(() => {
-    if (overlayMode !== 'window') return;
+    if (overlayMode !== 'window' && overlayMode !== 'sidebar') return;
 
     const openSidebarToTab = async (tab: 'terminal' | 'todo') => {
       setActiveSidebarTab(tab);
       if (internalSidebarOpen) return;
       try {
-        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(true);
+        const result = await (window.desktopAPI as any).toggleInternalSidebar?.(true, internalSidebarWidthRef.current);
         if (result) {
           setInternalSidebarOpen(result.open);
           return;
@@ -1299,9 +1558,16 @@ export function useAppController() {
 
     window.addEventListener('agent-todo-update', handleTodo);
     window.addEventListener('agent-terminal-activity', handleTerminal);
+
+    const unsubCli = window.desktopAPI?.onCliAgentSessionStarted?.(() => {
+      window.dispatchEvent(new CustomEvent('agent-terminal-activity'));
+      void openSidebarToTab('terminal');
+    });
+
     return () => {
       window.removeEventListener('agent-todo-update', handleTodo);
       window.removeEventListener('agent-terminal-activity', handleTerminal);
+      unsubCli?.();
     };
   }, [overlayMode, internalSidebarOpen]);
 
@@ -1363,8 +1629,12 @@ export function useAppController() {
   }, []);
 
   const inputStatusText = useMemo(() => {
+    const attachmentStatus = typeof updateState.info?.attachmentStatus === 'string'
+      ? updateState.info.attachmentStatus
+      : '';
     if (isRecording) return 'Recording...';
     if (queueDepth > 0) return `Queued: ${queueDepth}`;
+    if (attachmentStatus) return attachmentStatus;
     if (state?.connecting) return 'Connecting\u2026';
     if (!state?.connected) {
       if (state?.status === 'error') return 'Connection error';
@@ -1380,7 +1650,7 @@ export function useAppController() {
       return `${plannerData.nextUp.title} ${plannerData.nextUp.timeLabel}`;
     }
     return 'Ready';
-  }, [isRecording, queueDepth, statusLabel, plannerData?.nextUp]);
+  }, [isRecording, queueDepth, updateState.info, statusLabel, plannerData?.nextUp]);
 
   // AI is "working" only for actual inference phases — NOT connection setup.
   // Connecting/starting/disconnected/error should not surface the video icon.
@@ -1388,6 +1658,50 @@ export function useAppController() {
     const p = (ai?.phase || '').toString();
     return p === 'routing' || p === 'responding' || p === 'tool';
   }, [ai?.phase]);
+
+  const WORKING_PHASES = useMemo(() => new Set(['routing', 'responding', 'tool']), []);
+
+  /** Active AI work across tabs, queue, and delegated subagents — feeds compact task counter. */
+  const backgroundTaskCount = useMemo(() => {
+    let count = 0;
+    for (const tab of tabs) {
+      if (WORKING_PHASES.has(tab.aiState?.phase || '')) count++;
+    }
+    count += queueDepth;
+    for (const list of Object.values(activeSubagentsByTab || {})) {
+      count += Array.isArray(list) ? list.length : 0;
+    }
+    return count;
+  }, [tabs, queueDepth, activeSubagentsByTab, WORKING_PHASES]);
+
+  /** Per-tab snapshot for the compact hub task list. */
+  const compactHubTabs = useMemo(() => {
+    return (tabs as Array<{
+      id: string;
+      title: string;
+      messages: Array<{ role: string; text?: string }>;
+      currentResponse: string;
+      aiState: { phase: string; statusText: string };
+    }>).map((tab) => {
+      const lastMsg = tab.messages[tab.messages.length - 1];
+      const lastUser = [...tab.messages].reverse().find((m) => m.role === 'user');
+      const streaming = !!(tab.currentResponse || '').trim();
+      const preview = streaming
+        ? tab.currentResponse
+        : lastMsg?.role === 'assistant'
+          ? String(lastMsg.text || '')
+          : '';
+      return {
+        id: tab.id,
+        title: tab.title?.trim() || 'Chat',
+        isWorking: WORKING_PHASES.has(tab.aiState?.phase || ''),
+        statusText: tab.aiState?.statusText || 'Idle',
+        userPrompt: String(lastUser?.text || '').trim(),
+        assistantText: String(preview || '').trim(),
+        isStreaming: streaming && tab.id === activeTabId,
+      };
+    });
+  }, [tabs, activeTabId, WORKING_PHASES]);
 
   // Compute status icon based on current state
   const inputStatusIcon = useMemo((): 'video' | 'calendar' | 'bell' | 'task' | 'ai' | 'mic' | 'queue' | undefined => {
@@ -1412,6 +1726,26 @@ export function useAppController() {
     if (isRecording || queueDepth > 0 || isAiWorking) return undefined;
     return plannerData?.nextUp?.minutesUntil;
   }, [isRecording, queueDepth, isAiWorking, plannerData?.nextUp?.minutesUntil]);
+
+  // While the agent is responding/running tools, swap the single spinner in
+  // the compact status pill for a horizontal stack of brand logos — one per
+  // unique integration touched in this response (icons accumulate and stay
+  // visible until the response completes, so the user sees the full work
+  // footprint). Empty array = legacy statusText/statusIcon fallback.
+  const inputStatusItems = useMemo<StatusItem[]>(() => {
+    if (!isAiWorking) return [];
+    const calls = currentToolCalls || [];
+    if (calls.length === 0) return [];
+    return [{
+      id: 'tool-brand-stack',
+      text: statusLabel,
+      icon: 'custom',
+      iconNode: <ToolBrandStack toolCalls={calls} />,
+      priority: 200,
+      pin: true,
+      ariaLabel: statusLabel,
+    }];
+  }, [isAiWorking, currentToolCalls, statusLabel]);
 
   const connectionStatus = useMemo((): 'connected' | 'connecting' | 'disconnected' | 'error' => {
     if (state?.connecting) return 'connecting';
@@ -1439,6 +1773,7 @@ export function useAppController() {
   const handleShowWindow = useCallback(() => {
     setOverlayMode('window');
     window.desktopAPI.setMode('window');
+    try { window.desktopAPI?.setIgnoreMouseEvents?.(false); } catch { }
   }, []);
 
   const commands = useMemo<CommandItem[]>(() => {
@@ -1552,31 +1887,57 @@ export function useAppController() {
   const miniOutputText = useMemo(() => {
     const streamingText = (currentResponse || '').trim();
     if (streamingText) return currentResponse || '';
+    const lastMsg = messages[messages.length - 1];
+    if (isAiWorking || lastMsg?.role === 'user') return '';
     return lastAssistantMessage?.text || '';
-  }, [currentResponse, lastAssistantMessage]);
+  }, [currentResponse, lastAssistantMessage, messages, isAiWorking]);
 
   const miniOutputHasContent = useMemo(() => {
     const streamingText = (currentResponse || '').trim();
     if (streamingText) return true;
+    const lastMsg = messages[messages.length - 1];
+    if (isAiWorking || lastMsg?.role === 'user') return false;
     return !!(lastAssistantMessage?.text || '').trim();
-  }, [currentResponse, lastAssistantMessage?.text]);
+  }, [currentResponse, lastAssistantMessage?.text, messages, isAiWorking]);
+
+  const miniOutputStreaming = useMemo(
+    () => !!(currentResponse || '').trim(),
+    [currentResponse],
+  );
+
+  const miniOutputPrompt = useMemo(() => {
+    const lastUser = [...messages].reverse().find((m) => m?.role === 'user');
+    const lastMsg = messages[messages.length - 1];
+    const inFlight =
+      !!(currentResponse || '').trim()
+      || !!(currentReasoning || '').trim()
+      || isAiWorking
+      || lastMsg?.role === 'user';
+
+    if (inFlight && lastUser) {
+      return String(lastUser.text || '').trim();
+    }
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'assistant') {
+        for (let j = i - 1; j >= 0; j--) {
+          if (messages[j]?.role === 'user') return String(messages[j].text || '').trim();
+        }
+        return '';
+      }
+    }
+
+    return lastUser ? String(lastUser.text || '').trim() : '';
+  }, [messages, currentResponse, currentReasoning, isAiWorking]);
 
   const lastAssistantIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const id = lastAssistantMessage?.id || null;
-    if (id && id !== lastAssistantIdRef.current) {
-      setShowMiniOutput(true);
-    }
-    lastAssistantIdRef.current = id;
+    lastAssistantIdRef.current = lastAssistantMessage?.id || null;
   }, [lastAssistantMessage?.id]);
 
   const hadStreamingRef = useRef(false);
   useEffect(() => {
-    const isStreamingNow = !!(currentResponse || '').trim();
-    if (isStreamingNow && !hadStreamingRef.current) {
-      setShowMiniOutput(true);
-    }
-    hadStreamingRef.current = isStreamingNow;
+    hadStreamingRef.current = !!(currentResponse || '').trim();
   }, [currentResponse]);
 
   return {
@@ -1593,6 +1954,9 @@ export function useAppController() {
     askUserPrompt,
     setAskUserPrompt,
     lastError,
+    showCreditsLimitNotice,
+    onDismissCreditsLimitNotice: handleDismissCreditsLimitNotice,
+    onAddCredits: handleOpenBilling,
     handleSignIn,
     hasMessages,
     messages,
@@ -1658,10 +2022,12 @@ export function useAppController() {
     steerTarget,
     setSteerTarget,
     internalSidebarOpen,
+    internalSidebarWidth,
     activeSidebarTab,
     handleToggleInternalSidebar,
     handleCloseInternalSidebar,
     handleSwitchSidebarTab,
+    handleInternalSidebarResize,
     activeProject,
     conversationId,
     handleExitProjectMode,
@@ -1675,6 +2041,7 @@ export function useAppController() {
     inputStatusIcon,
     inputStatusUrgency,
     inputStatusMinutesUntil,
+    inputStatusItems,
     isRecording,
     handleMicClick,
     accessToken,
@@ -1692,7 +2059,11 @@ export function useAppController() {
     updateState,
     miniOutputText,
     miniOutputHasContent,
+    miniOutputStreaming,
+    miniOutputPrompt,
     showMiniOutput,
     setShowMiniOutput,
+    backgroundTaskCount,
+    compactHubTabs,
   };
 }

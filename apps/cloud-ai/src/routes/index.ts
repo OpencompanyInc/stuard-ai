@@ -11,6 +11,7 @@ import { handleXRoutes } from './integrations/x';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
@@ -64,7 +65,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleXRoutes(req, res, parsedUrl)) return true;
   if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
   if (await handleMetaRoutes(req, res, parsedUrl)) return true;
-  if (await handleWhatsAppRoutes(req, res, parsedUrl)) return true;
+  if (WHATSAPP_INTEGRATION_ENABLED && await handleWhatsAppRoutes(req, res, parsedUrl)) return true;
   if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;
   if (await handleInferenceRoutes(req, res, parsedUrl)) return true;

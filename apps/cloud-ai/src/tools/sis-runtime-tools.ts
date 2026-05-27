@@ -21,15 +21,18 @@ import { initToolRegistry } from './meta-tools';
 // Initialize on module load
 initToolRegistry();
 
+const SIS_SEARCH_TOOL_RESULT_LIMIT = 3;
+const SIS_SEARCH_TOOL_DESCRIPTION_LIMIT = 120;
+
 /**
  * Fallback keyword search when Supabase SIS is not available.
  * Searches tool names and descriptions for matching keywords.
  */
 function searchToolsKeyword(
   query: string,
-  options: { category?: string | null; limit?: number } = {}
+  options: { category?: string | null } = {}
 ): Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> {
-  const { category = null, limit = 10 } = options;
+  const { category = null } = options;
   const queryLower = query.toLowerCase();
   const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
   
@@ -78,7 +81,7 @@ function searchToolsKeyword(
   // Sort by score descending
   results.sort((a, b) => b.score - a.score);
   
-  return results.slice(0, limit);
+  return results.slice(0, SIS_SEARCH_TOOL_RESULT_LIMIT);
 }
 
 /**
@@ -87,14 +90,13 @@ function searchToolsKeyword(
  */
 export const sis_search_tools = createTool({
   id: 'sis_search_tools',
-  description: 'Discover available tools by describing what you need. Returns tool names and descriptions. Use sis_execute_tool to run them.',
+  description: 'Discover available tools with a required query. Optionally filter by category. Returns at most 3 compact results. Use sis_execute_tool to run them.',
 
   inputSchema: z.object({
     query: z.string().min(3).describe('What you want to do, e.g. "send email", "screenshot", "browser click"'),
     category: z.enum([
       'system', 'core', 'input', 'ui', 'vision', 'data', 'integrations', 'flow'
     ]).optional().describe('Filter by category'),
-    limit: z.number().int().min(1).max(10).optional().default(5).describe('Max results (default 5)'),
   }),
 
   outputSchema: z.object({
@@ -108,7 +110,7 @@ export const sis_search_tools = createTool({
   }),
 
   execute: async (inputData, context) => {
-    const { query, category, limit = 10  } = inputData as { query: string; category?: string; limit?: number };
+    const { query, category } = inputData as { query: string; category?: string };
 
     let tools: Array<{ name: string; description: string; category: string; kind: string; score: number; schema: any }> = [];
     let searchMethod = 'keyword';
@@ -117,7 +119,7 @@ export const sis_search_tools = createTool({
     if (isSupabaseSISEnabled()) {
       try {
         const results = await searchToolsSemanticSupabase(query, {
-          topK: limit,
+          topK: SIS_SEARCH_TOOL_RESULT_LIMIT,
           threshold: 0.2,
           category: category || null,
         });
@@ -143,7 +145,7 @@ export const sis_search_tools = createTool({
 
     // Fallback to keyword search if semantic search didn't return results or isn't available
     if (tools.length === 0) {
-      tools = searchToolsKeyword(query, { category, limit });
+      tools = searchToolsKeyword(query, { category });
       searchMethod = 'keyword';
 
       if (process.env.SIS_DEBUG === '1') {
@@ -152,7 +154,7 @@ export const sis_search_tools = createTool({
     }
 
     // Also try querying the local agent for tools (if connected)
-    if (hasClientBridge() && tools.length < limit) {
+    if (hasClientBridge() && tools.length < SIS_SEARCH_TOOL_RESULT_LIMIT) {
       try {
         const agentResult = await execLocalTool('list_tools', { category }) as any;
         if (agentResult?.ok && Array.isArray(agentResult.tools)) {
@@ -191,14 +193,14 @@ export const sis_search_tools = createTool({
       }
     }
 
-    // Sort by score and limit
+    // Sort by score and apply the hard result cap.
     tools.sort((a, b) => b.score - a.score);
-    tools = tools.slice(0, limit);
+    tools = tools.slice(0, SIS_SEARCH_TOOL_RESULT_LIMIT);
 
     // Return compact format: name + short description only (no schemas)
     const compactTools = tools.map(t => ({
       name: t.name,
-      description: String(t.description || '').slice(0, 150),
+      description: String(t.description || '').slice(0, SIS_SEARCH_TOOL_DESCRIPTION_LIMIT),
     }));
 
     return {

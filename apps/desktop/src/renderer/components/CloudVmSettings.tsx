@@ -20,7 +20,6 @@ import {
   RefreshCw,
   ScanFace,
   Server,
-  Sparkles,
   Terminal,
   Unlink,
   Users,
@@ -461,11 +460,8 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
             <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">
               VM Settings
             </h1>
-            <p className="mt-2 flex items-center gap-2 text-[13px] text-theme-muted">
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-              <span>
-                Sync from your desktop, connect cloud accounts directly to the VM, and manage VM-local tools.
-              </span>
+            <p className="mt-2 text-[13px] text-theme-muted">
+              Sync from your desktop, connect cloud accounts directly to the VM, and manage VM-local tools.
             </p>
           </div>
           <button

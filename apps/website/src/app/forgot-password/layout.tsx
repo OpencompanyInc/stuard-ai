@@ -8,6 +8,14 @@ export const metadata: Metadata = {
     title: 'Forgot Password - Stuard AI',
     description: 'Reset your Stuard AI account password.',
     url: 'https://stuard.ai/forgot-password',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 

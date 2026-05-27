@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import {
   Cloud, Server, Activity, Power, Trash2,
   RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
-  Download, Upload, Sparkles, Zap, Shield,
+  Download, Upload, Zap, Shield,
   CreditCard, Plus, X, Rocket, Play, Square, Pause,
   ScrollText, AlertCircle, CheckCircle2, Circle,
   Workflow, FileText, CalendarDays, Timer, ListChecks, Radio, History, Bug,
@@ -100,10 +100,10 @@ function ConfigSlider({
   onChange,
 }: ConfigSliderProps) {
   const percent = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
-  const sliderBackground = `linear-gradient(90deg, var(--primary) 0%, var(--primary) ${percent}%, rgba(255, 255, 255, 0.12) ${percent}%, rgba(255, 255, 255, 0.12) 100%)`;
+  const sliderBackground = `linear-gradient(90deg, var(--primary) 0%, var(--primary) ${percent}%, var(--border) ${percent}%, var(--border) 100%)`;
 
   return (
-    <div className="rounded-[20px] border border-theme/10 dark:border-transparent bg-zinc-500/10 px-4 py-3.5">
+    <div className="rounded-[20px] border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 px-4 py-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold text-theme-fg">
@@ -179,7 +179,7 @@ export function CloudEngineDashboard() {
         description: 'Dedicated instances secured with encrypted storage and private networking.',
       },
       {
-        icon: Sparkles,
+        icon: Rocket,
         title: 'Rapid Provisioning',
         description: 'Spin up a fully configured environment in under 60 seconds.',
       },
@@ -237,8 +237,8 @@ export function CloudEngineDashboard() {
                 className={clsx(
                   'inline-flex items-center gap-2 self-start rounded-full border px-3.5 py-1.5 text-[11px] font-semibold transition shadow-sm',
                   customMode
-                    ? 'border-theme/10 dark:border-transparent bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
-                    : 'border-theme/10 dark:border-transparent bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
+                    ? 'border-theme/10 bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
+                    : 'border-theme/10 bg-zinc-500/10 text-theme-fg hover:bg-zinc-500/14'
                 )}
               >
                 <Cpu className="h-3 w-3 text-primary" />
@@ -256,7 +256,7 @@ export function CloudEngineDashboard() {
                       'relative flex min-h-[182px] flex-col rounded-[24px] border-2 p-4 text-left transition-all duration-200',
                       selectedPlan === p.id
                         ? 'border-primary bg-zinc-500/10'
-                        : 'border-theme/10 dark:border-transparent bg-zinc-500/10 hover:border-theme/20 dark:hover:border-transparent hover:bg-zinc-500/14'
+                        : 'border-theme/10 bg-zinc-500/10 hover:border-theme/20 hover:bg-zinc-500/14'
                     )}
                   >
                     {p.popular && (
@@ -287,7 +287,7 @@ export function CloudEngineDashboard() {
             )}
 
             {customMode && (
-              <div className="rounded-[24px] border border-theme/10 dark:border-transparent bg-theme-card/30 p-5 space-y-4">
+              <div className="rounded-[24px] border border-[color:var(--dashboard-panel-border)] bg-theme-card/30 p-5 space-y-4">
                 <ConfigSlider
                   icon={Cpu}
                   label="CPU Cores"
@@ -338,7 +338,7 @@ export function CloudEngineDashboard() {
               <h3 className="text-sm font-black text-theme-fg">Core Architecture</h3>
               <div className="mt-2.5 space-y-2.5">
                 {architectureHighlights.map(item => (
-                  <div key={item.title} className="relative overflow-hidden rounded-[20px] border border-theme/10 dark:border-transparent bg-zinc-500/10 p-3.5">
+                  <div key={item.title} className="relative overflow-hidden rounded-[20px] border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-3.5">
                     <div className="pointer-events-none absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-primary/18 via-primary/6 to-transparent" />
                     <div className="relative">
                       <div className="flex items-center gap-1.5">
@@ -352,7 +352,7 @@ export function CloudEngineDashboard() {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-theme/10 dark:border-transparent bg-zinc-500/10 p-4 shadow-xl shadow-black/10">
+            <div className="rounded-[24px] border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-4 shadow-xl shadow-black/10">
               <h3 className="text-sm font-black text-theme-fg">Resource Allocation</h3>
               <div className="mt-3 space-y-2.5">
                 <div className="rounded-xl bg-theme-hover/35 px-3 py-2.5">
@@ -377,7 +377,7 @@ export function CloudEngineDashboard() {
                 disabled={provisioning}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-black text-primary-fg transition hover:opacity-90 disabled:opacity-50 shadow-xl shadow-primary/20"
               >
-                {provisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {provisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
                 {provisioning ? 'Setting up your cloud engine...' : 'Deploy Cloud Engine'}
               </button>
               <p className="mt-3 text-center text-[10px] text-theme-muted">
@@ -572,7 +572,7 @@ export function CloudEngineDashboard() {
               The machine is running but the AI agent is still installing packages and starting up.
               This can take a few minutes on smaller plans.
             </p>
-            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent space-y-2">
+            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-[color:var(--dashboard-panel-border)] space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-theme-muted">Status</span>
                 <span className="font-bold text-amber-500">Agent starting...</span>
@@ -911,7 +911,7 @@ export function CloudEngineDashboard() {
       )}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent p-6 space-y-4">
+        <div className="rounded-2xl bg-theme-card/30 border border-[color:var(--dashboard-panel-border)] p-6 space-y-4">
           <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider">Your Machine</h3>
           <div className="space-y-3">
             <InfoRow icon={Server} label="Name" value={engine.instance_name} />
@@ -923,7 +923,7 @@ export function CloudEngineDashboard() {
             <InfoRow icon={Clock} label="Created" value={new Date(engine.created_at).toLocaleDateString()} />
           </div>
         </div>
-        <div className="rounded-2xl bg-theme-card/30 border border-theme/10 dark:border-transparent p-6">
+        <div className="rounded-2xl bg-theme-card/30 border border-[color:var(--dashboard-panel-border)] p-6">
           <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
           <div className="flex flex-col gap-4">
             <StatusPill label="AI Agent" connected={false} detail="Engine paused" />
@@ -1073,7 +1073,7 @@ function VmAutomationsTab({ deployments, stopDeployment, restartDeployment, refr
                   return (
                     <div
                       key={dep.id}
-                      className="group relative flex flex-col gap-3 rounded-2xl border border-theme/30 dark:border-transparent bg-zinc-500/10 p-5 transition hover:bg-theme-hover/30"
+                      className="group relative flex flex-col gap-3 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-5 transition hover:bg-theme-hover/30"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-center gap-3">
@@ -1164,7 +1164,7 @@ function VmAutomationsTab({ deployments, stopDeployment, restartDeployment, refr
 
 function AutomationStat({ value, label }: { value: string; label: string }) {
   return (
-    <div className="rounded-2xl border border-theme/30 bg-zinc-500/10 px-4 py-3.5 dark:border-transparent">
+    <div className="rounded-2xl border border-theme/30 bg-zinc-500/10 px-4 py-3.5">
       <div className="text-[22px] font-semibold leading-none tracking-tight text-theme-fg">{value}</div>
       <div className="mt-2 text-[12px] text-theme-muted">{label}</div>
     </div>
@@ -1232,7 +1232,7 @@ function BillingTab({ billing, engine }: { billing: any; engine: any }) {
                 'rounded-xl p-3 border transition-all',
                 tier === p.id
                   ? 'border-primary bg-primary/5'
-                  : 'border-theme/10 dark:border-transparent bg-theme-card/20'
+                  : 'border-theme/10 bg-theme-card/20'
               )}
             >
               <div className="text-sm font-black text-theme-fg">{p.emoji} {p.label}</div>
@@ -1276,7 +1276,7 @@ function MetricBar({ label, value, unit, color }: { label: string; value: number
 
 function StatusPill({ label, connected, detail }: { label: string; connected: boolean; detail: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card/20 p-4 flex-1">
+    <div className="flex items-center gap-3 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/20 p-4 flex-1">
       <div className={clsx('w-2.5 h-2.5 rounded-full', connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-400')} />
       <div>
         <div className="text-xs font-bold text-theme-fg">{label}</div>
@@ -1292,7 +1292,7 @@ function SyncStatusPill({ syncStatus, isSyncing, onSync }: { syncStatus: any; is
     synced: { dot: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]', text: 'text-green-500', bg: 'border-green-500/20' },
     out_of_sync: { dot: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]', text: 'text-amber-500', bg: 'border-amber-500/20' },
     syncing: { dot: 'bg-blue-400 animate-pulse shadow-[0_0_8px_rgba(96,165,250,0.5)]', text: 'text-blue-400', bg: 'border-blue-400/20' },
-    unknown: { dot: 'bg-gray-400', text: 'text-gray-400', bg: 'border-theme/10 dark:border-transparent' },
+    unknown: { dot: 'bg-gray-400', text: 'text-gray-400', bg: 'border-theme/10' },
   };
   const colors = colorMap[state] || colorMap.unknown;
   const labelMap: Record<string, string> = {
@@ -1592,7 +1592,7 @@ function DeploysTab({
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
                 placeholder="My Workflow"
-                className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
               />
             </div>
             <div>
@@ -1604,7 +1604,7 @@ function DeploysTab({
                     onClick={() => setNewKind(k)}
                     className={clsx(
                       'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border transition-all',
-                      newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 dark:border-transparent bg-theme-hover text-theme-muted hover:text-theme-fg'
+                      newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 bg-theme-hover text-theme-muted hover:text-theme-fg'
                     )}
                   >
                     {React.createElement(getDeployKindIcon(k), { className: 'w-3 h-3' })}
@@ -1622,7 +1622,7 @@ function DeploysTab({
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
               placeholder="Brief description of this deployment"
-              className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+              className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
             />
           </div>
 
@@ -1635,7 +1635,7 @@ function DeploysTab({
               onChange={e => setNewPayload(e.target.value)}
               placeholder={newKind === 'workflow' ? '{\n  "name": "My Workflow",\n  "version": "1",\n  "steps": [...]\n}' : newKind === 'script' ? '#!/usr/bin/env python3\nprint("Hello from the cloud!")' : '{\n  "files": {},\n  "packageJson": {},\n  "startCommand": "npm start"\n}'}
               rows={8}
-              className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
+              className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
             />
           </div>
 
@@ -1647,7 +1647,7 @@ function DeploysTab({
                 onChange={e => setNewEnvVars(e.target.value)}
                 placeholder="KEY=value&#10;ANOTHER_KEY=value"
                 rows={3}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
+                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
               />
             </div>
             <div className="space-y-3">
@@ -1658,7 +1658,7 @@ function DeploysTab({
                   value={newSchedule}
                   onChange={e => setNewSchedule(e.target.value)}
                   placeholder="0 */6 * * *"
-                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-theme/10 dark:border-transparent text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
                 />
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1705,7 +1705,7 @@ function DeploysTab({
 
             return (
               <div key={dep.id}>
-                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 dark:hover:border-transparent transition-all">
+                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="h-6 w-6 rounded-lg bg-theme-hover text-theme-muted flex items-center justify-center shrink-0">
@@ -1807,7 +1807,7 @@ function DeploysTab({
 
                 {/* Logs panel */}
                 {logsId === dep.id && (
-                  <div className="mt-2 rounded-xl border border-theme/10 dark:border-transparent bg-[#0d1117] overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                  <div className="mt-2 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[#0d1117] overflow-hidden animate-in slide-in-from-top-1 duration-150">
                     <div className="flex items-center justify-between px-4 py-2 border-b border-theme/10">
                       <span className="text-[10px] font-black text-theme-muted uppercase tracking-wider">Deploy Logs — {dep.name}</span>
                       <div className="flex items-center gap-2">

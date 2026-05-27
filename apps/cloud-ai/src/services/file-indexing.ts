@@ -91,7 +91,7 @@ async function readFileContent(path: string, maxChars: number = MAX_CONTENT_CHAR
 
 async function readFileBinary(path: string): Promise<{ base64: string; mimeType: string } | null> {
   try {
-    const result = await execLocalTool('read_file_binary', { path });
+    const result = await execLocalTool('read_file_binary', { path, inline: true });
     if (!result?.ok || !result?.base64) {
       return null;
     }
@@ -495,13 +495,14 @@ export async function searchFiles(
     mode?: 'quick' | 'semantic' | 'hybrid';
     kind?: string;
     limit?: number;
+    pathScopes?: string[];
   } = {}
 ): Promise<any> {
   if (!hasClientBridge()) {
     throw new Error('No client bridge available');
   }
 
-  const { mode = 'hybrid', kind, limit = 20 } = options;
+  const { mode = 'hybrid', kind, limit = 20, pathScopes } = options;
 
   let vector: number[] | undefined;
   if (mode === 'semantic' || mode === 'hybrid') {
@@ -517,6 +518,7 @@ export async function searchFiles(
     mode,
     kind,
     limit,
+    path_scopes: Array.isArray(pathScopes) ? pathScopes : undefined,
   }, undefined, 300000, { silent: true });
 
   return result;

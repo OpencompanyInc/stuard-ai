@@ -1315,8 +1315,34 @@ def purge_deleted_files(root_id: Optional[str] = None) -> int:
 # SEARCH OPERATIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _normalize_path_scopes(path_scopes: Optional[List[str]]) -> List[str]:
+    scopes: List[str] = []
+    for raw in path_scopes or []:
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        try:
+            scopes.append(os.path.normcase(os.path.normpath(os.path.abspath(os.path.expanduser(path)))))
+        except Exception:
+            continue
+    return list(dict.fromkeys(scopes))
+
+
+def _append_path_scope_filter(sql: str, params: List[Any], path_scopes: Optional[List[str]], alias: str = "f") -> str:
+    scopes = _normalize_path_scopes(path_scopes)
+    if not scopes:
+        return sql
+
+    clauses: List[str] = []
+    for scope in scopes:
+        child_prefix = scope.rstrip("\\/") + os.sep + "%"
+        clauses.append(f"(LOWER({alias}.path) = LOWER(?) OR LOWER({alias}.path) LIKE LOWER(?))")
+        params.extend([scope, child_prefix])
+    return sql + " AND (" + " OR ".join(clauses) + ")"
+
+
 def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
-               root_id: Optional[str] = None) -> List[IndexedFile]:
+               root_id: Optional[str] = None, path_scopes: Optional[List[str]] = None) -> List[IndexedFile]:
     """Full-text search on filename, path, summary, keywords."""
     
     # Pre-process query for better partial matching (prefix search)
@@ -1343,6 +1369,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
     if root_id:
         base_sql += " AND f.root_id = ?"
         params.append(root_id)
+    base_sql = _append_path_scope_filter(base_sql, params, path_scopes, alias="f")
 
     # NOTE: bm25() must reference the *real* FTS table name, not an alias.
     base_sql += " ORDER BY bm25(files_fts) LIMIT ?"
@@ -1392,6 +1419,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
         if root_id:
             like_sql += " AND root_id = ?"
             like_params.append(root_id)
+        like_sql = _append_path_scope_filter(like_sql, like_params, path_scopes, alias="indexed_files")
         if ("\\" in original_query or "/" in original_query) and len(original_query) >= 4:
             like_sql = """
                 SELECT * FROM indexed_files
@@ -1404,6 +1432,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
             if root_id:
                 like_sql += " AND root_id = ?"
                 like_params.append(root_id)
+            like_sql = _append_path_scope_filter(like_sql, like_params, path_scopes, alias="indexed_files")
         like_sql += " ORDER BY CASE WHEN kind = 'application' THEN 0 WHEN extension IN ('.lnk','.url','.appref-ms','.exe') THEN 0 ELSE 1 END, filename LIMIT ?"
         like_params.append(limit - len(results))
         
@@ -1422,7 +1451,8 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
 
 
 def search_vector(query_vector: List[float], limit: int = 20, threshold: float = 0.65,
-                  kind: Optional[FileKind] = None, root_id: Optional[str] = None) -> List[Tuple[IndexedFile, float]]:
+                  kind: Optional[FileKind] = None, root_id: Optional[str] = None,
+                  path_scopes: Optional[List[str]] = None) -> List[Tuple[IndexedFile, float]]:
     """Vector similarity search using cosine similarity."""
     query_np = np.array(query_vector, dtype=np.float32)
     
@@ -1436,6 +1466,14 @@ def search_vector(query_vector: List[float], limit: int = 20, threshold: float =
         if root_id:
             conditions.append("root_id = ?")
             params.append(root_id)
+        scopes = _normalize_path_scopes(path_scopes)
+        if scopes:
+            scope_clauses: List[str] = []
+            for scope in scopes:
+                child_prefix = scope.rstrip("\\/") + os.sep + "%"
+                scope_clauses.append("(LOWER(path) = LOWER(?) OR LOWER(path) LIKE LOWER(?))")
+                params.extend([scope, child_prefix])
+            conditions.append("(" + " OR ".join(scope_clauses) + ")")
         
         where = " AND ".join(conditions)
         rows = conn.execute(f"SELECT * FROM indexed_files WHERE {where}", tuple(params)).fetchall()
@@ -1459,7 +1497,8 @@ def search_vector(query_vector: List[float], limit: int = 20, threshold: float =
 
 def hybrid_search(query: str, query_vector: Optional[List[float]] = None,
                   limit: int = 20, kind: Optional[FileKind] = None,
-                  root_id: Optional[str] = None) -> List[Tuple[IndexedFile, float, str]]:
+                  root_id: Optional[str] = None,
+                  path_scopes: Optional[List[str]] = None) -> List[Tuple[IndexedFile, float, str]]:
     """
     Hybrid search combining FTS and vector search.
     Returns (file, score, match_type) tuples.
@@ -1467,7 +1506,7 @@ def hybrid_search(query: str, query_vector: Optional[List[float]] = None,
     results_map: Dict[str, Tuple[IndexedFile, float, str]] = {}
     
     # FTS search
-    fts_results = search_fts(query, limit=limit * 2, kind=kind, root_id=root_id)
+    fts_results = search_fts(query, limit=limit * 2, kind=kind, root_id=root_id, path_scopes=path_scopes)
     for i, f in enumerate(fts_results):
         # FTS rank as score (higher is better, normalize roughly)
         score = 1.0 - (i / len(fts_results)) if fts_results else 0.5
@@ -1475,7 +1514,7 @@ def hybrid_search(query: str, query_vector: Optional[List[float]] = None,
     
     # Vector search if vector provided
     if query_vector:
-        vec_results = search_vector(query_vector, limit=limit * 2, kind=kind, root_id=root_id)
+        vec_results = search_vector(query_vector, limit=limit * 2, kind=kind, root_id=root_id, path_scopes=path_scopes)
         for f, score in vec_results:
             if f.id in results_map:
                 # Boost if found in both

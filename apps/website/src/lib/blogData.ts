@@ -1,6 +1,7 @@
 export type BlogAuthor = {
   name: string;
   avatar?: string;
+  bio?: string;
 };
 
 export type BlogSEO = {
@@ -9,6 +10,7 @@ export type BlogSEO = {
 };
 
 export type BlogPost = {
+  id?: string;
   slug: string;
   title: string;
   excerpt: string;

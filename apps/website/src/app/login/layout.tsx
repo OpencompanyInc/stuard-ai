@@ -8,6 +8,14 @@ export const metadata: Metadata = {
     title: 'Sign In - Stuard AI',
     description: 'Sign in to your Stuard AI account.',
     url: 'https://stuard.ai/login',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 

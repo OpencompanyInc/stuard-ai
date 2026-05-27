@@ -40,10 +40,10 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({
             key={tab.id}
             onClick={() => onSwitchTab?.(tab.id)}
             className={clsx(
-              "group flex items-center gap-2 px-3 py-1.5 rounded-xl text-[13px] font-bold transition-all duration-200 cursor-pointer select-none min-w-[120px] max-w-[200px] border flex-shrink-0 relative",
+              "group flex items-center gap-2 px-3 py-1.5 rounded-xl text-[13px] font-bold transition-all duration-200 cursor-pointer select-none min-w-[120px] max-w-[200px] flex-shrink-0 relative",
               tab.id === activeTabId
-                ? "bg-theme-card text-theme-fg border-theme/5"
-                : "bg-transparent text-theme-muted hover:bg-theme-hover/50 border-transparent hover:text-theme-fg"
+                ? "bg-theme-card text-theme-fg"
+                : "bg-transparent text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg"
             )}
           >
             <span className="truncate flex-1 min-w-0">{tab.title || 'New Chat'}</span>

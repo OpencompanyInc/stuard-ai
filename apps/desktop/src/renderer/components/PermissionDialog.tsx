@@ -103,15 +103,15 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
   }, [isOpen, onAllow, onDeny]);
 
   const riskColors = {
-    low: 'text-emerald-600 bg-emerald-50 border-emerald-100',
-    medium: 'text-amber-600 bg-amber-50 border-amber-100',
-    high: 'text-rose-600 bg-rose-50 border-rose-100',
+    low: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    medium: 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20',
+    high: 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20',
   };
 
   const riskBadge = {
-    low: 'bg-emerald-100 text-emerald-700',
-    medium: 'bg-amber-100 text-amber-700',
-    high: 'bg-rose-100 text-rose-700',
+    low: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+    medium: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+    high: 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
   };
 
   return createPortal(
@@ -124,9 +124,9 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
           className="fixed left-0 right-0 bottom-0 z-[99999] flex justify-center pointer-events-auto"
         >
-          <div className="w-full max-w-xl mx-4 mb-4 border border-black/10 bg-white/98 backdrop-blur-xl rounded-2xl shadow-2xl">
+          <div className="w-full max-w-xl mx-4 mb-4 border border-theme bg-theme-card backdrop-blur-xl rounded-2xl shadow-2xl">
             {/* Header */}
-            <div className="px-4 py-3 flex items-center gap-3 bg-neutral-50/50 rounded-t-2xl">
+            <div className="px-4 py-3 flex items-center gap-3 bg-theme-hover/50 rounded-t-2xl border-b border-theme/30">
               <div className={clsx(
                 "p-2 rounded-lg border flex-shrink-0",
                 riskColors[meta.risk]
@@ -135,7 +135,7 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
               </div>
               <div className="flex-1 min-w-0 flex flex-col justify-center">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-neutral-900 font-medium text-xs tracking-wide">Permission Required</h3>
+                  <h3 className="text-theme-fg font-medium text-xs tracking-wide">Permission Required</h3>
                   {meta.risk === 'high' && (
                     <span className={clsx(
                       "text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider",
@@ -145,7 +145,7 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
                     </span>
                   )}
                 </div>
-                <p className="text-neutral-500 text-[11px] truncate mt-0.5">
+                <p className="text-theme-muted text-[11px] truncate mt-0.5">
                   {description || meta.description}
                 </p>
               </div>
@@ -154,16 +154,16 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
             {/* Tool info */}
             <div className="px-3 py-2.5 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-neutral-400 text-[10px] uppercase tracking-wider font-medium w-8">Tool</span>
-                <code className="text-neutral-700 text-[11px] font-mono bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200">
+                <span className="text-theme-muted text-[10px] uppercase tracking-wider font-medium w-8">Tool</span>
+                <code className="text-theme-fg text-[11px] font-mono bg-theme-hover px-1.5 py-0.5 rounded border border-theme/30">
                   {tool}
                 </code>
               </div>
               
               {argsSummary && !showArgs && (
                 <div className="flex items-start gap-2">
-                   <span className="text-neutral-400 text-[10px] uppercase tracking-wider font-medium w-8 mt-1">Args</span>
-                   <div className="flex-1 text-neutral-600 text-[11px] font-mono bg-neutral-50 rounded px-2 py-1 truncate border border-neutral-200/50">
+                   <span className="text-theme-muted text-[10px] uppercase tracking-wider font-medium w-8 mt-1">Args</span>
+                   <div className="flex-1 text-theme-fg text-[11px] font-mono bg-theme-hover/50 rounded px-2 py-1 truncate border border-theme/20">
                     {argsSummary}
                    </div>
                 </div>
@@ -174,7 +174,7 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
                 <div>
                    <button
                     onClick={() => setShowArgs(!showArgs)}
-                    className="flex items-center gap-1.5 text-neutral-400 hover:text-neutral-600 text-[10px] transition-colors mt-1 ml-[40px]"
+                    className="flex items-center gap-1.5 text-theme-muted hover:text-theme-fg text-[10px] transition-colors mt-1 ml-[40px]"
                   >
                     <ChevronDown className={clsx(
                       "w-3 h-3 transition-transform duration-200",
@@ -192,7 +192,7 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
                         transition={{ duration: 0.15 }}
                         className="overflow-hidden ml-[40px]"
                       >
-                        <pre className="mt-1 text-neutral-600 text-[10px] font-mono bg-neutral-50 rounded border border-neutral-200 px-2 py-2 overflow-x-auto scrollbar-hidden max-h-40">
+                        <pre className="mt-1 text-theme-fg text-[10px] font-mono bg-theme-hover/50 rounded border border-theme/20 px-2 py-2 overflow-x-auto scrollbar-hidden max-h-40">
                           {formatArgs(args)}
                         </pre>
                       </motion.div>
@@ -203,20 +203,20 @@ export const PermissionDialog: React.FC<PermissionDialogProps> = ({
             </div>
 
             {/* Actions */}
-            <div className="px-3 py-2 border-t border-black/5 flex items-center justify-between gap-3 bg-neutral-50/50 rounded-b-2xl">
-              <div className="text-neutral-400 text-[9px] font-medium hidden sm:block">
-                Press <span className="text-neutral-600">Enter</span> to allow
+            <div className="px-3 py-2 border-t border-theme/30 flex items-center justify-between gap-3 bg-theme-hover/50 rounded-b-2xl">
+              <div className="text-theme-muted text-[9px] font-medium hidden sm:block">
+                Press <span className="text-theme-fg">Enter</span> to allow
               </div>
               <div className="flex gap-2 flex-1 sm:flex-none justify-end">
                 <button
                   onClick={onDeny}
-                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-800 text-xs font-medium transition-colors border border-black/5 w-full sm:w-auto"
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-theme-hover hover:bg-theme-active text-theme-muted hover:text-theme-fg text-xs font-medium transition-colors border border-theme/30 w-full sm:w-auto"
                 >
                   Deny
                 </button>
                 <button
                   onClick={onAllow}
-                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold transition-colors w-full sm:w-auto"
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-fg hover:opacity-90 text-xs font-semibold transition-colors w-full sm:w-auto"
                 >
                   Allow
                 </button>

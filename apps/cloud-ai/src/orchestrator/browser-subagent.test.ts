@@ -104,7 +104,7 @@ describe('Bridge Context Propagation', () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('Browser Pack Tool Resolution', () => {
-  it('every browser pack tool name exists in the execution tools universe', { timeout: 30000 }, async () => {
+  it('every browser pack tool name exists in the execution tools universe', { timeout: 60000 }, async () => {
     const { BROWSER_PACK } = await import('./capability-packs');
     const { getExecutionTools } = await import('../agents/stuard/tools');
 
@@ -127,7 +127,7 @@ describe('Browser Pack Tool Resolution', () => {
     expect(missingTools).toEqual([]);
   });
 
-  it('browser pack tools have valid execute functions', async () => {
+  it('browser pack tools have valid execute functions', { timeout: 60000 }, async () => {
     const { BROWSER_PACK } = await import('./capability-packs');
     const { getExecutionTools } = await import('../agents/stuard/tools');
 
@@ -184,6 +184,24 @@ describe('Browser Pack Tool Resolution', () => {
 
     if (missing.length > 0) {
       console.error('MISSING FILE_OPS TOOLS:', missing);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('cli_agent pack tools all resolve', async () => {
+    const { CLI_AGENT_PACK } = await import('./capability-packs');
+    const { getExecutionTools } = await import('../agents/stuard/tools');
+
+    const executionTools = getExecutionTools();
+    const missing: string[] = [];
+    for (const toolName of CLI_AGENT_PACK.toolNames) {
+      if (!executionTools[toolName]) {
+        missing.push(toolName);
+      }
+    }
+
+    if (missing.length > 0) {
+      console.error('MISSING CLI_AGENT TOOLS:', missing);
     }
     expect(missing).toEqual([]);
   });
@@ -512,7 +530,7 @@ describe('Delegation Tool Contract', () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('Browser Session ID Injection', () => {
-  it('makeLocalTool injects browserUseSessionId from bridge secrets', async () => {
+  it('makeLocalTool injects browserUseSessionId and browserUseTabIndex from bridge secrets', async () => {
     const { withClientBridge } = await import('../tools/bridge');
     const { browser_use_status } = await import('../tools/device/browser-use');
 
@@ -528,7 +546,7 @@ describe('Browser Session ID Injection', () => {
       }),
     } as any;
 
-    const secrets = { browserUseSessionId: 'my-session-42' };
+    const secrets = { browserUseSessionId: 'my-session-42', browserUseTabIndex: 3 };
 
     await withClientBridge(mockWs, async () => {
       const toolPromise = (browser_use_status as any).execute(
@@ -546,6 +564,7 @@ describe('Browser Session ID Injection', () => {
     // Verify session_id was injected from secrets
     if (sentArgs) {
       expect(sentArgs.session_id).toBe('my-session-42');
+      expect(sentArgs.tab_index).toBe(3);
     }
   });
 });

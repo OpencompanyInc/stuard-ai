@@ -8,6 +8,10 @@ export interface XTerminalProps {
   sessionId: string;
   onResize?: (cols: number, rows: number) => void;
   className?: string;
+  // When true, the terminal is watch-only: keystrokes and pastes are not
+  // forwarded to the PTY. Used for headed CLI agent sessions in the sidebar
+  // terminal so the user observes the delegated agent until they take over.
+  readOnly?: boolean;
 }
 
 export interface XTerminalRef {
@@ -20,14 +24,17 @@ export interface XTerminalRef {
 export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
   sessionId,
   onResize,
-  className
+  className,
+  readOnly = false,
 }, ref) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onResizeRef = useRef(onResize);
   const lastSizeRef = useRef<string>('');
+  const readOnlyRef = useRef(readOnly);
   onResizeRef.current = onResize;
+  readOnlyRef.current = readOnly;
 
   // Initialize terminal
   useEffect(() => {
@@ -86,7 +93,13 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
     // Clipboard: Ctrl+V paste, Ctrl+C copy (when selected), right-click paste
     term.attachCustomKeyEventHandler((event) => {
       const isMod = event.ctrlKey || event.metaKey;
+      // Copy is always allowed; paste/typing are gated by readOnly.
+      if (isMod && event.key === 'c' && event.type === 'keydown' && term.hasSelection()) {
+        navigator.clipboard.writeText(term.getSelection());
+        return false;
+      }
       if (isMod && event.key === 'v' && event.type === 'keydown') {
+        if (readOnlyRef.current) return false;
         navigator.clipboard.readText().then(text => {
           if (text) {
             // Bracket paste mode for proper multi-line handling
@@ -95,16 +108,13 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
         });
         return false;
       }
-      if (isMod && event.key === 'c' && event.type === 'keydown' && term.hasSelection()) {
-        navigator.clipboard.writeText(term.getSelection());
-        return false;
-      }
       return true;
     });
 
     // Right-click paste
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
+      if (readOnlyRef.current) return;
       navigator.clipboard.readText().then(text => {
         if (text) {
           (window as any).desktopAPI?.terminalWrite?.(sessionId, text);
@@ -113,8 +123,9 @@ export const XTerminal = forwardRef<XTerminalRef, XTerminalProps>(({
     };
     terminalElement.addEventListener('contextmenu', handleContextMenu);
 
-    // Handle user input -> send to main process
+    // Handle user input -> send to main process (suppressed while watch-only).
     term.onData((data) => {
+      if (readOnlyRef.current) return;
       (window as any).desktopAPI?.terminalWrite?.(sessionId, data);
     });
 

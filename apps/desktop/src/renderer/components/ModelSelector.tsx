@@ -15,6 +15,7 @@ import type { ModelMeta, ModelSourcePreference, ReasoningLevel } from '../hooks/
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { useByokStatus } from '../hooks/useByokStatus';
 import { clsx } from 'clsx';
+import { ModelProviderLogo } from './ModelProviderLogo';
 
 interface ModelSelectorProps {
   selectedModelId: string | 'auto';
@@ -379,23 +380,31 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     { level: 'high', label: 'High' },
   ];
 
+  const wfSurfaceTheme = useMemo(() => {
+    if (typeof document === 'undefined') return undefined;
+    const attr = document.querySelector('[data-wf-theme]')?.getAttribute('data-wf-theme');
+    return attr === 'dark' || attr === 'light' ? attr : undefined;
+  }, [open]);
+
   return (
     <div className="relative" ref={containerRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
         className={clsx(
-          "flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors cursor-pointer outline-none group border border-transparent hover:bg-black/[0.04] dark:hover:bg-white/[0.04]",
-          open && "bg-black/[0.04] dark:bg-white/[0.04]",
+          "model-selector-trigger flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors cursor-pointer outline-none group hover:bg-theme-hover/60",
+          open && "bg-theme-hover/80",
           className
         )}
       >
         <div className="relative w-5 h-5 flex items-center justify-center flex-shrink-0">
           {selectedModel?.logoUrl ? (
-            <img
+            <ModelProviderLogo
               src={selectedModel.logoUrl}
               alt={selectedModel.provider}
-              className="w-4 h-4 object-contain"
+              providerId={selectedModel.providerId}
+              className="w-4 h-4"
             />
           ) : (
             selectedModel ? (
@@ -439,11 +448,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         const panel = (
           <div
             ref={panelRef}
+            data-wf-theme={wfSurfaceTheme}
             className={clsx(
-              "z-[10005] rounded-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-150",
+              "z-[10005] model-selector-panel rounded-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-150 shadow-2xl",
               variant === 'glass'
-                ? "bg-theme-card/90 backdrop-blur-2xl border border-white/10 shadow-xl"
-                : "bg-theme-card/98 backdrop-blur-xl border border-theme/15 shadow-xl",
+                ? "bg-theme-card/90 backdrop-blur-2xl"
+                : "bg-theme-card/98 backdrop-blur-xl",
               portal
                 ? "fixed"
                 : [
@@ -455,7 +465,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             style={portal ? portalStyle : { width: panelWidth }}
           >
             {/* Search header */}
-            <div className="p-2 border-b border-theme/10">
+            <div className="p-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted/70 pointer-events-none" />
                 <input
@@ -513,7 +523,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       selectedModelId === 'auto' && "bg-primary/[0.08]",
                     )}
                   >
-                    <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-primary/15 to-primary/5 border border-primary/15">
+                    <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-primary/15 to-primary/5">
                       <Sparkles className="w-3.5 h-3.5 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -650,7 +660,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="px-2.5 py-2 bg-theme-bg/40 border-t border-theme/10 flex flex-col gap-1.5">
+            <div className="px-2.5 py-2 bg-theme-bg/40 flex flex-col gap-1.5">
               {onModelSourceChange && (
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-semibold text-theme-muted/80 uppercase tracking-wider w-[60px] flex-shrink-0">
@@ -673,7 +683,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               ? "bg-emerald-500 text-white shadow-sm"
                               : opt.value === 'subscription'
                                 ? "bg-cyan-500 text-white shadow-sm"
-                                : "bg-theme-card text-theme-fg shadow-sm border border-theme/10"
+                                : "bg-theme-card text-theme-fg shadow-sm"
                             : opt.disabled
                               ? "text-theme-muted/40 cursor-not-allowed"
                               : "text-theme-muted hover:text-theme-fg"
@@ -709,7 +719,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         "flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors text-center",
                         reasoningLevel === level
                           ? level === 'none'
-                            ? "bg-theme-card text-theme-fg shadow-sm border border-theme/10"
+                            ? "bg-theme-card text-theme-fg shadow-sm"
                             : "bg-purple-500 text-white shadow-sm"
                           : !reasoningApplies
                             ? "text-theme-muted/40 hover:text-theme-muted"
@@ -722,7 +732,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   ))}
                 </div>
               </div>
-              <div className="flex items-center justify-between pt-1 border-t border-theme/5">
+              <div className="flex items-center justify-between pt-1">
                 <div className="flex items-center gap-3 text-[10px] text-theme-muted/70">
                   <span className="flex items-center gap-1">
                     <kbd className="font-mono text-theme-muted">↑↓</kbd>
@@ -789,12 +799,13 @@ const ModelItem: React.FC<ModelItemProps> = ({
         isSelected && 'bg-primary/[0.08]',
       )}
     >
-      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-theme-bg border border-theme/10">
+      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-theme-hover/50">
         {model.logoUrl ? (
-          <img
+          <ModelProviderLogo
             src={model.logoUrl}
             alt={model.provider}
-            className="w-4 h-4 object-contain"
+            providerId={model.providerId}
+            className="w-4 h-4"
           />
         ) : (
           PROVIDER_FALLBACK_ICONS[model.provider] || <Cpu className="w-3.5 h-3.5 text-theme-muted" />

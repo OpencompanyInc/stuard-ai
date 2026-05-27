@@ -7,6 +7,7 @@ import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
 import { encryptForUser, decryptForUser, type EncryptedField } from './utils/token-encryption';
+import { scheduleAutoRefillCheck } from './billing/auto-refill';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 // Prefer new key names, fall back to legacy
@@ -513,9 +514,10 @@ export async function verifyToken(token: string): Promise<{ userId: string; emai
   const cached = _tokenCache.get(token);
   if (cached && cached.expiresAt > now) return cached.result;
   try {
-    const { data, error } = await supabaseAnon.auth.getUser(token);
-    if (error || !data?.user) return null;
-    const result = { userId: data.user.id, email: data.user.email || undefined };
+    const { data, error } = await supabaseAnon.auth.getClaims(token);
+    const claims = data?.claims as { sub?: string; email?: string } | undefined;
+    if (error || !claims?.sub) return null;
+    const result = { userId: claims.sub, email: typeof claims.email === 'string' ? claims.email : undefined };
     _tokenCache.set(token, { result, expiresAt: now + TOKEN_CACHE_TTL_MS });
     return result;
   } catch {
@@ -529,8 +531,9 @@ export async function createConversation(
   firstMessage: string,
   model: string,
   firstMessageMetadata?: MessageMetadata,
-  source: 'stuard' | 'workflow' | 'proactive' = 'stuard',
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard',
   forcePersist = false,
+  initialTitle?: string,
 ): Promise<string | null> {
   if (!supabaseService) return null;
 
@@ -540,10 +543,15 @@ export async function createConversation(
   }
 
   try {
-    // Create a conversation and attach the first user message
+    // Create a conversation and attach the first user message. Persist a
+    // best-guess title up front so list views never render "Untitled" while
+    // the LLM-generated title is being produced asynchronously.
+    const trimmedTitle = String(initialTitle || '').trim().slice(0, 80);
+    const row: Record<string, any> = { user_id: userId, model, source, status: 'started' };
+    if (trimmedTitle) row.title = trimmedTitle;
     const { data: conv, error: convErr } = await supabaseService
       .from('conversations')
-      .insert([{ user_id: userId, model, source, status: 'started' }])
+      .insert([row])
       .select('id')
       .single();
     if (convErr || !conv?.id) return null;
@@ -557,6 +565,7 @@ export async function createConversation(
         metadata: firstMessageMetadata || null,
       },
     ]);
+    await touchConversationActivity(userId, conversationId);
     return conversationId;
   } catch {
     return null;
@@ -601,6 +610,17 @@ export interface MessageMetadata {
   >;
 }
 
+async function touchConversationActivity(userId: string, conversationId: string): Promise<void> {
+  if (!supabaseService || !conversationId) return;
+  try {
+    await supabaseService
+      .from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', conversationId)
+      .eq('user_id', userId);
+  } catch {}
+}
+
 export async function addAssistantMessage(
   userId: string, 
   conversationId: string, 
@@ -620,6 +640,7 @@ export async function addAssistantMessage(
         metadata: metadata || null,
       },
     ]);
+    await touchConversationActivity(userId, conversationId);
   } catch {}
 }
 
@@ -642,6 +663,7 @@ export async function addUserMessage(
         metadata: metadata || null,
       },
     ]);
+    await touchConversationActivity(userId, conversationId);
   } catch {}
 }
 
@@ -735,6 +757,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     if (!billingExcluded && creditCost > 0) {
       try {
         await debitCreditGrants(userId, creditCost);
+        scheduleAutoRefillCheck(userId);
       } catch {}
     }
   } catch {}

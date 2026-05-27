@@ -83,16 +83,16 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
       const className = childProps.className || '';
       const language = className.replace('language-', '') || 'code';
       return (
-        <div className="my-4 rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm w-full max-w-full group/codeblock flex flex-col">
-          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex items-center justify-between select-none">
-            <span className="text-xs text-slate-500 font-mono font-bold uppercase tracking-wider">{language}</span>
+        <div className="my-4 rounded-xl overflow-hidden bg-theme-card border border-theme shadow-sm w-full max-w-full group/codeblock flex flex-col">
+          <div className="bg-theme-hover px-4 py-2 border-b border-theme flex items-center justify-between select-none">
+            <span className="text-xs text-theme-muted font-mono font-bold uppercase tracking-wider">{language}</span>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => {
                   const code = String(codeContent).replace(/\n$/, '');
                   navigator.clipboard.writeText(code);
                 }}
-                className="flex items-center gap-1.5 px-2 py-1 hover:bg-slate-200 rounded-md transition-colors text-slate-500 hover:text-slate-700 text-[10px] font-medium uppercase tracking-wider"
+                className="flex items-center gap-1.5 px-2 py-1 hover:bg-theme-active rounded-md transition-colors text-theme-muted hover:text-theme-fg text-[10px] font-medium uppercase tracking-wider"
                 title="Copy code"
               >
                 <Copy className="w-3 h-3" />
@@ -101,9 +101,9 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
             </div>
           </div>
           <div className="relative w-full overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 w-full bg-white">
+            <div className="overflow-x-auto overflow-y-auto max-h-[400px] custom-scrollbar p-4 w-full bg-theme-bg">
               <code
-                className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-slate-800 whitespace-pre tab-4")}
+                className={clsx(className, "font-mono text-[13px] inline-block min-w-full leading-[1.7] text-theme-fg whitespace-pre tab-4")}
                 {...childProps}
               >
                 {codeContent}
@@ -114,7 +114,7 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
       );
     },
     code: ({ className, children, ...props }: any) => (
-      <code className="bg-slate-100 border border-slate-200 text-slate-800 rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>
+      <code className="bg-theme-hover border border-theme text-theme-fg rounded-md px-[6px] py-[2px] font-mono text-[0.85em] font-medium align-middle" {...props}>{children}</code>
     ),
     table: (props: any) => (
       <div className="overflow-x-auto scrollbar-none my-3 rounded-xl border border-theme/20 shadow-sm">

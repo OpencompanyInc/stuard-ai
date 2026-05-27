@@ -37,20 +37,20 @@ export async function generateMetadata({ params }: RouteParams): Promise<Metadat
       modifiedTime: post.updatedAt || post.publishedAt,
       authors: [post.author.name],
       tags: post.tags,
-      images: post.image ? [
+      images: [
         {
-          url: post.image,
+          url: post.image || '/og-image.png',
           width: 1200,
           height: 630,
           alt: post.title,
         },
-      ] : undefined,
+      ],
     },
     twitter: {
       card: 'summary_large_image',
       title: post.title,
       description: post.excerpt,
-      images: post.image ? [post.image] : undefined,
+      images: [post.image || '/og-image.png'],
     },
   };
 }
@@ -314,7 +314,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
               <h2 className="text-3xl font-bold text-gray-900 mb-8">Related Articles</h2>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {relatedPosts.map((relatedPost) => (
-                  <BlogCard key={relatedPost.id} post={relatedPost} />
+                  <BlogCard key={relatedPost.slug} post={relatedPost} />
                 ))}
               </div>
             </div>

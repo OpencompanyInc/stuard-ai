@@ -14,6 +14,15 @@
   --foreground-muted: #64748b;
   /* slate-500 */
 
+  /* Compact launcher pill — RGB channels so Tailwind `/X` opacity works */
+  --compact-pill-bg: 255 255 255;
+  --compact-pill-fg: 26 26 26;
+  --compact-pill-fg-muted: 100 116 139;
+  /* Selected/hover row inside the compact dropdown — gray-200 in light mode */
+  --compact-pill-hover: #e5e7eb;
+  /* Soft elevation so the pill lifts off light backgrounds — kept tight so it fits inside the ~14px safe area around the pill in compact mode */
+  --compact-pill-shadow: 0 6px 16px rgba(15, 23, 42, 0.14), 0 2px 4px rgba(15, 23, 42, 0.08);
+
   --sidebar-bg: #e2e8f0;
   /* slate-200 */
   --sidebar-border: #cbd5e1;
@@ -63,6 +72,15 @@
   --foreground: #ffffff;
   --foreground-muted: #a6a6a6;
 
+  /* Compact launcher pill — matches the original hardcoded #171717 / white / #A6A6A6 */
+  --compact-pill-bg: 23 23 23;
+  --compact-pill-fg: 255 255 255;
+  --compact-pill-fg-muted: 166 166 166;
+  /* Original dark-mode selected-row tone */
+  --compact-pill-hover: #262626;
+  /* Tight elevation on dark backgrounds — same vertical footprint as light mode so the safe area math holds */
+  --compact-pill-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+
   --sidebar-bg: #252526;
   --sidebar-border: #2b2b2b;
   /* Slightly darker than main borders */
@@ -95,13 +113,596 @@
   --dashboard-shell-bg: #050505;
   --dashboard-panel: rgba(10, 10, 10, 0.96);
   --dashboard-panel-solid: #1b1b1b;
-  --dashboard-panel-border: rgba(255, 255, 255, 0.08);
+  --dashboard-panel-border: #3e3e3e;
   --dashboard-sidebar-item: rgba(255, 255, 255, 0.06);
   --dashboard-sidebar-item-active: rgba(255, 255, 255, 0.13);
   --dashboard-hover: rgba(255, 255, 255, 0.075);
   --dashboard-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
   --dashboard-shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.28);
   --dashboard-glow: rgba(255, 255, 255, 0.035);
+}
+
+/* Window / sidebar launcher: borrow the compact pill palette so the larger
+   launcher reads as one continuous surface with compact mode. Tokens follow
+   `data-theme`; light mode gets a softer shell so it is not a flat white slab. */
+.launcher-compact-skin {
+  --background: rgb(var(--compact-pill-bg));
+  --card-bg: var(--compact-pill-hover);
+  --input-bg: color-mix(in srgb, var(--compact-pill-hover) 72%, rgb(var(--compact-pill-bg)) 28%);
+  --sidebar-item-hover: var(--compact-pill-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--compact-pill-hover) 80%, rgb(var(--compact-pill-fg)) 14%);
+  --border: rgb(var(--compact-pill-fg) / 0.12);
+  --foreground: rgb(var(--compact-pill-fg));
+  --foreground-muted: rgb(var(--compact-pill-fg-muted));
+  /* Compact mode's accent is the brand red, not the VS Code blue. */
+  --primary: #ff383c;
+  --primary-foreground: #ffffff;
+  font-family: 'General Sans', 'Inter', 'Figtree', sans-serif;
+  /* Window / sidebar launcher is a large floating panel — give it a layered,
+     softly-graded drop shadow rather than the tight compact-pill shadow. Falls
+     back to the pill shadow until a theme defines --launcher-panel-shadow. */
+  box-shadow: var(--launcher-panel-shadow, var(--compact-pill-shadow));
+}
+
+[data-theme='light'] .launcher-compact-skin {
+  --compact-pill-bg: 232 236 242;
+  --compact-pill-fg: 26 26 26;
+  --compact-pill-fg-muted: 100 116 139;
+  --compact-pill-hover: #dde3eb;
+  --compact-pill-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.12),
+    0 2px 6px rgba(15, 23, 42, 0.07);
+
+  --background: rgb(var(--compact-pill-bg));
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --sidebar-item-hover: #d8dee8;
+  --sidebar-item-active: #ccd4e0;
+  --border: rgba(15, 23, 42, 0.14);
+  /* Layered contact → mid → soft cast for real elevation. The widest layer's
+     reach (offset + blur ≈ 15px) stays inside even the docked sidebar's 16px
+     safe area, so the overflow-hidden shell never slices the shadow into a hard
+     rectangle — it fades to nothing and wraps the rounded corners. */
+  --launcher-panel-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 3px 6px rgba(15, 23, 42, 0.08),
+    0 5px 10px rgba(15, 23, 42, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    var(--launcher-panel-shadow);
+}
+
+/* Compact quick-response panel: keep <<>> attachments readable in a narrow card */
+.compact-response-md img,
+.compact-response-md video {
+  max-height: 160px;
+}
+
+.compact-rich-content-cta:hover {
+  filter: brightness(0.96);
+}
+
+.compact-rich-content-cta:active {
+  transform: scale(0.98);
+}
+
+/* Input card lifts off the gray shell in light mode */
+[data-theme='light'] .launcher-compact-skin .launcher-input-surface {
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='dark'] .launcher-compact-skin {
+  --card-bg: #262626;
+  --input-bg: #2a2a2a;
+  --sidebar-item-hover: #323232;
+  --sidebar-item-active: #3a3a3a;
+  --border: rgba(255, 255, 255, 0.06);
+  /* Same contained reach (~15px) as light mode so it never clips, just deeper
+     opacity because dark backdrops swallow soft shadows. */
+  --launcher-panel-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 3px 6px rgba(0, 0, 0, 0.5),
+    0 5px 10px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--launcher-panel-shadow);
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-input-surface {
+  background: var(--input-bg) !important;
+  border-color: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip {
+  background: #262626;
+  border-color: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip__icon {
+  background: #323232;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip:hover {
+  background: #2e2e2e;
+  border-color: rgba(255, 56, 60, 0.22);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  background: #383838;
+  border-color: transparent;
+}
+
+/* Launcher suggestion cards — rectangular outlined rows with rounded icon tiles */
+.launcher-suggestion-chip {
+  background: color-mix(in srgb, var(--card-bg) 42%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--foreground) 16%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.launcher-suggestion-chip__icon {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 65%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.launcher-suggestion-chip:hover {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 72%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--foreground) 14%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 8%, transparent),
+    0 4px 14px color-mix(in srgb, var(--primary) 10%, rgba(15, 23, 42, 0.08));
+}
+
+.launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--foreground) 12%);
+  background: color-mix(in srgb, var(--primary) 8%, var(--card-bg) 92%);
+}
+
+.launcher-suggestion-chip--skeleton {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 55%, transparent);
+  border: 1.5px dashed color-mix(in srgb, var(--foreground) 12%, transparent);
+  box-shadow: none;
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip__icon {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip:hover {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 56, 60, 0.28);
+}
+
+/* Internal sidebar — one surface with the launcher shell, no nested white card */
+.launcher-sidebar-panel {
+  box-shadow: none;
+  border: none !important;
+}
+
+/* Model selector dropdown — shadow-only, no light stroke */
+.model-selector-panel {
+  border: none !important;
+}
+
+[data-theme='dark'] .launcher-compact-skin .model-selector-panel {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+[data-wf-theme='dark'] .model-selector-panel,
+.model-selector-panel[data-wf-theme='dark'] {
+  color-scheme: dark;
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 94%, #12141a);
+  --card-border: var(--wf-border);
+  --border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
+  border: 1px solid var(--wf-border) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+[data-wf-theme='dark'] .model-selector-trigger {
+  color: var(--wf-fg);
+}
+
+[data-wf-theme='dark'] .model-selector-trigger:hover,
+[data-wf-theme='dark'] .model-selector-trigger[aria-expanded='true'] {
+  background: var(--wf-hover);
+}
+
+/* Status line floated above the chat input bar (window + launcher) */
+.input-status-float {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  align-self: flex-start;
+  padding: 0 2px;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+}
+
+button.input-status-float {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 2px;
+  cursor: default;
+}
+
+button.input-status-float:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Monochrome provider logos — invert to white on dark surfaces */
+.model-provider-logo {
+  object-fit: contain;
+}
+
+[data-theme='dark'] .model-provider-logo--invert-dark {
+  filter: brightness(0) invert(1);
+  opacity: 0.88;
+}
+
+.launcher-sidebar-divider {
+  height: 1px;
+  background: var(--sidebar-border);
+}
+
+[data-theme='dark'] .launcher-sidebar-panel {
+  box-shadow: none;
+}
+
+[data-theme='light'] .launcher-sidebar-panel {
+  box-shadow: none;
+}
+
+.launcher-sidebar-panel .launcher-sidebar-divider {
+  background: var(--sidebar-border);
+}
+
+[data-theme='dark'] .launcher-sidebar-panel .launcher-sidebar-divider {
+  background: var(--sidebar-border);
+}
+
+/* Compact thinking — red tidal swell glowing inside the pill's lower edge.
+   __inner::before → primary crest + thick bottom wash
+   __inner::after  → secondary crest (amber-tinged), half-cycle behind */
+.compact-thinking-glow {
+  --compact-thinking-glow-red: #ff383c;
+  --compact-thinking-glow-red-soft: #ff6b6b;
+  --compact-thinking-glow-amber: #ff8a4c;
+  position: relative;
+  width: 100%;
+  border-radius: 26px;
+  isolation: isolate;
+}
+
+.compact-thinking-glow__inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 26px;
+  overflow: hidden;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--compact-pill-shadow);
+}
+
+/* One continuous swell spanning the pill bottom. Two layered crests run the
+   same morphing keyframe half a cycle apart so one always follows the other.
+   Each crest grows, peaks, and collapses via animated background-size +
+   vertical scale — not a fixed blob sliding on a rail. */
+.compact-thinking-glow__inner::before,
+.compact-thinking-glow__inner::after {
+  content: '';
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  background-repeat: no-repeat;
+  border-radius: 450px;
+  pointer-events: none;
+  z-index: 0;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity, background-position, background-size;
+  animation: compact-thinking-wave 5.8s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.compact-thinking-glow__inner::before {
+  bottom: -12px;
+  height: 26px;
+  background-image: radial-gradient(
+    ellipse 52% 118% at 50% 100%,
+    #FF383C 0%,
+    #FF4246 10%,
+    rgba(255, 56, 60, 0.98) 22%,
+    rgba(255, 85, 85, 0.72) 36%,
+    rgba(255, 56, 60, 0.34) 52%,
+    transparent 74%
+  ),
+  linear-gradient(
+    to top,
+    rgba(255, 44, 48, 0.82) 0%,
+    rgba(255, 56, 60, 0.58) 24%,
+    rgba(255, 75, 75, 0.28) 52%,
+    transparent 100%
+  );
+  background-size: 34% 52%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(9px) saturate(1.6);
+}
+
+.compact-thinking-glow__inner::after {
+  bottom: -10px;
+  height: 22px;
+  background-image: radial-gradient(
+    ellipse 58% 112% at 50% 100%,
+    rgba(255, 110, 55, 0.96) 0%,
+    rgba(255, 56, 60, 0.85) 24%,
+    rgba(255, 85, 80, 0.45) 44%,
+    rgba(255, 56, 60, 0.2) 56%,
+    transparent 74%
+  ),
+  linear-gradient(
+    to top,
+    rgba(255, 56, 60, 0.62) 0%,
+    rgba(255, 90, 65, 0.36) 32%,
+    rgba(255, 80, 80, 0.12) 60%,
+    transparent 100%
+  );
+  background-size: 38% 48%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(11px) saturate(1.5);
+  animation-delay: -2.9s;
+}
+
+/* Compact title bump — grows from the input pill top edge as one connected surface */
+.compact-title-bump {
+  z-index: 3;
+  border-radius: 12px 12px 0 0;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow: none;
+}
+
+.compact-title-bump::before,
+.compact-title-bump::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.compact-title-bump::before {
+  left: -10px;
+  background: radial-gradient(circle at 0 0, transparent 10px, rgb(var(--compact-pill-bg)) 10px);
+}
+
+.compact-title-bump::after {
+  right: -10px;
+  background: radial-gradient(circle at 100% 0, transparent 10px, rgb(var(--compact-pill-bg)) 10px);
+}
+
+/* Crest builds as it travels: width + height swell at the peak, collapse
+   into a trough at the tail. Skew leans the face forward like real water.
+   Two layers offset 50% keep the motion continuous with no hard reset. */
+@keyframes compact-thinking-wave {
+  0%, 100% {
+    background-position: -12% 100%, 0 100%;
+    background-size: 34% 48%, 100% 100%;
+    transform: translate3d(0, 4px, 0) scaleY(0.86) skewX(-2deg);
+    opacity: 0.62;
+  }
+  14% {
+    background-position: 14% 100%, 0 100%;
+    background-size: 50% 68%, 100% 100%;
+    transform: translate3d(0, 1px, 0) scaleY(0.98) skewX(-3deg);
+    opacity: 0.84;
+  }
+  30% {
+    background-position: 34% 100%, 0 100%;
+    background-size: 66% 82%, 100% 100%;
+    transform: translate3d(0, -2px, 0) scaleY(1.1) skewX(-1.5deg);
+    opacity: 0.98;
+  }
+  44% {
+    background-position: 50% 100%, 0 100%;
+    background-size: 74% 92%, 100% 100%;
+    transform: translate3d(0, -4px, 0) scaleY(1.16) skewX(0deg);
+    opacity: 1;
+  }
+  58% {
+    background-position: 66% 100%, 0 100%;
+    background-size: 66% 80%, 100% 100%;
+    transform: translate3d(0, -2px, 0) scaleY(1.08) skewX(1.5deg);
+    opacity: 0.96;
+  }
+  74% {
+    background-position: 84% 100%, 0 100%;
+    background-size: 52% 64%, 100% 100%;
+    transform: translate3d(0, 1px, 0) scaleY(0.96) skewX(3deg);
+    opacity: 0.78;
+  }
+  88% {
+    background-position: 108% 100%, 0 100%;
+    background-size: 36% 50%, 100% 100%;
+    transform: translate3d(0, 3px, 0) scaleY(0.88) skewX(2deg);
+    opacity: 0.65;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-thinking-glow__inner::before,
+  .compact-thinking-glow__inner::after {
+    animation: none;
+    background-position: 50% 100%, 0 100%;
+    background-size: 58% 72%, 100% 100%;
+    transform: none;
+    opacity: 0.94;
+  }
+
+  .compact-thinking-glow__inner {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      var(--compact-pill-shadow);
+  }
+}
+
+/* Compact voice button — frosted glass so thinking waves bleed through */
+.compact-voice-btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 42%, transparent);
+  backdrop-filter: blur(14px) saturate(1.45);
+  -webkit-backdrop-filter: blur(14px) saturate(1.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.05),
+    0 2px 8px rgba(15, 23, 42, 0.07);
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.2s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    background-color 0.25s ease;
+}
+
+.compact-voice-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(255, 255, 255, 0) 58%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.compact-voice-btn:hover {
+  color: rgb(var(--compact-pill-fg));
+  border-color: rgb(var(--compact-pill-fg) / 0.16);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 52%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.06),
+    0 3px 10px rgba(15, 23, 42, 0.1);
+}
+
+.compact-voice-btn:active {
+  transform: scale(0.95);
+}
+
+.compact-voice-btn--active {
+  color: rgb(var(--compact-pill-fg));
+  border-color: rgba(255, 56, 60, 0.32);
+  background: color-mix(in srgb, rgba(255, 56, 60, 0.22) 55%, rgb(var(--compact-pill-bg)) 45%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 12px rgba(255, 56, 60, 0.14),
+    0 0 0 1px rgba(255, 56, 60, 0.08),
+    0 2px 10px rgba(255, 56, 60, 0.12);
+}
+
+.compact-voice-btn--active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 120%, rgba(255, 56, 60, 0.35), transparent 68%);
+  pointer-events: none;
+  z-index: 0;
+  animation: compact-voice-pulse 2.4s ease-in-out infinite;
+}
+
+/* Extra clear during thinking glow — waves read through the mic chip */
+.compact-thinking-glow .compact-voice-btn--thinking {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px) saturate(1.65);
+  -webkit-backdrop-filter: blur(10px) saturate(1.65);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -8px 16px rgba(255, 56, 60, 0.08),
+    0 0 14px rgba(255, 56, 60, 0.1);
+}
+
+[data-theme='dark'] .compact-voice-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme='dark'] .compact-voice-btn:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme='dark'] .compact-voice-btn::before {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.03) 45%,
+    rgba(255, 255, 255, 0) 60%
+  );
+}
+
+[data-theme='dark'] .compact-thinking-glow .compact-voice-btn--thinking {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -10px 18px rgba(255, 56, 60, 0.12),
+    0 0 18px rgba(255, 56, 60, 0.14);
+}
+
+@keyframes compact-voice-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-voice-btn--active::after {
+    animation: none;
+    opacity: 0.65;
+  }
 }
 
 /* Custom Theme - Uses custom gradient colors set via JS */
@@ -195,6 +796,10 @@
   border-color: var(--border);
 }
 
+.border-theme-card {
+  border-color: var(--card-border);
+}
+
 .border-theme-sidebar {
   border-color: var(--sidebar-border);
 }
@@ -253,6 +858,11 @@
 [data-theme='dark'] .memory-mode-tab.memory-mode-tab-active {
   background-color: #ffffff !important;
   color: #000000 !important;
+}
+
+/* Settings: dark-mode card borders use grey scale, not white-alpha hairlines */
+[data-theme='dark'] [data-onboarding='settings-view'] .dashboard-card {
+  border-color: var(--border);
 }
 
 .memory-context-surface {
@@ -343,7 +953,7 @@
   background: color-mix(in srgb, var(--dashboard-panel-solid) 74%, transparent);
   border: 1px solid var(--dashboard-panel-border);
   border-radius: 24px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
 }
 
 .dashboard-sidebar-brand {
@@ -383,7 +993,15 @@
   background: var(--dashboard-sidebar-item-active);
   border-color: var(--dashboard-panel-border);
   color: var(--foreground);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), var(--dashboard-shadow-soft);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .dashboard-sidebar-section {
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .dashboard-sidebar-item.is-active {
+  border-color: var(--border);
 }
 
 .dashboard-main-surface {
@@ -405,7 +1023,7 @@
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 90% 14%, color-mix(in srgb, var(--primary) 92%, transparent) 0%, color-mix(in srgb, var(--primary) 40%, transparent) 18%, transparent 36%),
+    radial-gradient(circle at 90% 14%, color-mix(in srgb, var(--primary) 26%, transparent) 0%, color-mix(in srgb, var(--primary) 10%, transparent) 20%, transparent 42%),
     linear-gradient(180deg, color-mix(in srgb, var(--dashboard-panel-solid) 96%, black 4%) 0%, color-mix(in srgb, var(--dashboard-panel-solid) 92%, black 8%) 100%);
 }
 
@@ -416,8 +1034,8 @@
   border-radius: inherit;
   pointer-events: none;
   background:
-    radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--primary) 48%, black 4%) 0%, color-mix(in srgb, var(--primary) 24%, transparent) 20%, transparent 40%);
-  opacity: 0.96;
+    radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--primary) 30%, transparent) 0%, color-mix(in srgb, var(--primary) 12%, transparent) 22%, transparent 44%);
+  opacity: 0.4;
 }
 
 .dashboard-card-premium::after {
@@ -450,10 +1068,10 @@
   border-radius: inherit;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 104%, color-mix(in srgb, var(--primary) 58%, transparent) 0%, color-mix(in srgb, var(--primary) 22%, transparent) 24%, transparent 48%),
+    radial-gradient(circle at 50% 104%, color-mix(in srgb, var(--primary) 26%, transparent) 0%, color-mix(in srgb, var(--primary) 10%, transparent) 26%, transparent 50%),
     repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px),
     repeating-linear-gradient(90deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 5px);
-  opacity: 0.72;
+  opacity: 0.5;
 }
 
 .dashboard-card-accent::after {
@@ -466,9 +1084,9 @@
   transform: translateX(-50%);
   pointer-events: none;
   border-radius: 999px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 42%, transparent) 0%, transparent 68%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 24%, transparent) 0%, transparent 68%);
   filter: blur(32px);
-  opacity: 0.9;
+  opacity: 0.45;
 }
 
 .dashboard-card-muted {
@@ -483,17 +1101,28 @@
   border-radius: 999px;
 }
 
+/* CTA buttons are white pills with off-black text (brief: "CTA buttons should be white"). */
 .dashboard-button-primary {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 88%, white 12%) 0%, var(--primary) 100%);
-  color: var(--primary-foreground);
-  border: 1px solid color-mix(in srgb, var(--primary) 68%, white 32%);
-  box-shadow: 0 16px 32px color-mix(in srgb, var(--primary) 22%, transparent);
+  background: #ffffff;
+  color: #131210;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.dashboard-button-primary:hover:not(:disabled) {
+  background: #f1f1f0;
+}
+.dashboard-button-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .dashboard-button-secondary {
   background: color-mix(in srgb, var(--dashboard-panel-solid) 78%, transparent);
   color: var(--foreground);
   border: 1px solid var(--dashboard-panel-border);
+  border-radius: 999px;
 }
 
 .dashboard-button-secondary:hover,
@@ -505,7 +1134,7 @@
   background: color-mix(in srgb, var(--dashboard-panel-solid) 70%, transparent);
   border: 1px solid var(--dashboard-panel-border);
   color: var(--foreground);
-  border-radius: 16px;
+  border-radius: 999px;
   box-shadow: var(--dashboard-shadow-soft);
 }
 
@@ -513,17 +1142,192 @@
   background: var(--dashboard-hover);
 }
 
-[data-theme='dark'] .dashboard-card {
-  background: color-mix(in srgb, var(--dashboard-panel-solid) 94%, transparent);
+/* ─── Brand palette + unified chrome (dashboard window only) ──────────────────
+   Scoped to .dashboard-root so the launcher / chat windows keep their palette,
+   and so the user's custom theme is never clobbered. */
+.dashboard-root {
+  --primary: #ff1727;            /* brand red — accents, active states, CTAs */
+  --primary-foreground: #ffffff;
 }
 
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-card,
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-card-muted,
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-button-secondary,
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-refresh-button,
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-pill,
-[data-theme='dark'] .cloud-engine-dashboard .dashboard-sidebar-section {
+/* Brand palette — exact values: off-black #131210, light grey #E5E5E5, red #FF1727 */
+:root:not([style*="--custom-gradient-start"])[data-theme='light'] .dashboard-root {
+  --foreground: #131210;                          /* off-black */
+  --dashboard-shell-bg: #e5e5e5;                  /* light grey canvas */
+  --dashboard-panel-solid: #ffffff;
+  --dashboard-panel: rgba(255, 255, 255, 0.86);
+  --dashboard-panel-border: #e5e5e5;              /* light-grey hairline */
+  --dashboard-hover: rgba(19, 18, 16, 0.05);
+  --dashboard-glow: rgba(255, 23, 39, 0.05);      /* faint red accent glow */
+}
+
+:root:not([style*="--custom-gradient-start"])[data-theme='dark'] .dashboard-root {
+  --dashboard-shell-bg: #131210;                  /* off-black */
+  --dashboard-panel-solid: #1c1b18;
+  --dashboard-panel: rgba(22, 21, 19, 0.96);
+  --dashboard-panel-border: #3e3e3e; /* VS Code grey — matches --border / --card-border */
+  --dashboard-glow: rgba(255, 23, 39, 0.07);      /* faint red accent glow */
+}
+
+/* The single top bar that holds page context + status + CTAs */
+.dashboard-topbar {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 2.6rem 1.5rem 0.85rem;   /* top clears the 40px window drag strip */
+  border-bottom: 1px solid var(--dashboard-panel-border);
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 55%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+/* Floating page icon — soft brand gradient + glow for depth */
+.dashboard-topbar-icon {
+  position: relative;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.85rem;
+  color: var(--primary-foreground);
+  background:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--primary) 92%, white 8%) 0%,
+      color-mix(in srgb, var(--primary) 58%, black 12%) 100%);
+  box-shadow:
+    0 10px 22px color-mix(in srgb, var(--primary) 30%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.dashboard-topbar-icon::after {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 45%, transparent) 0%, transparent 70%);
+  filter: blur(14px);
+  opacity: 0.7;
+}
+
+/* Status pills */
+.dashboard-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent);
+  border: 1px solid var(--dashboard-panel-border);
+  color: var(--foreground-muted);
+}
+
+.dashboard-badge--accent {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+  color: color-mix(in srgb, var(--primary) 80%, var(--foreground) 20%);
+}
+
+.dashboard-badge-dot {
+  height: 0.4rem;
+  width: 0.4rem;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+}
+
+/* Solid brand pill (matches the reference's status chip) */
+.dashboard-badge--solid {
+  background: var(--primary);
   border-color: transparent;
+  color: var(--primary-foreground);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
+/* Brand wordmark chip in the top bar */
+.dashboard-brand-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.85rem;
+  width: 1.85rem;
+  flex-shrink: 0;
+  border-radius: 0.7rem;
+  color: var(--primary-foreground);
+  background:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--primary) 92%, white 8%) 0%,
+      color-mix(in srgb, var(--primary) 58%, black 12%) 100%);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+/* Segmented control — like the Elements / Symbol toggle in the reference */
+.dashboard-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 60%, transparent);
+  border: 1px solid var(--dashboard-panel-border);
+}
+.dashboard-segment-item {
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dashboard-segment-item:hover {
+  color: var(--foreground);
+}
+.dashboard-segment-item.is-active {
+  color: var(--foreground);
+  background: var(--dashboard-panel-solid);
+  box-shadow: var(--dashboard-shadow-soft);
+}
+
+/* Vibrant soft RED gradient surface for floating, white icon tiles */
+.dashboard-feature-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--primary) 88%, white 12%) 0%, transparent 52%),
+    radial-gradient(circle at 84% 24%, color-mix(in srgb, var(--primary) 70%, black 8%) 0%, transparent 54%),
+    radial-gradient(circle at 60% 96%, color-mix(in srgb, var(--primary) 55%, black 18%) 0%, transparent 56%),
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 92%, white 8%) 0%, var(--primary) 52%, color-mix(in srgb, var(--primary) 70%, black 22%) 100%);
+}
+.dashboard-feature-tile--brand {
+  background:
+    radial-gradient(circle at 20% 16%, color-mix(in srgb, var(--primary) 92%, white 8%) 0%, transparent 54%),
+    radial-gradient(circle at 84% 22%, color-mix(in srgb, var(--primary) 62%, black 10%) 0%, transparent 56%),
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 88%, white 12%) 0%, var(--primary) 55%, color-mix(in srgb, var(--primary) 66%, black 24%) 100%);
+}
+
+/* White floating icon tile that sits on a feature gradient */
+.dashboard-icon-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(17, 17, 26, 0.16), 0 2px 6px rgba(17, 17, 26, 0.08);
+}
+
+[data-theme='dark'] .dashboard-card {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 94%, transparent);
 }
 
 [data-theme='dark'] .dashboard-card-muted,
@@ -585,7 +1389,10 @@
 }
 
 [data-wf-theme='dark'] {
+  color-scheme: dark;
   --wf-bg:            #0d0d0f;
+  --border:           #3e3e3e;
+  --sidebar-border:   #2b2b2b;
   --wf-bg-elevated:   rgba(255,255,255,0.04);
   --wf-bg-sunken:     #080809;
   --wf-bg-glass:      rgba(255,255,255,0.06);
@@ -617,6 +1424,16 @@
   --wf-wire-icon-border: #475569;
   --wf-wire-icon-fg:  #94a3b8;
   --wf-wire-handle-bg: #0a0a0a;
+  /* App theme-* utilities (ModelSelector, etc.) → workflow palette */
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 92%, #0d0d0f);
+  --card-border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
 }
 
 /* Workflow theme utility classes */
@@ -633,6 +1450,11 @@
 
 .wf-dot-grid {
   background-image: radial-gradient(var(--wf-canvas-dot) 1.5px, transparent 1.5px);
+}
+
+.wf-canvas-content {
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .wf-node-card {
@@ -883,6 +1705,22 @@ body {
   margin: 0;
   background: transparent;
   -webkit-font-smoothing: antialiased;
+}
+
+/* When the overlay window is maximized, the floating rounded card should
+   collapse into a flat full-screen surface. We target nested cards by attribute
+   instead of threading the maximized state through every component. */
+[data-overlay-maximized='true'] .rounded-\[28px\],
+[data-overlay-maximized='true'] .rounded-r-\[28px\] {
+  border-radius: 0 !important;
+}
+[data-overlay-maximized='true'] [class*='shadow'] {
+  box-shadow: none !important;
+}
+/* The launcher panel's elevation lives on a class without "shadow" in its name,
+   so drop it explicitly when the window is maximized and fills the screen. */
+[data-overlay-maximized='true'] .launcher-compact-skin {
+  box-shadow: none !important;
 }
 
 /* Window drag regions */

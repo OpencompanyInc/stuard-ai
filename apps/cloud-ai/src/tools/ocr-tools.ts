@@ -109,7 +109,7 @@ async function resolveOcrImage(inputData: any, writer: any) {
     const screenshotPath = typeof screenshot?.filePath === 'string' ? screenshot.filePath : '';
     if (!screenshotPath) return { ok: false as const, error: 'Failed to capture screenshot for OCR.' };
     await safeToolWrite(writer, { type: 'tool_event', tool: 'google_cloud_ocr', status: 'reading_file', path: screenshotPath });
-    const bin = await execLocalTool('read_file_binary', { path: screenshotPath }, writer);
+    const bin = await execLocalTool('read_file_binary', { path: screenshotPath, inline: true }, writer);
     const data = typeof bin?.data === 'string' ? bin.data : '';
     if (!data) return { ok: false as const, error: String(bin?.error || 'Failed to read screenshot image.') };
     return {
@@ -123,7 +123,7 @@ async function resolveOcrImage(inputData: any, writer: any) {
 
   if (path) {
     await safeToolWrite(writer, { type: 'tool_event', tool: 'google_cloud_ocr', status: 'reading_file', path });
-    const bin = await execLocalTool('read_file_binary', { path }, writer);
+    const bin = await execLocalTool('read_file_binary', { path, inline: true }, writer);
     const data = typeof bin?.data === 'string' ? bin.data : '';
     if (!data) return { ok: false as const, error: String(bin?.error || 'Failed to read image file.') };
     return {

@@ -8,7 +8,7 @@ from browser_server.utils import (
     _resolve_selector_target,
 )
 from browser_server.lifecycle import (
-    _ensure_browser, _get_page_url, _get_page_title,
+    _ensure_browser_session, _get_page_url, _get_page_title,
     _evaluate, _goto, _wait_for_selector,
     _cdp_click_selector, _cdp_click_at, _cdp_type_text, _cdp_press_key,
     _cdp_clear_and_type,
@@ -24,7 +24,7 @@ async def handle_navigate(req: web.Request) -> web.Response:
         return _err("Only http/https/about URLs are allowed")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -52,7 +52,7 @@ async def handle_click(req: web.Request) -> web.Response:
         return _err("selector, elementId, or text is required")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -290,7 +290,7 @@ async def handle_type(req: web.Request) -> web.Response:
     timeout = _clamp_int(body.get("timeout", 5000), 5000, 500, 30000)
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -402,7 +402,7 @@ async def handle_press_key(req: web.Request) -> web.Response:
         return _err("key is too long")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:

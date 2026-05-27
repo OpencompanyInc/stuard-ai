@@ -47,9 +47,21 @@ export const create_directory = makeLocalTool('create_directory', 'Create direct
 
 export const list_directory = makeLocalTool(
   'list_directory',
-  'List directory contents',
-  z.object({ path: z.string() }),
-  z.object({ items: z.array(z.object({ name: z.string(), type: z.enum(['file', 'dir']) })) }),
+  'List directory contents. Returns up to 500 entries by default (hard max 2000). Use limit/offset to paginate large directories.',
+  z.object({
+    path: z.string(),
+    limit: z.number().int().positive().optional().describe('Max entries to return (default 500, hard max 2000)'),
+    offset: z.number().int().nonnegative().optional().describe('Number of entries to skip (default 0)'),
+  }),
+  z.object({
+    ok: z.boolean(),
+    items: z.array(z.object({ name: z.string(), type: z.enum(['file', 'dir']) })),
+    count: z.number().optional(),
+    truncated: z.boolean().optional(),
+    total: z.number().optional(),
+    empty: z.boolean().optional(),
+    message: z.string().optional(),
+  }),
 );
 
 export const open_file = makeLocalTool(

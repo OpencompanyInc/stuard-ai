@@ -2,7 +2,7 @@
  * Skills - Visual agent skills/routines system
  * Allows users to define reusable skill patterns for Stuard AI
  */
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   Search, Plus, Trash2, Wand2, MessageSquare, Terminal, Eye, Brain,
   GripVertical, X, Save, ToggleLeft, ToggleRight, AlertCircle, Check,
@@ -19,6 +19,10 @@ import { useSkillChat } from "../hooks/useSkillChat";
 import { useModelRegistry } from "../../hooks/useModelRegistry";
 import { buildContextUsageMetrics } from "../../utils/contextUsage";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
+import { usePreferences } from "../../hooks/usePreferences";
+import type { ReasoningLevel } from "../../hooks/usePreferences";
+
+const WF_INPUT = "wf-input focus:outline-none";
 
 // ============================================================================
 // TYPES
@@ -220,8 +224,8 @@ export const DEFAULT_SKILLS: Skill[] = [
 // UTILITY FUNCTIONS
 // ============================================================================
 
-export function getSkillColorClasses(color: string): { bg: string; icon: string; border: string; bgSoft: string; accent: string } {
-  const colors: Record<string, { bg: string; icon: string; border: string; bgSoft: string; accent: string }> = {
+export function getSkillColorClasses(color: string, d = false): { bg: string; icon: string; border: string; bgSoft: string; accent: string } {
+  const light: Record<string, { bg: string; icon: string; border: string; bgSoft: string; accent: string }> = {
     blue: { bg: 'bg-blue-600', icon: 'text-blue-600', border: 'border-blue-200', bgSoft: 'bg-blue-50', accent: 'border-blue-500' },
     purple: { bg: 'bg-purple-600', icon: 'text-purple-600', border: 'border-purple-200', bgSoft: 'bg-purple-50', accent: 'border-purple-500' },
     emerald: { bg: 'bg-emerald-600', icon: 'text-emerald-600', border: 'border-emerald-200', bgSoft: 'bg-emerald-50', accent: 'border-emerald-500' },
@@ -231,11 +235,22 @@ export function getSkillColorClasses(color: string): { bg: string; icon: string;
     indigo: { bg: 'bg-indigo-600', icon: 'text-indigo-600', border: 'border-indigo-200', bgSoft: 'bg-indigo-50', accent: 'border-indigo-500' },
     teal: { bg: 'bg-teal-600', icon: 'text-teal-600', border: 'border-teal-200', bgSoft: 'bg-teal-50', accent: 'border-teal-500' },
   };
+  const dark: Record<string, { bg: string; icon: string; border: string; bgSoft: string; accent: string }> = {
+    blue: { bg: 'bg-blue-500', icon: 'text-blue-400', border: 'border-blue-500/30', bgSoft: 'bg-blue-500/15', accent: 'border-blue-500' },
+    purple: { bg: 'bg-purple-500', icon: 'text-purple-400', border: 'border-purple-500/30', bgSoft: 'bg-purple-500/15', accent: 'border-purple-500' },
+    emerald: { bg: 'bg-emerald-500', icon: 'text-emerald-400', border: 'border-emerald-500/30', bgSoft: 'bg-emerald-500/15', accent: 'border-emerald-500' },
+    amber: { bg: 'bg-amber-500', icon: 'text-amber-400', border: 'border-amber-500/30', bgSoft: 'bg-amber-500/15', accent: 'border-amber-500' },
+    rose: { bg: 'bg-rose-500', icon: 'text-rose-400', border: 'border-rose-500/30', bgSoft: 'bg-rose-500/15', accent: 'border-rose-500' },
+    cyan: { bg: 'bg-cyan-500', icon: 'text-cyan-400', border: 'border-cyan-500/30', bgSoft: 'bg-cyan-500/15', accent: 'border-cyan-500' },
+    indigo: { bg: 'bg-indigo-500', icon: 'text-indigo-400', border: 'border-indigo-500/30', bgSoft: 'bg-indigo-500/15', accent: 'border-indigo-500' },
+    teal: { bg: 'bg-teal-500', icon: 'text-teal-400', border: 'border-teal-500/30', bgSoft: 'bg-teal-500/15', accent: 'border-teal-500' },
+  };
+  const colors = d ? dark : light;
   return colors[color] || colors.blue;
 }
 
-function getStepColorClasses(type: SkillStepType) {
-  const colors = {
+function getStepColorClasses(type: SkillStepType, d = false) {
+  const light = {
     prompt: {
       border: 'border-blue-200',
       headerBg: 'bg-blue-50/50',
@@ -269,6 +284,41 @@ function getStepColorClasses(type: SkillStepType) {
       accent: 'border-l-emerald-500',
     },
   };
+  const dark = {
+    prompt: {
+      border: 'border-blue-500/25',
+      headerBg: 'bg-blue-500/10',
+      iconBg: 'bg-blue-500/20',
+      iconText: 'text-blue-400',
+      badge: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
+      accent: 'border-l-blue-500',
+    },
+    tool: {
+      border: 'border-purple-500/25',
+      headerBg: 'bg-purple-500/10',
+      iconBg: 'bg-purple-500/20',
+      iconText: 'text-purple-400',
+      badge: 'bg-purple-500/15 text-purple-300 border-purple-500/25',
+      accent: 'border-l-purple-500',
+    },
+    condition: {
+      border: 'border-amber-500/25',
+      headerBg: 'bg-amber-500/10',
+      iconBg: 'bg-amber-500/20',
+      iconText: 'text-amber-400',
+      badge: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
+      accent: 'border-l-amber-500',
+    },
+    output: {
+      border: 'border-emerald-500/25',
+      headerBg: 'bg-emerald-500/10',
+      iconBg: 'bg-emerald-500/20',
+      iconText: 'text-emerald-400',
+      badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
+      accent: 'border-l-emerald-500',
+    },
+  };
+  const colors = d ? dark : light;
   return colors[type];
 }
 
@@ -507,7 +557,9 @@ export function SkillsLibrary({
               {!search && tab === 'all' && (
                 <button
                   onClick={onCreateSkill}
-                  className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+                  className={`mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    d ? 'bg-white text-slate-900 hover:bg-white/90' : 'bg-slate-900 text-white hover:bg-slate-800'
+                  }`}
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Create skill
@@ -534,7 +586,7 @@ interface SkillCardProps {
 
 function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPublish }: SkillCardProps) {
   const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
-  const colorClasses = getSkillColorClasses(skill.color);
+  const colorClasses = getSkillColorClasses(skill.color, d);
   const isPending = tab === 'suggested';
   const publishStatus = skill.metadata?.publishStatus as 'published' | 'failed' | undefined;
   const lastPublishError = (skill.metadata?.lastPublishError as string | undefined) || '';
@@ -717,12 +769,43 @@ interface SkillEditorProps {
 }
 
 export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }: SkillEditorProps) {
+  const { isDark: d } = useWorkflowTheme();
+  const { modelSource, setModelSource } = usePreferences();
   const [editedSkill, setEditedSkill] = useState<Skill>(skill);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [toolSearchOpen, setToolSearchOpen] = useState<string | null>(null);
   const [toolSearch, setToolSearch] = useState("");
   const [showAI, setShowAI] = useState(false);
   const chatInputRef = useRef<ChatInputRef>(null);
+  const [skillChatModelId, setSkillChatModelId] = useState<string | 'auto'>(() => {
+    try {
+      const raw = window.localStorage.getItem('skill.chat_model_id');
+      const v = raw ? String(raw).trim() : 'auto';
+      return v ? (v as string | 'auto') : 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+  const [skillReasoningLevel, setSkillReasoningLevel] = useState<ReasoningLevel>(() => {
+    try {
+      const raw = window.localStorage.getItem('skill.reasoning_level');
+      return raw === 'none' || raw === 'low' || raw === 'medium' || raw === 'high' ? raw : 'high';
+    } catch {
+      return 'high';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('skill.chat_model_id', String(skillChatModelId || 'auto'));
+    } catch { /* ignore */ }
+  }, [skillChatModelId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('skill.reasoning_level', skillReasoningLevel);
+    } catch { /* ignore */ }
+  }, [skillReasoningLevel]);
 
   const applySkillUpdates = useCallback((updates: Partial<Skill>) => {
     setEditedSkill(prev => ({
@@ -738,13 +821,16 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
     skill: editedSkill,
     onApplySkill: applySkillUpdates,
     cloudAiHttp,
+    selectedModelId: skillChatModelId,
+    selectedModelSource: modelSource,
+    selectedReasoningLevel: skillReasoningLevel,
   });
   const { modelById } = useModelRegistry();
   const skillContextMetrics = useMemo(() => buildContextUsageMetrics({
     usage: skillChat.latestUsage,
-    modelId: skillChat.latestModelId,
+    modelId: skillChat.latestModelId || (skillChatModelId !== 'auto' ? skillChatModelId : undefined),
     modelById,
-  }), [modelById, skillChat.latestModelId, skillChat.latestUsage]);
+  }), [modelById, skillChat.latestModelId, skillChat.latestUsage, skillChatModelId]);
 
   const updateSkill = (updates: Partial<Skill>) => {
     setEditedSkill(prev => ({ ...prev, ...updates }));
@@ -789,20 +875,20 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
   }, [toolSearch]);
 
   const IconComponent = SKILL_ICONS.find(i => i.name === editedSkill.icon)?.icon || Wand2;
-  const colorClasses = getSkillColorClasses(editedSkill.color);
+  const colorClasses = getSkillColorClasses(editedSkill.color, d);
 
   return (
     <div className="flex-1 flex h-screen w-screen overflow-hidden font-sans wf-bg wf-fg">
 
       {/* Left Panel - Skill Settings */}
-      <div className="w-[320px] flex flex-col border-r overflow-hidden shrink-0 z-10 wf-bg-elevated wf-border">
+      <div className="w-[320px] flex flex-col border-r overflow-hidden shrink-0 z-10 wf-bg-elevated border wf-border">
         {/* Header */}
-        <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-slate-50/50">
+        <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 wf-border wf-bg-overlay">
           <div className="flex items-center gap-2">
-            <button onClick={onCancel} className="p-1.5 hover:bg-slate-200 rounded-md text-slate-500 transition-colors">
+            <button onClick={onCancel} className="p-1.5 rounded-md wf-fg-faint wf-hover-fg wf-hover-bg transition-colors">
               <X className="w-4 h-4" />
             </button>
-            <h2 className="text-sm font-semibold text-slate-800">
+            <h2 className="text-sm font-semibold wf-fg">
               {skill.id.startsWith('skill_') && skill.name === 'New Skill' ? 'Create Skill' : skill.source === 'auto' ? 'Auto-Skill Settings' : 'Skill Settings'}
             </h2>
           </div>
@@ -810,7 +896,9 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             {onPublish && (
               <button
                 onClick={() => onPublish(editedSkill)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition-colors text-xs font-medium"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-colors text-xs font-medium border ${
+                  d ? 'border-blue-500/30 text-blue-300 hover:bg-blue-500/10' : 'bg-white border-blue-200 text-blue-600 hover:bg-blue-50'
+                }`}
                 title="Publish to Marketplace"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -819,7 +907,9 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             )}
             <button
               onClick={() => onSave(editedSkill)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors text-xs font-medium"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors text-xs font-medium ${
+                d ? 'bg-white text-slate-900 hover:bg-white/90' : 'bg-slate-900 text-white hover:bg-slate-800'
+              }`}
             >
               <Save className="w-3.5 h-3.5" />
               Save
@@ -832,18 +922,20 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
 
           {/* Auto-Skill Origin Banner */}
           {editedSkill.source === 'auto' && (
-            <div className="p-3 rounded-lg bg-violet-50 border border-violet-200 space-y-2">
+            <div className={`p-3 rounded-lg border space-y-2 ${
+              d ? 'bg-violet-500/10 border-violet-500/25' : 'bg-violet-50 border-violet-200'
+            }`}>
               <div className="flex items-center gap-2">
                 <div className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center">
                   <Sparkles className="w-3.5 h-3.5 text-white" />
                 </div>
                 <div>
-                  <span className="text-xs font-semibold text-violet-700">Auto-Generated Skill</span>
-                  <p className="text-[10px] text-violet-500">Learned from conversation patterns</p>
+                  <span className={`text-xs font-semibold ${d ? 'text-violet-300' : 'text-violet-700'}`}>Auto-Generated Skill</span>
+                  <p className={`text-[10px] ${d ? 'text-violet-400' : 'text-violet-500'}`}>Learned from conversation patterns</p>
                 </div>
               </div>
               {editedSkill.metadata?.confidence != null && (
-                <div className="flex items-center gap-3 text-[10px] text-violet-600">
+                <div className={`flex items-center gap-3 text-[10px] ${d ? 'text-violet-400' : 'text-violet-600'}`}>
                   <span>Confidence: <strong>{Math.round(editedSkill.metadata.confidence * 100)}%</strong></span>
                   {editedSkill.metadata.generatedAt && (
                     <span>Detected: {formatRelativeTime(editedSkill.metadata.generatedAt)}</span>
@@ -851,13 +943,13 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                 </div>
               )}
               {editedSkill.metadata?.antiPatterns && editedSkill.metadata.antiPatterns.length > 0 && (
-                <div className="pt-1 border-t border-violet-200">
-                  <span className="text-[10px] font-medium text-violet-600 flex items-center gap-1 mb-1">
+                <div className={`pt-1 border-t ${d ? 'border-violet-500/25' : 'border-violet-200'}`}>
+                  <span className={`text-[10px] font-medium flex items-center gap-1 mb-1 ${d ? 'text-violet-300' : 'text-violet-600'}`}>
                     <AlertCircle className="w-3 h-3" /> Mistakes to avoid
                   </span>
                   <ul className="space-y-0.5">
                     {editedSkill.metadata.antiPatterns.slice(0, 3).map((ap: string, i: number) => (
-                      <li key={i} className="text-[10px] text-violet-500 pl-3">· {ap}</li>
+                      <li key={i} className={`text-[10px] pl-3 ${d ? 'text-violet-400' : 'text-violet-500'}`}>· {ap}</li>
                     ))}
                   </ul>
                 </div>
@@ -866,14 +958,14 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
           )}
 
           {/* Active Toggle */}
-          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+          <div className={`flex items-center justify-between p-3 rounded-lg border ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-200'}`}>
             <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${editedSkill.isActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-              <span className="text-sm font-medium text-slate-700/80">Skill Active</span>
+              <div className={`w-2 h-2 rounded-full ${editedSkill.isActive ? 'bg-emerald-500' : (d ? 'bg-white/20' : 'bg-slate-300')}`} />
+              <span className="text-sm font-medium wf-fg">Skill Active</span>
             </div>
             <button
               onClick={() => updateSkill({ isActive: !editedSkill.isActive })}
-              className={`transition-colors ${editedSkill.isActive ? 'text-emerald-600' : 'text-slate-400'}`}
+              className={`transition-colors ${editedSkill.isActive ? 'text-emerald-500' : 'wf-fg-faint'}`}
             >
               {editedSkill.isActive ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
             </button>
@@ -881,24 +973,24 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
           
           {/* Name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-700/80">Name</label>
+            <label className="text-xs font-medium wf-fg">Name</label>
             <input
               type="text"
               value={editedSkill.name}
               onChange={(e) => updateSkill({ name: e.target.value })}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-400"
+              className={`w-full px-3 py-2 rounded-md text-sm ${WF_INPUT}`}
               placeholder="e.g., Code Reviewer"
             />
           </div>
 
           {/* Description */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-700/80">Description</label>
+            <label className="text-xs font-medium wf-fg">Description</label>
             <textarea
               value={editedSkill.description}
               onChange={(e) => updateSkill({ description: e.target.value })}
               rows={3}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400"
+              className={`w-full px-3 py-2 rounded-md text-sm resize-none ${WF_INPUT}`}
               placeholder="What does this skill do..."
             />
           </div>
@@ -906,28 +998,32 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
           {/* Trigger */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-slate-700/80">Trigger</label>
+              <label className="text-xs font-medium wf-fg">Trigger</label>
             </div>
             <textarea
               value={editedSkill.trigger}
               onChange={(e) => updateSkill({ trigger: e.target.value })}
               rows={2}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none placeholder-slate-400 font-mono text-xs"
+              className={`w-full px-3 py-2 rounded-md text-sm resize-none font-mono text-xs ${WF_INPUT}`}
               placeholder="When the user asks to..."
             />
-            <p className="text-[10px] text-slate-500">Natural language trigger instruction for the orchestrator agent.</p>
+            <p className="text-[10px] wf-fg-muted">Natural language trigger instruction for the orchestrator agent.</p>
           </div>
 
           {/* Icon & Color Picker */}
-          <div className="space-y-4 pt-4 border-t border-slate-100">
+          <div className="space-y-4 pt-4 border-t wf-border-subtle">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-700/80">Icon</label>
+              <label className="text-xs font-medium wf-fg">Icon</label>
               <div className="flex flex-wrap gap-1.5">
                 {SKILL_ICONS.map(({ name, icon: Icon }) => (
                   <button
                     key={name}
                     onClick={() => updateSkill({ icon: name })}
-                    className={`p-2 rounded-md border transition-colors ${editedSkill.icon === name ? 'bg-slate-50 border-slate-400 text-slate-800 shadow-sm' : 'bg-white border-transparent text-slate-500 hover:bg-slate-50'}`}
+                    className={`p-2 rounded-md border transition-colors ${
+                      editedSkill.icon === name
+                        ? d ? 'bg-white/[0.08] border-white/20 wf-fg shadow-sm' : 'bg-slate-50 border-slate-400 text-slate-800 shadow-sm'
+                        : d ? 'border-transparent wf-fg-muted wf-hover-bg' : 'bg-white border-transparent text-slate-500 hover:bg-slate-50'
+                    }`}
                   >
                     <Icon className="w-4 h-4" />
                   </button>
@@ -935,15 +1031,15 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-700/80">Theme Color</label>
+              <label className="text-xs font-medium wf-fg">Theme Color</label>
               <div className="flex flex-wrap gap-2">
                 {SKILL_COLORS.map(color => {
-                  const cc = getSkillColorClasses(color);
+                  const cc = getSkillColorClasses(color, d);
                   return (
                     <button
                       key={color}
                       onClick={() => updateSkill({ color })}
-                      className={`w-6 h-6 rounded-full ${cc.bg} transition-all ${editedSkill.color === color ? 'ring-2 ring-slate-900 ring-offset-2 scale-110' : 'hover:scale-110'}`}
+                      className={`w-6 h-6 rounded-full ${cc.bg} transition-all ${editedSkill.color === color ? `ring-2 scale-110 ${d ? 'ring-white ring-offset-2 ring-offset-[#0d0d0f]' : 'ring-slate-900 ring-offset-2'}` : 'hover:scale-110'}`}
                     />
                   );
                 })}
@@ -958,13 +1054,13 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
       <div className="flex-1 flex overflow-hidden">
 
       {/* Steps Builder */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
+      <div className="flex-1 flex flex-col overflow-hidden wf-bg-sunken">
 
         {/* Steps Header */}
-        <div className="h-14 px-6 border-b border-slate-200 bg-white flex items-center justify-between shrink-0">
+        <div className="h-14 px-6 border-b flex items-center justify-between shrink-0 wf-border wf-bg-elevated">
           <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold text-slate-800">Skill Steps</h3>
-            <span className="px-2 py-0.5 bg-slate-50 text-slate-600 rounded text-xs font-medium">{editedSkill.steps.length} steps</span>
+            <h3 className="text-sm font-semibold wf-fg">Skill Steps</h3>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${d ? 'bg-white/[0.06] wf-fg-muted' : 'bg-slate-50 text-slate-600'}`}>{editedSkill.steps.length} steps</span>
           </div>
 
           {/* Add Step Buttons + AI Toggle */}
@@ -976,21 +1072,25 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                 <button
                   key={type}
                   onClick={() => addStep(type)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors bg-white border border-slate-200 hover:bg-slate-50 text-slate-700/80`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors border wf-fg-muted ${
+                    d ? 'bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.06]' : 'bg-white border-slate-200 hover:bg-slate-50'
+                  }`}
                   title={config.description}
                 >
-                  <Icon className="w-3.5 h-3.5 text-slate-500" />
+                  <Icon className="w-3.5 h-3.5 wf-fg-faint" />
                   {config.label}
                 </button>
               );
             })}
-            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <div className={`w-px h-5 mx-1 ${d ? 'bg-white/[0.08]' : 'bg-slate-200'}`} />
             <button
               onClick={() => { setShowAI(v => !v); setTimeout(() => chatInputRef.current?.focus(), 100); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 showAI
                   ? 'bg-indigo-600 text-white border border-indigo-700 shadow-sm'
-                  : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700/80'
+                  : d
+                    ? 'bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.06] wf-fg-muted'
+                    : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700/80'
               }`}
               title="AI Assistant"
             >
@@ -1006,7 +1106,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             {editedSkill.steps.map((step, index) => {
               const config = STEP_TYPE_CONFIG[step.type];
               const StepIcon = config.icon;
-              const stepColorClasses = getStepColorClasses(step.type);
+              const stepColorClasses = getStepColorClasses(step.type, d);
               const selectedTool = AVAILABLE_TOOLS.find(t => t.id === step.toolName);
               
               return (
@@ -1022,13 +1122,13 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                       moveStep(fromIdx, index);
                     }
                   }}
-                  className={`group relative bg-white rounded-lg border border-slate-200 shadow-sm transition-all ${
-                    draggedStepId === step.id ? 'opacity-50' : 'hover:border-slate-300'
-                  } border-l-[3px] ${stepColorClasses.accent}`}
+                  className={`group relative rounded-lg border shadow-sm transition-all border-l-[3px] ${stepColorClasses.accent} ${
+                    d ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-white border-slate-200'
+                  } ${draggedStepId === step.id ? 'opacity-50' : d ? 'hover:border-white/[0.14]' : 'hover:border-slate-300'}`}
                 >
                   {/* Step Header */}
-                  <div className={`flex items-center gap-3 px-4 py-2.5 ${stepColorClasses.headerBg} border-b border-slate-100 rounded-tr-lg rounded-tl-sm`}>
-                    <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-slate-400 hover:text-slate-600 transition-colors">
+                  <div className={`flex items-center gap-3 px-4 py-2.5 ${stepColorClasses.headerBg} border-b wf-border-subtle rounded-tr-lg rounded-tl-sm`}>
+                    <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 wf-fg-faint wf-hover-fg transition-colors">
                       <GripVertical className="w-4 h-4" />
                     </div>
                     
@@ -1037,12 +1137,12 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                     </div>
                     
                     <div className="flex-1 flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-400 w-5 text-right">{index + 1}.</span>
+                      <span className="text-xs font-medium wf-fg-faint w-5 text-right">{index + 1}.</span>
                       <input
                         type="text"
                         value={step.label}
                         onChange={(e) => updateStep(step.id, { label: e.target.value })}
-                        className="bg-transparent font-medium text-sm text-slate-800 focus:outline-none w-full placeholder-slate-400"
+                        className="bg-transparent font-medium text-sm wf-fg focus:outline-none w-full placeholder:wf-fg-faint"
                         placeholder="Step name..."
                       />
                     </div>
@@ -1053,7 +1153,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                     
                     <button
                       onClick={() => deleteStep(step.id)}
-                      className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      className="p-1 wf-fg-faint hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -1063,35 +1163,35 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                   <div className="p-4 space-y-3">
                     {step.type === 'tool' && (
                       <div className="relative">
-                        <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1.5 block">Tool</label>
+                        <label className="text-[10px] font-medium wf-fg-muted uppercase tracking-wider mb-1.5 block">Tool</label>
                         <button
                           onClick={() => setToolSearchOpen(toolSearchOpen === step.id ? null : step.id)}
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-left flex items-center justify-between hover:border-slate-300 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-300"
+                          className={`w-full px-3 py-2 rounded-md text-sm text-left flex items-center justify-between transition-colors focus:outline-none ${WF_INPUT}`}
                         >
                           {selectedTool ? (
                             <div className="flex items-center gap-2.5">
-                              <selectedTool.icon className="w-4 h-4 text-slate-500" />
-                              <span className="font-medium text-slate-700/80">{selectedTool.name}</span>
-                              <span className="text-slate-400 text-xs hidden sm:inline truncate max-w-[200px]"> - {selectedTool.description}</span>
+                              <selectedTool.icon className="w-4 h-4 wf-fg-faint" />
+                              <span className="font-medium wf-fg">{selectedTool.name}</span>
+                              <span className="wf-fg-faint text-xs hidden sm:inline truncate max-w-[200px]"> - {selectedTool.description}</span>
                             </div>
                           ) : (
-                            <span className="text-slate-400">Select a tool...</span>
+                            <span className="wf-fg-faint">Select a tool...</span>
                           )}
-                          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${toolSearchOpen === step.id ? 'rotate-180' : ''}`} />
+                          <ChevronDown className={`w-4 h-4 wf-fg-faint transition-transform ${toolSearchOpen === step.id ? 'rotate-180' : ''}`} />
                         </button>
                         
                         {/* Tool Dropdown */}
                         {toolSearchOpen === step.id && (
-                          <div className="absolute z-50 mt-1 w-full bg-white rounded-lg border border-slate-200 shadow-lg max-h-[280px] overflow-hidden flex flex-col">
-                            <div className="p-2 border-b border-slate-100">
+                          <div className={`absolute z-50 mt-1 w-full rounded-lg border shadow-lg max-h-[280px] overflow-hidden flex flex-col ${d ? 'bg-[#12141a] border-white/[0.1]' : 'bg-white border-slate-200'}`}>
+                            <div className="p-2 border-b wf-border-subtle">
                               <div className="relative">
-                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 wf-fg-faint" />
                                 <input
                                   type="text"
                                   value={toolSearch}
                                   onChange={(e) => setToolSearch(e.target.value)}
                                   placeholder="Search tools..."
-                                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-slate-300"
+                                  className={`w-full pl-8 pr-3 py-1.5 rounded text-xs ${WF_INPUT}`}
                                   autoFocus
                                 />
                               </div>
@@ -1102,7 +1202,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                                 if (categoryTools.length === 0) return null;
                                 return (
                                   <div key={category} className="mb-1">
-                                    <p className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">{category}</p>
+                                    <p className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider wf-fg-faint">{category}</p>
                                     {categoryTools.map(tool => (
                                       <button
                                         key={tool.id}
@@ -1111,9 +1211,13 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                                           setToolSearchOpen(null);
                                           setToolSearch("");
                                         }}
-                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${step.toolName === tool.id ? 'bg-indigo-50 text-slate-900' : 'text-slate-700/80 hover:bg-slate-50'}`}
+                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
+                                          step.toolName === tool.id
+                                            ? d ? 'bg-indigo-500/15 wf-fg' : 'bg-indigo-50 text-slate-900'
+                                            : 'wf-fg-muted wf-hover-bg'
+                                        }`}
                                       >
-                                        <tool.icon className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                        <tool.icon className="w-3.5 h-3.5 wf-fg-faint shrink-0" />
                                         <span className="font-medium text-xs truncate">{tool.name}</span>
                                       </button>
                                     ))}
@@ -1127,14 +1231,14 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                     )}
                     
                     <div>
-                      <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-1.5 block">
+                      <label className="text-[10px] font-medium wf-fg-muted uppercase tracking-wider mb-1.5 block">
                         {step.type === 'prompt' ? 'Instructions' : step.type === 'condition' ? 'Condition Logic' : step.type === 'output' ? 'Output Format' : 'Description'}
                       </label>
                       <textarea
                         value={step.content}
                         onChange={(e) => updateStep(step.id, { content: e.target.value })}
                         rows={3}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-800 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 resize-none font-mono text-xs"
+                        className={`w-full px-3 py-2 rounded-md text-sm resize-none font-mono text-xs ${WF_INPUT}`}
                         placeholder={
                           step.type === 'prompt' ? 'Enter instructions for the AI to follow...' :
                           step.type === 'condition' ? 'Define when to branch (e.g., "If the user tone is formal...")' :
@@ -1150,12 +1254,14 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             
             {/* Empty State */}
             {editedSkill.steps.length === 0 && (
-              <div className="py-16 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl bg-white">
-                <div className="w-12 h-12 bg-slate-50 rounded-lg flex items-center justify-center mb-3">
-                  <ListChecks className="w-6 h-6 text-slate-400" />
+              <div className={`py-16 flex flex-col items-center justify-center text-center border-2 border-dashed rounded-xl ${
+                d ? 'border-white/[0.1] bg-white/[0.02]' : 'border-slate-200 bg-white'
+              }`}>
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-3 ${d ? 'bg-white/[0.04]' : 'bg-slate-50'}`}>
+                  <ListChecks className="w-6 h-6 wf-fg-faint" />
                 </div>
-                <h3 className="text-sm font-semibold text-slate-700/80">No steps defined</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                <h3 className="text-sm font-semibold wf-fg">No steps defined</h3>
+                <p className="text-xs wf-fg-muted mt-1 max-w-sm">
                   Add steps from the toolbar above to define this skill's execution flow.
                 </p>
               </div>
@@ -1164,10 +1270,10 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             {/* Connection Lines Visual */}
             {editedSkill.steps.length > 0 && (
               <div className="flex justify-center pt-2 pb-8">
-                <div className="w-px h-8 bg-slate-200 absolute mt-[-8px]"></div>
-                <div className="flex items-center gap-1.5 px-3 py-1 bg-white rounded-full border border-slate-200 shadow-sm mt-6 z-10">
-                  <Check className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-[11px] text-slate-500 font-medium">End of Skill</span>
+                <div className={`w-px h-8 absolute mt-[-8px] ${d ? 'bg-white/[0.08]' : 'bg-slate-200'}`}></div>
+                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border shadow-sm mt-6 z-10 ${d ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-white border-slate-200'}`}>
+                  <Check className="w-3.5 h-3.5 wf-fg-faint" />
+                  <span className="text-[11px] wf-fg-muted font-medium">End of Skill</span>
                 </div>
               </div>
             )}
@@ -1208,13 +1314,19 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
           />
 
           {/* Chat Input */}
-          <div className="p-3 border-t border-white/[0.06]">
+          <div className="p-3 border-t wf-border-subtle">
             <ChatInput
               ref={chatInputRef}
               onSend={skillChat.sendMessage}
               busy={skillChat.busy}
               onStop={skillChat.stopGeneration}
               contextMetrics={skillContextMetrics}
+              selectedModelId={skillChatModelId}
+              onSelectModel={setSkillChatModelId}
+              modelSource={modelSource}
+              onModelSourceChange={setModelSource}
+              reasoningLevel={skillReasoningLevel}
+              onReasoningLevelChange={setSkillReasoningLevel}
             />
           </div>
         </div>
@@ -1251,7 +1363,7 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
   const [done, setDone] = useState(false);
 
   const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
-  const colorClasses = getSkillColorClasses(skill.color);
+  const colorClasses = getSkillColorClasses(skill.color, d);
 
   const handlePublish = async () => {
     setBusy(true);

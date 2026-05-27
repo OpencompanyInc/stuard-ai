@@ -146,6 +146,9 @@ def _list_json_items(dir_path: str) -> List[Dict[str, Any]]:
                     nm = str(data.get("name") or "").strip()
                     if nm:
                         meta["name"] = nm
+                    desc = str(data.get("description") or "").strip()
+                    if desc:
+                        meta["description"] = desc
                     triggers = []
                     if isinstance(data.get("triggers"), list):
                         for t in data["triggers"]:
@@ -170,10 +173,61 @@ def _list_json_items(dir_path: str) -> List[Dict[str, Any]]:
     return items
 
 
-async def list_local_workflows(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List local workflow JSON files created by the Stuard desktop app."""
+def _workflow_score(item: Dict[str, Any], query: str) -> int:
+    q = (query or "").strip().lower()
+    if not q:
+        return 0
+    item_id = str(item.get("id") or "").lower()
+    name = str(item.get("name") or "").lower()
+    desc = str(item.get("description") or "").lower()
+    triggers = " ".join(str(t) for t in item.get("triggers") or []).lower()
+    haystack = f"{item_id} {name} {desc} {triggers}"
+    tokens = [t for t in re.split(r"\s+", q) if t]
+
+    score = 0
+    if item_id == q or name == q:
+        score += 100
+    if item_id.startswith(q) or name.startswith(q):
+        score += 60
+    if item_id.find(q) >= 0 or name.find(q) >= 0:
+        score += 40
+    if desc.find(q) >= 0:
+        score += 25
+    for token in tokens:
+        if token in name:
+            score += 12
+        if token in desc:
+            score += 8
+        if token in haystack:
+            score += 4
+    return score
+
+
+async def search_local_workflows(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Search local workflow JSON files created by the Stuard desktop app."""
+    query = str(args.get("query") or "").strip()
+    limit = max(1, min(250, int(args.get("limit") or 10)))
+    requested_mode = str(args.get("mode") or "lexical").lower()
     items = _list_json_items(_workflows_dir())
-    return {"ok": True, "items": items}
+    workflows: List[Dict[str, Any]] = []
+    for item in items:
+        scored = dict(item)
+        scored["description"] = str(scored.get("description") or "")
+        scored["triggers"] = scored.get("triggers") if isinstance(scored.get("triggers"), list) else []
+        scored["inputSchema"] = []
+        scored["outputSchema"] = []
+        scored["score"] = _workflow_score(scored, query)
+        workflows.append(scored)
+
+    if query:
+        workflows = [w for w in workflows if int(w.get("score") or 0) > 0]
+    workflows.sort(key=lambda w: (int(w.get("score") or 0), float(w.get("updatedAt") or 0)), reverse=True)
+    return {
+        "ok": True,
+        "workflows": workflows[:limit],
+        "mode": "lexical",
+        "requestedMode": requested_mode,
+    }
 
 
 async def list_local_stuards(args: Dict[str, Any]) -> Dict[str, Any]:

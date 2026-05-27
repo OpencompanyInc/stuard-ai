@@ -236,7 +236,7 @@ export const telnyx_send_mms = createTool({
 
       // If a local file path is provided, read it via bridge and upload
       if (!resolvedUrl && input.path) {
-        const bin = await execLocalTool('read_file_binary', { path: input.path }, execCtx?.writer);
+        const bin = await execLocalTool('read_file_binary', { path: input.path, inline: true }, execCtx?.writer);
         const fileData = bin?.data as string | undefined;
         if (!fileData) {
           throw new Error(`Could not read file at path: ${input.path}`);

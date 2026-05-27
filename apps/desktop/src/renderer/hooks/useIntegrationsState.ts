@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { WHATSAPP_INTEGRATION_ENABLED } from "../../../../../shared/integration-flags";
 
 interface UseIntegrationsStateArgs {
   session: Session | null;
   AGENT_HTTP: string;
   CLOUD_AI_HTTP: string;
+  statusChecksEnabled?: boolean;
 }
 
 /** Shape returned by the profiles API */
@@ -16,7 +18,7 @@ interface IntegrationProfile {
   scopes_csv?: string | null;
 }
 
-export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: UseIntegrationsStateArgs) {
+export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statusChecksEnabled = true }: UseIntegrationsStateArgs) {
   const [connectedMap, setConnectedMap] = useState<Record<string, boolean>>({});
   const [intQuery, setIntQuery] = useState("");
   const [intCategory, setIntCategory] = useState("All");
@@ -29,12 +31,19 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   const [mpLocalStatus, setMpLocalStatus] = useState<any | null>(null);
   const [mpUpdateInfo, setMpUpdateInfo] = useState<any | null>(null);
   const [mpUpdating, setMpUpdating] = useState<boolean>(false);
+  // Data Analysis (pandas/numpy/scipy + matplotlib/seaborn in dedicated on-demand venv)
+  const [daStatus, setDaStatus] = useState<any | null>(null);
+  const [daInstalling, setDaInstalling] = useState<boolean>(false);
+  const [daUninstalling, setDaUninstalling] = useState<boolean>(false);
   const [browserUseLocalStatus, setBrowserUseLocalStatus] = useState<any | null>(null);
   const [browserUseUpdateInfo, setBrowserUseUpdateInfo] = useState<any | null>(null);
   const [browserUseUpdating, setBrowserUseUpdating] = useState<boolean>(false);
   const [pyEnvId, setPyEnvId] = useState<string>("default");
   const [pyPackages, setPyPackages] = useState<string>("");
   const [pyReqTxt, setPyReqTxt] = useState<string>("");
+  const [pyPackagesList, setPyPackagesList] = useState<Array<{ name: string; version: string }>>([]);
+  const [pyPackagesLoading, setPyPackagesLoading] = useState<boolean>(false);
+  const [pyInstallMessage, setPyInstallMessage] = useState<string | null>(null);
   const [pyInstalling, setPyInstalling] = useState<boolean>(false);
   const [pyRunning, setPyRunning] = useState<boolean>(false);
   const [pyRunCode, setPyRunCode] = useState<string>("print(\"hello from python\")");
@@ -133,7 +142,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
             serverConnected['telnyx'] = null;
           }
         })(),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/whatsapp/status`, "whatsapp"),
+        ...(WHATSAPP_INTEGRATION_ENABLED
+          ? [fetchStatus(`${CLOUD_AI_HTTP}/integrations/whatsapp/status`, "whatsapp")]
+          : []),
       ]);
 
       setConnectedMap((prev) => {
@@ -143,6 +154,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         if (prev.webhooks) next.webhooks = true;
         if (prev.ffmpeg) next.ffmpeg = true;
         if (prev.mediapipe) next.mediapipe = true;
+        if (prev['data-analysis']) next['data-analysis'] = true;
         if (prev.ollama) next.ollama = true;
         if (prev.browser_use) next.browser_use = true;
         if (prev['agent-cli']) next['agent-cli'] = true;
@@ -172,12 +184,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   }, [session?.access_token, CLOUD_AI_HTTP]);
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await syncConnectedFromServer();
       } catch {}
     })();
-  }, [syncConnectedFromServer]);
+  }, [statusChecksEnabled, syncConnectedFromServer]);
 
   // Regular integrations (OAuth-based, not MCPs)
   const integrationLibraryRaw = useMemo(
@@ -185,6 +198,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "python", name: "Python", description: "Required for local tools. Stuard sets it up automatically when needed.", category: "Local", homepage: "https://www.python.org/", available: true },
       { slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true },
       { slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
+      { slug: "data-analysis", name: "Data Analysis", description: "Analyze and visualize data with pandas, numpy, scipy, matplotlib, and seaborn. Installed on demand into an isolated environment.", category: "Local", homepage: "https://pandas.pydata.org/", available: true },
       { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
       { slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true },
       { slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true },
@@ -204,7 +218,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       { slug: "google-docs", name: "Google Docs", description: "Read document content.", category: "Files", homepage: "https://docs.google.com/", available: true },
       { slug: "google-tasks", name: "Google Tasks", description: "List, create, and complete tasks.", category: "Productivity", homepage: "https://tasks.google.com/", available: true },
       { slug: "telnyx", name: "Phone (SMS/Call)", description: "Verify your phone number to receive SMS and voice call notifications from Stuard.", category: "Communication", homepage: "https://telnyx.com/", available: true },
-      { slug: "whatsapp", name: "WhatsApp", description: "Connect your WhatsApp number to receive messages, voice notes, images, and files from Stuard.", category: "Communication", homepage: "https://business.whatsapp.com/", available: true },
+      // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+      ...(WHATSAPP_INTEGRATION_ENABLED
+        ? [{ slug: "whatsapp", name: "WhatsApp", description: "Connect your WhatsApp number to receive messages, voice notes, images, and files from Stuard.", category: "Communication", homepage: "https://business.whatsapp.com/", available: true }]
+        : []),
     ],
     []
   );
@@ -228,16 +245,30 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
 
   const connectedCount = useMemo(() => Object.keys(connectedMap).length, [connectedMap]);
 
+  const refreshPythonPackages = async (envId?: string) => {
+    const targetEnv = (envId || pyEnvId || "default").trim() || "default";
+    setPyPackagesLoading(true);
+    try {
+      const resp = await fetch(`${AGENT_HTTP}/v1/runtime/python/packages?envId=${encodeURIComponent(targetEnv)}`);
+      const j = await resp.json().catch(() => null);
+      if (j && typeof j === "object" && (j as any).ok) {
+        const rows = Array.isArray((j as any).packages) ? (j as any).packages : [];
+        setPyPackagesList(rows.filter((row: any) => row && row.name));
+      }
+    } catch {
+    } finally {
+      setPyPackagesLoading(false);
+    }
+  };
+
   const refreshPythonStatus = async () => {
     try {
-      const resp = await fetch(`${AGENT_HTTP}/v1/runtime/python/status`);
+      const resp = await fetch(`${AGENT_HTTP}/v1/runtime/python/status?envId=${encodeURIComponent(pyEnvId || "default")}`);
       const j = await resp.json().catch(() => null);
       if (j && typeof j === "object") {
         setPyStatus(j);
-        // Reconcile persisted "connected" state with reality so a stale
-        // localStorage flag from a prior session doesn't make the card show
-        // ACTIVE while the runtime is missing.
         const available = !!(j as any).available;
+        const ready = !!(j as any).activeReady || !!(j as any).defaultReady;
         setConnectedMap((prev) => {
           const next = { ...prev } as Record<string, boolean>;
           if (available) next.python = true;
@@ -246,17 +277,23 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
           emitConnectedChanged();
           return next;
         });
+        if (available && ready) {
+          await refreshPythonPackages((j as any).activeEnvId || pyEnvId || "default");
+        } else {
+          setPyPackagesList([]);
+        }
       }
     } catch {}
   };
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshPythonStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled, pyEnvId]);
 
   const refreshFfmpegStatus = async () => {
     try {
@@ -276,12 +313,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshFfmpegStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled]);
 
   const refreshMediapipeStatus = async () => {
     try {
@@ -349,13 +387,71 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
   };
 
+  // ── Data Analysis ──────────────────────────────────────────────────────────
+
+  const refreshDataAnalysisStatus = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('data_analysis_status', {});
+      if (res && typeof res === 'object') setDaStatus(res);
+      const installed = !!(res && res.installed);
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (installed) next['data-analysis'] = true;
+        else delete next['data-analysis'];
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {}
+  };
+
+  const setupDataAnalysis = async () => {
+    setDaInstalling(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('data_analysis_setup', {});
+      if (res && typeof res === 'object' && !res.ok && res.error) {
+        console.error('[data_analysis_setup] failed:', res.error);
+      }
+    } catch (e) {
+      console.error('[data_analysis_setup] exception:', e);
+    } finally {
+      await refreshDataAnalysisStatus();
+      setDaInstalling(false);
+    }
+  };
+
+  const uninstallDataAnalysis = async () => {
+    setDaUninstalling(true);
+    try {
+      const res = await (window as any).desktopAPI?.execTool?.('data_analysis_uninstall', {});
+      if (res && typeof res === 'object' && !res.ok && res.error) {
+        console.error('[data_analysis_uninstall] failed:', res.error);
+      }
+    } catch (e) {
+      console.error('[data_analysis_uninstall] exception:', e);
+    } finally {
+      await refreshDataAnalysisStatus();
+      setDaUninstalling(false);
+    }
+  };
+
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshMediapipeStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled]);
+
+  useEffect(() => {
+    if (!statusChecksEnabled) return;
+    (async () => {
+      try {
+        await refreshDataAnalysisStatus();
+      } catch {}
+    })();
+  }, [statusChecksEnabled]);
 
   const refreshOllamaStatus = async () => {
     setOllamaChecking(true);
@@ -393,17 +489,18 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshOllamaStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled]);
 
   const refreshCliAgentStatus = async () => {
     setCliAgentChecking(true);
     try {
-      const res = await (window as any).desktopAPI?.execTool?.('cli_agent_detect', {});
+      const res = await (window as any).desktopAPI?.execTool?.('cli_agent_detect', { includeVersions: false });
       if (res && typeof res === 'object') setCliAgentStatus(res);
 
       const anyAvailable = !!(res && (res as any).anyAvailable);
@@ -422,12 +519,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshCliAgentStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled]);
 
   const refreshBrowserUseStatus = async () => {
     setBrowserUseChecking(true);
@@ -567,12 +665,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     (async () => {
       try {
         await refreshBrowserUseStatus();
       } catch {}
     })();
-  }, []);
+  }, [statusChecksEnabled]);
 
   const setupFfmpeg = async () => {
     setFfInstalling(true);
@@ -587,11 +686,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   };
 
   const setupPython = async () => {
+    setPyInstallMessage(null);
     try {
       await fetch(`${AGENT_HTTP}/v1/runtime/python/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ envId: pyEnvId || "default" }),
       });
       await refreshPythonStatus();
     } catch {}
@@ -599,14 +699,35 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
 
   const installPython = async () => {
     setPyInstalling(true);
+    setPyInstallMessage(null);
     try {
       const packages = pyPackages.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
       const payload: any = { envId: pyEnvId, packages, requirementsTxt: pyReqTxt };
-      await fetch(`${AGENT_HTTP}/v1/runtime/python/install`, {
+      const resp = await fetch(`${AGENT_HTTP}/v1/runtime/python/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const j = await resp.json().catch(() => null);
+      if (j && typeof j === "object") {
+        const installed = Array.isArray((j as any).packagesInstalled) ? (j as any).packagesInstalled.length : 0;
+        const skipped = Array.isArray((j as any).packagesSkipped) ? (j as any).packagesSkipped.length : 0;
+        if ((j as any).ok) {
+          if (installed > 0 && skipped > 0) {
+            setPyInstallMessage(`Installed ${installed}, skipped ${skipped} already present`);
+          } else if (installed > 0) {
+            setPyInstallMessage(`Installed ${installed} package${installed === 1 ? "" : "s"}`);
+          } else if (skipped > 0) {
+            setPyInstallMessage(`All ${skipped} package${skipped === 1 ? " is" : "s are"} already installed`);
+          } else {
+            setPyInstallMessage("Nothing to install");
+          }
+          setPyPackages("");
+          setPyReqTxt("");
+        } else if ((j as any).error) {
+          setPyInstallMessage(String((j as any).error));
+        }
+      }
       await refreshPythonStatus();
     } finally {
       setPyInstalling(false);
@@ -662,6 +783,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
         await syncConnectedFromServer(token);
         return;
       }
+    }
+
+    if (slug === "data-analysis") {
+      try {
+        await uninstallDataAnalysis();
+      } catch {}
+      return;
     }
 
     // Fallback for local-only or unknown integrations.
@@ -722,12 +850,16 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   }, [session?.access_token, CLOUD_AI_HTTP]);
 
   useEffect(() => {
+    if (!statusChecksEnabled) {
+      setProfiles([]);
+      return;
+    }
     if (!session?.access_token) {
       setProfiles([]);
       return;
     }
     void refreshProfiles();
-  }, [session?.access_token, refreshProfiles]);
+  }, [statusChecksEnabled, session?.access_token, refreshProfiles]);
 
   /** Set a given profile as the default for its provider */
   const setDefaultProfile = useCallback(async (provider: string, profileLabel: string) => {
@@ -768,6 +900,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
   // desktop window we re-pull profiles + connected state so a freshly-linked
   // account shows up without a manual Refresh click.
   useEffect(() => {
+    if (!statusChecksEnabled) return;
     if (!session?.access_token) return;
     const onFocus = () => {
       void refreshProfiles();
@@ -783,7 +916,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [session?.access_token, refreshProfiles, syncConnectedFromServer]);
+  }, [statusChecksEnabled, session?.access_token, refreshProfiles, syncConnectedFromServer]);
 
   const telnyxRequestCode = async (phone: string, slot: number = 0): Promise<{ ok: boolean; error?: string }> => {
     const token = session?.access_token;
@@ -972,7 +1105,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
 
   // Poll for WhatsApp link confirmation while waiting for the user to send the code
   useEffect(() => {
-    if (!whatsappLinking || !session?.access_token) return;
+    if (!WHATSAPP_INTEGRATION_ENABLED || !whatsappLinking || !session?.access_token) return;
     let cancelled = false;
     const poll = async () => {
       while (!cancelled) {
@@ -1025,6 +1158,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
       return;
     }
 
+    if (slug === "data-analysis") {
+      try {
+        await setupDataAnalysis();
+      } catch {}
+      return;
+    }
+
     if (slug === "ollama") {
       try {
         const status = await (window as any).desktopAPI?.execTool?.('ollama_status', {});
@@ -1057,7 +1197,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     }
 
     if (slug === "whatsapp") {
-      await refreshWhatsAppStatus();
+      if (WHATSAPP_INTEGRATION_ENABLED) await refreshWhatsAppStatus();
       return;
     }
 
@@ -1228,6 +1368,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setPyPackages,
     pyReqTxt,
     setPyReqTxt,
+    pyPackagesList,
+    pyPackagesLoading,
+    pyInstallMessage,
     pyInstalling,
     ffInstalling,
     mpStatus,
@@ -1235,6 +1378,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     mpLocalStatus,
     mpUpdateInfo,
     mpUpdating,
+    daStatus,
+    daInstalling,
+    daUninstalling,
     browserUseLocalStatus,
     browserUseUpdateInfo,
     browserUseUpdating,
@@ -1269,6 +1415,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     handleDisconnect,
     handleLearnMore,
     refreshPythonStatus,
+    refreshPythonPackages,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
     refreshOllamaStatus,
@@ -1284,6 +1431,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP }: Use
     setupFfmpeg,
     setupMediapipe,
     updateMediapipe,
+    refreshDataAnalysisStatus,
+    setupDataAnalysis,
+    uninstallDataAnalysis,
     installPython,
     runPython,
     // profile actions

@@ -107,13 +107,13 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
 
   return (
     <div className={clsx(
-      "w-full h-full flex overflow-hidden rounded-2xl",
+      "launcher-compact-skin w-full h-full flex overflow-hidden rounded-[32px]",
       translucentMode
-        ? "bg-theme-card/80 backdrop-blur-2xl"
-        : "bg-theme-bg"
+        ? "bg-theme-bg backdrop-blur-2xl"
+        : "bg-theme-bg",
     )}>
       {/* Icon Rail */}
-      <div className="relative flex flex-col items-center w-[52px] shrink-0 py-2.5 gap-0.5 border-r border-theme/5">
+      <div className="relative flex flex-col items-center w-[52px] shrink-0 py-2.5 gap-0.5 border-r border-theme-sidebar">
         {/* Drag handle */}
         <div
           className="flex items-center justify-center w-9 h-6 mb-1.5 text-theme-muted/30 cursor-grab active:cursor-grabbing"
@@ -140,8 +140,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                   className={clsx(
                     'relative flex items-center justify-center w-full h-10 rounded-xl transition-all duration-200',
                     isActive
-                      ? 'bg-theme-hover/70 text-theme-fg'
-                      : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/40'
+                      ? 'bg-theme-active text-theme-fg'
+                      : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/50',
                   )}
                   title={tab.label}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -166,7 +166,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                 {/* Tooltip */}
                 <div className={clsx(
                   "absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap pointer-events-none transition-all duration-150 z-50",
-                  "bg-theme-card text-theme-fg shadow-lg border border-theme/10",
+                  "bg-pill-bg text-pill-fg shadow-[var(--compact-pill-shadow)]",
                   isHovered ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-1"
                 )}>
                   {tab.label}
@@ -206,7 +206,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Content Header */}
         <div
-          className="flex items-center justify-between px-4 h-11 border-b border-theme/5 shrink-0"
+          className="flex items-center justify-between px-4 h-11 shrink-0"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

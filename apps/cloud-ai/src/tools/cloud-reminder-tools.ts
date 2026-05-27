@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '../supabase';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal: auto-sync a reminder to cloud when cloud_notify is set
@@ -25,7 +26,10 @@ export async function syncReminderToCloud(
     .single();
 
   const tz = (profile as any)?.timezone || 'UTC';
-  const method = opts.cloud_notify_method || 'sms';
+  let method = opts.cloud_notify_method || 'sms';
+  if (!WHATSAPP_INTEGRATION_ENABLED) {
+    if (method === 'whatsapp' || method === 'both') method = 'sms';
+  }
 
   // Parse the "when" value
   let remindAt: Date;

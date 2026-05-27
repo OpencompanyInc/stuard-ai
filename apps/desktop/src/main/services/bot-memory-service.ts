@@ -375,7 +375,7 @@ export const botMemoryService = {
       }
       sections.push(lines.join('\n'));
     } else {
-      // No cards yet — still tell the bot the tools exist so it can start
+      // No cards yet — still tell the agent the tools exist so it can start
       // building memory on its very first run instead of running blind.
       sections.push([
         '# YOUR PRIVATE KANBAN (empty — start populating it as you work)',

@@ -20,6 +20,9 @@ _config: dict = {
 }
 _lock = asyncio.Lock()
 _viewport_cache: dict[str, int] = {"w": 1280, "h": 900}  # cached viewport size for mirror
+_tab_session_targets: dict[str, str] = {}  # session_id -> CDP target id
+_tab_target_owners: dict[str, str] = {}    # CDP target id -> session_id
+_tab_session_touched: dict[str, float] = {}
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -30,3 +33,4 @@ HOST = os.environ.get("STUARD_BROWSER_HOST", os.environ.get("BROWSER_USE_HOST", 
 AUTH_HEADER = "x-stuard-browser-token"
 AUTH_TOKEN = os.environ.get("STUARD_BROWSER_AUTH_TOKEN", os.environ.get("BROWSER_USE_AUTH_TOKEN", "")).strip()
 PROFILE_ROOT = Path(os.environ.get("STUARD_BROWSER_PROFILE_DIR", os.environ.get("BROWSER_USE_PROFILE_DIR", str(Path.home() / ".stuard" / "browser-profiles"))))
+TAB_SESSION_TTL_SECONDS = int(os.environ.get("STUARD_BROWSER_TAB_SESSION_TTL_SECONDS", "7200"))

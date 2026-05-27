@@ -11,14 +11,13 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout, BookOpen, BookText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { VoiceMorphPill } from '../../../voice/VoiceMorphPill';
 import type { VoiceToolEvent } from '../../../../hooks/useVoiceMode';
 import { clsx } from 'clsx';
 import QueuePanel from '../../../QueuePanel';
 import { FileNavigator, ContextItem, FileNavRef } from '../../../FileNavigator';
-import MessageBubble from '../messages/MessageBubble/MessageBubble';
 import { QuickShortcutsGrid, BookmarkEditor, useBookmarks, Bookmark, getTypeConfig } from '../../../QuickShortcuts';
 import stuardLogo from '@website-assets/logo.png';
 import googleLogo from '../../../../assets/icons/google.png';
@@ -31,14 +30,23 @@ import type { UrgencyLevel } from '../../../../hooks/usePlannerData';
 import { useStatusCarousel, type StatusItem } from '../../../../hooks/useStatusCarousel';
 import { useWorkflows } from '../../../../workflows/hooks/useWorkflows';
 import { getMarketplaceApi } from '../../../../utils/cloud';
+import { filterCompactMarketplaceResults } from '../../../../utils/marketplaceSearch';
+import {
+  filterCompactStuardNav,
+  openWorkflowInStudio,
+  runDeployedWorkflow,
+  type CompactStuardNavItem,
+} from '../../../../utils/compactStuardNav';
 import { chooseDropdownPlacement } from '../../../../utils/dropdownPlacement';
+import { TabHistoryMenu, estimateCompactTabMenuHeight, type ConversationHistoryItem } from '../TabHistoryMenu';
+import { useChatTabs } from '../ChatTabsContext';
 
 interface InputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
   onSteer?: () => void;
-  attachments: Array<{ type: 'image' | 'file'; name: string }>;
+  attachments: Array<{ type: 'image' | 'file'; name: string; mimeType?: string; source?: string }>;
   onRemoveAttachment: (index: number) => void;
   onAttachFiles: () => void;
   onAttachImages: () => void;
@@ -48,13 +56,13 @@ interface InputAreaProps {
   signedIn: boolean;
   onSignIn: () => void;
 
-  // History / Conversations
+  // History
   conversationTitle: string | null;
-  conversations: any[];
-  loadingConversations: boolean;
-  onSelectConversation: (id: string) => void;
-  onDeleteConversation?: (id: string) => void;
-  onNewChat: () => void;
+  conversations?: ConversationHistoryItem[];
+  loadingConversations?: boolean;
+  activeConversationId?: string | null;
+  onSelectConversation?: (id: string) => void;
+  onNewChat?: () => void;
   onStopGeneration?: () => void;
   onChatMenuOpenChange: (open: boolean) => void;
   chatMenuOpen: boolean;
@@ -113,10 +121,21 @@ interface InputAreaProps {
   miniOutputText?: string;
   miniOutputHasContent?: boolean;
   miniOutputStreaming?: boolean;
+  miniOutputPrompt?: string;
   showMiniOutput?: boolean;
   setShowMiniOutput?: React.Dispatch<React.SetStateAction<boolean>>;
+  /** In-flight tool calls from the current assistant turn — feeds compact brand chips. */
+  currentToolCalls?: ReadonlyArray<{ id: string; tool: string; status: 'called' | 'running' | 'completed' | 'error' }>;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
+
+  /** When true, compact mode shows the animated thinking border instead of the AI sparkle status pill. */
+  isAiWorking?: boolean;
+
+  /** Background AI tasks — drives the compact task counter. */
+  backgroundTaskCount?: number;
+  /** Per-tab snapshots for the compact hub. */
+  compactHubTabs?: import('./compact/CompactHub').CompactHubTab[];
 }
 
 import { normalizeInputSearchText, shouldRunInputSemanticSearch } from './search';
@@ -125,7 +144,77 @@ import { getFileKindConfig } from './fileKind';
 import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_ROW_WITH_ICON, FIGMA_KBD } from './styles';
 import { AttachmentBar } from './AttachmentBar';
 import { FolderPermissionsButton } from './FolderPermissionsButton';
+import { CompactSearchDropdown } from './compact/CompactSearchDropdown';
+import { CompactStatusPill } from './compact/CompactStatusPill';
+import { CompactInputPill } from './compact/CompactInputPill';
+import { CompactDragCorner } from './compact/CompactDragCorner';
+import { CompactTitleBar } from './compact/CompactTitleBar';
+import { CompactFileNavPortal } from './compact/CompactFileNavPortal';
+import {
+  COMPACT_DROPDOWN_MAX_HEIGHT,
+  COMPACT_OVERLAY_DROPDOWN_GAP,
+  COMPACT_WINDOW_DROPDOWN_MARGIN,
+  compactWindowResizeAnchor,
+} from './compact/compactOverlayLayout';
+import { CompactHub, COMPACT_HUB_PEEK_VISIBLE } from './compact/CompactHub';
+import { COMPACT_RESPONSE_PANEL_MAX_HEIGHT } from './CompactResponsePanel';
 
+const COMPACT_TITLE_BUMP_HEIGHT = 24;
+const COMPACT_TITLE_BUMP_OVERLAP = 10;
+/** Net vertical space the centered title bump adds above the input pill. */
+const COMPACT_TITLE_BAR_HEIGHT = COMPACT_TITLE_BUMP_HEIGHT - COMPACT_TITLE_BUMP_OVERLAP + 2;
+/** Fallback before the response panel reports its first measured height. */
+const COMPACT_QUICK_RESPONSE_MIN_HEIGHT = 96;
+/** Gap between response panel bottom and input bar + top shadow clearance. */
+const COMPACT_QUICK_RESPONSE_CHROME = 20;
+
+type CompactSearchEngineId =
+  | 'google'
+  | 'bing'
+  | 'duckduckgo'
+  | 'youtube'
+  | 'github'
+  | 'merriam'
+  | 'wikipedia';
+
+const COMPACT_SEARCH_ENGINE_IDS = new Set<string>([
+  'google',
+  'bing',
+  'duckduckgo',
+  'youtube',
+  'github',
+  'merriam',
+  'wikipedia',
+]);
+
+function normalizeCompactSearchEngineId(id: string | null | undefined): CompactSearchEngineId {
+  return COMPACT_SEARCH_ENGINE_IDS.has(id || '')
+    ? (id as CompactSearchEngineId)
+    : 'google';
+}
+
+function compactSearchUrl(engineId: string | null | undefined, query: string): string {
+  const id = normalizeCompactSearchEngineId(engineId);
+  const q = query.trim();
+  const encoded = encodeURIComponent(q);
+  switch (id) {
+    case 'bing':
+      return q ? `https://www.bing.com/search?q=${encoded}` : 'https://www.bing.com/';
+    case 'duckduckgo':
+      return q ? `https://duckduckgo.com/?q=${encoded}` : 'https://duckduckgo.com/';
+    case 'youtube':
+      return q ? `https://www.youtube.com/results?search_query=${encoded}` : 'https://www.youtube.com/';
+    case 'github':
+      return q ? `https://github.com/search?q=${encoded}` : 'https://github.com/search';
+    case 'merriam':
+      return q ? `https://www.merriam-webster.com/dictionary/${encoded}` : 'https://www.merriam-webster.com/';
+    case 'wikipedia':
+      return q ? `https://en.wikipedia.org/w/index.php?search=${encoded}` : 'https://en.wikipedia.org/';
+    case 'google':
+    default:
+      return q ? `https://www.google.com/search?q=${encoded}` : 'https://www.google.com/';
+  }
+}
 
 const InputArea = forwardRef(function InputArea(
   {
@@ -133,7 +222,9 @@ const InputArea = forwardRef(function InputArea(
     attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
     onPaste, onDrop,
     signedIn, onSignIn,
-    conversationTitle, conversations, loadingConversations, onSelectConversation, onDeleteConversation, onNewChat, onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
+    conversationTitle, conversations = [], loadingConversations = false,
+    activeConversationId, onSelectConversation = () => {}, onNewChat = () => {},
+    onStopGeneration, onChatMenuOpenChange, chatMenuOpen,
     expanded, onToggleExpand, onOpenDashboard, overlayMode, statusText, statusIcon, statusUrgency, statusMinutesUntil, statusItems,
     connectionStatus,
     queueDepth, queuedMessages, onCancelQueuedMessage,
@@ -154,13 +245,20 @@ const InputArea = forwardRef(function InputArea(
     miniOutputText,
     miniOutputHasContent,
     miniOutputStreaming,
+    miniOutputPrompt = '',
     showMiniOutput,
     setShowMiniOutput,
+    currentToolCalls,
     onSubmitToolOutput,
     onGenUIResponse,
+    isAiWorking = false,
+    backgroundTaskCount = 0,
+    compactHubTabs = [],
   }: InputAreaProps,
   ref: React.ForwardedRef<HTMLTextAreaElement>
 ) {
+
+  const { tabs: openTabs, activeTabId } = useChatTabs();
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
@@ -242,9 +340,11 @@ const InputArea = forwardRef(function InputArea(
       try {
         const token = accessToken ?? null;
         const api = getMarketplaceApi(() => token);
-        const res = await api.search({ query: q, limit: 3 });
+        // Ask the server for a small over-fetch so the client-side similarity
+        // cutoff still leaves enough rows to fill the 3-slot dropdown.
+        const res = await api.search({ query: q, limit: 8 });
         if (res.ok && res.results) {
-          setMarketplaceResults(res.results);
+          setMarketplaceResults(filterCompactMarketplaceResults(res.results as any[], q));
         } else {
           setMarketplaceResults([]);
         }
@@ -264,9 +364,55 @@ const InputArea = forwardRef(function InputArea(
     const q = (query || '').toLowerCase().trim();
     if (!q || q.length < 2) return [];
     return localWorkflows.filter(w =>
-      (w.name || '').toLowerCase().includes(q)
-    ).slice(0, 3);
+      (w.name || '').toLowerCase().includes(q) ||
+      w.id.toLowerCase().includes(q)
+    ).slice(0, 5);
   }, [localWorkflows, query]);
+
+  const [workflowDeployMap, setWorkflowDeployMap] = useState<Record<string, { deployed: boolean; running: boolean }>>({});
+
+  useEffect(() => {
+    if (filteredLocalWorkflows.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        filteredLocalWorkflows.map(async (w) => {
+          try {
+            const status = await (window as any).desktopAPI?.workflowsGetDeployStatus?.(w.id);
+            return [
+              w.id,
+              {
+                deployed: Boolean(status?.deployed),
+                running: Boolean(status?.running),
+              },
+            ] as const;
+          } catch {
+            return [w.id, { deployed: false, running: false }] as const;
+          }
+        })
+      );
+      if (!cancelled) {
+        setWorkflowDeployMap((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filteredLocalWorkflows]);
+
+  type CompactWorkflowHit = {
+    id: string;
+    name?: string;
+    deployed: boolean;
+    running: boolean;
+  };
+
+  const compactWorkflowHits = React.useMemo<CompactWorkflowHit[]>(() => {
+    return filteredLocalWorkflows.map((w) => ({
+      id: w.id,
+      name: w.name,
+      deployed: workflowDeployMap[w.id]?.deployed ?? false,
+      running: workflowDeployMap[w.id]?.running ?? false,
+    }));
+  }, [filteredLocalWorkflows, workflowDeployMap]);
 
   const matchingBookmarks = React.useMemo(() => {
     const q = (query || '').toLowerCase().trim();
@@ -277,51 +423,8 @@ const InputArea = forwardRef(function InputArea(
     ).slice(0, 4);
   }, [bookmarks, query]);
 
-  // Built-in Stuard commands (Studio, Dashboard) — surfaced at the top of
-  // the dropdown so they always outrank app/file matches when the query is
-  // even loosely related.
-  type StuardCommand = {
-    id: 'studio' | 'dashboard';
-    title: string;
-    subtitle: string;
-    icon: React.ComponentType<any>;
-    tile: string;
-    keywords: string[];
-    run: () => void;
-  };
-  const stuardCommands = React.useMemo<StuardCommand[]>(() => {
-    const q = (query || '').toLowerCase().trim();
-    if (!q || q.length < 2) return [];
-    const all: StuardCommand[] = [
-      {
-        id: 'studio',
-        title: 'Stuard Studio',
-        subtitle: 'Open the workflow studio',
-        icon: Sparkles,
-        tile: '#7C3AED',
-        keywords: ['stuard', 'studio', 'workflow', 'workflows', 'automation', 'automate', 'builder', 'skill', 'skills'],
-        run: () => {
-          try { (window as any).desktopAPI?.openWorkflows?.(); } catch {}
-          try { (window as any).desktopAPI?.hide?.(); } catch {}
-        },
-      },
-      {
-        id: 'dashboard',
-        title: 'Dashboard',
-        subtitle: 'Open the Stuard dashboard',
-        icon: Layout,
-        tile: '#2563EB',
-        keywords: ['stuard', 'dashboard', 'dash', 'home', 'overview', 'planner', 'panel'],
-        run: () => {
-          try { (window as any).desktopAPI?.openDashboard?.(); } catch {}
-          try { (window as any).desktopAPI?.hide?.(); } catch {}
-        },
-      },
-    ];
-    return all.filter(c =>
-      c.title.toLowerCase().includes(q) ||
-      c.keywords.some(k => k.includes(q) || q.includes(k))
-    );
+  const stuardCommands = React.useMemo<CompactStuardNavItem[]>(() => {
+    return filterCompactStuardNav(query, 10);
   }, [query]);
 
 
@@ -341,11 +444,11 @@ const InputArea = forwardRef(function InputArea(
         });
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok && Array.isArray(res.results)) {
-          const isStuardSelf = (r: any) => {
-            const name = String(r?.name || r?.display_name || '').toLowerCase();
-            return name === 'stuard' || name === 'stuard ai' || name.startsWith('stuard ai');
-          };
-          const apps = res.results.filter((r: any) => r.source === 'app-discovery' && !isStuardSelf(r));
+          // We used to filter out Stuard AI itself here on the theory that
+          // it's redundant when you're already in the app. Removed: users
+          // expect to see it (consistent with full launcher view, and lets
+          // them focus an existing instance from the compact dropdown).
+          const apps = res.results.filter((r: any) => r.source === 'app-discovery');
           const files = res.results.filter((r: any) => (
             r.source !== 'app-discovery' &&
             String(r.kind || '').toLowerCase() !== 'application'
@@ -623,6 +726,54 @@ const InputArea = forwardRef(function InputArea(
     }
   }, [ref]);
 
+  const [compactHubOpen, setCompactHubOpen] = useState(false);
+  const compactHubOpenRef = useRef(false);
+  const hubResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userDismissedHubRef = useRef(false);
+  const wasStreamingRef = useRef(false);
+  const [quickResponseHeight, setQuickResponseHeight] = useState(0);
+  const quickResponseHeightRef = useRef(0);
+  useEffect(() => { compactHubOpenRef.current = compactHubOpen; }, [compactHubOpen]);
+
+  const openCompactHub = useCallback((force = false) => {
+    if (expanded || overlayMode !== 'compact') return;
+    if (!force && userDismissedHubRef.current) return;
+    userDismissedHubRef.current = false;
+    setCompactHubOpen(true);
+  }, [expanded, overlayMode]);
+
+  const closeCompactHub = useCallback(() => {
+    userDismissedHubRef.current = true;
+    setCompactHubOpen(false);
+  }, []);
+
+  const handleQuickResponseHeightChange = useCallback((height: number) => {
+    const next = Math.max(0, Math.ceil(height));
+    if (next === quickResponseHeightRef.current) return;
+    quickResponseHeightRef.current = next;
+    setQuickResponseHeight(next);
+  }, []);
+
+  useEffect(() => {
+    if (!compactHubOpen) {
+      quickResponseHeightRef.current = 0;
+      setQuickResponseHeight(0);
+    }
+  }, [compactHubOpen]);
+
+  const showHubPeek = React.useMemo(() => {
+    if (!signedIn) return false;
+    // Active turn uses the response panel — no peek strip or reserved gap.
+    if (compactHubOpen || isAiWorking || !!miniOutputStreaming) return false;
+    return (
+      backgroundTaskCount > 0
+      || compactHubTabs.some((t) => t.isWorking || t.assistantText || t.userPrompt)
+      || compactHubTabs.length > 1
+      || !!(miniOutputText || '').trim()
+      || !!miniOutputHasContent
+    );
+  }, [signedIn, backgroundTaskCount, compactHubTabs, miniOutputStreaming, miniOutputText, miniOutputHasContent, compactHubOpen, isAiWorking]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Arrow key navigation for dropdowns
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -660,7 +811,7 @@ const InputArea = forwardRef(function InputArea(
       }
     }
 
-    // Escape to close dropdowns
+    // Escape to close dropdowns or hub
     if (e.key === 'Escape') {
       if (showFileNavRef.current) {
         e.preventDefault();
@@ -668,9 +819,14 @@ const InputArea = forwardRef(function InputArea(
         setFileNavFilter("");
         return;
       }
+      if (compactHubOpenRef.current) {
+        e.preventDefault();
+        closeCompactHub();
+        return;
+      }
     }
 
-    // Web Search Shortcut (Ctrl+Enter)
+    // Web Search Shortcut (Ctrl+Enter) — steer when streaming, otherwise open search
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       if (miniOutputStreaming && onSteer && query.trim()) {
@@ -684,35 +840,27 @@ const InputArea = forwardRef(function InputArea(
       // Let's dispatch a custom event or just trigger the search via a dedicated handler that we'll Expose/Use.
       // Ideally, we'd call the search function directly.
       const savedEngine = typeof window !== 'undefined' ? localStorage.getItem('stuard_default_search_engine') : 'google';
-      const engineId = savedEngine || 'google';
+      const engineId = normalizeCompactSearchEngineId(savedEngine);
       const q = query.trim();
-
-      // Define engines map temporarily here or move searchEngines out of render
-      // For safety, let's just construct the URL manually or find it if we move the config up.
-      // To avoid duplication, let's just trigger the search action directly if we can access the list.
-      // We will move searchEngines definition UP or duplicat minimal logic.
-
-      let url = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
-      if (engineId === 'bing') url = `https://www.bing.com/search?q=${encodeURIComponent(q)}`;
-      if (engineId === 'duckduckgo') url = `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
-      if (engineId === 'youtube') url = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
-      if (engineId === 'github') url = `https://github.com/search?q=${encodeURIComponent(q)}`;
+      const url = compactSearchUrl(engineId, q);
 
       if (q) {
         window.desktopAPI?.openExternal?.(url);
         setQuery("");
         window.desktopAPI?.hide?.();
       } else {
-        window.desktopAPI?.openExternal?.(url); // Open homepage
+        window.desktopAPI?.openExternal?.(url);
       }
       return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      userDismissedHubRef.current = false;
+      openCompactHub(true);
       onSend();
     }
-  }, [onSend, onSteer, query, setQuery, miniOutputStreaming]);
+  }, [onSend, onSteer, query, setQuery, miniOutputStreaming, openCompactHub, closeCompactHub]);
 
   // File Navigation State for @ mentions
   const [showFileNav, setShowFileNav] = useState(false);
@@ -869,18 +1017,37 @@ const InputArea = forwardRef(function InputArea(
   const showSearchOptions = !expanded && query.trim().length >= 2 && !showFileNav;
   const typingActive = query.trim().length > 0;
 
+  // Auto-open quick response when the assistant starts streaming.
+  useEffect(() => {
+    const streaming = !!miniOutputStreaming;
+    const streamingStarted = streaming && !wasStreamingRef.current;
+    wasStreamingRef.current = streaming;
+
+    if (!streamingStarted || expanded || overlayMode !== 'compact') return;
+    if (showSearchOptions || showFileNav) return;
+    openCompactHub(true);
+  }, [miniOutputStreaming, expanded, overlayMode, showSearchOptions, showFileNav, openCompactHub]);
+
+  // Auto-open when AI work begins (voice / other send paths).
+  useEffect(() => {
+    if (!isAiWorking || expanded || overlayMode !== 'compact') return;
+    if (showSearchOptions || showFileNav) return;
+    openCompactHub();
+  }, [isAiWorking, expanded, overlayMode, showSearchOptions, showFileNav, openCompactHub]);
+
   // State for expanded web search options - must be defined before updateWindowSize
   const [showWebOptions, setShowWebOptions] = useState(false);
   const [defaultEngineId, setDefaultEngineId] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('stuard_default_search_engine') || 'google';
+      return normalizeCompactSearchEngineId(localStorage.getItem('stuard_default_search_engine'));
     }
     return 'google';
   });
 
   const handleSetDefaultEngine = useCallback((id: string) => {
-    setDefaultEngineId(id);
-    localStorage.setItem('stuard_default_search_engine', id);
+    const nextId = normalizeCompactSearchEngineId(id);
+    setDefaultEngineId(nextId);
+    localStorage.setItem('stuard_default_search_engine', nextId);
     setShowWebOptions(false);
   }, []);
 
@@ -895,35 +1062,114 @@ const InputArea = forwardRef(function InputArea(
   const extraInputHeightRef = useRef(0);
   const currentTextareaHeightRef = useRef(36);
   const [dropdownPlacement, setDropdownPlacement] = useState<'top' | 'bottom'>('top');
-  const prevWindowHeightRef = useRef(140);
-  const prevWindowWidthRef = useRef(366);
-  const isExpandingRef = useRef(false);
+  const dropdownPlacementRef = useRef<'top' | 'bottom'>('top');
+  /**
+   * Placement we last applied an anchor for. When this differs from the
+   * placement we're about to apply, the input bar needs to physically swap
+   * window edges — that's the only path that uses raw setBounds; everything
+   * else goes through `overlay:resize` with the appropriate anchor and lets
+   * the main process do the math.
+   */
+  const lastAppliedPlacementRef = useRef<'top' | 'bottom'>('top');
+  /** Locked placement while ANY overlay (dropdown / hub / peek) is visible. */
+  const lockedOverlayPlacementRef = useRef<'top' | 'bottom' | null>(null);
+  /** Locked dropdown reserve so async results don't resize the window. */
+  const lockedOverlayHeightRef = useRef(0);
+  const [lockedOverlayHeight, setLockedOverlayHeight] = useState(0);
+  /** Last (w, h, anchor) tuple we asked main-process for — dedupes IPC spam. */
+  const lastSentBoundsRef = useRef<{ w: number; h: number; anchor: 'top' | 'bottom' } | null>(null);
+  /**
+   * Coalesces updateWindowSize calls within a single animation frame into one
+   * IPC. A keystroke can trigger updateWindowSize 3-5 times in the same render
+   * cycle (useEffect dep changes + textarea remeasure + ...). Each call here
+   * cancels the previous RAF and schedules a new one; only the last fires.
+   */
+  const pendingResizeRafRef = useRef<number | null>(null);
+  const compactMousePassthroughRef = useRef(false);
+  const lastPlacementFlipAtRef = useRef(0);
+  const COMPACT_WINDOW_PY = 14;
 
   const calculatePlacement = useCallback((): 'top' | 'bottom' => {
     try {
+      const screenTop = (window?.screen as any)?.availTop ?? 0;
       const screenHeight = window?.screen?.availHeight || 1080;
       const windowTop = window?.screenY || window?.screenTop || 0;
-      const windowHeight = window?.outerHeight || 140;
-      const flipToTopThreshold = dropdownPlacement === 'bottom' ? 80 : 60;
-      const flipToBottomThreshold = 160;
-      const spaceBelow = screenHeight - (windowTop + windowHeight);
-      const spaceAbove = windowTop;
+      const windowHeight = window?.outerHeight || 88;
+      const hasAttachmentsForPlacement = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
+      const inputBarHeightForPlacement = 88
+        + extraInputHeightRef.current
+        + 8
+        + (hasAttachmentsForPlacement ? 44 : 0);
 
-      if (dropdownPlacement === 'bottom') {
-        if (spaceBelow < flipToTopThreshold && spaceAbove > spaceBelow) {
-          return 'top';
-        }
-        return 'bottom';
+      // Placement must be based on the visible pill, not the native window.
+      // In bottom-half mode the native window can be a tall transparent canvas
+      // (650px) while the pill sits at its bottom edge. Using windowTop would
+      // flip the dropdown while the pill is still visibly near the bottom,
+      // which looks like Ctrl+Up teleporting back down.
+      const currentPlacement = dropdownPlacementRef.current;
+      const inputTop = currentPlacement === 'top'
+        ? windowTop + windowHeight - COMPACT_WINDOW_PY - inputBarHeightForPlacement
+        : windowTop + COMPACT_WINDOW_PY;
+      const inputBottom = inputTop + inputBarHeightForPlacement;
+      const needsDropdownForPlacement = showSearchOptions || showFileNav;
+      const dropdownHeightForPlacement = needsDropdownForPlacement
+        ? COMPACT_DROPDOWN_MAX_HEIGHT
+        : 0;
+      if (Date.now() - lastPlacementFlipAtRef.current < 260) {
+        return currentPlacement;
       }
 
-      if (spaceBelow > flipToBottomThreshold) {
-        return 'bottom';
+      const screenBottom = screenTop + screenHeight;
+      const edgeMargin = 96;
+      const flipBias = 28;
+      const neededDropdownRoom = dropdownHeightForPlacement + COMPACT_OVERLAY_DROPDOWN_GAP;
+      const roomAbove = Math.max(0, inputTop - screenTop - edgeMargin);
+      const roomBelow = Math.max(0, screenBottom - inputBottom - edgeMargin);
+
+      if (currentPlacement === 'top') {
+        return neededDropdownRoom > roomAbove && roomBelow > roomAbove + flipBias
+          ? 'bottom'
+          : 'top';
       }
-      return 'top';
+      return neededDropdownRoom > roomBelow && roomAbove > roomBelow + flipBias
+        ? 'top'
+        : 'bottom';
     } catch {
       return 'top';
     }
-  }, [dropdownPlacement]);
+  }, [attachments.length, contextPaths, showSearchOptions, showFileNav]);
+
+  // Max room the OS will actually let the dropdown occupy, given the current
+  // window position and chosen growth direction. The dropdown is portaled to
+  // document.body, so anything past the OS-clamped window edge gets clipped
+  // — overflow-y-auto can't save it. We cap to this AND the app-level cap.
+  //
+  // CAP_WINDOW_H must match MODE_SIZE_CONSTRAINTS.compact.maxH in the main
+  // process (window.ts). If they drift, the renderer asks for more height
+  // than the OS will grant, Electron silently clamps, and the anchor='bottom'
+  // dy math in setOverlaySize teleports the pill upward by the clamped delta
+  // every single resize. They MUST agree.
+  const CAP_WINDOW_H = 650;
+  const computeMaxDropdownH = useCallback((placement: 'top' | 'bottom', inputBarH: number): number => {
+    try {
+      const screenAvailTop = (window?.screen as any)?.availTop ?? 0;
+      const screenAvailH = window?.screen?.availHeight ?? 900;
+      const screenAvailBottom = screenAvailTop + screenAvailH;
+      const winTop = window?.screenY ?? window?.screenTop ?? 0;
+      const winH = window?.outerHeight ?? CAP_WINDOW_H;
+      const currentPlacement = dropdownPlacementRef.current;
+      const inputTop = currentPlacement === 'top'
+        ? winTop + winH - COMPACT_WINDOW_PY - inputBarH
+        : winTop + COMPACT_WINDOW_PY;
+      const inputBottom = inputTop + inputBarH;
+      const roomForDropdown = placement === 'top'
+        ? inputTop - screenAvailTop
+        : screenAvailBottom - inputBottom;
+      return Math.max(96, Math.min(COMPACT_DROPDOWN_MAX_HEIGHT, roomForDropdown - 32));
+    } catch {
+      return 480;
+    }
+  }, []);
 
   // Expand/collapse state for the compact status pill. Lifted above
   // updateWindowSize because the carousel feed (driven by these states)
@@ -938,6 +1184,8 @@ const InputArea = forwardRef(function InputArea(
   const effectiveStatusItems = React.useMemo<StatusItem[]>(() => {
     if (Array.isArray(statusItems) && statusItems.length > 0) return statusItems;
     if (statusText && statusIcon) {
+      // Thinking is shown via the compact pill glow border, not the sparkle pill.
+      if (statusIcon === 'ai' && isAiWorking) return [];
       return [{
         id: `legacy-${statusIcon}`,
         text: statusText,
@@ -947,130 +1195,373 @@ const InputArea = forwardRef(function InputArea(
       }];
     }
     return [];
-  }, [statusItems, statusText, statusIcon, statusUrgency]);
+  }, [statusItems, statusText, statusIcon, statusUrgency, isAiWorking]);
 
   const { current: currentStatusItem, count: statusItemCount } = useStatusCarousel(
     effectiveStatusItems,
     { intervalMs: 10_000, paused: statusExpanded },
   );
 
-  // Handle window resizing based on content with smart placement
+  // === Window sizing / anchoring ====================================
+  //
+  // The compact overlay has to grow/shrink the OS window every time the
+  // dropdown opens, the textarea reflows, async file results arrive, or the
+  // peek shows up. Each of those events fires updateWindowSize.
+  //
+  // Anchoring rule:
+  //   placement='bottom' (dropdown below input bar) → input bar at WINDOW TOP
+  //     → anchor 'top' : main-process keeps window TOP edge fixed.
+  //   placement='top'    (dropdown above input bar) → input bar at WINDOW BOTTOM
+  //     → anchor 'bottom' : main-process keeps window BOTTOM edge fixed.
+  //
+  // Either way the input bar stays at the same screen Y. That's the whole
+  // point of the anchor IPC — the renderer doesn't have to compute Y from
+  // (possibly-stale) window.screenY, and concurrent updates can't drift.
+  //
+  // The ONLY path that uses raw setBounds is a placement flip (the user
+  // dragged the window past the screen-midline hysteresis while a dropdown
+  // is open). For that one-shot translation we read window.screenY and emit
+  // exactly one setBounds; subsequent resizes return to the anchored path.
+  // ===================================================================
   const updateWindowSize = useCallback(() => {
     if (expanded) return;
+    if (overlayMode !== 'compact') return;
+    const api = (window as any).desktopAPI;
+    if (!api) return;
 
+    // Coalesce multiple calls in the same frame. The body below executes once
+    // per RAF with the freshest closure (this useCallback rebinds on dep
+    // change, so the latest invocation captures latest state).
+    if (pendingResizeRafRef.current !== null) {
+      cancelAnimationFrame(pendingResizeRafRef.current);
+    }
+    pendingResizeRafRef.current = requestAnimationFrame(() => {
+      pendingResizeRafRef.current = null;
+      runResize();
+    });
+
+    function runResize() {
     const needsDropdown = showSearchOptions || showFileNav;
-    const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
-    const miniHeight = miniEnabled && !needsDropdown && !typingActive ? 300 : 0;
+    const needsOverlay = needsDropdown || compactHubOpen || showHubPeek;
 
     const height = currentTextareaHeightRef.current;
     const baseTextareaHeight = 36;
     const extraHeight = Math.max(0, height - baseTextareaHeight);
 
-    // Calculate target height
-    // Compact native window is 366x62; the visible pill hugs 360x56 inside a 3px safe edge.
     const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
     const attachmentHeight = hasAttachments ? 44 : 0;
-    const showStatusPill = overlayMode === 'compact' && statusItemCount > 0;
+    const showStatusPill = statusItemCount > 0;
     const statusPillHeight = showStatusPill ? 40 : 0;
-    const baseHeight = (overlayMode === 'compact' ? 62 : 156) + miniHeight + attachmentHeight + statusPillHeight;
-    const searchDropdownHeight = 480;
-    const fileNavDropdownHeight = 400;
-    const dropdownHeight = showFileNav
-      ? fileNavDropdownHeight
-      : showSearchOptions
-        ? searchDropdownHeight
-        : 0;
-
-    const targetHeight = needsDropdown ? baseHeight + dropdownHeight : baseHeight;
-
-    const minWindowHeight = overlayMode === 'compact' ? 62 : 100;
-    const finalHeight = Math.min(Math.max(minWindowHeight, targetHeight + extraHeight), 650);
-    const prevHeight = prevWindowHeightRef.current;
-    const heightChange = finalHeight - prevHeight;
+    const compactTitleBarHeight = 0; // compact title bar is currently always hidden
+    const baseHeight = 88 + attachmentHeight + statusPillHeight + compactTitleBarHeight;
 
     if (extraHeight !== extraInputHeightRef.current) {
       extraInputHeightRef.current = extraHeight;
       setExtraInputHeight(extraHeight);
     }
 
-    // Determine placement BEFORE resizing
-    const needsOverlay = needsDropdown || miniEnabled;
-    const newPlacement = needsOverlay ? calculatePlacement() : dropdownPlacement;
-    setDropdownPlacement(newPlacement);
+    const inputBarHeightForCalc = 88
+      + extraHeight + 8 /* inputBarGap */
+      + attachmentHeight + statusPillHeight + compactTitleBarHeight;
 
-    // Skip if no height change (width is now fixed in compact mode, so width never changes)
-    if (heightChange === 0) return;
-
-    prevWindowHeightRef.current = finalHeight;
-    isExpandingRef.current = heightChange > 0;
-
-    requestAnimationFrame(() => {
-      const currentOuterWidth = Math.round((window as any)?.outerWidth || 520);
-      const targetWidth = overlayMode === 'compact' ? 520 : currentOuterWidth;
-      const widthChange = targetWidth - prevWindowWidthRef.current;
-      prevWindowWidthRef.current = targetWidth;
-
-      // When placement is 'top' (dropdown above input), expand separate UPWARD
-      // This keeps the input bar visually anchored at the bottom.
-      // Also shift X by half the width delta so the centered pill doesn't visually slide.
-      if (newPlacement === 'top' && heightChange !== 0) {
-        const currentScreenX = window.screenX;
-        const currentScreenY = window.screenY;
-        const newY = currentScreenY - heightChange;
-        const newX = currentScreenX - Math.round(widthChange / 2);
-
-        window.desktopAPI?.setBounds?.({
-          x: newX,
-          y: newY,
-          width: targetWidth,
-          height: finalHeight,
-        });
-      } else if (widthChange !== 0) {
-        // Bottom placement: anchor top, but still recenter horizontally on width change.
-        const currentScreenX = window.screenX;
-        const currentScreenY = window.screenY;
-        const newX = currentScreenX - Math.round(widthChange / 2);
-        window.desktopAPI?.setBounds?.({
-          x: newX,
-          y: currentScreenY,
-          width: targetWidth,
-          height: finalHeight,
-        });
-      } else {
-        window.desktopAPI?.resize?.(targetWidth, finalHeight);
+    // --- 1. Decide placement -------------------------------------------------
+    // Lock placement whenever ANY overlay is visible. While locked, the
+    // placement does NOT recompute on every render — that's what causes the
+    // teleport. The placement only changes either (a) when the user drags the
+    // window across the screen-midline hysteresis (handled by
+    // applyPlacementOnMove updating the lock) or (b) when no overlay is up.
+    if (needsOverlay) {
+      if (!lockedOverlayPlacementRef.current) {
+        lockedOverlayPlacementRef.current = calculatePlacement();
       }
-    });
-  }, [expanded, showSearchOptions, showFileNav, showWebOptions, calculatePlacement, showMiniOutput, miniOutputHasContent, typingActive, overlayMode, attachments.length, contextPaths?.length, statusItemCount]);
+    } else if (lockedOverlayPlacementRef.current) {
+      lockedOverlayPlacementRef.current = null;
+    }
 
-  // Update on dropdown state changes
-  useEffect(() => {
-    if (expanded) return;
-    updateWindowSize();
-  }, [expanded, updateWindowSize, showSearchOptions, showFileNav, showWebOptions, showMiniOutput, miniOutputHasContent, overlayMode, attachments.length, contextPaths?.length, statusItemCount]);
-
-  // Recalculate placement when window moves
-  useEffect(() => {
-    if (expanded) return;
-
-    const handleWindowMove = () => {
-      if (showSearchOptions || showFileNav || (showMiniOutput && miniOutputHasContent)) {
-        const newPlacement = calculatePlacement();
-        if (newPlacement !== dropdownPlacement) {
-          setDropdownPlacement(newPlacement);
-        }
+    // Dropdown reserve is locked only while the dropdown is showing — peek/hub
+    // don't need a fixed reserve since their height is driven by content.
+    if (needsDropdown) {
+      if (!lockedOverlayHeightRef.current) {
+        const lockedP = lockedOverlayPlacementRef.current ?? calculatePlacement();
+        const maxH = Math.min(
+          COMPACT_DROPDOWN_MAX_HEIGHT,
+          computeMaxDropdownH(lockedP, inputBarHeightForCalc),
+        );
+        lockedOverlayHeightRef.current = maxH;
+        setLockedOverlayHeight(maxH);
       }
+    } else if (lockedOverlayHeightRef.current) {
+      lockedOverlayHeightRef.current = 0;
+      setLockedOverlayHeight(0);
+    }
+
+    const placement = lockedOverlayPlacementRef.current
+      ?? calculatePlacement();
+
+    if (placement !== dropdownPlacementRef.current) {
+      dropdownPlacementRef.current = placement;
+      setDropdownPlacement(placement);
+    }
+
+    // --- 2. Compute target dimensions ---------------------------------------
+    const maxDropdownH = computeMaxDropdownH(placement, inputBarHeightForCalc);
+    const dropdownHeight = needsDropdown
+      ? (lockedOverlayHeightRef.current || Math.min(COMPACT_DROPDOWN_MAX_HEIGHT, maxDropdownH))
+      : 0;
+
+    const dropdownEdgeMargin = COMPACT_WINDOW_DROPDOWN_MARGIN;
+    const peekEdgeMargin = 8;
+    const quickResponseOpen = compactHubOpen && !needsDropdown;
+    const hubPeekVisible = showHubPeek && !compactHubOpen && !needsDropdown;
+    const quickResponsePanelHeight = quickResponseOpen
+      ? Math.min(
+          Math.max(
+            quickResponseHeight || COMPACT_QUICK_RESPONSE_MIN_HEIGHT,
+            COMPACT_QUICK_RESPONSE_MIN_HEIGHT,
+          ),
+          COMPACT_RESPONSE_PANEL_MAX_HEIGHT,
+          maxDropdownH,
+        )
+      : 0;
+    const quickResponseReserve = quickResponseOpen
+      ? quickResponsePanelHeight + COMPACT_QUICK_RESPONSE_CHROME
+      : 0;
+
+    const contentHeight = needsDropdown
+      ? inputBarHeightForCalc + dropdownHeight + dropdownEdgeMargin
+      : quickResponseOpen
+        ? inputBarHeightForCalc + quickResponseReserve
+        : hubPeekVisible
+          ? inputBarHeightForCalc + COMPACT_HUB_PEEK_VISIBLE + peekEdgeMargin
+          : baseHeight;
+
+    // Bottom-half rewrite: when placement='top', the dropdown renders above
+    // the pill, so any native resize is a move+resize of a transparent window.
+    // That is the Windows one-frame "reload" flash. Keep the compact window
+    // at its stable max height for this orientation, including while idle, and
+    // let search/file dropdowns mount inside that already-sized canvas.
+    let targetHeight = placement === 'top' ? CAP_WINDOW_H : contentHeight;
+
+    const minWindowHeight = 88 + compactTitleBarHeight;
+    const usesInputBarCalc = needsDropdown || quickResponseOpen || hubPeekVisible;
+    const finalHeight = Math.min(
+      Math.max(minWindowHeight, usesInputBarCalc ? targetHeight : targetHeight + extraHeight),
+      CAP_WINDOW_H,
+    );
+    const roundedW = 520;
+    const roundedH = Math.round(finalHeight);
+
+    // --- 3. Choose anchor & dispatch ----------------------------------------
+    const anchor = compactWindowResizeAnchor(placement);
+    const placementChanged = placement !== lastAppliedPlacementRef.current;
+    const last = lastSentBoundsRef.current;
+
+    // Placement flip: rare (only on user-initiated drag across the midline
+    // while an overlay is open). We need to physically move the window so
+    // the input bar lands at the same screen Y under the new orientation.
+    // First-ever call (last == null) is NOT a flip even if the default
+    // lastAppliedPlacementRef diverges from calculatePlacement — the window
+    // is still at baseline height and the pill is visually centered, so
+    // anchored resize alone preserves position.
+    if (placementChanged && last) {
+      const currentScreenX = window.screenX;
+      const currentScreenY = window.screenY;
+      const liveOuterH = Math.round(window.outerHeight || roundedH);
+      const oldAnchor = compactWindowResizeAnchor(lastAppliedPlacementRef.current);
+      // Where the input bar's TOP edge sits on screen right now.
+      const inputBarTopY = oldAnchor === 'top'
+        ? currentScreenY + COMPACT_WINDOW_PY
+        : currentScreenY + liveOuterH - COMPACT_WINDOW_PY - inputBarHeightForCalc;
+      // Window Y such that input bar lands at that same screen Y under the
+      // new placement.
+      const targetY = anchor === 'top'
+        ? inputBarTopY - COMPACT_WINDOW_PY
+        : inputBarTopY - roundedH + COMPACT_WINDOW_PY + inputBarHeightForCalc;
+      try {
+        api.setBounds?.({
+          x: Math.round(currentScreenX),
+          y: Math.round(targetY),
+          width: roundedW,
+          height: roundedH,
+          anchor,
+        });
+      } catch {}
+      lastAppliedPlacementRef.current = placement;
+      lastSentBoundsRef.current = { w: roundedW, h: roundedH, anchor };
+      return;
+    }
+
+    // Common case: same placement → atomic anchored resize in main process.
+    if (last && last.w === roundedW && last.h === roundedH && last.anchor === anchor) {
+      // Width/height/anchor unchanged → main process would no-op anyway.
+      // Skip the IPC round-trip.
+      lastAppliedPlacementRef.current = placement;
+      return;
+    }
+    lastSentBoundsRef.current = { w: roundedW, h: roundedH, anchor };
+    lastAppliedPlacementRef.current = placement;
+    try { api.resize?.(roundedW, roundedH, anchor); } catch {}
+    } // end runResize
+  }, [
+    expanded,
+    overlayMode,
+    showSearchOptions,
+    showFileNav,
+    calculatePlacement,
+    computeMaxDropdownH,
+    attachments.length,
+    contextPaths?.length,
+    statusItemCount,
+    compactHubOpen,
+    showHubPeek,
+    quickResponseHeight,
+  ]);
+
+  // Cancel any pending RAF on unmount.
+  useEffect(() => () => {
+    if (pendingResizeRafRef.current !== null) {
+      cancelAnimationFrame(pendingResizeRafRef.current);
+      pendingResizeRafRef.current = null;
+    }
+  }, []);
+
+  const setCompactMousePassthrough = useCallback((ignore: boolean) => {
+    if (compactMousePassthroughRef.current === ignore) return;
+    compactMousePassthroughRef.current = ignore;
+    try {
+      window.desktopAPI?.setIgnoreMouseEvents?.(ignore, ignore ? { forward: true } : undefined);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (expanded || overlayMode !== 'compact') {
+      setCompactMousePassthrough(false);
+      return;
+    }
+
+    const updatePassthrough = (event: MouseEvent) => {
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      const interactive = !!el?.closest?.(
+        '[data-compact-hit-area="true"], [data-radix-popper-content-wrapper]',
+      );
+      setCompactMousePassthrough(!interactive);
     };
 
-    // Check periodically while dropdown is open (window move events aren't reliable in Electron)
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (showSearchOptions || showFileNav || (showMiniOutput && miniOutputHasContent)) {
-      interval = setInterval(handleWindowMove, 200);
+    window.addEventListener('mousemove', updatePassthrough);
+    window.addEventListener('mousedown', updatePassthrough, true);
+    return () => {
+      window.removeEventListener('mousemove', updatePassthrough);
+      window.removeEventListener('mousedown', updatePassthrough, true);
+      setCompactMousePassthrough(false);
+    };
+  }, [expanded, overlayMode, setCompactMousePassthrough]);
+
+  // Hub open → resize immediately; hub close → wait for exit animation so the
+  // pill doesn't jump while the panel is still sliding away.
+  useEffect(() => {
+    if (expanded || overlayMode !== 'compact') return;
+
+    if (hubResizeTimerRef.current) {
+      clearTimeout(hubResizeTimerRef.current);
+      hubResizeTimerRef.current = null;
+    }
+
+    if (compactHubOpen) {
+      updateWindowSize();
+    } else {
+      hubResizeTimerRef.current = setTimeout(() => {
+        updateWindowSize();
+        hubResizeTimerRef.current = null;
+      }, 240);
     }
 
     return () => {
-      if (interval) clearInterval(interval);
+      if (hubResizeTimerRef.current) {
+        clearTimeout(hubResizeTimerRef.current);
+        hubResizeTimerRef.current = null;
+      }
     };
-  }, [expanded, showSearchOptions, showFileNav, calculatePlacement, dropdownPlacement, showMiniOutput, miniOutputHasContent, attachments.length, contextPaths?.length]);
+  }, [compactHubOpen, expanded, overlayMode, updateWindowSize]);
+
+  // Update on dropdown / peek / content changes — not on every stream tick.
+  useEffect(() => {
+    if (expanded) return;
+    updateWindowSize();
+  }, [
+    expanded,
+    updateWindowSize,
+    showSearchOptions,
+    showFileNav,
+    overlayMode,
+    attachments.length,
+    contextPaths?.length,
+    statusItemCount,
+    showHubPeek,
+    quickResponseHeight,
+  ]);
+
+  // Drag-detection: the user can move the window via the title-bar drag
+  // region, which Electron doesn't surface as a DOM event. We poll on a
+  // 100ms cadence while an overlay is open. If the window moved across the
+  // screen-midline hysteresis, calculatePlacement returns the OTHER side and
+  // we re-lock; updateWindowSize then detects placementChanged and emits a
+  // single setBounds to translate the input bar.
+  const applyPlacementOnMove = useCallback(() => {
+    if (expanded || overlayMode !== 'compact') return;
+    const nextPlacement = calculatePlacement();
+    const lockedP = lockedOverlayPlacementRef.current;
+    const currentPlacement = lockedP ?? dropdownPlacementRef.current;
+    if (nextPlacement !== currentPlacement) {
+      // Window crossed the hysteresis boundary — re-lock placement and
+      // refresh the dropdown reserve for the new direction.
+      if (lockedP) {
+        lockedOverlayPlacementRef.current = nextPlacement;
+      }
+      lastPlacementFlipAtRef.current = Date.now();
+      dropdownPlacementRef.current = nextPlacement;
+      setDropdownPlacement(nextPlacement);
+      const inputBarHeightForCalc = 88
+        + extraInputHeightRef.current + 8
+        + (attachments.length > 0 || (contextPaths && contextPaths.length > 0) ? 44 : 0)
+        + (statusItemCount > 0 ? 40 : 0);
+      if (lockedOverlayHeightRef.current) {
+        const maxH = Math.min(
+          COMPACT_DROPDOWN_MAX_HEIGHT,
+          computeMaxDropdownH(nextPlacement, inputBarHeightForCalc),
+        );
+        lockedOverlayHeightRef.current = maxH;
+        setLockedOverlayHeight(maxH);
+      }
+      updateWindowSize();
+    }
+  }, [
+    expanded,
+    overlayMode,
+    showSearchOptions,
+    showFileNav,
+    compactHubOpen,
+    showHubPeek,
+    calculatePlacement,
+    computeMaxDropdownH,
+    attachments.length,
+    contextPaths,
+    statusItemCount,
+    updateWindowSize,
+  ]);
+
+  useEffect(() => {
+    if (expanded || overlayMode !== 'compact') return;
+    const interval = setInterval(applyPlacementOnMove, 150);
+    return () => clearInterval(interval);
+  }, [
+    expanded,
+    overlayMode,
+    showSearchOptions,
+    showFileNav,
+    compactHubOpen,
+    showHubPeek,
+    applyPlacementOnMove,
+  ]);
 
   // Handle height change for auto-expansion in compact mode
   const handleHeightChange = useCallback((height: number) => {
@@ -1078,13 +1569,16 @@ const InputArea = forwardRef(function InputArea(
     updateWindowSize();
   }, [updateWindowSize]);
 
-  // Search engines configuration
+  // Search engines configuration. Lucide-iconed entries sit alongside the
+  // image-logo brands; the engine picker chip accepts either as a ReactNode.
   const searchEngines = [
-    { id: 'google', name: 'Google', icon: <img src={googleLogo} className="w-5 h-5 object-contain" alt="Google" />, color: 'text-blue-500', bg: 'bg-blue-500', ring: 'ring-blue-500/20', url: (q: string) => `https://www.google.com/search?q=${encodeURIComponent(q)}` },
-    { id: 'bing', name: 'Bing', icon: <img src={bingLogo} className="w-5 h-5 object-contain" alt="Bing" />, color: 'text-cyan-500', bg: 'bg-cyan-500', ring: 'ring-cyan-500/20', url: (q: string) => `https://www.bing.com/search?q=${encodeURIComponent(q)}` },
-    { id: 'duckduckgo', name: 'DuckDuckGo', icon: <img src={duckduckgoLogo} className="w-5 h-5 object-contain" alt="DuckDuckGo" />, color: 'text-orange-500', bg: 'bg-orange-500', ring: 'ring-orange-500/20', url: (q: string) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}` },
-    { id: 'youtube', name: 'YouTube', icon: <img src={youtubeLogo} className="w-5 h-5 object-contain" alt="YouTube" />, color: 'text-red-500', bg: 'bg-red-500', ring: 'ring-red-500/20', url: (q: string) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
-    { id: 'github', name: 'GitHub', icon: <img src={githubLogo} className="w-5 h-5 object-contain" alt="GitHub" />, color: 'text-purple-500', bg: 'bg-purple-500', ring: 'ring-purple-500/20', url: (q: string) => `https://github.com/search?q=${encodeURIComponent(q)}` },
+    { id: 'google', name: 'Google', icon: <img src={googleLogo} className="w-5 h-5 object-contain" alt="Google" />, color: 'text-blue-500', bg: 'bg-blue-500', ring: 'ring-blue-500/20', url: (q: string) => compactSearchUrl('google', q) },
+    { id: 'bing', name: 'Bing', icon: <img src={bingLogo} className="w-5 h-5 object-contain" alt="Bing" />, color: 'text-cyan-500', bg: 'bg-cyan-500', ring: 'ring-cyan-500/20', url: (q: string) => compactSearchUrl('bing', q) },
+    { id: 'duckduckgo', name: 'DuckDuckGo', icon: <img src={duckduckgoLogo} className="w-5 h-5 object-contain" alt="DuckDuckGo" />, color: 'text-orange-500', bg: 'bg-orange-500', ring: 'ring-orange-500/20', url: (q: string) => compactSearchUrl('duckduckgo', q) },
+    { id: 'youtube', name: 'YouTube', icon: <img src={youtubeLogo} className="w-5 h-5 object-contain" alt="YouTube" />, color: 'text-red-500', bg: 'bg-red-500', ring: 'ring-red-500/20', url: (q: string) => compactSearchUrl('youtube', q) },
+    { id: 'github', name: 'GitHub', icon: <img src={githubLogo} className="w-5 h-5 object-contain" alt="GitHub" />, color: 'text-purple-500', bg: 'bg-purple-500', ring: 'ring-purple-500/20', url: (q: string) => compactSearchUrl('github', q) },
+    { id: 'merriam', name: 'Merriam-Webster', icon: <BookOpen className="w-5 h-5" strokeWidth={1.75} style={{ color: '#D4373E' }} />, color: 'text-rose-500', bg: 'bg-rose-500', ring: 'ring-rose-500/20', url: (q: string) => compactSearchUrl('merriam', q) },
+    { id: 'wikipedia', name: 'Wikipedia', icon: <BookText className="w-5 h-5" strokeWidth={1.75} style={{ color: '#A2A9B1' }} />, color: 'text-slate-300', bg: 'bg-slate-500', ring: 'ring-slate-500/20', url: (q: string) => compactSearchUrl('wikipedia', q) },
   ];
 
   const activeEngine = searchEngines.find(e => e.id === defaultEngineId) || searchEngines[0];
@@ -1101,12 +1595,13 @@ const InputArea = forwardRef(function InputArea(
     } else if (type === 'web') {
       const q = query.trim();
       const engine = searchEngines.find(e => e.id === engineId) || searchEngines[0];
+      const url = engine.url(q);
       if (q) {
-        window.desktopAPI?.openExternal?.(engine.url(q));
+        window.desktopAPI?.openExternal?.(url);
         setQuery("");
         window.desktopAPI?.hide?.();
       } else {
-        window.desktopAPI?.openExternal?.(engine.url(''));
+        window.desktopAPI?.openExternal?.(url);
       }
       setShowWebOptions(false);
     } else if (type === 'quick') {
@@ -1161,15 +1656,16 @@ const InputArea = forwardRef(function InputArea(
     });
 
     const workflowsStart = items.length;
-    filteredLocalWorkflows.forEach((w) => {
+    compactWorkflowHits.forEach((w) => {
       items.push({
         key: `wf-${w.id}`,
-        onSelect: async () => {
-          try {
-            await window.desktopAPI?.workflowsRun?.(w.id);
-            window.desktopAPI?.hide?.();
-            (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
-          } catch (e) { console.error(e); }
+        onSelect: () => {
+          if (w.deployed) {
+            void runDeployedWorkflow(w.id, w.name);
+          } else {
+            openWorkflowInStudio(w.id);
+          }
+          setQuery('');
         },
       });
     });
@@ -1193,7 +1689,7 @@ const InputArea = forwardRef(function InputArea(
     appResults,
     matchingBookmarks,
     fileResults,
-    filteredLocalWorkflows,
+    compactWorkflowHits,
     marketplaceResults,
     activeEngine.id,
     handleSearchOption,
@@ -1222,7 +1718,13 @@ const InputArea = forwardRef(function InputArea(
 
   const hasStatusPill = overlayMode === 'compact' && !!currentStatusItem;
   const statusPillOffset = hasStatusPill ? 40 : 0;
-  const baseInputBarHeight = overlayMode === 'compact' ? 62 : 140;
+  const showCompactTitleBar = false;
+  const compactTitleBarOffset = showCompactTitleBar ? COMPACT_TITLE_BAR_HEIGHT : 0;
+  const compactTitleText =
+    openTabs.find((tab) => tab.id === activeTabId)?.title?.trim()
+    || conversationTitle?.trim()
+    || (isAiWorking ? 'Working…' : 'Chat');
+  const baseInputBarHeight = (overlayMode === 'compact' ? 88 : 140) + compactTitleBarOffset;
   const inputBarHeight = baseInputBarHeight + extraInputHeight + inputBarGap + attachmentOffset + statusPillOffset;
 
   // Collapse expand state when the pill itself is no longer rendered.
@@ -1274,6 +1776,7 @@ const InputArea = forwardRef(function InputArea(
         // the bar a satisfying "pop" before the actual mode switch fires.
         setCornerSnapping(true);
         setCornerDrag({ x: 0, y: 0 });
+        closeCompactHub();
         window.setTimeout(() => {
           setCornerSnapping(false);
           try { onToggleExpand(); } catch {}
@@ -1287,17 +1790,22 @@ const InputArea = forwardRef(function InputArea(
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
-  }, [onToggleExpand]);
+  }, [onToggleExpand, closeCompactHub]);
 
   // Compact Mode
   if (!expanded) {
     const needsDropdown = showSearchOptions || showFileNav;
-    const miniEnabled = !!(showMiniOutput && (miniOutputHasContent ?? !!(miniOutputText || '').trim()));
-    const isTyping = query.trim().length > 0;
-    const miniOpen = miniEnabled && !needsDropdown && !isTyping;
-    const compactSearchDropdownMaxHeight = 480;
-    const compactSearchDropdownScrollHeight = compactSearchDropdownMaxHeight;
-    const compactFileNavMaxHeight = 400;
+    // Cap dropdown height to the room actually available between the input bar
+    // and the OS-clamped window edge in the current placement direction. The
+    // dropdown is portaled to document.body, so anything past the native window
+    // edge gets clipped by the OS — overflow-y-auto can't save it. Mirrors the
+    // same calculation in updateWindowSize() so window-size and CSS-cap agree.
+    const availableForDropdown = computeMaxDropdownH(dropdownPlacement, inputBarHeight);
+    const compactOverlayMaxHeight = lockedOverlayHeight
+      || Math.min(COMPACT_DROPDOWN_MAX_HEIGHT, availableForDropdown);
+    const compactSearchDropdownMaxHeight = compactOverlayMaxHeight;
+    const compactSearchDropdownScrollHeight = compactOverlayMaxHeight;
+    const compactFileNavMaxHeight = compactOverlayMaxHeight;
 
     // Drag visual: input bar nudges + scales slightly as the corner is pulled.
     // Capped low so it stays subtle; pop on snap is a touch larger.
@@ -1306,784 +1814,161 @@ const InputArea = forwardRef(function InputArea(
     const cornerTranslateX = cornerSnapping ? 0 : Math.min(cornerDrag.x / 6, 6);
     const cornerTranslateY = cornerSnapping ? 0 : Math.min(cornerDrag.y / 6, 6);
     const cornerActive = cornerDragMag > 0 || cornerSnapping;
+    const showThinkingGlow = isAiWorking;
     return (
       <div className={clsx(
-        "w-full h-full flex flex-col relative p-[3px]",
+        "w-full h-full flex flex-col relative px-[3px] py-[14px]",
         dropdownPlacement === 'top' ? "justify-end" : "justify-start"
       )}>
         {/* Search Options Dropdown - shows when typing */}
-        {showSearchOptions && typeof document !== 'undefined' && document.body && createPortal(
-          <div
-            className={clsx(
-              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[96%] max-w-[560px] animate-in fade-in duration-200",
-              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
-            )}
-            style={{
-              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
-              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
-            }}
-          >
-            <div
-              className="overflow-hidden flex flex-col"
-              style={{
-                maxHeight: compactSearchDropdownMaxHeight,
-                background: '#171717',
-                borderRadius: 12,
-                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.18)',
+        {showSearchOptions && (
+          <CompactSearchDropdown
+            placement={dropdownPlacement}
+            inputBarHeight={inputBarHeight}
+            maxHeight={compactSearchDropdownMaxHeight}
+            scrollHeight={compactSearchDropdownScrollHeight}
+            query={query}
+            setQuery={setQuery}
+            selectedIndex={selectedIndex}
+            setSelectedIndex={setSelectedIndex}
+            offsets={dropdownSelection.offsets}
+            onAskStuard={() => handleSearchOption('chat')}
+            onWebSearch={() => handleSearchOption('web', activeEngine.id)}
+            activeEngineName={activeEngine.name}
+            searchEngines={searchEngines.map((e) => ({
+              id: e.id,
+              name: e.name,
+              icon: e.icon,
+            }))}
+            activeEngineId={activeEngine.id}
+            onSelectEngine={handleSetDefaultEngine}
+            stuardCommands={stuardCommands}
+            appResults={appResults}
+            fileLoading={fileLoading}
+            fileIconDataUrls={fileIconDataUrls}
+            onLaunchApp={handleLaunchApp}
+            matchingBookmarks={matchingBookmarks}
+            onExecuteBookmark={executeBookmark}
+            fileResults={fileResults}
+            fileSemanticLoading={fileSemanticLoading}
+            onAddFileAsContext={handleAddFileAsContext}
+            filteredLocalWorkflows={compactWorkflowHits}
+            marketplaceResults={marketplaceResults}
+            isMarketplaceSearching={isMarketplaceSearching}
+          />
+        )}
+
+        {showFileNav && (
+          <CompactFileNavPortal
+            placement={dropdownPlacement}
+            inputBarHeight={inputBarHeight}
+            maxHeight={compactFileNavMaxHeight}
+            fileNavRef={fileNavRef}
+            filter={fileNavFilter}
+            onSelect={handleFileSelect}
+            onClose={() => setShowFileNav(false)}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {hasStatusPill && currentStatusItem && (
+          <div data-compact-hit-area="true">
+            <CompactStatusPill
+              item={currentStatusItem}
+              statusExpanded={statusExpanded}
+              onHoverChange={setStatusHovered}
+              onClick={(item) => {
+                if (item.onClick) { try { item.onClick(); } catch {} return; }
+                setStatusPinned((v) => !v);
               }}
-            >
-              <div
-                className="flex flex-col overflow-y-auto custom-scrollbar"
-                style={{ padding: 16, gap: 12, maxHeight: compactSearchDropdownScrollHeight }}
-              >
-                {/* QUICK ACTIONS */}
-                <div className="flex flex-col" style={{ gap: 8 }}>
-                  <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                    Quick Actions
-                  </div>
-
-                  {/* Ask Stuard */}
-                  {(() => {
-                    const rowIdx = dropdownSelection.offsets.askStuard;
-                    const isSel = selectedIndex === rowIdx;
-                    return (
-                      <button
-                        onMouseEnter={() => setSelectedIndex(rowIdx)}
-                        onClick={() => handleSearchOption('chat')}
-                        className="w-full flex items-center"
-                        style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
-                      >
-                        <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
-                          <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                            &ldquo;{query.trim()}&rdquo;
-                          </div>
-                          <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                            Ask Stuard
-                          </div>
-                        </div>
-                        <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>
-                          Enter
-                        </span>
-                      </button>
-                    );
-                  })()}
-
-                  {/* Search Engine */}
-                  {(() => {
-                    const rowIdx = dropdownSelection.offsets.webSearch;
-                    const isSel = selectedIndex === rowIdx;
-                    return (
-                      <button
-                        onMouseEnter={() => setSelectedIndex(rowIdx)}
-                        onClick={() => handleSearchOption('web', activeEngine.id)}
-                        className="w-full flex items-center"
-                        style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
-                      >
-                        <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
-                          <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                            &ldquo;{query.trim()}&rdquo;
-                          </div>
-                          <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                            Search {activeEngine.name}
-                          </div>
-                        </div>
-                        <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>
-                          Ctrl + Enter
-                        </span>
-                      </button>
-                    );
-                  })()}
-                </div>
-
-                {/* STUARD — built-in commands (Studio, Dashboard) ranked at the top */}
-                {stuardCommands.length > 0 && (
-                  <div className="flex flex-col" style={{ gap: 8 }}>
-                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                      Stuard
-                    </div>
-
-                    {stuardCommands.map((c, idx) => {
-                      const Icon = c.icon;
-                      const rowIdx = dropdownSelection.offsets.stuardCommandsStart + idx;
-                      const isSel = selectedIndex === rowIdx;
-                      return (
-                        <button
-                          key={`cmd-${c.id}`}
-                          onMouseEnter={() => setSelectedIndex(rowIdx)}
-                          onClick={() => { c.run(); setQuery(''); }}
-                          className="w-full flex items-center text-left"
-                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                        >
-                          <div
-                            className="flex items-center justify-center shrink-0"
-                            style={{ width: 36, height: 36, borderRadius: 4, background: c.tile }}
-                          >
-                            <Icon className="w-4 h-4" strokeWidth={1.75} />
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                              <HighlightMatch text={c.title} query={query} />
-                            </div>
-                            <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                              {c.subtitle}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* APPLICATIONS */}
-                {appResults.length > 0 && (
-                  <div className="flex flex-col" style={{ gap: 8 }}>
-                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                      Applications
-                      {fileLoading && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
-                    </div>
-
-                    {appResults.map((a: any, idx: number) => {
-                      const iconUrl = a?.iconDataUrl || (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
-                      const name = String(a.name || '');
-                      const rowIdx = dropdownSelection.offsets.appsStart + idx;
-                      const isSel = selectedIndex === rowIdx;
-                      return (
-                        <button
-                          key={`app-${a.path || idx}`}
-                          onMouseEnter={() => setSelectedIndex(rowIdx)}
-                          onClick={() => { handleLaunchApp(a.launchTarget || a.path); setQuery(''); }}
-                          className="w-full flex items-center text-left"
-                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                        >
-                          <div
-                            className="flex items-center justify-center shrink-0 overflow-hidden"
-                            style={{ width: 36, height: 36, borderRadius: 4, background: iconUrl ? 'rgba(64, 64, 64, 0.5)' : '#3B82F6' }}
-                          >
-                            {iconUrl ? (
-                              <img src={iconUrl} alt="" className="w-7 h-7 object-contain" />
-                            ) : (
-                              <AppWindow className="w-4 h-4 text-white" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                              <HighlightMatch text={name} query={query} />
-                            </div>
-                            <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                              open {name}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* SHORTCUTS — user bookmarks */}
-                {matchingBookmarks.length > 0 && (
-                  <div className="flex flex-col" style={{ gap: 8 }}>
-                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                      Shortcuts
-                    </div>
-
-                    {matchingBookmarks.map((bm, idx) => {
-                      const cfg = getTypeConfig(bm.type);
-                      const Icon = cfg.icon;
-                      const rowIdx = dropdownSelection.offsets.bookmarksStart + idx;
-                      const isSel = selectedIndex === rowIdx;
-                      return (
-                        <button
-                          key={`bm-${bm.id}`}
-                          onMouseEnter={() => setSelectedIndex(rowIdx)}
-                          onClick={() => executeBookmark(bm)}
-                          className="w-full flex items-center text-left"
-                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                        >
-                          <div
-                            className="flex items-center justify-center shrink-0"
-                            style={{ width: 36, height: 36, borderRadius: 4, background: 'rgba(64, 64, 64, 0.5)' }}
-                          >
-                            <Icon className={clsx('w-4 h-4', cfg.color)} />
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                              <HighlightMatch text={bm.name} query={query} />
-                            </div>
-                            <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                              open {bm.name}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* FILES */}
-                {Array.isArray(fileResults) && fileResults.length > 0 && (
-                  <div className="flex flex-col" style={{ gap: 8 }}>
-                    <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                      Files
-                      {fileSemanticLoading && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
-                    </div>
-
-                    {fileResults.slice(0, 6).map((f: any, idx: number) => {
-                      if (!f) return null;
-                      const kind = String(f.kind || 'other').toLowerCase();
-                      const cfg = getFileKindConfig(kind);
-                      const iconUrl = f?.path ? fileIconDataUrls[String(f.path)] : undefined;
-                      const isThumbnail = String(f.preview_kind || 'icon') === 'thumbnail';
-                      const fileName = String(f.display_name || f.filename || f.name || '').trim() ||
-                        String(f.path || '').split(/[/\\]/).pop() || 'Untitled';
-                      const fullPath = String(f.path || f.target_path || '');
-                      const showThumbnail = iconUrl && isThumbnail;
-                      const rowIdx = dropdownSelection.offsets.filesStart + idx;
-                      const isSel = selectedIndex === rowIdx;
-                      return (
-                        <button
-                          key={String(f.id || f.path || idx)}
-                          onMouseEnter={() => setSelectedIndex(rowIdx)}
-                          onClick={() => {
-                            if (kind === 'application') {
-                              (window as any).desktopAPI?.openPath?.(String(f.path));
-                              (window as any).desktopAPI?.hide?.();
-                              setQuery('');
-                            } else {
-                              handleAddFileAsContext(f);
-                            }
-                          }}
-                          className="w-full flex items-center text-left"
-                          style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                        >
-                          <div
-                            className="flex items-center justify-center shrink-0 overflow-hidden"
-                            style={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: 4,
-                              background: showThumbnail ? 'rgba(64, 64, 64, 0.5)' : cfg.tile,
-                            }}
-                          >
-                            {showThumbnail ? (
-                              <img src={iconUrl} alt="" className="w-full h-full object-cover" />
-                            ) : iconUrl ? (
-                              <img src={iconUrl} alt="" className="w-7 h-7 object-contain" />
-                            ) : kind === 'folder' ? (
-                              <Folder className="w-5 h-5 text-white" />
-                            ) : (
-                              <span style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 600 }}>
-                                {cfg.label}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                            <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                              <HighlightMatch text={fileName} query={query} />
-                            </div>
-                            <div className="truncate" style={{ fontSize: 8, lineHeight: '14px', color: '#A3A3A3' }}>
-                              {fullPath}
-                            </div>
-                          </div>
-                          <span
-                            className="shrink-0 flex items-center justify-center"
-                            style={{ padding: '3px 6px', color: '#A3A3A3' }}
-                            title={kind === 'application' ? 'Open' : 'Attach'}
-                          >
-                            {kind === 'application' ? (
-                              <ExternalLink className="w-4 h-4" strokeWidth={1.75} />
-                            ) : (
-                              <Paperclip className="w-4 h-4" strokeWidth={1.75} />
-                            )}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* WORKFLOWS — header always present (shows "No workflows" when empty) */}
-                <div className="flex flex-col" style={{ gap: 8 }}>
-                  <div style={{ fontSize: 10, lineHeight: '14px', color: '#FFFFFF', fontWeight: 400 }}>
-                    {(filteredLocalWorkflows.length === 0 && marketplaceResults.length === 0)
-                      ? 'No workflows'
-                      : 'Workflows'}
-                    {isMarketplaceSearching && <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />}
-                  </div>
-
-                  {filteredLocalWorkflows.map((w, idx) => {
-                    const rowIdx = dropdownSelection.offsets.workflowsStart + idx;
-                    const isSel = selectedIndex === rowIdx;
-                    return (
-                    <button
-                      key={w.id}
-                      onMouseEnter={() => setSelectedIndex(rowIdx)}
-                      onClick={async () => {
-                        try {
-                          await window.desktopAPI?.workflowsRun?.(w.id);
-                          window.desktopAPI?.hide?.();
-                          (window as any).desktopAPI?.notify?.('Workflow Started', `Running ${w.name}...`);
-                        } catch (e) { console.error(e); }
-                      }}
-                      className="w-full flex items-center text-left"
-                      style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                    >
-                      <div
-                        className="flex items-center justify-center shrink-0"
-                        style={{ width: 36, height: 36, borderRadius: 4, background: '#F59E0B' }}
-                      >
-                        <Zap className="w-4 h-4 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                        <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                          <HighlightMatch text={w.name || 'Untitled'} query={query} />
-                        </div>
-                        <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                          Run local workflow
-                        </div>
-                      </div>
-                      <span
-                        className="shrink-0 flex items-center justify-center"
-                        style={{ padding: '3px 6px', color: '#A3A3A3' }}
-                        title="Run"
-                      >
-                        <Play className="w-4 h-4" strokeWidth={1.75} />
-                      </span>
-                    </button>
-                    );
-                  })}
-
-                  {marketplaceResults.map((w, idx) => {
-                    const rowIdx = dropdownSelection.offsets.marketplaceStart + idx;
-                    const isSel = selectedIndex === rowIdx;
-                    return (
-                    <button
-                      key={w.slug}
-                      onMouseEnter={() => setSelectedIndex(rowIdx)}
-                      onClick={() => {
-                        window.desktopAPI?.openWorkflows?.({ marketplaceSlug: w.slug });
-                        window.desktopAPI?.hide?.();
-                      }}
-                      className="w-full flex items-center text-left"
-                      style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
-                    >
-                      <div
-                        className="flex items-center justify-center shrink-0"
-                        style={{ width: 36, height: 36, borderRadius: 4, background: '#6366F1' }}
-                      >
-                        <CloudDownload className="w-4 h-4 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
-                        <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: '#FFFFFF' }}>
-                          <HighlightMatch text={w.name} query={query} />
-                        </div>
-                        <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: '#A3A3A3' }}>
-                          Marketplace • {w.publisher_name || 'Community'}
-                        </div>
-                      </div>
-                      <span
-                        className="shrink-0 flex items-center justify-center"
-                        style={{ padding: '3px 6px', color: '#A3A3A3' }}
-                        title="Install"
-                      >
-                        <Download className="w-4 h-4" strokeWidth={1.75} />
-                      </span>
-                    </button>
-                    );
-                  })}
-                </div>
-
-              </div>
-            </div>
-          </div>,
-          document.body
+            />
+          </div>
         )}
-
-        {showFileNav && typeof document !== 'undefined' && document.body && createPortal(
-          <div
-            className={clsx(
-              "fixed left-1/2 -translate-x-1/2 z-[100000] w-[92%] max-w-[520px] animate-in fade-in duration-200",
-              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
-            )}
-            style={{
-              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
-              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
-            }}
-          >
-            <div style={{ maxHeight: compactFileNavMaxHeight }} className="overflow-hidden">
-              <FileNavigator
-                ref={fileNavRef}
-                onSelect={handleFileSelect}
-                onClose={() => setShowFileNav(false)}
-                onNavigate={handleNavigate}
-                filter={fileNavFilter}
-              />
-            </div>
-          </div>,
-          document.body
-        )}
-
-        {/* Quick Answer Dropdown - behaves like suggestion dropdown (top/bottom placement) */}
-        {miniOpen && typeof document !== 'undefined' && document.body && createPortal(
-          <div
-            className={clsx(
-              "fixed left-1/2 -translate-x-1/2 z-[99999] w-[92%] max-w-[520px]",
-              "animate-in fade-in duration-200",
-              dropdownPlacement === 'top' ? "slide-in-from-bottom-centered mb-3" : "slide-in-from-top-centered mt-2"
-            )}
-            style={{
-              bottom: dropdownPlacement === 'top' ? `${inputBarHeight}px` : 'auto',
-              top: dropdownPlacement === 'bottom' ? `${inputBarHeight - 8}px` : 'auto',
-            }}
-          >
-            <div className={clsx(
-              translucentMode
-                ? "rounded-[24px] bg-theme-bg backdrop-blur-2xl border border-theme/20"
-                : "rounded-[24px] bg-theme-bg border border-theme/20",
-              "shadow-lg shadow-black/10 overflow-hidden"
-            )}>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-theme/10 bg-theme-bg">
-                <div className="text-[11px] font-bold uppercase tracking-widest text-theme-muted">
-                  Quick answer
-                </div>
-                <button
-                  type="button"
-                  className="w-7 h-7 rounded-[10px] bg-theme-bg border border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center justify-center"
-                  title="Hide"
-                  onClick={() => setShowMiniOutput?.(false)}
-                >
-                  <Cross2Icon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="max-h-[220px] overflow-y-auto overflow-x-hidden custom-scrollbar">
-                <MessageBubble
-                  role="assistant"
-                  text={miniOutputText || ''}
-                  isStreaming={!!miniOutputStreaming}
-                  reasoning={undefined}
-                  toolCalls={undefined}
-                  streamChunks={undefined}
-                  onSubmitToolOutput={onSubmitToolOutput}
-                  onGenUIResponse={onGenUIResponse}
-                  compact={true}
-                />
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
-        {(() => {
-          if (!hasStatusPill || !currentStatusItem) return null;
-          const item = currentStatusItem;
-          const iconKey = item.icon;
-          const IconCmp = iconKey === 'video' ? Video
-            : iconKey === 'calendar' ? Calendar
-            : iconKey === 'bell' ? Bell
-            : iconKey === 'task' ? ListTodo
-            : iconKey === 'weather' ? Sparkles
-            : iconKey === 'slack' ? MessageSquare
-            : iconKey === 'ai' ? Loader2
-            : iconKey === 'mic' ? Mic
-            : iconKey === 'queue' ? Loader2
-            : null;
-          // Icon color: explicit override > urgency > type-based default.
-          const iconColor = item.iconColor
-            ?? (item.urgency === 'now'
-              ? '#FF383C'
-              : item.urgency === 'soon'
-                ? '#F59E0B'
-                : iconKey === 'bell'
-                  ? '#F59E0B'         // reminders → yellow/amber
-                  : iconKey === 'calendar'
-                    ? '#3B82F6'       // meetings → blue
-                    : iconKey === 'task'
-                      ? '#10B981'     // tasks → emerald
-                      : iconKey === 'weather'
-                        ? '#60A5FA'   // weather → sky
-                        : iconKey === 'slack'
-                          ? '#A855F7' // slack → violet
-                          : iconKey === 'ai'
-                            ? '#A78BFA' // AI working → soft violet
-                            : iconKey === 'mic'
-                              ? '#FF383C' // recording → red
-                              : iconKey === 'queue'
-                                ? '#60A5FA' // queued → sky
-                                : '#FFFFFF');
-          const urgencyGlow = item.urgency === 'now'
-            ? '0 0 12px rgba(255, 56, 60, 0.35)'
-            : item.urgency === 'soon'
-              ? '0 0 12px rgba(245, 158, 11, 0.3)'
-              : undefined;
-          const flipTransition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] };
-          return (
-            <div className="w-full mx-auto flex" style={{ maxWidth: 360, marginBottom: 8 }}>
-              <motion.button
-                type="button"
-                layout
-                transition={{ type: 'spring', stiffness: 320, damping: 30, mass: 0.7 }}
-                className={clsx(
-                  "no-drag flex items-center min-w-0 cursor-pointer outline-none",
-                  item.urgency === 'now' && "animate-pulse",
-                )}
-                style={{
-                  backgroundColor: '#171717',
-                  borderRadius: 12,
-                  padding: 8,
-                  gap: 8,
-                  height: 32,
-                  maxWidth: '100%',
-                  boxShadow: urgencyGlow,
-                }}
-                onMouseEnter={() => setStatusHovered(true)}
-                onMouseLeave={() => setStatusHovered(false)}
-                onFocus={() => setStatusHovered(true)}
-                onBlur={() => setStatusHovered(false)}
-                onClick={() => {
-                  if (item.onClick) { try { item.onClick(); } catch {} return; }
-                  setStatusPinned((v) => !v);
-                }}
-                title={item.ariaLabel || item.text}
-                aria-expanded={statusExpanded}
-                aria-label={item.ariaLabel || item.text}
-              >
-                {/* Icon flip: each item's icon enters from below and the
-                    outgoing one rises upward, like a digital flap clock. */}
-                <div
-                  className="relative flex items-center justify-center flex-shrink-0 overflow-hidden"
-                  style={{ width: 16, height: 16 }}
-                >
-                  <AnimatePresence initial={false} mode="popLayout">
-                    <motion.span
-                      key={`icon-${item.id}`}
-                      className="absolute inset-0 flex items-center justify-center"
-                      initial={{ y: '100%', opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      exit={{ y: '-100%', opacity: 0 }}
-                      transition={flipTransition}
-                    >
-                      {iconKey === 'custom' && item.iconNode
-                        ? item.iconNode
-                        : IconCmp
-                          ? <IconCmp className={clsx('w-4 h-4', (iconKey === 'queue' || iconKey === 'ai') && 'animate-spin')} strokeWidth={1.75} style={{ color: iconColor }} />
-                          : null}
-                    </motion.span>
-                  </AnimatePresence>
-                </div>
-                <AnimatePresence initial={false}>
-                  {statusExpanded && (
-                    <motion.div
-                      key="status-text-wrap"
-                      className="overflow-hidden whitespace-nowrap relative"
-                      initial={{ opacity: 0, width: 0, marginLeft: -8 }}
-                      animate={{ opacity: 1, width: 'auto', marginLeft: 0 }}
-                      exit={{ opacity: 0, width: 0, marginLeft: -8 }}
-                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                      style={{ height: 16 }}
-                    >
-                      <AnimatePresence initial={false} mode="popLayout">
-                        <motion.span
-                          key={`text-${item.id}`}
-                          className="text-white block whitespace-nowrap"
-                          initial={{ y: '100%', opacity: 0 }}
-                          animate={{ y: 0, opacity: 1 }}
-                          exit={{ y: '-100%', opacity: 0 }}
-                          transition={flipTransition}
-                          style={{
-                            fontSize: 12,
-                            lineHeight: '16px',
-                            fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif",
-                            fontWeight: 400,
-                          }}
-                        >
-                          {item.text}
-                        </motion.span>
-                      </AnimatePresence>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.button>
-            </div>
-          );
-        })()}
         <div
+          data-compact-hit-area="true"
           className={clsx(
-            "w-full mx-auto relative",
+            "w-full mx-auto relative overflow-visible",
             cornerActive ? "transition-transform duration-150 ease-out" : "transition-all duration-300",
           )}
           style={{
-            maxWidth: 360,
+            maxWidth: 420,
             transform: cornerActive
               ? `translate(${cornerTranslateX}px, ${cornerTranslateY}px) scale(${cornerScale})`
               : undefined,
             transformOrigin: 'bottom right',
           }}
         >
-        <div
-          className="drag w-full min-h-[56px] h-auto rounded-[18px] flex flex-col justify-center relative overflow-hidden isolate"
-          style={{
-            zIndex: 1,
-            padding: 10,
-            gap: 8,
-            backgroundColor: "#171717",
+        <CompactHub
+          expanded={compactHubOpen && !needsDropdown}
+          showPeek={showHubPeek && !needsDropdown}
+          backgroundTaskCount={backgroundTaskCount}
+          tabs={compactHubTabs}
+          activeTabId={activeTabId}
+          onPeekClick={() => openCompactHub(true)}
+          onClose={closeCompactHub}
+          onExpand={() => {
+            closeCompactHub();
+            onToggleExpand();
           }}
-          onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
-          onDrop={onDrop}
+          userPrompt={miniOutputPrompt || ''}
+          assistantText={miniOutputText || ''}
+          isStreaming={!!miniOutputStreaming}
+          toolCalls={currentToolCalls}
+          translucentMode={translucentMode}
+          inputBarHeight={inputBarHeight}
+          placement={dropdownPlacement}
+          onQuickResponseHeightChange={handleQuickResponseHeightChange}
         >
-          {/* Pill content sits above the translucent surface. */}
-          <div className="relative w-full flex flex-col gap-2" style={{ zIndex: 2 }}>
-          {/* Attachments only render when there's something to show */}
-          {(attachments.length > 0 || (contextPaths?.length ?? 0) > 0) && (
-            <AttachmentBar
-              attachments={attachments}
-              contextPaths={contextPaths}
-              onRemoveAttachment={onRemoveAttachment}
-              onRemoveContext={removeContext}
-            />
-          )}
-
-          {/* Single row: +, input, voice */}
-          <div className="flex items-center w-full no-drag" style={{ gap: 10, height: 36 }}>
-            {!signedIn ? (
-              <button
-                onClick={onSignIn}
-                className="no-drag flex-1 flex items-center justify-center gap-2 h-9 rounded-xl bg-primary text-primary-fg font-semibold text-[12px] hover:opacity-90 transition-all active:scale-95"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>Sign in</span>
-              </button>
-            ) : (
-              <>
-                {/* + (attach) */}
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      className="w-6 h-6 flex items-center justify-center text-white/90 hover:text-white transition-colors flex-shrink-0"
-                      title="Attach"
-                    >
-                      <PlusLucide className="w-6 h-6" strokeWidth={1.5} />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content className="DropdownContent z-[10001] min-w-[160px] bg-[rgb(23,23,23)]/85 backdrop-blur-xl rounded-xl border border-white/10 p-1 shadow-2xl" sideOffset={8} align="start" collisionPadding={10}>
-                      <DropdownMenu.Item
-                        onSelect={onAttachFiles}
-                        className="group text-[13px] text-white/90 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 outline-none cursor-pointer transition-colors"
-                      >
-                        <FileIcon className="w-3.5 h-3.5 opacity-70" />
-                        <span>Attach files</span>
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        onSelect={onAttachImages}
-                        className="group text-[13px] text-white/90 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 outline-none cursor-pointer transition-colors"
-                      >
-                        <ImageIcon className="w-3.5 h-3.5 opacity-70" />
-                        <span>Attach images</span>
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-
-                {/* Input */}
-                <div
-                  className="flex-1 relative flex items-center justify-center min-h-[36px] rounded-[12px]"
-                  style={{ padding: 6, gap: 4 }}
-                >
-                  <TextareaAutosize
-                    ref={setTextareaRef}
-                    value={query}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    onPaste={onPaste}
-                    onHeightChange={handleHeightChange}
-                    placeholder={showFileNav ? "Type to filter..." : miniOutputStreaming ? "Ask next or steer current step" : "Ask anything"}
-                    className={clsx(
-                      "w-full bg-transparent outline-none text-[12px] leading-4 p-0 resize-none scrollbar-hidden font-normal text-white placeholder:text-white",
-                      query.length > 0 ? "text-left" : "text-center"
-                    )}
-                    style={{ fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif" }}
-                    minRows={1}
-                    maxRows={5}
-                  />
-                </div>
-
-                {miniOutputStreaming && onSteer && query.trim() && (
-                  <button
-                    type="button"
-                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-all active:scale-95 flex-shrink-0"
-                    title="Steer current step"
-                    onClick={onSteer}
-                  >
-                    <CornerDownRight className="w-4 h-4" />
-                  </button>
-                )}
-
-                {/* Voice */}
-                <button
-                  type="button"
-                  className={clsx(
-                    "w-8 h-8 rounded-[10px] flex items-center justify-center transition-all active:scale-95 flex-shrink-0",
-                    voiceActive ? "bg-white/15 text-white" : "text-white/85 hover:text-white hover:bg-white/10"
-                  )}
-                  title={voiceActive ? "Stop voice" : "Start voice"}
-                  onClick={onToggleVoice}
-                >
-                  <AudioLines className="w-4 h-4" strokeWidth={1.5} />
-                </button>
-              </>
-            )}
-          </div>
-          </div>
-
+        <div className="w-full relative z-[5]">
+          <CompactTitleBar
+            show={showCompactTitleBar}
+            bumpHeight={COMPACT_TITLE_BUMP_HEIGHT}
+            overlap={COMPACT_TITLE_BUMP_OVERLAP}
+            title={compactTitleText}
+            isAiWorking={isAiWorking}
+            chatMenuOpen={chatMenuOpen}
+            onChatMenuOpenChange={onChatMenuOpenChange}
+            conversations={conversations}
+            loadingConversations={loadingConversations}
+            activeConversationId={activeConversationId}
+            onSelectConversation={onSelectConversation}
+            onNewChat={onNewChat}
+          />
+          <CompactInputPill
+            showThinkingGlow={showThinkingGlow}
+            signedIn={signedIn}
+            onSignIn={onSignIn}
+            attachments={attachments}
+            contextPaths={contextPaths}
+            onRemoveAttachment={onRemoveAttachment}
+            onRemoveContext={removeContext}
+            onAttachFiles={onAttachFiles}
+            onAttachImages={onAttachImages}
+            onDrop={onDrop}
+            textareaRef={setTextareaRef}
+            query={query}
+            setQuery={setQuery}
+            onKeyDown={handleKeyDown}
+            onPaste={onPaste}
+            onHeightChange={handleHeightChange}
+            placeholder={
+              showFileNav
+                ? 'Type to filter...'
+                : miniOutputStreaming
+                  ? 'Queue after this turn…'
+                  : isAiWorking
+                    ? ''
+                    : 'Ask anything'
+            }
+            miniOutputStreaming={!!miniOutputStreaming}
+            onSteer={onSteer}
+            voiceActive={voiceActive}
+            onToggleVoice={onToggleVoice}
+          />
         </div>
+        </CompactHub>
 
-          {/* Drag-to-expand corner handle — a thick red arc hugging the
-              OUTSIDE of the bar's bottom-right corner, reading as a resize
-              grip clipped to the bar's exterior. Lives as a sibling of the
-              bar (not inside it) so the bar's overflow:hidden no longer
-              shaves off the stroke. The arc is drawn with radius
-              barCornerRadius + strokeWidth/2 around the bar's corner-curve
-              center, so the inner edge of the stroke meets the bar's outer
-              edge curve exactly and the stroke extends outward from there. */}
-          <button
-            type="button"
-            className="no-drag absolute"
-            style={{
-              right: -8,
-              bottom: -8,
-              width: 52,
-              height: 52,
-              padding: 0,
-              border: 'none',
-              background: 'transparent',
-              cursor: 'nwse-resize',
-              zIndex: 4,
-              transform: cornerActive ? 'scale(1.12)' : 'scale(1)',
-              transformOrigin: 'bottom right',
-              transition: 'transform 160ms ease-out, filter 160ms ease-out',
-              filter: cornerActive ? 'brightness(1.15)' : 'none',
-            }}
-            onPointerDown={handleCornerPointerDown}
-            title="Drag to expand"
-            aria-label="Drag to expand to window mode"
-          >
-            <svg width="52" height="52" viewBox="0 0 52 52" style={{ display: 'block', overflow: 'visible' }}>
-              {/* Button is 52×52 at right:-8 / bottom:-8, so SVG (44, 44)
-                  lands on the bar's exterior bottom-right corner and the
-                  bar's corner-curve center (18px in from each edge) lands
-                  at SVG (26, 26). Path radius 22 around that center → the
-                  8px stroke spans radius 18 (= bar's outer edge curve) to
-                  26 (= 8px outside the bar). Outer stroke pixels reach
-                  SVG (52, 26) and (26, 52) — exactly at the SVG bounds,
-                  with `overflow: visible` covering any sub-pixel spill. */}
-              <path
-                d="M 47 26 A 21 21 0 0 1 26 47"
-                stroke="#FF383C"
-                strokeWidth="6"
-                strokeLinecap="butt"
-                fill="none"
-              />
-            </svg>
-          </button>
+          <CompactDragCorner onPointerDown={handleCornerPointerDown} active={cornerActive} />
         </div>
 
         {/* Bookmark Editor Modal */}
@@ -2194,7 +2079,7 @@ const InputArea = forwardRef(function InputArea(
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={onPaste}
-                placeholder={showFileNav ? "Type to filter context..." : miniOutputStreaming ? "Ask next or steer current step" : "Just ask Stuard"}
+                placeholder={showFileNav ? "Type to filter context..." : miniOutputStreaming ? "Queue after this turn…" : "Just ask Stuard"}
                 className={clsx(
                   "no-drag w-full outline-none text-[13px] leading-normal placeholder:truncate rounded-3xl px-5 py-2 resize-none scrollbar-hidden transition-colors overflow-hidden font-medium",
                   showFileNav
@@ -2211,22 +2096,6 @@ const InputArea = forwardRef(function InputArea(
           <div className="flex items-center gap-1 bg-theme-hover/50 border border-theme/10 rounded-lg p-0.5 h-8">
             {/* Folder Permissions */}
             <FolderPermissionsButton />
-            <div className="w-px h-4 bg-theme/20 mx-0.5" />
-            {/* Mic Button */}
-            {onMicClick && (
-              <button
-                id="stuard-mic-btn"
-                className={clsx(
-                  "no-drag inline-flex items-center justify-center rounded-md transition-all h-7 w-7",
-                  isRecording ? "text-red-500 animate-pulse bg-red-500/10" : "text-theme-fg/70 hover:text-theme-fg hover:bg-theme-hover"
-                )}
-                onClick={onMicClick}
-                title={isRecording ? "Stop recording" : "Start recording"}
-                data-onboarding="mic-btn"
-              >
-                <Mic className="w-3.5 h-3.5" />
-              </button>
-            )}
             <div className="w-px h-4 bg-theme/20 mx-0.5" />
 
             {/* Dashboard Link */}

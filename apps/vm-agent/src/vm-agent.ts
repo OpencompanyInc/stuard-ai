@@ -1360,6 +1360,7 @@ const DB_FILES_TO_WATCH = [
   'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
   'memory.db', 'memory.db-wal', 'memory.db-shm',
   'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+  'workflow.db', 'workflow.db-wal', 'workflow.db-shm',
 ];
 const _lastSyncMtimes = new Map<string, number>();
 let _syncInFlight = false;
@@ -1959,6 +1960,15 @@ async function syncAgentData(args: any): Promise<any> {
           if (result.copied) copied++; else skipped++;
         }
         console.log(`[vm-agent] Legacy archive: ${copied} copied, ${skipped} skipped (kept local)`);
+      }
+
+      // Legacy archives may store workflow.db at archive root (outside agent/)
+      const rootWorkflowDb = `${extractDir}/workflow.db`;
+      if (fs.existsSync(rootWorkflowDb)) {
+        const result = mergeCopy(rootWorkflowDb, `${AGENT_DATA_DIR}/workflow.db`);
+        if (result.copied) copied++;
+        else skipped++;
+        console.log(`[vm-agent] workflow.db from archive root: ${result.reason}`);
       }
 
       // Restore device keys if the archive carries them — this is what lets

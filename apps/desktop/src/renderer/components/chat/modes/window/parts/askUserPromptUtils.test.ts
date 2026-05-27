@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAskUserResult, normalizeAskUserPrompt } from './askUserPromptUtils';
+import { buildAskUserResult, normalizeAskUserPrompt } from '@stuardai/chat-ui/askUserPromptUtils';
 
 describe('askUserPromptUtils', () => {
   it('normalizes the legacy single-question ask_user format', () => {

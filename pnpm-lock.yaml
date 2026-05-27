@@ -23,7 +23,7 @@ importers:
         version: 8.2.2
       framer-motion:
         specifier: ^12.23.24
-        version: 12.23.24(react@19.2.0)
+        version: 12.23.24(react-dom@19.2.0)(react@19.2.0)
       katex:
         specifier: ^0.16.25
         version: 0.16.25
@@ -96,6 +96,9 @@ importers:
       '@polar-sh/sdk':
         specifier: ^0.46.7
         version: 0.46.7
+      '@stuardai/workflow-core':
+        specifier: workspace:*
+        version: link:../../packages/workflow-core
       '@supabase/supabase-js':
         specifier: ^2.45.4
         version: 2.76.0
@@ -188,6 +191,24 @@ importers:
       '@radix-ui/react-slider':
         specifier: ^1.3.6
         version: 1.3.6(@types/react-dom@18.2.7)(@types/react@18.2.21)(react-dom@18.2.0)(react@18.2.0)
+      '@stuardai/bots-ui':
+        specifier: workspace:*
+        version: link:../../packages/bots-ui
+      '@stuardai/chat-ui':
+        specifier: workspace:*
+        version: link:../../packages/chat-ui
+      '@stuardai/cloud-client':
+        specifier: workspace:*
+        version: link:../../packages/cloud-client
+      '@stuardai/cloud-runtime-ui':
+        specifier: workspace:*
+        version: link:../../packages/cloud-runtime-ui
+      '@stuardai/vm-chat':
+        specifier: workspace:*
+        version: link:../../packages/vm-chat
+      '@stuardai/workflow-core':
+        specifier: workspace:*
+        version: link:../../packages/workflow-core
       '@supabase/supabase-js':
         specifier: ^2.45.4
         version: 2.76.0
@@ -503,6 +524,24 @@ importers:
       '@stripe/stripe-js':
         specifier: ^7.8.0
         version: 7.9.0
+      '@stuardai/bots-ui':
+        specifier: workspace:*
+        version: link:../../packages/bots-ui
+      '@stuardai/chat-ui':
+        specifier: workspace:*
+        version: link:../../packages/chat-ui
+      '@stuardai/cloud-client':
+        specifier: workspace:*
+        version: link:../../packages/cloud-client
+      '@stuardai/cloud-runtime-ui':
+        specifier: workspace:*
+        version: link:../../packages/cloud-runtime-ui
+      '@stuardai/vm-chat':
+        specifier: workspace:*
+        version: link:../../packages/vm-chat
+      '@stuardai/workflow-core':
+        specifier: workspace:*
+        version: link:../../packages/workflow-core
       '@supabase/supabase-js':
         specifier: ^2.54.0
         version: 2.76.0
@@ -585,6 +624,170 @@ importers:
       vitest:
         specifier: ^4.0.10
         version: 4.0.10(@types/node@20.19.22)(terser@5.46.0)
+
+  packages/bots-ui:
+    dependencies:
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      lucide-react:
+        specifier: '>=0.500.0'
+        version: 0.554.0(react@19.2.0)
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.0
+      react-dom:
+        specifier: '>=18.0.0'
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@types/react':
+        specifier: 18.2.21
+        version: 18.2.21
+      '@types/react-dom':
+        specifier: 18.2.7
+        version: 18.2.7
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/chat-ui:
+    dependencies:
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      framer-motion:
+        specifier: ^12.0.0
+        version: 12.23.24(react-dom@19.2.0)(react@19.2.0)
+      lucide-react:
+        specifier: '>=0.500.0'
+        version: 0.554.0(react@19.2.0)
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.0
+      react-dom:
+        specifier: '>=18.0.0'
+        version: 19.2.0(react@19.2.0)
+      react-markdown:
+        specifier: ^10.0.0
+        version: 10.1.0(@types/react@18.2.21)(react@19.2.0)
+      rehype-katex:
+        specifier: ^7.0.0
+        version: 7.0.1
+      remark-gfm:
+        specifier: ^4.0.0
+        version: 4.0.1
+      remark-math:
+        specifier: ^6.0.0
+        version: 6.0.0
+    devDependencies:
+      '@types/react':
+        specifier: 18.2.21
+        version: 18.2.21
+      '@types/react-dom':
+        specifier: 18.2.7
+        version: 18.2.7
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/cloud-client:
+    devDependencies:
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/cloud-runtime-ui:
+    dependencies:
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      lucide-react:
+        specifier: '>=0.500.0'
+        version: 0.554.0(react@19.2.0)
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.0
+      react-dom:
+        specifier: '>=18.0.0'
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@types/react':
+        specifier: 18.2.21
+        version: 18.2.21
+      '@types/react-dom':
+        specifier: 18.2.7
+        version: 18.2.7
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/main-chat:
+    dependencies:
+      '@stuardai/chat-ui':
+        specifier: workspace:*
+        version: link:../chat-ui
+      '@stuardai/cloud-client':
+        specifier: workspace:*
+        version: link:../cloud-client
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      lucide-react:
+        specifier: '>=0.500.0'
+        version: 0.554.0(react@19.2.0)
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.0
+      react-dom:
+        specifier: '>=18.0.0'
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@types/react':
+        specifier: 18.2.21
+        version: 18.2.21
+      '@types/react-dom':
+        specifier: 18.2.7
+        version: 18.2.7
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/vm-chat:
+    dependencies:
+      '@stuardai/chat-ui':
+        specifier: workspace:*
+        version: link:../chat-ui
+      '@stuardai/cloud-client':
+        specifier: workspace:*
+        version: link:../cloud-client
+      clsx:
+        specifier: ^2.0.0
+        version: 2.1.1
+      lucide-react:
+        specifier: '>=0.500.0'
+        version: 0.554.0(react@19.2.0)
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.0
+      react-dom:
+        specifier: '>=18.0.0'
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@types/react':
+        specifier: 18.2.21
+        version: 18.2.21
+      '@types/react-dom':
+        specifier: 18.2.7
+        version: 18.2.7
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/workflow-core:
+    devDependencies:
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
 
 packages:
 
@@ -4807,6 +5010,7 @@ packages:
 
   /@ungap/structured-clone@1.3.0:
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   /@unrs/resolver-binding-android-arm-eabi@1.11.1:
     resolution: {integrity: sha512-ppLRUgHVaGRWUx0R0Ut06Mjo9gBaBkg3v/8AxusGLhsIotbBLuRk51rAzqLC8gq6NyyAojEXglNjzf6R948DNw==}
@@ -5071,6 +5275,7 @@ packages:
   /@xmldom/xmldom@0.8.11:
     resolution: {integrity: sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
     requiresBuild: true
     dev: true
 
@@ -7553,7 +7758,7 @@ packages:
     resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
     engines: {node: '>=18.0.0'}
     dependencies:
-      eventsource-parser: 3.0.6
+      eventsource-parser: 3.0.8
     dev: false
 
   /execa@9.6.1:
@@ -7985,7 +8190,7 @@ packages:
       tslib: 2.8.1
     dev: false
 
-  /framer-motion@12.23.24(react@19.2.0):
+  /framer-motion@12.23.24(react-dom@19.2.0)(react@19.2.0):
     resolution: {integrity: sha512-HMi5HRoRCTou+3fb3h9oTLyJGBxHfW+HnNE25tAXOvVx/IvwMHK0cx7IR4a2ZU6sh3IX1Z+4ts32PcYBOqka8w==}
     peerDependencies:
       '@emotion/is-prop-valid': '*'
@@ -8002,8 +8207,8 @@ packages:
       motion-dom: 12.23.23
       motion-utils: 12.23.6
       react: 19.2.0
+      react-dom: 19.2.0(react@19.2.0)
       tslib: 2.8.1
-    dev: true
 
   /fresh@2.0.0:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
@@ -11608,7 +11813,6 @@ packages:
     dependencies:
       react: 19.2.0
       scheduler: 0.27.0
-    dev: false
 
   /react-force-graph-2d@1.29.0(react@18.2.0):
     resolution: {integrity: sha512-Xv5IIk+hsZmB3F2ibja/t6j/b0/1T9dtFOQacTUoLpgzRHrO6wPu1GtQ2LfRqI/imgtaapnXUgQaE8g8enPo5w==}
@@ -11710,7 +11914,6 @@ packages:
       vfile: 6.0.3
     transitivePeerDependencies:
       - supports-color
-    dev: true
 
   /react-redux@9.2.0(@types/react@18.2.21)(react@18.2.0)(redux@5.0.1):
     resolution: {integrity: sha512-ROY9fvHhwOD9ySfrF0wmvu//bKCQ6AeZZq1nJNtbDC+kk5DuSuNX/n6YWYF/SYy7bSba4D4FSz8DJeKY/S/r+g==}
@@ -12381,7 +12584,6 @@ packages:
 
   /scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
-    dev: false
 
   /section-matter@1.0.0:
     resolution: {integrity: sha512-vfD3pmTzGpufjScBh50YHKzEu2lxBWhVEHsNGoEXmCmn2hKGfeNLYMzCJpe8cD7gqX7TJluOVpBkAequ6dgMmA==}

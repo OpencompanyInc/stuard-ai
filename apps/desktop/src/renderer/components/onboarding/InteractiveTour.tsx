@@ -38,7 +38,7 @@ const STEPS: TourStepDef[] = [
   {
     id: 'mention',
     hint: <>Type <Kbd>@</Kbd> in the input to drop in files, folders, or browser context.</>,
-    ack: "Nice — that's how you hand me context.",
+    ack: "Nice. That's how you hand me context.",
     anchor: 'stuard-input-area',
     side: 'top',
     detect: (advance) => {
@@ -64,7 +64,7 @@ const STEPS: TourStepDef[] = [
   },
   {
     id: 'layout',
-    hint: <>Switch layouts here — compact, sidebar, or full window.</>,
+    hint: <>Switch layouts here: compact, sidebar, or full window.</>,
     ack: 'Whichever fits.',
     anchor: 'stuard-collapse-btn',
     side: 'bottom',

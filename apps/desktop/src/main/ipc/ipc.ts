@@ -1,8 +1,8 @@
 ﻿
-import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -31,6 +31,8 @@ import {
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 import { pushDesktopAgentDataToVM, requestAgentDataPush } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
+import { testBotSetupPreflight } from "../services/bot-setup-preflight";
+import { runBotPreflightProbe, type BotPreflightProbeRequest } from "../services/bot-preflight-probes";
 import {
   browserMirrorClickAt,
   browserMirrorPressKey,
@@ -281,15 +283,45 @@ export function setupIpc() {
   ipcMain.handle("overlay:moveBy", (_e, dx: number, dy: number) => moveOverlayBy(dx, dy));
   ipcMain.handle("overlay:getSize", () => getOverlaySize());
   ipcMain.handle("overlay:getMode", () => getOverlayMode());
+  ipcMain.handle("overlay:minimize", () => overlayMinimize());
+  ipcMain.handle("overlay:toggleMaximize", () => overlayToggleMaximize());
+  ipcMain.handle("overlay:isMaximized", () => overlayIsMaximized());
   ipcMain.handle("overlay:startScreenSnip", () => startOverlayScreenSnip());
 
+  const windowFromEvent = (e: IpcMainInvokeEvent) => {
+    try { return BrowserWindow.fromWebContents(e.sender); } catch { return null; }
+  };
+  ipcMain.handle("window:minimize", (e) => {
+    const w = windowFromEvent(e);
+    if (w && !w.isDestroyed()) try { w.minimize(); } catch { }
+  });
+  ipcMain.handle("window:toggleMaximize", (e) => {
+    const w = windowFromEvent(e);
+    if (w && !w.isDestroyed()) {
+      try {
+        if (w.isMaximized()) w.unmaximize();
+        else w.maximize();
+      } catch { }
+    }
+  });
+  ipcMain.handle("window:isMaximized", (e) => {
+    const w = windowFromEvent(e);
+    if (!w || w.isDestroyed()) return false;
+    try { return w.isMaximized(); } catch { return false; }
+  });
+  ipcMain.handle("window:close", (e) => {
+    const w = windowFromEvent(e);
+    if (w && !w.isDestroyed()) try { w.close(); } catch { }
+  });
+
   // Internal sidebar (rendered inside overlay window, expands window width)
-  ipcMain.handle("overlay:toggleInternalSidebar", (_e, open?: boolean) => toggleInternalSidebar(open));
+  ipcMain.handle("overlay:toggleInternalSidebar", (_e, open?: boolean, panelWidth?: number) => toggleInternalSidebar(open, panelWidth));
+  ipcMain.handle("overlay:resizeInternalSidebar", (_e, panelWidth: number) => resizeInternalSidebar(panelWidth));
   ipcMain.handle("overlay:getInternalSidebarState", () => getInternalSidebarState());
 
   // System windows
   ipcMain.handle("system:openDashboard", (_e, options?: { tab?: string }) => openDashboardWindow(options));
-  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string; workflowId?: string }) => openWorkflowsWindow(options));
+  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => openWorkflowsWindow(options));
   ipcMain.handle("system:openOnboarding", () => openOnboardingWindow());
   ipcMain.handle("system:closeOnboarding", () => closeOnboardingWindow());
   ipcMain.handle("system:openVoiceTest", () => openVoiceTestWindow());
@@ -982,8 +1014,7 @@ export function setupIpc() {
   // Cloud Engine â€” agent data upload (desktop â†’ GCS â†’ VM)
   ipcMain.handle('cloud:uploadAgentData', async () => {
     try {
-      const ok = await pushDesktopAgentDataToVM();
-      return { ok };
+      return await pushDesktopAgentDataToVM();
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'upload_failed') };
     }
@@ -1452,6 +1483,39 @@ export function setupIpc() {
   // because the underlying registry is process-global; both views show the
   // same union, minus the proactive_task_* helpers (those are kanban plumbing).
   ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
+  ipcMain.handle('bots:testSetup', (_e, input: any) => {
+    try {
+      return testBotSetupPreflight(input || {}, proactiveAvailableTools);
+    } catch (err: any) {
+      return {
+        ok: false,
+        summary: err?.message || 'Setup test failed.',
+        checks: [],
+        error: err?.message || 'setup_test_failed',
+      };
+    }
+  });
+  ipcMain.handle('bots:runPreflightProbe', async (
+    _e,
+    payload: { request: BotPreflightProbeRequest; cloudHttpBase: string; authToken: string | null },
+  ) => {
+    try {
+      const result = await runBotPreflightProbe(
+        payload?.request || { probe: '', args: undefined },
+        {
+          cloudHttpBase: String(payload?.cloudHttpBase || '').trim(),
+          authToken: payload?.authToken ? String(payload.authToken) : null,
+        },
+      );
+      return { ok: true, ...result };
+    } catch (err: any) {
+      return {
+        ok: false,
+        status: 'fail' as const,
+        detail: err?.message || 'probe_failed',
+      };
+    }
+  });
 
   // Deploy / undeploy a bot to the user's cloud VM (in addition to local).
   ipcMain.handle('bots:deployToVm', async (_e, id: string) => {
@@ -1577,6 +1641,50 @@ export function setupIpc() {
       await refreshAppCache();
       const apps = await getInstalledApps();
       return { ok: true, count: apps.length };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Nukes the on-disk UWP icon cache, the in-memory app cache, then forces a
+  // fresh discovery + manifest scan. Use this when Store apps have updated
+  // (their install dirs get renamed by version, breaking cached PNG paths)
+  // or after installing a new app that hasn't appeared in search yet.
+  ipcMain.handle('apps:clearCacheAndRediscover', async () => {
+    try {
+      const userData = app.getPath('userData');
+      // Nuke both the UWP manifest-derived cache and the Win32 PowerShell-
+      // extracted PNG cache, then force discovery + a fresh icon prewarm.
+      try { await fs.promises.unlink(path.join(userData, 'uwp-icons-v1.json')); } catch { /* already gone */ }
+      try { await fs.promises.unlink(path.join(userData, 'win32-icons-v1.json')); } catch { /* already gone */ }
+      try {
+        await fs.promises.rm(path.join(userData, 'win32-icons-v1'), { recursive: true, force: true });
+      } catch { /* already gone */ }
+      await refreshAppCache();
+      const apps = await getInstalledApps();
+      return { ok: true, count: apps.length };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Trigger a full re-scan of every indexed root. Doesn't drop the DB
+  // (1.3GB+ for a full home-dir index — re-crawling from scratch would take
+  // ages and a stale-row sweep at the end gives an equivalent end state).
+  ipcMain.handle('fileIndex:forceReindex', async () => {
+    try {
+      const roots = await listRoots();
+      let scanned = 0;
+      for (const root of roots) {
+        if (!root.enabled || root.schedule === 'off') continue;
+        try {
+          await scanRoot(root.id);
+          scanned++;
+        } catch (e: any) {
+          logger.warn(`[fileIndex:forceReindex] scan of ${root.path} failed:`, e?.message);
+        }
+      }
+      return { ok: true, scanned };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     }

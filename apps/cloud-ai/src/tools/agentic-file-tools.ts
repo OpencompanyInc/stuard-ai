@@ -9,6 +9,10 @@ import { z } from 'zod';
 import { makeLocalTool } from './device/shared';
 
 const MAX_FILE_LINES = 650;
+const MAX_GLOB_RESULTS = 500;
+const MAX_GLOB_RESULTS_HARD = 2000;
+const MAX_GREP_RESULTS = 200;
+const MAX_GREP_RESULTS_HARD = 500;
 
 /**
  * File Read Tool
@@ -127,11 +131,11 @@ export const glob = makeLocalTool(
   `Find files/folders using a glob pattern.
 
 PARAMS:
-- pattern: Glob pattern (required)
-- root: Optional base path
+- pattern: Glob pattern (required). Use specific patterns like **/*.pdf or *.txt — never **/* (rejected as too broad).
+- root: Base directory (required when pattern contains **)
 - recursive: Enable ** to match recursively (default true)
 - include_files/include_dirs: Filter results
-- max_results: Max results to return
+- max_results: Max results to return (default ${MAX_GLOB_RESULTS}, hard max ${MAX_GLOB_RESULTS_HARD})
 
 RETURNS:
 - items: [{ path, type }]
@@ -143,7 +147,7 @@ RETURNS:
     recursive: z.boolean().optional().describe('Enable recursive glob (**). Default true'),
     include_files: z.boolean().optional().describe('Include files (default true)'),
     include_dirs: z.boolean().optional().describe('Include directories (default true)'),
-    max_results: z.number().int().positive().optional().describe('Max results to return'),
+    max_results: z.number().int().positive().optional().describe(`Max results to return (default ${MAX_GLOB_RESULTS}, hard max ${MAX_GLOB_RESULTS_HARD})`),
   }),
   z.object({
     ok: z.boolean(),
@@ -173,7 +177,7 @@ PARAMS:
 - regex: Treat pattern as regex (default true)
 - case_sensitive: Default true
 - include_glob/exclude_glob: Filter filenames (string or string[])
-- max_results: Max matches to return
+- max_results: Max matches to return (default ${MAX_GREP_RESULTS}, hard max ${MAX_GREP_RESULTS_HARD})
 - max_file_size: Skip files larger than this (bytes)
 
 RETURNS:
@@ -187,7 +191,7 @@ RETURNS:
     case_sensitive: z.boolean().optional().describe('Case-sensitive search (default true)'),
     include_glob: z.union([z.string(), z.array(z.string())]).optional().describe('Include filename glob(s)'),
     exclude_glob: z.union([z.string(), z.array(z.string())]).optional().describe('Exclude filename glob(s)'),
-    max_results: z.number().int().positive().optional().describe('Max matches to return'),
+    max_results: z.number().int().positive().optional().describe(`Max matches to return (default ${MAX_GREP_RESULTS}, hard max ${MAX_GREP_RESULTS_HARD})`),
     max_file_size: z.number().int().positive().optional().describe('Skip files larger than this in bytes'),
   }),
   z.object({

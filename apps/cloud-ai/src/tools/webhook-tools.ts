@@ -22,7 +22,7 @@ const CLOUD_PUBLIC_URL = process.env.CLOUD_PUBLIC_URL || 'https://api.stuard.ai'
  */
 export const create_webhook = createTool({
   id: 'create_webhook',
-  description: 'Create a new webhook endpoint that can trigger workflows or receive external events. Returns the webhook URL that external services can POST to.',
+  description: 'Create a cloud webhook endpoint that external services can POST to in order to trigger workflows or receive events. For local website request/response calls, use a workflow webhook trigger with mode "local" and the desktop /webhooks/call/:flowId URL from workflow docs.',
   inputSchema: z.object({
     name: z.string().describe('A descriptive name for the webhook'),
     description: z.string().optional().describe('Optional description of what this webhook does'),
@@ -31,6 +31,8 @@ export const create_webhook = createTool({
     triggerId: z.string().optional().describe('Specific trigger ID within the workflow'),
     requireSignature: z.boolean().default(false).describe('Require HMAC signature verification'),
     allowedIps: z.array(z.string()).optional().describe('Optional list of allowed IP addresses'),
+    isActive: z.boolean().optional().describe('Enable or disable the public cloud incoming URL. Local-only registry rows may be inactive but still used for Supabase discovery/history.'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Optional metadata such as local endpoint descriptors or integration context.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -47,7 +49,7 @@ export const create_webhook = createTool({
     message: z.string().optional(),
   }),
   execute: async (inputData, context) => {
-    const { name, description, type, workflowId, triggerId, requireSignature, allowedIps  } = inputData as any;
+    const { name, description, type, workflowId, triggerId, requireSignature, allowedIps, isActive, metadata  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -63,6 +65,8 @@ export const create_webhook = createTool({
       target_workflow_trigger_id: triggerId,
       require_signature: requireSignature,
       allowed_ips: allowedIps,
+      is_active: isActive,
+      metadata,
     });
     
     if (!webhook) {
@@ -90,7 +94,7 @@ export const create_webhook = createTool({
  */
 export const list_webhooks = createTool({
   id: 'list_webhooks',
-  description: 'List all webhooks configured for the user',
+  description: 'List all webhooks configured for the user, including cloud endpoints and Supabase-synced local webhook metadata/history rows.',
   inputSchema: z.object({}),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -105,6 +109,7 @@ export const list_webhooks = createTool({
       triggerCount: z.number(),
       lastTriggeredAt: z.string().optional(),
       workflowId: z.string().optional(),
+      metadata: z.any().optional(),
     })).optional(),
     count: z.number().optional(),
   }),
@@ -130,6 +135,7 @@ export const list_webhooks = createTool({
         triggerCount: w.trigger_count,
         lastTriggeredAt: w.last_triggered_at,
         workflowId: w.target_workflow_id,
+        metadata: w.metadata,
       })),
       count: webhooks.length,
     };
@@ -151,6 +157,7 @@ export const update_webhook = createTool({
     triggerId: z.string().optional().describe('New trigger ID'),
     requireSignature: z.boolean().optional().describe('Require signature verification'),
     allowedIps: z.array(z.string()).optional().describe('New IP whitelist'),
+    metadata: z.record(z.string(), z.any()).optional().describe('Replace webhook metadata, including synced local endpoint descriptors.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -158,7 +165,7 @@ export const update_webhook = createTool({
     message: z.string().optional(),
   }),
   execute: async (inputData, context) => {
-    const { webhookId, name, description, isActive, workflowId, triggerId, requireSignature, allowedIps  } = inputData as any;
+    const { webhookId, name, description, isActive, workflowId, triggerId, requireSignature, allowedIps, metadata  } = inputData as any;
     const secrets = getBridgeSecrets();
     const userId = secrets?.userId;
     
@@ -174,6 +181,7 @@ export const update_webhook = createTool({
     if (triggerId !== undefined) updates.target_workflow_trigger_id = triggerId;
     if (requireSignature !== undefined) updates.require_signature = requireSignature;
     if (allowedIps !== undefined) updates.allowed_ips = allowedIps;
+    if (metadata !== undefined) updates.metadata = metadata;
     
     const success = await updateWebhook(userId, webhookId, updates);
     

@@ -21,11 +21,11 @@ import {
   Play,
   RefreshCw,
   Search,
-  Sparkles,
   Trash2,
   Upload,
   Volume2,
   VolumeX,
+  Wand2,
   X,
 } from 'lucide-react';
 import {
@@ -51,7 +51,7 @@ const CATEGORIES: CategoryDef[] = [
   { id: 'audio', label: 'Audio', icon: Music, color: 'text-amber-400', match: (i) => i.kind === 'audio' },
   { id: 'recordings', label: 'Recordings', icon: Mic, color: 'text-red-400', match: (i) => ['audio-recordings', 'video-recordings'].includes(i.source) || i.classification?.toLowerCase().includes('capture') },
   { id: 'screenshots', label: 'Screenshots', icon: Monitor, color: 'text-cyan-400', match: (i) => i.source === 'screenshots' || i.classification === 'Screenshot' || i.source === 'screen-recordings' || i.source === 'screen-audio' },
-  { id: 'generated', label: 'AI Generated', icon: Sparkles, color: 'text-violet-400', match: (i) => i.source === 'generated' || i.source === 'generated-audio' || i.classification?.toLowerCase().includes('generated') },
+  { id: 'generated', label: 'AI Generated', icon: Wand2, color: 'text-violet-400', match: (i) => i.source === 'generated' || i.source === 'generated-audio' || i.classification?.toLowerCase().includes('generated') },
   { id: 'messages', label: 'Messages', icon: MessageSquare, color: 'text-green-400', match: (i) => i.source === 'message-media' || i.tags?.some((t) => ['telnyx', 'whatsapp', 'message-media'].includes(t)) },
   { id: 'misc', label: 'Other', icon: File, color: 'text-gray-400', match: (i) => !CATEGORIES.slice(1, -1).some((c) => c.match(i)) },
 ];
@@ -244,7 +244,7 @@ function MediaLightbox({
             <video key={item.id} src={src} controls autoPlay playsInline className="max-h-[calc(100vh-180px)] max-w-full rounded-2xl bg-black object-contain shadow-2xl" />
           )}
           {item.kind === 'audio' && src && (
-            <div className="w-full max-w-xl rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-sm">
+            <div className="w-full max-w-xl rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 p-8 backdrop-blur-sm">
               <div className="mb-4 flex justify-center">
                 <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/20 text-primary">
                   <Music className="h-10 w-10" />
@@ -254,7 +254,7 @@ function MediaLightbox({
             </div>
           )}
           {(item.kind === 'document' || item.kind === 'unknown' || !src) && (
-            <div className="flex max-w-md flex-col items-center gap-4 rounded-3xl border border-white/10 bg-white/5 px-10 py-12 text-center backdrop-blur-sm">
+            <div className="flex max-w-md flex-col items-center gap-4 rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 px-10 py-12 text-center backdrop-blur-sm">
               <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-white/5 text-white/80">{kindIcon(item.kind, 'h-10 w-10')}</div>
               <p className="text-lg font-semibold text-white">{item.name}</p>
               <p className="text-sm text-white/50">Open with native app to view this file.</p>
@@ -316,7 +316,7 @@ function MediaCard({ item, viewMode, onClick }: { item: MediaLibraryItem; viewMo
         ) : null}
         {!hasVisualPreview ? (
           <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-theme-hover/80 to-theme-hover/30">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-theme-muted">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-black/20 text-theme-muted">
               {kindIcon(item.kind, 'h-7 w-7')}
             </div>
           </div>

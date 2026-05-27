@@ -7,7 +7,7 @@
  * 3. inspect_workflow (defined here)
  * 4. modify_workflow (from workflow.ts)
  * 5. execute_step (defined here)
- * 6. list_workflows (defined here)
+ * 6. search_workflows (defined here)
  * 7. stop_workflow (from device-tools)
  * 8. web_search (from perplexity-tools)
  * 9. write_file (from device-tools)
@@ -18,6 +18,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge } from '../../tools/bridge';
+import { search_local_workflows } from '../../tools/device/workflows';
 import { getSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
 import { workflowMap } from '../../tools/workflow-system';
 import { writeLog } from '../../utils/logger';
@@ -26,7 +27,7 @@ import {
   formatWorkflowSchematic,
   getFlowContextById,
   getWireBySelector,
-} from '../../../../../shared/workflow-topology';
+} from '@stuardai/workflow-core/topology';
 
 function wfLog(event: string, data?: Record<string, any>) {
   const msg = data ? `[wf-agent-tool] ${event}: ${JSON.stringify(data)}` : `[wf-agent-tool] ${event}`;
@@ -120,46 +121,60 @@ export const executeStep = createTool({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LIST WORKFLOWS - List all saved workflows
+// SEARCH WORKFLOWS - Search saved workflows
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const listWorkflows = createTool({
-  id: 'list_workflows',
-  description: 'List all saved workflows from the local store.',
-  inputSchema: z.object({}),
+export const searchWorkflows = createTool({
+  id: 'search_workflows',
+  description: 'Search saved workflows from the local store by semantic meaning or lexical text.',
+  inputSchema: z.object({
+    query: z.string().optional().describe('Workflow name, id, or natural language description. Empty returns recent workflows.'),
+    mode: z.enum(['semantic', 'lexical']).default('semantic').describe('semantic for natural language matching; lexical for exact text/name/id matching.'),
+    limit: z.number().int().min(1).max(50).default(10),
+  }),
   outputSchema: z.object({
     ok: z.boolean(),
     workflows: z.array(z.object({
       id: z.string(),
       name: z.string(),
       path: z.string().optional(),
+      description: z.string().optional(),
+      score: z.number().optional(),
     })).optional(),
+    mode: z.string().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, { writer }) => {
-    wfLog('list_workflows');
+    const args = inputData as any;
+    wfLog('search_workflows', { query: args?.query, mode: args?.mode, limit: args?.limit });
 
     if (!hasClientBridge()) {
       return { ok: true, workflows: [], error: 'No client bridge available' };
     }
 
     try {
-      const result = await execLocalTool('list_local_workflows', {}, writer as any, 10000);
+      const result = await (search_local_workflows as any).execute?.(
+        { query: args?.query || '', mode: args?.mode || 'semantic', limit: args?.limit || 10 },
+        { writer } as any,
+      );
       
       if (result?.ok && result?.workflows) {
         return {
           ok: true,
+          mode: result.mode,
           workflows: result.workflows.map((w: any) => ({
             id: w.id || w.name,
             name: w.name,
             path: w.path,
+            description: w.description,
+            score: typeof w.score === 'number' ? w.score : undefined,
           })),
         };
       }
 
       return { ok: true, workflows: [] };
     } catch (e: any) {
-      wfLog('list_workflows_error', { error: e.message });
+      wfLog('search_workflows_error', { error: e.message });
       return { ok: false, workflows: [], error: e.message };
     }
   },
@@ -174,7 +189,7 @@ export const loadWorkflow = createTool({
   description:
     'Load an existing saved workflow into the editing session so inspect_workflow and modify_workflow can act on it. ' +
     'Use this when the user references an existing workflow by id (e.g. "modify flow_morning_brief"). ' +
-    'Call list_workflows first if you do not know the exact id. ' +
+    'Call search_workflows first if you do not know the exact id. ' +
     'After loading, call inspect_workflow to see the current topology before editing.',
   inputSchema: z.object({
     workflowId: z.string().describe('The id of the saved workflow to load (e.g. "flow_morning_brief").'),

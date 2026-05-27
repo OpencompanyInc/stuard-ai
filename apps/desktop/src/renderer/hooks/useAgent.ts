@@ -472,6 +472,7 @@ function hasPendingDelegatedToolWork(tab?: ConversationTab | null) {
 interface UseAgentOptions {
   customAgentUrl?: string;
   onTitleUpdate?: (conversationId: string, title: string) => void;
+  onConversationActivity?: (conversationId: string, updatedAt?: string) => void;
   initialChatMode?: ChatMode;
   initialChatModels?: ChatModelsConfig;
 }
@@ -485,6 +486,8 @@ export function useAgent(options?: string | UseAgentOptions) {
   const initialChatModels = cloneChatModelsConfig((typeof options === 'object' ? options?.initialChatModels : undefined) || DEFAULT_TAB_CHAT_MODELS);
   const onTitleUpdateRef = useRef<((cid: string, title: string) => void) | undefined>();
   onTitleUpdateRef.current = typeof options === 'object' ? options?.onTitleUpdate : undefined;
+  const onConversationActivityRef = useRef<((cid: string, updatedAt?: string) => void) | undefined>();
+  onConversationActivityRef.current = typeof options === 'object' ? options?.onConversationActivity : undefined;
 
   // Tabs State
   const [tabs, setTabs] = useState<ConversationTab[]>([{
@@ -587,6 +590,17 @@ export function useAgent(options?: string | UseAgentOptions) {
   const setTabLastError = (tabId: string, err: { code: string; data?: any } | null) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, lastError: err } : t));
   };
+  const clearLastError = useCallback((tabId?: string) => {
+    const targetTabId = tabId || activeTabIdRef.current;
+    setTabs(prev => prev.map(t => {
+      if (t.id !== targetTabId) return t;
+      const next = { ...t, lastError: null };
+      if (t.aiState.phase === 'error') {
+        next.aiState = { phase: 'idle', statusText: 'Ready' };
+      }
+      return next;
+    }));
+  }, []);
   const setChatMode = useCallback((mode: ChatMode) => {
     const targetTabId = activeTabIdRef.current;
     const nextMode = (typeof mode === 'string' && mode.trim()) ? mode.trim() : DEFAULT_TAB_CHAT_MODE;
@@ -847,7 +861,11 @@ export function useAgent(options?: string | UseAgentOptions) {
         if (tabId === targetTabId) { targetRequestId = reqId; break; }
       }
 
-      if (wsOpen) {
+      const canSendBareStop = !targetRequestId
+        && runningTabsRef.current.has(targetTabId)
+        && runningTabsRef.current.size <= 1;
+
+      if (wsOpen && (targetRequestId || canSendBareStop)) {
         const stopPayload: any = { type: 'stop' };
         if (targetRequestId) stopPayload.requestId = targetRequestId;
         wsRef.current!.send(JSON.stringify(stopPayload));
@@ -1086,7 +1104,26 @@ export function useAgent(options?: string | UseAgentOptions) {
 
       clearTabStopped(targetTabId);
       lastStreamActivityRef.current = Date.now();
-      try { wsRef.current.send(JSON.stringify(payload)); } catch { }
+      try {
+        wsRef.current.send(JSON.stringify(payload));
+      } catch (error: any) {
+        const message = String(error?.message || 'Failed to send message');
+        requestIdToTabRef.current.delete(requestId);
+        const fifoIdx = pendingResponseTabsRef.current.indexOf(targetTabId);
+        if (fifoIdx !== -1) pendingResponseTabsRef.current.splice(fifoIdx, 1);
+        runningTabsRef.current.delete(targetTabId);
+        pendingSendRef.current = pendingSendRef.current.filter((item) => item.id !== next.id);
+        setTabs(prev => prev.map(t =>
+          t.id === targetTabId
+            ? {
+                ...t,
+                aiState: { phase: 'error', message, statusText: `Send failed: ${message}` },
+                lastError: { code: 'send_failed', data: { message } },
+              }
+            : t
+        ));
+        return;
+      }
 
       // Update this specific tab's AI state
       setTabs(prev => prev.map(t =>
@@ -3084,6 +3121,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               console.log('[agent] New conversation:', cidStr);
               updateStreamingTab(t => ({ ...t, serverId: cidStr }));
               streamingConversationIdRef.current = cidStr;
+              try { onConversationActivityRef.current?.(cidStr, new Date().toISOString()); } catch { }
             }
           } else if (msg.type === 'title') {
             // Update tab title when server generates one
@@ -3424,6 +3462,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       if (targetConversationId) {
         payload.conversationId = targetConversationId;
         payload.memory = { ...(payload.memory || {}), thread: targetConversationId };
+        try { onConversationActivityRef.current?.(targetConversationId, new Date().toISOString()); } catch { }
       }
       if (resetConversationNextRef.current) {
         payload.resetConversation = true;
@@ -3900,6 +3939,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     cancelQueuedMessage,
     respondToApproval,
     lastError,
+    clearLastError,
     chatMode,
     setChatMode,
     chatModels,

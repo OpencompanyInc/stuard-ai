@@ -26,6 +26,8 @@ export type DeployTarget = ExecutionTarget; // 'local' | 'cloud'; 'vm' coming la
  *   schedule.interval: { every: '10m' | '15m' | '30m' | '1h' | '2h' | 'random' }
  *   schedule.cron:     { expr: string; tz?: string }
  *   webhook:           { slug: string; url?: string; secret?: string; createdAt: string; lastFiredAt?: string | null }
+ *   fs.watch:          { path: string; pattern?: string; recursive?: boolean; events?: string[]; debounceMs?: number }
+ *   command.watch:     { cmd: string; args?: string[]; cwd?: string; fireOn?: Array<'stdout' | 'stderr' | 'exit'> }
  *   gmail.new_email:   { from?: string; subjectContains?: string; integrationId?: string }
  *   manual:            {}
  */
@@ -33,6 +35,8 @@ export type BotTriggerType =
   | 'schedule.interval'
   | 'schedule.cron'
   | 'webhook'
+  | 'fs.watch'
+  | 'command.watch'
   | 'gmail.new_email'
   | 'manual';
 
@@ -193,7 +197,7 @@ function normalizeBot(raw: any): Bot {
 }
 
 const VALID_TRIGGER_TYPES: BotTriggerType[] = [
-  'schedule.interval', 'schedule.cron', 'webhook', 'gmail.new_email', 'manual',
+  'schedule.interval', 'schedule.cron', 'webhook', 'fs.watch', 'command.watch', 'gmail.new_email', 'manual',
 ];
 
 function normalizeTriggers(rawTriggers: any, rawBot: any, config: BotConfig | undefined): BotTrigger[] {
@@ -227,10 +231,55 @@ function normalizeTrigger(raw: any): BotTrigger | null {
     args: raw.args && typeof raw.args === 'object' ? raw.args : {},
     enabled: raw.enabled !== false,
     label: typeof raw.label === 'string' ? raw.label : undefined,
-    requiresCloud: typeof raw.requiresCloud === 'boolean'
+    requiresCloud: type === 'webhook' ? false : typeof raw.requiresCloud === 'boolean'
       ? raw.requiresCloud
-      : (type === 'webhook' || type === 'gmail.new_email'),
+      : type === 'gmail.new_email',
   };
+}
+
+/**
+ * Fills in sensible per-type defaults for any args the caller left blank, so a
+ * trigger is never created with an undefined field. Critically this is where a
+ * webhook gets its slug/secret — without it a blueprint-provided webhook would
+ * have no URL. Mutates and returns the trigger. `botIdHint`/`fallbackInterval`
+ * let create() and addTrigger() share identical seeding.
+ */
+function seedTriggerDefaults(
+  trigger: BotTrigger,
+  opts: { botIdHint: string; fallbackInterval?: string },
+): BotTrigger {
+  const args = trigger.args && typeof trigger.args === 'object' ? trigger.args : {};
+  if (trigger.type === 'schedule.interval' && !args.every) {
+    trigger.args = { ...args, every: opts.fallbackInterval || '30m' };
+  } else if (trigger.type === 'schedule.cron' && !args.expr) {
+    trigger.args = { ...args, expr: '0 9 * * 2' }; // sensible default: Tue 9am
+  } else if (trigger.type === 'webhook' && !args.slug) {
+    trigger.args = {
+      ...args,
+      slug: `bot_${opts.botIdHint.slice(-6)}_${Math.random().toString(36).slice(2, 8)}`,
+      secret: Math.random().toString(36).slice(2, 18),
+      createdAt: new Date().toISOString(),
+      lastFiredAt: null,
+    };
+  } else if (trigger.type === 'fs.watch' && !args.path) {
+    trigger.args = {
+      ...args,
+      path: '',
+      pattern: args.pattern || '**/*',
+      recursive: args.recursive !== false,
+      events: Array.isArray(args.events) && args.events.length ? args.events : ['add', 'change', 'unlink'],
+      debounceMs: typeof args.debounceMs === 'number' ? args.debounceMs : 750,
+    };
+  } else if (trigger.type === 'command.watch' && !args.cmd) {
+    trigger.args = {
+      ...args,
+      cmd: 'python',
+      args: Array.isArray(args.args) ? args.args : ['watcher.py'],
+      cwd: args.cwd || '',
+      fireOn: Array.isArray(args.fireOn) && args.fireOn.length ? args.fireOn : ['stdout'],
+    };
+  }
+  return trigger;
 }
 
 function normalizeStatus(value: any): BotStatus {
@@ -365,9 +414,15 @@ export const botService = {
     const file = getOrInitBotsFile();
     const now = new Date().toISOString();
     const config = { ...DEFAULT_BOT_CONFIG, ...(input.config || {}) };
+    const botId = input.id || `bot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     // Seed triggers from the input or synthesize one from the requested interval.
+    // Blueprint-provided triggers arrive with partial args; seedTriggerDefaults
+    // fills the gaps (notably the webhook slug/secret) the same way addTrigger does.
     const triggers: BotTrigger[] = Array.isArray(input.triggers) && input.triggers.length > 0
-      ? input.triggers.map(normalizeTrigger).filter((t): t is BotTrigger => !!t)
+      ? input.triggers
+          .map(normalizeTrigger)
+          .filter((t): t is BotTrigger => !!t)
+          .map(t => seedTriggerDefaults(t, { botIdHint: botId, fallbackInterval: config.interval }))
       : [{
           id: `trig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           type: 'schedule.interval',
@@ -378,7 +433,7 @@ export const botService = {
         }];
 
     const bot: Bot = {
-      id: input.id || `bot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: botId,
       name: input.name,
       emoji: input.emoji || DEFAULT_BOT_EMOJI,
       systemPrompt: input.systemPrompt || '',
@@ -518,27 +573,14 @@ export const botService = {
     if (input.type === 'schedule.interval' && bot.triggers.some(t => t.type === 'schedule.interval')) {
       return null;
     }
-    const trigger: BotTrigger = {
+    const trigger: BotTrigger = seedTriggerDefaults({
       id: input.id || `trig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type: input.type,
       args: input.args || {},
       enabled: input.enabled !== false,
       label: input.label,
-      requiresCloud: input.type === 'webhook' || input.type === 'gmail.new_email',
-    };
-    // Seed default args per type so the UI never lands on an undefined field.
-    if (trigger.type === 'schedule.interval' && !trigger.args.every) {
-      trigger.args = { every: bot.config?.interval || '30m' };
-    } else if (trigger.type === 'schedule.cron' && !trigger.args.expr) {
-      trigger.args = { expr: '0 9 * * 2' }; // sensible default: Tue 9am
-    } else if (trigger.type === 'webhook' && !trigger.args.slug) {
-      trigger.args = {
-        slug: `bot_${botId.slice(-6)}_${Math.random().toString(36).slice(2, 8)}`,
-        secret: Math.random().toString(36).slice(2, 18),
-        createdAt: new Date().toISOString(),
-        lastFiredAt: null,
-      };
-    }
+      requiresCloud: input.type === 'gmail.new_email',
+    }, { botIdHint: botId, fallbackInterval: bot.config?.interval });
     const next = [...bot.triggers, trigger];
     this.update(botId, { triggers: next });
     syncLegacyIntervalMirror(this, botId);

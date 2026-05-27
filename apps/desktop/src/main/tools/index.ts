@@ -7,8 +7,8 @@ import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execAskUserInApp } from './handlers/ask-user-inapp';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
-import { execCliAgentDetect, execCliAgentStart, execCliAgentSend, execCliAgentRead, execCliAgentStatus, execCliAgentStop } from './handlers/cli-agent';
-import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execListLocalWorkflows, execReadLocalWorkflow, execDeployLocalWorkflow, execListLocalStuards } from './handlers/workflow';
+import { execCliAgentDetect, execCliAgentStart, execCliAgentSend, execCliAgentRead, execCliAgentStatus, execCliAgentWaitFor, execCliAgentWaitIdle, execCliAgentStop } from './handlers/cli-agent';
+import { execCallWorkflow, execInvokeWorkflow, execTestRunSteps, execSearchLocalWorkflows, execReadLocalWorkflow, execDeployLocalWorkflow, execListLocalStuards } from './handlers/workflow';
 import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handlers/workspace-functions';
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
@@ -211,7 +211,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'workspace_create_folder') return execWorkspaceCreateFolder(args, ctx);
       if (toolName === 'workspace_get_info') return execWorkspaceGetInfo(args, ctx);
       if (toolName === 'test_run_steps') return execTestRunSteps(args, ctx);
-      if (toolName === 'list_local_workflows') return execListLocalWorkflows(args, ctx);
+      if (toolName === 'search_local_workflows') return execSearchLocalWorkflows(args, ctx);
       if (toolName === 'read_local_workflow') return execReadLocalWorkflow(args, ctx);
       if (toolName === 'deploy_local_workflow') return execDeployLocalWorkflow(args, ctx);
       if (toolName === 'list_local_stuards') return execListLocalStuards(args, ctx);
@@ -245,11 +245,13 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'terminal_destroy') return execTerminalDestroy(args, ctx);
 
       // Coding-agent CLI integrations
-      if (toolName === 'cli_agent_detect') return execCliAgentDetect();
+      if (toolName === 'cli_agent_detect') return execCliAgentDetect(args);
       if (toolName === 'cli_agent_start') return execCliAgentStart(args, ctx);
       if (toolName === 'cli_agent_send') return execCliAgentSend(args, ctx);
       if (toolName === 'cli_agent_read') return execCliAgentRead(args);
       if (toolName === 'cli_agent_status') return execCliAgentStatus(args);
+      if (toolName === 'cli_agent_wait_for') return execCliAgentWaitFor(args);
+      if (toolName === 'cli_agent_wait_idle') return execCliAgentWaitIdle(args);
       if (toolName === 'cli_agent_stop') return execCliAgentStop(args, ctx);
 
       // Ollama (Local AI) tools

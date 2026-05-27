@@ -129,6 +129,10 @@ export const file_search = makeLocalTool(
       .optional()
       .describe('Filter by file type'),
     root_id: z.string().optional().describe('Filter by indexed root'),
+    path_scopes: z
+      .array(z.string())
+      .optional()
+      .describe('Restrict results to these exact file paths or folders and their children'),
     limit: z.number().optional().default(20),
   }),
   z.object({

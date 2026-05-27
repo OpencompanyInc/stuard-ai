@@ -325,9 +325,43 @@ const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
   'bot_memory_delete',
   'bot_memory_log',
   'write_session_summary',
+  'choose_notification_channel',
+  'search_tools',
+  'get_tool_schema',
+  'execute_tool',
+  'get_skill_info',
   'search_past_conversations',
   'get_conversation_context',
 ]);
+
+function localHumanizeToolName(name: string): string {
+  return String(name || '')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
+function localSearchAllowedTools(query: string, allowedTools?: string[]): Array<{ name: string; description: string; category: string }> {
+  const q = String(query || '').toLowerCase().trim();
+  const names = Array.from(new Set([
+    ...(Array.isArray(allowedTools) ? allowedTools : []),
+    ...Array.from(LOCAL_PROACTIVE_INTERNAL_TOOLS),
+  ].map((name) => String(name || '').trim()).filter(Boolean)));
+
+  return names
+    .filter((name) => {
+      if (!q) return true;
+      const label = localHumanizeToolName(name).toLowerCase();
+      return name.toLowerCase().includes(q) || label.includes(q);
+    })
+    .filter((name) => !name.startsWith('proactive_task_') && !name.startsWith('bot_memory_'))
+    .slice(0, 12)
+    .map((name) => ({
+      name,
+      description: `Allowed tool: ${localHumanizeToolName(name)}`,
+      category: name.includes('_') ? name.split('_')[0] : 'tool',
+    }));
+}
 
 export function extractAgentToolRequest(msg: any): AgentToolRequest | null {
   if (String(msg?.type || '').toLowerCase() !== 'tool_request') return null;
@@ -350,11 +384,59 @@ export async function executeAgentToolRequest(
   allowedTools?: string[],
 ): Promise<{ type: 'tool_result'; id: string; result: any }> {
   try {
+    if (request.tool === 'search_tools') {
+      const query = String(request.args?.query || '').trim();
+      return {
+        type: 'tool_result',
+        id: request.id,
+        result: { ok: true, tools: localSearchAllowedTools(query, allowedTools) },
+      };
+    }
+    if (request.tool === 'get_tool_schema') {
+      const toolName = String(request.args?.tool_name || request.args?.toolName || '').trim();
+      if (!isLocalProactiveToolAllowed(toolName, allowedTools)) {
+        return {
+          type: 'tool_result',
+          id: request.id,
+          result: { ok: false, error: `Tool '${toolName}' is not allowed for this agent.` },
+        };
+      }
+      return {
+        type: 'tool_result',
+        id: request.id,
+        result: {
+          ok: true,
+          tool_name: toolName,
+          schema: { type: 'object', additionalProperties: true },
+          note: 'Desktop local proactive runs expose a permissive schema preview; call execute_tool with args matching the tool docs or prior examples.',
+        },
+      };
+    }
+    if (request.tool === 'execute_tool') {
+      const toolName = String(request.args?.tool_name || request.args?.toolName || '').trim();
+      const args = request.args?.args && typeof request.args.args === 'object' ? request.args.args : {};
+      if (!isLocalProactiveToolAllowed(toolName, allowedTools)) {
+        return {
+          type: 'tool_result',
+          id: request.id,
+          result: { ok: false, error: `Tool '${toolName}' is not allowed for this agent.` },
+        };
+      }
+      const result = await execTool(toolName, args, ctx);
+      return { type: 'tool_result', id: request.id, result };
+    }
+    if (request.tool === 'choose_notification_channel') {
+      return {
+        type: 'tool_result',
+        id: request.id,
+        result: { ok: true, channel: 'app', urgency: 'normal', reason: 'Default desktop notification channel.' },
+      };
+    }
     if (!isLocalProactiveToolAllowed(request.tool, allowedTools)) {
       return {
         type: 'tool_result',
         id: request.id,
-        result: { ok: false, error: `Tool '${request.tool}' is not allowed for this bot.` },
+        result: { ok: false, error: `Tool '${request.tool}' is not allowed for this agent.` },
       };
     }
     const result = await execTool(request.tool, request.args, ctx);
@@ -449,7 +531,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     '  • bot_memory_delete({ id }) — drop a card (prefer "completed" to preserve history).',
     '  • bot_memory_log({ summary, outcome }) — append a one-line run wrap-up.',
     '- search_past_conversations / get_conversation_context — recall prior runs and chats.',
-    'Use bot_memory_* aggressively. Without it every run starts blind. The user can also edit these cards from the Bots → Kanban tab; lastEditedBy distinguishes their edits from yours.',
+    'Use bot_memory_* aggressively. Without it every run starts blind. The user can also edit these cards from the Agents > Kanban tab; lastEditedBy distinguishes their edits from yours.',
     'Kanban truth rule: if the user asks you to add, update, move, or delete a kanban card, call the matching bot_memory_* tool and verify ok=true before saying it was done. Never claim memory or kanban changes from text alone.',
     '',
     '## HOW TO THINK',
@@ -460,7 +542,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     '5. If you have nothing to act on or report, skip the notification. Don\'t manufacture check-ins.',
     '',
     '## BIAS TOWARD ACTION',
-    'You are NOT a reminder bot. Never say "don\'t forget" or "you should". Instead:',
+    'You are NOT a reminder agent. Never say "don\'t forget" or "you should". Instead:',
     '- Research things → present findings',
     '- Draft things → show the draft',
     '- Complete tasks → report results',
@@ -507,7 +589,7 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     }
   }
 
-  // Kanban first — the bot's private working memory is the most load-bearing
+  // Kanban first — the agent's private working memory is the most load-bearing
   // piece of context for any non-first run. Render it under its own header
   // before the user-configured focus brief so the model sees its own state
   // before it sees any directives.
@@ -525,11 +607,11 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
   }
 
   if (Array.isArray(payload?.config?.allowedTools) && payload.config.allowedTools.length > 0) {
-    lines.push(`Added non-internal tools for this bot: ${payload.config.allowedTools.join(', ')}.`);
-    lines.push('All other non-internal tools are not part of this bot. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool) remains available regardless.');
+    lines.push(`Added non-internal tools for this agent: ${payload.config.allowedTools.join(', ')}.`);
+    lines.push('All other non-internal tools are not part of this agent. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, choose_notification_channel, write_session_summary, search_tools/get_tool_schema/execute_tool) remains available regardless.');
     lines.push('If the user asks what tools you have, list only the added non-internal tools above plus your default toolkit. Do not answer with Stuard main-chat capabilities.');
   } else {
-    lines.push('Added non-internal tools for this bot: (none).');
+    lines.push('Added non-internal tools for this agent: (none).');
     lines.push('If the user asks what tools you have, list only your default toolkit. Do not answer with a generic Stuard main-chat capability list.');
   }
 

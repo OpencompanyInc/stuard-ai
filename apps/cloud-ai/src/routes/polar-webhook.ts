@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { Polar } from '@polar-sh/sdk';
 import { getSupabaseAdmin } from '../supabase';
 import { writeLog } from '../utils/logger';
+import { markAutoRefillSuccess } from '../billing/auto-refill';
 
 // ─── Credit pricing (mirrors apps/website/src/lib/creditPricing.ts) ──────────
 
@@ -264,8 +265,16 @@ async function getCurrentBillingSubscriptionId(userId: string): Promise<string |
   const { data } = await sb
     .from('profiles')
     .select('billing_subscription_id')
-    .eq('id', userId)
+    .eq('user_id', userId)
     .maybeSingle();
+  if (!data) {
+    const fallback = await sb
+      .from('profiles')
+      .select('billing_subscription_id')
+      .eq('id', userId)
+      .maybeSingle();
+    return (fallback.data as any)?.billing_subscription_id || null;
+  }
   return (data as any)?.billing_subscription_id || null;
 }
 
@@ -566,14 +575,26 @@ async function applyAddonGrant(userId: string, payload: any) {
     payload?.orderId, payload?.order_id, payload?.id,
     payload?.checkout?.id, payload?.checkout_id,
   ) || `${productId || 'addon'}:${amountCents}`;
+
+  const metadata = payload?.metadata || payload?.checkout?.metadata || {};
+  const isAutoRefill =
+    metadata?.autoRefill === true ||
+    metadata?.autoRefill === 'true' ||
+    metadata?.auto_refill === true ||
+    metadata?.auto_refill === 'true';
+
   await upsertCreditGrant({
     userId,
     sourceType: 'addon_purchase',
     sourceRef: orderRef,
     amountUsd: amount.amountDollars,
     totalCredits: amount.credits,
-    metadata: { productId, orderId: orderRef },
+    metadata: { productId, orderId: orderRef, ...(isAutoRefill ? { autoRefill: true } : {}) },
   });
+
+  if (isAutoRefill) {
+    await markAutoRefillSuccess(userId);
+  }
 }
 
 async function handlePolarEvent(eventType: string, payload: any) {

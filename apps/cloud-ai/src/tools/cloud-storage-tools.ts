@@ -65,7 +65,7 @@ export const cloud_storage_upload = createTool({
     });
 
     // Read the file from the user's machine via bridge
-    const bin = await execLocalTool('read_file_binary', { path }, writer as any);
+    const bin = await execLocalTool('read_file_binary', { path, inline: true }, writer as any);
     const data = bin?.data as string | undefined;
     if (!data) {
       throw new Error(`Could not read file at path: ${path}`);

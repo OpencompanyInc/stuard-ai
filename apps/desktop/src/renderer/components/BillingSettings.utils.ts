@@ -326,6 +326,70 @@ export function aggregateComputeBillingEvents(rows: ComputeBillingEventRow[]): U
   }));
 }
 
+export function rollupUsageCategory(category: string): string {
+  const cat = String(category || "usage");
+  if (!cat.startsWith("inference:")) return cat;
+
+  const model = cat.slice("inference:".length);
+  if (!model || model === "unknown") return "inference:other";
+
+  const provider = model.includes("/")
+    ? model.split("/")[0].toLowerCase()
+    : model.toLowerCase();
+
+  const knownProviders = new Set([
+    "anthropic",
+    "openai",
+    "google",
+    "deepseek",
+    "meta",
+    "mistral",
+    "groq",
+    "ollama",
+    "x-ai",
+    "cohere",
+  ]);
+
+  return knownProviders.has(provider) ? `inference:${provider}` : "inference:other";
+}
+
+export function rollupUsageBreakdownForDisplay(
+  items: UsageBreakdownLike[],
+  options?: { maxItems?: number },
+): UsageBreakdownLike[] {
+  const maxItems = Math.max(4, options?.maxItems ?? 8);
+  const merged: Record<string, UsageBreakdownLike> = {};
+
+  for (const row of items || []) {
+    const category = rollupUsageCategory(String(row?.category || "usage"));
+    if (!merged[category]) merged[category] = { category, credits: 0, costUsd: 0, count: 0 };
+    merged[category].credits += Number(row?.credits) || 0;
+    merged[category].costUsd += Number(row?.costUsd) || 0;
+    merged[category].count += Number(row?.count) || 0;
+  }
+
+  const sorted = Object.values(merged)
+    .map((item) => ({
+      ...item,
+      credits: Number(item.credits.toFixed(2)),
+      costUsd: Number(item.costUsd.toFixed(6)),
+    }))
+    .sort((a, b) => b.credits - a.credits || b.count - a.count);
+
+  if (sorted.length <= maxItems) return sorted;
+
+  const head = sorted.slice(0, maxItems - 1);
+  const tail = sorted.slice(maxItems - 1);
+  const other: UsageBreakdownLike = {
+    category: "other",
+    credits: Number(tail.reduce((sum, item) => sum + item.credits, 0).toFixed(2)),
+    costUsd: Number(tail.reduce((sum, item) => sum + item.costUsd, 0).toFixed(6)),
+    count: tail.reduce((sum, item) => sum + item.count, 0),
+  };
+
+  return [...head, other];
+}
+
 export function mergeUsageBreakdowns(
   usageRows: UsageBreakdownLike[],
   computeRows: UsageBreakdownLike[]

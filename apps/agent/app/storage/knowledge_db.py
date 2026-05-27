@@ -800,6 +800,52 @@ def get_event_history(limit: int = 50) -> List[Fact]:
     return [_row_to_fact(r) for r in rows]
 
 
+def get_project_detail_facts(limit: int = 20) -> List[Fact]:
+    """Recent project-linked facts."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM facts
+               WHERE category = 'project' AND validity = 1
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+
+    return [_row_to_fact(r) for r in rows]
+
+
+def get_diverse_context_facts(limit: int = 12) -> List[Dict[str, str]]:
+    """Round-robin sample across memory types — avoids only surfacing the newest bio rows."""
+    buckets: List[Tuple[str, List[Fact]]] = [
+        ("bio", get_bio_facts(limit=8)),
+        ("project", get_project_detail_facts(limit=8)),
+        ("procedural", get_procedural_facts(limit=8)),
+        ("event", get_event_history(limit=8)),
+    ]
+
+    seen: set[str] = set()
+    out: List[Dict[str, str]] = []
+    idx = 0
+    exhausted = 0
+
+    while len(out) < limit and exhausted < len(buckets):
+        exhausted = 0
+        for kind, facts in buckets:
+            if idx >= len(facts):
+                exhausted += 1
+                continue
+            text = str(facts[idx].text or "").strip()
+            if text:
+                dedupe = text.lower()
+                if dedupe not in seen:
+                    seen.add(dedupe)
+                    out.append({"type": kind, "text": text})
+                    if len(out) >= limit:
+                        break
+        idx += 1
+
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════

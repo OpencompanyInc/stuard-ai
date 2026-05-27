@@ -4,6 +4,7 @@ import type { AgentType } from './types';
 interface ProviderOptionsArgs {
   agentType: AgentType;
   workflowModelId?: string;
+  skillModelId?: string;
   chosenModelId?: string;
   modelSource?: string;
   modelLabel: string;
@@ -12,7 +13,7 @@ interface ProviderOptionsArgs {
 
 export function resolveMaxSteps(msg: any, agentType: AgentType) {
   const requestedMaxSteps = msg?.maxSteps ?? msg?.limits?.maxSteps;
-  let maxSteps = agentType === 'workflow' ? 60 : DEFAULT_MAX_STEPS;
+  let maxSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : DEFAULT_MAX_STEPS;
 
   try {
     const parsed = Number(requestedMaxSteps);
@@ -57,6 +58,7 @@ function tailOf(id: string): string {
 export function buildProviderOptions({
   agentType,
   workflowModelId,
+  skillModelId,
   chosenModelId,
   modelSource,
   modelLabel,
@@ -65,12 +67,14 @@ export function buildProviderOptions({
   const providerOptions: any = {};
   const reasoningLevel = normalizeReasoning(msg);
 
-  // Pick the id we should route from. Workflow uses workflowModelId, everything
-  // else uses chosenModelId; modelLabel is the last-resort fallback (it can be
-  // just a tier string like "balanced", which won't match anything below).
+  // Pick the id we should route from. Workflow/skill architects use their
+  // dedicated model ids; everything else uses chosenModelId. modelLabel is the
+  // last-resort fallback (it can be just a tier string like "balanced").
   const effectiveId = (agentType === 'workflow' && workflowModelId)
     ? workflowModelId
-    : (chosenModelId || modelLabel || '');
+    : (agentType === 'skill' && skillModelId)
+      ? skillModelId
+      : (chosenModelId || modelLabel || '');
   const prefix = prefixOf(effectiveId);
 
   // When the model is routed through OpenRouter, its SDK ignores per-provider

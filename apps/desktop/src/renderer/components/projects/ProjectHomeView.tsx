@@ -22,16 +22,21 @@ import {
   Circle,
   CircleCheckBig,
   FileText,
+  FolderOpen,
   Loader2,
   Plus,
+  Settings2,
   StickyNote,
   Tag as TagIcon,
+  Target,
   Trash2,
   X,
 } from 'lucide-react';
 import {
+  addProjectContextPath,
   listJournal,
   listMemories,
+  updateProject,
   type JournalEntry,
   type JournalEntryType,
   type MemoryType,
@@ -40,7 +45,7 @@ import {
 } from '../../hooks/useProjects';
 import type { UnifiedTask } from '../../types/tasks';
 
-type TabId = 'timeline' | 'tasks' | 'memory' | 'files';
+type TabId = 'timeline' | 'tasks' | 'memory' | 'files' | 'instructions';
 
 interface ProjectHomeViewProps {
   project: Project;
@@ -53,6 +58,7 @@ const TABS: Array<{ id: TabId; label: string; icon: React.ComponentType<{ classN
   { id: 'tasks', label: 'Tasks', icon: CheckSquare },
   { id: 'memory', label: 'Notes', icon: StickyNote },
   { id: 'files', label: 'Files', icon: FileText },
+  { id: 'instructions', label: 'Instructions', icon: Settings2 },
 ];
 
 const NARROW_TAB_BREAKPOINT = 360; // icon-only tabs below this width
@@ -68,15 +74,23 @@ async function execTool<T = any>(tool: string, args: any = {}): Promise<T | null
   }
 }
 
-export const ProjectHomeView: React.FC<ProjectHomeViewProps> = ({ project, onBack }) => {
+export const ProjectHomeView: React.FC<ProjectHomeViewProps> = ({ project, onBack, onProjectChanged }) => {
   const [tab, setTab] = useState<TabId>('timeline');
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState<number>(0);
+  const [counts, setCounts] = useState<Partial<Record<TabId, number>>>({
+    files: (project.pinned_paths || []).length,
+  });
 
-  // Reset tab when switching projects so each opens cleanly on the timeline.
+  // Reset tab + counts when switching projects so each opens cleanly on the timeline.
   useEffect(() => {
     setTab('timeline');
-  }, [project.id]);
+    setCounts({ files: (project.pinned_paths || []).length });
+  }, [project.id, project.pinned_paths]);
+
+  const reportCount = useCallback((id: TabId, n: number) => {
+    setCounts((prev) => (prev[id] === n ? prev : { ...prev, [id]: n }));
+  }, []);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -106,15 +120,19 @@ export const ProjectHomeView: React.FC<ProjectHomeViewProps> = ({ project, onBac
 
       <ProjectHeader project={project} onBack={onBack} accent={accent} />
 
-      <div className="shrink-0 flex items-stretch gap-0 px-1.5 border-b border-theme/5">
+      <ProjectWorkspaceStrip project={project} counts={counts} accent={accent} />
+
+      <div className="shrink-0 flex items-stretch gap-0 px-1.5 border-b border-theme-sidebar overflow-x-auto custom-scrollbar">
         {TABS.map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
+          const count = counts[t.id];
+          const hasCount = typeof count === 'number' && count > 0;
           return (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              title={t.label}
+              title={hasCount ? `${t.label} · ${count}` : t.label}
               className={clsx(
                 'relative flex items-center justify-center gap-1.5 px-2.5 py-2 text-[12px] font-medium transition-colors whitespace-nowrap',
                 active ? 'text-theme-fg' : 'text-theme-muted/80 hover:text-theme-fg',
@@ -122,6 +140,18 @@ export const ProjectHomeView: React.FC<ProjectHomeViewProps> = ({ project, onBac
             >
               <Icon className="w-3.5 h-3.5 shrink-0" />
               {!tabsCompact && <span>{t.label}</span>}
+              {hasCount && (
+                <span
+                  className={clsx(
+                    'shrink-0 px-1.5 py-0.5 rounded-full text-[9.5px] font-bold leading-none tabular-nums',
+                    active
+                      ? 'bg-theme-hover/80 text-theme-fg'
+                      : 'bg-theme-hover/50 text-theme-muted/80',
+                  )}
+                >
+                  {count}
+                </span>
+              )}
               {active && (
                 <span
                   className="absolute left-1.5 right-1.5 -bottom-px h-[2px] rounded-full"
@@ -134,10 +164,19 @@ export const ProjectHomeView: React.FC<ProjectHomeViewProps> = ({ project, onBac
       </div>
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {tab === 'timeline' && <TimelineTab project={project} />}
-        {tab === 'tasks' && <TasksTab project={project} accent={accent} />}
-        {tab === 'memory' && <MemoryTab project={project} />}
-        {tab === 'files' && <FilesTab project={project} />}
+        {tab === 'timeline' && <TimelineTab project={project} onCount={(n) => reportCount('timeline', n)} />}
+        {tab === 'tasks' && <TasksTab project={project} accent={accent} onCount={(n) => reportCount('tasks', n)} />}
+        {tab === 'memory' && <MemoryTab project={project} onCount={(n) => reportCount('memory', n)} />}
+        {tab === 'files' && (
+          <FilesTab
+            project={project}
+            onProjectChanged={onProjectChanged}
+            onCount={(n) => reportCount('files', n)}
+          />
+        )}
+        {tab === 'instructions' && (
+          <InstructionsTab project={project} onProjectChanged={onProjectChanged} />
+        )}
       </div>
     </div>
   );
@@ -152,7 +191,7 @@ const ProjectHeader: React.FC<{ project: Project; onBack?: () => void; accent: s
   onBack,
   accent,
 }) => (
-  <div className="shrink-0 px-3 pt-3 pb-2.5 border-b border-theme/5">
+  <div className="shrink-0 px-3 pt-3 pb-2.5 border-b border-theme-sidebar">
     <div className="flex items-start gap-2.5">
       {onBack && (
         <button
@@ -183,12 +222,12 @@ const ProjectHeader: React.FC<{ project: Project; onBack?: () => void; accent: s
           {project.status && project.status !== 'active' && (
             <span
               className={clsx(
-                'shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider leading-none',
+                'shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none',
                 project.status === 'paused' && 'bg-amber-500/10 text-amber-500',
                 project.status === 'archived' && 'bg-zinc-500/10 text-zinc-500',
               )}
             >
-              {project.status}
+              {formatTypeLabel(project.status)}
             </span>
           )}
         </div>
@@ -196,6 +235,14 @@ const ProjectHeader: React.FC<{ project: Project; onBack?: () => void; accent: s
           <p className="mt-0.5 text-[12px] text-theme-muted line-clamp-2 break-words">
             {project.description}
           </p>
+        )}
+        {project.goals && (
+          <div className="mt-1 flex items-start gap-1.5 text-[11.5px] text-theme-fg/80 leading-snug">
+            <Target className="w-3 h-3 mt-[2px] shrink-0 text-theme-muted/70" />
+            <span className="break-words line-clamp-2" title={project.goals}>
+              {project.goals}
+            </span>
+          </div>
         )}
         {project.tags && project.tags.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -222,6 +269,57 @@ const ProjectHeader: React.FC<{ project: Project; onBack?: () => void; accent: s
 // Timeline / Journal tab
 // ─────────────────────────────────────────────────────────────────────────────
 
+const ProjectWorkspaceStrip: React.FC<{
+  project: Project;
+  counts: Partial<Record<TabId, number>>;
+  accent: string;
+}> = ({ project, counts, accent }) => {
+  const files = (project.pinned_paths || []).length;
+  const notes = counts.memory || 0;
+  const tasks = counts.tasks || 0;
+  const timeline = counts.timeline || 0;
+  const hasInstructions = !!String(project.instructions || '').trim();
+
+  const items = [
+    { label: 'Files', value: files, ready: files > 0 },
+    { label: 'Notes', value: notes, ready: notes > 0 },
+    { label: 'Tasks', value: tasks, ready: tasks > 0 },
+    { label: 'Timeline', value: timeline, ready: timeline > 0 },
+    { label: 'Instructions', value: hasInstructions ? 'Set' : 'Unset', ready: hasInstructions },
+  ];
+
+  return (
+    <div className="shrink-0 px-3 py-2 border-b border-theme-sidebar bg-theme-card/20">
+      <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className={clsx(
+              'shrink-0 min-w-[72px] px-2 py-1.5 rounded-lg border text-left',
+              item.ready
+                ? 'border-theme bg-theme-card/70'
+                : 'border-theme-sidebar bg-theme-bg/25',
+            )}
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: item.ready ? accent : 'rgba(113, 113, 122, 0.35)' }}
+              />
+              <span className="text-[9.5px] uppercase font-bold tracking-wide text-theme-muted/70">
+                {item.label}
+              </span>
+            </div>
+            <div className="mt-0.5 text-[12px] font-semibold text-theme-fg tabular-nums">
+              {item.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const JOURNAL_BADGE: Record<string, string> = {
   decision: 'bg-violet-500/10 text-violet-400',
   finding: 'bg-sky-500/10 text-sky-400',
@@ -235,18 +333,23 @@ const JOURNAL_BADGE: Record<string, string> = {
   note: 'bg-theme-hover/60 text-theme-muted',
 };
 
+// Timeline = time-ordered events. Plain "notes" belong in the Notes tab
+// (memory_create), so we omit `note` from the user-facing palette. Existing
+// `type: 'note'` entries still render (see JOURNAL_BADGE fallback).
 const JOURNAL_TYPE_OPTIONS: Array<{ id: JournalEntryType; label: string }> = [
-  { id: 'note', label: 'Note' },
   { id: 'finding', label: 'Finding' },
+  { id: 'decision', label: 'Decision' },
   { id: 'question', label: 'Question' },
   { id: 'hypothesis', label: 'Hypothesis' },
-  { id: 'decision', label: 'Decision' },
   { id: 'blocker', label: 'Blocker' },
   { id: 'edit', label: 'Edit' },
   { id: 'milestone', label: 'Milestone' },
 ];
 
-const TimelineTab: React.FC<{ project: Project }> = ({ project }) => {
+const TimelineTab: React.FC<{ project: Project; onCount?: (n: number) => void }> = ({
+  project,
+  onCount,
+}) => {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -260,6 +363,10 @@ const TimelineTab: React.FC<{ project: Project }> = ({ project }) => {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    onCount?.(entries.length);
+  }, [entries.length, onCount]);
 
   const handleAdd = useCallback(
     async (input: { type: JournalEntryType; title: string; body?: string }) => {
@@ -297,8 +404,8 @@ const TimelineTab: React.FC<{ project: Project }> = ({ project }) => {
         ) : entries.length === 0 ? (
           <PanelStatus
             icon={<Activity className="w-7 h-7 text-theme-muted/50" />}
-            title="No journal entries yet"
-            body="Add a quick note above, or let Stuard record decisions, findings, and milestones as you work."
+            title="Timeline is empty"
+            body="Decisions, findings, and blockers show up here as the project moves. Save durable facts and snippets in Notes instead."
           />
         ) : (
           entries.map((entry) => (
@@ -314,7 +421,7 @@ const JournalComposer: React.FC<{
   onSubmit: (input: { type: JournalEntryType; title: string; body?: string }) => Promise<void>;
 }> = ({ onSubmit }) => {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState<JournalEntryType>('note');
+  const [type, setType] = useState<JournalEntryType>('finding');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -330,7 +437,7 @@ const JournalComposer: React.FC<{
   const reset = () => {
     setTitle('');
     setBody('');
-    setType('note');
+    setType('finding');
   };
 
   const submit = async () => {
@@ -351,10 +458,10 @@ const JournalComposer: React.FC<{
       <div className="shrink-0 px-3 pt-3 pb-2">
         <button
           onClick={() => setOpen(true)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme/5 hover:border-theme/15 text-left transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-left transition-colors"
         >
           <Plus className="w-3.5 h-3.5 text-theme-muted" />
-          <span className="text-[12px] text-theme-muted/80">Add to timeline…</span>
+          <span className="text-[12px] text-theme-muted/80">Log a finding, decision, or blocker…</span>
         </button>
       </div>
     );
@@ -362,7 +469,7 @@ const JournalComposer: React.FC<{
 
   return (
     <div className="shrink-0 px-3 pt-3 pb-2">
-      <div className="rounded-lg bg-theme-card/70 border border-theme/15 p-2.5 space-y-2">
+      <div className="rounded-lg bg-theme-card/70 border border-theme p-2.5 space-y-2">
         <div className="flex items-center gap-2">
           <TypeSelect value={type} options={JOURNAL_TYPE_OPTIONS} onChange={setType} />
           <button
@@ -427,10 +534,10 @@ const JournalRow: React.FC<{ entry: JournalEntry; onDelete: () => void }> = ({ e
   const when = useMemo(() => formatRelative(entry.ts || entry.created_at), [entry.ts, entry.created_at]);
 
   return (
-    <div className="group px-3 py-2.5 rounded-lg bg-theme-card/60 border border-theme/5 hover:border-theme/15 transition-colors">
+    <div className="group px-3 py-2.5 rounded-lg bg-theme-card/60 border border-theme-sidebar hover:border-theme transition-colors">
       <div className="flex items-center gap-2">
-        <span className={clsx('px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider', badge)}>
-          {entry.type}
+        <span className={clsx('px-1.5 py-0.5 rounded-md text-[10px] font-semibold leading-none', badge)}>
+          {formatTypeLabel(entry.type)}
         </span>
         <span className="text-[11px] text-theme-muted/70">{when}</span>
         <button
@@ -460,7 +567,10 @@ const MEMORY_TYPE_OPTIONS: Array<{ id: MemoryType; label: string }> = [
   { id: 'link', label: 'Link' },
 ];
 
-const MemoryTab: React.FC<{ project: Project }> = ({ project }) => {
+const MemoryTab: React.FC<{ project: Project; onCount?: (n: number) => void }> = ({
+  project,
+  onCount,
+}) => {
   const [memories, setMemories] = useState<ProjectMemory[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -474,6 +584,10 @@ const MemoryTab: React.FC<{ project: Project }> = ({ project }) => {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    onCount?.(memories.length);
+  }, [memories.length, onCount]);
 
   const handleAdd = useCallback(
     async (input: { type: MemoryType; title?: string; content: string }) => {
@@ -510,7 +624,7 @@ const MemoryTab: React.FC<{ project: Project }> = ({ project }) => {
           <PanelStatus
             icon={<StickyNote className="w-7 h-7 text-theme-muted/50" />}
             title="No notes yet"
-            body="Save snippets, facts, or links here. They're searchable across sessions."
+            body="Facts, snippets, links — anything you'll want to recall later. Searchable across sessions. For time-ordered events, use Timeline instead."
           />
         ) : (
           memories.map((m) => <MemoryRow key={m.id} memory={m} onDelete={() => handleDelete(m.id)} />)
@@ -561,10 +675,10 @@ const MemoryComposer: React.FC<{
       <div className="shrink-0 px-3 pt-3 pb-2">
         <button
           onClick={() => setOpen(true)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme/5 hover:border-theme/15 text-left transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-left transition-colors"
         >
           <Plus className="w-3.5 h-3.5 text-theme-muted" />
-          <span className="text-[12px] text-theme-muted/80">Save a note…</span>
+          <span className="text-[12px] text-theme-muted/80">Save a fact, snippet, or link…</span>
         </button>
       </div>
     );
@@ -572,7 +686,7 @@ const MemoryComposer: React.FC<{
 
   return (
     <div className="shrink-0 px-3 pt-3 pb-2">
-      <div className="rounded-lg bg-theme-card/70 border border-theme/15 p-2.5 space-y-2">
+      <div className="rounded-lg bg-theme-card/70 border border-theme p-2.5 space-y-2">
         <div className="flex items-center gap-2">
           <TypeSelect value={type} options={MEMORY_TYPE_OPTIONS} onChange={setType} />
           <button
@@ -623,13 +737,13 @@ const MemoryComposer: React.FC<{
 };
 
 const MemoryRow: React.FC<{ memory: ProjectMemory; onDelete: () => void }> = ({ memory, onDelete }) => (
-  <div className="group px-3 py-2.5 rounded-lg bg-theme-card/60 border border-theme/5 hover:border-theme/15 transition-colors">
+  <div className="group px-3 py-2.5 rounded-lg bg-theme-card/60 border border-theme-sidebar hover:border-theme transition-colors">
     <div className="flex items-center gap-2">
-      <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-theme-hover/60 text-theme-muted">
-        {memory.type}
+      <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold leading-none bg-theme-hover/60 text-theme-muted">
+        {formatTypeLabel(memory.type)}
       </span>
       {memory.pinned && (
-        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400">
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold leading-none bg-amber-500/10 text-amber-400">
           <Bookmark className="w-2.5 h-2.5" /> Pinned
         </span>
       )}
@@ -652,7 +766,11 @@ const MemoryRow: React.FC<{ memory: ProjectMemory; onDelete: () => void }> = ({ 
 // Tasks tab — wired to UnifiedTasks, filtered by projectId
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TasksTab: React.FC<{ project: Project; accent: string }> = ({ project, accent }) => {
+const TasksTab: React.FC<{ project: Project; accent: string; onCount?: (n: number) => void }> = ({
+  project,
+  accent,
+  onCount,
+}) => {
   const [tasks, setTasks] = useState<UnifiedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [composing, setComposing] = useState(false);
@@ -678,6 +796,16 @@ const TasksTab: React.FC<{ project: Project; accent: string }> = ({ project, acc
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Tabs show open tasks (open is what the user has to do); completed work
+  // shows behind the "N completed" disclosure inside the panel.
+  const openCount = useMemo(
+    () => tasks.filter((t) => t.status !== 'completed').length,
+    [tasks],
+  );
+  useEffect(() => {
+    onCount?.(openCount);
+  }, [openCount, onCount]);
 
   useEffect(() => {
     if (composing) {
@@ -747,13 +875,13 @@ const TasksTab: React.FC<{ project: Project; accent: string }> = ({ project, acc
         {!composing ? (
           <button
             onClick={() => setComposing(true)}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme/5 hover:border-theme/15 text-left transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-left transition-colors"
           >
             <Plus className="w-3.5 h-3.5 text-theme-muted" />
             <span className="text-[12px] text-theme-muted/80">Add a task…</span>
           </button>
         ) : (
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-theme-card/70 border border-theme/15">
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-theme-card/70 border border-theme">
             <Circle className="w-3.5 h-3.5 text-theme-muted shrink-0" />
             <input
               ref={inputRef}
@@ -818,7 +946,7 @@ const TasksTab: React.FC<{ project: Project; accent: string }> = ({ project, acc
               <div className="pt-3">
                 <button
                   onClick={() => setShowCompleted((s) => !s)}
-                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-[10.5px] uppercase tracking-wider font-bold text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/40 transition-colors"
+                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/40 transition-colors"
                 >
                   <ChevronDown
                     className={clsx(
@@ -826,7 +954,7 @@ const TasksTab: React.FC<{ project: Project; accent: string }> = ({ project, acc
                       !showCompleted && '-rotate-90',
                     )}
                   />
-                  {done.length} completed
+                  {done.length} completed task{done.length === 1 ? '' : 's'}
                 </button>
                 {showCompleted && (
                   <div className="mt-1 space-y-1">
@@ -900,30 +1028,271 @@ const TaskRow: React.FC<{
 // Files tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FilesTab: React.FC<{ project: Project }> = ({ project }) => {
-  const paths = project.pinned_paths || [];
-  if (paths.length === 0) {
-    return (
-      <div className="h-full overflow-y-auto custom-scrollbar p-3">
-        <PanelStatus
-          icon={<FileText className="w-7 h-7 text-theme-muted/50" />}
-          title="No pinned files"
-          body="Pin files to this project to surface them here."
+const InstructionsTab: React.FC<{
+  project: Project;
+  onProjectChanged?: () => void;
+}> = ({ project, onProjectChanged }) => {
+  const [draft, setDraft] = useState(project.instructions || '');
+  const [busy, setBusy] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    setDraft(project.instructions || '');
+    setSavedAt(null);
+  }, [project.id, project.instructions]);
+
+  const dirty = draft !== (project.instructions || '');
+
+  const save = useCallback(async () => {
+    if (!dirty || busy) return;
+    setBusy(true);
+    try {
+      const updated = await updateProject(project.id, { instructions: draft.trim() });
+      if (updated) {
+        setSavedAt(Date.now());
+        onProjectChanged?.();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, dirty, draft, project.id, onProjectChanged]);
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="shrink-0 px-3 pt-3 pb-2 border-b border-theme-sidebar">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-[12px] font-bold text-theme-fg">Project instructions</h3>
+            <p className="mt-0.5 text-[11px] text-theme-muted/70">
+              Persistent behavior, sources, formats, and constraints for every chat in this project.
+            </p>
+          </div>
+          <button
+            onClick={() => void save()}
+            disabled={!dirty || busy}
+            className="shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-theme-fg text-theme-bg disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity inline-flex items-center gap-1"
+          >
+            {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 p-3">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => void save()}
+          placeholder="Examples: Always check attached project files before answering. Prefer concise implementation notes. Cite source files when making claims."
+          className="w-full h-full resize-none rounded-lg bg-theme-card/60 border border-theme focus:border-theme px-3 py-2 text-[12.5px] leading-relaxed text-theme-fg placeholder:text-theme-muted/45 outline-none custom-scrollbar"
         />
       </div>
-    );
-  }
+
+      <div className="shrink-0 px-3 pb-3 min-h-[24px] text-[10.5px] text-theme-muted/60">
+        {dirty ? 'Unsaved changes' : savedAt ? 'Saved' : 'Used automatically in Project Mode'}
+      </div>
+    </div>
+  );
+};
+
+const FilesTab: React.FC<{
+  project: Project;
+  onProjectChanged?: () => void;
+  onCount?: (n: number) => void;
+}> = ({ project, onProjectChanged, onCount }) => {
+  const [paths, setPaths] = useState<string[]>(project.pinned_paths || []);
+  const [composing, setComposing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Re-sync if the parent prop changes (e.g. AI tool attached context).
+  useEffect(() => {
+    setPaths(project.pinned_paths || []);
+  }, [project.id, project.pinned_paths]);
+
+  useEffect(() => {
+    onCount?.(paths.length);
+  }, [paths.length, onCount]);
+
+  useEffect(() => {
+    if (composing) {
+      const id = requestAnimationFrame(() => inputRef.current?.focus());
+      return () => cancelAnimationFrame(id);
+    }
+  }, [composing]);
+
+  const persist = useCallback(
+    async (next: string[]) => {
+      setPaths(next);
+      setBusy(true);
+      try {
+        const updated = await updateProject(project.id, { pinned_paths: next });
+        if (updated?.pinned_paths) setPaths(updated.pinned_paths);
+        onProjectChanged?.();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [project.id, onProjectChanged],
+  );
+
+  const attachPath = useCallback(async (rawPath: string) => {
+    const trimmed = rawPath.trim();
+    if (!trimmed || busy) return;
+    if (paths.includes(trimmed)) {
+      setDraft('');
+      setComposing(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await addProjectContextPath(project.id, trimmed);
+      if (result.error) {
+        console.warn('[projects] failed to add context path:', result.error);
+        return;
+      }
+      if (result.project?.pinned_paths) {
+        setPaths(result.project.pinned_paths);
+      } else {
+        setPaths([...paths, trimmed]);
+      }
+      onProjectChanged?.();
+      setDraft('');
+      setComposing(false);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, paths, project.id, onProjectChanged]);
+
+  const submit = useCallback(async () => {
+    await attachPath(draft);
+  }, [attachPath, draft]);
+
+  const pickFiles = useCallback(async () => {
+    const api = (window as any).desktopAPI;
+    const result = await api?.pickFiles?.({ multiple: true, title: 'Add files to project context' });
+    const picked = Array.isArray(result?.files) ? result.files.map((file: any) => file.path).filter(Boolean) : [];
+    for (const filePath of picked) await attachPath(filePath);
+  }, [attachPath]);
+
+  const pickFolders = useCallback(async () => {
+    const api = (window as any).desktopAPI;
+    const result = await api?.pickFolder?.({ multiple: true, title: 'Add folders to project context' });
+    const picked = Array.isArray(result?.folders) ? result.folders.map((folder: any) => folder.path).filter(Boolean) : [];
+    for (const folderPath of picked) await attachPath(folderPath);
+  }, [attachPath]);
+
+  const remove = useCallback(
+    async (path: string) => {
+      await persist(paths.filter((p) => p !== path));
+    },
+    [paths, persist],
+  );
+
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar p-3 space-y-1">
-      {paths.map((path) => (
-        <div
-          key={path}
-          className="px-3 py-2 rounded-lg bg-theme-card/60 border border-theme/5 text-[12.5px] font-mono text-theme-fg/90 truncate"
-          title={path}
-        >
-          {path}
-        </div>
-      ))}
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="shrink-0 px-3 pt-3 pb-2">
+        {!composing ? (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setComposing(true)}
+              className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-left transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5 text-theme-muted" />
+              <span className="text-[12px] text-theme-muted/80 truncate">Add file or folder context...</span>
+            </button>
+            <button
+              onClick={() => void pickFiles()}
+              disabled={busy}
+              className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-theme-muted hover:text-theme-fg disabled:opacity-40"
+              title="Choose files"
+            >
+              <FileText className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => void pickFolders()}
+              disabled={busy}
+              className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-theme-card/50 hover:bg-theme-card/80 border border-theme-sidebar hover:border-theme text-theme-muted hover:text-theme-fg disabled:opacity-40"
+              title="Choose folders"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-theme-card/70 border border-theme">
+            <FileText className="w-3.5 h-3.5 text-theme-muted shrink-0" />
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void submit();
+                }
+                if (e.key === 'Escape') {
+                  setComposing(false);
+                  setDraft('');
+                }
+              }}
+              placeholder="Absolute file or folder path..."
+              className="flex-1 min-w-0 bg-transparent text-[12px] font-mono text-theme-fg placeholder:text-theme-muted/50 outline-none"
+            />
+            <button
+              onClick={submit}
+              disabled={!draft.trim() || busy}
+              className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-theme-fg text-theme-bg disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity inline-flex items-center gap-1"
+            >
+              {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+              Add
+            </button>
+            <button
+              onClick={() => {
+                setComposing(false);
+                setDraft('');
+              }}
+              className="w-6 h-6 inline-flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+              title="Cancel"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 pt-1 pb-3 space-y-1">
+        {paths.length === 0 ? (
+          <PanelStatus
+            icon={<FileText className="w-7 h-7 text-theme-muted/50" />}
+            title="No context files or folders"
+            body="Add files or folders to make them searchable project context."
+          />
+        ) : (
+          paths.map((path) => (
+            <div
+              key={path}
+              className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-theme-card/60 border border-theme-sidebar hover:border-theme transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 shrink-0 text-theme-muted" />
+              <span
+                className="flex-1 min-w-0 text-[12.5px] font-mono text-theme-fg/90 truncate"
+                title={path}
+              >
+                {path}
+              </span>
+              <button
+                onClick={() => void remove(path)}
+                disabled={busy}
+                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 inline-flex items-center justify-center rounded-md text-theme-muted hover:text-red-400 hover:bg-red-500/10 disabled:opacity-30"
+                title="Remove context path"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 };
@@ -946,7 +1315,7 @@ function TypeSelect<T extends string>({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="appearance-none pr-6 pl-2 py-1 rounded-md text-[10.5px] font-bold uppercase tracking-wider bg-theme-hover/60 text-theme-muted outline-none cursor-pointer"
+        className="appearance-none pr-6 pl-2 py-1 rounded-md text-[11px] font-semibold bg-theme-hover/60 text-theme-muted hover:text-theme-fg outline-none cursor-pointer transition-colors"
       >
         {options.map((opt) => (
           <option key={opt.id} value={opt.id}>
@@ -976,6 +1345,13 @@ const PanelStatus: React.FC<{
       {body && <p className="text-xs text-theme-muted/60 max-w-[320px]">{body}</p>}
     </div>
   );
+
+// Turn an enum-style value into a human label: "chat_summary" → "Chat summary".
+function formatTypeLabel(value: string): string {
+  if (!value) return '';
+  const spaced = value.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
 
 function formatRelative(iso: string): string {
   if (!iso) return '';

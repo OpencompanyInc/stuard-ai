@@ -15,7 +15,7 @@ export function AttachmentPicker({
   onRemove: (idx: number) => void;
   onFiles: (files: FileList | null) => void;
   uploading: boolean;
-  inputRef: React.RefObject<HTMLInputElement | null>;
+  inputRef: React.RefObject<HTMLInputElement>;
 }) {
   const atLimit = attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE;
   return (

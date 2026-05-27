@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
+const VALID_PLATFORMS = new Set(['macos', 'linux', 'both']);
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -13,6 +15,14 @@ export async function POST(request: NextRequest) {
     if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
       return NextResponse.json(
         { error: 'Please provide a valid email address' },
+        { status: 400 }
+      );
+    }
+
+    const normalizedUseCase = typeof useCase === 'string' ? useCase.trim().toLowerCase() : undefined;
+    if (normalizedUseCase && !VALID_PLATFORMS.has(normalizedUseCase)) {
+      return NextResponse.json(
+        { error: 'Invalid platform selection' },
         { status: 400 }
       );
     }
@@ -32,7 +42,7 @@ export async function POST(request: NextRequest) {
         email: email.toLowerCase().trim(),
         name: name?.trim(),
         company: company?.trim(),
-        use_case: useCase?.trim(),
+        use_case: normalizedUseCase,
         referral_source: referralSource?.trim(),
         position: (count || 0) + 1,
       })

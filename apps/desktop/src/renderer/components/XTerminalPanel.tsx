@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Terminal, X, ChevronDown, Monitor, Cpu, TerminalSquare } from 'lucide-react';
+import { Plus, Terminal, X, ChevronDown, Monitor, Cpu, TerminalSquare, Keyboard, Eye } from 'lucide-react';
 import { clsx } from 'clsx';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { XTerminal, XTerminalRef } from './XTerminal';
@@ -18,6 +18,13 @@ interface TerminalSession {
   exitCode?: number;
 }
 
+interface CliAgentMeta {
+  id: string;
+  label: string;
+  provider: string;
+  cwd: string;
+}
+
 interface XTerminalPanelProps {
   className?: string;
   onClose?: () => void;
@@ -26,21 +33,85 @@ interface XTerminalPanelProps {
 export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClose: _onClose }) => {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [cliAgentByTerminalId, setCliAgentByTerminalId] = useState<Record<string, CliAgentMeta>>({});
+  const [takenOver, setTakenOver] = useState<Record<string, boolean>>({});
   const terminalRefs = useRef<Map<string, XTerminalRef>>(new Map());
 
-  // Load existing sessions on mount
-  useEffect(() => {
-    const loadSessions = async () => {
-      const result = await (window as any).desktopAPI?.terminalList?.();
-      if (result?.ok && Array.isArray(result.sessions)) {
-        setSessions(result.sessions);
-        if (result.sessions.length > 0 && !activeSessionId) {
-          setActiveSessionId(result.sessions[0].id);
-        }
+  const mergeCliAgentSessions = useCallback((entries: Array<{ terminalSessionId: string; id: string; label: string; provider: string; cwd: string }>) => {
+    if (entries.length === 0) return;
+    setCliAgentByTerminalId((prev) => {
+      const next = { ...prev };
+      for (const entry of entries) {
+        next[entry.terminalSessionId] = {
+          id: entry.id,
+          label: entry.label,
+          provider: entry.provider,
+          cwd: entry.cwd,
+        };
       }
-    };
-    loadSessions();
+      return next;
+    });
   }, []);
+
+  const refreshSessions = useCallback(async (preferredId?: string | null) => {
+    const result = await (window as any).desktopAPI?.terminalList?.();
+    if (result?.ok && Array.isArray(result.sessions)) {
+      setSessions(result.sessions);
+      if (preferredId && result.sessions.some((s: TerminalSession) => s.id === preferredId)) {
+        setActiveSessionId(preferredId);
+      } else if (result.sessions.length > 0) {
+        setActiveSessionId((current) => current || result.sessions[0].id);
+      }
+    }
+  }, []);
+
+  // Load existing sessions + active CLI agent sessions on mount
+  useEffect(() => {
+    void refreshSessions();
+    void (async () => {
+      const result = await (window as any).desktopAPI?.execTool?.('cli_agent_status', {});
+      const entries = Array.isArray(result?.sessions)
+        ? result.sessions
+        : result?.session
+          ? [result.session]
+          : [];
+      mergeCliAgentSessions(entries);
+    })();
+  }, [mergeCliAgentSessions, refreshSessions]);
+
+  // Headed CLI-agent sessions: surface in the sidebar terminal instead of a popup
+  useEffect(() => {
+    const api = (window as any).desktopAPI;
+    if (!api) return;
+
+    const unsubStart = api.onCliAgentSessionStarted?.((s: CliAgentMeta & { terminalSessionId: string }) => {
+      mergeCliAgentSessions([s]);
+      void refreshSessions(s.terminalSessionId);
+    });
+
+    const unsubStop = api.onCliAgentSessionStopped?.(({ terminalSessionId }: { terminalSessionId: string }) => {
+      setCliAgentByTerminalId((prev) => {
+        const removed = prev[terminalSessionId];
+        if (removed) {
+          setTakenOver((t) => {
+            if (!t[removed.id]) return t;
+            const next = { ...t };
+            delete next[removed.id];
+            return next;
+          });
+        }
+        if (!removed) return prev;
+        const next = { ...prev };
+        delete next[terminalSessionId];
+        return next;
+      });
+    });
+
+    return () => {
+      unsubStart?.();
+      unsubStop?.();
+    };
+  }, [mergeCliAgentSessions, refreshSessions]);
 
   // Subscribe to terminal data events
   useEffect(() => {
@@ -128,7 +199,22 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
     }
   };
 
-  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const activeCliAgent = activeSessionId ? cliAgentByTerminalId[activeSessionId] : undefined;
+  const isTakenOver = activeCliAgent ? !!takenOver[activeCliAgent.id] : true;
+
+  const sessionTitle = (session: TerminalSession) => {
+    const cli = cliAgentByTerminalId[session.id];
+    if (cli) return cli.label;
+    return session.title || session.shell.split(/[/\\]/).pop();
+  };
+
+  const toggleTakeOver = () => {
+    if (!activeCliAgent || !activeSessionId) return;
+    setTakenOver((prev) => ({ ...prev, [activeCliAgent.id]: !prev[activeCliAgent.id] }));
+    if (!isTakenOver) {
+      window.setTimeout(() => terminalRefs.current.get(activeSessionId)?.focus(), 0);
+    }
+  };
 
   return (
     <div className={clsx("flex flex-col h-full bg-[#1e1e1e] rounded-b-[20px] overflow-hidden", className)}>
@@ -150,7 +236,7 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
               session.id === activeSessionId ? "text-blue-400" : "text-gray-500"
             )} />
             <span className="max-w-[120px] truncate">
-              {session.title || session.shell.split(/[/\\]/).pop()}
+              {sessionTitle(session)}
             </span>
             {session.status === 'exited' && (
               <span className={clsx(
@@ -221,6 +307,25 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
         </div>
       </div>
 
+      {activeCliAgent && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#333] text-[11px]">
+          <span className="text-gray-500 truncate flex-1" title={activeCliAgent.cwd}>
+            {activeCliAgent.cwd}
+          </span>
+          <button
+            onClick={toggleTakeOver}
+            title={isTakenOver ? 'Watching is off — you are typing into the agent. Click to go back to watch-only.' : 'Take over: type into the agent terminal'}
+            className={clsx(
+              'flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide transition-colors',
+              isTakenOver ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25' : 'text-gray-400 hover:bg-[#333]',
+            )}
+          >
+            {isTakenOver ? <Keyboard className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            {isTakenOver ? 'Typing' : 'Watching'}
+          </button>
+        </div>
+      )}
+
       {/* Terminal Area */}
       <div className="flex-1 relative overflow-hidden bg-[#1e1e1e]">
         {sessions.length === 0 ? (
@@ -238,22 +343,23 @@ export const XTerminalPanel: React.FC<XTerminalPanelProps> = ({ className, onClo
               New Terminal Session
             </button>
           </div>
-        ) : activeSession ? (
-          <div key={activeSession.id} className="absolute inset-0 p-3">
-            <div className="w-full h-full rounded-xl overflow-hidden border border-[#333] bg-[#1e1e1e]">
-              <XTerminal
-                key={activeSession.id}
-                sessionId={activeSession.id}
-                onResize={handleResize}
-                ref={(ref) => setTerminalRef(activeSession.id, ref)}
-                className="h-full"
-              />
-            </div>
-          </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-sm text-gray-500">
-            Select a terminal session to continue.
-          </div>
+          sessions.map((session) => (
+            <div
+              key={session.id}
+              className={clsx('absolute inset-0 p-3', session.id === activeSessionId ? 'block' : 'hidden')}
+            >
+              <div className="w-full h-full rounded-xl overflow-hidden border border-[#333] bg-[#1e1e1e]">
+                <XTerminal
+                  sessionId={session.id}
+                  onResize={session.id === activeSessionId ? handleResize : undefined}
+                  readOnly={!!cliAgentByTerminalId[session.id] && !takenOver[cliAgentByTerminalId[session.id].id]}
+                  ref={(ref) => setTerminalRef(session.id, ref)}
+                  className="h-full"
+                />
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>

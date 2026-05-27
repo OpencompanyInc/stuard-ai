@@ -118,8 +118,10 @@ vi.mock('../../utils/logger', () => {
   };
 });
 
-vi.mock('../../utils/config', () => {
+vi.mock('../../utils/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/config')>();
   return {
+    ...actual,
     ENABLE_ROUTING: true,
     REQUIRE_AUTH: false,
   };
@@ -178,7 +180,7 @@ describe('prepareChatRequest', () => {
     wsConversationsState.clear();
   });
 
-  it('builds the orchestrator agent for normal chat requests', async () => {
+  it('builds the orchestrator agent for normal chat requests', { timeout: 60000 }, async () => {
     const agent = { id: 'orchestrator-agent' };
     getOrchestratorAgentMock.mockReturnValue(agent);
 

@@ -103,6 +103,24 @@ describe('Capability Packs', () => {
     expect(FILE_OPS_PACK.toolNames).toContain('terminal_create');
     expect(FILE_OPS_PACK.toolNames).toContain('grep');
     expect(FILE_OPS_PACK.toolNames).toContain('glob');
+    // cli_agent_* tools now live in the dedicated CLI_AGENT_PACK
+    expect(FILE_OPS_PACK.toolNames).not.toContain('cli_agent_start');
+    expect(FILE_OPS_PACK.toolNames).not.toContain('cli_agent_read');
+  });
+
+  it('cli_agent pack has the expected tools and is registered', async () => {
+    const { CLI_AGENT_PACK, KNOWN_SUBAGENT_NAMES, getCapabilityPack } = await import('./capability-packs');
+    expect(CLI_AGENT_PACK.kind).toBe('cli_agent');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_detect');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_start');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_send');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_read');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_status');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_wait_for');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_wait_idle');
+    expect(CLI_AGENT_PACK.toolNames).toContain('cli_agent_stop');
+    expect(KNOWN_SUBAGENT_NAMES).toContain('cli_agent');
+    expect(getCapabilityPack('cli_agent')).toBeDefined();
   });
 
   it('workflow pack has the expected tools', async () => {

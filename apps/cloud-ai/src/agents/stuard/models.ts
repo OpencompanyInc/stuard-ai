@@ -14,12 +14,12 @@ export function getModel(model: ModelChoice, modelId?: string) {
   // Final defense: pick something we know is always wired up. Avoid OpenAI
   // here so a depleted OpenAI quota can't take down a whole tier.
   if (model === 'fast') {
-    return buildProviderModel('google/gemini-3.1-flash-lite-preview');
+    return buildProviderModel('google/gemini-3.1-flash-lite');
   }
   if (model === 'balanced') {
     return (
       buildProviderModel('xai/grok-4-1-fast') ||
-      buildProviderModel('google/gemini-3.1-flash-lite-preview')
+      buildProviderModel('google/gemini-3.1-flash-lite')
     );
   }
   if (model === 'research') {
@@ -30,7 +30,7 @@ export function getModel(model: ModelChoice, modelId?: string) {
   }
   return (
     buildProviderModel('google/gemini-3.1-pro-preview') ||
-    buildProviderModel('google/gemini-3.1-flash-lite-preview')
+    buildProviderModel('google/gemini-3.1-flash-lite')
   );
 }
 

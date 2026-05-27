@@ -2,4 +2,4 @@ export {
   getStreamingOverlapLength,
   mergeStreamingText,
   isRedundantStreamingUpdate,
-} from '../../../../../shared/chat-ui/streamMerge';
+} from '@stuardai/chat-ui/streamMerge';

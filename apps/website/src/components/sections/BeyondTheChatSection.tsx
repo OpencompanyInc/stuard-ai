@@ -20,9 +20,9 @@ const BeyondTheChatSection = () => {
           </h2>
 
           <p className="max-w-[720px] text-[14px] leading-[22px] sm:text-[15px] sm:leading-[24px] lg:text-[16px] lg:leading-[26px] font-normal text-[#E5E5E5]">
-            ChatGPT can write a script that calls ffmpeg. Stuard can run it. It reads the file you just
-            downloaded, sees what&apos;s on your screen, changes your wallpaper, dims your brightness,
-            opens your camera — whatever the job needs.
+            Most assistants stop at the suggestion — you&apos;re left switching apps, hunting for files,
+            doing the messy parts yourself. Stuard lives on your machine and actually finishes what you
+            started.
           </p>
 
           <Link

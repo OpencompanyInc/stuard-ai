@@ -86,6 +86,8 @@ export {
   cli_agent_send,
   cli_agent_read,
   cli_agent_status,
+  cli_agent_wait_for,
+  cli_agent_wait_idle,
   cli_agent_stop,
 } from './device/cli-agent';
 
@@ -93,10 +95,29 @@ export {
 export {
   python_status,
   python_setup,
+  python_list_packages,
   python_install,
   run_python_script,
   run_node_script,
 } from './device/python';
+
+// Data Analysis (pandas/numpy/scipy/matplotlib/seaborn in a dedicated venv)
+export {
+  data_analysis_status,
+  data_analysis_setup,
+  data_analysis_uninstall,
+  data_load,
+  describe_data,
+  correlate_data,
+  plot_line,
+  plot_bar,
+  plot_scatter,
+  plot_hist,
+  plot_pie,
+  plot_heatmap,
+  plot_box,
+  run_data_python,
+} from './device/data-analysis';
 
 // Utility tools (no scripts needed)
 export {
@@ -143,13 +164,12 @@ export {
 // Workflows metadata (desktop-side JSON files)
 // These tools require a client bridge to the desktop app. If no bridge is available,
 // they return an empty list gracefully instead of timing out.
-// NOTE: list_local_workflows removed - use search_local_workflows instead
+// NOTE: workflow discovery is handled by search_local_workflows.
 // NOTE: list_local_stuards deprecated - stuards and workflows are now unified
 export {
   list_local_stuards,  // Deprecated, kept for backwards compatibility
   show_json_workflow_code,
   execute_workflow,
-  find_workflow_semantic,
   import_workflow,
   run_automation,
   stop_automation,
@@ -389,6 +409,10 @@ export {
   journal_add,
   memory_add,
   project_search,
+  search_project_conversations,
+  add_project_context,
+  pin_file,
+  unpin_file,
 } from './device/projects';
 
 // ═══════════════════════════════════════════════════════════════════════════════

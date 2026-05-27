@@ -1,7 +1,7 @@
 export type {
   ChatAttachment,
   ChatAttachmentKind,
-} from '../../../../../shared/chat-ui/attachments';
+} from '@stuardai/chat-ui/attachments';
 export {
   isDocumentAttachment,
   getChatAttachmentKind,
@@ -12,4 +12,4 @@ export {
   buildAttachmentMessageText,
   shouldConvertPasteToDocumentAttachment,
   createClipboardDocumentAttachment,
-} from '../../../../../shared/chat-ui/attachments';
+} from '@stuardai/chat-ui/attachments';

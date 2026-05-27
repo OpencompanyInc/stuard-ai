@@ -31,10 +31,11 @@ interface WorkflowCanvasPaneProps {
   /** Navigate back to parent workflow */
   onNavigateBack?: () => void;
   onCanvasMouseDown: (e: React.MouseEvent) => void;
-  onWheel: (e: React.WheelEvent) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
+  onZoomFit?: () => void;
+  bindWheelTarget?: (el: HTMLDivElement | null) => () => void;
   onAutoOrganize: () => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -73,10 +74,11 @@ export function WorkflowCanvasPane({
   onSetActiveTab,
   onCloseFileTab,
   onCanvasMouseDown,
-  onWheel,
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  onZoomFit,
+  bindWheelTarget,
   onAutoOrganize,
   onDragOver,
   onDrop,
@@ -130,10 +132,11 @@ export function WorkflowCanvasPane({
           selectedWireIndex={selectedWireIndex}
           selectionBox={selectionBox}
           onCanvasMouseDown={onCanvasMouseDown}
-          onWheel={onWheel}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}
           onZoomReset={onZoomReset}
+          onZoomFit={onZoomFit}
+          bindWheelTarget={bindWheelTarget}
           onAutoOrganize={onAutoOrganize}
           onDragOver={onDragOver}
           onDrop={onDrop}

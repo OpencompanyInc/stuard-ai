@@ -8,7 +8,7 @@ export const FIGMA_ROW_BASE: React.CSSProperties = {
 };
 export const FIGMA_ROW_PRIMARY: React.CSSProperties = {
   ...FIGMA_ROW_BASE,
-  background: '#262626',
+  background: 'var(--compact-pill-hover)',
 };
 export const FIGMA_ROW_WITH_ICON: React.CSSProperties = {
   ...FIGMA_ROW_BASE,
@@ -16,5 +16,5 @@ export const FIGMA_ROW_WITH_ICON: React.CSSProperties = {
 };
 export const FIGMA_KBD: React.CSSProperties = {
   padding: '3px 6px',
-  color: '#A3A3A3',
+  color: 'rgb(var(--compact-pill-fg-muted))',
 };

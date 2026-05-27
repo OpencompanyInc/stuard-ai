@@ -44,10 +44,10 @@ export default function SignUpPage() {
       }
 
       if (data.user) {
-        supabase.from('profiles').upsert(
+        void supabase.from('profiles').upsert(
           { user_id: data.user.id, email, display_name: fullName, created_at: new Date().toISOString() },
-          { onConflict: 'user_id' }
-        ).then(() => {}).catch(() => {});
+          { onConflict: 'user_id' },
+        );
       }
 
       if (data.session) {

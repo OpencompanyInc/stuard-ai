@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 
@@ -20,14 +21,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const initial = displayName.charAt(0).toUpperCase();
 
     const nav = [
-        { name: 'Overview', href: '/dashboard', icon: HomeIcon },
+        { name: 'Overview', href: '/dashboard', icon: DashboardIcon },
         { name: 'Cloud Engine', href: '/dashboard/cloud', icon: CloudIcon },
-        { name: 'Billing', href: '/dashboard/billing', icon: CreditCardIcon },
-        { name: 'Support', href: '/dashboard/support', icon: SupportIcon },
+        { name: 'Billings', href: '/dashboard/billing', icon: CreditCardIcon },
         { name: 'Settings', href: '/dashboard/settings', icon: SettingsIcon },
     ];
 
-    const active = (href: string) => pathname === href || pathname.startsWith(href + '/');
+    const active = (href: string) => {
+        if (href === '/dashboard') return pathname === '/dashboard';
+        return pathname === href || pathname.startsWith(href + '/');
+    };
+    const activeItem = nav.find((n) => active(n.href));
 
     const handleLogout = async () => {
         await logout();
@@ -35,86 +39,76 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
 
     const sidebar = (
-        <>
-            {/* Logo */}
-            <div className="h-14 flex items-center gap-2.5 px-5 flex-shrink-0">
-                <Link href="/" className="flex items-center gap-2.5">
-                    <div className="h-7 w-7 bg-gray-900 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-sm">S</span>
-                    </div>
-                    <span className="font-semibold text-[15px] text-gray-900">Stuard AI</span>
-                </Link>
-            </div>
-
-            {/* Nav */}
-            <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-                {nav.map((item) => (
-                    <Link
-                        key={item.name}
-                        href={item.href}
-                        onClick={() => setMobileOpen(false)}
-                        className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium rounded-lg transition-colors ${
-                            active(item.href)
-                                ? 'bg-gray-900 text-white'
-                                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                        }`}
-                    >
-                        <item.icon className={`w-4 h-4 ${active(item.href) ? 'text-white' : 'text-gray-400'}`} />
-                        {item.name}
+        <div className="flex h-full flex-col justify-between gap-3 px-3 pt-4 overflow-y-auto dash-scroll">
+            {/* Top: Logo + Nav */}
+            <div className="flex flex-col gap-6 min-h-0">
+                {/* Brand row */}
+                <div className="flex items-center justify-between px-1">
+                    <Link href="/" className="flex items-center gap-2">
+                        <Image
+                            src="/stuard-mark.png"
+                            alt="Stuard"
+                            width={20}
+                            height={20}
+                            className="h-5 w-5"
+                            priority
+                        />
+                        <span className="text-[15px] font-medium leading-5 text-white">Stuard AI</span>
                     </Link>
-                ))}
-            </nav>
-
-            {/* Download CTA */}
-            <div className="px-3 pb-2">
-                <Link href="/download" className="block">
-                    <div className="px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors group">
-                        <div className="flex items-center gap-2">
-                            <DesktopIcon className="w-4 h-4 text-gray-400" />
-                            <span className="text-[13px] font-medium text-gray-700">Download Desktop</span>
-                        </div>
-                    </div>
-                </Link>
-            </div>
-
-            {/* User */}
-            <div className="px-3 pb-4 pt-2 border-t border-gray-200">
-                <div className="flex items-center gap-2.5 px-2 py-2">
-                    <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
-                        {initial}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-medium text-gray-900 truncate">{displayName}</p>
-                        <p className="text-[11px] text-gray-400 truncate">{displayEmail}</p>
-                    </div>
                     <button
-                        onClick={handleLogout}
-                        className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
-                        title="Sign out"
+                        type="button"
+                        onClick={() => setMobileOpen(false)}
+                        className="hidden lg:flex h-6 w-6 items-center justify-center text-white/70 hover:text-white"
+                        aria-label="Toggle sidebar"
                     >
-                        <LogoutIcon className="w-4 h-4" />
+                        <PanelLeftIcon className="h-4 w-4" />
                     </button>
                 </div>
+
+                {/* Nav */}
+                <nav className="flex flex-col gap-1">
+                    {nav.map((item) => (
+                        <Link
+                            key={item.name}
+                            href={item.href}
+                            onClick={() => setMobileOpen(false)}
+                            className={`dash-nav-item ${active(item.href) ? 'dash-nav-item--active' : ''}`}
+                        >
+                            <item.icon className="h-4 w-4" />
+                            <span>{item.name}</span>
+                        </Link>
+                    ))}
+                </nav>
             </div>
-        </>
+
+            {/* Bottom: Desktop CTA */}
+            <div className="pb-3">
+                <div className="dash-desktop-cta">
+                    <h3 className="dash-desktop-cta__title">
+                        Get More from<br />Stuard on Desktop
+                    </h3>
+                    <Link href="/download" className="dash-desktop-cta__button">
+                        <DesktopDownloadIcon className="h-4 w-4" />
+                        <span>Download Desktop</span>
+                    </Link>
+                </div>
+            </div>
+        </div>
     );
 
     return (
-        <div className="min-h-screen bg-[#F7F7F5] pt-3 lg:pt-4">
-            {/* Desktop Sidebar */}
-            <aside className="hidden lg:flex w-56 flex-col fixed top-10 bottom-0 z-40 bg-white border-r border-gray-200">
-                {sidebar}
-            </aside>
-
+        <div className="min-h-screen bg-[#0A0A0A] text-white">
             {/* Mobile Top Bar */}
-            <div className="lg:hidden fixed top-10 inset-x-0 z-40 bg-white border-b border-gray-200 h-14 flex items-center justify-between px-4">
+            <div className="lg:hidden sticky top-0 z-40 bg-[#0A0A0A]/95 backdrop-blur border-b border-neutral-800 h-14 flex items-center justify-between px-4">
                 <Link href="/" className="flex items-center gap-2">
-                    <div className="h-7 w-7 bg-gray-900 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-sm">S</span>
-                    </div>
-                    <span className="font-semibold text-[15px] text-gray-900">Stuard</span>
+                    <Image src="/stuard-mark.png" alt="Stuard" width={24} height={24} className="h-6 w-6" />
+                    <span className="text-[15px] font-medium text-white">Stuard AI</span>
                 </Link>
-                <button onClick={() => setMobileOpen(!mobileOpen)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                <button
+                    onClick={() => setMobileOpen(!mobileOpen)}
+                    className="p-2 text-white/80 hover:text-white hover:bg-neutral-800/60 rounded-lg"
+                    aria-label="Toggle menu"
+                >
                     {mobileOpen ? <CloseIcon className="w-5 h-5" /> : <MenuIcon className="w-5 h-5" />}
                 </button>
             </div>
@@ -122,48 +116,136 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Mobile Drawer */}
             {mobileOpen && (
                 <div className="lg:hidden fixed inset-0 z-50">
-                    <div className="absolute inset-0 bg-black/20" onClick={() => setMobileOpen(false)} />
-                    <div className="absolute left-0 top-10 bottom-0 w-56 bg-white shadow-xl flex flex-col">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
+                    <div className="dash-sidebar absolute left-3 right-3 top-16 bottom-3 overflow-hidden flex flex-col">
                         {sidebar}
                     </div>
                 </div>
             )}
 
-            {/* Main Content */}
-            <main className="lg:ml-56 min-h-screen pt-14 lg:pt-4">
-                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-                    {children}
-                </div>
-            </main>
+            {/* Desktop layout: sticky sidebar + main */}
+            <div className="lg:flex lg:items-start lg:gap-3 lg:p-3">
+                {/* Sticky Sidebar (uses sticky so it works inside the motion.div containing block) */}
+                <aside className="hidden lg:block w-[220px] flex-shrink-0 sticky top-3 self-start" style={{ height: 'calc(100vh - 1.5rem)' }}>
+                    <div className="dash-sidebar h-full overflow-hidden flex flex-col">
+                        {sidebar}
+                    </div>
+                </aside>
+
+                {/* Main Content */}
+                <main className="flex-1 min-w-0">
+                    {/* Top bar (page title + user) */}
+                    <div className="flex items-center justify-between px-3 lg:px-1 h-10 mb-1 lg:mb-2">
+                        <p className="text-[13px] text-neutral-400">{activeItem?.name ?? 'Overview'}</p>
+                        <div className="flex items-center gap-2 rounded-full bg-neutral-900/70 border border-neutral-800 pl-1 pr-2.5 py-0.5">
+                            <div className="h-6 w-6 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 flex items-center justify-center text-[11px] font-semibold text-neutral-900">
+                                {initial}
+                            </div>
+                            <span className="text-[12px] font-medium text-neutral-200">{displayName}</span>
+                            <button
+                                onClick={handleLogout}
+                                className="ml-0.5 text-neutral-500 hover:text-white"
+                                title="Sign out"
+                                aria-label="Sign out"
+                            >
+                                <LogoutIcon className="w-3 h-3" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="px-3 lg:px-1 pb-6">
+                        {children}
+                    </div>
+                </main>
+            </div>
         </div>
     );
 }
 
-// Minimal SVG icons
-function HomeIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>;
+// ── Icons ────────────────────────────────────────────────────────────────────
+
+function DashboardIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5}>
+            <rect x="2.5" y="2.5" width="6" height="6" rx="1.5" />
+            <rect x="11.5" y="2.5" width="6" height="6" rx="1.5" />
+            <rect x="11.5" y="11.5" width="6" height="6" rx="1.5" />
+            <rect x="2.5" y="11.5" width="6" height="6" rx="1.5" />
+        </svg>
+    );
 }
-function CreditCardIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" /></svg>;
-}
-function SettingsIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
-}
+
 function CloudIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>;
+    return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5.5 14.5h9a3.5 3.5 0 0 0 .5-6.96A5 5 0 0 0 5.1 9.1 3.5 3.5 0 0 0 5.5 14.5Z" />
+            <path d="M10 11.5v5" />
+            <path d="m8.5 15 1.5 1.5 1.5-1.5" />
+        </svg>
+    );
 }
-function SupportIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" /></svg>;
+
+function CreditCardIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1.667" y="3.333" width="16.667" height="13.333" rx="2" />
+            <path d="M1.667 7.5h16.667" />
+            <path d="M4.167 13.333h2.083" />
+            <path d="M8.333 13.333h2.917" />
+        </svg>
+    );
 }
-function DesktopIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" /></svg>;
+
+function SettingsIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+        </svg>
+    );
 }
+
+function PanelLeftIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+        </svg>
+    );
+}
+
+function DesktopDownloadIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1.667" y="2.5" width="16.667" height="11.667" rx="2" />
+            <path d="M6.667 17.5h6.666" />
+            <path d="M10 14.167V17.5" />
+            <path d="M7.5 8.333 10 10.833l2.5-2.5" />
+            <path d="M10 5.833v5" />
+        </svg>
+    );
+}
+
 function LogoutIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" /></svg>;
+    return (
+        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+        </svg>
+    );
 }
+
 function MenuIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>;
+    return (
+        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+        </svg>
+    );
 }
+
 function CloseIcon({ className }: { className?: string }) {
-    return <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>;
+    return (
+        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+    );
 }

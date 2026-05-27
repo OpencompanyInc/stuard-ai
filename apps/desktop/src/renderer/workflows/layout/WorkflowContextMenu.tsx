@@ -1,4 +1,5 @@
 import {
+  Boxes,
   Clipboard,
   ClipboardPaste,
   Copy,
@@ -10,12 +11,14 @@ import {
   Settings,
   SkipForward,
   Trash,
+  Ungroup,
   Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import type { DesignerModel } from "../types";
 import type { WorkflowContextMenu } from "./types";
+import { useWorkflowGroupsContext } from "../WorkflowGroupsContext";
 
 interface WorkflowContextMenuProps {
   contextMenu: WorkflowContextMenu | null;
@@ -58,6 +61,15 @@ export function WorkflowContextMenuOverlay({
   onZoomIn,
   onZoomOut,
 }: WorkflowContextMenuProps) {
+  const groups = useWorkflowGroupsContext();
+  // Selection forms an existing group exactly? → offer Ungroup instead of Group.
+  const existingGroup = groups?.groups.find(
+    (g) =>
+      selectedNodeIds.size > 0 &&
+      g.memberIds.length === selectedNodeIds.size &&
+      g.memberIds.every((id) => selectedNodeIds.has(id)),
+  );
+
   if (!contextMenu) return null;
 
   return (
@@ -170,6 +182,36 @@ export function WorkflowContextMenuOverlay({
                     Ctrl+D
                   </span>
                 </button>
+
+                {groups && selectedNodeIds.size > 1 && !existingGroup && (
+                  <button
+                    onClick={() => {
+                      const id = groups.createGroup(Array.from(selectedNodeIds));
+                      if (id) groups.setCollapsed(id, true);
+                      onClose();
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                  >
+                    <Boxes className="w-4 h-4 [color:var(--wf-accent)]" />
+                    <span>Group {selectedNodeIds.size} nodes</span>
+                    <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded wf-menu-shortcut">
+                      Ctrl+G
+                    </span>
+                  </button>
+                )}
+
+                {groups && existingGroup && (
+                  <button
+                    onClick={() => {
+                      groups.ungroup(existingGroup.id);
+                      onClose();
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors wf-menu-item"
+                  >
+                    <Ungroup className="w-4 h-4 wf-menu-item-muted" />
+                    <span>Ungroup</span>
+                  </button>
+                )}
 
                 <div className="h-px my-1 wf-menu-divider" />
 

@@ -5,12 +5,14 @@ const {
   getBridgeWsMock,
   getBridgeSecretsMock,
   withClientBridgeMock,
+  execLocalToolMock,
   writeLogMock,
 } = vi.hoisted(() => ({
   runSubagentMock: vi.fn(),
   getBridgeWsMock: vi.fn(),
   getBridgeSecretsMock: vi.fn(),
   withClientBridgeMock: vi.fn(async (_ws: any, fn: () => any) => fn()),
+  execLocalToolMock: vi.fn(async () => ({ ok: true })),
   writeLogMock: vi.fn(),
 }));
 
@@ -19,6 +21,7 @@ vi.mock('./subagent-runtime', () => ({
 }));
 
 vi.mock('../tools/bridge', () => ({
+  execLocalTool: execLocalToolMock,
   getBridgeWs: getBridgeWsMock,
   getBridgeSecrets: getBridgeSecretsMock,
   withClientBridge: withClientBridgeMock,
@@ -27,6 +30,16 @@ vi.mock('../tools/bridge', () => ({
 vi.mock('../utils/logger', () => ({
   writeLog: writeLogMock,
 }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 describe('Delegation question coordination', () => {
   beforeEach(() => {
@@ -217,6 +230,56 @@ describe('Delegation question coordination', () => {
     expect(request.context).toContain('Target agent name: Research');
   });
 
+  it('assigns deterministic tab indexes and unique session secrets for parallel browser delegates', async () => {
+    const {
+      assignBrowserDelegateTabIndexes,
+      buildDelegateBridgeSecrets,
+    } = await import('./delegation-tools');
+
+    const tasks = [
+      { subagent: 'browser' },
+      { subagent: 'file_ops' },
+      { subagent: 'browser' },
+      { subagent: 'browser' },
+    ];
+
+    const indexes = assignBrowserDelegateTabIndexes(tasks);
+    expect(indexes).toEqual([0, undefined, 1, 2]);
+
+    const first = buildDelegateBridgeSecrets('browser', { userId: 'user-1' }, 'run-a', indexes[0]);
+    const second = buildDelegateBridgeSecrets('browser', { userId: 'user-1' }, 'run-b', indexes[2]);
+    const nonBrowser = buildDelegateBridgeSecrets('file_ops', { userId: 'user-1' }, 'run-c', indexes[1]);
+
+    expect(first?.browserUseSessionId).toBe('browser-run-a');
+    expect(second?.browserUseSessionId).toBe('browser-run-b');
+    expect(first?.browserUseSessionId).not.toBe(second?.browserUseSessionId);
+    expect(first?.browserUseTabIndex).toBe(0);
+    expect(second?.browserUseTabIndex).toBe(1);
+    expect(nonBrowser).toEqual({ userId: 'user-1' });
+  });
+
+  it('gives a single browser delegate a session id without forcing a tab index', async () => {
+    getBridgeSecretsMock.mockReturnValue({ userId: 'user-1' });
+    runSubagentMock.mockResolvedValue({
+      ok: true,
+      subagentId: 'sa-browser',
+      result: 'done',
+      durationMs: 1,
+    });
+
+    const { delegate } = await import('./delegation-tools');
+
+    const result = await (delegate as any).execute({
+      tasks: [{ subagent: 'browser', instruction: 'Open one page.' }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runSubagentMock).toHaveBeenCalledTimes(1);
+    const [{ bridgeSecrets }] = runSubagentMock.mock.calls[0];
+    expect(bridgeSecrets.browserUseSessionId).toMatch(/^browser-run-/);
+    expect(bridgeSecrets.browserUseTabIndex).toBeUndefined();
+  });
+
   it('returns an error when the requested skill is not available', async () => {
     getBridgeSecretsMock.mockReturnValue({
       __skills: [
@@ -243,5 +306,224 @@ describe('Delegation question coordination', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Unknown skill "missing skill"');
     expect(runSubagentMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the first parallel question before waiting for a slow sibling, then waits for final batch completion', async () => {
+    const slowTask = deferred<any>();
+    runSubagentMock.mockImplementation(async ({ request, onQuestion }: any) => {
+      if (request.instruction.includes('ask first')) {
+        const answer = await onQuestion({
+          type: 'subagent_question',
+          questionId: 'q-parallel-1',
+          subagentId: 'sa-question',
+          runId: 'run-question',
+          question: 'Which value should I use?',
+        });
+        expect(answer.answer).toBe('use 42');
+        return {
+          ok: true,
+          subagentId: 'sa-question',
+          result: 'Question task finished.',
+          durationMs: 10,
+        };
+      }
+
+      return slowTask.promise;
+    });
+
+    const { delegate, replyToSubagent } = await import('./delegation-tools');
+
+    const delegated = await Promise.race([
+      (delegate as any).execute({
+        tasks: [
+          { subagent: 'browser', instruction: 'ask first, then finish' },
+          { subagent: 'file_ops', instruction: 'slow sibling' },
+        ],
+      }),
+      new Promise(resolve => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+
+    expect(delegated).not.toBe('timeout');
+    expect((delegated as any).awaitingReply).toBe(true);
+    expect((delegated as any).completed).toBe(false);
+    expect((delegated as any).questionId).toBe('q-parallel-1');
+    expect((delegated as any).results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'awaiting_reply', questionId: 'q-parallel-1' }),
+      expect.objectContaining({ status: 'running', completed: false }),
+    ]));
+
+    let replySettled = false;
+    const replyPromise = (replyToSubagent as any).execute({
+      questionId: 'q-parallel-1',
+      answer: 'use 42',
+    }).then((value: any) => {
+      replySettled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(replySettled).toBe(false);
+
+    slowTask.resolve({
+      ok: true,
+      subagentId: 'sa-slow',
+      result: 'Slow task finished.',
+      durationMs: 100,
+    });
+
+    const final = await replyPromise;
+    expect(final.ok).toBe(true);
+    expect(final.results).toHaveLength(2);
+    expect(final.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subagentId: 'sa-question', completed: true, result: 'Question task finished.' }),
+      expect.objectContaining({ subagentId: 'sa-slow', completed: true, result: 'Slow task finished.' }),
+    ]));
+  });
+
+  it('surfaces parallel questions FIFO while only one question is active', async () => {
+    runSubagentMock.mockImplementation(async ({ request, onQuestion }: any) => {
+      if (request.instruction.includes('first')) {
+        const answer = await onQuestion({
+          type: 'subagent_question',
+          questionId: 'q-first',
+          subagentId: 'sa-first',
+          runId: 'run-first',
+          question: 'First question?',
+        });
+        expect(answer.answer).toBe('alpha');
+        return {
+          ok: true,
+          subagentId: 'sa-first',
+          result: 'First done.',
+          durationMs: 1,
+        };
+      }
+
+      const answer = await onQuestion({
+        type: 'subagent_question',
+        questionId: 'q-second',
+        subagentId: 'sa-second',
+        runId: 'run-second',
+        question: 'Second question?',
+      });
+      expect(answer.answer).toBe('beta');
+      return {
+        ok: true,
+        subagentId: 'sa-second',
+        result: 'Second done.',
+        durationMs: 2,
+      };
+    });
+
+    const { delegate, replyToSubagent } = await import('./delegation-tools');
+
+    const first = await (delegate as any).execute({
+      tasks: [
+        { subagent: 'browser', instruction: 'first parallel question' },
+        { subagent: 'file_ops', instruction: 'second parallel question' },
+      ],
+    });
+
+    expect(first.awaitingReply).toBe(true);
+    expect(first.questionId).toBe('q-first');
+    expect(first.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ questionId: 'q-first', status: 'awaiting_reply' }),
+    ]));
+
+    const second = await (replyToSubagent as any).execute({
+      questionId: 'q-first',
+      answer: 'alpha',
+    });
+
+    expect(second.awaitingReply).toBe(true);
+    expect(second.completed).toBe(false);
+    expect(second.questionId).toBe('q-second');
+    expect(second.question.question).toBe('Second question?');
+
+    const final = await (replyToSubagent as any).execute({
+      questionId: 'q-second',
+      answer: 'beta',
+    });
+
+    expect(final.ok).toBe(true);
+    expect(final.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subagentId: 'sa-first', completed: true, result: 'First done.' }),
+      expect.objectContaining({ subagentId: 'sa-second', completed: true, result: 'Second done.' }),
+    ]));
+  });
+
+  it('does not return parallel completion until every sibling is terminal', async () => {
+    const slowTask = deferred<any>();
+    runSubagentMock.mockImplementation(async ({ request }: any) => {
+      if (request.instruction.includes('fast')) {
+        return {
+          ok: true,
+          subagentId: 'sa-fast',
+          result: 'Fast return_control summary.',
+          durationMs: 5,
+        };
+      }
+      return slowTask.promise;
+    });
+
+    const { delegate } = await import('./delegation-tools');
+
+    let settled = false;
+    const delegatedPromise = (delegate as any).execute({
+      tasks: [
+        { subagent: 'browser', instruction: 'fast return_control completion' },
+        { subagent: 'file_ops', instruction: 'slow terminal sibling' },
+      ],
+    }).then((value: any) => {
+      settled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    slowTask.resolve({
+      ok: true,
+      subagentId: 'sa-slow-terminal',
+      result: 'Slow terminal summary.',
+      durationMs: 50,
+    });
+
+    const final = await delegatedPromise;
+    expect(final.ok).toBe(true);
+    expect(final.results).toHaveLength(2);
+    expect(final.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subagentId: 'sa-fast', completed: true }),
+      expect.objectContaining({ subagentId: 'sa-slow-terminal', completed: true }),
+    ]));
+  });
+
+  it('preserves the aggregate response when parallel tasks complete without questions', async () => {
+    runSubagentMock.mockImplementation(async ({ request }: any) => ({
+      ok: true,
+      subagentId: request.instruction.includes('one') ? 'sa-one' : 'sa-two',
+      result: request.instruction.includes('one') ? 'One done.' : 'Two done.',
+      durationMs: 1,
+    }));
+
+    const { delegate } = await import('./delegation-tools');
+
+    const result = await (delegate as any).execute({
+      tasks: [
+        { subagent: 'browser', instruction: 'one' },
+        { subagent: 'file_ops', instruction: 'two' },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.awaitingReply).toBeUndefined();
+    expect(result.questionId).toBeUndefined();
+    expect(result.results).toEqual([
+      expect.objectContaining({ index: 0, subagent: 'browser', completed: true, result: 'One done.' }),
+      expect.objectContaining({ index: 1, subagent: 'file_ops', completed: true, result: 'Two done.' }),
+    ]);
+    expect(result.summary).toContain('2/2 tasks completed');
   });
 });

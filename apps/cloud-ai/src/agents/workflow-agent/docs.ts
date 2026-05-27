@@ -151,8 +151,9 @@ with inspect_workflow({ mode: "trigger_flow" }).`,
     title: 'Triggers — Starting Points',
     keywords: [
       'trigger', 'triggers', 'start', 'manual', 'hotkey', 'keystroke', 'cron',
-      'schedule', 'webhook', 'fs.watch', 'filesystem', 'function', 'app_start',
-      'keyboard', 'shortcut',
+      'schedule', 'webhook', 'webhook call', 'local webhook return value',
+      'request response', 'fetch await', 'website localhost', 'fs.watch',
+      'filesystem', 'function', 'app_start', 'keyboard', 'shortcut',
     ],
     content: `Every trigger:
   { id: "trig_0", type: string, args: {}, label?: string, position: {x,y}, inputParams?: [] }
@@ -183,7 +184,28 @@ EXAMPLE — Cron every 15 min weekdays:
 EXAMPLE — Webhook (auto-creates local endpoint):
   { type: "webhook.local", args: {} }
   → POST http://127.0.0.1:18080/webhooks/incoming/<flowId>
-  → ctx.webhook.body, ctx.webhook.headers, ctx.webhook.query
+  → Fire-and-forget: HTTP response is { ok, delivered } while workflow runs.
+
+EXAMPLE - Local website calls workflow and awaits returned data:
+  { id: "trig_webhook", type: "webhook", args: { mode: "local" } }
+  workflow branch MUST end with a return_value node.
+  Website:
+    await fetch("http://127.0.0.1:18080/webhooks/call/<flowId>?triggerId=trig_webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId: "123" })
+    })
+  -> HTTP response is { ok, workflowId, result, returned }.
+
+WEBHOOK DATA ACCESS:
+  Local /incoming and /call JSON bodies are exposed as ctx.input, ctx.args,
+  and ctx.webhook. Use templates like {{input.customerId}},
+  {{args.customerId}}, or {{webhook.customerId}}.
+
+SUPABASE SYNC:
+  Local webhook definitions are synced into the webhooks table for discovery
+  and each local trigger/call is best-effort logged to webhook_events. Runtime
+  does NOT depend on Supabase; local calls still work offline.
 
 TIP: A workflow can have MANY triggers. Each wires independently to its own
 starting node — great for "run on hotkey OR on file change".`,
@@ -2471,7 +2493,7 @@ export function getDocSection(id: string): DocChunk | null {
 export const searchWorkflowDocs = createTool({
   id: 'search_workflow_docs',
   description:
-    'Search workflow documentation by topic. Returns relevant doc sections covering architecture, execution model, connecting nodes, triggers, nodes, wires (basic/branching/convergence/callNode), guards (jsonlogic + ai routing), loops (forEach/repeat/while + patterns), variables (workflow + runtime), templates, workspace, utility tools, scripts (python/node), ai_inference, agent_nodes, streams, function triggers, custom_ui (basics, hooks, data passing, markdown, live updates, stuard API, node routing, multi-page, window config, visual effects, pitfalls), modify_workflow ops & pitfalls, output_schema, debugging, common pitfalls, and performance tips. Use "list" to see all sections, or a section id for a specific one.',
+    'Search workflow documentation by topic. Returns relevant doc sections covering architecture, execution model, connecting nodes, triggers (manual/hotkey/cron/webhook including local request-response /webhooks/call with return_value), nodes, wires (basic/branching/convergence/callNode), guards (jsonlogic + ai routing), loops (forEach/repeat/while + patterns), variables (workflow + runtime), templates, workspace, utility tools, scripts (python/node), ai_inference, agent_nodes, streams, function triggers, custom_ui (basics, hooks, data passing, markdown, live updates, stuard API, node routing, multi-page, window config, visual effects, pitfalls), modify_workflow ops & pitfalls, output_schema, debugging, common pitfalls, and performance tips. Use "list" to see all sections, or a section id for a specific one.',
   inputSchema: z.object({
     query: z
       .string()

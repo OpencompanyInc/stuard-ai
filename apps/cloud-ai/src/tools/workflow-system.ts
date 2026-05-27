@@ -542,6 +542,7 @@ EXAMPLE:
       persisted,
       persistError,
       ...(nodeIssues.length > 0 ? { nodeIssues, message: `Workflow created (${spec.nodes.length} nodes, ${spec.wires.length} wires).${issuesSummary}` } : {}),
+      ...(nodeIssues.length === 0 ? { message: `Workflow created (${spec.nodes.length} nodes, ${spec.wires.length} wires).` } : {}),
     };
   },
 });
@@ -638,7 +639,12 @@ export const listAllToolFormats = createTool({
     const triggers = [
       { type: 'manual', description: 'Manual trigger - run workflow on demand', argsTemplate: {} },
       { type: 'app_start', description: 'Application startup trigger - run once when Stuard launches after the local Python agent is ready', argsTemplate: {} },
-      { type: 'webhook', description: 'Webhook trigger - receive HTTP POST requests. Set mode to "cloud" for public URL or "local" for localhost.', argsTemplate: { mode: 'cloud' } },
+      {
+        type: 'webhook',
+        description: 'Webhook trigger - receive HTTP POST requests. Set mode to "cloud" for public URL or "local" for localhost. Local mode exposes /webhooks/incoming/:flowId for fire-and-forget triggers and /webhooks/call/:flowId?triggerId=... for request/response calls that wait for a return_value node.',
+        argsTemplate: { mode: 'cloud' },
+        outputSchema: { input: 'any', args: 'any', webhook: 'any', trigger: 'object' },
+      },
       { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '0 9 * * *' } },
       { type: 'hotkey', description: 'Global hotkey trigger', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
       { type: 'keystroke', description: 'Keystroke sequence trigger', argsTemplate: { sequence: 'stuard' } },

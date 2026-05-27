@@ -87,7 +87,7 @@ describe('proactive tool request helpers', () => {
     ).resolves.toEqual({
       type: 'tool_result',
       id: 'req-3',
-      result: { ok: false, error: "Tool 'run_command' is not allowed for this bot." },
+      result: { ok: false, error: "Tool 'run_command' is not allowed for this agent." },
     });
   });
 
@@ -106,6 +106,45 @@ describe('proactive tool request helpers', () => {
       id: 'req-4',
       result: { ok: true, tasks: [] },
     });
+  });
+
+  it('handles local proactive search_tools without forwarding to the Python agent', async () => {
+    const execTool = async () => {
+      throw new Error('should not forward');
+    };
+
+    const result = await executeAgentToolRequest(
+      { id: 'req-5', tool: 'search_tools', args: { query: 'media' } },
+      { agentWsUrl: 'ws://127.0.0.1:8765/ws', cloudAiUrl: 'http://127.0.0.1:8082', logFn: () => {} },
+      execTool,
+      ['analyze_media', 'ffmpeg_extract_audio'],
+    );
+
+    expect(result.type).toBe('tool_result');
+    expect(result.result.ok).toBe(true);
+    expect(result.result.tools.some((tool: any) => tool.name === 'analyze_media')).toBe(true);
+  });
+
+  it('handles local proactive execute_tool by forwarding the selected allowed tool', async () => {
+    const calls: Array<{ tool: string; args: any }> = [];
+    const execTool = async (tool: string, args: any) => {
+      calls.push({ tool, args });
+      return { ok: true, summary: 'done' };
+    };
+
+    await expect(
+      executeAgentToolRequest(
+        { id: 'req-6', tool: 'execute_tool', args: { tool_name: 'analyze_media', args: { task: 'transcribe' } } },
+        { agentWsUrl: 'ws://127.0.0.1:8765/ws', cloudAiUrl: 'http://127.0.0.1:8082', logFn: () => {} },
+        execTool,
+        ['analyze_media'],
+      )
+    ).resolves.toEqual({
+      type: 'tool_result',
+      id: 'req-6',
+      result: { ok: true, summary: 'done' },
+    });
+    expect(calls).toEqual([{ tool: 'analyze_media', args: { task: 'transcribe' } }]);
   });
 });
 

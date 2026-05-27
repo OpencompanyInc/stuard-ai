@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, ListTodo, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
+import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
 import QueuePanel from '../../../../QueuePanel';
 import { CheckpointManager } from '../../../../CheckpointManager';
 import { ModelSelector } from '../../../../ModelSelector';
@@ -15,6 +15,9 @@ import { supabase } from '../../../../../lib/supabaseClient';
 import { VoiceOrb, type VoiceState } from '../../../../voice/VoiceOrb';
 import { describeTool, friendlyVoiceState } from '../../../../voice/voiceLabels';
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../../../hooks/useVoiceMode';
+import { CreditsLimitNotice } from '../../../shared/CreditsLimitNotice';
+import { ToolRunningIndicator } from '../../../shared/input/ToolRunningIndicator';
+import { hasInFlightToolCalls, type ToolCallLike } from '../../../../../utils/toolBrand';
 
 // ── Realtime Voice Conversation Test Helpers ──
 
@@ -109,8 +112,7 @@ interface ChatInputAreaProps {
   onSteer?: () => void;
   // Steer target dropdown — list of running delegated subagents in the
   // current tab plus the selected target. 'orchestrator' is the implicit
-  // default. When the user picks a subagent, sendInActiveMode routes the
-  // text to that subagent instead of the parent turn.
+  // default. Send always queues; the steer button nudges the selected target.
   activeSubagents?: Array<{ id: string; kind: string }>;
   steerTarget?: string;
   onSteerTargetChange?: (target: string) => void;
@@ -127,7 +129,6 @@ interface ChatInputAreaProps {
   onCancelQueuedMessage?: (id: string) => void;
   statusText?: string;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
-  displayModelName: string;
   contextMetrics?: ContextUsageMetrics | null;
   translucentMode?: boolean;
   showFileNav: boolean;
@@ -156,6 +157,12 @@ interface ChatInputAreaProps {
   onVoiceMuteToggle?: () => void;
   voiceTranscripts?: TranscriptLine[];
   voiceActiveTools?: VoiceToolEvent[];
+  showCreditsLimitNotice?: boolean;
+  onDismissCreditsLimitNotice?: () => void;
+  onAddCredits?: () => void;
+  /** Match window/sidebar launcher shell — input card on gray surface */
+  launcherSkin?: boolean;
+  currentToolCalls?: readonly ToolCallLike[];
 }
 
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -179,7 +186,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onCancelQueuedMessage,
   statusText = 'Online',
   connectionStatus = 'connected',
-  displayModelName,
   contextMetrics,
   translucentMode = false,
   showFileNav,
@@ -204,33 +210,18 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onVoiceMuteToggle,
   voiceTranscripts = [],
   voiceActiveTools = [],
+  showCreditsLimitNotice = false,
+  onDismissCreditsLimitNotice,
+  onAddCredits,
+  launcherSkin = false,
+  currentToolCalls = [],
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
 
-  // Mode that determines what pressing Enter / clicking the primary send button does
-  // while the agent is streaming: 'queue' fires after the current turn, 'steer'
-  // interjects mid-step. Reset back to 'queue' whenever streaming stops.
-  const [interjectMode, setInterjectMode] = useState<'queue' | 'steer'>('queue');
-  useEffect(() => {
-    if (!isStreaming) setInterjectMode('queue');
-  }, [isStreaming]);
   const canSteer = Boolean(isStreaming && onSteer);
-  // Only surface the steer/queue toggle when the user is actually composing a
-  // message — empty input means there's nothing to send either way.
-  const showInterjectToggle = canSteer && query.trim().length > 0;
-  // Targeting a specific subagent forces steer mode — "queue turn" applies to
-  // the parent conversation and doesn't make sense at the subagent level.
   const targetingSubagent = steerTarget !== 'orchestrator'
     && activeSubagents.some((s) => s.id === steerTarget);
-  const effectiveMode: 'queue' | 'steer' = targetingSubagent ? 'steer' : interjectMode;
-  const sendInActiveMode = useCallback(() => {
-    if (canSteer && effectiveMode === 'steer' && query.trim()) {
-      onSteer?.();
-    } else {
-      onSend();
-    }
-  }, [canSteer, effectiveMode, onSend, onSteer, query]);
 
   // Resolve the human-readable label for the current steer target. Falls back
   // to the bare id (or 'Subagent') when the running list hasn't reported a
@@ -245,9 +236,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     if (match) return `${humanizeSubagentKind(match.kind)} agent`;
     return 'Subagent';
   })();
-  // Target selector stays visible during the entire turn so the user can
-  // re-aim a steer without first toggling into steer mode. When there are no
-  // delegated subagents to pick from we drop it — there's nothing to choose.
+  // Target selector visible while streaming so the user can pick a subagent
+  // before clicking steer. Hidden when no delegated subagents are running.
   const showSteerTargetSelector = canSteer && activeSubagents.length > 0;
 
   // ── Realtime Voice Conversation Test State ──
@@ -477,13 +467,60 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   }, [onDrop]);
 
   return (
-    <div
+    <div className="flex flex-col shrink-0 gap-2">
+      <div className="input-status-float">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {hasInFlightToolCalls(currentToolCalls) ? (
+            <ToolRunningIndicator toolCalls={currentToolCalls} className="min-w-0" />
+          ) : (
+            <>
+              {connectionStatus !== 'connected' && (
+                <div className={clsx(
+                  "w-2.5 h-2.5 rounded-full shrink-0",
+                  connectionStatus === 'connecting' ? 'bg-amber-500' :
+                    connectionStatus === 'error' ? 'bg-red-500' :
+                      'bg-theme-muted/50'
+                )} />
+              )}
+              {connectionStatus === 'connecting' ? (
+                <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
+              ) : null}
+              <span className={clsx(
+                "truncate text-[11px] font-bold uppercase tracking-widest",
+                connectionStatus === 'connected' ? 'text-theme-muted' :
+                  connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
+                    connectionStatus === 'error' ? 'text-red-600' :
+                      'text-theme-muted'
+              )}>
+                {statusText}
+              </span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <ContextUsageIndicator metrics={contextMetrics} compact />
+          <CheckpointManager />
+        </div>
+      </div>
+
+      <div
       className={clsx(
-        "rounded-[28px] p-1 flex flex-col gap-1 shrink-0 relative transition-all duration-300",
-        translucentMode
-          ? "bg-theme-bg backdrop-blur-xl"
-          : "bg-theme-card",
-        isDragOver && "ring-2 ring-primary/50 ring-offset-1"
+        "flex flex-col shrink-0 relative transition-all duration-300",
+        launcherSkin
+          ? clsx(
+              "launcher-input-surface rounded-[16px] p-2.5 gap-1.5 border border-theme/20",
+              translucentMode
+                ? "bg-theme-bg/80 backdrop-blur-xl"
+                : "bg-theme-input",
+              isDragOver && "ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent",
+            )
+          : clsx(
+              "rounded-[28px] p-1 gap-1",
+              translucentMode
+                ? "bg-theme-bg backdrop-blur-xl"
+                : "bg-theme-card",
+              isDragOver && "ring-2 ring-primary/50 ring-offset-1",
+            ),
       )}
       onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
       onDragEnter={handleDragEnter}
@@ -492,13 +529,22 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     >
       {/* Drop overlay */}
       {isDragOver && (
-        <div className="absolute inset-0 z-50 rounded-[28px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150">
+        <div className={clsx(
+          "absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150",
+          launcherSkin ? "rounded-[16px]" : "rounded-[28px]",
+        )}>
           <div className="flex items-center gap-2 text-primary font-semibold text-sm">
             <Upload className="w-5 h-5" />
             <span>Drop files, images, or PDFs here</span>
           </div>
         </div>
       )}
+      <CreditsLimitNotice
+        open={showCreditsLimitNotice}
+        onDismiss={onDismissCreditsLimitNotice || (() => {})}
+        onAddCredits={onAddCredits || (() => {})}
+      />
+
       <AnimatePresence initial={false}>
         {(queueDepth > 0 || queuedMessages.length > 0) && (
           <QueuePanel
@@ -663,193 +709,17 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         </div>
       )}
 
-      {/* Status Row */}
-      <div className="flex items-center justify-between px-3 py-1">
-        <div className="flex items-center gap-2">
-          <div className={clsx(
-            "w-2.5 h-2.5 rounded-full",
-            connectionStatus === 'connected' ? 'bg-emerald-500' :
-              connectionStatus === 'connecting' ? 'bg-amber-500' :
-                connectionStatus === 'error' ? 'bg-red-500' :
-                  'bg-theme-muted/50'
-          )} />
-          {connectionStatus === 'connecting' ? (
-            <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin" />
-          ) : null}
-          <span className={clsx(
-            "text-[11px] font-bold uppercase tracking-widest",
-            connectionStatus === 'connected' ? 'text-theme-muted' :
-              connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
-                connectionStatus === 'error' ? 'text-red-600' :
-                  'text-theme-muted'
-          )}>
-            {statusText}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <ContextUsageIndicator metrics={contextMetrics} compact />
-          <CheckpointManager />
-          <span className="text-[11px] font-bold uppercase tracking-widest text-theme-muted truncate max-w-[240px]">{displayModelName}</span>
-        </div>
-      </div>
-
-      {/* Interject Mode Toggle — only visible while streaming with steer support AND user has typed something */}
-      <AnimatePresence initial={false}>
-        {showInterjectToggle && (
-          <motion.div
-            key="interject-mode"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.18 }}
-            className="overflow-hidden"
-          >
-            <div className="flex items-center justify-between gap-2 px-3 pt-1.5 pb-1">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-[10px] font-black uppercase tracking-widest text-theme-muted shrink-0">
-                  On send
-                </span>
-                <span className="text-[10px] font-bold text-theme-muted/70 truncate">
-                  {effectiveMode === 'steer'
-                    ? targetingSubagent
-                      ? `Nudge ${steerTargetLabel.toLowerCase()} now`
-                      : 'Interject before next tool'
-                    : 'Queue for after this turn'}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {/* Steer target selector — visible whenever subagents are running */}
-                {showSteerTargetSelector && (
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger asChild>
-                      <button
-                        type="button"
-                        className={clsx(
-                          "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1 border",
-                          targetingSubagent
-                            ? "bg-violet-500/12 border-violet-500/25 text-violet-600 dark:text-violet-300"
-                            : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg"
-                        )}
-                        title="Pick which agent the steer should nudge"
-                      >
-                        {targetingSubagent ? (
-                          <span className="relative flex h-1.5 w-1.5 mr-0.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-                          </span>
-                        ) : (
-                          <Sparkles className="w-3 h-3" strokeWidth={2.5} />
-                        )}
-                        <span className="normal-case tracking-normal text-[10.5px] font-bold truncate max-w-[140px]">
-                          {steerTargetLabel}
-                        </span>
-                      </button>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        className="DropdownContent z-[10005] min-w-[220px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl"
-                        sideOffset={6}
-                        align="end"
-                        collisionPadding={10}
-                      >
-                        <div className="px-2 pt-1.5 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
-                          Send next message to
-                        </div>
-                        <DropdownMenu.Item
-                          onSelect={() => onSteerTargetChange?.('orchestrator')}
-                          className={clsx(
-                            "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
-                            steerTarget === 'orchestrator'
-                              ? "bg-primary/10 text-primary"
-                              : "text-theme-fg hover:bg-theme-hover"
-                          )}
-                        >
-                          <CornerDownRight className="w-3.5 h-3.5 text-primary/70 shrink-0" strokeWidth={2.4} />
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold">Orchestrator</div>
-                            <div className="text-[10px] text-theme-muted truncate">Main conversation • supports queue</div>
-                          </div>
-                          {steerTarget === 'orchestrator' && <span className="text-[9px] uppercase tracking-wider font-black text-primary">Active</span>}
-                        </DropdownMenu.Item>
-                        {activeSubagents.length > 0 && (
-                          <>
-                            <div className="px-2 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
-                              Running subagents
-                            </div>
-                            {activeSubagents.map((sa) => (
-                              <DropdownMenu.Item
-                                key={sa.id}
-                                onSelect={() => onSteerTargetChange?.(sa.id)}
-                                className={clsx(
-                                  "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
-                                  steerTarget === sa.id
-                                    ? "bg-violet-500/12 text-violet-700 dark:text-violet-300"
-                                    : "text-theme-fg hover:bg-theme-hover"
-                                )}
-                              >
-                                <span className="relative flex h-2 w-2 shrink-0">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <div className="font-semibold truncate">{humanizeSubagentKind(sa.kind)} agent</div>
-                                  <div className="text-[10px] text-theme-muted truncate">Mid-task nudge • applies at next step</div>
-                                </div>
-                                {steerTarget === sa.id && <span className="text-[9px] uppercase tracking-wider font-black text-violet-600 dark:text-violet-300">Active</span>}
-                              </DropdownMenu.Item>
-                            ))}
-                          </>
-                        )}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                )}
-                {/* Steer-vs-queue toggle. Hidden when targeting a subagent —
-                    queue mode only makes sense for the orchestrator. */}
-                {!targetingSubagent && (
-                  <div className="flex items-center gap-0.5 bg-theme-hover/60 rounded-full p-0.5 border border-theme/10">
-                    <button
-                      type="button"
-                      onClick={() => setInterjectMode('steer')}
-                      className={clsx(
-                        "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
-                        interjectMode === 'steer'
-                          ? "bg-primary text-primary-fg"
-                          : "text-theme-muted hover:text-theme-fg"
-                      )}
-                      title="Steer the current step — interjects now, before the next tool runs"
-                    >
-                      <CornerDownRight className="w-3 h-3" strokeWidth={2.5} />
-                      Steer step
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setInterjectMode('queue')}
-                      className={clsx(
-                        "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5",
-                        interjectMode === 'queue'
-                          ? "bg-primary text-primary-fg"
-                          : "text-theme-muted hover:text-theme-fg"
-                      )}
-                      title="Queue the message — sends after the current turn finishes"
-                    >
-                      <ListTodo className="w-3 h-3" strokeWidth={2.5} />
-                      Queue turn
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Input Row — voice strip or text input */}
       {voiceActive ? (
         <motion.div layout className="flex flex-col gap-1.5 relative">
           <motion.div
             layout
-            className="flex items-center gap-2 bg-theme-hover/55 rounded-[24px] p-1.5 pr-2 border border-theme/10 backdrop-blur-xl"
+            className={clsx(
+              "flex items-center gap-2 backdrop-blur-xl border border-theme/10",
+              launcherSkin
+                ? "bg-theme-hover/55 rounded-[14px] p-1.5 pr-2"
+                : "bg-theme-hover/55 rounded-[24px] p-1.5 pr-2",
+            )}
           >
             <motion.div
               layout
@@ -962,65 +832,25 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           </AnimatePresence>
         </motion.div>
       ) : (
-        <div className="flex items-center gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 transition-all relative z-50">
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                type="button"
-                className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-theme-card transition-colors text-theme-muted hover:text-theme-fg"
-                title="Attach"
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content className="DropdownContent z-[10005] min-w-[200px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl" sideOffset={8} align="start" collisionPadding={10}>
-                {onOpenFileNav && (
-                  <DropdownMenu.Item
-                    onSelect={() => onOpenFileNav()}
-                    className="group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-theme-hover cursor-pointer"
-                  >
-                    <AtSign className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" strokeWidth={2.2} />
-                    <span className="flex-1">Add context</span>
-                    <span className="text-[10px] font-mono text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">@</span>
-                  </DropdownMenu.Item>
-                )}
-                <DropdownMenu.Item
-                  onSelect={() => onAttachFiles?.()}
-                  className={clsx(
-                    "group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
-                    onAttachFiles ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
-                  )}
-                >
-                  <File className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
-                  <span>Attach files</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={() => onAttachImages?.()}
-                  className={clsx(
-                    "group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
-                    onAttachImages ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
-                  )}
-                >
-                  <Image className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
-                  <span>Attach images</span>
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-
-          <div className="flex-1 relative rounded-xl transition-all flex items-center">
+        <div className={clsx(
+          "flex flex-col transition-all relative z-[1]",
+          launcherSkin
+            ? "gap-1.5 px-0.5"
+            : "gap-1 bg-theme-hover/50 rounded-[24px] p-1.5 focus-within:ring-2 focus-within:ring-primary/10",
+        )}>
+          <div className="min-w-0 w-full px-1">
             <TextareaAutosize
               ref={textareaRef}
               data-onboarding="chat-input"
-              className="w-full bg-transparent outline-none text-[15px] text-theme-fg placeholder:text-theme-muted font-semibold min-w-0 resize-none leading-5 py-0 overflow-y-auto custom-scrollbar px-2"
+              className={clsx(
+                "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted min-w-0 resize-none leading-5 py-1 overflow-y-auto custom-scrollbar px-1",
+                launcherSkin
+                  ? "text-[14px] font-normal placeholder:text-theme-muted/80"
+                  : "text-[15px] font-semibold",
+              )}
               placeholder={
                 isStreaming
-                  ? targetingSubagent
-                    ? `Nudge ${steerTargetLabel.toLowerCase()}…`
-                    : effectiveMode === 'steer'
-                      ? 'Steer the current step…'
-                      : 'Queue after this turn…'
+                  ? 'Queue after this turn…'
                   : 'Just ask Stuard'
               }
               value={query}
@@ -1060,17 +890,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   if (canSteer && (e.metaKey || e.ctrlKey) && query.trim()) {
-                    // Cmd/Ctrl+Enter flips the action: steer→queue, queue→steer.
-                    // When targeting a subagent, queue isn't applicable so the
-                    // override falls back to the normal send to the orchestrator.
-                    if (effectiveMode === 'steer') {
-                      if (targetingSubagent) sendInActiveMode();
-                      else onSend();
-                    } else {
-                      onSteer?.();
-                    }
+                    onSteer?.();
                   } else {
-                    sendInActiveMode();
+                    onSend();
                   }
                 }
               }}
@@ -1080,6 +902,69 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             />
           </div>
 
+          <div className="flex items-center gap-2 w-full min-w-0">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className={clsx(
+                  "flex items-center justify-center transition-colors shrink-0",
+                  launcherSkin
+                    ? "w-9 h-9 rounded-[12px] hover:bg-pill-fg/10 text-pill-fg/80 hover:text-pill-fg"
+                    : "w-10 h-10 rounded-full hover:bg-theme-card text-theme-muted hover:text-theme-fg",
+                )}
+                title="Attach"
+              >
+                <Plus className="w-5 h-5" strokeWidth={launcherSkin ? 1.75 : 2} />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className={clsx(
+                  "DropdownContent z-[10005] min-w-[200px] rounded-xl border p-1 shadow-xl",
+                  launcherSkin
+                    ? "bg-pill-bg border-pill-fg/10 shadow-[var(--compact-pill-shadow)]"
+                    : "bg-theme-card border-theme",
+                )}
+                sideOffset={8}
+                align="start"
+                collisionPadding={10}
+              >
+                {onOpenFileNav && (
+                  <DropdownMenu.Item
+                    onSelect={() => onOpenFileNav()}
+                    className="group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-theme-hover cursor-pointer"
+                  >
+                    <AtSign className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" strokeWidth={2.2} />
+                    <span className="flex-1">Add context</span>
+                    <span className="text-[10px] font-mono text-theme-muted bg-theme-hover px-1.5 py-0.5 rounded">@</span>
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item
+                  onSelect={() => onAttachFiles?.()}
+                  className={clsx(
+                    "group text-[13px] text-theme-fg font-semibold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                    onAttachFiles ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
+                  )}
+                >
+                  <File className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
+                  <span>Attach files</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => onAttachImages?.()}
+                  className={clsx(
+                    "group text-[13px] text-theme-fg font-bold flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                    onAttachImages ? "hover:bg-theme-hover cursor-pointer" : "opacity-40 cursor-not-allowed"
+                  )}
+                >
+                  <Image className="w-4 h-4 text-primary group-hover:opacity-100 opacity-70" />
+                  <span>Attach images</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
+          <div className="ml-auto flex items-center gap-2 shrink-0">
           <ModelSelector
             selectedModelId={selectedModelId}
             onSelectModel={(id) => {
@@ -1093,6 +978,92 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             align="end"
           />
 
+          {showSteerTargetSelector && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  className={clsx(
+                    "h-9 px-2 rounded-[14px] text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1 border shrink-0",
+                    targetingSubagent
+                      ? "bg-violet-500/12 border-violet-500/25 text-violet-600 dark:text-violet-300"
+                      : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg"
+                  )}
+                  title="Pick which agent to steer"
+                >
+                  {targetingSubagent ? (
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                    </span>
+                  ) : (
+                    <Sparkles className="w-3 h-3" strokeWidth={2.5} />
+                  )}
+                  <span className="normal-case tracking-normal text-[10.5px] font-bold truncate max-w-[100px]">
+                    {steerTargetLabel}
+                  </span>
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  className="DropdownContent z-[10005] min-w-[220px] bg-theme-card rounded-xl border border-theme p-1 shadow-xl"
+                  sideOffset={6}
+                  align="end"
+                  collisionPadding={10}
+                >
+                  <div className="px-2 pt-1.5 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
+                    Steer target
+                  </div>
+                  <DropdownMenu.Item
+                    onSelect={() => onSteerTargetChange?.('orchestrator')}
+                    className={clsx(
+                      "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
+                      steerTarget === 'orchestrator'
+                        ? "bg-primary/10 text-primary"
+                        : "text-theme-fg hover:bg-theme-hover"
+                    )}
+                  >
+                    <CornerDownRight className="w-3.5 h-3.5 text-primary/70 shrink-0" strokeWidth={2.4} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold">Orchestrator</div>
+                      <div className="text-[10px] text-theme-muted truncate">Main conversation</div>
+                    </div>
+                    {steerTarget === 'orchestrator' && <span className="text-[9px] uppercase tracking-wider font-black text-primary">Active</span>}
+                  </DropdownMenu.Item>
+                  {activeSubagents.length > 0 && (
+                    <>
+                      <div className="px-2 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-theme-muted/70">
+                        Running subagents
+                      </div>
+                      {activeSubagents.map((sa) => (
+                        <DropdownMenu.Item
+                          key={sa.id}
+                          onSelect={() => onSteerTargetChange?.(sa.id)}
+                          className={clsx(
+                            "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
+                            steerTarget === sa.id
+                              ? "bg-violet-500/12 text-violet-700 dark:text-violet-300"
+                              : "text-theme-fg hover:bg-theme-hover"
+                          )}
+                        >
+                          <span className="relative flex h-2 w-2 shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold truncate">{humanizeSubagentKind(sa.kind)} agent</div>
+                            <div className="text-[10px] text-theme-muted truncate">Mid-task nudge</div>
+                          </div>
+                          {steerTarget === sa.id && <span className="text-[9px] uppercase tracking-wider font-black text-violet-600 dark:text-violet-300">Active</span>}
+                        </DropdownMenu.Item>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
+
           {isStreaming && !query.trim() ? (
             <button
               onClick={onStop}
@@ -1102,41 +1073,40 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               <Square className="w-4 h-4 fill-current" />
             </button>
           ) : query.trim() ? (
-            <button
-              onClick={sendInActiveMode}
-              className={clsx(
-                "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 hover:opacity-90 flex-shrink-0",
-                canSteer && effectiveMode === 'steer' && targetingSubagent
-                  ? "bg-violet-500 text-white"
-                  : "bg-primary text-primary-fg"
+            <>
+              {canSteer && (
+                <button
+                  type="button"
+                  onClick={onSteer}
+                  className={clsx(
+                    "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 border",
+                    targetingSubagent
+                      ? "bg-violet-500/15 border-violet-500/30 text-violet-600 dark:text-violet-300 hover:bg-violet-500/25"
+                      : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
+                  )}
+                  title={
+                    targetingSubagent
+                      ? `Steer ${steerTargetLabel} (Cmd/Ctrl+Enter)`
+                      : "Steer current step (Cmd/Ctrl+Enter)"
+                  }
+                >
+                  <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
+                </button>
               )}
-              title={
-                canSteer
-                  ? effectiveMode === 'steer'
-                    ? targetingSubagent
-                      ? `Nudge ${steerTargetLabel} now`
-                      : "Steer current step (Cmd/Ctrl+Enter to queue instead)"
-                    : "Queue after this turn (Cmd/Ctrl+Enter to steer instead)"
-                  : "Send message"
-              }
-            >
-              {canSteer && effectiveMode === 'steer' ? (
-                <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
-              ) : (
+              <button
+                onClick={onSend}
+                className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 hover:opacity-90 flex-shrink-0 bg-primary text-primary-fg"
+                title={canSteer ? "Queue after this turn" : "Send message"}
+              >
                 <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
-              )}
-            </button>
-          ) : (
-            <button
-              onClick={onToggleVoice}
-              className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 bg-primary text-primary-fg hover:opacity-90 flex-shrink-0"
-              title="Voice mode"
-            >
-              <Mic className="w-5 h-5" />
-            </button>
-          )}
+              </button>
+            </>
+          ) : null}
+          </div>
+          </div>
         </div>
       )}
+    </div>
     </div>
   );
 };

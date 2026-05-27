@@ -34,10 +34,16 @@ export function useSkillChat({
   skill,
   onApplySkill,
   cloudAiHttp,
+  selectedModelId = 'auto',
+  selectedModelSource,
+  selectedReasoningLevel,
 }: {
   skill: Skill;
   onApplySkill: (updates: Partial<Skill>) => void;
   cloudAiHttp?: string;
+  selectedModelId?: string | 'auto';
+  selectedModelSource?: string;
+  selectedReasoningLevel?: string;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: "Hi! I'm your Skill Architect. Describe what you want this skill to do and I'll help you build or refine it." }
@@ -147,6 +153,17 @@ IMPORTANT:
             },
             model: 'auto',
           };
+
+          const hasExplicitModel = !!(selectedModelId && selectedModelId !== 'auto');
+          if (hasExplicitModel) {
+            payload.modelId = selectedModelId;
+          }
+          if (hasExplicitModel && selectedModelSource && typeof selectedModelSource === 'string') {
+            payload.modelSource = selectedModelSource;
+          }
+          if (selectedReasoningLevel && typeof selectedReasoningLevel === 'string') {
+            payload.reasoningLevel = selectedReasoningLevel;
+          }
           if (accessToken) payload.auth = { accessToken };
           ws.send(JSON.stringify(payload));
         };
@@ -461,7 +478,7 @@ IMPORTANT:
       setStreamItems([]);
       setReasoningText('');
     }
-  }, [messages, busy, skill, onApplySkill, cloudAiHttp]);
+  }, [messages, busy, skill, onApplySkill, cloudAiHttp, selectedModelId, selectedModelSource, selectedReasoningLevel]);
 
   const latestAssistantContext = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {

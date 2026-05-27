@@ -3,6 +3,7 @@ import { getExternalAccount, debitCredits } from '../supabase';
 import { waSendText } from '../routes/integrations/whatsapp';
 import { telnyxSendSms } from '../routes/integrations/telnyx';
 import { messagingCreditCost } from '../pricing';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -67,6 +68,9 @@ async function deliverViaSms(userId: string, text: string): Promise<void> {
 }
 
 async function deliverViaWhatsApp(userId: string, text: string): Promise<void> {
+  if (!WHATSAPP_INTEGRATION_ENABLED) {
+    throw new Error('WhatsApp delivery disabled');
+  }
   const account = await getExternalAccount(userId, 'whatsapp');
   const meta = account?.meta as any;
   const waId = meta?.waId || meta?.phone;
@@ -90,13 +94,18 @@ async function deliverReminder(reminder: CloudReminder): Promise<void> {
   if (reminder.delivery_method === 'sms') {
     await deliverViaSms(reminder.user_id, text);
   } else if (reminder.delivery_method === 'whatsapp') {
+    if (!WHATSAPP_INTEGRATION_ENABLED) {
+      throw new Error('WhatsApp delivery disabled');
+    }
     await deliverViaWhatsApp(reminder.user_id, text);
   } else if (reminder.delivery_method === 'both') {
     // Send both — if one fails, try the other, throw only if both fail
     const errors: string[] = [];
     try { await deliverViaSms(reminder.user_id, text); } catch (e: any) { errors.push(`sms: ${e?.message}`); }
-    try { await deliverViaWhatsApp(reminder.user_id, text); } catch (e: any) { errors.push(`wa: ${e?.message}`); }
-    if (errors.length === 2) throw new Error(errors.join('; '));
+    if (WHATSAPP_INTEGRATION_ENABLED) {
+      try { await deliverViaWhatsApp(reminder.user_id, text); } catch (e: any) { errors.push(`wa: ${e?.message}`); }
+    }
+    if (errors.length === (WHATSAPP_INTEGRATION_ENABLED ? 2 : 1)) throw new Error(errors.join('; '));
   }
 }
 

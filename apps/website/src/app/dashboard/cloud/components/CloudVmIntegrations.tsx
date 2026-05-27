@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { getCloudVmIntegrations } from '@/lib/cloudApi';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../../../shared/integration-flags';
 
 interface IntegrationEntry {
   provider: string;
@@ -104,7 +105,9 @@ export function CloudVmIntegrations({ engine, className }: Props) {
     );
   }
 
-  const vmIntegrations = data?.vmIntegrations || [];
+  const vmIntegrations = (data?.vmIntegrations || []).filter(
+    (it) => WHATSAPP_INTEGRATION_ENABLED || it.provider.toLowerCase() !== 'whatsapp',
+  );
   const services = data?.vm?.services || {};
   const browserReachable = !!data?.vm?.browserReachable;
   const chrome = data?.vm?.chrome || '';

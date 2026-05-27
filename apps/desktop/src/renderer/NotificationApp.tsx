@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { NotificationProvider, useNotification, NotificationConfig } from './components/NotificationSystem';
-import { normalizeAskUserPrompt } from './components/chat/modes/window/parts/askUserPromptUtils';
+import { normalizeAskUserPrompt } from '@stuardai/chat-ui/askUserPromptUtils';
 
 type InteractiveNotificationConfig = NotificationConfig & {
     permissionRequest?: any;

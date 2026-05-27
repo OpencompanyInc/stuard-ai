@@ -656,7 +656,7 @@ const InspectWorkflowOutput: React.FC<{ args: any; result: any }> = ({ args, res
 
 // Search-style tool outputs: render each hit as a small card with a title and
 // optional snippet. Used by search_workflow_docs, search_workflow_nodes,
-// search_tools, list_workflows. web_search gets its own favicon-chip view.
+// search_tools, search_workflows. web_search gets its own favicon-chip view.
 const SearchResultCard: React.FC<{ item: any }> = ({ item }) => {
   const title = String(item?.title || item?.name || item?.id || item?.label || item?.path || '').trim();
   const desc = String(item?.description || item?.snippet || item?.summary || item?.content || '').trim();
@@ -786,7 +786,7 @@ const ToolOutputView: React.FC<{ tool: string; args: any; result: any }> = ({ to
     const view = <WebSearchSourcesView query={args?.query || args?.q} result={result} />;
     if (view) return view;
   }
-  if (t === 'search_workflow_docs' || t === 'search_workflow_nodes' || t === 'search_tools' || t === 'list_workflows') {
+  if (t === 'search_workflow_docs' || t === 'search_workflow_nodes' || t === 'search_tools' || t === 'search_workflows') {
     const view = <SearchResultsOutput result={result} />;
     if (view) return view;
   }

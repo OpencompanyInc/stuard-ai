@@ -369,7 +369,14 @@ fn open_db(path: &str) -> rusqlite::Result<Connection> {
     // Speed up repeated small queries (search, stats) by hinting to SQLite
     // that pages can live in memory. This matters a lot on a million-row DB.
     conn.pragma_update(None, "temp_store", "MEMORY")?;
-    conn.pragma_update(None, "cache_size", &-64_000i64)?; // ~64MB page cache
+    // ~256MB per connection. The user's home-dir index is 1.3GB+ so 64MB only
+    // covered ~5% of the DB; common terms like "taxes" hit thousands of rows
+    // and re-paged repeatedly. 256MB × 4 daemon workers = 1GB cache, enough
+    // to keep the FTS posting lists hot for typical workloads.
+    conn.pragma_update(None, "cache_size", &-256_000i64)?;
+    // Don't block forever if another connection (e.g. a concurrent scan)
+    // holds a lock; surface as a clean error after 2s.
+    conn.busy_timeout(std::time::Duration::from_millis(2000))?;
     Ok(conn)
 }
 
@@ -613,7 +620,10 @@ fn cmd_list_roots(db_path: &str) -> Result<ListRootsOut, Box<dyn std::error::Err
     let conn = open_db(db_path)?;
     ensure_read_schema(&conn)?;
     ensure_root_columns(&conn)?;
+    do_list_roots(&conn)
+}
 
+fn do_list_roots(conn: &Connection) -> Result<ListRootsOut, Box<dyn std::error::Error>> {
     let mut stmt = conn.prepare("SELECT * FROM indexed_roots ORDER BY created_at ASC")?;
     let rows = stmt.query_map([], row_to_root)?;
     let mut roots = Vec::new();
@@ -1068,11 +1078,11 @@ fn build_file_result(
         kind.clone()
     };
 
-    let target_path = if ext_lower == ".lnk" {
-        resolve_lnk_target(&path)
-    } else {
-        None
-    };
+    // target_path resolution does a synchronous `fs::read` of the .lnk file.
+    // Doing it here multiplies disk reads by `fetch_limit` (300+) on every
+    // search; we defer it to a post-truncation pass so we only resolve the
+    // few .lnk shortcuts that survive ranking.
+    let target_path: Option<String> = None;
 
     Ok(FileResult {
         id: row.get("id")?,
@@ -1212,21 +1222,79 @@ fn sanitize_fts_token(tok: &str) -> String {
         .replace('"', "")
 }
 
+/// Common English stopwords that hurt FTS5 performance when ANDed into a query
+/// — they match millions of rows but add no selectivity. The launcher search
+/// box accepts free-form text (sometimes the user dictates a whole sentence),
+/// so we filter aggressively rather than blindly intersecting posting lists.
+fn is_fts_stopword(tok: &str) -> bool {
+    matches!(
+        tok,
+        "the" | "a" | "an" | "and" | "or" | "but" | "of" | "in" | "on" | "at"
+            | "to" | "for" | "with" | "by" | "from" | "as" | "is" | "are" | "was"
+            | "were" | "be" | "been" | "being" | "am" | "i" | "you" | "he" | "she"
+            | "it" | "we" | "they" | "this" | "that" | "these" | "those" | "my"
+            | "your" | "his" | "her" | "its" | "our" | "their" | "me" | "us" | "them"
+            | "do" | "does" | "did" | "have" | "has" | "had" | "can" | "could" | "will"
+            | "would" | "should" | "may" | "might" | "must" | "shall" | "if" | "then"
+            | "so" | "than" | "too" | "very" | "just" | "also" | "any" | "all" | "some"
+            | "no" | "not" | "only" | "own" | "same" | "such" | "more" | "most" | "other"
+            | "into" | "out" | "over" | "under" | "again" | "further" | "once"
+            | "make" | "made" | "get" | "got"
+    )
+}
+
 fn build_fts_match(tokens: &[String]) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
+    // Sanitize + deduplicate + drop stopwords/too-short tokens.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut clean: Vec<String> = Vec::new();
     for tok in tokens {
-        let clean = sanitize_fts_token(tok);
-        if clean.is_empty() {
+        let sanitized = sanitize_fts_token(tok);
+        if sanitized.len() < 2 {
             continue;
         }
+        if is_fts_stopword(&sanitized) {
+            continue;
+        }
+        if !seen.insert(sanitized.clone()) {
+            continue;
+        }
+        clean.push(sanitized);
+    }
+
+    // Fallback: if filtering ate every token (e.g. user typed only "of" or
+    // "to"), keep the longest original token so search still finds *something*.
+    if clean.is_empty() {
+        if let Some(best) = tokens
+            .iter()
+            .map(|t| sanitize_fts_token(t))
+            .filter(|t| !t.is_empty())
+            .max_by_key(|t| t.len())
+        {
+            clean.push(best);
+        }
+    }
+
+    if clean.is_empty() {
+        return None;
+    }
+
+    // Cap how many tokens we AND together. FTS5 with N AND'd prefix matches
+    // has to intersect N posting lists; on a multi-million row index that
+    // turns a 200-char dictated query into a multi-second daemon stall (and
+    // every keystroke after queues behind it). 6 tokens is plenty to narrow
+    // a launcher search, and we prefer the longest (most-selective) ones.
+    const MAX_FTS_TOKENS: usize = 6;
+    if clean.len() > MAX_FTS_TOKENS {
+        clean.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        clean.truncate(MAX_FTS_TOKENS);
+    }
+
+    let parts: Vec<String> = clean
+        .into_iter()
         // Prefix match so typing "random_cha" finds "random_chaos"
-        parts.push(format!("\"{}\"*", clean));
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" AND "))
-    }
+        .map(|t| format!("\"{}\"*", t))
+        .collect();
+    Some(parts.join(" AND "))
 }
 
 fn location_order_sql() -> &'static str {
@@ -1252,7 +1320,19 @@ fn cmd_search(
 ) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     ensure_read_schema(&conn)?;
+    do_search(&conn, query, limit, kind, root_id)
+}
 
+/// Daemon-friendly variant of `cmd_search` that reuses an already-open
+/// connection. The daemon holds one `Connection` for the lifetime of the
+/// process so the SQLite page cache stays warm across requests.
+fn do_search(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+    kind: Option<&str>,
+    root_id: Option<&str>,
+) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(SearchOut {
@@ -1264,12 +1344,19 @@ fn cmd_search(
 
     let q_norm = normalize_search_text(query);
     let tokens: Vec<String> = q_norm.split_whitespace().map(|s| s.to_string()).collect();
-    let fetch_limit = (limit * 10).max(120).min(2000);
+    // Bigger fetch window — we trade ~2x bytes pulled from SQLite for getting
+    // a wider candidate pool that the Rust scorer can rank. The previous
+    // `limit * 10` was tuned around ORDER BY bm25 narrowing the result; now
+    // that we drop bm25 we want more candidates so common terms still find
+    // the most-relevant hit.
+    let fetch_limit = (limit * 20).max(300).min(2000);
 
     let mut collected: Vec<FileResult> = Vec::new();
+    let fts_match_expr = build_fts_match(&tokens);
+    let fts_was_attempted = fts_match_expr.is_some();
 
     // 1) Fast path: FTS5 MATCH with prefix tokens. O(log N) instead of O(N).
-    if let Some(match_expr) = build_fts_match(&tokens) {
+    if let Some(match_expr) = fts_match_expr {
         let mut sql = String::from(
             "SELECT f.* FROM indexed_files f
              JOIN files_fts fts ON fts.rowid = f.rowid
@@ -1284,7 +1371,13 @@ fn cmd_search(
             sql.push_str(" AND f.root_id = ?");
             params_vec.push(rid.to_string());
         }
-        sql.push_str(&format!(" ORDER BY bm25(files_fts) LIMIT {}", fetch_limit));
+        // No ORDER BY: FTS5's bm25() forces SQLite to score every matching
+        // posting before LIMIT can short-circuit, so a common term like
+        // "taxes" (thousands of matches) took 1.5–2s. Without ORDER BY,
+        // SQLite returns the first N matches and stops. Our Rust-side
+        // `score_search_result` (filename closeness + location priority)
+        // already does the relevance ranking that mattered for the UI.
+        sql.push_str(&format!(" LIMIT {}", fetch_limit));
 
         match conn.prepare(&sql) {
             Ok(mut stmt) => {
@@ -1312,8 +1405,14 @@ fn cmd_search(
         }
     }
 
-    // 2) Fallback LIKE search when FTS returns nothing (single-char tokens etc.).
-    if collected.is_empty() && !tokens.is_empty() {
+    // 2) Fallback LIKE search ONLY when FTS couldn't build a valid query
+    // (every token was too short / a stopword). If FTS actually ran and
+    // returned zero matches, we trust that — the LIKE path does a full
+    // table scan with instr() across millions of rows, which on this
+    // user's 1.3GB index was a 1.7s stall for terms like "taxes" that
+    // had no FTS hits (it would then find substring matches like
+    // "syntaxes" in plugin paths, both expensive and confusing).
+    if collected.is_empty() && !tokens.is_empty() && !fts_was_attempted {
         let mut where_parts: Vec<String> = vec!["status != 'deleted'".to_string()];
         let mut params_vec: Vec<String> = Vec::new();
         for tok in &tokens {
@@ -1363,6 +1462,16 @@ fn cmd_search(
             .then_with(|| a.path.cmp(&b.path))
     });
     collected.truncate(limit);
+
+    // Hydrate .lnk target paths for the final few results only — see comment
+    // in build_file_result. This is the only spot where we touch the disk
+    // per row, so containing it to ≤ `limit` rows (default 12) is critical.
+    for result in collected.iter_mut() {
+        if result.extension.eq_ignore_ascii_case(".lnk") {
+            result.target_path = resolve_lnk_target(&result.path);
+        }
+    }
+
     let count = collected.len();
     Ok(SearchOut {
         ok: true,
@@ -1383,7 +1492,15 @@ fn cmd_list_folder(
 ) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     ensure_read_schema(&conn)?;
+    do_list_folder(&conn, path, recursive, limit)
+}
 
+fn do_list_folder(
+    conn: &Connection,
+    path: &str,
+    recursive: bool,
+    limit: usize,
+) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let normalized = path.trim_end_matches(['\\', '/']).replace('/', "\\");
     let prefix_any = format!("{}\\%", normalized);
 
@@ -1431,6 +1548,10 @@ fn cmd_list_folder(
 fn cmd_stats(db_path: &str) -> Result<StatsOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     ensure_read_schema(&conn)?;
+    do_stats(&conn)
+}
+
+fn do_stats(conn: &Connection) -> Result<StatsOut, Box<dyn std::error::Error>> {
     let roots: i64 = conn.query_row("SELECT COUNT(*) FROM indexed_roots", [], |r| r.get(0))?;
     let total_files: i64 = conn.query_row(
         "SELECT COUNT(*) FROM indexed_files WHERE status != 'deleted'",
@@ -1489,24 +1610,123 @@ fn cmd_stats(db_path: &str) -> Result<StatsOut, Box<dyn std::error::Error>> {
 // Response: { "id": "<same>", "ok": true, "results": […] }  OR  { "id": …, "ok": false, "error": "…" }
 // ─────────────────────────────────────────────────────────
 
+struct DaemonJob {
+    id: serde_json::Value,
+    cmd: String,
+    args: serde_json::Value,
+}
+
+fn build_envelope(
+    id: serde_json::Value,
+    response: Result<serde_json::Value, Box<dyn std::error::Error>>,
+) -> serde_json::Value {
+    match response {
+        Ok(value) => {
+            let mut obj = match value {
+                serde_json::Value::Object(m) => m,
+                other => {
+                    let mut m = serde_json::Map::new();
+                    m.insert("value".to_string(), other);
+                    m
+                }
+            };
+            obj.insert("id".to_string(), id);
+            serde_json::Value::Object(obj)
+        }
+        Err(err) => serde_json::json!({ "id": id, "ok": false, "error": err.to_string() }),
+    }
+}
+
 fn cmd_daemon(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::{BufRead, BufReader, Write};
 
-    // Make sure the schema exists before the first request so queries are fast.
+    // Multi-threaded daemon: a small pool of workers, each holding its own
+    // SQLite connection, handles requests in parallel. Single-threaded mode
+    // queued every keystroke behind a slow query — when the user dictated a
+    // long phrase the agent forwarded it as a `file_search` tool call, and
+    // every later request stalled until the first one finished. With WAL
+    // mode + per-worker connections, SQLite reads are genuinely concurrent.
+    let workers: usize = std::env::var("STUARD_INDEXER_DAEMON_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4)
+        .clamp(1, 16);
+
+    // Validate the DB once before spawning workers so an init/permission
+    // problem surfaces as a clean error instead of N silent worker deaths.
     {
         let conn = open_db(db_path)?;
         ensure_read_schema(&conn)?;
+        ensure_root_columns(&conn)?;
     }
 
+    let (job_tx, job_rx) = unbounded::<DaemonJob>();
+    let (writer_tx, writer_rx) = unbounded::<String>();
+
+    // Writer thread owns stdout — every response, including the initial
+    // ready signal, goes through here so we never interleave bytes from
+    // multiple workers mid-line.
+    let writer = thread::spawn(move || {
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        while let Ok(line) = writer_rx.recv() {
+            if writeln!(out, "{}", line).is_err() {
+                break;
+            }
+            if out.flush().is_err() {
+                break;
+            }
+        }
+    });
+
+    // Initial ready signal — kept inside its own scope so the cloned sender
+    // drops before we send any real responses (not strictly required, but
+    // makes shutdown semantics obvious).
+    {
+        let tx = writer_tx.clone();
+        let _ = tx.send(
+            serde_json::json!({ "ok": true, "ready": true })
+                .to_string(),
+        );
+    }
+
+    let mut worker_handles = Vec::with_capacity(workers);
+    for worker_idx in 0..workers {
+        let job_rx = job_rx.clone();
+        let writer_tx = writer_tx.clone();
+        let db_path = db_path.to_string();
+        let handle = thread::spawn(move || {
+            let conn = match open_db(&db_path) {
+                Ok(c) => c,
+                Err(err) => {
+                    eprintln!(
+                        "[daemon worker {}] open_db failed: {}",
+                        worker_idx, err
+                    );
+                    return;
+                }
+            };
+            // Schema is ensured by the validation block above; per-worker
+            // setup is just the pragmas in open_db.
+            while let Ok(job) = job_rx.recv() {
+                let response = dispatch_daemon_cmd(&conn, &job.cmd, &job.args);
+                let envelope = build_envelope(job.id, response);
+                if let Ok(serialized) = serde_json::to_string(&envelope) {
+                    if writer_tx.send(serialized).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        worker_handles.push(handle);
+    }
+    // Drop the originals so the writer thread can shut down cleanly once all
+    // workers exit (each worker holds its own clone).
+    drop(job_rx);
+    drop(writer_tx);
+
     let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
     let mut reader = BufReader::new(stdin.lock());
-    let mut out = stdout.lock();
-
-    // Ready signal so callers know the process is warm.
-    writeln!(out, "{}", serde_json::json!({ "ok": true, "ready": true }))?;
-    out.flush()?;
-
     let mut line = String::new();
     loop {
         line.clear();
@@ -1521,48 +1741,39 @@ fn cmd_daemon(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         let req: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(err) => {
-                writeln!(
-                    out,
-                    "{}",
-                    serde_json::json!({ "ok": false, "error": format!("bad_json: {}", err) })
-                )?;
-                out.flush()?;
+            Err(_) => {
+                // Bad JSON has no id we can correlate to — just ignore so
+                // a single broken line can't kill the daemon. Original
+                // implementation emitted an id-less error which the TS side
+                // discarded anyway.
                 continue;
             }
         };
 
         let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
-        let cmd = req.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+        let cmd = req
+            .get("cmd")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let args = req.get("args").cloned().unwrap_or(serde_json::json!({}));
 
-        let response = dispatch_daemon_cmd(db_path, cmd, &args);
-
-        let envelope = match response {
-            Ok(value) => {
-                let mut obj = match value {
-                    serde_json::Value::Object(m) => m,
-                    other => {
-                        let mut m = serde_json::Map::new();
-                        m.insert("value".to_string(), other);
-                        m
-                    }
-                };
-                obj.insert("id".to_string(), id);
-                serde_json::Value::Object(obj)
-            }
-            Err(err) => serde_json::json!({ "id": id, "ok": false, "error": err.to_string() }),
-        };
-
-        writeln!(out, "{}", serde_json::to_string(&envelope).unwrap())?;
-        out.flush()?;
+        if job_tx.send(DaemonJob { id, cmd, args }).is_err() {
+            break;
+        }
     }
 
+    // Shutdown: drop sender to let workers drain and exit.
+    drop(job_tx);
+    for h in worker_handles {
+        let _ = h.join();
+    }
+    let _ = writer.join();
     Ok(())
 }
 
 fn dispatch_daemon_cmd(
-    db_path: &str,
+    conn: &Connection,
     cmd: &str,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -1579,8 +1790,8 @@ fn dispatch_daemon_cmd(
             let limit = as_i64("limit").unwrap_or(50) as usize;
             let kind = as_str("kind");
             let root_id = as_str("root_id").or_else(|| as_str("root-id"));
-            let out = cmd_search(
-                db_path,
+            let out = do_search(
+                conn,
                 &query,
                 limit.clamp(1, 500),
                 kind.as_deref(),
@@ -1588,8 +1799,8 @@ fn dispatch_daemon_cmd(
             )?;
             Ok(serde_json::to_value(out)?)
         }
-        "stats" => Ok(serde_json::to_value(cmd_stats(db_path)?)?),
-        "list-roots" | "list_roots" => Ok(serde_json::to_value(cmd_list_roots(db_path)?)?),
+        "stats" => Ok(serde_json::to_value(do_stats(conn)?)?),
+        "list-roots" | "list_roots" => Ok(serde_json::to_value(do_list_roots(conn)?)?),
         "list-folder" | "list_folder" => {
             let folder = as_str("path").unwrap_or_default();
             let limit = as_i64("limit").unwrap_or(200) as usize;
@@ -1597,8 +1808,8 @@ fn dispatch_daemon_cmd(
                 .get("recursive")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            Ok(serde_json::to_value(cmd_list_folder(
-                db_path,
+            Ok(serde_json::to_value(do_list_folder(
+                conn,
                 &folder,
                 recursive,
                 limit.clamp(1, 2000),
@@ -1658,6 +1869,32 @@ mod tests {
             &query,
         );
         assert!(exact_random_score > prefix_downloads_score);
+    }
+
+    #[test]
+    fn build_fts_match_caps_token_count_and_drops_stopwords() {
+        // Simulates the launcher receiving a long dictated phrase. Without
+        // capping/filtering, FTS5 would AND ~20 posting lists together and
+        // chew on it for seconds.
+        let phrase = normalize_search_text(
+            "fix the file search and make it faster some icons dont show even some applications",
+        );
+        let tokens: Vec<String> = phrase.split_whitespace().map(String::from).collect();
+        let expr = build_fts_match(&tokens).expect("non-empty");
+        let and_count = expr.matches(" AND ").count();
+        assert!(and_count <= 5, "expected <=5 AND clauses, got: {} ({})", and_count, expr);
+        assert!(!expr.to_lowercase().contains("\"the\""), "stopword leaked: {}", expr);
+        assert!(!expr.to_lowercase().contains("\"and\""), "stopword leaked: {}", expr);
+    }
+
+    #[test]
+    fn build_fts_match_keeps_something_when_only_stopwords() {
+        // Pathological input — if every token is filtered, we still want a
+        // search rather than silently returning no results.
+        let phrase = normalize_search_text("of to the and");
+        let tokens: Vec<String> = phrase.split_whitespace().map(String::from).collect();
+        let expr = build_fts_match(&tokens).expect("non-empty fallback");
+        assert!(!expr.is_empty());
     }
 }
 

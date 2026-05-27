@@ -2,6 +2,60 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
 import { clsx } from 'clsx';
 import { getCloudAiHttp } from '../utils/cloud';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
+
+// Brand integration logos (Simple Icons SVG + favicons).
+import discordLogo from '../assets/integrations/Discord.svg';
+import elevenLabsLogo from '../assets/integrations/ElevenLabs.svg';
+import ffmpegLogo from '../assets/integrations/FFmpeg.svg';
+import facebookLogo from '../assets/integrations/Facebook.svg';
+import githubBrandLogo from '../assets/integrations/GitHub.svg';
+import gmailLogo from '../assets/integrations/Gmail.svg';
+import googleCalendarLogo from '../assets/integrations/GoogleCalendar.svg';
+import googleDocsLogo from '../assets/integrations/GoogleDocs.svg';
+import googleDriveLogo from '../assets/integrations/GoogleDrive.svg';
+import googleSheetsLogo from '../assets/integrations/GoogleSheets.svg';
+import googleTasksLogo from '../assets/integrations/GoogleTasks.svg';
+import instagramLogo from '../assets/integrations/Instagram.svg';
+import ollamaLogo from '../assets/integrations/Ollama.svg';
+import outlookLogo from '../assets/integrations/Outlook.png';
+import pythonLogo from '../assets/integrations/Python.svg';
+import redditLogo from '../assets/integrations/Reddit.svg';
+import supabaseLogo from '../assets/integrations/Supabase.svg';
+import telnyxLogo from '../assets/integrations/Telnyx.png';
+import threadsLogo from '../assets/integrations/Threads.svg';
+import whatsappLogo from '../assets/integrations/WhatsApp.svg';
+import xLogo from '../assets/integrations/X.svg';
+import youtubeLogo from '../assets/integrations/YouTube.svg';
+
+const BRAND_LOGOS: Record<string, string> = {
+  python: pythonLogo,
+  ffmpeg: ffmpegLogo,
+  ollama: ollamaLogo,
+  outlook: outlookLogo,
+  github: githubBrandLogo,
+  discord: discordLogo,
+  reddit: redditLogo,
+  x: xLogo,
+  facebook: facebookLogo,
+  instagram: instagramLogo,
+  threads: threadsLogo,
+  telnyx: telnyxLogo,
+  whatsapp: whatsappLogo,
+  youtube: youtubeLogo,
+  supabase: supabaseLogo,
+  elevenlabs: elevenLabsLogo,
+  gmail: gmailLogo,
+  'google-drive': googleDriveLogo,
+  'google-calendar': googleCalendarLogo,
+  'google-docs': googleDocsLogo,
+  'google-sheets': googleSheetsLogo,
+  'google-tasks': googleTasksLogo,
+};
+
+function hasBrandLogo(slug: string): boolean {
+  return slug in BRAND_LOGOS;
+}
 
 interface IntegrationProfile {
   provider: string;
@@ -32,6 +86,9 @@ interface IntegrationsViewProps {
   setPyPackages: (v: string) => void;
   pyReqTxt: string;
   setPyReqTxt: (v: string) => void;
+  pyPackagesList: Array<{ name: string; version: string }>;
+  pyPackagesLoading: boolean;
+  pyInstallMessage: string | null;
   pyRunCode: string;
   setPyRunCode: (v: string) => void;
   pyInstalling: boolean;
@@ -41,6 +98,7 @@ interface IntegrationsViewProps {
   pyRunning: boolean;
   pyRunResult: any;
   refreshPythonStatus: () => Promise<void> | void;
+  refreshPythonPackages: () => Promise<void> | void;
   refreshFfmpegStatus: () => Promise<void> | void;
   refreshMediapipeStatus: () => Promise<void> | void;
   setupPython: () => Promise<void> | void;
@@ -90,6 +148,12 @@ interface IntegrationsViewProps {
   mpUpdateInfo?: any;
   mpUpdating?: boolean;
   updateMediapipe?: () => Promise<void> | void;
+  daStatus?: any;
+  daInstalling?: boolean;
+  daUninstalling?: boolean;
+  refreshDataAnalysisStatus?: () => Promise<void> | void;
+  setupDataAnalysis?: () => Promise<void> | void;
+  uninstallDataAnalysis?: () => Promise<void> | void;
 }
 
 /** Map integration slug → backend provider name */
@@ -117,29 +181,17 @@ function isGoogleSlug(slug: string): boolean {
 const GOOGLE_SLUGS = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
 
 function getIntegrationIcon(slug: string, size = "w-5 h-5") {
+  const brandLogo = BRAND_LOGOS[slug];
+  if (brandLogo) {
+    return <img src={brandLogo} alt="" className={clsx(size, "object-contain select-none")} draggable={false} />;
+  }
   switch (slug) {
-    case 'python': return <Terminal className={size} />;
-    case 'ffmpeg': return <Film className={size} />;
     case 'mediapipe': return <ScanFace className={size} />;
-    case 'ollama': return <Bot className={size} />;
+    case 'data-analysis': return <Table className={size} />;
     case 'agent-cli': return <Terminal className={size} />;
     case 'browser': return <Globe className={size} />;
     case 'browser-use': return <Globe className={size} />;
-    case 'outlook': return <Mail className={size} />;
-    case 'github': return <Github className={size} />;
-    case 'discord': return <Users className={size} />;
-    case 'reddit': return <ArrowUpRight className={size} />;
-    case 'x': return <MessageSquare className={size} />;
-    case 'facebook': return <Globe className={size} />;
-    case 'instagram': return <MessageSquare className={size} />;
-    case 'threads': return <Users className={size} />;
-    case 'google-drive': return <HardDrive className={size} />;
     case 'webhooks': return <Webhook className={size} />;
-    case 'google-calendar': return <Calendar className={size} />;
-    case 'gmail': return <Mail className={size} />;
-    case 'google-sheets': return <Table className={size} />;
-    case 'google-docs': return <FileText className={size} />;
-    case 'telnyx': return <Phone className={size} />;
     default: return <Box className={size} />;
   }
 }
@@ -963,13 +1015,8 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className={clsx(
-              "w-10 h-10 rounded-lg border shadow-sm flex items-center justify-center",
-              isConnected ? "bg-[#25D366]/15 border-[#25D366]/30" : "bg-theme-hover border-theme"
-            )}>
-              <span className={clsx("w-5 h-5", isConnected ? "text-[#25D366]" : "text-theme-muted")}>
-                {WA_ICON}
-              </span>
+            <div className="w-10 h-10 rounded-lg border border-theme bg-white shadow-sm flex items-center justify-center p-1.5">
+              <img src={whatsappLogo} alt="" className="w-full h-full object-contain select-none" draggable={false} />
             </div>
             <div>
               <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">WhatsApp</h3>
@@ -1111,8 +1158,14 @@ interface StandardCardProps {
   pyStatus?: any;
   pyEnvId?: string;
   setPyEnvId?: (v: string) => void;
+  pyPackages?: string;
+  setPyPackages?: (v: string) => void;
+  pyPackagesList?: Array<{ name: string; version: string }>;
+  pyPackagesLoading?: boolean;
+  pyInstallMessage?: string | null;
   pyInstalling?: boolean;
   installPython?: () => Promise<void> | void;
+  refreshPythonPackages?: () => Promise<void> | void;
   ffStatus?: any;
   ffInstalling?: boolean;
   refreshFfmpegStatus?: () => Promise<void> | void;
@@ -1123,6 +1176,12 @@ interface StandardCardProps {
   mpUpdateInfo?: any;
   mpUpdating?: boolean;
   updateMediapipe?: () => Promise<void> | void;
+  daStatus?: any;
+  daInstalling?: boolean;
+  daUninstalling?: boolean;
+  refreshDataAnalysisStatus?: () => Promise<void> | void;
+  setupDataAnalysis?: () => Promise<void> | void;
+  uninstallDataAnalysis?: () => Promise<void> | void;
   ollamaStatus?: any;
   ollamaChecking?: boolean;
   refreshOllamaStatus?: () => Promise<void> | void;
@@ -1154,10 +1213,11 @@ const StandardCard: React.FC<StandardCardProps> = ({
   profilesLoading,
   setDefaultProfile,
   deleteProfile,
-  pyStatus, pyEnvId, setPyEnvId, pyInstalling, installPython,
+  pyStatus, pyEnvId, setPyEnvId, pyPackages, setPyPackages, pyPackagesList, pyPackagesLoading, pyInstallMessage, pyInstalling, installPython, refreshPythonPackages,
   ffStatus, ffInstalling, refreshFfmpegStatus,
   mpStatus, mpInstalling, refreshMediapipeStatus,
   mpLocalStatus, mpUpdateInfo, mpUpdating, updateMediapipe,
+  daStatus, daInstalling, daUninstalling, refreshDataAnalysisStatus, setupDataAnalysis, uninstallDataAnalysis,
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
   browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
   browserUseLocalStatus, browserUseUpdateInfo, browserUseUpdating, updateBrowserUse,
@@ -1166,10 +1226,12 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+  const [showPyPackages, setShowPyPackages] = useState(false);
 
   const isPython = i.slug === 'python';
   const isFfmpeg = i.slug === 'ffmpeg';
   const isMediapipe = i.slug === 'mediapipe';
+  const isDataAnalysis = i.slug === 'data-analysis';
   const isOllama = i.slug === 'ollama';
   const isBrowserUse = i.slug === 'browser-use';
   const isAgentCli = i.slug === 'agent-cli';
@@ -1204,7 +1266,11 @@ const StandardCard: React.FC<StandardCardProps> = ({
         <div className="flex items-center gap-3">
           <div className={clsx(
             "w-10 h-10 rounded-md border shadow-sm flex items-center justify-center text-[18px] font-bold group-hover:scale-105 transition-transform duration-300",
-            isConnected ? "bg-primary/10 border-primary/20 text-primary" : "bg-theme-hover border-theme text-theme-fg"
+            hasBrandLogo(i.slug)
+              ? "bg-white border-theme p-1.5"
+              : isConnected
+                ? "bg-primary/10 border-primary/20 text-primary"
+                : "bg-theme-hover border-theme text-theme-fg"
           )}>
             {getIntegrationIcon(i.slug)}
           </div>
@@ -1371,6 +1437,88 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </>
             )}
           </div>
+
+          {pyStatus?.available && (
+            <>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide shrink-0">Env</label>
+                <input
+                  list="python-env-options"
+                  value={pyEnvId || 'default'}
+                  onChange={(e) => setPyEnvId?.(e.target.value.trim() || 'default')}
+                  placeholder="default"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary"
+                />
+                <datalist id="python-env-options">
+                  {[...(Array.isArray(pyStatus.envs) ? pyStatus.envs : []), 'default']
+                    .filter((env, idx, arr) => env && arr.indexOf(env) === idx)
+                    .map((env: string) => (
+                      <option key={env} value={env} />
+                    ))}
+                </datalist>
+                <button
+                  type="button"
+                  onClick={() => refreshPythonPackages?.()}
+                  disabled={pyPackagesLoading}
+                  className="p-1 rounded-md text-theme-muted hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50"
+                  title="Refresh packages"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", pyPackagesLoading && "animate-spin")} />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPyPackages((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 text-[10px] font-semibold text-theme-muted hover:text-theme-fg transition-colors"
+              >
+                <span>
+                  {pyPackagesLoading
+                    ? 'Loading packages...'
+                    : `${pyPackagesList?.length ?? pyStatus.packageCount ?? 0} installed package${(pyPackagesList?.length ?? pyStatus.packageCount ?? 0) === 1 ? '' : 's'}`}
+                </span>
+                {showPyPackages ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+
+              {showPyPackages && (
+                <div className="max-h-28 overflow-y-auto rounded-md border border-theme/60 bg-theme-card/40">
+                  {(pyPackagesList?.length ?? 0) > 0 ? (
+                    <div className="divide-y divide-theme/40">
+                      {pyPackagesList!.slice(0, 40).map((pkg) => (
+                        <div key={pkg.name} className="flex items-center justify-between gap-2 px-2 py-1 text-[10px]">
+                          <span className="font-mono text-theme-fg truncate">{pkg.name}</span>
+                          <span className="font-mono text-theme-muted shrink-0">{pkg.version}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-2 py-2 text-[10px] text-theme-muted">No packages installed yet.</div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  value={pyPackages || ''}
+                  onChange={(e) => setPyPackages?.(e.target.value)}
+                  placeholder="Add packages (e.g. requests pandas>=2.0)"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted/70"
+                />
+                <button
+                  type="button"
+                  onClick={() => installPython?.()}
+                  disabled={pyInstalling || !(pyPackages || '').trim()}
+                  className="px-3 py-1.5 bg-primary text-primary-fg text-[11px] font-bold rounded-md hover:opacity-90 disabled:opacity-50 transition-all shadow-sm shrink-0"
+                >
+                  {pyInstalling ? '...' : 'Add'}
+                </button>
+              </div>
+
+              {pyInstallMessage && (
+                <div className="text-[10px] text-theme-muted">{pyInstallMessage}</div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -1879,6 +2027,21 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 {mpInstalling ? <Loader2 className="w-3 h-3 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
                 {mpInstalling ? 'Installing...' : 'MediaPipe Ready'}
               </div>
+            ) : isDataAnalysis ? (
+              <>
+                <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                  {(daInstalling || daUninstalling) ? <Loader2 className="w-3 h-3 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                  {daInstalling ? 'Installing...' : daUninstalling ? 'Uninstalling...' : 'Data Analysis Ready'}
+                </div>
+                <button
+                  onClick={() => handleDisconnect(i.slug)}
+                  disabled={daInstalling || daUninstalling}
+                  className="h-8 px-2 rounded-md border border-theme bg-theme-card text-[10px] font-bold text-theme-muted hover:bg-red-500/5 hover:text-red-400 hover:border-red-500/30 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                  title="Remove data_analysis venv and free disk space"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -1918,18 +2081,19 @@ const StandardCard: React.FC<StandardCardProps> = ({
               ) : (
                 <button
                   onClick={() => handleConnect(i.slug)}
-                  disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling) || (isPython && pyInstalling)}
+                  disabled={(isFfmpeg && ffInstalling) || (isMediapipe && mpInstalling) || (isPython && pyInstalling) || (isDataAnalysis && daInstalling)}
                   className={clsx(
                     "flex-1 h-8 flex items-center justify-center gap-2 rounded-md text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50",
-                    (isFfmpeg || isMediapipe || isPython) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
+                    (isFfmpeg || isMediapipe || isPython || isDataAnalysis) ? "bg-theme-fg text-theme-bg hover:opacity-90" : "bg-primary text-primary-fg hover:opacity-90"
                   )}
                 >
-                  {(isFfmpeg || isMediapipe || isPython) ? (
-                    (ffInstalling || mpInstalling || pyInstalling) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />
+                  {(isFfmpeg || isMediapipe || isPython || isDataAnalysis) ? (
+                    (ffInstalling || mpInstalling || pyInstalling || daInstalling) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />
                   ) : <ArrowRight className="w-3.5 h-3.5" />}
                   {isFfmpeg ? (ffInstalling ? 'Installing...' : 'Install')
                    : isMediapipe ? (mpInstalling ? 'Installing...' : 'Install')
                    : isPython ? (pyInstalling ? 'Setting up...' : 'Set Up')
+                   : isDataAnalysis ? (daInstalling ? 'Installing...' : 'Install')
                    : 'Connect'}
                 </button>
               )}
@@ -1965,6 +2129,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     handleDisconnect,
     handleLearnMore,
     refreshPythonStatus,
+    refreshPythonPackages,
     profiles,
     profilesLoading,
     refreshProfiles,
@@ -1975,9 +2140,20 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     mpStatus,
     pyEnvId,
     setPyEnvId,
+    pyPackages,
+    setPyPackages,
+    pyPackagesList,
+    pyPackagesLoading,
+    pyInstallMessage,
     pyInstalling,
     ffInstalling,
     mpInstalling,
+    daStatus,
+    daInstalling,
+    daUninstalling,
+    refreshDataAnalysisStatus,
+    setupDataAnalysis,
+    uninstallDataAnalysis,
     installPython,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
@@ -2041,7 +2217,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     [filteredIntegrations]
   );
   const showWhatsAppCard = useMemo(
-    () => filteredIntegrations.some(i => i.slug === 'whatsapp'),
+    () => WHATSAPP_INTEGRATION_ENABLED && filteredIntegrations.some(i => i.slug === 'whatsapp'),
     [filteredIntegrations]
   );
 
@@ -2073,11 +2249,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
         Promise.resolve(refreshPythonStatus()),
         Promise.resolve(refreshFfmpegStatus()),
         Promise.resolve(refreshMediapipeStatus()),
+        Promise.resolve(refreshDataAnalysisStatus?.()),
         Promise.resolve(refreshOllamaStatus()),
         Promise.resolve(refreshBrowserUseStatus?.()),
         Promise.resolve(refreshCliAgentStatus?.()),
         Promise.resolve(refreshTelnyxStatus()),
-        Promise.resolve(refreshWhatsAppStatus()),
+        ...(WHATSAPP_INTEGRATION_ENABLED ? [Promise.resolve(refreshWhatsAppStatus())] : []),
       ]);
     } finally {
       setIsRefreshingAll(false);
@@ -2216,8 +2393,14 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     pyStatus={pyStatus}
                     pyEnvId={pyEnvId}
                     setPyEnvId={setPyEnvId}
+                    pyPackages={pyPackages}
+                    setPyPackages={setPyPackages}
+                    pyPackagesList={pyPackagesList}
+                    pyPackagesLoading={pyPackagesLoading}
+                    pyInstallMessage={pyInstallMessage}
                     pyInstalling={pyInstalling}
                     installPython={installPython}
+                    refreshPythonPackages={refreshPythonPackages}
                     ffStatus={ffStatus}
                     ffInstalling={ffInstalling}
                     refreshFfmpegStatus={refreshFfmpegStatus}
@@ -2228,6 +2411,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     mpUpdateInfo={mpUpdateInfo}
                     mpUpdating={mpUpdating}
                     updateMediapipe={updateMediapipe}
+                    daStatus={daStatus}
+                    daInstalling={daInstalling}
+                    daUninstalling={daUninstalling}
+                    refreshDataAnalysisStatus={refreshDataAnalysisStatus}
+                    setupDataAnalysis={setupDataAnalysis}
+                    uninstallDataAnalysis={uninstallDataAnalysis}
                     ollamaStatus={ollamaStatus}
                     ollamaChecking={ollamaChecking}
                     refreshOllamaStatus={refreshOllamaStatus}

@@ -39,10 +39,10 @@ export const Slider: React.FC<SliderProps> = ({
   };
 
   return (
-    <div className={clsx("w-full my-3 p-4 border rounded-xl bg-white", disabled && "opacity-60")}>
+    <div className={clsx("w-full my-3 p-4 border border-theme/20 rounded-xl bg-theme-card", disabled && "opacity-60")}>
       <div className="flex justify-between items-center mb-3">
-        {label && <label className="text-sm font-medium text-neutral-700">{label}</label>}
-        <span className="text-sm font-mono text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded">
+        {label && <label className="text-sm font-medium text-theme-fg">{label}</label>}
+        <span className="text-sm font-mono text-theme-muted bg-theme-hover px-2 py-0.5 rounded">
           {localValue}{unit}
         </span>
       </div>
@@ -55,10 +55,10 @@ export const Slider: React.FC<SliderProps> = ({
           value={localValue}
           onChange={handleChange}
           disabled={disabled}
-          className="w-full h-2 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          className="w-full h-2 bg-theme-hover rounded-lg appearance-none cursor-pointer accent-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
       </div>
-      <div className="flex justify-between text-xs text-neutral-400 mt-1">
+      <div className="flex justify-between text-xs text-theme-muted mt-1">
         <span>{min}{unit}</span>
         <span>{max}{unit}</span>
       </div>

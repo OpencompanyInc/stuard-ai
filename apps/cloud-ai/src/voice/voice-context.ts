@@ -31,6 +31,7 @@ import {
   VOICE_TOOL_DEFINITIONS,
   loadVoiceRuntimeMemorySummary,
 } from './voice-runtime-tools';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 // ── Voice Tool Definitions ──────────────────────────────────────────────────
 // These are the voice-safe tools the model can call during a live call.
@@ -112,6 +113,7 @@ function buildVoiceSystemPrompt(opts: {
       'Delegate to specialists:',
       '- browser     — web browsing, form filling, page scraping, screenshots',
       '- file_ops    — reading/writing files, code editing, terminal commands',
+      '- cli_agent   — drive installed coding-agent CLIs (Codex, Cursor, Antigravity, Claude Code) for codebase Q&A and agentic coding tasks (uses user subscription)',
       '- workflow    — creating, modifying, testing StuardAI automation workflows',
       '- reminders   — scheduling reminders, managing tasks/to-dos',
       '- ffmpeg      — audio/video processing (convert, trim, extract audio, frames)',
@@ -120,7 +122,7 @@ function buildVoiceSystemPrompt(opts: {
       '- outlook     — Outlook mail & calendar',
       '- github      — repos, issues, PRs, branches, actions',
       '- meta        — Facebook, Instagram, Threads',
-      '- whatsapp    — WhatsApp messaging',
+      ...(WHATSAPP_INTEGRATION_ENABLED ? ['- whatsapp    — WhatsApp messaging'] : []),
       '- telnyx      — SMS, voice calls',
       '- reddit      — subreddits, posts, comments',
       '- discord     — Discord bot operations',

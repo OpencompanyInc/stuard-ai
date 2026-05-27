@@ -16,6 +16,11 @@ interface ChartProps {
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+function chartGridStroke(): string {
+  if (typeof document === 'undefined') return '#e5e5e5';
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? '#3e3e3e' : '#e5e5e5';
+}
+
 export const Chart: React.FC<ChartProps> = ({
   type,
   title,
@@ -25,14 +30,16 @@ export const Chart: React.FC<ChartProps> = ({
   series = [{ key: 'value', color: '#3b82f6' }],
   height = 300
 }) => {
+  const gridStroke = chartGridStroke();
+
   return (
-    <div className="w-full my-3 p-4 border rounded-xl bg-white">
-      {title && <h4 className="text-sm font-medium text-neutral-700 mb-4">{title}</h4>}
+    <div className="w-full my-3 p-4 border border-theme/20 rounded-xl bg-theme-card">
+      {title && <h4 className="text-sm font-medium text-theme-fg mb-4">{title}</h4>}
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
           {type === 'bar' ? (
             <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
               <XAxis dataKey={nameKey} tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
               <Tooltip 
@@ -52,7 +59,7 @@ export const Chart: React.FC<ChartProps> = ({
             </BarChart>
           ) : type === 'line' ? (
             <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
               <XAxis dataKey={nameKey} tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
               <Tooltip 

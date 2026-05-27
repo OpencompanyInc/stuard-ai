@@ -300,20 +300,20 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'telnyx_list_voice_providers', category: 'integrations', kind: 'cloud', description: 'List available voice providers and their configuration status', argsTemplate: {}, outputSchema: { ok: 'boolean', providers: 'any[]', defaultProvider: 'string' } },
   { id: 'telnyx_list_active_calls', category: 'integrations', kind: 'cloud', description: 'List currently active voice calls with status and duration', argsTemplate: {}, outputSchema: { ok: 'boolean', calls: 'any[]' } },
   { id: 'telnyx_hangup_call', category: 'integrations', kind: 'cloud', description: 'Hang up an active voice call', argsTemplate: { call_control_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
-  // WhatsApp
-  { id: 'whatsapp_send_message', category: 'integrations', kind: 'cloud', description: 'Send a WhatsApp text message to the connected number', argsTemplate: { message: '', preview_url: false }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
-  { id: 'whatsapp_send_media', category: 'integrations', kind: 'cloud', description: 'Send media to the connected WhatsApp number', argsTemplate: { type: 'image', url: '', caption: '', filename: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
-  { id: 'whatsapp_send_reaction', category: 'integrations', kind: 'cloud', description: 'React to a WhatsApp message with an emoji', argsTemplate: { message_id: '', emoji: '👍' }, outputSchema: { ok: 'boolean', error: 'string' } },
-  { id: 'whatsapp_mark_read', category: 'integrations', kind: 'cloud', description: 'Mark a WhatsApp message as read', argsTemplate: { message_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
-  { id: 'whatsapp_upload_media', category: 'integrations', kind: 'cloud', description: 'Upload media to WhatsApp servers and get a reusable media ID', argsTemplate: { url: '', mime_type: '' }, outputSchema: { ok: 'boolean', mediaId: 'string', error: 'string' } },
-  { id: 'whatsapp_status', category: 'integrations', kind: 'cloud', description: 'Check whether WhatsApp is connected for the current user', argsTemplate: {}, outputSchema: { ok: 'boolean', connected: 'boolean', phone: 'string', error: 'string' } },
-  { id: 'whatsapp_get_media_url', category: 'integrations', kind: 'cloud', description: 'Get the temporary download URL and metadata for a received WhatsApp media message by its media_id', argsTemplate: { media_id: '' }, outputSchema: { ok: 'boolean', url: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
-  { id: 'whatsapp_download_media', category: 'integrations', kind: 'cloud', description: 'Download a received WhatsApp media file (image, audio, video, document) to a local temp file', argsTemplate: { media_id: '', filename: '' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
-  { id: 'whatsapp_send_voice_note', category: 'integrations', kind: 'cloud', description: 'Generate a voice note with ElevenLabs TTS and send via WhatsApp', argsTemplate: { message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', messageId: 'string', audioUrl: 'string', to: 'string', error: 'string' } },
-  { id: 'whatsapp_transcribe_voice_note', category: 'integrations', kind: 'cloud', description: 'Download and transcribe a received WhatsApp voice note using Whisper', argsTemplate: { media_id: '', language: '' }, outputSchema: { ok: 'boolean', transcript: 'string', language: 'string', duration: 'number', error: 'string' } },
-  { id: 'whatsapp_send_template', category: 'integrations', kind: 'cloud', description: 'Send a pre-approved WhatsApp template message', argsTemplate: { template_name: '', language_code: 'en_US' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
-  { id: 'whatsapp_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call to the WhatsApp phone number with provider selection', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
-  { id: 'whatsapp_make_call', category: 'integrations', kind: 'cloud', description: 'Call the WhatsApp phone number and speak a message via basic TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
+  // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+  // { id: 'whatsapp_send_message', category: 'integrations', kind: 'cloud', description: 'Send a WhatsApp text message to the connected number', argsTemplate: { message: '', preview_url: false }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  // { id: 'whatsapp_send_media', category: 'integrations', kind: 'cloud', description: 'Send media to the connected WhatsApp number', argsTemplate: { type: 'image', url: '', caption: '', filename: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  // { id: 'whatsapp_send_reaction', category: 'integrations', kind: 'cloud', description: 'React to a WhatsApp message with an emoji', argsTemplate: { message_id: '', emoji: '👍' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  // { id: 'whatsapp_mark_read', category: 'integrations', kind: 'cloud', description: 'Mark a WhatsApp message as read', argsTemplate: { message_id: '' }, outputSchema: { ok: 'boolean', error: 'string' } },
+  // { id: 'whatsapp_upload_media', category: 'integrations', kind: 'cloud', description: 'Upload media to WhatsApp servers and get a reusable media ID', argsTemplate: { url: '', mime_type: '' }, outputSchema: { ok: 'boolean', mediaId: 'string', error: 'string' } },
+  // { id: 'whatsapp_status', category: 'integrations', kind: 'cloud', description: 'Check whether WhatsApp is connected for the current user', argsTemplate: {}, outputSchema: { ok: 'boolean', connected: 'boolean', phone: 'string', error: 'string' } },
+  // { id: 'whatsapp_get_media_url', category: 'integrations', kind: 'cloud', description: 'Get the temporary download URL and metadata for a received WhatsApp media message by its media_id', argsTemplate: { media_id: '' }, outputSchema: { ok: 'boolean', url: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
+  // { id: 'whatsapp_download_media', category: 'integrations', kind: 'cloud', description: 'Download a received WhatsApp media file (image, audio, video, document) to a local temp file', argsTemplate: { media_id: '', filename: '' }, outputSchema: { ok: 'boolean', filePath: 'string', mimeType: 'string', fileSize: 'number', error: 'string' } },
+  // { id: 'whatsapp_send_voice_note', category: 'integrations', kind: 'cloud', description: 'Generate a voice note with ElevenLabs TTS and send via WhatsApp', argsTemplate: { message: '', voice_id: '', model_id: 'eleven_turbo_v2_5' }, outputSchema: { ok: 'boolean', messageId: 'string', audioUrl: 'string', to: 'string', error: 'string' } },
+  // { id: 'whatsapp_transcribe_voice_note', category: 'integrations', kind: 'cloud', description: 'Download and transcribe a received WhatsApp voice note using Whisper', argsTemplate: { media_id: '', language: '' }, outputSchema: { ok: 'boolean', transcript: 'string', language: 'string', duration: 'number', error: 'string' } },
+  // { id: 'whatsapp_send_template', category: 'integrations', kind: 'cloud', description: 'Send a pre-approved WhatsApp template message', argsTemplate: { template_name: '', language_code: 'en_US' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
+  // { id: 'whatsapp_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call to the WhatsApp phone number with provider selection', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
+  // { id: 'whatsapp_make_call', category: 'integrations', kind: 'cloud', description: 'Call the WhatsApp phone number and speak a message via basic TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
   // Discord
   { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
   { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
@@ -1201,6 +1201,13 @@ for (const trigType of ['webhook', 'webhook.cloud', 'webhook.local']) {
         ],
       },
     };
+    TOOL_SCHEMAS[trigType].outputs = [
+      'input',
+      'args',
+      'webhook',
+      'trigger',
+      'trigger.data',
+    ];
   }
 }
 

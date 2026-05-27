@@ -101,7 +101,7 @@ export async function loadMediaSources(
         continue;
       }
 
-      const bin = await execLocalTool('read_file_binary', { path: filePath }, writer);
+      const bin = await execLocalTool('read_file_binary', { path: filePath, inline: true }, writer);
       const data = bin?.data as string | undefined;
       const mimeType = (bin?.mimeType as string | undefined) || 'image/png';
       if (data) {
@@ -133,7 +133,7 @@ export async function loadMediaSources(
         });
 
         try {
-          const bin = await execLocalTool('read_file_binary', { path: s.path }, writer);
+          const bin = await execLocalTool('read_file_binary', { path: s.path, inline: true }, writer);
           const data = bin?.data as string | undefined;
           if (data) {
             parts.push({ type: 'file', data, mediaType: mimeType });
@@ -205,7 +205,7 @@ export async function loadMediaSources(
           });
 
           try {
-            const bin = await execLocalTool('read_file_binary', { path: s.path }, writer);
+            const bin = await execLocalTool('read_file_binary', { path: s.path, inline: true }, writer);
             const data = bin?.data as string | undefined;
             if (data) {
               parts.push({ type: 'file', data, mediaType: mimeType });

@@ -417,7 +417,8 @@ const PROMPT_POOL: SuggestedPrompt[] = [
 
   // Integration prompts
   { id: 'p-calendar-today', text: 'What meetings do I have today?', category: 'integrations', icon: 'Calendar', paths: ['assistant', 'workspace'] },
-  { id: 'p-send-whatsapp', text: 'Send a WhatsApp message to...', category: 'integrations', icon: 'MessageCircle', paths: null },
+  // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+  // { id: 'p-send-whatsapp', text: 'Send a WhatsApp message to...', category: 'integrations', icon: 'MessageCircle', paths: null },
   { id: 'p-github-issues', text: 'Show me my open GitHub issues', category: 'integrations', icon: 'Github', paths: ['automation', 'operator'] },
   { id: 'p-connect-accounts', text: 'Help me connect my accounts', category: 'integrations', icon: 'Plug', paths: null },
 

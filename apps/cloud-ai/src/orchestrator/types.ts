@@ -18,7 +18,7 @@ export interface SubagentCorrelation {
 
 // ─── Capability Pack ─────────────────────────────────────────────────────────
 
-export type SubagentKind = 'browser' | 'file_ops' | 'workflow' | 'reminders' | 'ffmpeg' | 'media' | 'vm' | 'bot' | 'agent' | 'integration' | 'custom';
+export type SubagentKind = 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'media' | 'vm' | 'bot' | 'agent' | 'integration' | 'custom';
 
 export interface CapabilityPack {
   kind: SubagentKind;

@@ -28,8 +28,7 @@
       ]
     },
     "typeRoots": [
-      "./node_modules/@types",
-      "./node_modules"
+      "./node_modules/@types"
     ]
   },
   "include": [
@@ -38,6 +37,15 @@
     "**/*.tsx",
     "../../shared/**/*.ts",
     "../../shared/**/*.tsx",
+    "../../packages/chat-ui/**/*.ts",
+    "../../packages/chat-ui/**/*.tsx",
+    "../../packages/cloud-client/**/*.ts",
+    "../../packages/cloud-runtime-ui/**/*.ts",
+    "../../packages/workflow-core/**/*.ts",
+    "../../packages/bots-ui/**/*.ts",
+    "../../packages/bots-ui/**/*.tsx",
+    "../../packages/vm-chat/**/*.ts",
+    "../../packages/vm-chat/**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

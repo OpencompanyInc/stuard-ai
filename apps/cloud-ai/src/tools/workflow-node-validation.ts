@@ -46,7 +46,7 @@ const ORCHESTRATOR_ONLY_TOOLS = new Set<string>([
   'modify_workflow',
   'inspect_workflow',
   'load_workflow',
-  'list_workflows',
+  'search_workflows',
   'deploy_workflow',
   'stop_automation',
   'execute_step',

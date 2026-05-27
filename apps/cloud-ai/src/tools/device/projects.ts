@@ -6,8 +6,9 @@
  * - list_projects: lightweight project picker for the AI.
  * - journal_add: append a timestamped entry to a project's timeline.
  * - memory_add: write a project-scoped (or global) memory with auto-embedding.
- * - project_search: semantic search over a project's memories. Embedding is
- *   generated cloud-side; storage + search happens on the desktop SQLite.
+ * - add_project_context / project_search: attach files/folders and search both
+ *   project notes and scoped file-index content. Embeddings are generated
+ *   cloud-side; storage + search happens on the desktop SQLite.
  *
  * Conversation context: `conversation_id` is currently a required input
  * because Mastra doesn't expose it on the tool execute context. Phase 3
@@ -17,10 +18,143 @@
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import path from 'node:path';
 import { execLocalTool, hasClientBridge } from './shared';
 import { generateEmbedding } from '../../memory/conversations';
+import * as fileIndexingService from '../../services/file-indexing';
 
 const ERR_NO_BRIDGE = 'No client bridge available';
+
+function normalizeProjectPath(raw: string): string {
+  return String(raw || '').trim().replace(/^file:\/+/, '');
+}
+
+function dirnameForLocalPath(raw: string): string | null {
+  const p = normalizeProjectPath(raw);
+  if (!p) return null;
+  const parser = /^[a-zA-Z]:[\\/]/.test(p) || p.includes('\\') ? path.win32 : path;
+  const dir = parser.dirname(p);
+  return dir && dir !== '.' && dir !== p ? dir : null;
+}
+
+async function readPinnedFileAsMemory(projectId: string, filePath: string): Promise<any | null> {
+  try {
+    const readResult = await execLocalTool('read_file', {
+      path: filePath,
+      line_start: 1,
+      line_end: 400,
+    }, undefined, 60000, { silent: true });
+    const content = String(readResult?.content || '').trim();
+    if (!readResult?.ok || !content) return null;
+
+    const normalizedForName = filePath.replace(/\\/g, '/');
+    const title = `File context: ${path.basename(normalizedForName) || filePath}`;
+    const body = `Path: ${filePath}\n\n${content.slice(0, 12000)}`;
+    const embedding = await generateEmbedding(`${title}\n\n${body}`);
+
+    return execLocalTool('memory_create', {
+      type: 'file',
+      title,
+      content: body,
+      project_ids: [projectId],
+      metadata: { path: filePath, source: 'project_context_file' },
+      source: 'tool',
+      added_by: 'ai',
+      embedding: embedding.length > 0 ? embedding : undefined,
+    }, undefined, 60000, { silent: true });
+  } catch {
+    return null;
+  }
+}
+
+async function attachProjectContextPath(
+  projectId: string,
+  rawPath: string,
+  options: { processLimit?: number; scan?: boolean } = {},
+): Promise<any> {
+  const cleanPath = normalizeProjectPath(rawPath);
+  if (!projectId) return { ok: false, error: 'missing project_id' };
+  if (!cleanPath) return { ok: false, error: 'missing path' };
+
+  const projectResult = await execLocalTool('project_get', { project_id: projectId });
+  if (!projectResult?.ok || !projectResult.project) {
+    return { ok: false, error: projectResult?.error || 'project_not_found' };
+  }
+
+  const current: string[] = Array.isArray(projectResult.project.pinned_paths)
+    ? projectResult.project.pinned_paths
+    : [];
+  const alreadyPinned = current.includes(cleanPath);
+  const next = alreadyPinned ? current : [...current, cleanPath];
+  const updated = alreadyPinned
+    ? projectResult
+    : await execLocalTool('project_update', { project_id: projectId, pinned_paths: next });
+
+  let contextKind: 'folder' | 'file' | 'path' = 'path';
+  let root: any = null;
+  let scan: any = null;
+  let fileMemory: any = null;
+  let embeddingProgress: any = null;
+
+  const addRoot = await execLocalTool('file_index_add_root', {
+    path: cleanPath,
+    schedule: 'daily',
+  }, undefined, 60000, { silent: true });
+
+  if (addRoot?.ok && addRoot.root) {
+    contextKind = 'folder';
+    root = addRoot.root;
+    if (options.scan !== false) {
+      scan = await execLocalTool('file_index_scan', {
+        root_id: root.id,
+        compute_hashes: false,
+      }, undefined, 300000, { silent: true });
+      try {
+        embeddingProgress = await fileIndexingService.processPendingFiles(options.processLimit ?? 75);
+      } catch (error) {
+        embeddingProgress = { ok: false, error: String(error) };
+      }
+    }
+  } else {
+    contextKind = 'file';
+    fileMemory = await readPinnedFileAsMemory(projectId, cleanPath);
+
+    const parent = dirnameForLocalPath(cleanPath);
+    if (parent) {
+      const parentRoot = await execLocalTool('file_index_add_root', {
+        path: parent,
+        schedule: 'daily',
+      }, undefined, 60000, { silent: true });
+      if (parentRoot?.ok && parentRoot.root) {
+        root = parentRoot.root;
+        if (options.scan !== false) {
+          scan = await execLocalTool('file_index_scan', {
+            root_id: root.id,
+            compute_hashes: false,
+          }, undefined, 300000, { silent: true });
+          try {
+            embeddingProgress = await fileIndexingService.processPendingFiles(options.processLimit ?? 25);
+          } catch (error) {
+            embeddingProgress = { ok: false, error: String(error) };
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    ok: !!updated?.ok || alreadyPinned,
+    project: updated?.project || projectResult.project,
+    pinned_paths: next,
+    already_pinned: alreadyPinned,
+    indexed: !!root,
+    context_kind: contextKind,
+    root,
+    scan,
+    file_memory: fileMemory?.memory || null,
+    embedding_progress: embeddingProgress,
+  };
+}
 
 export const list_projects = createTool({
   id: 'list_projects',
@@ -56,6 +190,10 @@ export const create_project = createTool({
     name: z.string().describe('Display name for the project. Required.'),
     description: z.string().optional().describe('One-line description of what the project is.'),
     goals: z.string().optional().describe('What success looks like for this project.'),
+    instructions: z
+      .string()
+      .optional()
+      .describe('Standing project instructions applied to every chat in this project, similar to Claude Project instructions or Perplexity Space answer instructions.'),
     status: z.enum(['active', 'paused', 'archived']).optional().default('active'),
     icon: z.string().optional().describe('Emoji icon. Default 📁.'),
     color: z
@@ -78,7 +216,7 @@ export const create_project = createTool({
 
     // Embed name + description so list_projects later participates in semantic
     // recall. Best-effort: project creation must not fail because embedding did.
-    const embedText = [c.name, c.description, c.goals].filter(Boolean).join('\n\n');
+    const embedText = [c.name, c.description, c.goals, c.instructions].filter(Boolean).join('\n\n');
     let embedding: number[] = [];
     try {
       embedding = embedText ? await generateEmbedding(embedText) : [];
@@ -90,6 +228,7 @@ export const create_project = createTool({
       name: String(c.name).trim(),
       description: c.description,
       goals: c.goals,
+      instructions: c.instructions,
       status: c.status || 'active',
       icon: c.icon,
       color: c.color,
@@ -102,16 +241,21 @@ export const create_project = createTool({
 export const update_project = createTool({
   id: 'update_project',
   description:
-    'Update an existing project — name, description, goals, status, icon, color, or tags. Use this when the user asks to rename, pause, archive, or otherwise tweak project metadata. Only include the fields you intend to change.',
+    'Update an existing project — name, description, goals, status, icon, color, tags, or the full pinned_paths list. Use this when the user asks to rename, pause, archive, or otherwise tweak project metadata. Only include the fields you intend to change. To add/remove a single file from the Files tab, prefer `pin_file` / `unpin_file` over rewriting the whole `pinned_paths` array here.',
   inputSchema: z.object({
     project_id: z.string(),
     name: z.string().optional(),
     description: z.string().optional(),
     goals: z.string().optional(),
+    instructions: z.string().optional(),
     status: z.enum(['active', 'paused', 'archived']).optional(),
     icon: z.string().optional(),
     color: z.string().optional(),
     tags: z.array(z.string()).optional(),
+    pinned_paths: z
+      .array(z.string())
+      .optional()
+      .describe('Full replacement list of pinned file paths shown in the project\'s Files tab. Pass an empty array to clear. For single-file edits prefer pin_file/unpin_file.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -123,6 +267,106 @@ export const update_project = createTool({
     if (!hasClientBridge()) return { ok: false, error: ERR_NO_BRIDGE };
     if (!c.project_id) return { ok: false, error: 'missing project_id' };
     return execLocalTool('project_update', c);
+  },
+});
+
+export const pin_file = createTool({
+  id: 'pin_file',
+  description:
+    'Pin a file to the project\'s **Files tab**. Use when the user says "pin this file", "add X to the project files", or when a file is recurring source material for the project. Idempotent — pinning an already-pinned path is a no-op. Path should be absolute (e.g. "C:/Users/me/notes/spec.md") so it resolves later.',
+  inputSchema: z.object({
+    project_id: z.string(),
+    path: z.string().describe('Absolute file or folder path to attach as project context.'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    project: z.any().optional(),
+    pinned_paths: z.array(z.string()).optional(),
+    already_pinned: z.boolean().optional(),
+    indexed: z.boolean().optional(),
+    context_kind: z.string().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    const c = inputData as any;
+    if (!hasClientBridge()) return { ok: false, error: ERR_NO_BRIDGE };
+    if (!c.project_id) return { ok: false, error: 'missing project_id' };
+    if (!c.path || !String(c.path).trim()) return { ok: false, error: 'missing path' };
+
+    const attached = await attachProjectContextPath(c.project_id, c.path, { processLimit: 25 });
+    return {
+      ok: true,
+      project: attached.project,
+      pinned_paths: attached.pinned_paths,
+      already_pinned: !!attached.already_pinned,
+      indexed: attached.indexed,
+      context_kind: attached.context_kind,
+    };
+  },
+});
+
+export const add_project_context = createTool({
+  id: 'add_project_context',
+  description:
+    'Attach files or folders as searchable project context, similar to Claude Projects or Perplexity Spaces. This updates the project Files tab, scans folders into the local file index, embeds pending files best-effort, and stores individual file content as project-scoped memory.',
+  inputSchema: z.object({
+    project_id: z.string(),
+    paths: z.array(z.string()).min(1).describe('Absolute file/folder paths to add as project context.'),
+    process_limit: z.number().int().min(0).max(1000).optional().default(150),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    results: z.array(z.any()).optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    const c = inputData as any;
+    if (!hasClientBridge()) return { ok: false, error: ERR_NO_BRIDGE, results: [] };
+    const paths: string[] = Array.isArray(c.paths) ? c.paths : [];
+    const perPathLimit = Math.max(0, Math.floor((c.process_limit ?? 150) / Math.max(paths.length, 1)));
+    const results = [];
+    for (const p of paths) {
+      results.push(await attachProjectContextPath(c.project_id, p, { processLimit: perPathLimit }));
+    }
+    return { ok: results.every((r) => r.ok), results };
+  },
+});
+
+export const unpin_file = createTool({
+  id: 'unpin_file',
+  description:
+    'Remove a file from the project\'s **Files tab**. Use when the user says "unpin X" or "remove X from the project files". Idempotent — unpinning a path that wasn\'t pinned is a no-op.',
+  inputSchema: z.object({
+    project_id: z.string(),
+    path: z.string().describe('Absolute file path to unpin. Must match the pinned path exactly.'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    project: z.any().optional(),
+    pinned_paths: z.array(z.string()).optional(),
+    was_pinned: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData) => {
+    const c = inputData as any;
+    if (!hasClientBridge()) return { ok: false, error: ERR_NO_BRIDGE };
+    if (!c.project_id) return { ok: false, error: 'missing project_id' };
+    if (!c.path || !String(c.path).trim()) return { ok: false, error: 'missing path' };
+
+    const projectResult = await execLocalTool('project_get', { project_id: c.project_id });
+    if (!projectResult?.ok || !projectResult.project) {
+      return { ok: false, error: projectResult?.error || 'project_not_found' };
+    }
+    const current: string[] = Array.isArray(projectResult.project.pinned_paths)
+      ? projectResult.project.pinned_paths
+      : [];
+    const path = String(c.path).trim();
+    if (!current.includes(path)) {
+      return { ok: true, project: projectResult.project, pinned_paths: current, was_pinned: false };
+    }
+    const next = current.filter((p) => p !== path);
+    const updated = await execLocalTool('project_update', { project_id: c.project_id, pinned_paths: next });
+    return { ...updated, pinned_paths: next, was_pinned: true };
   },
 });
 
@@ -212,12 +456,13 @@ export const exit_project_mode = createTool({
 export const journal_add = createTool({
   id: 'journal_add',
   description:
-    'Append an entry to a project\'s timeline — the project\'s long-term lab notebook. Use the full type palette: decision, finding, question, hypothesis, blocker, edit, note. Reserve "milestone" for rare shipped-work moments (entering a project or finishing a chat is NOT a milestone). Default to "note" or "finding" for normal observations. Keep titles ≤80 chars, scannable. Use body for the why. Include source_ref (commit_sha, file_paths, task_id, url) when relevant.',
+    'Append an entry to the project\'s **Timeline tab** — time-ordered events worth recalling later. Pick a specific type: `decision` (a meaningful choice), `finding` (a non-obvious discovery), `question` (open thread to investigate), `hypothesis` (a testable claim), `blocker` (something stuck + what unblocks it), `edit` (a significant code/file change — include source_ref.file_paths), `milestone` (rare; shipped work or major user-visible outcomes only). Use `note` only as a last resort — durable facts/snippets/links belong in `memory_add` (Notes tab), not here. Title ≤80 chars, scannable. Body carries the why. Include source_ref (commit_sha, file_paths, task_id, url) when relevant.',
   inputSchema: z.object({
     project_id: z.string(),
     type: z
       .enum(['decision', 'finding', 'blocker', 'edit', 'chat_summary', 'task', 'milestone', 'note', 'question', 'hypothesis'])
-      .default('note'),
+      .default('finding')
+      .describe('Pick the most specific type. Avoid `note` — durable facts/snippets/links belong in memory_add (Notes tab). Avoid `milestone` unless work shipped.'),
     title: z.string().describe('Short, scannable headline (≤80 chars ideal).'),
     body: z.string().optional().describe('Optional supporting detail.'),
     source_ref: z
@@ -253,7 +498,7 @@ export const journal_add = createTool({
 export const memory_add = createTool({
   id: 'memory_add',
   description:
-    'Save a memory — a durable note, fact, snippet, or URL — that future turns can recall via project_search. Use for things worth keeping (preferences, decisions captured as facts, useful snippets, references), NOT for chat history. When Project Mode is active and you omit project_ids, the memory is automatically scoped to the active project. Pass empty `project_ids: []` to save a global (cross-project) memory.',
+    'Save to the project\'s **Notes tab** — a durable note, fact, snippet, or link the user (or future-you) will want to recall via project_search. This is the DEFAULT for capturing facts/snippets/preferences/URLs/observations. Use this *instead of* `journal_add` for anything that isn\'t a time-ordered event. When Project Mode is active and you omit `project_ids`, the note auto-scopes to the active project. Pass `project_ids: []` explicitly to save globally (cross-project). Set `pinned: true` to highlight the note inside the Notes tab (this does NOT add it to the Files tab — use `pin_file` for that).',
   inputSchema: z.object({
     content: z.string().describe('The memory body — the fact, note, or snippet itself.'),
     title: z.string().optional().describe('Short headline. Optional but improves recall.'),
@@ -324,15 +569,18 @@ export const memory_add = createTool({
 export const project_search = createTool({
   id: 'project_search',
   description:
-    'Semantic search over a project\'s memories (notes, snippets, links, facts). Returns memories most relevant to the query. Use this when you need context about prior work in a project — instead of guessing, search.',
+    'Semantic search over the project\'s **Notes tab** (everything saved via `memory_add` — notes, facts, snippets, links). Returns the most relevant entries for the query. Call this *before* guessing whenever prior project context would help. For time-ordered events use journal_list (Timeline) instead; for prior chat use search_project_conversations.',
   inputSchema: z.object({
     project_id: z.string(),
     query: z.string().describe('Natural-language search query.'),
     limit: z.number().int().min(1).max(50).optional().default(10),
+    include_files: z.boolean().optional().default(true),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     results: z.array(z.any()).optional(),
+    memory_results: z.array(z.any()).optional(),
+    file_results: z.array(z.any()).optional(),
     count: z.number().optional(),
     error: z.string().optional(),
   }),
@@ -345,11 +593,60 @@ export const project_search = createTool({
       return { ok: false, error: 'failed_to_embed_query', results: [] };
     }
 
-    return execLocalTool('memory_search', {
+    const memoryResult = await execLocalTool('memory_search', {
       project_id: c.project_id,
       query_embedding: embedding,
       limit: c.limit ?? 10,
     });
+
+    let fileResult: any = { ok: true, results: [] };
+    if (c.include_files !== false) {
+      const projectResult = await execLocalTool(
+        'project_get',
+        { project_id: c.project_id },
+        undefined,
+        30000,
+        { silent: true },
+      );
+      const pathScopes = Array.isArray(projectResult?.project?.pinned_paths)
+        ? projectResult.project.pinned_paths
+        : [];
+
+      if (pathScopes.length > 0) {
+        try {
+          fileResult = await fileIndexingService.searchFiles(c.query, {
+            mode: 'hybrid',
+            limit: c.limit ?? 10,
+            pathScopes,
+          });
+        } catch (error: any) {
+          fileResult = { ok: false, error: String(error?.message || error), results: [] };
+        }
+      }
+    }
+
+    const memoryResults = Array.isArray(memoryResult?.results)
+      ? memoryResult.results.map((result: any) => ({ ...result, source_type: 'memory' }))
+      : [];
+    const fileResults = Array.isArray(fileResult?.results)
+      ? fileResult.results.map((result: any) => ({
+          file: result,
+          score: Number(result?.score || 0),
+          source_type: 'file',
+        }))
+      : [];
+    const results = [...memoryResults, ...fileResults]
+      .sort((a: any, b: any) => Number(b?.score || 0) - Number(a?.score || 0))
+      .slice(0, c.limit ?? 10);
+
+    return {
+      ok: memoryResult?.ok !== false && fileResult?.ok !== false,
+      results,
+      memory_results: memoryResults,
+      file_results: fileResults,
+      count: results.length,
+      error: memoryResult?.error || fileResult?.error,
+    };
   },
 });
 

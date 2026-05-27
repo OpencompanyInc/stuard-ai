@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useCallback,
   useDeferredValue,
   useEffect,
@@ -7,10 +7,13 @@
   useState,
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   MicOff,
   Mic,
   Plus,
+  AtSign,
+  Upload,
   Video,
   X,
   Calendar,
@@ -52,10 +55,10 @@ import type {
   ReasoningLevel,
 } from "../../../../hooks/usePreferences";
 import { ModelSelector } from "../../../ModelSelector";
-import { useModelRegistry } from "../../../../hooks/useModelRegistry";
 import { SidebarTabsPanel } from "../../shared/sidebar/SidebarTabsPanel";
 import { ChatTabs } from "../window/parts/ChatTabs";
 import { ChatHeaderActions } from "../window/parts/ChatHeaderActions";
+import { ChatHeaderMenu } from "../window/parts/ChatHeaderMenu";
 import {
   QuickShortcutsGrid,
   BookmarkEditor,
@@ -68,6 +71,8 @@ import { SuggestedPrompts } from "../../../onboarding/SuggestedPrompts";
 import { ContextItem } from "../../../FileNavigator";
 import { FileNavigatorOverlay } from "../window/parts/FileNavigatorOverlay";
 import { useFileNavigator } from "../../../../hooks/useFileNavigator";
+import { CreditsLimitNotice } from "../../shared/CreditsLimitNotice";
+import { AttachmentBar } from "../../shared/input/AttachmentBar";
 
 interface LauncherViewProps {
   query: string;
@@ -79,20 +84,25 @@ interface LauncherViewProps {
   onMicClick?: () => void;
   isRecording?: boolean;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  attachments?: Array<{ type: "image" | "file"; name: string; mimeType?: string; source?: string }>;
+  onAttachFiles?: () => void;
+  onAttachImages?: () => void;
+  onRemoveAttachment?: (index: number) => void;
   accessToken?: string | null;
   overlayMode?: "compact" | "sidebar" | "window";
 
   // History Props
-  conversations: any[];
-  loadingConversations: boolean;
-  onSelectConversation: (id: string) => void;
   chatMenuOpen: boolean;
   onChatMenuOpenChange: (open: boolean) => void;
   onNewChat: () => void;
+  conversations?: Array<{ id: string; title?: string; created_at?: string }>;
+  loadingConversations?: boolean;
+  activeConversationId?: string | null;
+  onSelectConversation?: (id: string) => void;
   onOpenDashboard: () => void;
   onToggleExpand: () => void;
   onCollapse?: () => void;
-  onDeleteConversation?: (id: string) => void;
 
   // Sidebar
   onToggleSidebar?: () => void;
@@ -122,8 +132,10 @@ interface LauncherViewProps {
 
   // Internal Sidebar
   activeSidebarTab?: "terminal" | "todo" | "projects";
+  internalSidebarWidth?: number;
   onCloseInternalSidebar?: () => void;
   onSwitchSidebarTab?: (tab: "terminal" | "todo" | "projects") => void;
+  onInternalSidebarResize?: (deltaX: number) => void;
 
   // Voice Mode
   voiceActive?: boolean;
@@ -141,9 +153,14 @@ interface LauncherViewProps {
   contextPaths?: ContextItem[];
   onAddContext?: (item: ContextItem) => void;
   onRemoveContext?: (index: number) => void;
+
+  showCreditsLimitNotice?: boolean;
+  onDismissCreditsLimitNotice?: () => void;
+  onAddCredits?: () => void;
 }
 
 import { NextUpIcon, getNextUpBgColor, getNextUpTextColor } from './NextUp';
+import { LauncherGreeting } from './LauncherGreeting';
 import { normalizeLauncherSearchText, shouldRunLauncherSemanticSearch } from './search';
 import { quickActions } from './quickActions';
 
@@ -157,13 +174,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onMicClick,
   isRecording,
   onPaste,
+  onDrop,
+  attachments = [],
+  onAttachFiles,
+  onAttachImages,
+  onRemoveAttachment,
   accessToken,
   overlayMode,
-  conversations,
-  loadingConversations,
-  onSelectConversation,
   chatMenuOpen,
   onChatMenuOpenChange,
+  onNewChat,
+  conversations = [],
+  loadingConversations = false,
+  activeConversationId,
+  onSelectConversation = () => {},
   onOpenDashboard,
   onToggleSidebar,
   sidebarOpen = false,
@@ -178,7 +202,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   reasoningLevel,
   onReasoningLevelChange,
   onCollapse,
-  onDeleteConversation,
   tabs = [],
   activeTabId,
   onSwitchTab,
@@ -187,8 +210,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
   // Internal Sidebar
   activeSidebarTab = "projects",
+  internalSidebarWidth = 304,
   onCloseInternalSidebar,
   onSwitchSidebarTab,
+  onInternalSidebarResize,
 
   // Voice
   voiceActive = false,
@@ -204,6 +229,9 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   contextPaths = [],
   onAddContext,
   onRemoveContext,
+  showCreditsLimitNotice = false,
+  onDismissCreditsLimitNotice,
+  onAddCredits,
 }) => {
   const {
     showFileNav,
@@ -214,9 +242,31 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     handleFileSelect,
     handleNavigate,
     handleCloseFileNav,
+    handleOpenFileNav,
   } = useFileNavigator({ query, setQuery, onAddContext });
 
-  const { modelById } = useModelRegistry();
+  const dragCounterRef = useRef(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current++;
+    if (dragCounterRef.current === 1) setIsDragOver(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+  const handleDropWrapped = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    onDrop?.(e);
+  }, [onDrop]);
+
   const CLOUD_AI_HTTP =
     (window as any).__CLOUD_AI_HTTP__ ||
     (import.meta as any).env?.VITE_CLOUD_AI_URL ||
@@ -231,11 +281,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     typeof chatMode === "string" && chatMode.trim()
       ? (chatMode.trim() as any)
       : "auto";
-  const selectedModelLabel = (() => {
-    if (selectedModelId === "auto") return "Auto";
-    const m = modelById.get(selectedModelId);
-    return m ? m.name : selectedModelId;
-  })();
   const filteredCommands = useMemo(
     () =>
       commands
@@ -866,6 +911,125 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   };
 
   const isCompact = overlayMode === "compact";
+  const isWindowMode = overlayMode === "window";
+
+  // Shared input pieces — reused by the compact single-row and the window/sidebar
+  // two-row layouts so the textarea (and its keydown wiring) lives in one place.
+  const inputTextarea = (
+    <TextareaAutosize
+      ref={textareaRef}
+      className={clsx(
+        "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/70 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
+        isCompact
+          ? "text-[14px] font-normal leading-5 py-1.5 px-1"
+          : "text-[14px] font-normal leading-5 py-1 px-1",
+      )}
+      placeholder="Just ask Stuard"
+      value={query}
+      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+      onPaste={onPaste}
+      onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if ((e.nativeEvent as any)?.isComposing) return;
+        if (showFileNav && fileNavRef.current) {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            fileNavRef.current.moveSelection(1);
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            fileNavRef.current.moveSelection(-1);
+            return;
+          }
+          if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            fileNavRef.current.selectCurrent();
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            handleCloseFileNav();
+            return;
+          }
+          if (e.key === " ") {
+            const added = fileNavRef.current.addCurrent();
+            if (added) e.preventDefault();
+            return;
+          }
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          onSend();
+        }
+      }}
+      minRows={1}
+      maxRows={isCompact ? 2 : 4}
+      autoFocus
+    />
+  );
+
+  const attachMenu = (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className="w-9 h-9 rounded-[12px] flex items-center justify-center hover:bg-pill-fg/10 transition-colors text-pill-fg/80 hover:text-pill-fg shrink-0"
+          title="Attach"
+        >
+          <Plus className="w-5 h-5" strokeWidth={1.75} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="DropdownContent z-[10005] min-w-[200px] bg-pill-bg rounded-xl border border-pill-fg/10 p-1 shadow-[var(--compact-pill-shadow)]"
+          sideOffset={8}
+          align="start"
+          collisionPadding={10}
+        >
+          <DropdownMenu.Item
+            onSelect={() => handleOpenFileNav()}
+            className="group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-pill-fg/10 cursor-pointer"
+          >
+            <AtSign className="w-4 h-4 opacity-70" strokeWidth={2.2} />
+            <span className="flex-1">Add context</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => onAttachFiles?.()}
+            className={clsx(
+              "group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+              onAttachFiles ? "hover:bg-pill-fg/10 cursor-pointer" : "opacity-40 cursor-not-allowed",
+            )}
+          >
+            <FileIcon className="w-4 h-4 opacity-70" />
+            <span>Attach files</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => onAttachImages?.()}
+            className={clsx(
+              "group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+              onAttachImages ? "hover:bg-pill-fg/10 cursor-pointer" : "opacity-40 cursor-not-allowed",
+            )}
+          >
+            <ImageIcon className="w-4 h-4 opacity-70" />
+            <span>Attach images</span>
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+
+  const modelSelectorNode = (
+    <ModelSelector
+      selectedModelId={selectedModelId}
+      onSelectModel={(id) => onChatModeChange?.(id as any)}
+      modelSource={modelSource}
+      onModelSourceChange={onModelSourceChange}
+      reasoningLevel={reasoningLevel}
+      onReasoningLevelChange={onReasoningLevelChange}
+      side="top"
+      align="end"
+    />
+  );
 
   return (
     <>
@@ -886,17 +1050,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         activeTab={activeSidebarTab}
         onSwitchTab={onSwitchSidebarTab || (() => {})}
         translucentMode={translucentMode}
+        width={internalSidebarWidth}
+        onResize={onInternalSidebarResize}
       />
 
       <div
         className={clsx(
-          "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme/60",
-          isCompact ? "p-1.5" : "p-3",
+          "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme overflow-hidden",
+          !isCompact && "launcher-compact-skin",
+          isCompact ? "p-1.5" : "p-4",
           sidebarOpen
             ? (isCompact
-                ? "rounded-r-2xl rounded-l-none border-l-0 overflow-hidden"
-                : "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden")
-            : (isCompact ? "rounded-2xl overflow-hidden" : "rounded-[28px] overflow-hidden"),
+                ? "rounded-r-2xl rounded-l-none border-l-0"
+                : "rounded-r-[32px] rounded-l-none border-l-0")
+            : (isCompact ? "rounded-2xl" : "rounded-[32px]"),
           translucentMode
             ? "bg-theme-bg backdrop-blur-2xl"
             : "bg-theme-bg",
@@ -905,9 +1072,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           background: translucentMode
             ? "color-mix(in srgb, var(--background) 76%, transparent)"
             : undefined,
-          boxShadow: isCompact
-            ? "0 8px 24px rgba(15, 23, 42, 0.10)"
-            : "0 18px 40px rgba(15, 23, 42, 0.08)",
+          boxShadow: isCompact ? "0 8px 24px rgba(15, 23, 42, 0.10)" : undefined,
         }}
       >
         <div
@@ -915,13 +1080,13 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
             "flex-1 min-h-0 flex flex-col overflow-hidden",
             isCompact
               ? "rounded-xl p-1"
-              : "p-2 rounded-[24px] border border-theme",
-            translucentMode
+              : "gap-3",
+            isCompact && translucentMode
               ? "bg-theme-bg backdrop-blur-xl"
-              : (isCompact ? "" : "bg-theme-card shadow-sm"),
+              : "",
           )}
           style={{
-            background: translucentMode
+            background: isCompact && translucentMode
               ? "color-mix(in srgb, var(--card-bg) 84%, transparent)"
               : undefined,
           }}
@@ -932,7 +1097,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               "flex items-center justify-between w-full min-w-0 shrink-0",
               isCompact
                 ? "px-2 py-1"
-                : "px-2 py-2 border-b border-theme backdrop-blur-sm",
+                : "px-0.5",
             )}
           >
             <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
@@ -944,119 +1109,69 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 onAddTab={onAddTab}
               />
             </div>
-            <ChatHeaderActions
-              onToggleSidebar={onToggleSidebar}
-              sidebarOpen={sidebarOpen}
-              onOpenDashboard={onOpenDashboard}
-              onCollapse={onCollapse || (() => {})}
-              overlayMode={overlayMode}
-              chatMenuOpen={chatMenuOpen}
-              onChatMenuOpenChange={onChatMenuOpenChange}
-              conversations={conversations}
-              loadingConversations={loadingConversations}
-              onSelectConversation={onSelectConversation}
-              onDeleteConversation={onDeleteConversation}
-            />
+            {isCompact ? (
+              <ChatHeaderActions
+                onToggleSidebar={onToggleSidebar}
+                sidebarOpen={sidebarOpen}
+                onOpenDashboard={onOpenDashboard}
+                onCollapse={onCollapse || (() => {})}
+                overlayMode={overlayMode}
+                chatMenuOpen={chatMenuOpen}
+                onChatMenuOpenChange={onChatMenuOpenChange}
+                conversations={conversations}
+                loadingConversations={loadingConversations}
+                activeConversationId={activeConversationId}
+                onSelectConversation={onSelectConversation}
+                onNewChat={onNewChat}
+              />
+            ) : (
+              <ChatHeaderMenu
+                chatMenuOpen={chatMenuOpen}
+                onChatMenuOpenChange={onChatMenuOpenChange}
+                conversations={conversations}
+                loadingConversations={loadingConversations}
+                activeConversationId={activeConversationId}
+                onSelectConversation={onSelectConversation}
+                onNewChat={onNewChat}
+                onOpenDashboard={onOpenDashboard}
+                onToggleSidebar={onToggleSidebar}
+                sidebarOpen={sidebarOpen}
+                onCollapse={onCollapse}
+              />
+            )}
           </div>
 
           {/* Main Content Area â€” hidden in compact mode (no vertical room) */}
           {!isCompact && (
-          <div className="flex-1 flex flex-col items-center px-4 pb-3 overflow-y-auto scrollbar-minimal">
+          <div className="flex-1 min-h-0 flex flex-col overflow-y-auto scrollbar-minimal">
             {viewMode === "tasks" ? (
-              <div className="w-full flex-1 min-h-0 overflow-y-auto scrollbar-minimal pt-3">
+              <div className="w-full flex-1 min-h-0 overflow-y-auto scrollbar-minimal">
                 <TasksView
                   compact
                   defaultSubTab={tasksSubTab}
                   onSubTabChange={setTasksSubTab}
                 />
               </div>
-            ) : (
-              <div className="w-full max-w-xl flex flex-col flex-1">
-                {/* Greeting */}
-                <div className="text-center pt-4 pb-2 shrink-0">
-                  <h1 className="text-lg font-bold text-theme-fg mb-1">
-                    What can I help with?
-                  </h1>
-                  <p className="text-theme-muted text-xs font-medium">
-                    Ask anything, search files, or run automations
-                  </p>
-                </div>
-
-                {/* Quick Actions Grid */}
-                {!showResults && (
-                  <div className="grid grid-cols-5 gap-1.5 mb-3 shrink-0">
-                    {quickActions.map((action) => (
-                      <button
-                        key={action.id}
-                        onClick={() => handleQuickAction(action.id)}
-                        className="group flex flex-col items-center gap-1.5 p-2.5 rounded-xl bg-transparent hover:bg-theme-hover/70 border border-theme/5 hover:border-theme/20 transition-all duration-200"
-                      >
-                        <div
-                          className={clsx(
-                            "w-5 h-5 rounded-lg flex items-center justify-center transition-all group-hover:scale-110",
-                            action.bgLight,
-                            action.textColor,
-                          )}
-                        >
-                          <action.icon className="w-3 h-3" />
-                        </div>
-                        <span className="text-[10px] font-semibold text-theme-muted group-hover:text-theme-fg transition-colors">
-                          {action.label}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Suggested Prompts */}
-                {!showResults && (
-                  <div className="mb-3 shrink-0">
-                    <SuggestedPrompts
-                      onSelect={(text) => {
-                        setQuery(text);
-                        // Auto-focus happens via the textarea
-                      }}
-                      maxVisible={4}
-                      compact
-                    />
-                  </div>
-                )}
-
-                {/* Quick Shortcuts / Bookmarks */}
-                {!showResults && (
-                  <div className="bg-theme-hover/15 rounded-xl border border-theme/5 shrink-0">
-                    <QuickShortcutsGrid
-                      bookmarks={bookmarks}
-                      onExecute={executeBookmark}
-                      onEdit={() => setShowBookmarkEditor(true)}
-                      onAdd={() => setShowBookmarkEditor(true)}
-                      maxVisible={6}
-                    />
-                  </div>
-                )}
-
-                {/* Results */}
-                {showResults && (
-                  <div className="flex-1 overflow-y-auto scrollbar-minimal pr-2 space-y-3 min-h-0">
+            ) : showResults ? (
+                  <div className="flex-1 overflow-y-auto scrollbar-minimal pr-1 space-y-2 min-h-0">
                     <button
                       onClick={onSend}
-                      className="w-full flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-theme-hover transition-all group border border-transparent hover:border-theme/30 relative overflow-hidden bg-theme-bg"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[14px] hover:bg-theme-active transition-colors group border border-theme bg-theme-card text-left"
                     >
-                      <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      <div className="w-7 h-7 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all ring-1 ring-primary/20 group-hover:ring-primary/50 z-10">
+                      <div className="w-7 h-7 rounded-[10px] bg-primary/15 flex items-center justify-center shrink-0">
                         <MessageSquare className="w-3.5 h-3.5 text-primary" />
                       </div>
-                      <div className="flex-1 text-left z-10">
-                        <div className="text-[13px] font-bold text-theme-fg group-hover:text-primary transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-semibold text-theme-fg">
                           Ask Stuard
                         </div>
-                        <div className="text-[11px] text-theme-muted font-semibold">
+                        <div className="text-[11px] text-theme-muted truncate">
                           Get an AI assistant response
                         </div>
                       </div>
-                      <div className="text-[10px] font-bold text-theme-muted bg-theme-hover px-2.5 py-1.5 rounded-lg border border-theme/10 group-hover:bg-primary group-hover:text-primary-fg group-hover:border-primary transition-all z-10">
+                      <span className="text-[10px] font-semibold text-theme-muted bg-theme-active px-2 py-1 rounded-md shrink-0">
                         Enter
-                      </div>
+                      </span>
                     </button>
 
                     {/* Apps â€” always first */}
@@ -1192,8 +1307,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </div>
                     )}
                   </div>
-                )}
-              </div>
+            ) : (
+              <LauncherGreeting
+                accessToken={accessToken}
+                onSelectSuggestion={setQuery}
+              />
             )}
           </div>
           )}
@@ -1201,154 +1319,107 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           {/* Bottom Input Area - Integrated into the single card */}
           <div
             className={clsx(
-              "shrink-0 w-full mt-auto",
-              isCompact ? "px-1.5 pb-1" : "max-w-3xl mx-auto px-4 pb-4",
+              "shrink-0 w-full mt-auto flex flex-col gap-2",
+              isCompact ? "px-1.5 pb-1" : "w-full",
             )}
           >
-            {/* Compact-mode quick shortcuts row â€” apps first, then bookmarks */}
-            {overlayMode === "compact" &&
-              !showResults &&
-              (discoveredApps.length > 0 || bookmarks.length > 0) && (
-                <div className="flex items-center gap-1 mb-1 overflow-x-auto scrollbar-hidden">
-                  {/* Discovered apps â€” icon-only dock */}
-                  {discoveredApps.slice(0, 6).map((da: any) => {
-                    const iconUrl =
-                      da?.iconDataUrl || fileIconDataUrls[String(da.id || "")];
-                    return (
-                      <button
-                        key={da.id}
-                        onClick={() =>
-                          handleLaunchApp(da.launchTarget || da.id)
-                        }
-                        className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0"
-                        title={da.name}
-                      >
-                        {iconUrl ? (
-                          <img
-                            src={iconUrl}
-                            alt=""
-                            loading="lazy"
-                            className="w-4 h-4 object-contain"
-                          />
-                        ) : (
-                          <AppWindow className="w-3.5 h-3.5 text-theme-muted" />
-                        )}
-                      </button>
-                    );
-                  })}
-                  {/* Bookmarks fill remaining slots â€” icon-only */}
-                  {bookmarks
-                    .slice(
-                      0,
-                      Math.max(0, 7 - Math.min(discoveredApps.length, 6)),
-                    )
-                    .map((bm) => {
-                      const cfg = getTypeConfig(bm.type);
-                      const Icon = cfg.icon;
-                      return (
-                        <button
-                          key={bm.id}
-                          onClick={() => executeBookmark(bm)}
-                          className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0"
-                          title={bm.name}
-                        >
-                          <Icon className={clsx("w-3.5 h-3.5", cfg.color)} />
-                        </button>
-                      );
-                    })}
-                  <button
-                    onClick={() => setShowBookmarkEditor(true)}
-                    className="h-7 w-7 rounded-lg flex items-center justify-center hover:bg-theme-hover/60 transition-all shrink-0 text-theme-muted/60 hover:text-theme-muted"
-                    title="Edit shortcuts"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
+            <button
+              type="button"
+              onClick={() =>
+                nextUp &&
+                window.desktopAPI?.openDashboard?.({ tab: "planner" })
+              }
+              className={clsx(
+                "input-status-float text-left justify-start",
+                nextUp &&
+                  "cursor-pointer hover:opacity-90 transition-opacity",
               )}
+              title={nextUp ? "View in Planner" : undefined}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                {nextUp ? (
+                  <div
+                    className={clsx(
+                      "rounded-full flex items-center justify-center shrink-0",
+                      isCompact ? "w-3.5 h-3.5" : "w-5 h-5",
+                      getNextUpBgColor(nextUp),
+                    )}
+                  >
+                    <NextUpIcon type={nextUp.icon} />
+                  </div>
+                ) : connectionStatus === "connecting" ? (
+                  <div className="w-3 h-3 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
+                ) : connectionStatus === "error" ? (
+                  <span
+                    className={clsx(
+                      "rounded-full shrink-0 bg-red-500",
+                      isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
+                    )}
+                  />
+                ) : voiceActive ? (
+                  <span
+                    className={clsx(
+                      "rounded-full shrink-0 bg-emerald-500 animate-pulse",
+                      isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
+                    )}
+                  />
+                ) : null}
+                <span
+                  className={clsx(
+                    "truncate",
+                    isCompact
+                      ? "text-[10px] font-medium tracking-wide"
+                      : "text-[11px] font-bold uppercase tracking-widest",
+                    nextUp
+                      ? getNextUpTextColor(nextUp)
+                      : connectionStatus === "connected"
+                        ? "text-theme-muted"
+                        : connectionStatus === "connecting"
+                          ? "text-amber-700 dark:text-amber-500"
+                          : connectionStatus === "error"
+                            ? "text-red-600"
+                            : "text-theme-muted",
+                  )}
+                >
+                  {displayStatus}
+                </span>
+              </div>
+            </button>
+
             <div
               className={clsx(
-                "flex flex-col shrink-0",
+                "flex flex-col shrink-0 relative",
                 isCompact
                   ? "gap-0.5"
                   : clsx(
-                      "rounded-[28px] p-1 gap-1",
+                      "launcher-input-surface rounded-[16px] p-2.5 gap-1.5 border border-theme/20",
                       translucentMode
-                        ? "bg-theme-bg backdrop-blur-xl"
-                        : "bg-theme-card",
+                        ? "bg-theme-bg/80 backdrop-blur-xl"
+                        : "bg-theme-input",
+                      isDragOver && "ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent",
                     ),
               )}
+              onDragOver={(e) => {
+                e.preventDefault();
+                try { e.dataTransfer.dropEffect = "copy"; } catch { }
+              }}
+              onDragEnter={onDrop ? handleDragEnter : undefined}
+              onDragLeave={onDrop ? handleDragLeave : undefined}
+              onDrop={onDrop ? handleDropWrapped : undefined}
             >
-              <button
-                type="button"
-                onClick={() =>
-                  nextUp &&
-                  window.desktopAPI?.openDashboard?.({ tab: "planner" })
-                }
-                className={clsx(
-                  "flex items-center justify-between gap-3 text-left",
-                  isCompact ? "px-2 py-0.5" : "px-3 py-1",
-                  nextUp &&
-                    "cursor-pointer hover:opacity-80 transition-opacity",
-                )}
-                title={nextUp ? "View in Planner" : undefined}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  {nextUp ? (
-                    <div
-                      className={clsx(
-                        "rounded-full flex items-center justify-center shrink-0",
-                        isCompact ? "w-3.5 h-3.5" : "w-5 h-5",
-                        getNextUpBgColor(nextUp),
-                      )}
-                    >
-                      <NextUpIcon type={nextUp.icon} />
-                    </div>
-                  ) : connectionStatus === "connecting" ? (
-                    <div className="w-3 h-3 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
-                  ) : (
-                    <span
-                      className={clsx(
-                        "rounded-full shrink-0",
-                        isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
-                        connectionStatus === "error"
-                          ? "bg-red-500"
-                          : voiceActive
-                            ? "bg-emerald-500 animate-pulse"
-                            : "bg-emerald-500/70",
-                      )}
-                    />
-                  )}
-                  <span
-                    className={clsx(
-                      "truncate",
-                      isCompact
-                        ? "text-[10px] font-medium tracking-wide"
-                        : "text-[11px] font-bold uppercase tracking-widest",
-                      nextUp
-                        ? getNextUpTextColor(nextUp)
-                        : connectionStatus === "connected"
-                          ? "text-theme-muted"
-                          : connectionStatus === "connecting"
-                            ? "text-amber-700 dark:text-amber-500"
-                            : connectionStatus === "error"
-                              ? "text-red-600"
-                              : "text-theme-muted",
-                    )}
-                  >
-                    {displayStatus}
-                  </span>
+              {!isCompact && isDragOver && (
+                <div className="absolute inset-0 z-50 rounded-[16px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none">
+                  <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                    <Upload className="w-5 h-5" />
+                    <span>Drop files, images, or links here</span>
+                  </div>
                 </div>
-                <span
-                  className={clsx(
-                    "text-theme-muted truncate",
-                    isCompact
-                      ? "text-[10px] font-medium tracking-wide max-w-[140px]"
-                      : "text-[11px] font-bold uppercase tracking-widest max-w-[180px]",
-                  )}
-                >
-                  {selectedModelLabel}
-                </span>
-              </button>
+              )}
+              <CreditsLimitNotice
+                open={showCreditsLimitNotice}
+                onDismiss={onDismissCreditsLimitNotice || (() => {})}
+                onAddCredits={onAddCredits || onOpenDashboard}
+              />
 
               {voiceActive ? (
                 <motion.div layout className="flex flex-col gap-1.5 relative">
@@ -1373,7 +1444,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       "flex items-center gap-2 transition-colors duration-300 backdrop-blur-xl",
                       isCompact
                         ? "bg-theme-hover/50 rounded-xl px-2 py-1 border border-theme/15"
-                        : "bg-theme-hover/55 rounded-[24px] p-1.5 pr-2 border border-theme/10",
+                        : "bg-theme-hover/55 rounded-[14px] p-1.5 pr-2 border border-theme/10",
                     )}
                   >
                     <motion.div
@@ -1512,7 +1583,15 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 </motion.div>
               ) : (
                 <div className="flex flex-col gap-1.5">
-                  {contextPaths.length > 0 && (
+                  {!isCompact && onRemoveAttachment && (
+                    <AttachmentBar
+                      attachments={attachments}
+                      contextPaths={contextPaths}
+                      onRemoveAttachment={onRemoveAttachment}
+                      onRemoveContext={(idx) => onRemoveContext?.(idx)}
+                    />
+                  )}
+                  {isCompact && contextPaths.length > 0 && (
                     <div className="flex flex-wrap gap-1 px-1">
                       {contextPaths.map((ctx, idx) => {
                         const Icon = ctx.type === "bot"
@@ -1545,20 +1624,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   )}
                 <div
                   className={clsx(
-                    "flex items-center transition-all",
+                    "flex flex-col transition-all",
                     isCompact
-                      ? "gap-1 bg-theme-hover/40 rounded-xl px-2 py-1 border border-theme/10 focus-within:border-primary/30 focus-within:bg-theme-hover/60"
-                      : "gap-2 bg-theme-hover/50 rounded-[24px] p-1.5 pr-2 focus-within:ring-2 focus-within:ring-primary/10 border border-theme/5",
+                      ? "gap-1 bg-theme-hover/40 rounded-xl px-2 py-1.5 border border-theme/10 focus-within:border-primary/30 focus-within:bg-theme-hover/60"
+                      : "gap-1.5 px-0.5",
                   )}
                 >
-                  <div className="flex-1 relative flex items-center min-w-0">
+                  <div className="min-w-0 w-full">
                     <TextareaAutosize
                       ref={textareaRef}
                       className={clsx(
                         "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/80 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
                         isCompact
-                          ? "text-[14px] font-normal leading-5 py-1.5 px-1"
-                          : "text-[15px] font-semibold leading-5 py-2 px-3",
+                          ? "text-[14px] font-normal leading-5 py-1 px-1"
+                          : "text-[14px] font-normal leading-5 py-1 px-2",
                       )}
                       placeholder="Just ask Stuard"
                       value={query}
@@ -1608,6 +1687,57 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     />
                   </div>
 
+                  <div className="flex items-center gap-2 w-full min-w-0">
+                  {!isCompact && (
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="w-9 h-9 rounded-[12px] flex items-center justify-center hover:bg-pill-fg/10 transition-colors text-pill-fg/80 hover:text-pill-fg shrink-0"
+                          title="Attach"
+                        >
+                          <Plus className="w-5 h-5" strokeWidth={1.75} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content
+                          className="DropdownContent z-[10005] min-w-[200px] bg-pill-bg rounded-xl border border-pill-fg/10 p-1 shadow-[var(--compact-pill-shadow)]"
+                          sideOffset={8}
+                          align="start"
+                          collisionPadding={10}
+                        >
+                          <DropdownMenu.Item
+                            onSelect={() => handleOpenFileNav()}
+                            className="group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors hover:bg-pill-fg/10 cursor-pointer"
+                          >
+                            <AtSign className="w-4 h-4 opacity-70" strokeWidth={2.2} />
+                            <span className="flex-1">Add context</span>
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            onSelect={() => onAttachFiles?.()}
+                            className={clsx(
+                              "group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                              onAttachFiles ? "hover:bg-pill-fg/10 cursor-pointer" : "opacity-40 cursor-not-allowed",
+                            )}
+                          >
+                            <FileIcon className="w-4 h-4 opacity-70" />
+                            <span>Attach files</span>
+                          </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            onSelect={() => onAttachImages?.()}
+                            className={clsx(
+                              "group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2.5 rounded-lg outline-none transition-colors",
+                              onAttachImages ? "hover:bg-pill-fg/10 cursor-pointer" : "opacity-40 cursor-not-allowed",
+                            )}
+                          >
+                            <ImageIcon className="w-4 h-4 opacity-70" />
+                            <span>Attach images</span>
+                          </DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  )}
+                  <div className="ml-auto flex items-center gap-2 shrink-0">
                   <ModelSelector
                     selectedModelId={selectedModelId}
                     onSelectModel={(id) => onChatModeChange?.(id as any)}
@@ -1619,22 +1749,19 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     align="end"
                   />
 
-                  {!isCompact && (
+                  {!isCompact && query.trim() && (
                     <button
                       type="button"
                       onClick={onSend}
                       title="Send"
                       aria-label="Send message"
-                      className={clsx(
-                        "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0",
-                        query.trim()
-                          ? "bg-primary text-primary-fg hover:opacity-90"
-                          : "bg-theme-hover/60 text-theme-muted",
-                      )}
+                      className="h-9 w-9 rounded-[12px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 bg-primary text-primary-fg hover:opacity-90"
                     >
                       <CornerDownLeft className="w-4 h-4" />
                     </button>
                   )}
+                  </div>
+                  </div>
                 </div>
                 </div>
               )}

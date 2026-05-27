@@ -17,6 +17,7 @@ export interface Project {
   name: string;
   description?: string | null;
   goals?: string | null;
+  instructions?: string | null;
   status: ProjectStatus;
   tags: string[];
   pinned_paths: string[];
@@ -129,6 +130,7 @@ export async function createProject(input: {
   name: string;
   description?: string;
   goals?: string;
+  instructions?: string;
   status?: ProjectStatus;
   icon?: string;
   color?: string;
@@ -143,6 +145,22 @@ export async function updateProject(
 ): Promise<Project | null> {
   const result = await exec('project_update', { project_id: projectId, ...patch });
   return result.ok ? ((result.project as Project) ?? null) : null;
+}
+
+export async function addProjectContextPath(
+  projectId: string,
+  path: string,
+): Promise<{ project: Project | null; indexed: boolean; error?: string }> {
+  const result = await exec('project_context_add', {
+    project_id: projectId,
+    path,
+    scan: true,
+  });
+  return {
+    project: result.ok ? ((result.project as Project) ?? null) : null,
+    indexed: !!result.indexed,
+    error: result.error,
+  };
 }
 
 export async function deleteProject(projectId: string): Promise<boolean> {

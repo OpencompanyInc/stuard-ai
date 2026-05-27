@@ -11,6 +11,7 @@ import {
   onMainAuthSessionChange,
 } from './auth-session';
 import { registerIncomingMessagingMedia } from './media-library';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 
 type SmsMode = 'agent' | 'proactive';
 type SmsPreferredModel = 'fast' | 'balanced' | 'smart' | 'research';
@@ -227,8 +228,9 @@ async function sendSmsNotify(toPhone: string, text: string, provider?: string | 
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token || !toPhone) return;
+  const isWhatsApp = String(provider || '').toLowerCase() === 'whatsapp';
+  if (isWhatsApp && !WHATSAPP_INTEGRATION_ENABLED) return;
   try {
-    const isWhatsApp = String(provider || '').toLowerCase() === 'whatsapp';
     const endpoint = isWhatsApp
       ? `${getCloudAiUrl()}/integrations/whatsapp/wa-notify`
       : `${getCloudAiUrl()}/integrations/telnyx/sms-notify`;
@@ -353,6 +355,9 @@ async function submitSmsReply(input: {
   if (!token) throw new Error('desktop_auth_missing');
 
   const isWhatsApp = String(input.provider || '').toLowerCase() === 'whatsapp';
+  if (isWhatsApp && !WHATSAPP_INTEGRATION_ENABLED) {
+    throw new Error('whatsapp_integration_disabled');
+  }
   const endpoint = isWhatsApp
     ? `${getCloudAiUrl()}/integrations/whatsapp/wa-reply`
     : `${getCloudAiUrl()}/integrations/telnyx/sms-reply`;

@@ -17,35 +17,52 @@ import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || 'http://127.0.0.1:8082';
 
-function WebhookUrlInfo({ mode, flowId }: { mode: 'cloud' | 'local'; flowId: string }) {
+function withQueryParam(rawUrl: string, key: string, value?: string) {
+  if (!value) return rawUrl;
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.set(key, value);
+    return parsed.toString();
+  } catch {
+    const separator = rawUrl.includes('?') ? '&' : '?';
+    return `${rawUrl}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+function WebhookUrlInfo({ mode, flowId, triggerId }: { mode: 'cloud' | 'local'; flowId: string; triggerId?: string }) {
   const [url, setUrl] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [callUrl, setCallUrl] = useState('');
+  const [copied, setCopied] = useState<'trigger' | 'call' | null>(null);
 
   useEffect(() => {
     if (mode === 'local') {
       const api = (window as any).desktopAPI;
       if (api?.webhooksLocalUrl) {
         api.webhooksLocalUrl(flowId).then((res: any) => {
-          if (res?.url) setUrl(res.url);
-          else setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+          const triggerUrl = res?.url || `http://127.0.0.1:18080/webhooks/incoming/${flowId}`;
+          setUrl(triggerUrl);
+          setCallUrl(withQueryParam(triggerUrl.replace('/webhooks/incoming/', '/webhooks/call/'), 'triggerId', triggerId));
         }).catch(() => {
           setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+          setCallUrl(withQueryParam(`http://127.0.0.1:18080/webhooks/call/${flowId}`, 'triggerId', triggerId));
         });
       } else {
         setUrl(`http://127.0.0.1:18080/webhooks/incoming/${flowId}`);
+        setCallUrl(withQueryParam(`http://127.0.0.1:18080/webhooks/call/${flowId}`, 'triggerId', triggerId));
       }
     } else {
       // Cloud webhook URL
       const base = CLOUD_AI_HTTP.replace(/\/+$/, '');
       setUrl(`${base}/webhooks/incoming/${flowId}`);
+      setCallUrl('');
     }
-  }, [mode, flowId]);
+  }, [mode, flowId, triggerId]);
 
-  const handleCopy = () => {
-    if (!url) return;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const handleCopy = (value: string, target: 'trigger' | 'call') => {
+    if (!value) return;
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(target);
+      setTimeout(() => setCopied(null), 2000);
     }).catch(() => {});
   };
 
@@ -73,28 +90,54 @@ function WebhookUrlInfo({ mode, flowId }: { mode: 'cloud' | 'local'; flowId: str
         </div>
         {url && (
           <div className={`px-3 py-2 border-t ${isCloud ? 'border-blue-500/20' : 'border-emerald-500/20'} wf-input`}>
+            <div className="text-[10px] font-semibold wf-fg-muted mb-1">
+              Trigger and return immediately
+            </div>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-[11px] wf-fg font-mono wf-input px-2 py-1.5 rounded-lg break-all select-all leading-relaxed">
                 {url}
               </code>
               <button
-                onClick={handleCopy}
+                onClick={() => handleCopy(url, 'trigger')}
                 className={`p-1.5 rounded-lg transition-all shrink-0 ${
-                  copied
+                  copied === 'trigger'
                     ? 'bg-green-500/20 text-green-400'
                     : `${isCloud ? 'hover:bg-blue-500/20 text-blue-400/60 hover:text-blue-400' : 'hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-400'}`
                 }`}
                 title="Copy URL"
               >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied === 'trigger' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
+            {!isCloud && callUrl && (
+              <div className="mt-3">
+                <div className="text-[10px] font-semibold wf-fg-muted mb-1">
+                  Call and wait for return_value
+                </div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-[11px] wf-fg font-mono wf-input px-2 py-1.5 rounded-lg break-all select-all leading-relaxed">
+                    {callUrl}
+                  </code>
+                  <button
+                    onClick={() => handleCopy(callUrl, 'call')}
+                    className={`p-1.5 rounded-lg transition-all shrink-0 ${
+                      copied === 'call'
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'hover:bg-emerald-500/20 text-emerald-400/60 hover:text-emerald-400'
+                    }`}
+                    title="Copy call URL"
+                  >
+                    {copied === 'call' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className={`flex items-start gap-1.5 text-[10px] mt-2 ${isCloud ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
               <Info className="w-3 h-3 mt-0.5 shrink-0" />
               <span>
                 {isCloud
                   ? 'Send a POST request with JSON body to this URL to trigger this workflow.'
-                  : 'Send a POST request with JSON body from your local network to trigger this workflow.'}
+                  : 'Use the call URL from a local website when you need the fetch response to contain this workflow\'s return_value.'}
               </span>
             </div>
           </div>
@@ -536,7 +579,7 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
             const webhookMode: 'cloud' | 'local' = toolName === 'webhook.local' ? 'local' :
               toolName === 'webhook.cloud' ? 'cloud' :
               (item?.args?.mode === 'local' ? 'local' : 'cloud');
-            return <WebhookUrlInfo mode={webhookMode} flowId={model.id} />;
+            return <WebhookUrlInfo mode={webhookMode} flowId={model.id} triggerId={item.id} />;
           })()}
 
           {/* Input Parameters - for triggers (workflow-as-function) */}
@@ -1560,5 +1603,3 @@ function OutputSchemaEditor({
     </div>
   );
 }
-
-

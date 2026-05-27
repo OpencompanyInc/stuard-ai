@@ -6,6 +6,7 @@ import { getBridgeSecrets, getBridgeWs, withClientBridge, execLocalTool } from '
 import { writeLog } from '../utils/logger';
 import { randomUUID } from 'crypto';
 import { createInterjectionUserMessage } from '../server/chat/interjections';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 const MAX_LOG_ENTRIES = 200;
 const LOG_FLUSH_MS = 750;
@@ -25,25 +26,40 @@ type RunningHeadlessTask = {
 // Store abort controllers for running headless tasks
 const runningTasks = new Map<string, RunningHeadlessTask>();
 
-export function abortHeadlessTask(taskId: string): boolean {
+function abortWithReason(controller: AbortController, reason: string) {
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch {}
+  }
+}
+
+function getAbortReason(signal?: AbortSignal | null): string {
+  const reason = (signal as any)?.reason;
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason?.message === 'string') return reason.message;
+  return signal?.aborted ? 'aborted' : '';
+}
+
+export function abortHeadlessTask(taskId: string, reason = 'external_abort'): boolean {
   const running = runningTasks.get(taskId);
   if (running) {
-    console.log(`[HeadlessAgent] Aborting task: ${taskId}`);
-    running.controller.abort();
+    console.log(`[HeadlessAgent] Aborting task: ${taskId} | reason=${reason}`);
+    abortWithReason(running.controller, reason);
     runningTasks.delete(taskId);
     return true;
   }
   return false;
 }
 
-export function abortHeadlessTasksForRequest(chatWs?: any, requestId?: string): number {
+export function abortHeadlessTasksForRequest(chatWs?: any, requestId?: string, reason = 'request_abort'): number {
   let count = 0;
   for (const [taskId, running] of Array.from(runningTasks.entries())) {
     const sameRequest = requestId ? running.requestId === requestId : true;
     const sameSocket = !chatWs || running.chatWs === chatWs || running.bridgeWs === chatWs;
     if (!sameRequest || !sameSocket) continue;
-    console.log(`[HeadlessAgent] Aborting task for stopped request: ${taskId}`);
-    try { running.controller.abort(); } catch {}
+    console.log(`[HeadlessAgent] Aborting task for request: ${taskId} | reason=${reason}`);
+    abortWithReason(running.controller, reason);
     runningTasks.delete(taskId);
     count++;
   }
@@ -345,9 +361,9 @@ async function runHeadlessTask(
   let parentAbortHandler: (() => void) | undefined;
   if (parentAbortSignal) {
     if (parentAbortSignal.aborted) {
-      abortController.abort();
+      abortWithReason(abortController, getAbortReason(parentAbortSignal) || 'parent_abort');
     } else {
-      parentAbortHandler = () => abortController.abort();
+      parentAbortHandler = () => abortWithReason(abortController, getAbortReason(parentAbortSignal) || 'parent_abort');
       parentAbortSignal.addEventListener('abort', parentAbortHandler, { once: true });
     }
   }
@@ -374,7 +390,7 @@ async function runHeadlessTask(
     };
 
     // 1. Prepare integrations and MCP tools
-    const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp', 'x'];
+    const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
     const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
     const enabledIntegrations = providers.filter((_, i) => !!checks[i]);
 
@@ -463,10 +479,11 @@ async function runHeadlessTask(
         runningTasks.delete(taskId);
         const finalText = String(text || '').trim() || String(aggregatedText || '').trim();
         if (abortController.signal.aborted) {
+          const abortReason = getAbortReason(abortController.signal) || 'unknown';
           await execLocalTool('subagent_update', {
             task_id: taskId,
             status: 'cancelled',
-            result: { text: finalText, finishReason: 'aborted', stoppedBy: 'user' }
+            result: { text: finalText, finishReason: 'aborted', stoppedBy: abortReason }
           }).catch(() => {});
           return;
         }
@@ -555,12 +572,13 @@ async function runHeadlessTask(
     runningTasks.delete(taskId);
 
     if (error?.name === 'AbortError' || abortController.signal.aborted) {
-      console.log(`[HeadlessAgent] Task ${taskId} was stopped by user`);
+      const abortReason = getAbortReason(abortController.signal) || 'unknown';
+      console.log(`[HeadlessAgent] Task ${taskId} aborted | reason=${abortReason}`);
       const partialText = aggregatedText ? aggregatedText.trim() : '';
       await execLocalTool('subagent_update', {
         task_id: taskId,
         status: 'cancelled',
-        result: { text: partialText, finishReason: 'aborted', stoppedBy: 'user' }
+        result: { text: partialText, finishReason: 'aborted', stoppedBy: abortReason }
       }).catch(() => {});
       return;
     }
@@ -572,6 +590,15 @@ async function runHeadlessTask(
       result: { error: error.message }
     }).catch(() => {});
   } finally {
+    const sessionId = typeof bridgeSecrets?.browserUseSessionId === 'string'
+      ? bridgeSecrets.browserUseSessionId
+      : '';
+    if (sessionId) {
+      await execLocalTool('browser_use_tabs', {
+        action: 'release',
+        session_id: sessionId,
+      }).catch(() => {});
+    }
     if (parentAbortSignal && parentAbortHandler) {
       try { parentAbortSignal.removeEventListener('abort', parentAbortHandler); } catch {}
     }

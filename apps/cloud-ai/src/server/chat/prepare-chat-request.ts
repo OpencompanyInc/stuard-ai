@@ -3,13 +3,19 @@ import type { WebSocket } from 'ws';
 
 import { getBotAgentForUser } from '../../agents/bot-agent';
 import { getWorkflowAgentForUser } from '../../agents/workflow-agent';
+import { getSkillAgentForUser, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { verifyAccessToken, AuthErrorCode } from '../../auth';
 import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
 import type { OrchestratorPromptOptions } from '../../orchestrator/orchestrator-agent';
 import { execLocalTool, hasClientBridge } from '../../tools/bridge';
-import type { JournalEntryPayload, ProjectContextPayload } from '../../agents/stuard/prompts';
+import type {
+  JournalEntryPayload,
+  ProjectContextPayload,
+  ProjectRetrievedContextPayload,
+} from '../../agents/stuard/prompts';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 import {
   createConversation,
   addUserMessage,
@@ -25,6 +31,7 @@ import { clearSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
 import { contentToText, normalizeMessages } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { writeLog } from '../../utils/logger';
+import { fallbackTitleFromMessage } from '../../utils/thread-title';
 import { ENABLE_ROUTING, REQUIRE_AUTH } from '../../utils/config';
 import { anonResources, anonThreads, conversations, wsConversations } from '../socket/state';
 import { buildInputMessages } from './message-context';
@@ -131,8 +138,41 @@ export async function prepareChatRequest({
     return null;
   }
 
+  // Per-user reads kicked off in parallel; the credit check still hard-gates
+  // the request. Integrations + conversation hydration are independent reads
+  // that we'd otherwise serialize behind the credit check + router LLM call.
+  // Side effects (webhook delivery, run-state sync, daily counter) only touch
+  // this user's own state and are pure UX — fire-and-forget so they never add
+  // to TTFT. If the access gate ends up rejecting the request, the in-flight
+  // reads are discarded.
+  const history = conversations.get(ws) || [];
+  const hydrationConvId = typeof msg?.conversationId === 'string' ? msg.conversationId.trim() : '';
+  const needsHydration = !!(authUser && hydrationConvId && history.length === 0);
+
+  let integrationsPromise: Promise<{ enabledIntegrations: string[]; mcpTools: Record<string, any> }> =
+    Promise.resolve({ enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any> });
+  let hydrationPromise: Promise<any[] | null> = Promise.resolve(null);
+
   if (authUser) {
-    const access = await checkAccess(authUser.userId);
+    const accessPromise = checkAccess(authUser.userId);
+    integrationsPromise = loadIntegrations(authUser.userId);
+    if (needsHydration) {
+      hydrationPromise = getConversationMessages(authUser.userId, hydrationConvId, 100).catch(() => null);
+    }
+
+    void (async () => {
+      try {
+        const delivered = await registerWebhookState(ws, authUser.userId);
+        if (delivered > 0) {
+          writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
+        }
+      } catch { }
+    })();
+    try { sendRunStateSync(ws, authUser.userId, requestId); } catch { }
+    void Promise.resolve(incrementDailyRequestCounter(authUser.userId)).catch(() => {});
+
+    // GATE: enforce credit access before any further work or stream open.
+    const access = await accessPromise;
     if (!access.allowed) {
       send(ws, {
         type: 'error',
@@ -141,21 +181,6 @@ export async function prepareChatRequest({
       }, requestId);
       return null;
     }
-
-    try {
-      await incrementDailyRequestCounter(authUser.userId);
-    } catch { }
-
-    try {
-      const delivered = await registerWebhookState(ws, authUser.userId);
-      if (delivered > 0) {
-        writeLog('queued_webhooks_delivered', { userId: authUser.userId, count: delivered });
-      }
-    } catch { }
-
-    try {
-      sendRunStateSync(ws, authUser.userId, requestId);
-    } catch { }
   }
 
   const requestedMode = normalizeTierChoice(msg?.model);
@@ -194,26 +219,23 @@ export async function prepareChatRequest({
 
   send(ws, { type: 'progress', event: 'model', data: { tier: routedTier, modelId: chosenModelId } }, requestId);
 
-  const { enabledIntegrations, mcpTools } = authUser
-    ? await loadIntegrations(authUser.userId)
-    : { enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any> };
+  // Drain the in-flight per-user reads kicked off above the access gate. By
+  // the time the router (which often makes an LLM call) returns, these are
+  // typically already resolved, so the await is usually free.
+  const { enabledIntegrations, mcpTools } = await integrationsPromise;
 
-  const history = conversations.get(ws) || [];
   // Hydrate from durable storage when this is a fresh socket (typical for the VM
   // bridge, which opens a brand-new WS per chat turn) and the caller already has
   // a known conversationId. Without this, every turn would look like a new
   // conversation to the model and lose all prior context.
-  const hydrationConvId = typeof msg?.conversationId === 'string' ? msg.conversationId.trim() : '';
-  if (authUser && hydrationConvId && history.length === 0) {
-    try {
-      const stored = await getConversationMessages(authUser.userId, hydrationConvId, 100);
-      if (stored && stored.length > 0) {
-        for (const row of stored) {
-          appendStoredMessageToHistory(history, row);
-        }
-        conversations.set(ws, history);
+  if (needsHydration) {
+    const stored = await hydrationPromise;
+    if (stored && stored.length > 0) {
+      for (const row of stored) {
+        appendStoredMessageToHistory(history, row);
       }
-    } catch { }
+      conversations.set(ws, history);
+    }
   }
   appendNewUserMessagesToHistory(history, messages);
   // Persist the in-memory history back so subsequent calls on this same WS
@@ -233,9 +255,12 @@ export async function prepareChatRequest({
 
   const agentType = resolveAgentType(ws, msg);
   const workflowModelId = resolveWorkflowModelId(agentType, msg);
+  const skillModelId = resolveSkillModelId(agentType, msg, chosenModelId);
   const modelLabel = agentType === 'workflow'
     ? (workflowModelId || 'google/gemini-3-pro-preview')
-    : (chosenModelId || routedTier);
+    : agentType === 'skill'
+      ? (skillModelId || 'google/gemini-3-pro-preview')
+      : (chosenModelId || routedTier);
   const contextPathsForMeta = Array.isArray(msg?.context?.paths) ? msg.context.paths : undefined;
   const attachmentDescriptorsForMeta = buildAttachmentMetadata(msg?.attachments);
 
@@ -263,6 +288,7 @@ export async function prepareChatRequest({
     agentType,
     conversationId,
     conversationCreatedNow,
+    prompt,
   });
 
   const agent = await resolveAgent({
@@ -274,6 +300,7 @@ export async function prepareChatRequest({
     enabledIntegrations,
     mcpTools,
     workflowModelId,
+    skillModelId,
     modelSource,
     ws,
     requestId,
@@ -297,16 +324,18 @@ export async function prepareChatRequest({
   });
 
   if (authUser && conversationId && !conversationCreatedNow) {
-    try {
-      await addUserMessage(authUser.userId, conversationId, prompt, {
-        mode: requestedMode,
-        tier: routedTier,
-        modelId: chosenModelId,
-        modelSource,
-        contextPaths: contextPathsForMeta,
-        attachments: attachmentDescriptorsForMeta,
-      });
-    } catch { }
+    // Fire-and-forget: this DB write is for history persistence and the model
+    // never reads it back during this turn (the prompt is already passed via
+    // inputMessages). Blocking stream open on it costs 60–200 ms with no
+    // functional benefit.
+    void addUserMessage(authUser.userId, conversationId, prompt, {
+      mode: requestedMode,
+      tier: routedTier,
+      modelId: chosenModelId,
+      modelSource,
+      contextPaths: contextPathsForMeta,
+      attachments: attachmentDescriptorsForMeta,
+    }).catch(() => { });
   }
 
   const resolvedModelSource = typeof (agent as any)?.__modelSource === 'string'
@@ -333,6 +362,7 @@ export async function prepareChatRequest({
     conversationCreatedNow,
     modelLabel,
     workflowModelId,
+    skillModelId,
     contextPathsForMeta,
     resource,
     thread,
@@ -340,6 +370,7 @@ export async function prepareChatRequest({
     providerOptions: buildProviderOptions({
       agentType,
       workflowModelId,
+      skillModelId,
       chosenModelId,
       modelSource: resolvedModelSource,
       modelLabel,
@@ -392,6 +423,15 @@ async function resolveModelTier(
     return 'balanced';
   }
 
+  // When the caller pinned an explicit modelId, the router's only output —
+  // the tier — is used purely as a fallback for picking a default model id
+  // (see resolveChosenModelId), and that fallback never fires because the
+  // explicit id wins. Skip the LLM router call entirely; tag the tier as
+  // 'balanced' for billing/log purposes.
+  if (typeof msg?.modelId === 'string' && String(msg.modelId).trim()) {
+    return 'balanced';
+  }
+
   const context = msg?.context || {};
   const routerMessages = messages.map((message: any) => ({
     role: message.role,
@@ -417,7 +457,7 @@ function resolveChosenModelId(msg: any, routedTier: ModelChoice) {
 }
 
 async function loadIntegrations(userId: string) {
-  const providers = ['github', 'google', 'outlook', 'telnyx', 'whatsapp', 'x'];
+  const providers = ['github', 'google', 'outlook', 'telnyx', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
   let enabledIntegrations: string[] = [];
   let mcpTools: Record<string, any> = {};
 
@@ -578,6 +618,22 @@ function resolveAgentType(ws: WebSocket, msg: any): AgentType {
     return 'workflow';
   }
 
+  const inferredSkill =
+    clientType === 'skill_ui'
+    || clientType === 'skill'
+    || contextMode === 'skill_architect'
+    || contextMode === 'skill';
+
+  if (
+    rawAgentLower === 'skill'
+    || rawAgentLower === 'skill_agent'
+    || rawAgentLower === 'skill-architect'
+    || rawAgentLower === 'skill_architect'
+    || inferredSkill
+  ) {
+    return 'skill';
+  }
+
   return 'stuard';
 }
 
@@ -591,6 +647,20 @@ function resolveWorkflowModelId(agentType: AgentType, msg: any) {
   return process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview';
 }
 
+function resolveSkillModelId(agentType: AgentType, msg: any, chosenModelId?: string) {
+  if (agentType !== 'skill') return undefined;
+
+  if (typeof msg?.modelId === 'string' && String(msg.modelId).trim()) {
+    return String(msg.modelId).trim();
+  }
+
+  if (chosenModelId && String(chosenModelId).trim()) {
+    return String(chosenModelId).trim();
+  }
+
+  return process.env.SKILL_MODEL_ID || process.env.WORKFLOW_MODEL_ID || 'google/gemini-3-pro-preview';
+}
+
 interface ResolveAgentArgs {
   agentType: AgentType;
   msg: any;
@@ -600,6 +670,7 @@ interface ResolveAgentArgs {
   enabledIntegrations: string[];
   mcpTools: Record<string, any>;
   workflowModelId?: string;
+  skillModelId?: string;
   modelSource?: string;
   userId?: string | null;
   ws: WebSocket;
@@ -611,8 +682,9 @@ async function resolveProjectPromptOptions(args: {
   agentType: AgentType;
   conversationId: string | null;
   conversationCreatedNow: boolean;
+  prompt: string;
 }): Promise<OrchestratorPromptOptions> {
-  const { agentType, conversationId, conversationCreatedNow } = args;
+  const { agentType, conversationId, conversationCreatedNow, prompt } = args;
   const base: OrchestratorPromptOptions = { conversationId: conversationId || null };
 
   if (agentType !== 'stuard') return base;
@@ -645,6 +717,7 @@ async function resolveProjectPromptOptions(args: {
       name: String(project.name || 'Untitled project'),
       description: project.description ?? null,
       goals: project.goals ?? null,
+      instructions: project.instructions ?? null,
       status: project.status ?? null,
       tags: Array.isArray(project.tags) ? project.tags : [],
       pinned_paths: Array.isArray(project.pinned_paths) ? project.pinned_paths : [],
@@ -662,13 +735,92 @@ async function resolveProjectPromptOptions(args: {
         }))
       : [];
 
-    return { conversationId, activeProject, recentJournal };
+    const retrievedContext = await retrieveProjectContextForQuery({
+      projectId,
+      prompt,
+      pathScopes: activeProject.pinned_paths || [],
+    });
+
+    return { conversationId, activeProject, recentJournal, retrievedContext };
   } catch (error: any) {
     writeLog('project_context_resolve_failed', {
       conversationId,
       error: error?.message || String(error),
     });
     return base;
+  }
+}
+
+async function retrieveProjectContextForQuery(args: {
+  projectId: string;
+  prompt: string;
+  pathScopes: string[];
+}): Promise<ProjectRetrievedContextPayload | null> {
+  const query = String(args.prompt || '').trim();
+  if (!query) return null;
+
+  try {
+    const embedding = await getOrCreateQueryEmbedding(query);
+    if (!embedding || embedding.length === 0) return null;
+
+    const [memoryResult, fileResult] = await Promise.all([
+      execLocalTool(
+        'memory_search',
+        { project_id: args.projectId, query_embedding: embedding, limit: 5 },
+        undefined,
+        8000,
+        { silent: true },
+      ).catch((error: any) => ({ ok: false, error: String(error?.message || error), results: [] })),
+      args.pathScopes.length > 0
+        ? execLocalTool(
+            'file_search',
+            {
+              query,
+              vector: embedding,
+              mode: 'hybrid',
+              path_scopes: args.pathScopes,
+              limit: 5,
+            },
+            undefined,
+            8000,
+            { silent: true },
+          ).catch((error: any) => ({ ok: false, error: String(error?.message || error), results: [] }))
+        : Promise.resolve({ ok: true, results: [] }),
+    ]);
+
+    const memories = Array.isArray(memoryResult?.results)
+      ? memoryResult.results.slice(0, 5).map((hit: any) => {
+          const memory = hit?.memory || {};
+          return {
+            title: memory.title ?? null,
+            content: memory.content ?? null,
+            type: memory.type ?? null,
+            score: typeof hit?.score === 'number' ? hit.score : null,
+            url: memory.url ?? null,
+            metadata: memory.metadata ?? null,
+          };
+        })
+      : [];
+
+    const files = Array.isArray(fileResult?.results)
+      ? fileResult.results.slice(0, 5).map((file: any) => ({
+          path: file.path ?? null,
+          name: file.filename || file.display_name || null,
+          kind: file.kind ?? null,
+          score: typeof file?.score === 'number' ? file.score : null,
+          modified_at: file.modified_at ?? null,
+          snippet: file.summary || (Array.isArray(file.keywords) ? file.keywords.join(', ') : null),
+        }))
+      : [];
+
+    if (memories.length === 0 && files.length === 0) return null;
+    return { query, memories, files };
+  } catch (error: any) {
+    writeLog('project_query_context_failed', {
+      projectId: args.projectId,
+      error: error?.message || String(error),
+    });
+    return null;
   }
 }
 
@@ -681,6 +833,7 @@ async function resolveAgent({
   enabledIntegrations,
   mcpTools,
   workflowModelId,
+  skillModelId,
   modelSource,
   userId,
   ws,
@@ -689,6 +842,10 @@ async function resolveAgent({
 }: ResolveAgentArgs) {
   if (agentType === 'workflow') {
     return await resolveWorkflowAgent(msg, providedMessages, workflowModelId, ws, requestId, userId, modelSource);
+  }
+
+  if (agentType === 'skill') {
+    return await resolveSkillAgent(msg, skillModelId, ws, requestId, userId, modelSource);
   }
 
   if (agentType === 'bot') {
@@ -786,6 +943,40 @@ async function resolveWorkflowAgent(
   } catch (error: any) {
     console.error('[cloud-ai] Failed to get workflow agent:', error.message);
     send(ws, { type: 'error', message: 'Workflow agent unavailable: ' + error.message }, requestId);
+    return null;
+  }
+}
+
+async function resolveSkillAgent(
+  msg: any,
+  skillModelId: string | undefined,
+  ws: WebSocket,
+  requestId: string | undefined,
+  userId?: string | null,
+  modelSource?: string,
+) {
+  try {
+    const agent = await getSkillAgentForUser(skillModelId, userId, modelSource);
+    const rawAgent = typeof msg?.agent === 'string' ? String(msg.agent) : '';
+    const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).trim() : '';
+    const contextMode = typeof msg?.context?.mode === 'string' ? String(msg.context.mode).trim() : '';
+    console.log('[cloud-ai] Using skill agent', { rawAgent, clientType, ctxMode: contextMode, modelId: skillModelId });
+
+    clearSessionSkill();
+    const incomingSkill = msg?.context?.skill;
+    if (incomingSkill && typeof incomingSkill === 'object' && !Array.isArray(incomingSkill)) {
+      setSessionSkill(incomingSkill);
+      console.log('[cloud-ai] Pre-stored skill from context:', {
+        id: incomingSkill.id,
+        name: incomingSkill.name,
+        steps: incomingSkill.steps?.length,
+      });
+    }
+
+    return agent;
+  } catch (error: any) {
+    console.error('[cloud-ai] Failed to get skill agent:', error.message);
+    send(ws, { type: 'error', message: 'Skill agent unavailable: ' + error.message }, requestId);
     return null;
   }
 }
@@ -889,9 +1080,16 @@ async function resolveConversation({
 
   const conversationSource = agentType === 'workflow'
     ? 'workflow'
-    : agentType === 'bot'
-      ? 'proactive'
-      : 'stuard';
+    : agentType === 'skill'
+      ? 'skill'
+      : agentType === 'bot'
+        ? 'proactive'
+        : 'stuard';
+
+  // Compute an immediate fallback title from the first user message so the UI
+  // never shows "Untitled" while the LLM-generated title is in flight. The
+  // background title job in stream-runner overwrites this when it completes.
+  const fallbackTitle = fallbackTitleFromMessage(prompt);
 
   conversationId = await createConversation(
     authUser.userId,
@@ -907,11 +1105,15 @@ async function resolveConversation({
     },
     conversationSource,
     !!msg?.forcePersist,
+    fallbackTitle,
   ) as any;
 
   if (conversationId) {
     conversationCreatedNow = true;
     send(ws, { type: 'conversation', conversationId }, requestId);
+    if (fallbackTitle) {
+      send(ws, { type: 'title', conversationId, title: fallbackTitle, provisional: true }, requestId);
+    }
   }
 
   return { conversationId, conversationCreatedNow };

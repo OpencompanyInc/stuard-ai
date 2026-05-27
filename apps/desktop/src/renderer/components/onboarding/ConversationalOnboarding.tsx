@@ -15,6 +15,7 @@ type Scene =
   | 'signin'
   | 'intro'
   | 'greet'
+  | 'story'
   | 'acknowledge'
   | 'wakeword-try1'
   | 'wakeword-try2'
@@ -274,7 +275,7 @@ function StuardLine({ text, onTypingDone }: { text: string; onTypingDone?: () =>
   useEffect(() => { if (done) onTypingDone?.(); }, [done, onTypingDone]);
   return (
     <p
-      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[34ch] mx-auto"
+      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[42ch] mx-auto"
       style={{ textShadow: '0 2px 24px rgba(40,10,12,0.7), 0 0 2px rgba(0,0,0,0.5)' }}
     >
       {shown}
@@ -283,11 +284,19 @@ function StuardLine({ text, onTypingDone }: { text: string; onTypingDone?: () =>
   );
 }
 
-function StuardLineSequence({ phrases, onComplete }: { phrases: string[]; onComplete: () => void }) {
-  const shown = useTypewriterSequence(phrases, { onComplete });
+function StuardLineSequence({
+  phrases,
+  onComplete,
+  timing,
+}: {
+  phrases: string[];
+  onComplete: () => void;
+  timing?: Parameters<typeof useTypewriterSequence>[1];
+}) {
+  const shown = useTypewriterSequence(phrases, { ...timing, onComplete });
   return (
     <p
-      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[34ch] mx-auto"
+      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[42ch] mx-auto"
       style={{ textShadow: '0 2px 24px rgba(40,10,12,0.7), 0 0 2px rgba(0,0,0,0.5)' }}
     >
       {shown}
@@ -359,6 +368,16 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
   const [lineDone, setLineDone] = useState(false);
 
   const firstName = useMemo(() => pickFirstName(name, 'friend'), [name]);
+
+  const storyPhrases = useMemo(() => [
+    `Good to meet you, ${firstName}.`,
+    'I plug into your files, your apps, and every tool your computer exposes.',
+    'Tell me what you want. I read what\'s on your screen and actually run the job.',
+    'Clean up downloads. Summarize an inbox. Change your wallpaper. Whatever the job needs.',
+    'Do something twice? I save the recipe as a workflow you can run again.',
+    'Or grab a mini-app from the marketplace and install it in one click.',
+    'Your stuff stays local. Cloud only when you ask.',
+  ], [firstName]);
 
   // ── Auth bootstrap
   useEffect(() => {
@@ -488,7 +507,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
     const trimmed = name.trim();
     if (!trimmed) return;
     try { localStorage.setItem('stuard_user_name', trimmed); } catch {}
-    setScene('acknowledge');
+    setScene('story');
   };
 
   const handleSaveHotkey = async () => {
@@ -522,7 +541,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
         return (
           <SceneShell stepKey="signin">
             <StuardLine
-              text="Before we begin — sign in so I remember you."
+              text="Sign in first, so I remember you."
               onTypingDone={() => setLineDone(true)}
             />
             <div className="mt-12">
@@ -544,10 +563,12 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
               phrases={[
                 'Hey there.',
                 "I'm Stuard.",
-                'I live here on your desktop.',
-                'Email, files, the browser —',
-                "anything you'd open a tab for.",
-                "Now — I don't think we've met.",
+                'The AI workspace for your PC.',
+                'Most chat assistants live in a browser tab.',
+                'I live right here on your machine.',
+                'Your files, your apps, your whole toolbox.',
+                'I turn repeated work into workflows, mini-apps, and agents you can reuse.',
+                "But first, I don't think we've met.",
               ]}
               onComplete={() => setScene('greet')}
             />
@@ -558,7 +579,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
         return (
           <SceneShell stepKey="greet">
             <StuardLine
-              text="You are?"
+              text="What should I call you?"
               onTypingDone={() => setLineDone(true)}
             />
             <div className={clsx('mt-10 w-full max-w-[380px] transition-opacity duration-500', lineDone ? 'opacity-100' : 'opacity-0 pointer-events-none')}>
@@ -592,14 +613,24 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
           </SceneShell>
         );
 
+      case 'story':
+        return (
+          <SceneShell stepKey="story">
+            <StuardLineSequence
+              phrases={storyPhrases}
+              timing={{ holdMs: 1900, tailMs: 1400, typeSpeed: 36 }}
+              onComplete={() => setScene('acknowledge')}
+            />
+          </SceneShell>
+        );
+
       case 'acknowledge':
         return (
           <SceneShell stepKey="acknowledge">
             <StuardLineSequence
               phrases={[
-                `${firstName} — noted.`,
-                "Alright. First things first —",
-                "let me show you how to get my attention.",
+                `Alright, ${firstName}.`,
+                'Let me show you how to reach me.',
               ]}
               onComplete={() => setScene('wakeword-try1')}
             />
@@ -610,7 +641,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
         return (
           <SceneShell stepKey="wakeword-try1">
             <StuardLine
-              text={wakewordHeard ? 'There you are.' : 'Try saying — Hey Stuard.'}
+              text={wakewordHeard ? 'There you are.' : 'Try saying: Hey Stuard.'}
             />
             <div className="mt-9">
               {wakewordHeard ? (
@@ -645,7 +676,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
       case 'wakeword-success':
         return (
           <SceneShell stepKey="wakeword-success">
-            <StuardLine text="Nice. We're connected." />
+            <StuardLine text="Nice. We're connected. Voice works." />
           </SceneShell>
         );
 
@@ -654,8 +685,8 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
           <SceneShell stepKey="hotkey-intro">
             <StuardLineSequence
               phrases={[
-                "Talking isn't always an option, though.",
-                'So pick a hotkey, too.',
+                "Talking isn't always an option.",
+                'Pick a hotkey too, for when you are heads-down.',
               ]}
               onComplete={() => setScene('hotkey-set')}
             />
@@ -667,7 +698,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
         return (
           <SceneShell stepKey="hotkey-set">
             <StuardLine
-              text="This summons me from anywhere."
+              text="Press this from anywhere and I am right there."
               onTypingDone={() => setLineDone(true)}
             />
             <div className={clsx('mt-12 flex flex-col items-center gap-8 transition-opacity duration-500', lineDone ? 'opacity-100' : 'opacity-0 pointer-events-none')}>
@@ -732,7 +763,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
               <Check className="w-7 h-7 text-emerald-200" strokeWidth={1.6} />
             </motion.div>
             <StuardLine
-              text={`We're set, ${firstName}. I'll be around.`}
+              text={`Your PC is more powerful than your average chatbot thinks, ${firstName}. I'll be right here.`}
               onTypingDone={() => setLineDone(true)}
             />
             <Continue show={lineDone} label="Open Stuard" onClick={dismiss} />

@@ -28,30 +28,116 @@ export interface ChatSession {
 }
 
 const STORAGE_KEY = 'stuard_workflow_chat_sessions';
-const MAX_SESSIONS_PER_WORKFLOW = 10;
+const MAX_SESSIONS_PER_WORKFLOW = 5;
+const MAX_MESSAGES_PER_SESSION = 40;
+const MAX_CONTENT_CHARS = 24_000;
+const MAX_REASONING_CHARS = 12_000;
+const MAX_TEXT_PART_CHARS = 12_000;
+const MAX_PARTS_PER_MESSAGE = 60;
+const MAX_TOOL_JSON_CHARS = 24_000;
+
+function clipText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n\n[truncated ${value.length - maxChars} chars]`;
+}
+
+function compactValue(value: any, maxJsonChars = MAX_TOOL_JSON_CHARS): any {
+  if (value == null) return value;
+  if (typeof value === 'string') return clipText(value, Math.min(maxJsonChars, MAX_CONTENT_CHARS));
+  if (typeof value !== 'object') return value;
+
+  try {
+    const json = JSON.stringify(value);
+    if (json.length <= maxJsonChars) return value;
+  } catch {
+    return '[unserializable value]';
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      __truncated: true,
+      itemCount: value.length,
+      preview: value.slice(0, 20).map((item) => compactValue(item, Math.max(1_000, Math.floor(maxJsonChars / 20)))),
+    };
+  }
+
+  const out: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const lower = key.toLowerCase();
+    if (
+      lower.includes('base64') ||
+      lower === 'data' ||
+      lower === 'dataurl' ||
+      lower === 'imagedata' ||
+      lower === 'audiodata' ||
+      lower === 'videodata' ||
+      lower === 'buffer'
+    ) {
+      out[key] = typeof entry === 'string' ? `[omitted ${entry.length} chars]` : '[omitted binary payload]';
+      continue;
+    }
+    if (lower === 'workflow' || lower === 'spec') {
+      const spec: any = entry;
+      out[`${key}Summary`] = spec && typeof spec === 'object'
+        ? {
+          triggers: Array.isArray(spec.triggers) ? spec.triggers.length : undefined,
+          nodes: Array.isArray(spec.nodes) ? spec.nodes.length : undefined,
+          steps: Array.isArray(spec.steps) ? spec.steps.length : undefined,
+          wires: Array.isArray(spec.wires) ? spec.wires.length : undefined,
+        }
+        : '[omitted large workflow payload]';
+      continue;
+    }
+    out[key] = compactValue(entry, Math.max(1_000, Math.floor(maxJsonChars / 8)));
+  }
+  out.__truncated = true;
+  return out;
+}
+
+function compactPart(part: any): StoredStreamItem | null {
+  if (part?.type === 'tool') {
+    const event = part?.event && typeof part.event === 'object' ? part.event : {};
+    return {
+      type: 'tool',
+      event: {
+        ...event,
+        args: compactValue(event.args, 8_000),
+        argsText: typeof event.argsText === 'string' ? clipText(event.argsText, 8_000) : event.argsText,
+        result: compactValue(event.result, MAX_TOOL_JSON_CHARS),
+        workflowBefore: undefined,
+      },
+    } satisfies StoredStreamItem;
+  }
+  if (part?.type === 'text') {
+    return { type: 'text', content: clipText(typeof part?.content === 'string' ? part.content : '', MAX_TEXT_PART_CHARS) } satisfies StoredStreamItem;
+  }
+  if (part?.type === 'reasoning') {
+    return { type: 'reasoning', content: clipText(typeof part?.content === 'string' ? part.content : '', MAX_REASONING_CHARS) } satisfies StoredStreamItem;
+  }
+  return null;
+}
+
+function compactImages(images: any): ChatMessage['images'] {
+  if (!Array.isArray(images)) return undefined;
+  return images.slice(0, 8).map((img: any) => ({
+    path: typeof img?.path === 'string' ? img.path : '',
+    name: typeof img?.name === 'string' ? img.name : 'image',
+    mimeType: typeof img?.mimeType === 'string' ? img.mimeType : undefined,
+  }));
+}
 
 function normalizeMessage(message: any): ChatMessage {
   return {
     role: message?.role === 'assistant' || message?.role === 'system' ? message.role : 'user',
-    content: typeof message?.content === 'string' ? message.content : '',
-    images: Array.isArray(message?.images) ? message.images : undefined,
+    content: typeof message?.content === 'string' ? clipText(message.content, MAX_CONTENT_CHARS) : '',
+    images: compactImages(message?.images),
     parts: Array.isArray(message?.parts)
       ? message.parts
-        .map((part: any) => {
-          if (part?.type === 'tool') {
-            return { type: 'tool', event: part?.event } satisfies StoredStreamItem;
-          }
-          if (part?.type === 'text') {
-            return { type: 'text', content: typeof part?.content === 'string' ? part.content : '' } satisfies StoredStreamItem;
-          }
-          if (part?.type === 'reasoning') {
-            return { type: 'reasoning', content: typeof part?.content === 'string' ? part.content : '' } satisfies StoredStreamItem;
-          }
-          return null;
-        })
+        .slice(-MAX_PARTS_PER_MESSAGE)
+        .map(compactPart)
         .filter((part: StoredStreamItem | null): part is StoredStreamItem => part !== null)
       : undefined,
-    reasoning: typeof message?.reasoning === 'string' ? message.reasoning : undefined,
+    reasoning: typeof message?.reasoning === 'string' ? clipText(message.reasoning, MAX_REASONING_CHARS) : undefined,
     draft: message?.draft === true ? true : undefined,
     usage: message?.usage && typeof message.usage === 'object' ? message.usage : undefined,
     modelId: typeof message?.modelId === 'string' ? message.modelId : undefined,
@@ -66,7 +152,7 @@ function normalizeSession(session: any): ChatSession | null {
   return {
     id: session.id,
     workflowId: session.workflowId,
-    messages: Array.isArray(session.messages) ? session.messages.map(normalizeMessage) : [],
+    messages: Array.isArray(session.messages) ? session.messages.slice(-MAX_MESSAGES_PER_SESSION).map(normalizeMessage) : [],
     createdAt: typeof session.createdAt === 'string' ? session.createdAt : new Date().toISOString(),
     updatedAt: typeof session.updatedAt === 'string' ? session.updatedAt : new Date().toISOString(),
     title: typeof session.title === 'string' ? session.title : undefined,
@@ -138,7 +224,7 @@ export function saveSession(sessionId: string, messages: ChatMessage[]): void {
   const idx = all.findIndex(s => s.id === sessionId);
   
   if (idx >= 0) {
-    all[idx].messages = messages;
+    all[idx].messages = messages.slice(-MAX_MESSAGES_PER_SESSION).map(normalizeMessage);
     all[idx].updatedAt = new Date().toISOString();
     
     // Auto-generate title from first user message

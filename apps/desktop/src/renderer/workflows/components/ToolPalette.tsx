@@ -230,9 +230,9 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   }, [filteredCategories]);
 
   return (
-    <div className="flex flex-col h-full wf-bg-elevated border-r wf-border-subtle" data-onboarding="node-palette">
+    <div className="flex flex-col h-full wf-bg-elevated border-r border-theme-sidebar" data-onboarding="node-palette">
       {/* Header */}
-      <div className="h-14 px-4 py-2 border-b wf-border-subtle flex items-center justify-between shrink-0 bg-transparent">
+      <div className="h-14 px-4 py-2 border-b border-theme-sidebar flex items-center justify-between shrink-0 bg-transparent">
           <div className="flex items-center gap-2.5 text-sm font-bold wf-fg">
           <div className="p-1.5 rounded-lg wf-accent-soft [color:var(--wf-accent)]">
             <Box className="w-4 h-4" />
@@ -289,7 +289,7 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
           <div key={group.id} className="space-y-2">
             <div className="flex items-center gap-2 px-1 pt-1 select-none">
               <div className="text-[10px] font-bold uppercase tracking-wider wf-fg-muted">{group.label}</div>
-              <div className="flex-1 h-px wf-border-subtle border-t" />
+              <div className="flex-1 h-px border-t border-theme-sidebar" />
             </div>
             {group.categories.map(cat => {
           const isExpanded = expandedCategories.has(cat.id) || !!searchQuery;

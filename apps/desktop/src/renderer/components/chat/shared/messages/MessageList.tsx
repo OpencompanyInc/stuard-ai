@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useMemo, memo, useState, useCallback } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle, type Components } from 'react-virtuoso';
 import { motion } from 'framer-motion';
+import { clsx } from 'clsx';
 import MessageBubble from './MessageBubble/MessageBubble';
 import { CornerDownRight } from 'lucide-react';
 import type { ToolCall, StreamChunk } from '../../../../hooks/useAgent';
@@ -47,6 +48,34 @@ interface MessageListProps {
 // Sentinel id used for the live streaming bubble item. Kept stable so
 // Virtuoso doesn't unmount/remount it across token ticks.
 const STREAMING_ITEM_ID = '__streaming__';
+
+/** Horizontal inset for message rows — Virtuoso ignores scroller padding. */
+const CHAT_MESSAGE_GUTTER_PX = 20;
+
+const VirtuosoList = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(function VirtuosoList({ style, children, className, ...props }, ref) {
+  return (
+    <div
+      ref={ref}
+      {...props}
+      className={clsx(className, 'box-border')}
+      style={{
+        ...style,
+        paddingLeft: CHAT_MESSAGE_GUTTER_PX,
+        paddingRight: CHAT_MESSAGE_GUTTER_PX,
+        boxSizing: 'border-box',
+      }}
+    >
+      {children}
+    </div>
+  );
+});
+
+const virtuosoComponents: Components<VirtuosoItem> = {
+  List: VirtuosoList,
+};
 
 interface VirtuosoItem {
   id: string;
@@ -252,7 +281,7 @@ const MessageList: React.FC<MessageListProps> = ({
 
   const itemContent = useCallback(
     (_index: number, item: VirtuosoItem) => (
-      <div className="pb-1">
+      <div className="pb-1 w-full min-w-0 max-w-full box-border">
         <MessageItem
           item={item}
           streamingProps={item.kind === 'streaming' ? streamingProps : undefined}
@@ -268,10 +297,10 @@ const MessageList: React.FC<MessageListProps> = ({
     [],
   );
 
-  const scrollerClass = `${className || 'h-full no-drag custom-scrollbar px-3 py-2 select-text'} min-w-0 overflow-x-hidden`;
+  const scrollerClass = `${className || 'h-full no-drag custom-scrollbar py-2 select-text'} min-w-0 max-w-full box-border overflow-x-clip`;
 
   return (
-    <div className="relative h-full min-w-0 overflow-x-hidden">
+    <div className="relative h-full min-w-0 max-w-full overflow-x-clip">
       <Virtuoso
         ref={virtuosoRef}
         data={items}
@@ -282,8 +311,9 @@ const MessageList: React.FC<MessageListProps> = ({
         initialTopMostItemIndex={Math.max(0, items.length - 1)}
         overscan={{ main: 600, reverse: 200 }}
         increaseViewportBy={{ top: 400, bottom: 200 }}
+        components={virtuosoComponents}
         className={scrollerClass}
-        style={{ height: '100%', overflowX: 'hidden' }}
+        style={{ height: '100%', overflowX: 'clip' }}
       />
     </div>
   );

@@ -100,7 +100,7 @@ function PlanCard({ plan, current, onSelect, purchasing }: { plan: StoragePlan; 
         "relative flex flex-col p-4 rounded-2xl border-2 transition-all duration-300 text-left group",
         current
           ? "border-primary/40 bg-primary/5 ring-2 ring-primary/20 cursor-default"
-          : "border-theme/10 dark:border-transparent bg-theme-card hover:border-primary/30 hover:bg-primary/5 hover:shadow-lg",
+          : "border-theme/10 bg-theme-card hover:border-primary/30 hover:bg-primary/5 hover:shadow-lg",
         purchasing && "opacity-50 cursor-wait"
       )}
     >
@@ -283,7 +283,7 @@ function FilesTab({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Filter files..."
-            className="w-full pl-9 pr-3 py-2 bg-theme-hover/50 border border-theme/10 dark:border-transparent rounded-xl text-xs text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+            className="w-full pl-9 pr-3 py-2 bg-theme-hover/50 border border-[color:var(--dashboard-panel-border)] rounded-xl text-xs text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
           />
         </div>
         <button onClick={fetchFiles} className="p-2 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors">
@@ -293,7 +293,7 @@ function FilesTab({
 
       {/* File List */}
       {filtered.length === 0 ? (
-        <div className="p-6 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card text-center">
+        <div className="p-6 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card text-center">
           <FolderOpen className="w-10 h-10 text-theme-muted/30 mx-auto mb-3" />
           <p className="text-sm text-theme-muted font-medium">
             {files.length === 0 ? 'No files yet. Upload files above.' : 'No files matching your search.'}
@@ -303,7 +303,7 @@ function FilesTab({
           </p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card overflow-hidden">
+        <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card overflow-hidden">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-4 py-2 border-b border-theme/10 text-[10px] font-black text-theme-muted uppercase tracking-wider">
             <span>Name</span>
             <span>Size</span>
@@ -504,7 +504,7 @@ export function StorageView() {
           </div>
 
           {/* Quick Sync Card */}
-          <div className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card">
+          <div className="p-5 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card">
             <div className="flex items-center gap-2 mb-4">
               <ArrowUpDown className="w-4 h-4 text-primary" />
               <span className="font-bold text-theme-fg">VM ↔ Cloud Sync</span>
@@ -584,7 +584,7 @@ export function StorageView() {
       {tab === 'sync' && (
         <div className="space-y-4">
           {/* Sync Diagram */}
-          <div className="p-6 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card">
+          <div className="p-6 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card">
             <div className="flex items-center justify-center gap-4">
               <div className="flex flex-col items-center gap-2 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20">
@@ -618,7 +618,7 @@ export function StorageView() {
             <button
               onClick={syncToCloud}
               disabled={syncing}
-              className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card hover:border-primary/30 hover:bg-primary/3 transition-all text-left group disabled:opacity-50"
+              className="p-5 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card hover:border-primary/30 hover:bg-primary/3 transition-all text-left group disabled:opacity-50"
             >
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -637,7 +637,7 @@ export function StorageView() {
             <button
               onClick={syncFromCloud}
               disabled={syncing}
-              className="p-5 rounded-2xl border border-theme/10 dark:border-transparent bg-theme-card hover:border-blue-500/30 hover:bg-blue-500/3 transition-all text-left group disabled:opacity-50"
+              className="p-5 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card hover:border-blue-500/30 hover:bg-blue-500/3 transition-all text-left group disabled:opacity-50"
             >
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
@@ -655,7 +655,7 @@ export function StorageView() {
           </div>
 
           {/* Sync Info */}
-          <div className="p-4 rounded-2xl bg-theme-hover/30 border border-theme/5 dark:border-transparent">
+          <div className="p-4 rounded-2xl bg-theme-hover/30 border border-[color:var(--dashboard-panel-border)]">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
               <div>
                 <div className="text-sm font-black text-theme-fg">{timeAgo(syncStatus?.lastSyncAt || null)}</div>
@@ -698,7 +698,7 @@ export function StorageView() {
             ))}
           </div>
 
-          <div className="p-4 rounded-xl bg-theme-hover/30 border border-theme/5 dark:border-transparent text-xs text-theme-muted leading-relaxed">
+          <div className="p-4 rounded-xl bg-theme-hover/30 border border-[color:var(--dashboard-panel-border)] text-xs text-theme-muted leading-relaxed">
             <strong className="text-theme-fg">How storage works:</strong>
             <ul className="mt-2 space-y-1 list-disc list-inside">
               <li><strong>Hot disk</strong> is a fast PD-SSD attached to your VM — your live workspace</li>

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -32,6 +34,7 @@ async def _stream_subprocess(
     *,
     cwd: Optional[str],
     timeout_ms: int,
+    env: Optional[Dict[str, str]] = None,
     emit: Optional[Callable[[str, Dict[str, Any] | None], Awaitable[None]]] = None,
     flush_ms: int = 120,
     max_chunk: int = 8192,
@@ -51,6 +54,8 @@ async def _stream_subprocess(
     }
     if cwd:
         proc_kwargs["cwd"] = cwd
+    if env:
+        proc_kwargs["env"] = env
 
     proc = await asyncio.create_subprocess_exec(*argv, **proc_kwargs)
 
@@ -403,6 +408,7 @@ def _start_terminal_session(
     shell: bool = False,
     shell_used: str = "",
     cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
     terminal_id: Optional[str] = None,
     checkpoint_before: Optional[Dict[str, Any]] = None,
     max_chars: int = 200_000,
@@ -420,6 +426,8 @@ def _start_terminal_session(
     }
     if isinstance(cwd, str) and cwd:
         popen_kwargs["cwd"] = cwd
+    if env:
+        popen_kwargs["env"] = env
 
     if argv is not None:
         proc = subprocess.Popen(argv, shell=False, **popen_kwargs)  # nosec
@@ -537,32 +545,35 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
         except Exception:
             return False
 
+    python_env_dir = _command_python_env_dir(resolved_cwd)
+    command_env = _command_env_with_python_env(python_env_dir)
+
     shell_used = ""
     argv = []  # type: ignore[var-annotated]
     if _is_windows():
         if shell_pref in ("default", "cmd"):
             shell_used = "cmd"
-            argv = ["cmd.exe", "/d", "/c", cmd]
+            argv = ["cmd.exe", "/d", "/c", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
         elif shell_pref in ("auto", "powershell", "pwsh"):
             exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
             shell_used = "powershell"
-            argv = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd]
+            argv = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
         else:
             shell_used = "cmd"
-            argv = ["cmd.exe", "/d", "/c", cmd]
+            argv = ["cmd.exe", "/d", "/c", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
     else:
         if shell_pref in ("default", "sh"):
             exe = "/bin/sh"
             shell_used = "sh"
-            argv = [exe, "-lc", cmd]
+            argv = [exe, "-lc", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
         elif shell_pref in ("auto", "bash"):
             exe = "/bin/bash" if _exists("/bin/bash") else (shutil.which("bash") or "/bin/sh")
             shell_used = "bash" if "bash" in exe else "sh"
-            argv = [exe, "-lc", cmd]
+            argv = [exe, "-lc", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
         else:
             exe = "/bin/sh"
             shell_used = "sh"
-            argv = [exe, "-lc", cmd]
+            argv = [exe, "-lc", _shell_command_with_python_env(cmd, shell_used, python_env_dir)]
 
     if emit:
         await emit("executing", {"command": cmd, "shell": shell_used})
@@ -573,6 +584,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
             shell=False,
             shell_used=shell_used,
             cwd=resolved_cwd,
+            env=command_env,
             terminal_id=str(terminal_id) if terminal_id is not None else None,
             checkpoint_before=checkpoint,
         )
@@ -580,6 +592,7 @@ async def run_command(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] 
         rc, stdout, stderr, timed_out = await _stream_subprocess(
             [str(a) for a in argv],
             cwd=resolved_cwd,
+            env=command_env,
             timeout_ms=timeout_ms,
             emit=emit,
         )
@@ -739,7 +752,12 @@ def _resolve_python_env_id(env_id: Any) -> str:
 
 
 def _python_env_dir(env_id: str) -> str:
-    return os.path.join(_envs_base_dir(), _resolve_python_env_id(env_id))
+    resolved = _resolve_python_env_id(env_id)
+    if resolved == DEFAULT_PYTHON_ENV_ID:
+        native_env = _native_python_env_dir()
+        if native_env:
+            return native_env
+    return os.path.join(_envs_base_dir(), resolved)
 
 
 def _python_env_bin(env_dir: str) -> str:
@@ -750,6 +768,314 @@ def _python_env_bin(env_dir: str) -> str:
     return preferred if os.path.exists(preferred) or not os.path.exists(fallback) else fallback
 
 
+def _venv_bin_dir(env_dir: str) -> str:
+    return os.path.dirname(_python_env_bin(env_dir))
+
+
+def _is_usable_python_env(env_dir: Any) -> bool:
+    if not isinstance(env_dir, str) or not env_dir.strip():
+        return False
+    try:
+        resolved = os.path.abspath(os.path.expanduser(env_dir.strip()))
+        return os.path.isfile(os.path.join(resolved, "pyvenv.cfg")) and os.path.exists(_python_env_bin(resolved))
+    except Exception:
+        return False
+
+
+def _append_env_candidate(candidates: List[str], env_dir: Any) -> None:
+    if not isinstance(env_dir, str) or not env_dir.strip():
+        return
+    try:
+        resolved = os.path.abspath(os.path.expanduser(env_dir.strip()))
+    except Exception:
+        return
+    normalized = os.path.normcase(resolved)
+    if any(os.path.normcase(existing) == normalized for existing in candidates):
+        return
+    candidates.append(resolved)
+
+
+def _cwd_venv_candidates(cwd: Optional[str]) -> List[str]:
+    candidates: List[str] = []
+    if not cwd:
+        return candidates
+    try:
+        current = os.path.abspath(os.path.expanduser(cwd))
+        if not os.path.isdir(current):
+            return candidates
+        while True:
+            _append_env_candidate(candidates, os.path.join(current, ".venv"))
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    except Exception:
+        return candidates
+    return candidates
+
+
+def _agent_repo_venv() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".venv"))
+
+
+def _native_python_env_dir(cwd: Optional[str] = None, *, prefer_cwd: bool = False) -> str:
+    candidates: List[str] = []
+
+    _append_env_candidate(candidates, os.environ.get("STUARD_PYTHON_ENV"))
+    _append_env_candidate(candidates, os.environ.get("VIRTUAL_ENV"))
+
+    if prefer_cwd:
+        for candidate in _cwd_venv_candidates(cwd):
+            _append_env_candidate(candidates, candidate)
+
+    try:
+        sys_prefix = os.path.abspath(str(getattr(sys, "prefix", "") or ""))
+        base_prefix = os.path.abspath(str(getattr(sys, "base_prefix", "") or sys_prefix))
+        if sys_prefix and os.path.normcase(sys_prefix) != os.path.normcase(base_prefix):
+            _append_env_candidate(candidates, sys_prefix)
+    except Exception:
+        pass
+
+    _append_env_candidate(candidates, _agent_repo_venv())
+
+    if not prefer_cwd:
+        for candidate in _cwd_venv_candidates(cwd):
+            _append_env_candidate(candidates, candidate)
+
+    for candidate in candidates:
+        if _is_usable_python_env(candidate):
+            return candidate
+    return ""
+
+
+def _command_python_env_dir(cwd: Optional[str]) -> str:
+    native_env = _native_python_env_dir(cwd, prefer_cwd=True)
+    if native_env:
+        return native_env
+    default_env = os.path.join(_envs_base_dir(), DEFAULT_PYTHON_ENV_ID)
+    return default_env if _is_usable_python_env(default_env) else ""
+
+
+def _command_env_with_python_env(env_dir: str) -> Optional[Dict[str, str]]:
+    if not _is_usable_python_env(env_dir):
+        return None
+    bin_dir = _venv_bin_dir(env_dir)
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = env_dir
+    env["PYTHONNOUSERSITE"] = "1"
+    env.pop("PYTHONHOME", None)
+    existing_path = env.get("PATH") or ""
+    env["PATH"] = bin_dir + (os.pathsep + existing_path if existing_path else "")
+    return env
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _shell_command_with_python_env(cmd: str, shell_used: str, env_dir: str) -> str:
+    if not _is_usable_python_env(env_dir):
+        return cmd
+
+    py_bin = _python_env_bin(env_dir)
+    bin_dir = _venv_bin_dir(env_dir)
+
+    if shell_used == "powershell":
+        py = _ps_quote(py_bin)
+        path = _ps_quote(bin_dir)
+        venv = _ps_quote(env_dir)
+        preamble = (
+            f"$env:VIRTUAL_ENV={venv}; "
+            "$env:PYTHONNOUSERSITE='1'; "
+            "Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue; "
+            f"$env:PATH={path} + [IO.Path]::PathSeparator + $env:PATH; "
+            f"function python {{ & {py} @args }}; "
+            f"function python3 {{ & {py} @args }}; "
+            f"function py {{ & {py} @args }}; "
+            f"function pip {{ & {py} -m pip @args }}; "
+            f"function pip3 {{ & {py} -m pip @args }}; "
+        )
+        return preamble + cmd
+
+    if shell_used == "cmd":
+        return (
+            f'set "VIRTUAL_ENV={env_dir}" && '
+            'set "PYTHONNOUSERSITE=1" && '
+            f'set "PATH={bin_dir};%PATH%" && '
+            f"{cmd}"
+        )
+
+    py = shlex.quote(py_bin)
+    path = shlex.quote(bin_dir)
+    venv = shlex.quote(env_dir)
+    preamble = (
+        f"export VIRTUAL_ENV={venv}; "
+        "export PYTHONNOUSERSITE=1; "
+        "unset PYTHONHOME; "
+        f"export PATH={path}:$PATH; "
+        f"python() {{ {py} \"$@\"; }}; "
+        f"python3() {{ {py} \"$@\"; }}; "
+        f"py() {{ {py} \"$@\"; }}; "
+        f"pip() {{ {py} -m pip \"$@\"; }}; "
+        f"pip3() {{ {py} -m pip \"$@\"; }}; "
+    )
+    return preamble + cmd
+
+
+def _normalize_pkg_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+_INSTALLED_PACKAGES_CACHE: Dict[str, tuple[float, Dict[str, str]]] = {}
+_INSTALLED_PACKAGES_TTL_SEC = 30.0
+
+
+def _invalidate_installed_packages_cache(env_dir: str) -> None:
+    _INSTALLED_PACKAGES_CACHE.pop(env_dir, None)
+
+
+async def _list_installed_packages(py_bin: str, *, env_dir: str | None = None) -> Dict[str, str]:
+    """Return {package_name: version} for packages installed in the venv."""
+    if not py_bin or not os.path.exists(py_bin):
+        return {}
+    cache_key = env_dir or py_bin
+    now = time.time()
+    cached = _INSTALLED_PACKAGES_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < _INSTALLED_PACKAGES_TTL_SEC:
+        return cached[1]
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [py_bin, "-m", "pip", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return {}
+    try:
+        rows = json.loads(proc.stdout or "[]")
+        installed = {
+            str(row.get("name") or "").strip(): str(row.get("version") or "").strip()
+            for row in rows
+            if isinstance(row, dict) and row.get("name")
+        }
+    except Exception:
+        installed = {}
+    _INSTALLED_PACKAGES_CACHE[cache_key] = (now, installed)
+    return installed
+
+
+def _parse_requirements_lines(req_txt: str) -> List[str]:
+    specs: List[str] = []
+    for raw in req_txt.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("-"):
+            continue
+        specs.append(line)
+    return specs
+
+
+def _installed_lookup(installed: Dict[str, str]) -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    for name, version in installed.items():
+        lookup[_normalize_pkg_name(name)] = version
+    return lookup
+
+
+async def _filter_packages_to_install(py_bin: str, specs: List[str]) -> tuple[List[str], List[str]]:
+    """Split package specs into (needs_install, already_satisfied)."""
+    cleaned = [str(spec).strip() for spec in specs if str(spec).strip()]
+    if not cleaned:
+        return [], []
+
+    installed = await _list_installed_packages(py_bin)
+    lookup = _installed_lookup(installed)
+    check_code = r"""
+import json, sys
+from importlib.metadata import version, PackageNotFoundError
+try:
+    from packaging.requirements import Requirement
+except ImportError:
+    Requirement = None
+
+specs = json.loads(sys.argv[1])
+lookup = json.loads(sys.argv[2])
+result = {"install": [], "satisfied": []}
+
+def normalize(name):
+    import re
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+for raw in specs:
+    spec = str(raw).strip()
+    if not spec:
+        continue
+    if any(token in spec for token in ("://", " @")) or spec.startswith((".", "/", "~")):
+        result["install"].append(spec)
+        continue
+    if Requirement is None:
+        base = spec.split("[", 1)[0]
+        for op in ("==", ">=", "<=", "!=", "~=", "<", ">"):
+            if op in base:
+                base = base.split(op, 1)[0]
+                break
+        name = normalize(base.strip())
+        if name in lookup:
+            result["satisfied"].append(spec)
+        else:
+            result["install"].append(spec)
+        continue
+    try:
+        req = Requirement(spec)
+        try:
+            ver = version(req.name)
+            if req.specifier.contains(ver, prereleases=True):
+                result["satisfied"].append(spec)
+                continue
+        except PackageNotFoundError:
+            pass
+        result["install"].append(spec)
+    except Exception:
+        result["install"].append(spec)
+
+print(json.dumps(result))
+"""
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [py_bin, "-c", check_code, json.dumps(cleaned), json.dumps(lookup)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return cleaned, []
+    try:
+        parsed = json.loads(proc.stdout.strip() or "{}")
+        to_install = [str(x) for x in (parsed.get("install") or []) if str(x).strip()]
+        satisfied = [str(x) for x in (parsed.get("satisfied") or []) if str(x).strip()]
+        return to_install, satisfied
+    except Exception:
+        return cleaned, []
+
+
+async def _pip_install_packages(
+    py_bin: str,
+    specs: List[str],
+    *,
+    quiet: bool = True,
+    extra_args: List[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    cmd = [py_bin, "-m", "pip", "install"]
+    if quiet:
+        cmd.append("--quiet")
+    if extra_args:
+        cmd.extend(extra_args)
+    cmd.extend(specs)
+    return await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+
+
 async def _ensure_python_env(
     env_id: str,
     emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
@@ -757,7 +1083,7 @@ async def _ensure_python_env(
     resolved_env_id = _resolve_python_env_id(env_id)
     envs_root = _envs_base_dir()
     os.makedirs(envs_root, exist_ok=True)
-    env_dir = os.path.join(envs_root, resolved_env_id)
+    env_dir = _python_env_dir(resolved_env_id)
     py_bin = _python_env_bin(env_dir)
 
     if not os.path.exists(py_bin):
@@ -830,6 +1156,13 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
         default_ready = os.path.exists(default_python)
         active_ready = os.path.exists(active_python)
         needs_install = is_frozen and not system_python
+        package_count = 0
+        if active_ready:
+            try:
+                installed = await _list_installed_packages(active_python, env_dir=active_env_dir)
+                package_count = len(installed)
+            except Exception:
+                package_count = 0
         return {
             "ok": True,
             "available": bool(usable_python),
@@ -847,6 +1180,7 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
             "activeEnvPath": active_env_dir,
             "activePython": active_python,
             "activeReady": active_ready,
+            "packageCount": package_count,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -893,44 +1227,72 @@ async def python_install(args: Dict[str, Any], emit: Callable[[str, Dict[str, An
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-        install_args: list[str] = [py_bin, "-m", "pip", "install"]
+        pip_extra: list[str] = []
         wheelhouse = str(args.get("wheelhouse") or os.environ.get("AGENT_WHEELHOUSE") or "").strip()
         use_offline = False
         if offline_only and wheelhouse and os.path.isdir(wheelhouse):
-            install_args.extend(["--no-index", "--find-links", wheelhouse])
+            pip_extra.extend(["--no-index", "--find-links", wheelhouse])
             use_offline = True
         elif offline_only and not wheelhouse:
             return {"ok": False, "error": "offline_wheelhouse_missing"}
 
-        tmp_req = None
+        specs: list[str] = []
+        if isinstance(packages, list):
+            specs.extend(str(p).strip() for p in packages if str(p).strip())
         if req_txt.strip():
-            fd, tmp_req = tempfile.mkstemp(prefix="req-", suffix=".txt")
-            os.write(fd, req_txt.encode("utf-8"))
-            os.close(fd)
+            specs.extend(_parse_requirements_lines(req_txt))
 
-        try:
-            if emit:
-                await emit("installing", {"envId": env_id, "mode": "offline" if use_offline else "online"})
-            if tmp_req:
-                cmd = install_args + ["-r", tmp_req]
-                proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+        packages_installed: list[str] = []
+        packages_skipped: list[str] = []
+
+        if specs:
+            to_install, satisfied = await _filter_packages_to_install(py_bin, specs)
+            packages_skipped.extend(satisfied)
+            if satisfied and emit:
+                await emit("packages_already_installed", {"packages": satisfied, "count": len(satisfied)})
+
+            if to_install:
+                if emit:
+                    await emit("installing", {"envId": env_id, "mode": "offline" if use_offline else "online", "packages": to_install})
+                proc = await _pip_install_packages(py_bin, to_install, quiet=False, extra_args=pip_extra or None)
                 if proc.returncode != 0:
-                    return {"ok": False, "error": proc.stderr or "install_failed", "stdout": proc.stdout}
-            if isinstance(packages, list) and packages:
-                specs = [str(p) for p in packages if str(p).strip()]
-                if specs:
-                    cmd = install_args + specs
-                    proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
-                    if proc.returncode != 0:
-                        return {"ok": False, "error": proc.stderr or "install_failed", "stdout": proc.stdout}
-        finally:
-            try:
-                if tmp_req and os.path.exists(tmp_req):
-                    os.remove(tmp_req)
-            except Exception:
-                pass
+                    return {
+                        "ok": False,
+                        "error": proc.stderr or "install_failed",
+                        "stdout": proc.stdout,
+                        "packagesSkipped": packages_skipped,
+                    }
+                packages_installed.extend(to_install)
+                _invalidate_installed_packages_cache(env_dir)
+            elif emit:
+                await emit("install_skipped", {"envId": env_id, "reason": "already_installed", "packages": packages_skipped})
 
-        return {"ok": True, "envId": env_id, "envPath": env_dir, "python": py_bin}
+        return {
+            "ok": True,
+            "envId": env_id,
+            "envPath": env_dir,
+            "python": py_bin,
+            "packagesInstalled": packages_installed,
+            "packagesSkipped": packages_skipped,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def python_list_packages(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        args = args or {}
+        env_id = _resolve_python_env_id(args.get("envId"))
+        env_dir = _python_env_dir(env_id)
+        py_bin = _python_env_bin(env_dir)
+        if not os.path.exists(py_bin):
+            return {"ok": True, "envId": env_id, "ready": False, "packages": [], "count": 0}
+        installed = await _list_installed_packages(py_bin, env_dir=env_dir)
+        packages = sorted(
+            [{"name": name, "version": version} for name, version in installed.items()],
+            key=lambda row: row["name"].lower(),
+        )
+        return {"ok": True, "envId": env_id, "ready": True, "packages": packages, "count": len(packages)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -979,6 +1341,7 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             return {"ok": False, "error": "missing_code_or_path"}
 
         packages_installed: list[str] = []
+        packages_skipped: list[str] = []
         py_bin = ""
 
         try:
@@ -986,58 +1349,37 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-        # Install packages if specified
+        # Install packages if specified — skip ones already satisfied in this env.
         if auto_install and (packages or req_txt):
-            install_args = [py_bin, "-m", "pip", "install", "--quiet"]
-            
-            # Install from requirements.txt content
+            install_specs: list[str] = list(packages)
             if req_txt.strip():
-                if emit:
-                    await emit("installing_requirements", {"envId": env_id, "content": req_txt[:200]})
-                fd, tmp_req = tempfile.mkstemp(prefix="req-", suffix=".txt")
-                try:
-                    os.write(fd, req_txt.encode("utf-8"))
-                    os.close(fd)
-                    proc = await asyncio.to_thread(
-                        subprocess.run,
-                        install_args + ["-r", tmp_req],
-                        capture_output=True, text=True
-                    )
+                install_specs.extend(_parse_requirements_lines(req_txt))
+
+            if install_specs:
+                to_install, satisfied = await _filter_packages_to_install(py_bin, install_specs)
+                packages_skipped.extend(satisfied)
+                if satisfied and emit:
+                    await emit("packages_already_installed", {"packages": satisfied, "count": len(satisfied)})
+
+                if to_install:
+                    if emit:
+                        await emit("installing_packages", {"envId": env_id, "packages": to_install, "count": len(to_install)})
+                    proc = await _pip_install_packages(py_bin, to_install, quiet=True)
                     if proc.returncode != 0:
                         if emit:
                             await emit("install_error", {"error": proc.stderr[:500], "stdout": proc.stdout[:500]})
-                        return {"ok": False, "error": f"pip_install_failed: {proc.stderr[:500]}", "stdout": proc.stdout}
-                    packages_installed.append("requirements.txt")
-                finally:
-                    try:
-                        os.remove(tmp_req)
-                    except Exception:
-                        pass
-
-            # Install individual packages
-            if packages:
-                if emit:
-                    await emit("installing_packages", {"envId": env_id, "packages": packages, "count": len(packages)})
-                
-                for pkg in packages:
+                        return {
+                            "ok": False,
+                            "error": f"pip_install_failed: {proc.stderr[:500]}",
+                            "stdout": proc.stdout,
+                            "packagesSkipped": packages_skipped,
+                        }
+                    packages_installed.extend(to_install)
+                    _invalidate_installed_packages_cache(env_dir)
                     if emit:
-                        await emit("installing_package", {"package": pkg})
-                    proc = await asyncio.to_thread(
-                        subprocess.run,
-                        install_args + [pkg],
-                        capture_output=True, text=True
-                    )
-                    if proc.returncode != 0:
-                        # Try to continue with other packages
-                        if emit:
-                            await emit("package_install_warning", {"package": pkg, "error": proc.stderr[:200]})
-                    else:
-                        packages_installed.append(pkg)
-                        if emit:
-                            await emit("package_installed", {"package": pkg})
-                
-                if emit:
-                    await emit("packages_ready", {"installed": packages_installed, "count": len(packages_installed)})
+                        await emit("packages_ready", {"installed": packages_installed, "skipped": packages_skipped})
+                elif emit:
+                    await emit("packages_ready", {"installed": [], "skipped": packages_skipped})
 
         # Prepare cleanup list
         cleanup: list[str] = []
@@ -1121,6 +1463,8 @@ async def run_python_script(args: Dict[str, Any], emit: Callable[[str, Dict[str,
             _finish_command_checkpoint(checkpoint)
             if packages_installed:
                 result["packagesInstalled"] = packages_installed
+            if packages_skipped:
+                result["packagesSkipped"] = packages_skipped
 
             if emit:
                 if rc == 0:

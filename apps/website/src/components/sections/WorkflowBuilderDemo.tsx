@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { validateDesignerModel } from '@stuardai/workflow-core/compiler';
+import { Stuard } from '@stuardai/workflow-core/builder';
+import type { DesignerModel } from '@stuardai/workflow-core/types';
 
 // --- Types ---
 interface Node {
@@ -82,10 +85,38 @@ export default function WorkflowBuilderDemo() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [wires, setWires] = useState<Wire[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-  const [phase, setPhase] = useState<"idle" | "typing" | "processing" | "building" | "running">("idle");
+  const [phase, setPhase] = useState<"idle" | "typing" | "processing" | "building" | "running" | "finished">("idle");
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [showThinking, setShowThinking] = useState(false);
+
+  const demoValidation = useMemo(() => {
+    const model: DesignerModel = {
+      id: 'demo_hn_briefing',
+      name: 'Hacker News Daily Briefing',
+      version: '1',
+      triggers: [{ id: 'trigger_0', type: 'schedule.cron', label: 'Daily Schedule', args: { cron: '0 9 * * *' }, position: { x: 40, y: 40 } }],
+      nodes: FULL_NODES.filter((n) => n.type === 'action').map((node, index) => ({
+        id: node.id,
+        type: 'local.tool',
+        tool: node.id === 'scrape' ? 'scrape_url' : node.id === 'ai' ? 'cloud_ai_vision' : 'gmail_send',
+        label: node.label,
+        args: node.config || {},
+        position: { x: node.x, y: node.y || 60 + index * 100 },
+      })),
+      wires: FULL_WIRES.map((wire) => ({ from: wire.from, to: wire.to })),
+    };
+    const issues = validateDesignerModel(model);
+    const errors = issues.filter((issue) => issue.type === 'error').length;
+    const warnings = issues.filter((issue) => issue.type === 'warning').length;
+    const fluentSpec = Stuard.workflow('Hacker News Daily Briefing')
+      .onSchedule('0 9 * * *')
+      .step(['scrape_url', { url: 'https://news.ycombinator.com' }])
+      .step(['cloud_ai_vision', { prompt: 'Summarize tech trends' }])
+      .step(['gmail_send', { to: 'team@company.com', subject: 'Daily Tech Brief' }])
+      .build();
+    return { errors, warnings, fluentStepCount: fluentSpec.steps?.length ?? 0 };
+  }, []);
 
   // --- Animation Loop ---
   useEffect(() => {
@@ -423,6 +454,11 @@ export default function WorkflowBuilderDemo() {
                 <div className="flex items-center gap-1.5">
                     <div className={`w-1.5 h-1.5 rounded-full ${phase === 'running' ? 'bg-emerald-500 animate-pulse' : phase === 'processing' ? 'bg-indigo-500 animate-bounce' : 'bg-slate-300'}`} />
                     <span className="text-[10px] font-medium text-slate-500 capitalize">{phase}</span>
+                    {phase === 'finished' ? (
+                      <span className="ml-auto text-[10px] text-slate-400">
+                        workflow-core: {demoValidation.errors} errors, {demoValidation.warnings} warnings
+                      </span>
+                    ) : null}
                 </div>
             </div>
         </div>

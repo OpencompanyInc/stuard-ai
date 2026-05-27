@@ -12,6 +12,7 @@ export type ContentSegment =
   | { kind: 'image'; src: string }
   | { kind: 'video'; src: string }
   | { kind: 'audio'; src: string }
+  | { kind: 'file'; src: string }
   | { kind: 'youtube'; videoId: string; url: string }
   | { kind: 'link_preview'; url: string }
   | { kind: 'genui'; component: string; args: any; id: string }

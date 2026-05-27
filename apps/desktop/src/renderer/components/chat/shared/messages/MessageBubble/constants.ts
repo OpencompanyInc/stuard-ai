@@ -60,6 +60,9 @@ export const HIDDEN_TOOL_NAMES = new Set([
   'memory_list',
   'memory_search',
   'project_search',
+  'add_project_context',
+  'pin_file',
+  'unpin_file',
   // Agent internal tools
   'agent_todo',
   // Knowledge tools (internal)

@@ -270,10 +270,10 @@ if [ "$AGENT_DATA_DOWNLOADED" -eq 1 ]; then
       echo "[stuard] LanceDB embeddings restored"
     fi
 
-    # Restore workflow.db if present
+    # Restore workflow.db if present (legacy archives store it at archive root)
     if [ -f /tmp/agent-extract/workflow.db ]; then
-      cp -a /tmp/agent-extract/workflow.db /home/stuard/data/ 2>/dev/null || true
-      echo "[stuard] workflow.db restored"
+      cp -a /tmp/agent-extract/workflow.db /home/stuard/agent-data/ 2>/dev/null || true
+      echo "[stuard] workflow.db restored to agent-data"
     fi
 
     rm -rf /tmp/agent-extract /tmp/agent-data.tar.gz

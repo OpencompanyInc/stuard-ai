@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
-import type { ToolCall } from '@/_chat-ui/types';
+import type { ToolCall } from '@stuardai/chat-ui/types';
 
 /**
  * Web-friendly inline renderer for the `chat_ui` GenUI tool.

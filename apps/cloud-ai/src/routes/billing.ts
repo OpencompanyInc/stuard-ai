@@ -1,9 +1,30 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { Polar } from '@polar-sh/sdk';
 import { verifyToken } from '../supabase';
+import { getAutoRefillPending } from '../billing/auto-refill';
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...CORS };
+
+const CHECKOUT_PRODUCT_ALLOWLIST = new Set([
+  process.env.POLAR_SUBSCRIPTION_ID,
+  process.env.POLAR_PRODUCT_PAYG_ID,
+  process.env.NEXT_PUBLIC_POLAR_SUBSCRIPTION_ID,
+  process.env.NEXT_PUBLIC_POLAR_PRODUCT_PAYG_ID,
+  '22f2eb79-766c-402c-9e5b-2d48c7b099fb',
+  process.env.POLAR_ADDON_5_ID,
+  process.env.POLAR_ADDON_10_ID,
+  process.env.POLAR_ADDON_25_ID,
+  process.env.POLAR_ADDON_50_ID,
+  process.env.NEXT_PUBLIC_POLAR_ADDON_5_ID,
+  process.env.NEXT_PUBLIC_POLAR_ADDON_10_ID,
+  process.env.NEXT_PUBLIC_POLAR_ADDON_25_ID,
+  process.env.NEXT_PUBLIC_POLAR_ADDON_50_ID,
+  'd4939807-bc62-4a29-8a87-affb910e134b',
+  '7d67c4f0-f376-47cc-99a3-354011aae041',
+  '463ff74b-4f26-44b7-8a80-af2d2cdc9a7a',
+  '5516a18c-b03b-4ada-8b6a-599f2cc5b7e9',
+].filter((value): value is string => Boolean(value)));
 
 function getPolarClient(): Polar | null {
   const accessToken = process.env.POLAR_ACCESS_TOKEN || '';
@@ -134,24 +155,43 @@ export async function handleBillingRoutes(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  // GET /v1/billing/auto-refill/pending
+  if (req.method === 'GET' && parsedUrl.pathname === '/v1/billing/auto-refill/pending') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+
+    try {
+      const pending = await getAutoRefillPending(user.userId);
+      reply(res, 200, { ok: true, ...pending });
+    } catch (e: any) {
+      reply(res, 500, { ok: false, error: e?.message || 'Failed to load auto-refill status' });
+    }
+    return true;
+  }
+
   // POST /v1/billing/checkout
   if (req.method === 'POST' && parsedUrl.pathname === '/v1/billing/checkout') {
     const user = await authenticate(req, res);
     if (!user) return true;
 
     const body = await readBody(req);
-    const { productId, customerEmail, userId, successUrl } = body;
+    const { productId } = body;
     if (!productId) {
       reply(res, 400, { ok: false, error: 'productId required' });
+      return true;
+    }
+    if (!CHECKOUT_PRODUCT_ALLOWLIST.has(productId)) {
+      reply(res, 400, { ok: false, error: 'invalid_product' });
       return true;
     }
 
     try {
       const result = await polar.checkouts.create({
         products: [productId],
-        successUrl: successUrl || process.env.POLAR_SUCCESS_URL || 'https://stuard.ai/billing/success?checkout_id={CHECKOUT_ID}',
-        customerEmail: customerEmail || user.email,
-        metadata: (userId || user.userId) ? { userId: userId || user.userId } : undefined,
+        successUrl: process.env.POLAR_SUCCESS_URL || 'https://stuard.ai/billing/success?checkout_id={CHECKOUT_ID}',
+        customerEmail: user.email,
+        externalCustomerId: user.userId,
+        metadata: { userId: user.userId },
       });
 
       reply(res, 200, { ok: true, url: result.url || null });

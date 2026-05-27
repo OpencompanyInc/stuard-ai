@@ -4,6 +4,55 @@ import clsx from 'clsx';
 import { Check, ExternalLink, Loader2, Plug, RefreshCw, Unplug, AlertCircle } from 'lucide-react';
 import { getCloudAiHttp } from '../../utils/cloud';
 
+// Brand integration logos (Simple Icons SVG + favicons).
+import discordLogo from '../../assets/integrations/Discord.svg';
+import elevenLabsLogo from '../../assets/integrations/ElevenLabs.svg';
+import ffmpegLogo from '../../assets/integrations/FFmpeg.svg';
+import facebookLogo from '../../assets/integrations/Facebook.svg';
+import githubBrandLogo from '../../assets/integrations/GitHub.svg';
+import gmailLogo from '../../assets/integrations/Gmail.svg';
+import googleCalendarLogo from '../../assets/integrations/GoogleCalendar.svg';
+import googleDocsLogo from '../../assets/integrations/GoogleDocs.svg';
+import googleDriveLogo from '../../assets/integrations/GoogleDrive.svg';
+import googleSheetsLogo from '../../assets/integrations/GoogleSheets.svg';
+import googleTasksLogo from '../../assets/integrations/GoogleTasks.svg';
+import instagramLogo from '../../assets/integrations/Instagram.svg';
+import ollamaLogo from '../../assets/integrations/Ollama.svg';
+import outlookLogo from '../../assets/integrations/Outlook.png';
+import pythonLogo from '../../assets/integrations/Python.svg';
+import redditLogo from '../../assets/integrations/Reddit.svg';
+import supabaseLogo from '../../assets/integrations/Supabase.svg';
+import telnyxLogo from '../../assets/integrations/Telnyx.png';
+import threadsLogo from '../../assets/integrations/Threads.svg';
+import whatsappLogo from '../../assets/integrations/WhatsApp.svg';
+import xLogo from '../../assets/integrations/X.svg';
+import youtubeLogo from '../../assets/integrations/YouTube.svg';
+
+const BRAND_LOGOS: Record<string, string> = {
+  python: pythonLogo,
+  ffmpeg: ffmpegLogo,
+  ollama: ollamaLogo,
+  outlook: outlookLogo,
+  github: githubBrandLogo,
+  discord: discordLogo,
+  reddit: redditLogo,
+  x: xLogo,
+  facebook: facebookLogo,
+  instagram: instagramLogo,
+  threads: threadsLogo,
+  telnyx: telnyxLogo,
+  whatsapp: whatsappLogo,
+  youtube: youtubeLogo,
+  supabase: supabaseLogo,
+  elevenlabs: elevenLabsLogo,
+  gmail: gmailLogo,
+  'google-drive': googleDriveLogo,
+  'google-calendar': googleCalendarLogo,
+  'google-docs': googleDocsLogo,
+  'google-sheets': googleSheetsLogo,
+  'google-tasks': googleTasksLogo,
+};
+
 export interface IntegrationItem {
   slug: string;
   name: string;
@@ -285,10 +334,21 @@ export const IntegrationConnect: React.FC<IntegrationConnectProps> = ({
               {/* Icon + Status */}
               <div className="flex items-center justify-between w-full mb-3 relative z-10">
                 <div className={clsx(
-                  "w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold bg-gradient-to-br",
-                  iconData ? iconData.bg : "from-gray-500/20 to-gray-600/20"
+                  "w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold",
+                  BRAND_LOGOS[integration.slug]
+                    ? "bg-white p-1.5 border border-theme/30"
+                    : clsx("bg-gradient-to-br", iconData ? iconData.bg : "from-gray-500/20 to-gray-600/20")
                 )}>
-                  {integration.icon || iconData?.emoji || '🔌'}
+                  {BRAND_LOGOS[integration.slug] ? (
+                    <img
+                      src={BRAND_LOGOS[integration.slug]}
+                      alt=""
+                      className="w-full h-full object-contain select-none"
+                      draggable={false}
+                    />
+                  ) : (
+                    integration.icon || iconData?.emoji || '🔌'
+                  )}
                 </div>
 
                 {/* Status indicator */}

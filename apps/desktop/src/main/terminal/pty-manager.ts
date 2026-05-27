@@ -224,7 +224,10 @@ class PtyManager {
     return Array.from(this.sessions.values()).map(e => e.session);
   }
 
-  private broadcast(channel: string, data: unknown) {
+  // Public so sibling main-process modules (e.g. the cli_agent handler) can
+  // push their own lifecycle events to the renderer over the same channel
+  // plumbing the terminal UI already listens on.
+  broadcast(channel: string, data: unknown) {
     for (const win of BrowserWindow.getAllWindows()) {
       try {
         win.webContents.send(channel, data);

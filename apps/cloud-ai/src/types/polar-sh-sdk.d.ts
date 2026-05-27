@@ -19,6 +19,7 @@ declare module '@polar-sh/sdk' {
 
     customers: {
       list(args?: Record<string, any>): Promise<PolarListResult<any>>;
+      getExternal(args: { externalId: string }): Promise<{ id?: string | null } & Record<string, any>>;
     };
 
     subscriptions: {

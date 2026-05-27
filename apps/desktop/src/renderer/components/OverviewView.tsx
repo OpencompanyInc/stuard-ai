@@ -2,7 +2,6 @@ import React from "react";
 import { 
   MessageSquare, 
   ArrowRight,
-  Sparkles,
   Lock,
   WalletCards,
   History,
@@ -51,8 +50,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     <div className="space-y-6 pb-6" data-onboarding="overview-panel">
       {/* Header */}
       <div className="hidden rounded-2xl border border-theme/50 bg-theme-card/60 px-5 py-4 shadow-sm">
-        <p className="text-theme-muted text-sm font-medium flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-primary/70" />
+        <p className="text-theme-muted text-sm font-medium">
           Here's what's happening with your Stuard today.
         </p>
       </div>
@@ -60,7 +58,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.7fr_1fr_1fr]">
         {/* Plan & Credits Card */}
         <div className="dashboard-card dashboard-card-premium relative p-5 md:p-6 min-h-[188px] flex flex-col justify-between group">
-          <div className="absolute top-0 right-0 h-44 w-44 rounded-full bg-primary/25 blur-3xl translate-x-8 -translate-y-8 pointer-events-none opacity-90"></div>
+          <div className="absolute top-0 right-0 h-44 w-44 rounded-full bg-primary/15 blur-3xl translate-x-8 -translate-y-8 pointer-events-none opacity-50"></div>
           
           <div className="relative z-10">
             <div className="flex items-start justify-between gap-3 mb-5">
@@ -105,7 +103,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="h-3 rounded-full overflow-hidden w-full bg-black/30 dark:bg-black/45 border border-black/20 dark:border-white/10 shadow-[inset_0_2px_4px_rgba(0,0,0,0.35)]">
+                  <div className="h-3 rounded-full overflow-hidden w-full bg-black/30 dark:bg-black/45 border border-black/20 dark:border-[color:var(--dashboard-panel-border)] shadow-[inset_0_2px_4px_rgba(0,0,0,0.35)]">
                     <div
                       className="h-full bg-gradient-to-r from-cyan-300 via-sky-400 to-blue-500 rounded-full transition-all duration-1000 ease-out shadow-[0_0_12px_rgba(56,189,248,0.7)]"
                       style={{ width: remainingWidth, minWidth: remaining > 0 ? '8px' : '0px' }}
@@ -167,7 +165,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         {/* Quick Actions */}
         <div className="dashboard-card dashboard-card-accent relative p-5 md:p-6 min-h-[188px] flex flex-col justify-between group">
-          <div className="absolute bottom-0 left-1/2 h-36 w-36 rounded-full bg-primary/25 blur-3xl -translate-x-1/2 translate-y-8 pointer-events-none opacity-90"></div>
+          <div className="absolute bottom-0 left-1/2 h-36 w-36 rounded-full bg-primary/15 blur-3xl -translate-x-1/2 translate-y-8 pointer-events-none opacity-50"></div>
           
           <div className="relative z-10 text-center pt-3 space-y-3">
             <div className="text-[34px] font-semibold leading-none text-theme-fg">Stuard Studio</div>
@@ -220,7 +218,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 onClick={() => onNavigate('history')} 
                 className="dashboard-card-muted mt-8 px-5 py-3 text-[14px] font-medium text-theme-fg inline-flex items-center gap-2 rounded-2xl transition-all duration-300"
               >
-                <Sparkles className="w-4 h-4 text-theme-muted" />
+                <ArrowRight className="w-4 h-4 text-theme-muted" />
                 Ask Stuard
               </button>
             </div>

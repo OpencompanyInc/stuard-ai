@@ -30,7 +30,7 @@ async function captureScreenshot(
   const filePath = typeof shot?.filePath === 'string' ? shot.filePath : '';
   if (!filePath) return null;
 
-  const bin = await execLocalTool('read_file_binary', { path: filePath }, writer);
+  const bin = await execLocalTool('read_file_binary', { path: filePath, inline: true }, writer);
   const imageB64 = typeof bin?.data === 'string' ? bin.data : '';
   if (!imageB64) return null;
 

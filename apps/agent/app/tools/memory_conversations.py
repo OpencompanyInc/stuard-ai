@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from ..storage.memory_db import (
@@ -1531,6 +1532,7 @@ async def project_create(args: Dict[str, Any]) -> Dict[str, Any]:
             name=name,
             description=args.get("description"),
             goals=args.get("goals"),
+            instructions=args.get("instructions"),
             status=args.get("status", "active"),
             tags=args.get("tags"),
             pinned_paths=args.get("pinned_paths"),
@@ -1585,6 +1587,7 @@ async def project_update(args: Dict[str, Any]) -> Dict[str, Any]:
             name=args.get("name"),
             description=args.get("description"),
             goals=args.get("goals"),
+            instructions=args.get("instructions"),
             status=args.get("status"),
             tags=args.get("tags"),
             pinned_paths=args.get("pinned_paths"),
@@ -1612,6 +1615,81 @@ async def project_delete(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": True, "deleted": deleted}
     except Exception as e:
         logger.exception("project_delete failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def project_context_add(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach a file/folder path to a project and start local metadata indexing.
+
+    Semantic embedding still happens in cloud-ai via process_pending_file_index;
+    this local handler gives the desktop UI a direct way to make a path part of
+    project context without needing a cloud tool call.
+    """
+    try:
+        project_id = args.get("project_id")
+        raw_path = str(args.get("path") or "").strip()
+        if not project_id:
+            return {"ok": False, "error": "missing project_id"}
+        if not raw_path:
+            return {"ok": False, "error": "missing path"}
+
+        db = get_memory_db()
+        project = db.get_project(str(project_id))
+        if not project:
+            return {"ok": False, "error": "project_not_found"}
+
+        path = os.path.normpath(os.path.abspath(os.path.expanduser(raw_path)))
+        next_paths = list(project.pinned_paths or [])
+        if path not in next_paths:
+            next_paths.append(path)
+            project = db.update_project(str(project_id), pinned_paths=next_paths) or project
+
+        kind = "missing"
+        root = None
+        scan_result: Optional[Dict[str, Any]] = None
+        if os.path.isdir(path):
+            kind = "folder"
+            from . import file_scanner
+
+            add_result = await file_scanner.add_index_root({
+                "path": path,
+                "schedule": args.get("schedule", "daily"),
+            })
+            root = add_result.get("root") if isinstance(add_result, dict) else None
+            if add_result.get("ok") and args.get("scan", True):
+                scan_result = await file_scanner.scan_index_root({
+                    "root_id": root.get("id") if root else None,
+                    "compute_hashes": bool(args.get("compute_hashes", False)),
+                    "max_files": args.get("max_files"),
+                })
+        elif os.path.isfile(path):
+            kind = "file"
+            from . import file_scanner
+
+            parent = os.path.dirname(path)
+            add_result = await file_scanner.add_index_root({
+                "path": parent,
+                "schedule": args.get("schedule", "daily"),
+            })
+            root = add_result.get("root") if isinstance(add_result, dict) else None
+            if add_result.get("ok") and args.get("scan", True):
+                scan_result = await file_scanner.scan_index_root({
+                    "root_id": root.get("id") if root else None,
+                    "compute_hashes": bool(args.get("compute_hashes", False)),
+                    "max_files": args.get("max_files"),
+                })
+
+        return {
+            "ok": True,
+            "project": project.to_dict(),
+            "path": path,
+            "kind": kind,
+            "root": root,
+            "scan": scan_result,
+            "indexed": bool(root),
+        }
+    except Exception as e:
+        logger.exception("project_context_add failed")
         return {"ok": False, "error": str(e)}
 
 

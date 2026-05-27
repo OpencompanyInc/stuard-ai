@@ -14,6 +14,7 @@ import { safeToolWrite, getBridgeState, setBridgeState } from '../tools/bridge';
 import { search_tools } from '../tools/meta-tools';
 import { retrieveToolFormat } from '../tools/workflow-system';
 import { web_search } from '../tools/perplexity-tools';
+import { scrape_url } from '../tools/tavily-tools';
 import { normalizeToolInputForSchema, coerceToolInputSchema } from '../tools/zod-utils';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
@@ -384,7 +385,7 @@ COMMONLY USED TOOLS
 When creating tool steps, use these tool names:
 
 SEARCH & DATA:
-  web_search, http_request, memory_retrieval
+  web_search, scrape_url, http_request, memory_retrieval
 
 AI & ANALYSIS:
   ai_inference, analyze_image, analyze_media, analyze_current_screen, cloud_ai_vision
@@ -439,7 +440,7 @@ EXAMPLE - Creating a "Summarize Article" skill:
     color: "blue",
     steps: [
       { type: "prompt", label: "Understand Request", content: "Identify the URL or text the user wants summarized" },
-      { type: "tool", label: "Fetch Content", content: "Fetch the article content from the URL", toolName: "http_request" },
+      { type: "tool", label: "Fetch Content", content: "Extract the article content from the URL", toolName: "scrape_url" },
       { type: "prompt", label: "Analyze", content: "Read through the content and identify key points, main arguments, and conclusions" },
       { type: "output", label: "Summary", content: "Provide a clear, concise summary with: 1) Main topic, 2) Key points (bulleted), 3) Conclusion" }
     ]
@@ -521,6 +522,7 @@ function createSkillAgent(modelIdOverride?: string, modelInstance?: any): Agent 
         search_tools: createLoggedTool(search_tools, 'search_tools'),
         get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
         web_search: createLoggedTool(web_search, 'web_search'),
+        scrape_url: createLoggedTool(scrape_url, 'scrape_url'),
     };
 
     // Determine if we should use thinking mode

@@ -226,32 +226,129 @@ export async function execTestRunSteps(args: any, ctx: RouterContext): Promise<a
   }
 }
 
+function extractWorkflowSchemas(model: any) {
+  const triggers = Array.isArray(model?.triggers) ? model.triggers : [];
+  const triggerTypes = triggers.map((t: any) => String(t?.type || '')).filter(Boolean);
+  const inputSchema: any[] = [];
+
+  for (const trigger of triggers) {
+    const params = trigger?.inputParams;
+    if (!Array.isArray(params)) continue;
+    for (const param of params) {
+      inputSchema.push({
+        name: String(param?.name || ''),
+        type: String(param?.type || 'string'),
+        required: !!param?.required,
+        defaultValue: param?.defaultValue,
+        description: typeof param?.description === 'string' ? param.description : undefined,
+      });
+    }
+  }
+
+  const outputSchema = Array.isArray(model?.outputSchema)
+    ? model.outputSchema.map((field: any) => ({
+        name: String(field?.name || ''),
+        type: String(field?.type || 'string'),
+        description: typeof field?.description === 'string' ? field.description : undefined,
+      }))
+    : [];
+
+  return { triggerTypes, inputSchema, outputSchema };
+}
+
+function workflowSearchText(item: any, model: any): string {
+  const triggerTypes = Array.isArray(item?.triggers) ? item.triggers.join(' ') : '';
+  const nodeTools = Array.isArray(model?.nodes)
+    ? model.nodes.map((node: any) => String(node?.tool || node?.type || '')).filter(Boolean).join(' ')
+    : '';
+  return [
+    item?.id,
+    item?.name,
+    item?.description,
+    model?.name,
+    model?.description,
+    triggerTypes,
+    nodeTools,
+  ].map((v) => String(v || '').toLowerCase()).join(' ');
+}
+
+function scoreWorkflow(item: any, model: any, query: string): number {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+
+  const id = String(item?.id || '').toLowerCase();
+  const name = String(item?.name || model?.name || '').toLowerCase();
+  const desc = String(item?.description || model?.description || '').toLowerCase();
+  const haystack = workflowSearchText(item, model);
+  const tokens = q.split(/\s+/).filter(Boolean);
+
+  let score = 0;
+  if (id === q || name === q) score += 100;
+  if (id.startsWith(q) || name.startsWith(q)) score += 60;
+  if (id.includes(q) || name.includes(q)) score += 40;
+  if (desc.includes(q)) score += 25;
+  for (const token of tokens) {
+    if (name.includes(token)) score += 12;
+    if (desc.includes(token)) score += 8;
+    if (haystack.includes(token)) score += 4;
+  }
+  return score;
+}
+
 /**
- * List all locally saved workflows
+ * Search locally saved workflows. Empty query returns the recent workflow set.
  */
-export async function execListLocalWorkflows(args: any, ctx: RouterContext): Promise<any> {
-  console.log('[execListLocalWorkflows] CALLED - this is the desktop handler');
+export async function execSearchLocalWorkflows(args: any, ctx: RouterContext): Promise<any> {
   try {
+    const query = String(args?.query || '').trim();
+    const limit = Math.max(1, Math.min(250, Number(args?.limit || 10)));
+    const requestedMode = String(args?.mode || 'lexical').toLowerCase();
     const result = workflows_list();
-    console.log('[execListLocalWorkflows] workflows_list returned:', result?.ok, 'items:', result?.items?.length);
+    console.log('[execSearchLocalWorkflows] workflows_list returned:', result?.ok, 'items:', result?.items?.length);
     if (result?.ok && result?.items) {
-      const workflows = result.items.map((w: any) => ({
-        id: w.id,
-        name: w.name,
-        path: w.path,
-        updatedAt: w.updatedAt,
-        running: w.running,
-        triggers: w.triggers,
-      }));
-      console.log('[execListLocalWorkflows] returning workflows:', workflows.map((w: any) => w.name));
+      const workflows = result.items.map((w: any) => {
+        let model: any = null;
+        try {
+          const read = workflows_read(w.id);
+          if (read?.ok && typeof read.content === 'string') model = JSON.parse(read.content || '{}');
+        } catch { /* best effort metadata only */ }
+        const schemas = extractWorkflowSchemas(model);
+        const triggers = schemas.triggerTypes.length > 0 ? schemas.triggerTypes : (Array.isArray(w.triggers) ? w.triggers : []);
+        return {
+          id: String(model?.id || w.id),
+          name: String(model?.name || w.name || w.id),
+          description: String(model?.description || w.description || ''),
+          path: w.path,
+          updatedAt: w.updatedAt,
+          running: w.running,
+          triggers,
+          inputSchema: schemas.inputSchema,
+          outputSchema: schemas.outputSchema,
+          score: scoreWorkflow(w, model, query),
+        };
+      });
+
+      const filtered = query
+        ? workflows.filter((w: any) => Number(w.score || 0) > 0)
+        : workflows;
+      filtered.sort((a: any, b: any) => {
+        const byScore = Number(b.score || 0) - Number(a.score || 0);
+        if (byScore !== 0) return byScore;
+        return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+      });
+
+      const limited = filtered.slice(0, limit);
+      console.log('[execSearchLocalWorkflows] returning workflows:', limited.map((w: any) => w.name));
       return {
         ok: true,
-        workflows,
+        workflows: limited,
+        mode: 'lexical',
+        requestedMode,
       };
     }
-    return { ok: false, workflows: [], error: result?.error || 'failed to list workflows' };
+    return { ok: false, workflows: [], error: result?.error || 'failed to search workflows' };
   } catch (e: any) {
-    ctx.logFn(`list_local_workflows error: ${e?.message}`);
+    ctx.logFn(`search_local_workflows error: ${e?.message}`);
     return { ok: false, workflows: [], error: e?.message || 'failed' };
   }
 }

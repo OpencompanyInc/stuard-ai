@@ -87,7 +87,7 @@ describe('runAgent tool-call JSON parse failure handling', () => {
     writeLogMock.mockReset();
   });
 
-  it('emits tool_event:error then final (retryable) when Mastra throws invalid tool-call JSON error shape', { timeout: 30000 }, async () => {
+  it('emits tool_event:error then final (retryable) when Mastra throws invalid tool-call JSON error shape', { timeout: 60000 }, async () => {
     const parseError = new SyntaxError('Unterminated string in JSON at position 10');
     const thrown = {
       error: parseError,

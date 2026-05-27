@@ -7,7 +7,7 @@ Memory usage: ~30-50MB.
 Usage:
     python listen_numpy.py
     python listen_numpy.py --list-devices
-    python listen_numpy.py --weights apps/agent/app/data/wakeword/kws_weights.npz --sensitivity 0.75 --trigger-count 4 --ema-alpha 0.2
+    python listen_numpy.py --weights apps/desktop/resources/wakeword/models/kws_weights.npz --sensitivity 0.88
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -27,8 +29,15 @@ SAMPLE_RATE = 16000
 WINDOW_SIZE = 480  # 30ms
 HOP_SIZE = 160  # 10ms
 FFT_SIZE = 512
-DURATION = 1.0
-INPUT_LEN = int(SAMPLE_RATE * DURATION)
+WINDOW_DURATION = 1.5
+INPUT_LEN = int(SAMPLE_RATE * WINDOW_DURATION)
+DEFAULT_THRESHOLD = 0.88
+DEFAULT_EMA_ALPHA = 0.25
+DEFAULT_TRIGGER_COUNT = 8
+DEFAULT_COOLDOWN = 1.5
+DEFAULT_MIN_RMS = 0.003
+ACTIVITY_RMS_WINDOW = 0.20
+INFERENCE_INTERVAL = 0.02
 
 
 def _configure_stdout() -> None:
@@ -40,9 +49,40 @@ def _configure_stdout() -> None:
 
 
 def _default_weights_path() -> str:
-    # Default to the packaged agent weights (works when running from repo root).
+    # Default to the desktop wakeword resources (works when running from repo root).
     here = os.path.abspath(os.path.dirname(__file__))
-    return os.path.join(here, "apps", "agent", "app", "data", "wakeword", "kws_weights.npz")
+    return os.path.join(here, "apps", "desktop", "resources", "wakeword", "models", "kws_weights.npz")
+
+
+def _build_centered_hann_window() -> np.ndarray:
+    """Periodic hann centered in FFT_SIZE (matches torch.stft padded layout)."""
+    n = np.arange(WINDOW_SIZE, dtype=np.float32)
+    hann = 0.5 * (1.0 - np.cos(2.0 * np.pi * n / WINDOW_SIZE))
+    pad_left = (FFT_SIZE - WINDOW_SIZE) // 2
+    window = np.zeros(FFT_SIZE, dtype=np.float32)
+    window[pad_left: pad_left + WINDOW_SIZE] = hann
+    return window
+
+
+def _rms(audio: np.ndarray) -> float:
+    """Return RMS amplitude for a mono float buffer."""
+    return float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32) ** 2) + 1e-12))
+
+
+def _peak_window_rms(audio: np.ndarray, window_samples: int) -> float:
+    """Return the loudest short-window RMS inside the model buffer."""
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if audio.size == 0:
+        return 0.0
+
+    window_samples = max(1, min(int(window_samples), audio.size))
+    if window_samples == audio.size:
+        return _rms(audio)
+
+    power = audio * audio
+    cumsum = np.concatenate(([0.0], np.cumsum(power, dtype=np.float64)))
+    window_power = cumsum[window_samples:] - cumsum[:-window_samples]
+    return float(np.sqrt(np.max(window_power) / window_samples + 1e-12))
 
 
 def list_input_devices() -> None:
@@ -72,7 +112,7 @@ class NumPyDS_CNN:
         print(f"Loading weights from {weights_path}", flush=True)
         self.weights = np.load(weights_path)
         self.mel_matrix = self.weights["mel_matrix"]
-        self.window = np.hanning(WINDOW_SIZE).astype(np.float32)
+        self.window = _build_centered_hann_window()
 
         # Hardcoded architecture matching DS-CNN export.
         self.layers = []
@@ -185,10 +225,10 @@ class NumPyDS_CNN:
         else:
             audio = np.pad(audio, (0, INPUT_LEN - len(audio)))
 
-        n_frames = (len(audio) - WINDOW_SIZE) // HOP_SIZE + 1
+        n_frames = (len(audio) - FFT_SIZE) // HOP_SIZE + 1
         frames = np.lib.stride_tricks.as_strided(
             audio,
-            shape=(n_frames, WINDOW_SIZE),
+            shape=(n_frames, FFT_SIZE),
             strides=(audio.strides[0] * HOP_SIZE, audio.strides[0]),
         )
         windowed = frames * self.window
@@ -216,21 +256,37 @@ class NumPyDS_CNN:
         return float(x[0][1])
 
 
+def _write_wav(path: Path, audio: np.ndarray, sr: int = SAMPLE_RATE) -> None:
+    """Minimal int16 PCM WAV writer (no scipy dependency)."""
+    import wave
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clipped = np.clip(audio, -1.0, 1.0)
+    pcm = (clipped * 32767.0).astype(np.int16)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes(pcm.tobytes())
+
+
 def listen(
     weights_path: str,
-    sensitivity: float = 0.7,
-    cooldown: float = 1.0,
+    sensitivity: float = DEFAULT_THRESHOLD,
+    cooldown: float = DEFAULT_COOLDOWN,
     device: Optional[int] = None,
     show_status: bool = True,
     status_every: float = 0.5,
     seconds: Optional[float] = None,
-    trigger_count: int = 4,
-    ema_alpha: float = 0.2,
+    trigger_count: int = DEFAULT_TRIGGER_COUNT,
+    ema_alpha: float = DEFAULT_EMA_ALPHA,
+    min_rms: float = DEFAULT_MIN_RMS,
+    capture_dir: Optional[str] = None,
 ) -> None:
     _configure_stdout()
     if not os.path.exists(weights_path):
         print(f"Error: Weights not found at {weights_path}", flush=True)
-        print("Hint: run with --weights apps/agent/app/data/wakeword/kws_weights.npz", flush=True)
+        print("Hint: run with --weights apps/desktop/resources/wakeword/models/kws_weights.npz", flush=True)
         return
 
     model = NumPyDS_CNN(weights_path)
@@ -249,6 +305,10 @@ def listen(
     last_status = 0.0
     consec = 0
     ema: Optional[float] = None
+    activity_window_samples = int(round(ACTIVITY_RMS_WINDOW * SAMPLE_RATE))
+    capture_path_base = Path(capture_dir) if capture_dir else None
+    if capture_path_base is not None:
+        capture_path_base.mkdir(parents=True, exist_ok=True)
 
     def callback(indata, frames, time_info, status):  # noqa: ANN001
         nonlocal buffer
@@ -291,9 +351,17 @@ def listen(
                 t0 = time.perf_counter()
                 score = float(model.predict(current))
                 dur_ms = (time.perf_counter() - t0) * 1000.0
+                rms = _rms(current)
+                activity_rms = _peak_window_rms(current, activity_window_samples)
 
-                if ema_alpha and ema_alpha > 0.0:
-                    ema = score if ema is None else (ema_alpha * score + (1.0 - ema_alpha) * float(ema))
+                if activity_rms < min_rms:
+                    ema = None
+                    decision = 0.0
+                elif ema_alpha and ema_alpha > 0.0:
+                    if ema is None or score >= ema:
+                        ema = score
+                    else:
+                        ema = ema_alpha * score + (1.0 - ema_alpha) * float(ema)
                     decision = float(ema)
                 else:
                     decision = score
@@ -304,24 +372,36 @@ def listen(
                     consec = 0
 
                 if consec >= int(trigger_count) and (now - last_trigger) > cooldown:
-                    print(
+                    capture_path: Optional[Path] = None
+                    if capture_path_base is not None:
+                        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                        capture_path = capture_path_base / f"trigger_{stamp}_s{score:.3f}.wav"
+                        try:
+                            _write_wav(capture_path, current, sr=SAMPLE_RATE)
+                        except Exception as exc:
+                            print(f"\n[capture] failed: {exc}", flush=True)
+                            capture_path = None
+
+                    msg = (
                         f"\nWAKE WORD DETECTED  score={score:.3f}  decision={decision:.3f}  "
-                        f"consec={consec}  infer={dur_ms:.1f}ms",
-                        flush=True,
+                        f"threshold={sensitivity:.3f}  consec={consec}  infer={dur_ms:.1f}ms"
                     )
+                    if capture_path is not None:
+                        msg += f"  captured={capture_path}"
+                    print(msg, flush=True)
                     last_trigger = now
                     consec = 0
 
                 if show_status and (now - last_status) >= float(status_every):
-                    rms = float(np.sqrt(np.mean(current * current) + 1e-12))
                     print(
-                        f"\rscore={score:.3f}  decision={decision:.3f}  consec={consec}  rms={rms:.4f}  infer={dur_ms:.1f}ms     ",
+                        f"\rscore={score:.3f}  decision={decision:.3f}  threshold={sensitivity:.3f}  "
+                        f"consec={consec}  rms={rms:.4f}  activity={activity_rms:.4f}  infer={dur_ms:.1f}ms     ",
                         end="",
                         flush=True,
                     )
                     last_status = now
 
-                time.sleep(0.02)
+                time.sleep(INFERENCE_INTERVAL)
     except KeyboardInterrupt:
         print("\nStopping...", flush=True)
 
@@ -329,15 +409,17 @@ def listen(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", default=_default_weights_path())
-    parser.add_argument("--sensitivity", type=float, default=0.7)
-    parser.add_argument("--cooldown", type=float, default=1.0)
+    parser.add_argument("--sensitivity", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--cooldown", type=float, default=DEFAULT_COOLDOWN)
     parser.add_argument("--device", type=int, default=None, help="Input device index (see --list-devices)")
     parser.add_argument("--list-devices", action="store_true", help="List input devices and exit")
     parser.add_argument("--seconds", type=float, default=None, help="Stop automatically after N seconds")
     parser.add_argument("--no-status", action="store_true", help="Disable live score/status line")
     parser.add_argument("--status-every", type=float, default=0.5, help="Seconds between status updates")
-    parser.add_argument("--trigger-count", type=int, default=4, help="Require N consecutive frames above threshold")
-    parser.add_argument("--ema-alpha", type=float, default=0.2, help="EMA smoothing alpha for decision score (0 disables)")
+    parser.add_argument("--trigger-count", type=int, default=DEFAULT_TRIGGER_COUNT, help="Require N consecutive frames above threshold")
+    parser.add_argument("--ema-alpha", type=float, default=DEFAULT_EMA_ALPHA, help="EMA smoothing alpha for decision score (0 disables)")
+    parser.add_argument("--min-rms", type=float, default=DEFAULT_MIN_RMS, help="Ignore windows below this short-window RMS level")
+    parser.add_argument("--capture-dir", default=None, help="If set, save the 1.5s buffer to this dir on each trigger")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -354,6 +436,8 @@ def main() -> int:
         seconds=args.seconds,
         trigger_count=args.trigger_count,
         ema_alpha=args.ema_alpha,
+        min_rms=args.min_rms,
+        capture_dir=args.capture_dir,
     )
     return 0
 

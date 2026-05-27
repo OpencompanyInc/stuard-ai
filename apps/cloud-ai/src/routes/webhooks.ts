@@ -9,6 +9,7 @@ import {
   deleteWebhook, 
   regenerateWebhookSecret,
   getWebhookEvents,
+  logWebhookEvent,
   getProviderConfig,
   upsertProviderConfig,
 } from '../webhooks/core';
@@ -331,6 +332,7 @@ export async function handleWebhooks(req: IncomingMessage, res: ServerResponse, 
       target_workflow_trigger_id: parsed.triggerId,
       require_signature: parsed.requireSignature,
       allowed_ips: parsed.allowedIps,
+      is_active: parsed.isActive,
       metadata: parsed.metadata,
     });
     
@@ -412,6 +414,66 @@ export async function handleWebhooks(req: IncomingMessage, res: ServerResponse, 
     
     const events = await getWebhookEvents(auth.userId, { webhookId, limit, status });
     sendJson(res, 200, { ok: true, events });
+    return true;
+  }
+
+  // POST /v1/webhooks/local-event - Log a desktop-local webhook trigger/call
+  if (method === 'POST' && pathname === '/v1/webhooks/local-event') {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      sendJson(res, 401, { ok: false, error: 'unauthorized' });
+      return true;
+    }
+
+    const { parsed, raw } = await readBody(req);
+    const slug = String(parsed?.slug || parsed?.workflowId || '').trim();
+    if (!slug) {
+      sendJson(res, 400, { ok: false, error: 'slug_required' });
+      return true;
+    }
+
+    const webhooks = await getWebhooksByUser(auth.userId);
+    const webhook = webhooks.find((w) => w.slug === slug || w.target_workflow_id === slug);
+    if (!webhook) {
+      sendJson(res, 404, { ok: false, error: 'webhook_not_found' });
+      return true;
+    }
+
+    const responseStatus = Number(parsed?.response?.status || (parsed?.ok === false ? 500 : 200));
+    const eventStatus = parsed?.ok === false ? 'failed' : 'delivered';
+    const request = parsed?.request && typeof parsed.request === 'object' ? parsed.request : {};
+    const response = parsed?.response && typeof parsed.response === 'object' ? parsed.response : {};
+    const body = request.body ?? parsed?.body ?? {};
+    const rawBody = typeof request.rawBody === 'string'
+      ? request.rawBody.slice(0, 65_536)
+      : (typeof raw === 'string' ? raw.slice(0, 65_536) : '');
+
+    const eventId = await logWebhookEvent({
+      webhook_id: webhook.id,
+      user_id: auth.userId,
+      source_ip: String(request.sourceIp || '127.0.0.1'),
+      method: String(request.method || 'POST'),
+      path: String(request.path || `/webhooks/${parsed?.mode === 'call' ? 'call' : 'incoming'}/${slug}`),
+      headers: request.headers && typeof request.headers === 'object' ? request.headers : {},
+      query_params: request.queryParams && typeof request.queryParams === 'object' ? request.queryParams : {},
+      body,
+      raw_body: rawBody,
+      status: eventStatus as any,
+      error_message: parsed?.error ? String(parsed.error) : undefined,
+      response_status: responseStatus,
+      response_body: response.body ?? response,
+      delivered_to: String(parsed?.mode || 'local'),
+      delivery_attempts: 1,
+      delivered_at: eventStatus === 'delivered' ? new Date().toISOString() : undefined,
+      processed_at: new Date().toISOString(),
+    });
+
+    if (!eventId) {
+      sendJson(res, 500, { ok: false, error: 'logging_failed' });
+      return true;
+    }
+
+    sendJson(res, 201, { ok: true, eventId });
     return true;
   }
   

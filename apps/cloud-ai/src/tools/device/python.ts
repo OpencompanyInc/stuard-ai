@@ -19,9 +19,24 @@ export const python_setup = makeLocalTool(
   z.any(),
 );
 
+export const python_list_packages = makeLocalTool(
+  'python_list_packages',
+  'List installed Python packages (name + version) in a managed venv. Uses the shared default venv unless envId is provided.',
+  z.object({
+    envId: z.string().optional().describe('Optional managed env ID. Defaults to the shared "default" env.'),
+  }),
+  z.object({
+    ok: z.boolean().optional(),
+    envId: z.string().optional(),
+    ready: z.boolean().optional(),
+    count: z.number().int().optional(),
+    packages: z.array(z.object({ name: z.string(), version: z.string() })).optional(),
+  }),
+);
+
 export const python_install = makeLocalTool(
   'python_install',
-  'Install Python packages into a managed venv. Uses the shared default venv unless envId is provided.',
+  'Install Python packages into a managed venv. Skips packages already installed that satisfy the requested version. Uses the shared default venv unless envId is provided.',
   z.object({
     envId: z.string().optional().describe('Optional managed env ID. Omit to install into the persistent default venv.'),
     packages: z.array(z.string()).optional(),
@@ -30,7 +45,15 @@ export const python_install = makeLocalTool(
     allowNetworkInstall: z.boolean().optional(),
     wheelhouse: z.string().optional(),
   }),
-  z.any(),
+  z.object({
+    ok: z.boolean().optional(),
+    envId: z.string().optional(),
+    envPath: z.string().optional(),
+    python: z.string().optional(),
+    packagesInstalled: z.array(z.string()).optional(),
+    packagesSkipped: z.array(z.string()).optional(),
+    error: z.string().optional(),
+  }),
   600000,
 );
 
@@ -66,6 +89,7 @@ export const run_python_script = makeLocalTool(
     envId: z.string().optional().describe('Environment ID used'),
     envPath: z.string().optional().describe('Managed venv path used'),
     packagesInstalled: z.array(z.string()).optional().describe('List of packages that were installed'),
+    packagesSkipped: z.array(z.string()).optional().describe('Packages already installed and skipped'),
     streamId: z.string().optional().describe('Stream ID when stream=true'),
   }),
   (ctx) => {

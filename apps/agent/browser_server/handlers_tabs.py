@@ -5,7 +5,15 @@ from aiohttp import web
 
 from browser_server import state
 from browser_server.utils import _ok, _err
-from browser_server.lifecycle import _ensure_browser, _get_page_url, _get_page_title
+from browser_server.lifecycle import (
+    _claim_tab_for_session,
+    _ensure_browser_session,
+    _get_page_url,
+    _get_page_title,
+    _normalize_session_id,
+    _release_tab_session,
+    _tab_owner_snapshot,
+)
 
 
 async def handle_tabs(req: web.Request) -> web.Response:
@@ -13,7 +21,14 @@ async def handle_tabs(req: web.Request) -> web.Response:
     action = body.get("action", "list")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        if action == "release":
+            session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
+            if not session_id:
+                return _err("session_id is required for release action")
+            released = await _release_tab_session(session_id)
+            return _ok({"released": released, "session_id": session_id})
+
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -23,21 +38,30 @@ async def handle_tabs(req: web.Request) -> web.Response:
 
             if action == "list":
                 targets = await browser.list_targets()
+                owners = await _tab_owner_snapshot()
                 tabs = []
                 for i, t in enumerate(targets):
                     is_active = t["id"] == browser._active_id
-                    tabs.append({
+                    owner = owners.get(t["id"])
+                    tab = {
                         "index": i,
                         "url": t.get("url", ""),
                         "title": t.get("title", ""),
                         "active": is_active,
-                    })
+                        "owned": bool(owner),
+                    }
+                    if owner:
+                        tab["ownerSessionId"] = owner
+                    tabs.append(tab)
                 return _ok({"tabs": tabs, "count": len(tabs)})
 
             elif action == "new":
                 url = body.get("url", "about:blank")
                 page = await browser.new_page(url)
                 state._page = page
+                session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
+                if session_id and browser._active_id:
+                    await _claim_tab_for_session(session_id, browser._active_id)
                 return _ok({
                     "url": await _get_page_url(),
                     "title": await _get_page_title(),
@@ -47,8 +71,12 @@ async def handle_tabs(req: web.Request) -> web.Response:
                 index = body.get("index", 0)
                 targets = await browser.list_targets()
                 if 0 <= index < len(targets):
-                    page = await browser.activate_target(targets[index]["id"])
+                    target_id = targets[index]["id"]
+                    page = await browser.activate_target(target_id)
                     state._page = page
+                    session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
+                    if session_id:
+                        await _claim_tab_for_session(session_id, target_id)
                     return _ok({
                         "url": await _get_page_url(),
                         "title": await _get_page_title(),
@@ -60,6 +88,9 @@ async def handle_tabs(req: web.Request) -> web.Response:
                 targets = await browser.list_targets()
                 if index is not None and 0 <= index < len(targets):
                     target_id = targets[index]["id"]
+                    owner = state._tab_target_owners.get(target_id)
+                    if owner:
+                        await _release_tab_session(owner)
                     await browser.close_target(target_id)
                     # Switch to remaining tab
                     remaining = await browser.list_targets()
@@ -82,7 +113,7 @@ async def handle_cookies(req: web.Request) -> web.Response:
     action = body.get("action", "get")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:

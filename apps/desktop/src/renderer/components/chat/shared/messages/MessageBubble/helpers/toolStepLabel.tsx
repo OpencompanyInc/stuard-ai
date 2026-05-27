@@ -98,6 +98,34 @@ export function getToolStepLabel(tool: ToolCall): React.ReactNode {
       const cmd = typeof args.command === 'string' ? args.command : null;
       return cmd ? <span>Ran <InlineCodeChip max={64}>{cmd}</InlineCodeChip></span> : 'Ran command';
     }
+    case 'cli_agent_start': {
+      const provider = typeof args.provider === 'string' ? args.provider : null;
+      const prompt = typeof args.prompt === 'string' ? args.prompt : null;
+      if (provider && prompt) {
+        return <span>Started {provider} <InlineCodeChip max={48}>{prompt}</InlineCodeChip></span>;
+      }
+      return provider ? `Started ${provider} session` : 'Started CLI agent';
+    }
+    case 'cli_agent_send': {
+      const input = typeof args.input === 'string' ? args.input : (typeof args.text === 'string' ? args.text : null);
+      return input ? <span>Sent to CLI <InlineCodeChip max={56}>{input}</InlineCodeChip></span> : 'Sent to CLI agent';
+    }
+    case 'cli_agent_wait_for': {
+      const needle = typeof args.text === 'string' ? args.text : null;
+      return needle
+        ? <span>Waiting for CLI <InlineCodeChip max={48}>{needle}</InlineCodeChip></span>
+        : 'Waiting for CLI output';
+    }
+    case 'cli_agent_read':
+      return 'Read CLI output';
+    case 'terminal_read':
+      return 'Read terminal output';
+    case 'terminal_wait_for': {
+      const needle = typeof args.text === 'string' ? args.text : null;
+      return needle
+        ? <span>Waiting for <InlineCodeChip max={48}>{needle}</InlineCodeChip></span>
+        : 'Waiting for terminal output';
+    }
     case 'run_python_script':
     case 'run_node_script': {
       const lang = tool.tool === 'run_python_script' ? 'Python' : 'Node';

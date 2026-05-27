@@ -1,13 +1,51 @@
 import React, { memo } from 'react';
 import { Cross2Icon } from '@radix-ui/react-icons';
-import { Image as ImageIconLucide, File as FileIconLucide, Folder, FileText } from 'lucide-react';
+import { Image as ImageIconLucide, File as FileIconLucide, Folder, FileText, Music, Film } from 'lucide-react';
 import type { ContextItem } from '../../../FileNavigator';
+import { getChatAttachmentKind } from '../../../../utils/attachments';
 
 interface AttachmentBarProps {
-  attachments: Array<{ type: 'image' | 'file'; name: string }>;
+  attachments: Array<{ type: 'image' | 'file'; name: string; mimeType?: string; source?: string }>;
   contextPaths?: ContextItem[];
   onRemoveAttachment: (index: number) => void;
   onRemoveContext: (index: number) => void;
+}
+
+function AttachmentKindIcon({ attachment }: { attachment: AttachmentBarProps['attachments'][number] }) {
+  const kind = getChatAttachmentKind(attachment as any);
+  if (kind === 'image') {
+    return (
+      <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-500">
+        <ImageIconLucide className="w-3 h-3" />
+      </div>
+    );
+  }
+  if (kind === 'audio') {
+    return (
+      <div className="w-5 h-5 rounded-md bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+        <Music className="w-3 h-3" />
+      </div>
+    );
+  }
+  if (kind === 'video') {
+    return (
+      <div className="w-5 h-5 rounded-md bg-rose-500/10 flex items-center justify-center text-rose-500">
+        <Film className="w-3 h-3" />
+      </div>
+    );
+  }
+  if (kind === 'document') {
+    return (
+      <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center text-amber-500">
+        <FileText className="w-3 h-3" />
+      </div>
+    );
+  }
+  return (
+    <div className="w-5 h-5 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-500">
+      <FileIconLucide className="w-3 h-3" />
+    </div>
+  );
 }
 
 // Helper component for attachments & context
@@ -27,15 +65,7 @@ export const AttachmentBar = memo(({
           key={`att-${idx}`}
           className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-gray-200/50 border border-gray-300/30 hover:bg-gray-200/80 hover:border-gray-300/50 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
         >
-          {att.type === 'image' ? (
-            <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-500">
-              <ImageIconLucide className="w-3 h-3" />
-            </div>
-          ) : (
-            <div className="w-5 h-5 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-500">
-              <FileIconLucide className="w-3 h-3" />
-            </div>
-          )}
+          <AttachmentKindIcon attachment={att} />
           <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
             {att.name}
           </span>

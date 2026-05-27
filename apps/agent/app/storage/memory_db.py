@@ -221,6 +221,7 @@ class Project:
     name: str
     description: Optional[str] = None
     goals: Optional[str] = None
+    instructions: Optional[str] = None
     status: ProjectStatus = 'active'
     tags: List[str] = field(default_factory=list)
     pinned_paths: List[str] = field(default_factory=list)
@@ -581,6 +582,7 @@ class MemoryDB:
                     name_enc TEXT NOT NULL,
                     description_enc TEXT,
                     goals_enc TEXT,
+                    instructions_enc TEXT,
                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
                     tags_json TEXT,
                     pinned_paths_json TEXT,
@@ -594,6 +596,11 @@ class MemoryDB:
                     updated_at TEXT NOT NULL
                 )
             """)
+
+            try:
+                cur.execute("ALTER TABLE projects ADD COLUMN instructions_enc TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             # Memories — atomic facts/notes/snippets/etc with embeddings.
             # `project_ids_json` is a JSON array; empty array = global (cross-project).
@@ -2357,6 +2364,7 @@ class MemoryDB:
             name=_decrypt_content(row["name_enc"], self._crypto),
             description=_decrypt_content(row["description_enc"], self._crypto) if row["description_enc"] else None,
             goals=_decrypt_content(row["goals_enc"], self._crypto) if row["goals_enc"] else None,
+            instructions=_decrypt_content(row["instructions_enc"], self._crypto) if row["instructions_enc"] else None,
             status=row["status"],
             tags=json.loads(row["tags_json"]) if row["tags_json"] else [],
             pinned_paths=json.loads(row["pinned_paths_json"]) if row["pinned_paths_json"] else [],
@@ -2375,6 +2383,7 @@ class MemoryDB:
         name: str,
         description: Optional[str] = None,
         goals: Optional[str] = None,
+        instructions: Optional[str] = None,
         status: ProjectStatus = "active",
         tags: Optional[List[str]] = None,
         pinned_paths: Optional[List[str]] = None,
@@ -2388,15 +2397,16 @@ class MemoryDB:
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO projects
-                   (id, name_enc, description_enc, goals_enc, status, tags_json,
+                   (id, name_enc, description_enc, goals_enc, instructions_enc, status, tags_json,
                     pinned_paths_json, digest_enc, digest_updated_at, icon, color,
                     archived, embedding, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?, ?)""",
                 (
                     pid,
                     _encrypt_content(name, self._crypto),
                     _encrypt_content(description, self._crypto) if description else None,
                     _encrypt_content(goals, self._crypto) if goals else None,
+                    _encrypt_content(instructions, self._crypto) if instructions else None,
                     status,
                     json.dumps(tags or []),
                     json.dumps(pinned_paths or []),
@@ -2408,7 +2418,7 @@ class MemoryDB:
             )
             conn.commit()
         return Project(
-            id=pid, name=name, description=description, goals=goals, status=status,
+            id=pid, name=name, description=description, goals=goals, instructions=instructions, status=status,
             tags=tags or [], pinned_paths=pinned_paths or [], icon=icon, color=color,
             embedding=embedding, created_at=now, updated_at=now,
         )
@@ -2443,6 +2453,7 @@ class MemoryDB:
         name: Optional[str] = None,
         description: Optional[str] = None,
         goals: Optional[str] = None,
+        instructions: Optional[str] = None,
         status: Optional[ProjectStatus] = None,
         tags: Optional[List[str]] = None,
         pinned_paths: Optional[List[str]] = None,
@@ -2463,6 +2474,9 @@ class MemoryDB:
         if goals is not None:
             updates.append("goals_enc = ?")
             values.append(_encrypt_content(goals, self._crypto) if goals else None)
+        if instructions is not None:
+            updates.append("instructions_enc = ?")
+            values.append(_encrypt_content(instructions, self._crypto) if instructions else None)
         if status is not None:
             updates.append("status = ?")
             values.append(status)

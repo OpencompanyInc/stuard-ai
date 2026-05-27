@@ -158,11 +158,11 @@ export function WorkflowSidebar({
   // --- Collapsed state ---
   if (sidebarCollapsed) {
     return (
-      <aside className="w-12 bg-white border-r border-slate-200 flex flex-col items-center py-3 gap-3 shrink-0 z-20">
+      <aside className="w-12 bg-white border-r border-theme-sidebar flex flex-col items-center py-3 gap-3 shrink-0 z-20">
         <button onClick={onToggleCollapse} className="p-2 text-slate-400 hover:text-slate-700/80 hover:bg-slate-100 rounded-lg transition-all" title="Expand">
           <ChevronRight className="w-4 h-4" />
         </button>
-        <div className="w-6 h-px bg-slate-50" />
+        <div className="w-6 h-px bg-[color:var(--border)]" />
 <button onClick={onCreate} className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm transition-all" title="New Flow">
           <Plus className="w-4 h-4" />
         </button>
@@ -179,9 +179,9 @@ export function WorkflowSidebar({
 
   // --- Expanded state ---
   return (
-    <aside className="w-[260px] bg-white border-r border-slate-200 flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
+    <aside className="w-[260px] bg-white border-r border-theme-sidebar flex flex-col h-full shrink-0 z-20" data-onboarding="workflow-sidebar">
       {/* Header */}
-      <div className="h-10 px-3 border-b border-slate-100 flex items-center justify-between shrink-0">
+      <div className="h-10 px-3 border-b border-theme-sidebar flex items-center justify-between shrink-0">
         <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Explorer</span>
         <div className="flex items-center gap-0.5">
           <button onClick={onCreateFolder} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors" title="New Folder">
@@ -205,7 +205,7 @@ export function WorkflowSidebar({
             placeholder="Search..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 focus:border-blue-400 rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-slate-700/80 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+            className="w-full bg-slate-50 border border-theme focus:border-blue-400 rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-slate-700/80 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
           />
         </div>
       </div>
@@ -232,7 +232,7 @@ export function WorkflowSidebar({
       )}
 
       {/* Tree section header */}
-      <div className="px-3 py-1 flex items-center gap-1.5 border-t border-slate-100">
+      <div className="px-3 py-1 flex items-center gap-1.5 border-t border-theme-sidebar">
         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-1">Workflows</span>
         <span className="text-[10px] text-slate-400 tabular-nums">{items.length}</span>
       </div>
@@ -241,7 +241,7 @@ export function WorkflowSidebar({
       <div className="flex-1 overflow-y-auto scrollbar-minimal pb-2">
         {loading ? (
           <div className="py-12 flex justify-center">
-            <div className="w-5 h-5 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-theme-sidebar border-t-blue-500 rounded-full animate-spin" />
           </div>
         ) : filteredItems.length === 0 && folders.length === 0 ? (
           <div className="py-8 text-center px-4">
@@ -309,7 +309,7 @@ export function WorkflowSidebar({
       {folderMenu && (
         <div className="fixed inset-0 z-[100]" onClick={() => setFolderMenu(null)}>
           <div
-            className="absolute bg-white rounded-lg shadow-xl border border-slate-200 py-1 min-w-[150px]"
+            className="absolute bg-white rounded-lg shadow-xl border border-theme py-1 min-w-[150px]"
             style={{ top: Math.min(folderMenu.y, window.innerHeight - 100), left: Math.min(folderMenu.x, window.innerWidth - 170) }}
             onClick={e => e.stopPropagation()}
           >
@@ -323,7 +323,7 @@ export function WorkflowSidebar({
             >
               <Pencil className="w-3 h-3 text-slate-400" /> Rename
             </button>
-            <div className="h-px bg-slate-50 my-0.5" />
+            <div className="h-px bg-[color:var(--border)] my-0.5" />
             <button
               onClick={() => {
                 if (confirm(`Delete "${folderMenu.name}"? Items will move to root.`)) onDeleteFolder?.(folderMenu.name);
@@ -338,7 +338,7 @@ export function WorkflowSidebar({
       )}
 
       {/* Footer */}
-      <div className="border-t border-slate-100 bg-white">
+      <div className="border-t border-theme-sidebar bg-white">
         {credits && (
           <div className="px-3 py-2">
             <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">

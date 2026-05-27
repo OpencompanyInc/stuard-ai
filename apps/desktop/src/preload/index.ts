@@ -23,14 +23,32 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   startOverlayScreenSnip: (durationMs?: number) => ipcRenderer.invoke("overlay:startScreenSnip", durationMs),
   setMode: (mode: 'compact' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
   resize: (w: number, h: number, anchor?: 'top' | 'bottom') => ipcRenderer.invoke('overlay:resize', w, h, anchor),
-  setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => ipcRenderer.invoke('overlay:setBounds', bounds),
+  setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) => ipcRenderer.invoke('overlay:setBounds', bounds),
   moveBy: (dx: number, dy: number) => ipcRenderer.invoke('overlay:moveBy', dx, dy),
   getSize: () => ipcRenderer.invoke('overlay:getSize'),
   getMode: () => ipcRenderer.invoke('overlay:getMode'),
+  overlayMinimize: () => ipcRenderer.invoke('overlay:minimize'),
+  overlayToggleMaximize: () => ipcRenderer.invoke('overlay:toggleMaximize'),
+  overlayIsMaximized: () => ipcRenderer.invoke('overlay:isMaximized'),
+  onOverlayMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:maximizedChanged', handler);
+    return () => { try { ipcRenderer.off('overlay:maximizedChanged', handler); } catch { } };
+  },
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  onWindowMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('window:maximizedChanged', handler);
+    return () => { try { ipcRenderer.off('window:maximizedChanged', handler); } catch { } };
+  },
   // Internal sidebar (expands window width instead of separate window)
-  toggleInternalSidebar: (open?: boolean) => ipcRenderer.invoke('overlay:toggleInternalSidebar', open),
+  toggleInternalSidebar: (open?: boolean, panelWidth?: number) => ipcRenderer.invoke('overlay:toggleInternalSidebar', open, panelWidth),
+  resizeInternalSidebar: (panelWidth: number) => ipcRenderer.invoke('overlay:resizeInternalSidebar', panelWidth),
   getInternalSidebarState: () => ipcRenderer.invoke('overlay:getInternalSidebarState'),
-  onInternalSidebarChanged: (cb: (data: { open: boolean; width: number }) => void) => {
+  onInternalSidebarChanged: (cb: (data: { open: boolean; width: number; panelWidth?: number }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('overlay:internalSidebarChanged', handler);
     return () => { try { ipcRenderer.off('overlay:internalSidebarChanged', handler); } catch { } };
@@ -53,7 +71,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   },
   openDashboard: (options?: { tab?: string }) => ipcRenderer.invoke('system:openDashboard', options),
   openOnboarding: () => ipcRenderer.invoke('system:openOnboarding'),
-  openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string }) => ipcRenderer.invoke('system:openWorkflows', options),
+  openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => ipcRenderer.invoke('system:openWorkflows', options),
   openSpaces: () => ipcRenderer.invoke('spaces:open'),
   closeSpaces: () => ipcRenderer.invoke('spaces:close'),
   toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
@@ -138,6 +156,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // App Discovery & Unified Search
   listApps: (forceRefresh?: boolean) => ipcRenderer.invoke('apps:list', forceRefresh),
   refreshApps: () => ipcRenderer.invoke('apps:refresh'),
+  clearAppCacheAndRediscover: () => ipcRenderer.invoke('apps:clearCacheAndRediscover'),
+  forceReindex: () => ipcRenderer.invoke('fileIndex:forceReindex'),
   launchApp: (launchTarget: string) => ipcRenderer.invoke('apps:launch', launchTarget),
   unifiedSearch: (query: string, options?: any) => ipcRenderer.invoke('search:unified', query, options),
   onAppsUpdated: (cb: (data: any) => void) => {
@@ -387,7 +407,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('dashboard:navigate', handler);
     return () => { try { ipcRenderer.off('dashboard:navigate', handler); } catch { } };
   },
-  onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string }) => void) => {
+  onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('workflows:navigate', handler);
     return () => { try { ipcRenderer.off('workflows:navigate', handler); } catch { } };
@@ -421,6 +441,20 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('terminal:exit', handler);
     return () => { try { ipcRenderer.off('terminal:exit', handler); } catch { } };
+  },
+
+  // Delegated coding-agent CLI session lifecycle (headed mode). The PTY data
+  // itself flows over the existing terminal:data channel keyed by
+  // terminalSessionId — these events just announce which sessions exist.
+  onCliAgentSessionStarted: (cb: (data: { id: string; terminalSessionId: string; provider: string; label: string; cwd: string; mode: string; createdAt: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('cli-agent:session-started', handler);
+    return () => { try { ipcRenderer.off('cli-agent:session-started', handler); } catch { } };
+  },
+  onCliAgentSessionStopped: (cb: (data: { id: string; terminalSessionId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('cli-agent:session-stopped', handler);
+    return () => { try { ipcRenderer.off('cli-agent:session-stopped', handler); } catch { } };
   },
 
   // File Indexing
@@ -623,6 +657,9 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsUpdateTrigger: (id: string, triggerId: string, patch: any) => ipcRenderer.invoke('bots:updateTrigger', id, triggerId, patch),
   botsRemoveTrigger: (id: string, triggerId: string) => ipcRenderer.invoke('bots:removeTrigger', id, triggerId),
   botsGetAvailableTools: () => ipcRenderer.invoke('bots:getAvailableTools'),
+  botsTestSetup: (input: any) => ipcRenderer.invoke('bots:testSetup', input),
+  botsRunPreflightProbe: (payload: { request: { probe: string; args?: Record<string, any> }; cloudHttpBase: string; authToken: string | null }) =>
+    ipcRenderer.invoke('bots:runPreflightProbe', payload),
   botsDeployToVm: (id: string) => ipcRenderer.invoke('bots:deployToVm', id),
   botsStopOnVm: (id: string) => ipcRenderer.invoke('bots:stopOnVm', id),
   // Bot kanban + run log (private bot-owned memory, separate from user tasks)

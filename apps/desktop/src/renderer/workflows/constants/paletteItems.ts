@@ -367,12 +367,13 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'threads_publish_post', label: 'Threads: Publish Post', args: { text: '', reply_control: 'everyone' } },
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'whatsapp_status', label: 'WhatsApp: Status', args: {} },
-  { k: 'cloud.tool', t: 'whatsapp_send_message', label: 'WhatsApp: Send Message', args: { message: '', preview_url: false } },
-  { k: 'cloud.tool', t: 'whatsapp_send_media', label: 'WhatsApp: Send Media', args: { type: 'image', url: '', caption: '' } },
-  { k: 'cloud.tool', t: 'whatsapp_send_reaction', label: 'WhatsApp: Send Reaction', args: { message_id: '', emoji: '👍' } },
-  { k: 'cloud.tool', t: 'whatsapp_mark_read', label: 'WhatsApp: Mark Read', args: { message_id: '' } },
-  { k: 'cloud.tool', t: 'whatsapp_upload_media', label: 'WhatsApp: Upload Media', args: { url: '', mime_type: '' } },
+  // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+  // { k: 'cloud.tool', t: 'whatsapp_status', label: 'WhatsApp: Status', args: {} },
+  // { k: 'cloud.tool', t: 'whatsapp_send_message', label: 'WhatsApp: Send Message', args: { message: '', preview_url: false } },
+  // { k: 'cloud.tool', t: 'whatsapp_send_media', label: 'WhatsApp: Send Media', args: { type: 'image', url: '', caption: '' } },
+  // { k: 'cloud.tool', t: 'whatsapp_send_reaction', label: 'WhatsApp: Send Reaction', args: { message_id: '', emoji: '👍' } },
+  // { k: 'cloud.tool', t: 'whatsapp_mark_read', label: 'WhatsApp: Mark Read', args: { message_id: '' } },
+  // { k: 'cloud.tool', t: 'whatsapp_upload_media', label: 'WhatsApp: Upload Media', args: { url: '', mime_type: '' } },
 
   // ── Telnyx (SMS / Voice) ──────────────────────────────────────────────────
   { k: 'cloud.tool', t: 'telnyx_send_sms', label: 'Telnyx: Send SMS', args: { message: '' } },

@@ -4,6 +4,18 @@ import { extractYouTubeVideoId } from './media';
 import { normalizeMarkdownSpacing } from './markdown';
 import type { ContentSegment } from '../types';
 
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const AUDIO_EXTS = new Set(['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac', 'opus']);
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'm4v', 'webm']);
+
+function getAttachmentType(src: string): 'image' | 'video' | 'audio' | 'file' {
+  const ext = (src.match(/\.([a-zA-Z0-9]+)(?:[?#].*)?$/)?.[1] || '').toLowerCase();
+  if (AUDIO_EXTS.has(ext)) return 'audio';
+  if (VIDEO_EXTS.has(ext)) return 'video';
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  return 'file';
+}
+
 export function extractContentSegments(inputText: string): ContentSegment[] {
   if (!inputText) return [];
   const result: ContentSegment[] = [];
@@ -93,7 +105,7 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
     result.push({ kind: 'text', value: t });
   };
 
-  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
+  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'file' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
 
   // Add GenUI matches first (highest priority)
   for (const g of genuiMatches) {
@@ -116,10 +128,8 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
 
   while ((match = mediaRegex.exec(inputText)) !== null) {
     const src = String(match[1] || '').trim();
-    const isAudio = /\.(wav|mp3|ogg|m4a|aac)$/i.test(src);
-    const isVideo = /\.(mp4|mov|m4v|webm)$/i.test(src);
     allMatches.push({
-      type: isAudio ? 'audio' : isVideo ? 'video' : 'image',
+      type: getAttachmentType(src),
       start: match.index,
       end: match.index + match[0].length,
       data: { src },
@@ -193,6 +203,8 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
       result.push({ kind: 'video', src: m.data.src });
     } else if (m.type === 'audio' && m.data.src) {
       result.push({ kind: 'audio', src: m.data.src });
+    } else if (m.type === 'file' && m.data.src) {
+      result.push({ kind: 'file', src: m.data.src });
     } else if (m.type === 'youtube') {
       result.push({ kind: 'youtube', videoId: m.data.videoId, url: m.data.url });
     } else if (m.type === 'link_preview') {

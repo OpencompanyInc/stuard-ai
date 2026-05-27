@@ -335,10 +335,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               overlayMode={overlayMode}
               chatMenuOpen={chatMenuOpen}
               onChatMenuOpenChange={onChatMenuOpenChange}
-              conversations={conversations}
-              loadingConversations={loadingConversations}
-              onSelectConversation={onSelectConversation}
-              onDeleteConversation={onDeleteConversation}
             />
           </div>
 
@@ -393,7 +389,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           queuedMessages={queuedMessages}
           statusText={statusText}
           connectionStatus={connectionStatus}
-          displayModelName={displayModelName}
           translucentMode={translucentMode}
           showFileNav={showFileNav}
           textareaRef={textareaRef}

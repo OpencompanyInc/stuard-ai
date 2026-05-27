@@ -91,7 +91,14 @@ export async function execWorkspaceListFiles(args: any, ctx: RouterContext): Pro
     const wsRes = workflows_ensureWorkspace(flowId);
     if (!wsRes.ok) return { ok: false, error: wsRes.error || 'workspace_not_available' };
 
-    const result = workflows_listWorkspaceFiles(flowId, subpath ? String(subpath) : undefined);
+    const limit = typeof args?.limit === 'number' ? args.limit : undefined;
+    const offset = typeof args?.offset === 'number' ? args.offset : undefined;
+
+    const result = workflows_listWorkspaceFiles(
+      flowId,
+      subpath ? String(subpath) : undefined,
+      { limit, offset },
+    );
     return result;
   } catch (e: any) {
     return { ok: false, error: e?.message || 'workspace_list_files failed' };

@@ -87,8 +87,16 @@ function SidebarApp() {
     return () => { try { (typeof unsub === 'function') && unsub(); } catch { } };
   }, []);
 
+  // Switch to terminal tab when a headed CLI agent session starts
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onCliAgentSessionStarted?.(() => {
+      setActiveTab('terminal');
+    });
+    return () => { try { unsub?.(); } catch { } };
+  }, []);
+
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full launcher-compact-skin">
       <SidebarView
         activeTab={activeTab}
         onTabChange={setActiveTab}

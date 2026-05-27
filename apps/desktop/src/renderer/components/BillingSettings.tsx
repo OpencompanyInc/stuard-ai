@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ExternalLink,
   Loader2,
@@ -19,14 +19,10 @@ import {
   TrendingUp,
   Phone,
 } from "lucide-react";
+import { clsx } from "clsx";
 import { supabase } from "../lib/supabaseClient";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-} from "recharts";
+import { getApiEndpoint } from "../utils/apiEndpoint";
+import { openExternalUrl } from "../utils/billing";
 import {
   aggregateComputeBillingEvents,
   categorizeModelForUsage,
@@ -34,26 +30,12 @@ import {
   getUsageSourceLabel,
   isNonBillableUsageEvent,
   mergeUsageBreakdowns,
+  rollupUsageBreakdownForDisplay,
   normalizeComputeBillingLogEntry,
   normalizeUsageLogEntry,
   type ComputeBillingEventRow,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
-
-interface Product {
-  id: string;
-  name: string;
-  description: string;
-  prices: Array<{
-    id: string;
-    amount: number;
-    currency: string;
-    type: string;
-    recurringInterval?: string;
-  }>;
-  isRecurring: boolean;
-  benefits: string[];
-}
 
 interface CreditSummary {
   plan?: string;
@@ -67,6 +49,9 @@ interface CreditSummary {
   addonRemaining?: number;
   currentPeriodStart?: string | null;
   currentPeriodEnd?: string | null;
+  billingCustomerId?: string | null;
+  billingSubscriptionId?: string | null;
+  billingSubscriptionStatus?: string | null;
 }
 
 type BillingUser = {
@@ -81,6 +66,83 @@ interface UsageBreakdownItem {
   count: number;
 }
 
+type BillingPrefs = {
+  autoRefillEnabled: boolean;
+  autoRefillThresholdCredits: number;
+  autoRefillAmountCents: number;
+  monthlyBudgetCents: number | null;
+  hardSpendLimitCents: number | null;
+};
+
+type QuickCreditPack = {
+  id: string;
+  label: string;
+  amountCents: number;
+  productId: string;
+  credits: number;
+};
+
+const DEFAULT_BILLING_PREFS: BillingPrefs = {
+  autoRefillEnabled: false,
+  autoRefillThresholdCredits: 100,
+  autoRefillAmountCents: 1000,
+  monthlyBudgetCents: null,
+  hardSpendLimitCents: null,
+};
+
+type BillingCustomerSummary = {
+  id: string;
+  subscriptions?: Array<{ status?: string }>;
+  orders?: Array<{ id: string }>;
+};
+
+const ACTIVE_BILLING_STATUSES = new Set(["active", "trialing", "switching", "past_due"]);
+
+function customerHasBillingOnFile(customer: BillingCustomerSummary | null | undefined): boolean {
+  if (!customer?.id) return false;
+  if (Array.isArray(customer.orders) && customer.orders.length > 0) return true;
+  return (customer.subscriptions || []).some((sub) =>
+    ACTIVE_BILLING_STATUSES.has(String(sub?.status || "").trim().toLowerCase())
+  );
+}
+
+const WEBSITE_BILLING_URL = "https://stuard.ai/dashboard/billing";
+
+const QUICK_CREDIT_PACKS: QuickCreditPack[] = [
+  { id: "addon_5", label: "$5", amountCents: 500, productId: "d4939807-bc62-4a29-8a87-affb910e134b", credits: 100 },
+  { id: "addon_10", label: "$10", amountCents: 1000, productId: "7d67c4f0-f376-47cc-99a3-354011aae041", credits: 230 },
+  { id: "addon_25", label: "$25", amountCents: 2500, productId: "463ff74b-4f26-44b7-8a80-af2d2cdc9a7a", credits: 585 },
+  { id: "addon_50", label: "$50", amountCents: 5000, productId: "5516a18c-b03b-4ada-8b6a-599f2cc5b7e9", credits: 1170 },
+];
+
+const billingPrefsFromRow = (row: any): BillingPrefs => ({
+  autoRefillEnabled: Boolean(row?.auto_refill_enabled ?? DEFAULT_BILLING_PREFS.autoRefillEnabled),
+  autoRefillThresholdCredits: Number(row?.auto_refill_threshold_credits ?? DEFAULT_BILLING_PREFS.autoRefillThresholdCredits),
+  autoRefillAmountCents: Number(row?.auto_refill_amount_cents ?? DEFAULT_BILLING_PREFS.autoRefillAmountCents),
+  monthlyBudgetCents: row?.monthly_budget_cents == null ? null : Number(row.monthly_budget_cents),
+  hardSpendLimitCents: row?.hard_spend_limit_cents == null ? null : Number(row.hard_spend_limit_cents),
+});
+
+const billingPrefsToRow = (prefs: Partial<BillingPrefs>) => {
+  const row: Record<string, unknown> = {};
+  if (typeof prefs.autoRefillEnabled === "boolean") row.auto_refill_enabled = prefs.autoRefillEnabled;
+  if (Number.isFinite(prefs.autoRefillThresholdCredits)) {
+    row.auto_refill_threshold_credits = Math.max(0, Math.trunc(Number(prefs.autoRefillThresholdCredits)));
+  }
+  if (Number.isFinite(prefs.autoRefillAmountCents)) {
+    row.auto_refill_amount_cents = Math.max(500, Math.trunc(Number(prefs.autoRefillAmountCents)));
+  }
+  if (prefs.monthlyBudgetCents === null) row.monthly_budget_cents = null;
+  else if (Number.isFinite(prefs.monthlyBudgetCents)) {
+    row.monthly_budget_cents = Math.max(0, Math.trunc(Number(prefs.monthlyBudgetCents)));
+  }
+  if (prefs.hardSpendLimitCents === null) row.hard_spend_limit_cents = null;
+  else if (Number.isFinite(prefs.hardSpendLimitCents)) {
+    row.hard_spend_limit_cents = Math.max(0, Math.trunc(Number(prefs.hardSpendLimitCents)));
+  }
+  return row;
+};
+
 const CATEGORY_CONFIG: Record<
   string,
   { label: string; color: string; hex: string; icon: React.ElementType }
@@ -90,54 +152,132 @@ const CATEGORY_CONFIG: Record<
   storage: { label: "Storage", color: "bg-teal-500", hex: "#14b8a6", icon: HardDrive },
   messaging: { label: "Messaging", color: "bg-rose-500", hex: "#f43f5e", icon: MessageSquare },
   voice: { label: "Voice Calls", color: "bg-orange-500", hex: "#f97316", icon: Phone },
+  other: { label: "Other", color: "bg-gray-400", hex: "#9ca3af", icon: Zap },
 };
 
-const MODEL_COLORS: Array<{ color: string; hex: string }> = [
-  { color: "bg-blue-500", hex: "#3b82f6" },
-  { color: "bg-orange-400", hex: "#da7756" },
-  { color: "bg-green-500", hex: "#10a37f" },
-  { color: "bg-indigo-500", hex: "#6366f1" },
-  { color: "bg-cyan-500", hex: "#06b6d4" },
-  { color: "bg-amber-400", hex: "#f59e0b" },
-  { color: "bg-violet-500", hex: "#8b5cf6" },
-  { color: "bg-emerald-500", hex: "#10b981" },
-  { color: "bg-sky-500", hex: "#0ea5e9" },
-  { color: "bg-fuchsia-500", hex: "#d946ef" },
-  { color: "bg-lime-500", hex: "#84cc16" },
-  { color: "bg-rose-400", hex: "#fb7185" },
-];
-
-const modelColorCache = new Map<string, { color: string; hex: string }>();
-let modelColorIdx = 0;
-
-function getModelColor(category: string): { color: string; hex: string } {
-  if (!modelColorCache.has(category)) {
-    modelColorCache.set(category, MODEL_COLORS[modelColorIdx % MODEL_COLORS.length]);
-    modelColorIdx += 1;
-  }
-  return modelColorCache.get(category)!;
-}
+const INFERENCE_PROVIDER_CONFIG: Record<string, { label: string; hex: string }> = {
+  anthropic: { label: "Anthropic", hex: "#da7756" },
+  openai: { label: "OpenAI", hex: "#10a37f" },
+  google: { label: "Google", hex: "#4285f4" },
+  deepseek: { label: "DeepSeek", hex: "#4d6bff" },
+  meta: { label: "Meta", hex: "#0668E1" },
+  mistral: { label: "Mistral", hex: "#f97316" },
+  groq: { label: "Groq", hex: "#f55036" },
+  ollama: { label: "Local models", hex: "#6366f1" },
+  "x-ai": { label: "xAI", hex: "#111827" },
+  cohere: { label: "Cohere", hex: "#39594d" },
+  other: { label: "Other models", hex: "#9ca3af" },
+};
 
 function getCategoryConfig(category: string): { label: string; color: string; hex: string; icon: React.ElementType } {
   if (CATEGORY_CONFIG[category]) return CATEGORY_CONFIG[category];
   if (category.startsWith("inference:")) {
-    const model = category.slice("inference:".length);
-    const label = model.includes("/") ? model.split("/").slice(1).join("/") : model;
-    const { color, hex } = getModelColor(category);
-    return { label, color, hex, icon: Bot };
+    const provider = category.slice("inference:".length);
+    const providerConfig = INFERENCE_PROVIDER_CONFIG[provider] || INFERENCE_PROVIDER_CONFIG.other;
+    return {
+      label: providerConfig.label,
+      color: "bg-blue-500",
+      hex: providerConfig.hex,
+      icon: Bot,
+    };
   }
   return { label: category, color: "bg-gray-400", hex: "#9ca3af", icon: Zap };
 }
 
-const SectionHeader = ({ title, description }: { title: string; description: string }) => (
-  <div className="mb-6">
-    <h3 className="text-xl font-stuard text-theme-fg tracking-tight">{title}</h3>
-    <p className="text-sm text-theme-muted font-medium">{description}</p>
+const BillingSectionHeader = ({ title, description }: { title: string; description?: string }) => (
+  <div className="mb-5 border-b border-theme-sidebar pb-4">
+    <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight">{title}</h3>
+    {description ? <p className="text-[13px] text-theme-muted font-medium mt-1">{description}</p> : null}
   </div>
 );
 
-const formatCurrency = (amount: number, currency: string) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amount / 100);
+const BillingToggle = ({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    disabled={disabled}
+    onClick={() => onChange(!checked)}
+    className={clsx(
+      "relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:cursor-not-allowed",
+      checked ? "bg-primary" : "bg-theme-active/70 border border-theme",
+    )}
+  >
+    <span
+      className={clsx(
+        "inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200",
+        checked ? "translate-x-[1.15rem]" : "translate-x-0.5",
+      )}
+    />
+  </button>
+);
+
+const BillingField = ({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) => (
+  <div>
+    <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-1.5">{label}</label>
+    {children}
+    {hint ? <p className="mt-1 text-[11px] text-theme-muted leading-relaxed">{hint}</p> : null}
+  </div>
+);
+
+const billingInputClass =
+  "w-full px-3 py-2.5 rounded-xl border border-theme bg-theme-card text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted disabled:opacity-50";
+
+function UsageBarRow({
+  label,
+  credits,
+  total,
+  count,
+  hex,
+  icon: Icon,
+}: {
+  label: string;
+  credits: number;
+  total: number;
+  count: number;
+  hex: string;
+  icon: React.ElementType;
+}) {
+  const pct = total > 0 ? Math.min(100, (credits / total) * 100) : 0;
+  return (
+    <div className="rounded-xl border border-theme bg-theme-hover/40 px-4 py-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-theme bg-theme-card shrink-0">
+            <Icon className="w-3.5 h-3.5 text-theme-muted" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-theme-fg tracking-tight truncate">{label}</div>
+            <div className="text-[11px] text-theme-muted">{count.toLocaleString()} {count === 1 ? "event" : "events"}</div>
+          </div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[13px] font-semibold text-theme-fg tabular-nums">{credits.toFixed(1)}</div>
+          <div className="text-[11px] text-theme-muted tabular-nums">{pct.toFixed(1)}%</div>
+        </div>
+      </div>
+      <div className="h-1.5 rounded-full bg-theme-hover overflow-hidden">
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: hex }} />
+      </div>
+    </div>
+  );
+}
 
 const DETAIL_LOAD_DELAY_MS = 350;
 const COMPUTE_BILLING_ROW_LIMIT = 1500;
@@ -169,19 +309,6 @@ const formatRelativeTime = (dateStr: string): string => {
   if (diffHr < 24) return `${diffHr}h ago`;
   if (diffDay < 7) return `${diffDay}d ago`;
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-};
-
-const PieTooltip = ({ active, payload }: any) => {
-  if (!active || !payload?.[0]) return null;
-  const { name, value, payload: entry } = payload[0];
-  return (
-    <div className="bg-theme-card border border-theme rounded-lg px-3 py-2 shadow-lg">
-      <p className="text-[11px] font-bold text-theme-fg">{name}</p>
-      <p className="text-[10px] text-theme-muted">
-        {Number(value).toFixed(2)} credits ({Number(entry.pct).toFixed(1)}%)
-      </p>
-    </div>
-  );
 };
 
 function resolvePeriodDate(since: string | null): Date {
@@ -313,12 +440,16 @@ async function loadComputeBillingRows(uid: string, sinceIso: string, limit?: num
 
 export const BillingSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoRefill, setAutoRefill] = useState(false);
+  const [billingPrefs, setBillingPrefs] = useState<BillingPrefs | null>(null);
+  const [billingCustomer, setBillingCustomer] = useState<BillingCustomerSummary | null>(null);
+  const [billingCustomerLoading, setBillingCustomerLoading] = useState(false);
+  const [billingCustomerChecked, setBillingCustomerChecked] = useState(false);
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [prefsSaving, setPrefsSaving] = useState(false);
   const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
   const [usageBreakdown, setUsageBreakdown] = useState<UsageBreakdownItem[]>([]);
   const [usageLogs, setUsageLogs] = useState<UsageLogEntry[]>([]);
@@ -327,14 +458,14 @@ export const BillingSettings: React.FC = () => {
   const [usageLoading, setUsageLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsLoaded, setLogsLoaded] = useState(false);
-  const [productsLoading, setProductsLoading] = useState(false);
-  const [productsLoaded, setProductsLoaded] = useState(false);
 
   const LOGS_PER_PAGE = 20;
   const mountedRef = useRef(true);
   const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const detailLoadTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const convTitleCacheRef = useRef<Record<string, string>>({});
+  const autoRefillOpenedRef = useRef<Set<string>>(new Set());
+  const [autoRefillPendingUrl, setAutoRefillPendingUrl] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -357,7 +488,11 @@ export const BillingSettings: React.FC = () => {
     if (!user) return null;
 
     const [{ data: profile }, { data: rawGrants }] = await Promise.all([
-      supabase.from("profiles").select("plan, current_period_start, current_period_end").eq("id", user.id).maybeSingle(),
+      supabase
+        .from("profiles")
+        .select("plan, current_period_start, current_period_end, billing_customer_id, billing_subscription_id, billing_subscription_status")
+        .eq("user_id", user.id)
+        .maybeSingle(),
       supabase.from("credit_grants").select("source_type, total_credits, remaining_credits, expires_at").eq("user_id", user.id),
     ]);
 
@@ -396,8 +531,65 @@ export const BillingSettings: React.FC = () => {
         addonRemaining: Math.ceil(addonRemaining),
         currentPeriodStart: (profile as any)?.current_period_start || periodStart.toISOString(),
         currentPeriodEnd: (profile as any)?.current_period_end || null,
+        billingCustomerId: (profile as any)?.billing_customer_id || null,
+        billingSubscriptionId: (profile as any)?.billing_subscription_id || null,
+        billingSubscriptionStatus: (profile as any)?.billing_subscription_status || null,
       } as CreditSummary,
     };
+  }, []);
+
+  const loadBillingPrefs = useCallback(async (uid: string) => {
+    setPrefsLoading(true);
+    try {
+      const { data, error: prefsError } = await supabase
+        .from("profiles")
+        .select("auto_refill_enabled, auto_refill_threshold_credits, auto_refill_amount_cents, monthly_budget_cents, hard_spend_limit_cents")
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (prefsError) throw prefsError;
+      if (!mountedRef.current) return;
+      setBillingPrefs(billingPrefsFromRow(data));
+    } catch {
+      if (mountedRef.current) setBillingPrefs(DEFAULT_BILLING_PREFS);
+    } finally {
+      if (mountedRef.current) setPrefsLoading(false);
+    }
+  }, []);
+
+  const loadBillingCustomer = useCallback(async (email: string) => {
+    setBillingCustomerLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        if (mountedRef.current) setBillingCustomer(null);
+        return;
+      }
+
+      const apiBase = getApiEndpoint().replace(/\/+$/, "");
+      const response = await fetch(
+        `${apiBase}/v1/billing/customer?email=${encodeURIComponent(email)}`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+      const result = await response.json().catch(() => null);
+      if (!mountedRef.current) return;
+
+      if (response.ok && result?.ok && result.customer?.id) {
+        setBillingCustomer(result.customer as BillingCustomerSummary);
+      } else {
+        setBillingCustomer(null);
+      }
+    } catch {
+      if (mountedRef.current) setBillingCustomer(null);
+    } finally {
+      if (mountedRef.current) {
+        setBillingCustomerLoading(false);
+        setBillingCustomerChecked(true);
+      }
+    }
   }, []);
 
   const loadUsageBreakdown = useCallback(async (uid: string, since: string | null) => {
@@ -480,17 +672,6 @@ export const BillingSettings: React.FC = () => {
     }
   }, []);
 
-  const loadProducts = useCallback(async () => {
-    setProductsLoading(true);
-    try {
-      const result = await window.desktopAPI?.billingListProducts?.();
-      if (!mountedRef.current) return;
-      if (result?.ok && result.products) setProducts(result.products);
-    } finally {
-      if (mountedRef.current) { setProductsLoading(false); setProductsLoaded(true); }
-    }
-  }, []);
-
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -503,12 +684,9 @@ export const BillingSettings: React.FC = () => {
     convTitleCacheRef.current = {};
     setLogsTotal(0);
     setLogsPage(0);
-    setProducts([]);
-    setProductsLoaded(false);
-
-    window.desktopAPI?.getPrefs?.().then((r: any) => {
-      if (r?.ok && r.prefs?.autoRefillCredits !== undefined) setAutoRefill(!!r.prefs.autoRefillCredits);
-    }).catch(() => {});
+    setBillingPrefs(null);
+    setBillingCustomer(null);
+    setBillingCustomerChecked(false);
 
     try {
       const result = await loadCredits();
@@ -521,6 +699,8 @@ export const BillingSettings: React.FC = () => {
       setUserId(user.id);
       setUserEmail(user.email || null);
       setCreditSummary(summary);
+      void loadBillingPrefs(user.id);
+      if (user.email) void loadBillingCustomer(user.email);
       if (mountedRef.current) setLoading(false);
       const scheduleDetailLoad = (delay: number, run: () => void) => {
         const timer = setTimeout(() => {
@@ -538,7 +718,7 @@ export const BillingSettings: React.FC = () => {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [loadCredits, loadUsageBreakdown, loadLogs, loadProducts]);
+  }, [loadCredits, loadUsageBreakdown, loadBillingPrefs, loadBillingCustomer]);
 
   useEffect(() => {
     loadData();
@@ -572,51 +752,159 @@ export const BillingSettings: React.FC = () => {
     };
   }, [userId, logsLoaded, logsPage, loadCredits, loadUsageBreakdown, loadLogs]);
 
-  const creditPacks = products.filter((p) => !p.isRecurring);
-  const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
+  const displayBreakdown = useMemo(
+    () => rollupUsageBreakdownForDisplay(usageBreakdown, { maxItems: 8 }),
+    [usageBreakdown],
+  );
+  const displayTotal = displayBreakdown.reduce((sum, item) => sum + item.credits, 0);
+  const inferenceModelCount = useMemo(
+    () => usageBreakdown.filter((item) => item.category.startsWith("inference:")).length,
+    [usageBreakdown],
+  );
 
   const currentPlan = (() => {
     const raw = String(creditSummary?.plan || "free").trim().toLowerCase();
     if (raw === "free_trial" || raw === "trial") return "Free";
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
+  const planKey = currentPlan.trim().toLowerCase();
+  const subscriptionStatus = String(creditSummary?.billingSubscriptionStatus || "").trim().toLowerCase();
+  const periodEndsAt = creditSummary?.currentPeriodEnd ? Date.parse(creditSummary.currentPeriodEnd) : 0;
+  const hasActivePaidPlan =
+    !["", "free", "free_trial", "trial"].includes(planKey) &&
+    (
+      Number(creditSummary?.includedCredits || 0) > 0 ||
+      !Number.isNaN(periodEndsAt) && periodEndsAt > Date.now() ||
+      ["active", "trialing", "switching"].includes(subscriptionStatus)
+    );
+  const hasProfileBilling = Boolean(
+    creditSummary?.billingCustomerId ||
+    creditSummary?.billingSubscriptionId ||
+    ACTIVE_BILLING_STATUSES.has(subscriptionStatus) ||
+    hasActivePaidPlan
+  );
+  const hasPolarBilling = customerHasBillingOnFile(billingCustomer);
+  const hasPurchasedAddons = Number(creditSummary?.addonCredits || 0) > 0;
+  const hasBillingAccount = Boolean(
+    hasProfileBilling ||
+    hasPolarBilling ||
+    billingCustomer?.id ||
+    hasPurchasedAddons
+  );
+  const showPaymentMethodNeeded = billingCustomerChecked && !hasBillingAccount;
+
+  const pollAutoRefillPending = useCallback(async () => {
+    if (!userId) return;
+    const prefs = billingPrefs || DEFAULT_BILLING_PREFS;
+    if (!prefs.autoRefillEnabled || !hasBillingAccount) {
+      setAutoRefillPendingUrl(null);
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+
+      const apiBase = getApiEndpoint().replace(/\/+$/, "");
+      const response = await fetch(`${apiBase}/v1/billing/auto-refill/pending`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const result = await response.json().catch(() => null);
+      if (!mountedRef.current || !response.ok || !result?.ok) return;
+
+      if (result.pending && result.url) {
+        setAutoRefillPendingUrl(result.url);
+        const checkoutKey = String(result.checkoutId || result.url);
+        if (!autoRefillOpenedRef.current.has(checkoutKey)) {
+          autoRefillOpenedRef.current.add(checkoutKey);
+          void openExternalUrl(result.url);
+        }
+      } else {
+        setAutoRefillPendingUrl(null);
+      }
+    } catch {
+      // Non-fatal — will retry on next poll.
+    }
+  }, [userId, billingPrefs, hasBillingAccount]);
+
+  useEffect(() => {
+    if (!userId || !billingPrefs?.autoRefillEnabled || !hasBillingAccount) return;
+    void pollAutoRefillPending();
+    const timer = setInterval(() => void pollAutoRefillPending(), 30_000);
+    return () => clearInterval(timer);
+  }, [userId, billingPrefs?.autoRefillEnabled, hasBillingAccount, pollAutoRefillPending]);
 
   const usagePercent =
     creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
       ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
       : 0;
 
-  const pieData = usageBreakdown
-    .filter((item) => item.credits > 0)
-    .map((item) => {
-      const config = getCategoryConfig(item.category);
-      const pct = usageTotal > 0 ? Number(((item.credits / usageTotal) * 100).toFixed(1)) : 0;
-      return { name: config.label, value: item.credits, pct, fill: config.hex };
-    });
-
   const totalLogsPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
 
-  const handleAutoRefillToggle = async (enabled: boolean) => {
-    setAutoRefill(enabled);
+  const handleSaveBillingPrefs = async (next: Partial<BillingPrefs>) => {
+    if (!userId) return;
+    const previous = billingPrefs || DEFAULT_BILLING_PREFS;
+    const merged = { ...previous, ...next };
+    setBillingPrefs(merged);
+    setPrefsSaving(true);
     try {
-      await window.desktopAPI?.setPrefs?.({ autoRefillCredits: enabled });
-    } catch {
-      setAutoRefill(!enabled);
+      const row = billingPrefsToRow(next);
+      if (Object.keys(row).length === 0) return;
+      const { error: prefsError } = await supabase.from("profiles").update(row).eq("user_id", userId);
+      if (prefsError) throw prefsError;
+    } catch (e: any) {
+      setBillingPrefs(previous);
+      setError(e?.message || "Failed to save billing settings");
+    } finally {
+      setPrefsSaving(false);
     }
   };
 
-  const handlePurchaseCredits = async (productId: string) => {
+  const buildWebsiteCheckoutUrl = (pack: QuickCreditPack) => {
+    const qs = new URLSearchParams({
+      products: pack.productId,
+      customerEmail: userEmail || "",
+      customerExternalId: userId || "",
+      metadata: JSON.stringify({ userId, type: "addon", packId: pack.id }),
+    });
+    return `https://stuard.ai/api/polar/checkout?${qs.toString()}`;
+  };
+
+  const handleQuickTopUp = async (pack: QuickCreditPack) => {
     if (!userEmail) return;
-    setActionLoading(productId);
+    setActionLoading(pack.id);
+    setError(null);
     try {
-      const result = await window.desktopAPI?.billingPurchaseCredits?.({
-        productId,
-        email: userEmail,
-        userId: userId || undefined,
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("Missing session token");
+
+      const apiBase = getApiEndpoint().replace(/\/+$/, "");
+      const response = await fetch(`${apiBase}/v1/billing/checkout`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ productId: pack.productId }),
+        signal: AbortSignal.timeout(15_000),
       });
-      if (!result?.ok) setError(result?.error || "Failed to open purchase page");
+
+      const result = await response.json().catch(() => null);
+      if (response.ok && result?.ok && result.url) {
+        await openExternalUrl(result.url);
+      } else {
+        await openExternalUrl(buildWebsiteCheckoutUrl(pack));
+      }
     } catch (e: any) {
-      setError(e?.message || "Failed to open purchase page");
+      if (e?.message === "Missing session token") {
+        setError(e.message);
+      } else {
+        await openExternalUrl(buildWebsiteCheckoutUrl(pack));
+        return;
+      }
     } finally {
       setActionLoading(null);
     }
@@ -625,9 +913,9 @@ export const BillingSettings: React.FC = () => {
   const handleOpenWebsiteBilling = async () => {
     setActionLoading("website");
     try {
-      await (window as any).desktopAPI?.openExternal?.("https://stuard.ai/dashboard/billing");
-    } catch {
-      window.open("https://stuard.ai/dashboard/billing", "_blank", "noopener,noreferrer");
+      await openExternalUrl(WEBSITE_BILLING_URL);
+    } catch (e: any) {
+      setError(e?.message || "Failed to open billing page");
     } finally {
       setActionLoading(null);
     }
@@ -638,16 +926,17 @@ export const BillingSettings: React.FC = () => {
     void loadLogs(userId, billingPeriodStart, logsPage);
   };
 
-  const handleLoadProducts = () => {
-    if (productsLoading || productsLoaded) return;
-    void loadProducts();
-  };
+  const prefs = billingPrefs || DEFAULT_BILLING_PREFS;
+  const autoRefillDisabled =
+    prefsLoading ||
+    !billingPrefs ||
+    (!hasBillingAccount && (billingCustomerChecked || !userEmail));
 
   return (
     <div className="space-y-6">
       {/* ── Main Card: Balance + Limits ── */}
-      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-        <SectionHeader title="Billing & Credits" description="Manage your plan, credit balance, and add-ons." />
+      <div className="dashboard-card p-6">
+        <BillingSectionHeader title="Billing & Credits" description="Manage your plan, credit balance, and add-ons." />
 
         {error && (
           <div className="flex items-center justify-between gap-3 p-3 bg-red-500/10 rounded-theme-button border border-red-500/20 mb-6">
@@ -688,52 +977,55 @@ export const BillingSettings: React.FC = () => {
 
         {creditSummary && (
           <div className="mb-6">
-            <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-              Current Balance
-            </label>
-            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-primary" />
-                  <span className="text-[13px] font-bold text-theme-fg">{currentPlan} Plan</span>
+            <div className="rounded-xl border border-theme bg-theme-hover/40 p-4 md:p-5">
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-theme bg-theme-card">
+                    <CreditCard className="w-4 h-4 text-primary" />
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-semibold text-theme-fg">{currentPlan} plan</div>
+                    <div className="text-[11px] text-theme-muted">Current billing period</div>
+                  </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-lg font-black text-theme-fg">
+                  <div className="text-2xl font-semibold text-theme-fg tabular-nums">
                     {creditSummary.unlimited ? "Unlimited" : Number(creditSummary.remaining || 0).toLocaleString()}
-                  </span>
+                  </div>
                   {!creditSummary.unlimited && (
-                    <span className="text-[11px] text-theme-muted ml-1">credits remaining</span>
+                    <div className="text-[11px] text-theme-muted">credits remaining</div>
                   )}
                 </div>
               </div>
 
               {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
-                <div className="mb-3">
-                  <div className="w-full bg-theme-bg rounded-full h-2.5">
+                <div className="mb-4">
+                  <div className="w-full bg-theme-card rounded-full h-2 overflow-hidden border border-theme">
                     <div
-                      className={`h-2.5 rounded-full transition-all ${
-                        usagePercent >= 90 ? "bg-red-500" : usagePercent >= 70 ? "bg-amber-500" : "bg-emerald-500"
-                      }`}
+                      className={clsx(
+                        "h-2 rounded-full transition-all",
+                        usagePercent >= 90 ? "bg-red-500" : usagePercent >= 70 ? "bg-amber-500" : "bg-primary",
+                      )}
                       style={{ width: `${usagePercent}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-[10px] text-theme-muted mt-1">
+                  <div className="flex justify-between text-[11px] text-theme-muted mt-1.5">
                     <span>{Number(creditSummary.used || 0).toLocaleString()} used</span>
                     <span>{Number(creditSummary.limit).toLocaleString()} total</span>
                   </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-2 bg-theme-bg rounded-theme-button">
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">Subscription</p>
-                  <p className="text-sm font-bold text-theme-fg">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3">
+                  <p className="text-[11px] font-semibold text-theme-muted">Subscription</p>
+                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
                     {Number(creditSummary.includedRemaining || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="p-2 bg-theme-bg rounded-theme-button">
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">Add-ons</p>
-                  <p className="text-sm font-bold text-theme-fg">
+                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3">
+                  <p className="text-[11px] font-semibold text-theme-muted">Add-ons</p>
+                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
                     {Number(creditSummary.addonRemaining || 0).toLocaleString()}
                   </p>
                 </div>
@@ -743,49 +1035,46 @@ export const BillingSettings: React.FC = () => {
         )}
 
         {creditSummary && !creditSummary.unlimited && (
-          <div className="mb-6">
-            <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-              Plan Limits
-            </label>
-            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
+          <div className="mb-2">
+            <div className="rounded-xl border border-theme bg-theme-hover/40 p-4">
               <div className="grid grid-cols-3 gap-3">
-                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
-                  <Shield className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">Period Limit</p>
-                  <p className="text-sm font-black text-theme-fg">
+                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
+                  <Shield className="w-4 h-4 text-primary mx-auto mb-1.5" />
+                  <p className="text-[11px] font-semibold text-theme-muted">Period limit</p>
+                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
                     {Number(creditSummary.limit || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
-                  <TrendingUp className="w-4 h-4 text-amber-500 mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">Used</p>
-                  <p className="text-sm font-black text-theme-fg">
+                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
+                  <TrendingUp className="w-4 h-4 text-amber-500 mx-auto mb-1.5" />
+                  <p className="text-[11px] font-semibold text-theme-muted">Used</p>
+                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
                     {Number(creditSummary.used || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="text-center p-3 bg-theme-bg rounded-theme-button">
-                  <Coins className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
-                  <p className="text-[10px] text-theme-muted font-bold uppercase">Remaining</p>
-                  <p className="text-sm font-black text-theme-fg">
+                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
+                  <Coins className="w-4 h-4 text-emerald-500 mx-auto mb-1.5" />
+                  <p className="text-[11px] font-semibold text-theme-muted">Remaining</p>
+                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
                     {Number(creditSummary.remaining || 0).toLocaleString()}
                   </p>
                 </div>
               </div>
 
               {usagePercent >= 90 && (
-                <div className="mt-3 p-2 bg-red-500/10 border border-red-500/20 rounded-theme-button flex items-center gap-2">
+                <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 flex items-center gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-                  <span className="text-[11px] text-red-500 font-bold">
+                  <span className="text-[12px] text-red-500 font-medium">
                     {usagePercent >= 100
-                      ? "Credit limit reached! Purchase add-ons or upgrade your plan."
+                      ? "Credit limit reached. Purchase add-ons or upgrade your plan."
                       : "You've used over 90% of your credits this period."}
                   </span>
                 </div>
               )}
               {usagePercent >= 70 && usagePercent < 90 && (
-                <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/20 rounded-theme-button flex items-center gap-2">
+                <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-center gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                  <span className="text-[11px] text-amber-600 font-bold">
+                  <span className="text-[12px] text-amber-600 font-medium">
                     You've used {usagePercent}% of your credits this period.
                   </span>
                 </div>
@@ -797,95 +1086,44 @@ export const BillingSettings: React.FC = () => {
 
       {/* ── Usage Breakdown Card ── */}
       {(usageLoading || usageBreakdown.length > 0) && (
-        <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
-            Usage Breakdown
-          </label>
+        <div className="dashboard-card p-6">
+          <BillingSectionHeader
+            title="Usage breakdown"
+            description={
+              inferenceModelCount > 4
+                ? `Grouped ${inferenceModelCount} model entries by provider for a simpler view.`
+                : "Where your credits went this billing period."
+            }
+          />
 
           {usageLoading ? (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
             </div>
           ) : usageBreakdown.length === 0 ? (
-            <div className="text-center py-8">
+            <div className="text-center py-8 rounded-xl border border-theme bg-theme-hover/30">
               <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-              <p className="text-xs text-theme-muted font-medium">No usage breakdown available yet.</p>
+              <p className="text-[13px] text-theme-muted font-medium">No usage yet this period.</p>
             </div>
           ) : (
-            <div className="flex flex-col sm:flex-row gap-4">
-              {pieData.length > 0 && (
-                <div className="flex-shrink-0 w-full sm:w-[200px] h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%" cy="50%"
-                        innerRadius={50} outerRadius={80}
-                        paddingAngle={3}
-                        dataKey="value" nameKey="name"
-                        strokeWidth={0}
-                        label={({ cx, cy, midAngle, innerRadius: ir, outerRadius: or, percent: pct }: any) => {
-                          const RADIAN = Math.PI / 180;
-                          const radius = ir + (or - ir) * 0.5;
-                          const x = cx + radius * Math.cos(-midAngle * RADIAN);
-                          const y = cy + radius * Math.sin(-midAngle * RADIAN);
-                          const displayPct = Math.round((pct ?? 0) * 100);
-                          if (displayPct < 5) return null;
-                          return (
-                            <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700}>
-                              {displayPct}%
-                            </text>
-                          );
-                        }}
-                        labelLine={false}
-                      >
-                        {pieData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.fill} />
-                        ))}
-                      </Pie>
-                      <Tooltip content={<PieTooltip />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              <div className="flex-1 space-y-1.5">
-                {usageBreakdown.map((item) => {
-                  const config = getCategoryConfig(item.category);
-                  const pct = usageTotal > 0 ? ((item.credits / usageTotal) * 100).toFixed(1) : "0";
-                  return (
-                    <div
-                      key={item.category}
-                      className="flex items-center justify-between px-3 py-2 rounded-lg transition-colors"
-                      style={{ backgroundColor: config.hex + "0d" }}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: config.hex }} />
-                        <span className="text-[12px] font-semibold text-theme-fg">{config.label}</span>
-                        <span className="text-[10px] text-theme-muted">
-                          {item.count} {item.count === 1 ? "call" : "calls"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                          style={{ backgroundColor: config.hex + "18", color: config.hex }}
-                        >
-                          {pct}%
-                        </span>
-                        <span className="text-[12px] font-black text-theme-fg w-14 text-right tabular-nums">
-                          {item.credits.toFixed(1)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="flex items-center justify-between px-3 pt-2 mt-1 border-t border-theme">
-                  <span className="text-[11px] font-bold text-theme-muted">Total</span>
-                  <span className="text-[12px] font-black text-theme-fg w-14 text-right tabular-nums">
-                    {usageTotal.toFixed(1)}
-                  </span>
-                </div>
+            <div className="space-y-2.5">
+              {displayBreakdown.map((item) => {
+                const config = getCategoryConfig(item.category);
+                return (
+                  <UsageBarRow
+                    key={item.category}
+                    label={config.label}
+                    credits={item.credits}
+                    total={displayTotal}
+                    count={item.count}
+                    hex={config.hex}
+                    icon={config.icon}
+                  />
+                );
+              })}
+              <div className="flex items-center justify-between rounded-xl border border-theme bg-theme-card px-4 py-3">
+                <span className="text-[12px] font-semibold text-theme-muted">Total this period</span>
+                <span className="text-[14px] font-semibold text-theme-fg tabular-nums">{displayTotal.toFixed(1)} credits</span>
               </div>
             </div>
           )}
@@ -894,10 +1132,11 @@ export const BillingSettings: React.FC = () => {
 
       {/* ── Billing Logs Table ── */}
       {(creditSummary || !loading) && (
-      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-        <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-4 ml-1">
-          Credit Usage Logs
-        </label>
+      <div className="dashboard-card p-6">
+        <BillingSectionHeader
+          title="Credit usage logs"
+          description="Detailed events load on demand so billing stays responsive."
+        />
 
         {!logsLoaded && !logsLoading ? (
           <div className="text-center py-8">
@@ -906,7 +1145,7 @@ export const BillingSettings: React.FC = () => {
             <button
               onClick={handleLoadLogs}
               disabled={!userId}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold text-primary border border-primary/30 hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <RefreshCw className="w-3 h-3" />
               Load usage logs
@@ -941,7 +1180,7 @@ export const BillingSettings: React.FC = () => {
                     const sourceCategory = getUsageSourceCategory(log.sourceType, log.subagentKind);
                     const catConfig = getCategoryConfig(sourceCategory);
                     return (
-                      <tr key={log.id} className="border-b border-theme/50 hover:bg-theme-hover/50 transition-colors">
+                      <tr key={log.id} className="border-b border-theme-sidebar hover:bg-theme-hover/50 transition-colors">
                         <td className="px-2 py-2">
                           <span
                             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
@@ -1010,115 +1249,211 @@ export const BillingSettings: React.FC = () => {
 
       {/* ── Auto-Refill + Add-Ons Card ── */}
       {(creditSummary || !loading) && (
-      <div className="bg-theme-card rounded-theme-card border border-theme p-6 shadow-sm">
-        <div className="mb-6">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-            Auto-Refill
-          </label>
-          <div className="p-4 bg-theme-hover rounded-theme-button border border-theme">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoRefill}
-                onChange={(e) => handleAutoRefillToggle(e.target.checked)}
-                className="w-4 h-4 mt-0.5 rounded border-theme bg-theme-card text-primary focus:ring-primary"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4 text-primary" />
-                  <span className="text-[13px] font-bold text-theme-fg">Auto-refill credits</span>
+      <div className="dashboard-card p-6 space-y-6">
+        <div>
+          <div className="flex items-start justify-between gap-3 mb-4 border-b border-theme-sidebar pb-4">
+            <div>
+              <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight">Auto-refill</h3>
+              <p className="text-[13px] text-theme-muted font-medium mt-1">Top up automatically when your balance runs low.</p>
+            </div>
+            {(prefsLoading || prefsSaving) && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-theme-muted font-medium shrink-0 mt-1">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {prefsSaving ? "Saving" : "Loading"}
+              </span>
+            )}
+          </div>
+
+          <div className={clsx(
+            "rounded-xl border p-4 transition-colors",
+            prefs.autoRefillEnabled && hasBillingAccount ? "border-primary/20 bg-primary/5" : "border-theme bg-theme-hover/40",
+            autoRefillDisabled && "opacity-70",
+          )}>
+            <div className="flex items-center gap-4">
+              <span className={clsx(
+                "flex h-9 w-9 items-center justify-center rounded-xl border shrink-0",
+                prefs.autoRefillEnabled && hasBillingAccount ? "border-primary/30 bg-primary/10 text-primary" : "border-theme bg-theme-card text-theme-muted",
+              )}>
+                <RefreshCw className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13px] font-semibold text-theme-fg tracking-tight">Auto-refill credits</span>
+                  {!showPaymentMethodNeeded && billingCustomerLoading && !hasProfileBilling && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-theme-hover text-theme-muted">
+                      Checking payment method...
+                    </span>
+                  )}
+                  {showPaymentMethodNeeded && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600">
+                      Payment method needed
+                    </span>
+                  )}
                 </div>
-                <p className="text-[11px] text-theme-muted mt-1 font-medium">
-                  Automatically purchase a credit pack when your balance runs low, so you never run out mid-conversation.
+                <p className="text-[11px] text-theme-muted mt-0.5 leading-relaxed">
+                  When credits drop below your threshold, we create a Polar checkout and open it for a quick one-tap confirm.
                 </p>
               </div>
-            </label>
+              <BillingToggle
+                checked={prefs.autoRefillEnabled && hasBillingAccount}
+                onChange={(value) => handleSaveBillingPrefs({ autoRefillEnabled: value })}
+                disabled={autoRefillDisabled}
+              />
+            </div>
+
+            <div className={clsx(
+              "grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-theme-sidebar",
+              prefs.autoRefillEnabled && hasBillingAccount ? "" : "opacity-50 pointer-events-none",
+            )}>
+              <BillingField label="Trigger at" hint="Refill when balance falls below this amount.">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step={10}
+                    value={prefs.autoRefillThresholdCredits}
+                    onChange={(e) => setBillingPrefs({ ...prefs, autoRefillThresholdCredits: Number(e.target.value) })}
+                    onBlur={() => handleSaveBillingPrefs({ autoRefillThresholdCredits: prefs.autoRefillThresholdCredits })}
+                    className={billingInputClass}
+                  />
+                  <span className="text-[12px] text-theme-muted font-medium shrink-0">credits</span>
+                </div>
+              </BillingField>
+              <BillingField label="Refill amount" hint="Minimum $5. Uses your existing add-on packs or a custom amount.">
+                <div className="flex items-center gap-2">
+                  <span className="text-theme-muted font-medium">$</span>
+                  <input
+                    type="number"
+                    min={5}
+                    step={1}
+                    value={Math.round(prefs.autoRefillAmountCents / 100)}
+                    onChange={(e) => setBillingPrefs({ ...prefs, autoRefillAmountCents: Math.max(500, Number(e.target.value) * 100) })}
+                    onBlur={() => handleSaveBillingPrefs({ autoRefillAmountCents: prefs.autoRefillAmountCents })}
+                    className={billingInputClass}
+                  />
+                </div>
+              </BillingField>
+            </div>
+
+            {autoRefillPendingUrl && prefs.autoRefillEnabled && hasBillingAccount && (
+              <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                <p className="text-[12px] text-amber-700 font-medium">
+                  Low credits — confirm your auto-refill to add more.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void openExternalUrl(autoRefillPendingUrl)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-amber-800 border border-amber-500/40 hover:bg-amber-500/10 transition-colors shrink-0"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Confirm refill
+                </button>
+              </div>
+            )}
+
+            {showPaymentMethodNeeded && (
+              <button
+                onClick={handleOpenWebsiteBilling}
+                disabled={actionLoading === "website"}
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold text-primary border border-primary/30 hover:bg-primary/10 disabled:opacity-40 transition-colors"
+              >
+                {actionLoading === "website" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                Connect payment method
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="mb-6">
-          <label className="block text-[10px] font-black text-theme-muted uppercase tracking-widest mb-3 ml-1">
-            Purchase Add-On Credits
-          </label>
-          {!productsLoaded && !productsLoading ? (
-            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
-              <Coins className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-              <p className="text-xs text-theme-muted font-medium mb-3">Credit packs load separately from the main billing view.</p>
-              <button
-                onClick={handleLoadProducts}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-primary border border-primary/30 hover:bg-primary/10 transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />
-                Load credit packs
-              </button>
-            </div>
-          ) : productsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-5 h-5 animate-spin text-primary" />
-            </div>
-          ) : creditPacks.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {creditPacks.map((product) => {
-                const price = product.prices[0];
-                return (
-                  <button
-                    key={product.id}
-                    onClick={() => handlePurchaseCredits(product.id)}
-                    disabled={!!actionLoading || !userEmail}
-                    className="p-4 rounded-theme-button border border-theme bg-theme-bg hover:bg-theme-hover transition-all text-left group"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Coins className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
-                      <span className="font-bold text-theme-fg text-sm group-hover:text-primary transition-colors">
-                        {product.name}
-                      </span>
-                    </div>
-                    <p className="text-xs text-theme-muted mb-2">{product.description}</p>
-                    {product.benefits.length > 0 && (
-                      <ul className="text-xs text-theme-muted space-y-0.5 mb-2">
-                        {product.benefits.slice(0, 3).map((benefit, i) => (
-                          <li key={i} className="flex items-center gap-1">
-                            <span className="text-emerald-500">+</span> {benefit}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-primary">
-                        {price ? formatCurrency(price.amount, price.currency) : "—"}
-                      </span>
-                      {actionLoading === product.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                      ) : (
-                        <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="p-4 bg-theme-hover rounded-theme-button border border-theme text-center">
-              <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
-              <p className="text-xs text-theme-muted font-medium">No credit packs available right now.</p>
-            </div>
-          )}
+        <div>
+          <BillingSectionHeader
+            title="Budgets & limits"
+            description="Shared with stuard.ai and applied across desktop and web."
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <BillingField label="Monthly soft budget" hint="Leave blank for no soft budget.">
+              <div className="flex items-center gap-2">
+                <span className="text-theme-muted font-medium">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={prefs.monthlyBudgetCents == null ? "" : Math.round(prefs.monthlyBudgetCents / 100)}
+                  placeholder="No budget"
+                  onChange={(e) => setBillingPrefs({
+                    ...prefs,
+                    monthlyBudgetCents: e.target.value === "" ? null : Math.max(0, Number(e.target.value) * 100),
+                  })}
+                  onBlur={() => handleSaveBillingPrefs({ monthlyBudgetCents: prefs.monthlyBudgetCents })}
+                  disabled={!billingPrefs}
+                  className={billingInputClass}
+                />
+              </div>
+            </BillingField>
+            <BillingField label="Hard limit" hint="Leave blank for no hard cap.">
+              <div className="flex items-center gap-2">
+                <span className="text-theme-muted font-medium">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={prefs.hardSpendLimitCents == null ? "" : Math.round(prefs.hardSpendLimitCents / 100)}
+                  placeholder="No limit"
+                  onChange={(e) => setBillingPrefs({
+                    ...prefs,
+                    hardSpendLimitCents: e.target.value === "" ? null : Math.max(0, Number(e.target.value) * 100),
+                  })}
+                  onBlur={() => handleSaveBillingPrefs({ hardSpendLimitCents: prefs.hardSpendLimitCents })}
+                  disabled={!billingPrefs}
+                  className={billingInputClass}
+                />
+              </div>
+            </BillingField>
+          </div>
         </div>
 
-        <div className="pt-4 border-t border-theme">
+        <div>
+          <BillingSectionHeader title="One-time top-up" description="Add credits instantly without changing your plan." />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {QUICK_CREDIT_PACKS.map((pack) => (
+              <button
+                key={pack.id}
+                onClick={() => handleQuickTopUp(pack)}
+                disabled={!!actionLoading || !userEmail}
+                className="rounded-xl border border-theme bg-theme-hover/40 p-4 text-left transition-all hover:bg-theme-hover hover:border-theme disabled:opacity-50 disabled:cursor-not-allowed group"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[18px] font-semibold text-theme-fg group-hover:text-primary transition-colors">
+                    {pack.label}
+                  </span>
+                  {actionLoading === pack.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  ) : (
+                    <Plus className="w-4 h-4 text-theme-muted group-hover:text-primary transition-colors" />
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-theme-muted font-medium mt-2">
+                  <Coins className="w-3 h-3" />
+                  {pack.credits.toLocaleString()} credits
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-theme-sidebar">
           <button
             onClick={handleOpenWebsiteBilling}
             disabled={actionLoading === "website"}
-            className="flex items-center gap-2 px-4 py-2 rounded-theme-button border border-theme text-theme-fg text-sm font-bold hover:bg-theme-hover transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-theme bg-theme-card text-theme-fg text-[13px] font-semibold hover:bg-theme-hover transition-all"
           >
             {actionLoading === "website" ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <ExternalLink className="w-4 h-4" />
             )}
-            Manage billing & usage history on stuard.ai
+            Manage billing on stuard.ai
           </button>
-          <p className="text-[11px] text-theme-muted mt-2 ml-1 font-medium">
+          <p className="text-[11px] text-theme-muted mt-2 leading-relaxed">
             Change your plan, view transaction history, and manage payment methods on the website.
           </p>
         </div>

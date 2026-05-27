@@ -445,8 +445,8 @@ ${contextToUse}
 Continue the conversation naturally. Be brief, warm, and helpful. This is a follow-up reply, not a new check-in. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.`;
 
     const allowedToolsNote = Array.isArray(config.allowedTools) && config.allowedTools.length > 0
-      ? `\n\nAdded non-internal tools for this bot: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are not part of this bot. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context) remains available regardless.\nIf asked what tools you have, list only those added tools plus the default toolkit. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`
-      : `\n\nAdded non-internal tools for this bot: (none).\nIf asked what tools you have, list only your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context). Do not answer with a generic Stuard main-chat capability list. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`;
+      ? `\n\nAdded non-internal tools for this agent: ${config.allowedTools.join(', ')}.\nAll other non-internal tools are not part of this agent. Exact tools add only that tool; prefixes like x_ add a family only when explicitly listed. Your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context) remains available regardless.\nIf asked what tools you have, list only those added tools plus the default toolkit. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`
+      : `\n\nAdded non-internal tools for this agent: (none).\nIf asked what tools you have, list only your default toolkit (proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context). Do not answer with a generic Stuard main-chat capability list. If asked to change your kanban, use bot_memory_* and verify ok=true before saying it was done.`;
 
     const localHiddenContext = `[PROACTIVE FOLLOW-UP] The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return only the final user-facing reply. Do not expose reasoning or internal planning. Return a normal plain markdown/text reply only. Do not use GenUI, interactive UI blocks, or JSON UI payloads.${allowedToolsNote}
 
@@ -1678,7 +1678,7 @@ export function triggerManualWakeUp(botId?: string) {
     return { ok: false, error: `Already running a check-in for ${targetBotId}` };
   }
   if (!botService.get(targetBotId)) {
-    return { ok: false, error: 'Bot not found' };
+    return { ok: false, error: 'Agent not found' };
   }
   executeWakeUp({ botId: targetBotId, manual: true });
   return { ok: true, botId: targetBotId, target: 'local' as const };
@@ -1694,7 +1694,7 @@ export async function triggerVmWakeUp(botId: string): Promise<{ ok: boolean; err
   const id = String(botId || '').trim();
   if (!id) return { ok: false, error: 'bot_id_required', target: 'vm' };
   const bot = botService.get(id);
-  if (!bot) return { ok: false, error: 'Bot not found', target: 'vm' };
+  if (!bot) return { ok: false, error: 'Agent not found', target: 'vm' };
   if (!bot.vmDeployedAt) {
     // Caller should not be exposing the VM-run path for a bot that hasn't
     // been deployed; surface that explicitly so the UI can fall back.

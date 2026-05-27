@@ -260,9 +260,25 @@ function buildBotScopedActiveTools(agent: any, allowedTools: unknown): string[] 
 // Store active abort controllers by WebSocket
 const activeControllers = new WeakMap<WebSocket, AbortController>();
 
+function abortWithReason(controller: AbortController | null | undefined, reason: string) {
+  if (!controller) return;
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch {}
+  }
+}
+
+function getAbortReason(signal: AbortSignal | null | undefined): string {
+  const reason = (signal as any)?.reason;
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason?.message === 'string') return reason.message;
+  return signal?.aborted ? 'aborted' : '';
+}
+
 export function abortAgent(ws: WebSocket, requestId?: string): boolean {
   // Also abort any running delegated subagents
-  const subagentsCancelled = abortAllRunningSubagents();
+  const subagentsCancelled = abortAllRunningSubagents('client_stop');
   if (subagentsCancelled > 0) {
     console.log(`[AgentRunner] Aborted ${subagentsCancelled} running subagent(s)`);
   }
@@ -272,7 +288,7 @@ export function abortAgent(ws: WebSocket, requestId?: string): boolean {
     const controller = (ws as any)[`__abort_${requestId}`] as AbortController | undefined;
     if (controller) {
       console.log(`[AgentRunner] Aborting agent stream (requestId=${requestId})`);
-      controller.abort();
+      abortWithReason(controller, 'client_stop');
       delete (ws as any)[`__abort_${requestId}`];
       return true;
     }
@@ -281,7 +297,7 @@ export function abortAgent(ws: WebSocket, requestId?: string): boolean {
   const controller = activeControllers.get(ws);
   if (controller) {
     console.log('[AgentRunner] Aborting agent stream');
-    controller.abort();
+    abortWithReason(controller, 'client_stop');
     activeControllers.delete(ws);
     return true;
   }
@@ -648,7 +664,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           ) {
             needsCompaction = true;
             console.log(`[compactor] Halt-and-resume triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
-            compactionAbort?.abort();
+            abortWithReason(compactionAbort, 'compaction');
           }
         },
       });
@@ -769,7 +785,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           // Create per-stream abort controller that chains to the main one
           compactionAbort = new AbortController();
           // If the main abort fires, also abort the compaction controller
-          const onMainAbort = () => compactionAbort?.abort();
+          const onMainAbort = () => abortWithReason(compactionAbort, getAbortReason(abortController.signal) || 'parent_abort');
           abortController.signal.addEventListener('abort', onMainAbort, { once: true });
 
           // Get stream result from Mastra
@@ -899,7 +915,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
               // Re-stream with compacted input
               compactionAbort = new AbortController();
-              const onMainAbort2 = () => compactionAbort?.abort();
+              const onMainAbort2 = () => abortWithReason(compactionAbort, getAbortReason(abortController.signal) || 'parent_abort');
               abortController.signal.addEventListener('abort', onMainAbort2, { once: true });
               needsCompaction = false;
 
@@ -1103,7 +1119,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
     } catch (error: any) {
       // Handle abort specifically
       if (error.name === 'AbortError' || abortController.signal.aborted) {
-        console.log('[AgentRunner] Stream aborted by user');
+        console.log(`[AgentRunner] Stream aborted | reason=${getAbortReason(abortController.signal) || 'unknown'}`);
         send(ws, {
           type: 'final',
           model: chosenModelId || model,

@@ -41,6 +41,7 @@ import { compactHistory, pruneToolOutputs } from '../memory/context-compactor';
 import type { ModelChoice } from '../router/model-router';
 import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 // Track running subagents so they can be aborted when the parent stream is cancelled.
 // The request/socket metadata keeps a stop from one chat turn from cancelling
@@ -55,10 +56,33 @@ type RunningSubagent = {
 const runningSubagents = new Map<string, RunningSubagent>();
 const DEFAULT_SUBAGENT_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 
-export function abortRunningSubagent(subagentId: string): boolean {
+function abortWithReason(controller: AbortController, reason: string) {
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch {}
+  }
+}
+
+function getAbortReason(signal?: AbortSignal | null): string {
+  const reason = (signal as any)?.reason;
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason?.message === 'string') return reason.message;
+  return signal?.aborted ? 'aborted' : '';
+}
+
+function formatSubagentAbortMessage(reason: string): string {
+  if (reason === 'client_stop') return 'Subagent was cancelled';
+  if (reason === 'socket_closed') return 'Subagent aborted because the socket closed';
+  if (reason === 'hard_timeout') return 'Subagent aborted because the parent request timed out';
+  if (reason === 'parent_abort') return 'Subagent aborted because the parent request stopped';
+  return reason ? `Subagent aborted (${reason})` : 'Subagent was cancelled';
+}
+
+export function abortRunningSubagent(subagentId: string, reason = 'external_abort'): boolean {
   const running = runningSubagents.get(subagentId);
   if (running) {
-    running.controller.abort();
+    abortWithReason(running.controller, reason);
     runningSubagents.delete(subagentId);
     return true;
   }
@@ -76,17 +100,17 @@ export function isSubagentRunning(subagentId: string): boolean {
   return runningSubagents.has(subagentId);
 }
 
-export function abortAllRunningSubagents(): number {
+export function abortAllRunningSubagents(reason = 'external_abort'): number {
   let count = 0;
   for (const [, running] of runningSubagents) {
-    try { running.controller.abort(); } catch {}
+    abortWithReason(running.controller, reason);
     count++;
   }
   runningSubagents.clear();
   return count;
 }
 
-export function abortRunningSubagentsForRequest(chatWs: any, requestId?: string): number {
+export function abortRunningSubagentsForRequest(chatWs: any, requestId?: string, reason = 'request_abort'): number {
   let count = 0;
   for (const [id, running] of Array.from(runningSubagents.entries())) {
     const sameRequest = requestId
@@ -94,7 +118,7 @@ export function abortRunningSubagentsForRequest(chatWs: any, requestId?: string)
       : true;
     const sameSocket = !chatWs || running.chatWs === chatWs || running.bridgeWs === chatWs;
     if (!sameSocket || !sameRequest) continue;
-    try { running.controller.abort(); } catch {}
+    abortWithReason(running.controller, reason);
     runningSubagents.delete(id);
     count++;
   }
@@ -329,12 +353,18 @@ function makeGetOwnStatusTool(
         targetName,
       });
 
+      // silent: this tool is already surfaced to the UI as the nested
+      // `get_own_status` subagent step. The inner bridge call to bot/agent
+      // status is the same logical action under a different tool name, so
+      // emitting it too produces a duplicate that — when ALS subagent tagging
+      // is lost (see wrapToolWithBridge note re: AI-SDK breaking ALS) — leaks
+      // out of the delegation rectangle as a stray top-level "Bot Get Status".
       return execLocalTool(
         targetKind === 'agent' ? 'agent_get_status' : 'bot_get_status',
         args,
         undefined,
         30_000,
-        { noFallback: true },
+        { noFallback: true, silent: true },
       );
     },
   });
@@ -454,12 +484,17 @@ async function buildSubagent(
 
     let statusSnapshot: any = null;
     try {
+      // silent: this is a build-time snapshot used only to assemble the
+      // subagent's system prompt. It runs in the orchestrator's async context
+      // (before the subagent correlation exists), so it carries no __subagentId
+      // and would otherwise stream an untagged "Bot Get Status" tool event that
+      // renders outside the delegation rectangle. The user never needs to see it.
       statusSnapshot = await execLocalTool(
         targetKind === 'agent' ? 'agent_get_status' : 'bot_get_status',
         statusArgs,
         undefined,
         30_000,
-        { noFallback: true },
+        { noFallback: true, silent: true },
       );
     } catch (error: any) {
       statusSnapshot = { ok: false, error: error?.message || String(error) };
@@ -757,9 +792,9 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   let onExternalAbort: (() => void) | undefined;
   if (externalSignal) {
     if (externalSignal.aborted) {
-      localAbort.abort();
+      abortWithReason(localAbort, getAbortReason(externalSignal) || 'parent_abort');
     } else {
-      onExternalAbort = () => localAbort.abort();
+      onExternalAbort = () => abortWithReason(localAbort, getAbortReason(externalSignal) || 'parent_abort');
       externalSignal.addEventListener('abort', onExternalAbort, { once: true });
     }
   }
@@ -853,6 +888,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
   const kindLabels: Record<string, string> = {
     browser: 'Browser Agent',
     file_ops: 'File Agent',
+    cli_agent: 'CLI Agent',
     workflow: 'Workflow Agent',
     reminders: 'Reminders Agent',
     media: 'Media Agent',
@@ -906,7 +942,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
       ? new Promise<never>((_, reject) => {
           timeoutTimer = setTimeout(() => {
             timedOut = true;
-            try { localAbort.abort(); } catch {}
+            abortWithReason(localAbort, 'timeout');
             reject(new Error(`Subagent timed out after ${timeoutMs}ms`));
           }, timeoutMs);
         })
@@ -958,7 +994,9 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
         compactionAbort = new AbortController();
         needsCompaction = false;
         streamAccumulatedMessages = [];
-        const onLocalAbort = () => compactionAbort?.abort();
+        const onLocalAbort = () => {
+          if (compactionAbort) abortWithReason(compactionAbort, getAbortReason(localAbort.signal) || 'parent_abort');
+        };
         localAbort.signal.addEventListener('abort', onLocalAbort, { once: true });
 
         const buildStreamOptions = () => ({
@@ -1015,7 +1053,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
             ) {
               needsCompaction = true;
               console.log(`[subagent:${subagentId}] Halt-and-resume compaction triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
-              compactionAbort?.abort();
+              if (compactionAbort) abortWithReason(compactionAbort, 'compaction');
             }
           },
         });
@@ -1190,7 +1228,9 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
               // Re-stream with compacted messages
               compactionAbort = new AbortController();
-              const onLocalAbort2 = () => compactionAbort?.abort();
+              const onLocalAbort2 = () => {
+                if (compactionAbort) abortWithReason(compactionAbort, getAbortReason(localAbort.signal) || 'parent_abort');
+              };
               localAbort.signal.addEventListener('abort', onLocalAbort2, { once: true });
               needsCompaction = false;
 
@@ -1339,7 +1379,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           returnControlSummary = returnControlResult;
         }
 
-        const finalResult = returnControlSummary || text;
+        // Coerce both candidates to string — `text` is null/undefined when the
+        // AI SDK aborts mid-stream (e.g. context-window exceeded), and
+        // `returnControlResult` upstream can be an object. Without this the
+        // `.trim()` below explodes with "finalResult.trim is not a function"
+        // which masks the underlying SDK error and burns retries.
+        const toStr = (v: unknown): string =>
+          typeof v === 'string' ? v : v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+        const finalResult = toStr(returnControlSummary) || toStr(text);
 
         if (!finalResult.trim()) {
           throw new Error(
@@ -1433,6 +1480,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
       clearTimeout(timeoutTimer);
       timeoutTimer = undefined;
     }
+    const abortReason = getAbortReason(localAbort.signal);
     const isTimeout = error?.message?.startsWith('Subagent timed out after') || timedOut;
     const isAborted = localAbort.signal.aborted || error?.message === 'Subagent aborted';
 
@@ -1462,13 +1510,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     }
 
     if (isAborted) {
-      writeLog('subagent_aborted', { subagentId, durationMs });
-      emitToClient('cancelled', { durationMs }, { force: true });
+      writeLog('subagent_aborted', { subagentId, durationMs, reason: abortReason || 'unknown' });
+      console.log(`[subagent:${subagentId}] aborted | reason=${abortReason || 'unknown'}`);
+      emitToClient('cancelled', { durationMs, reason: abortReason || 'unknown' }, { force: true });
       suppressClientEvents = true;
       return {
         ok: false,
         subagentId,
-        error: 'Subagent was cancelled',
+        error: formatSubagentAbortMessage(abortReason),
         durationMs,
       };
     }
@@ -1510,7 +1559,7 @@ function detectIntegrationGroup(text: string): string | null {
     ['outlook', ['outlook', 'microsoft', 'office 365']],
     ['github', ['github', 'git repo', 'pull request', 'issue']],
     ['meta', ['facebook', 'instagram', 'threads', 'meta']],
-    ['whatsapp', ['whatsapp', 'wa message']],
+    ...(WHATSAPP_INTEGRATION_ENABLED ? [['whatsapp', ['whatsapp', 'wa message']] as [string, string[]]] : []),
     ['telnyx', ['telnyx', 'sms', 'phone call']],
     ['reddit', ['reddit', 'subreddit']],
     ['discord', ['discord', 'discord bot']],

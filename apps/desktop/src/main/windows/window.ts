@@ -1,4 +1,4 @@
-﻿
+
 import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen, powerMonitor, shell } from "electron";
 import path from "path";
 import fs from "fs";
@@ -24,7 +24,17 @@ const SIDEBAR_EXPANDED_WIDTH = 900;
 const SIDEBAR_EXPANDED_HEIGHT = 700;
 
 // Internal sidebar (rendered inside overlay window)
-const INTERNAL_SIDEBAR_WIDTH = 320;
+const DEFAULT_INTERNAL_SIDEBAR_WIDTH = 304;
+const INTERNAL_SIDEBAR_WIDTH_MIN = 240;
+const INTERNAL_SIDEBAR_WIDTH_MAX = 560;
+let internalSidebarPanelWidth = DEFAULT_INTERNAL_SIDEBAR_WIDTH;
+
+function clampInternalSidebarPanelWidth(width: number): number {
+  return Math.max(
+    INTERNAL_SIDEBAR_WIDTH_MIN,
+    Math.min(INTERNAL_SIDEBAR_WIDTH_MAX, Math.round(width)),
+  );
+}
 
 // Keep a stable record of the intended content size to prevent drift from DPI rounding
 let baseContentWidth = 400;
@@ -34,6 +44,7 @@ let baseOuterWidth = 0;
 let baseOuterHeight = 0;
 // When changing size programmatically (expand/collapse), temporarily disable the size lock
 let resizingProgrammatically = false;
+let compactResizeAnchor: 'top' | 'bottom' = 'top';
 
 type OverlayMode = "compact" | "sidebar" | "window";
 let currentMode: OverlayMode = "compact";
@@ -273,15 +284,17 @@ interface ModeSizePrefs {
 
 // Default sizes for each mode
 const DEFAULT_MODE_SIZES: ModeSizePrefs = {
-  compact: { width: 520, height: 62 },  // 360x56 visible pill centered in a transparent 520-wide window so the dropdown can extend beyond the pill without resizing on type
+  compact: { width: 520, height: 88 },  // 360x56 visible pill centered in a 520x88 transparent window — extra horizontal space lets the dropdown extend beyond the pill without resizing on type; extra vertical space lets the pill's drop shadow render without getting clipped at the window edge
   window: { width: 800, height: 600 },
 };
 
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
-  compact: { minW: 520, maxW: 800, minH: 62, maxH: 650 },
+  compact: { minW: 520, maxW: 1440, minH: 88, maxH: 650 },
   sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 },  // Allow for internal sidebar (320px)
-  window: { minW: 500, maxW: 1400, minH: 400, maxH: 1000 },
+  // Window mode is unbounded so the user can maximize to fill the screen.
+  // We still keep a sensible minimum to prevent collapsing the chrome.
+  window: { minW: 500, maxW: 0, minH: 400, maxH: 0 },
 };
 
 // Track internal sidebar state for width management
@@ -290,12 +303,19 @@ let internalSidebarOpen = false;
 // Track applied chrome state so we can skip redundant native calls.
 // Each native chrome change can trigger a Windows DWM repaint and produce
 // a visible flicker, so we only re-apply when something actually changed.
-let appliedChrome: { alwaysOnTop: boolean; skipTaskbar: boolean; hasShadow: boolean } | null = null;
+let appliedChrome: {
+  alwaysOnTop: boolean;
+  skipTaskbar: boolean;
+  hasShadow: boolean;
+  minimizable: boolean;
+  maximizable: boolean;
+} | null = null;
+
 function applyOverlayChrome(mode: OverlayMode) {
   if (!win) return;
   const desired = mode === 'window'
-    ? { alwaysOnTop: false, skipTaskbar: false, hasShadow: true }
-    : { alwaysOnTop: true, skipTaskbar: true, hasShadow: false };
+    ? { alwaysOnTop: false, skipTaskbar: false, hasShadow: true, minimizable: true, maximizable: true }
+    : { alwaysOnTop: true, skipTaskbar: true, hasShadow: false, minimizable: false, maximizable: false };
   try {
     if (!appliedChrome || appliedChrome.alwaysOnTop !== desired.alwaysOnTop) {
       if (desired.alwaysOnTop) {
@@ -310,8 +330,33 @@ function applyOverlayChrome(mode: OverlayMode) {
     if (!appliedChrome || appliedChrome.hasShadow !== desired.hasShadow) {
       try { win.setHasShadow(desired.hasShadow); } catch { }
     }
+    if (!appliedChrome || appliedChrome.minimizable !== desired.minimizable) {
+      try { win.setMinimizable(desired.minimizable); } catch { }
+    }
+    if (!appliedChrome || appliedChrome.maximizable !== desired.maximizable) {
+      try { win.setMaximizable(desired.maximizable); } catch { }
+    }
     appliedChrome = desired;
   } catch { }
+}
+
+function notifyOverlayMaximizedChanged() {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.webContents.send('overlay:maximizedChanged', { maximized: win.isMaximized() });
+  } catch { }
+}
+
+/** Frameless standalone windows (Studio, Dashboard, etc.) */
+export function attachStandaloneWindowChrome(browserWindow: BrowserWindow) {
+  if (!browserWindow || browserWindow.isDestroyed()) return;
+  const notify = () => {
+    try {
+      browserWindow.webContents.send('window:maximizedChanged', { maximized: browserWindow.isMaximized() });
+    } catch { }
+  };
+  browserWindow.on('maximize', notify);
+  browserWindow.on('unmaximize', notify);
 }
 
 function forceOverlayChrome() {
@@ -320,9 +365,13 @@ function forceOverlayChrome() {
     if (currentMode === 'window') {
       win.setAlwaysOnTop(false);
       win.setSkipTaskbar(false);
+      win.setMinimizable(true);
+      win.setMaximizable(true);
     } else {
       win.setAlwaysOnTop(true, 'screen-saver');
       win.setSkipTaskbar(true);
+      win.setMinimizable(false);
+      win.setMaximizable(false);
     }
   } catch { }
 }
@@ -392,6 +441,9 @@ function repositionTopCenter(target: BrowserWindow) {
 // Handle user resize - save the new size preference for the current mode
 function handleUserResize() {
   if (!win || resizingProgrammatically) return;
+  // Don't snapshot maximized dimensions as the user's "preferred" size — that
+  // would wipe out their last manual resize and make unmaximize unhelpful.
+  try { if (win.isMaximized()) return; } catch { /* ignore */ }
 
   const now = Date.now();
   if (now - lastUserResizeTime < 100) return; // Debounce
@@ -400,19 +452,21 @@ function handleUserResize() {
   const b = win.getBounds();
   const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
 
-  // Clamp to constraints
-  const width = Math.max(constraints.minW, Math.min(constraints.maxW, b.width));
-  const height = Math.max(constraints.minH, Math.min(constraints.maxH, b.height));
+  // Clamp to constraints. A maxW/maxH of 0 means "no maximum" (used in window mode).
+  const maxW = constraints.maxW > 0 ? constraints.maxW : b.width;
+  const maxH = constraints.maxH > 0 ? constraints.maxH : b.height;
+  const width = Math.max(constraints.minW, Math.min(maxW, b.width));
+  const height = Math.max(constraints.minH, Math.min(maxH, b.height));
 
   // Save user's preferred size for this mode (except sidebar which is special)
   // Subtract internal sidebar width if open, so we save the base content width
   if (currentMode !== 'sidebar') {
-    const savedWidth = internalSidebarOpen ? Math.max(width - INTERNAL_SIDEBAR_WIDTH, constraints.minW) : width;
+    const savedWidth = internalSidebarOpen ? Math.max(width - internalSidebarPanelWidth, constraints.minW) : width;
     userModeSizes[currentMode] = { width: savedWidth, height };
     // Persist to main process memory (could also use electron-store)
     baseContentWidth = savedWidth;
     baseContentHeight = height;
-    baseOuterWidth = internalSidebarOpen ? savedWidth + INTERNAL_SIDEBAR_WIDTH : savedWidth;
+    baseOuterWidth = internalSidebarOpen ? savedWidth + internalSidebarPanelWidth : savedWidth;
     baseOuterHeight = b.height;
   }
 
@@ -431,8 +485,10 @@ function assertOverlaySize() {
   const b = win.getBounds();
   const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
 
-  const clampedWidth = Math.max(constraints.minW, Math.min(constraints.maxW, b.width));
-  const clampedHeight = Math.max(constraints.minH, Math.min(constraints.maxH, b.height));
+  const maxW = constraints.maxW > 0 ? constraints.maxW : b.width;
+  const maxH = constraints.maxH > 0 ? constraints.maxH : b.height;
+  const clampedWidth = Math.max(constraints.minW, Math.min(maxW, b.width));
+  const clampedHeight = Math.max(constraints.minH, Math.min(maxH, b.height));
 
   // Only adjust if out of constraints
   if (b.width !== clampedWidth || b.height !== clampedHeight) {
@@ -446,13 +502,15 @@ function updateSizeConstraints(mode: OverlayMode) {
   const constraints = MODE_SIZE_CONSTRAINTS[mode];
   try {
     win.setMinimumSize(constraints.minW, constraints.minH);
+    // setMaximumSize(0, 0) means "unbounded" in Electron — used in window mode
+    // so the user can maximize to fill the screen.
     win.setMaximumSize(constraints.maxW, constraints.maxH);
   } catch { }
 }
 
 // Get current overlay size info for renderer
 export function getOverlaySize() {
-  if (!win) return { width: 520, height: 62, mode: 'compact' };
+  if (!win) return { width: 520, height: 88, mode: 'compact' };
   const b = win.getBounds();
   return { width: b.width, height: b.height, mode: currentMode };
 }
@@ -460,7 +518,7 @@ export function getOverlaySize() {
 export function createWindow() {
   logger.info("Creating overlay window...");
   const WIDTH = 520; // pill is 360px wide centered; the wider window holds the dropdown so typing doesn't resize horizontally
-  const HEIGHT = 62; // compact pill is 56px tall; +3px per side keeps borders from clipping
+  const HEIGHT = 88; // compact pill is 56px tall; ~16px on each side gives the drop shadow room to render without clipping at the window edge
 
   const preloadPath = getPreloadPath();
   logger.info("Preload path:", preloadPath);
@@ -478,7 +536,9 @@ export function createWindow() {
     movable: true,
     minimizable: false,
     maximizable: false,
-    fullscreenable: false,
+    // Allow fullscreen — window mode needs it; we still gate minimize/maximize
+    // via setMinimizable/setMaximizable per current mode.
+    fullscreenable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     useContentSize: true,
@@ -595,12 +655,19 @@ export function createWindow() {
     }
   });
 
-  // Keep overlay visible on focus changes; user controls visibility via hotkey or Escape
-  // Prevent minimize to survive Win+D / Show Desktop
+  // Keep overlay visible on focus changes; user controls visibility via hotkey or Escape.
+  // In compact/sidebar, prevent minimize so Win+D / Show Desktop cannot hide the overlay.
   win.on("minimize", (e: Electron.Event) => {
+    if (currentMode === 'window') return;
     e.preventDefault();
     win?.restore();
     win?.show();
+  });
+
+  win.on('maximize', () => notifyOverlayMaximizedChanged());
+  win.on('unmaximize', () => {
+    preMaximizeBounds = null;
+    notifyOverlayMaximizedChanged();
   });
 
   applyOverlayChrome(currentMode);
@@ -676,12 +743,15 @@ export function createWindow() {
           // Compact or Window mode: restore user-preferred size
           const prefs = userModeSizes[currentMode] || DEFAULT_MODE_SIZES[currentMode];
           const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
-          let width = Math.max(constraints.minW, Math.min(constraints.maxW, prefs.width));
-          let height = Math.max(constraints.minH, Math.min(constraints.maxH, prefs.height));
+          const maxW = constraints.maxW > 0 ? constraints.maxW : prefs.width;
+          const maxH = constraints.maxH > 0 ? constraints.maxH : prefs.height;
+          let width = Math.max(constraints.minW, Math.min(maxW, prefs.width));
+          let height = Math.max(constraints.minH, Math.min(maxH, prefs.height));
 
           // If internal sidebar was open, add its width back
           if (internalSidebarOpen) {
-            width = Math.min(width + INTERNAL_SIDEBAR_WIDTH, constraints.maxW + INTERNAL_SIDEBAR_WIDTH);
+            const sidebarMax = constraints.maxW > 0 ? constraints.maxW + internalSidebarPanelWidth : width + internalSidebarPanelWidth;
+            width = Math.min(width + internalSidebarPanelWidth, sidebarMax);
           }
 
           centerTopWithContentSize(win, width, height);
@@ -937,18 +1007,20 @@ export function openDashboardWindow(options?: { tab?: string }) {
   dashboardWin = d;
 }
 
-export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workflowId?: string }) {
+export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) {
   const initialSlug = options?.marketplaceSlug || '';
   const initialWorkflowId = options?.workflowId || '';
+  const initialView = options?.view || '';
 
   if (workflowsWin && !workflowsWin.isDestroyed()) {
     workflowsWin.show();
     workflowsWin.focus();
     workflowsWin.moveTop();
-    if (initialSlug || initialWorkflowId) {
+    if (initialSlug || initialWorkflowId || initialView) {
       workflowsWin.webContents.send('workflows:navigate', {
         ...(initialSlug ? { marketplaceSlug: initialSlug } : {}),
         ...(initialWorkflowId ? { workflowId: initialWorkflowId } : {}),
+        ...(initialView ? { view: initialView } : {}),
       });
     }
     return;
@@ -959,14 +1031,19 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workfl
     minWidth: 900,
     minHeight: 560,
     show: true,
-    frame: false,
+    // Use the native Windows chrome (title bar with min/max/close buttons)
+    // instead of a custom in-app title bar. macOS gets a hidden traffic-light
+    // bar that still allows window dragging.
+    frame: true,
+    title: 'Stuard Studio',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     transparent: false,
     resizable: true,
     icon: APP_ICON_PATH,
     movable: true,
     minimizable: true,
-    maximizable: false,
-    fullscreenable: false,
+    maximizable: true,
+    fullscreenable: true,
     skipTaskbar: false,
     alwaysOnTop: false,
     useContentSize: true,
@@ -979,6 +1056,9 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workfl
     },
     backgroundColor: "#ffffff",
   });
+  attachStandaloneWindowChrome(d);
+  // Keep the application menu hidden so it doesn't add an Electron menu bar
+  // above the native title bar. The OS title bar still renders normally.
   d.setMenu(null);
   d.setMenuBarVisibility(false);
   if (screenCaptureInvisibleEnabled) {
@@ -996,10 +1076,12 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workfl
   const queryParts: string[] = [];
   if (initialSlug) queryParts.push(`marketplaceSlug=${encodeURIComponent(initialSlug)}`);
   if (initialWorkflowId) queryParts.push(`workflowId=${encodeURIComponent(initialWorkflowId)}`);
+  if (initialView) queryParts.push(`view=${encodeURIComponent(initialView)}`);
   const queryString = queryParts.length ? `?${queryParts.join('&')}` : '';
   const loadFileQuery: Record<string, string> = {};
   if (initialSlug) loadFileQuery.marketplaceSlug = initialSlug;
   if (initialWorkflowId) loadFileQuery.workflowId = initialWorkflowId;
+  if (initialView) loadFileQuery.view = initialView;
 
   if (isDev) {
     const url = queryString
@@ -1442,6 +1524,24 @@ export function toggleWindow() {
 export function setOverlaySize(width: number, height: number, reposition = false, anchor: 'top' | 'bottom' = 'top') {
   if (!win) return;
   resizingProgrammatically = true;
+  if (currentMode === 'compact') {
+    compactResizeAnchor = anchor;
+  }
+
+  // Clamp the requested size against the same constraints Electron's
+  // setMaximumSize/setMinimumSize would enforce. If we skip this and just
+  // pass an oversized height to setBounds, Electron silently clamps the
+  // height but NOT our anchor-Y math — for anchor='bottom' that desynchs
+  // newY from the actual rendered bottom edge and the pill teleports up by
+  // (requested - clamped) on every resize. Belt-and-suspenders: clamp here.
+  const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+  if (constraints) {
+    const maxW = constraints.maxW > 0 ? constraints.maxW : width;
+    const maxH = constraints.maxH > 0 ? constraints.maxH : height;
+    width = Math.max(constraints.minW, Math.min(maxW, width));
+    height = Math.max(constraints.minH, Math.min(maxH, height));
+  }
+
   baseContentWidth = width;
   baseContentHeight = height;
 
@@ -1452,17 +1552,18 @@ export function setOverlaySize(width: number, height: number, reposition = false
   const sameSize = current.width === width && current.height === height;
 
   if (anchor === 'bottom') {
-    // Frameless + useContentSize: outer bounds == content bounds, so dy is exact.
+    // Keep the window's bottom edge fixed while resizing (dropdown above the pill).
     const dy = height - current.height;
     const newY = current.y - dy;
     if (!sameSize || newY !== current.y) {
       win.setBounds({ x: current.x, y: newY, width, height });
     }
   } else {
+    // Keep the window's top edge fixed while resizing (dropdown below the pill).
     if (reposition || !win.isVisible()) {
       centerTopWithContentSize(win, width, height);
     } else if (!sameSize) {
-      win.setContentSize(width, height);
+      win.setBounds({ x: current.x, y: current.y, width, height });
     }
   }
 
@@ -1479,8 +1580,56 @@ export function setOverlaySize(width: number, height: number, reposition = false
   });
 }
 
+export function overlayMinimize() {
+  if (!win || win.isDestroyed() || currentMode !== 'window') return;
+  try { win.minimize(); } catch { }
+}
+
+// Bounds the user had before they maximized the overlay. Transparent frameless
+// windows on Windows occasionally lose Electron's internal "normal bounds" memory
+// after chrome/size mutations (DWM repaint), so we snapshot ourselves to
+// guarantee restore behaves correctly.
+let preMaximizeBounds: { x: number; y: number; width: number; height: number } | null = null;
+
+export function overlayToggleMaximize() {
+  if (!win || win.isDestroyed() || currentMode !== 'window') return;
+  try {
+    if (win.isMaximized()) {
+      const target = preMaximizeBounds;
+      // Block any resize-event side-effects (assertOverlaySize / handleUserResize)
+      // from running while we transition out of maximized state.
+      resizingProgrammatically = true;
+      try { win.unmaximize(); } catch { }
+      if (target) {
+        try { win.setBounds(target); } catch { }
+        baseContentWidth = target.width;
+        baseContentHeight = target.height;
+        baseOuterWidth = target.width;
+        baseOuterHeight = target.height;
+        userModeSizes.window = { width: target.width, height: target.height };
+      }
+      setImmediate(() => { resizingProgrammatically = false; });
+      preMaximizeBounds = null;
+    } else {
+      try {
+        const b = win.getBounds();
+        preMaximizeBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
+      } catch { preMaximizeBounds = null; }
+      try { win.maximize(); } catch { }
+    }
+  } catch { }
+}
+
+export function overlayIsMaximized(): boolean {
+  if (!win || win.isDestroyed()) return false;
+  try { return win.isMaximized(); } catch { return false; }
+}
+
 export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
+  if (prevMode === 'window' && mode !== 'window' && win && !win.isDestroyed()) {
+    try { if (win.isMaximized()) win.unmaximize(); } catch { }
+  }
   if (prevMode === mode && mode !== 'sidebar') {
     // No-op: mode didn't change and there is nothing special to redo for
     // compact/window. (Sidebar is special because re-entering it should
@@ -1643,10 +1792,12 @@ if ($targetWindow -ne 0) {
   // Use user-preferred size for this mode, or fall back to defaults
   let { width, height } = userModeSizes[mode] || DEFAULT_MODE_SIZES[mode];
 
-  // Ensure within constraints
+  // Ensure within constraints (maxW/maxH of 0 means "no maximum")
   const constraints = MODE_SIZE_CONSTRAINTS[mode];
-  width = Math.max(constraints.minW, Math.min(constraints.maxW, width));
-  height = Math.max(constraints.minH, Math.min(constraints.maxH, height));
+  const maxW = constraints.maxW > 0 ? constraints.maxW : width;
+  const maxH = constraints.maxH > 0 ? constraints.maxH : height;
+  width = Math.max(constraints.minW, Math.min(maxW, width));
+  height = Math.max(constraints.minH, Math.min(maxH, height));
 
   // Notify the renderer FIRST so it can start swapping its DOM (compact
   // <-> window) in parallel with the native bounds change. If we resize
@@ -1665,6 +1816,20 @@ export function getOverlayMode() {
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function compactMovementYBounds(workArea: Electron.Rectangle, lockedH: number, anchor = compactResizeAnchor) {
+  const visibleMoveH = MODE_SIZE_CONSTRAINTS.compact.minH;
+  if (anchor === 'bottom') {
+    return {
+      minY: workArea.y - Math.max(0, lockedH - visibleMoveH),
+      maxY: workArea.y + workArea.height - lockedH,
+    };
+  }
+  return {
+    minY: workArea.y,
+    maxY: workArea.y + workArea.height - visibleMoveH,
+  };
 }
 
 // Coalesce many tiny moves (e.g. Ctrl+Arrow at 60fps from renderer) into a
@@ -1703,7 +1868,16 @@ function flushPendingMove() {
     const lockedW = baseOuterWidth || outer.width;
     const lockedH = baseOuterHeight || outer.height;
     const targetOuterX = clamp(outer.x + dx, wa.x, wa.x + wa.width - lockedW);
-    const targetOuterY = clamp(outer.y + dy, wa.y, wa.y + wa.height - lockedH);
+    // Compact mode often uses a tall transparent canvas so dropdowns can open
+    // above/below the pill without resizing on every keystroke. Movement
+    // should clamp the visible pill, not the whole transparent canvas; otherwise
+    // Ctrl+Up gets stuck while hundreds of invisible pixels are still on-screen.
+    let minY = wa.y;
+    let maxY = wa.y + wa.height - lockedH;
+    if (currentMode === 'compact') {
+      ({ minY, maxY } = compactMovementYBounds(wa, lockedH));
+    }
+    const targetOuterY = clamp(outer.y + dy, minY, maxY);
     if (targetOuterX === outer.x && targetOuterY === outer.y && outer.width === lockedW && outer.height === lockedH) return;
     win.setBounds({ x: targetOuterX, y: targetOuterY, width: lockedW, height: lockedH });
   } catch { }
@@ -1726,12 +1900,16 @@ export function moveOverlayBy(dx: number, dy: number) {
   setImmediate(flushPendingMove);
 }
 
-export function setOverlayBounds(bounds: { x?: number; y?: number; width?: number; height?: number }) {
+export function setOverlayBounds(bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) {
   if (!win) return;
   resizingProgrammatically = true;
   try {
     const current = win.getBounds();
-    const target = { ...current, ...bounds };
+    if (currentMode === 'compact' && bounds.anchor) {
+      compactResizeAnchor = bounds.anchor;
+    }
+    const { anchor, ...boundsPatch } = bounds;
+    const target = { ...current, ...boundsPatch };
 
     // Update baselines if size changes (essential for keeping lock on future moves)
     if (bounds.width !== undefined) {
@@ -1741,6 +1919,14 @@ export function setOverlayBounds(bounds: { x?: number; y?: number; width?: numbe
     if (bounds.height !== undefined) {
       baseContentHeight = bounds.height;
       baseOuterHeight = bounds.height;
+    }
+
+    if (currentMode === 'compact') {
+      try {
+        const display = screen.getDisplayMatching(target);
+        const { minY, maxY } = compactMovementYBounds(display.workArea, target.height, compactResizeAnchor);
+        target.y = clamp(target.y, minY, maxY);
+      } catch { }
     }
 
     win.setBounds(target);
@@ -1753,12 +1939,15 @@ export function setOverlayBounds(bounds: { x?: number; y?: number; width?: numbe
  * Toggle internal sidebar - expands/contracts overlay window width
  * This keeps sidebar as part of the main overlay window (not a separate window)
  */
-export function toggleInternalSidebar(open?: boolean): { open: boolean; width: number } {
+export function toggleInternalSidebar(open?: boolean, panelWidth?: number): { open: boolean; width: number; panelWidth: number } {
   const shouldOpen = typeof open === 'boolean' ? open : !internalSidebarOpen;
+  if (typeof panelWidth === 'number' && Number.isFinite(panelWidth)) {
+    internalSidebarPanelWidth = clampInternalSidebarPanelWidth(panelWidth);
+  }
 
   if (!win || win.isDestroyed()) {
     internalSidebarOpen = shouldOpen;
-    return { open: shouldOpen, width: 0 };
+    return { open: shouldOpen, width: 0, panelWidth: internalSidebarPanelWidth };
   }
 
   const current = win.getBounds();
@@ -1770,7 +1959,7 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
   try {
     if (shouldOpen && !internalSidebarOpen) {
       // Opening sidebar - expand width
-      const newWidth = Math.min(current.width + INTERNAL_SIDEBAR_WIDTH, workArea.width - 40);
+      const newWidth = Math.min(current.width + internalSidebarPanelWidth, workArea.width - 40);
 
       // Adjust x position if expanding would go off-screen
       let newX = current.x;
@@ -1782,15 +1971,17 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
       baseContentWidth = newWidth;
       baseOuterWidth = newWidth;
 
-      // Update max width constraint to allow the expanded size
+      // Update max width constraint to allow the expanded size.
+      // (maxW/maxH of 0 means "no max" so we keep that behavior in window mode.)
       const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
       try {
-        win.setMaximumSize(Math.max(constraints.maxW, newWidth + 100), constraints.maxH);
+        const expandedMaxW = constraints.maxW > 0 ? Math.max(constraints.maxW, newWidth + 100) : 0;
+        win.setMaximumSize(expandedMaxW, constraints.maxH);
       } catch { }
 
     } else if (!shouldOpen && internalSidebarOpen) {
       // Closing sidebar - contract width
-      const newWidth = Math.max(current.width - INTERNAL_SIDEBAR_WIDTH, MODE_SIZE_CONSTRAINTS[currentMode].minW);
+      const newWidth = Math.max(current.width - internalSidebarPanelWidth, MODE_SIZE_CONSTRAINTS[currentMode].minW);
 
       win.setBounds({ x: current.x, y: current.y, width: newWidth, height: current.height });
       baseContentWidth = newWidth;
@@ -1814,7 +2005,8 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
     try {
       win.webContents.send('overlay:internalSidebarChanged', {
         open: internalSidebarOpen,
-        width: win.getBounds().width
+        width: win.getBounds().width,
+        panelWidth: internalSidebarPanelWidth,
       });
     } catch { }
 
@@ -1822,11 +2014,70 @@ export function toggleInternalSidebar(open?: boolean): { open: boolean; width: n
     setTimeout(() => { resizingProgrammatically = false; }, 0);
   }
 
-  return { open: internalSidebarOpen, width: win.getBounds().width };
+  return { open: internalSidebarOpen, width: win.getBounds().width, panelWidth: internalSidebarPanelWidth };
 }
 
-export function getInternalSidebarState(): { open: boolean } {
-  return { open: internalSidebarOpen };
+export function resizeInternalSidebar(panelWidth: number): { width: number; panelWidth: number } {
+  const clamped = clampInternalSidebarPanelWidth(panelWidth);
+
+  if (!win || win.isDestroyed()) {
+    internalSidebarPanelWidth = clamped;
+    return { width: 0, panelWidth: clamped };
+  }
+
+  if (!internalSidebarOpen) {
+    internalSidebarPanelWidth = clamped;
+    return { width: win.getBounds().width, panelWidth: clamped };
+  }
+
+  const delta = clamped - internalSidebarPanelWidth;
+  if (delta === 0) {
+    return { width: win.getBounds().width, panelWidth: clamped };
+  }
+
+  const current = win.getBounds();
+  const display = screen.getDisplayMatching(current);
+  const workArea = display.workArea;
+  const constraints = MODE_SIZE_CONSTRAINTS[currentMode];
+
+  resizingProgrammatically = true;
+
+  try {
+    let newWidth = current.width + delta;
+    const maxW = constraints.maxW > 0 ? constraints.maxW : workArea.width - 40;
+    newWidth = Math.max(constraints.minW, Math.min(maxW, newWidth));
+
+    const appliedDelta = newWidth - current.width;
+    if (appliedDelta === 0) {
+      return { width: current.width, panelWidth: internalSidebarPanelWidth };
+    }
+
+    let newX = current.x;
+    if (newX + newWidth > workArea.x + workArea.width) {
+      newX = Math.max(workArea.x, workArea.x + workArea.width - newWidth);
+    }
+
+    win.setBounds({ x: newX, y: current.y, width: newWidth, height: current.height });
+    baseContentWidth = newWidth;
+    baseOuterWidth = newWidth;
+    internalSidebarPanelWidth = clampInternalSidebarPanelWidth(internalSidebarPanelWidth + appliedDelta);
+
+    try {
+      win.webContents.send('overlay:internalSidebarChanged', {
+        open: true,
+        width: newWidth,
+        panelWidth: internalSidebarPanelWidth,
+      });
+    } catch { }
+
+    return { width: newWidth, panelWidth: internalSidebarPanelWidth };
+  } finally {
+    setTimeout(() => { resizingProgrammatically = false; }, 0);
+  }
+}
+
+export function getInternalSidebarState(): { open: boolean; panelWidth: number } {
+  return { open: internalSidebarOpen, panelWidth: internalSidebarPanelWidth };
 }
 
 export function registerGlobalShortcuts() {

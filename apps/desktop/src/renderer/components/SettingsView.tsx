@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { DEFAULT_CHAT_MODELS, type ChatModelsConfig, type ModelMeta, type ThemeMode, type TonePreset } from "../hooks/usePreferences";
-import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Sparkles, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard, Brain, Scale, Cpu, ChevronDown, Check, Search } from "lucide-react";
+import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard, Brain, Scale, Cpu, ChevronDown, Check, Search } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { invalidateRendererSyncPrefsCache } from "../utils/syncPrefs";
 import { clsx } from "clsx";
 import { BillingSettings } from "./BillingSettings";
 import { useModelRegistry } from "../hooks/useModelRegistry";
 import { ApiKeysSection } from "./settings/ApiKeysSection";
+import { GlobalHotkeySection } from "./settings/GlobalHotkeySection";
+import { ModelProviderLogo } from "./ModelProviderLogo";
 
 type UpdateChannel = "stable" | "beta" | "staging";
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "error" | "up-to-date";
@@ -67,7 +69,7 @@ interface SettingsViewProps {
 }
 
 const SectionHeader = ({ title, description }: { title: string, description: string }) => (
-  <div className="mb-6 border-b border-theme/50 pb-4">
+  <div className="mb-6 border-b border-theme-sidebar pb-4">
     <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">{title}</h3>
     <p className="text-[13px] text-theme-muted font-medium">{description}</p>
   </div>
@@ -90,7 +92,7 @@ const SegmentedControl: React.FC<{
           className={clsx(
             "px-3.5 py-1.5 rounded-[10px] text-[12px] font-semibold tracking-tight transition-all",
             active
-              ? "bg-theme-card text-theme-fg shadow-sm border border-theme/50"
+              ? "bg-theme-card text-theme-fg shadow-sm border border-theme-sidebar"
               : "text-theme-muted hover:text-theme-fg"
           )}
         >
@@ -172,7 +174,7 @@ const ToggleRow = ({
 }) => (
   <div className={clsx(
     "flex items-center gap-4 p-4 rounded-xl border transition-colors",
-    accent ? "bg-primary/5 border-primary/20" : checked ? "bg-theme-hover/70 border-theme-hover/60" : "bg-theme-hover/40 border-theme hover:border-theme-hover/60"
+    accent ? "bg-primary/5 border-primary/20" : checked ? "bg-theme-hover/70 border-theme-sidebar" : "bg-theme-hover/40 border-theme hover:border-theme"
   )}>
     <div className="flex items-center gap-2.5 min-w-0 flex-1">
       {icon && <span className={clsx("flex-shrink-0", checked ? "text-primary" : "text-theme-muted")}>{icon}</span>}
@@ -256,10 +258,15 @@ function ProviderTile({ model, size = 24 }: { model?: ModelMeta; size?: number }
   if (model?.logoUrl) {
     return (
       <div
-        className="rounded-md bg-theme-card border border-theme/40 flex items-center justify-center overflow-hidden flex-shrink-0"
+        className="rounded-md bg-theme-card border border-theme-sidebar flex items-center justify-center overflow-hidden flex-shrink-0"
         style={dim}
       >
-        <img src={model.logoUrl} alt={model.provider} className="object-contain" style={{ width: size - 8, height: size - 8 }} />
+        <ModelProviderLogo
+          src={model.logoUrl}
+          alt={model.provider}
+          providerId={model.providerId}
+          style={{ width: size - 8, height: size - 8 }}
+        />
       </div>
     );
   }
@@ -276,7 +283,7 @@ function ProviderTile({ model, size = 24 }: { model?: ModelMeta; size?: number }
   }
   return (
     <div
-      className="rounded-md bg-theme-hover border border-theme/40 flex items-center justify-center flex-shrink-0"
+      className="rounded-md bg-theme-hover border border-theme-sidebar flex items-center justify-center flex-shrink-0"
       style={dim}
     >
       <Cpu className="text-theme-muted" style={{ width: size * 0.55, height: size * 0.55 }} />
@@ -410,7 +417,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
           "w-full flex items-center gap-2.5 rounded-xl border bg-theme-card px-2.5 py-2 text-left transition-all outline-none",
           open
             ? "border-primary/50 ring-2 ring-primary/15"
-            : "border-theme hover:border-theme-fg/25 hover:bg-theme-hover/40"
+            : "border-theme hover:border-theme hover:bg-theme-hover/40"
         )}
       >
         <ProviderTile model={selected} size={26} />
@@ -436,9 +443,9 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
           <div
             ref={panelRef}
             style={pos}
-            className="rounded-2xl border border-theme/60 bg-theme-card/95 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+            className="rounded-2xl border border-theme bg-theme-card/95 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
           >
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-theme/40 bg-theme-hover/30">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-theme-sidebar bg-theme-hover/30">
               <div className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">
                 {tierLabel} model
               </div>
@@ -460,7 +467,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Search models, providers..."
-                  className="w-full pl-8 pr-2.5 py-2 bg-theme-hover/50 border border-theme/40 rounded-xl text-[12px] font-medium text-theme-fg placeholder:text-theme-muted outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all"
+                  className="w-full pl-8 pr-2.5 py-2 bg-theme-hover/50 border border-theme-sidebar rounded-xl text-[12px] font-medium text-theme-fg placeholder:text-theme-muted outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all"
                 />
               </div>
             </div>
@@ -525,7 +532,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
               )}
             </div>
 
-            <div className="px-3 py-2 border-t border-theme/40 bg-theme-hover/20 text-[10px] text-theme-muted font-medium flex items-center justify-between">
+            <div className="px-3 py-2 border-t border-theme-sidebar bg-theme-hover/20 text-[10px] text-theme-muted font-medium flex items-center justify-between">
               <span>↑↓ navigate · ↵ select · esc close</span>
               <span>{flatList.length} model{flatList.length === 1 ? "" : "s"}</span>
             </div>
@@ -577,7 +584,7 @@ function AutoModelRoutingSection({
 
   return (
     <div className="dashboard-card p-6">
-      <div className="flex items-start justify-between gap-4 border-b border-theme/50 pb-4 mb-6">
+      <div className="flex items-start justify-between gap-4 border-b border-theme-sidebar pb-4 mb-6">
         <div className="min-w-0">
           <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">Auto Model Routing</h3>
           <p className="text-[13px] text-theme-muted font-medium">Pick which model Auto picks for each tier of task.</p>
@@ -766,7 +773,7 @@ function SecurityPrivacySection() {
                 {settings.has_password && (
                   <button
                     onClick={() => { setShowChangePassword(true); setShowSetPassword(false); }}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-theme text-theme-muted hover:text-theme-fg hover:border-theme-fg/20 transition-all"
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-theme text-theme-muted hover:text-theme-fg hover:border-theme transition-all"
                   >
                     Change
                   </button>
@@ -868,7 +875,7 @@ function SecurityPrivacySection() {
                         "px-3 py-1.5 rounded-lg text-xs font-semibold tracking-tight border transition-all",
                         settings.lock_timeout_minutes === mins
                           ? "bg-primary/10 border-primary/40 text-primary"
-                          : "bg-theme-hover/60 border-theme text-theme-muted hover:text-theme-fg hover:border-theme-hover/60"
+                          : "bg-theme-hover/60 border-theme text-theme-muted hover:text-theme-fg hover:border-theme"
                       )}
                     >
                       {mins < 60 ? `${mins}m` : "1h"}
@@ -929,7 +936,7 @@ const RestartModal: React.FC<{ open: boolean; version: string; onConfirm: () => 
         <div className="bg-theme-hover p-4 text-theme-fg relative overflow-hidden border-b border-theme">
           <div className="relative z-10 flex items-center gap-3 font-stuard">
             <div className="p-1.5 bg-primary/10 rounded-md border border-primary/20">
-              <Sparkles className="w-5 h-5 text-primary" />
+              <ArrowUpCircle className="w-5 h-5 text-primary" />
             </div>
             <h2 className="text-lg font-bold tracking-tight">Update Ready!</h2>
           </div>
@@ -943,7 +950,7 @@ const RestartModal: React.FC<{ open: boolean; version: string; onConfirm: () => 
               <div className="text-theme-muted text-[11px] mt-1">The app will close and restart automatically. Make sure to save any unsaved work.</div>
             </div>
           </div>
-          <div className="flex items-center gap-3 p-3 bg-theme-hover/60 rounded-xl mb-6 border border-theme transition-colors hover:border-theme-hover/60">
+          <div className="flex items-center gap-3 p-3 bg-theme-hover/60 rounded-xl mb-6 border border-theme transition-colors hover:border-theme">
             <div className="flex-1">
               <div className="text-xs font-semibold text-theme-fg tracking-tight">Auto-restart</div>
               <div className="text-[11px] text-theme-muted font-medium">Restart automatically in {countdown} seconds</div>
@@ -1114,7 +1121,7 @@ const UpdateManager: React.FC = () => {
                 )}
               </div>
             </div>
-            <div className="flex gap-3 pt-5 border-t border-theme/50">
+            <div className="flex gap-3 pt-5 border-t border-theme-sidebar">
               {(state.status === "idle" || state.status === "up-to-date" || state.status === "error") && (
                 <button onClick={handleCheck} className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[13px] font-semibold tracking-tight hover:opacity-90 transition-all flex items-center gap-2 active:scale-95 shadow-sm"><RefreshCw className="w-4 h-4" />Check for Updates</button>
               )}
@@ -1127,8 +1134,7 @@ const UpdateManager: React.FC = () => {
             </div>
             {state.releaseNotes && (state.status === "available" || state.status === "downloaded") && (
               <div className="mt-6 p-5 bg-theme-hover/40 rounded-xl border border-theme">
-                <div className="text-[11px] font-semibold text-theme-muted mb-2 tracking-tight flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-primary" />
+                <div className="text-[11px] font-semibold text-theme-muted mb-2 tracking-tight">
                   What's new in {state.latestVersion}
                 </div>
                 <div className="text-[13px] text-theme-fg leading-relaxed font-medium whitespace-pre-wrap">{state.releaseNotes}</div>
@@ -1306,6 +1312,8 @@ function GeneralTab({
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto space-y-6 px-4 py-4 md:px-6 md:py-4">
+        <GlobalHotkeySection />
+
         <AutoModelRoutingSection chatModels={chatModels} onChatModelsChange={setChatModels} />
 
         {/* AI Personality */}

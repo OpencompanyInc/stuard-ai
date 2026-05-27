@@ -71,6 +71,7 @@ interface WorkflowLauncherV2Props {
   loading: boolean;
   runningIds: Record<string, boolean>;
   updates?: Record<string, MarketplaceUpdate>;
+  initialView?: ActiveView;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onImport: () => void;
@@ -89,6 +90,7 @@ export function WorkflowLauncherV2({
   loading,
   runningIds,
   updates = {},
+  initialView = "workflows",
   onSelect,
   onCreate,
   onImport,
@@ -104,7 +106,7 @@ export function WorkflowLauncherV2({
   const { isDark } = useWorkflowTheme();
   const d = isDark;
   const inputRef = useRef<HTMLInputElement>(null);
-  const [activeView, setActiveView] = useState<ActiveView>("workflows");
+  const [activeView, setActiveView] = useState<ActiveView>(initialView);
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [workflowFilter, setWorkflowFilter] = useState<WorkflowLauncherFilterId>("all");
@@ -136,6 +138,10 @@ export function WorkflowLauncherV2({
       else reloadSkills();
     });
   }, [reloadSkills]);
+
+  useEffect(() => {
+    if (initialView) setActiveView(initialView);
+  }, [initialView]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -628,15 +634,15 @@ export function WorkflowLauncherV2({
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden wf-bg wf-fg font-sans">
-      <aside className="w-[300px] shrink-0 border-r wf-border p-6 flex flex-col gap-5 drag">
-        <div className={`rounded-[20px] border p-6 h-[120px] relative overflow-hidden no-drag ${d ? "border-slate-800 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+    <div className="flex h-full w-full overflow-hidden wf-bg wf-fg font-sans">
+      <aside className="w-[300px] shrink-0 border-r border-theme-sidebar p-6 flex flex-col gap-5 drag">
+        <div className={`rounded-[20px] border p-6 h-[120px] relative overflow-hidden no-drag ${d ? "border-theme bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
           <div className={`absolute right-[-10px] top-1/2 -translate-y-1/2 h-40 w-40 rounded-full blur-[35px] ${d ? "bg-blue-500/40" : "bg-blue-500/20"}`} />
           <div className="relative z-10 text-[18px] font-bold tracking-tight">Stuard Studio</div>
           <div className={`relative z-10 mt-1 text-[13px] ${d ? "text-slate-300" : "text-slate-500"}`}>All your workflows in one place</div>
         </div>
 
-        <div className="rounded-[24px] p-3 flex-1 no-drag overflow-y-auto scrollbar-minimal shadow-sm border space-y-1 wf-bg-elevated wf-border">
+        <div className="rounded-[24px] p-3 flex-1 no-drag overflow-y-auto scrollbar-minimal shadow-sm border border-theme-sidebar space-y-1 wf-bg-elevated">
           <SideNavItem d={d} active={activeView === "workflows"} icon={Layers} label="My Workflows" onClick={() => setActiveView("workflows")} />
           <SideNavItem d={d} active={activeView === "skills"} icon={Wand2} label="Skills" onClick={() => setActiveView("skills")} />
           <SideNavItem d={d} active={activeView === "deployed"} icon={Rocket} label="Deployed Workflows" onClick={() => setActiveView("deployed")} />
@@ -645,14 +651,14 @@ export function WorkflowLauncherV2({
           {onIntegrationBuilder && (
             <SideNavItem d={d} icon={Plug} label="Integration Builder" onClick={onIntegrationBuilder} />
           )}
-          <div className="h-px my-2" style={{ background: "var(--wf-border)" }} />
+          <div className="h-px my-2 bg-[color:var(--sidebar-border)]" />
           <SideNavItem d={d} icon={ExternalLink} label="Stuard Dashboard" onClick={onDashboard} />
           {onReplayTour && (
             <SideNavItem d={d} icon={Compass} label="Take the tour" onClick={onReplayTour} />
           )}
         </div>
 
-        <div className="rounded-[24px] p-3 no-drag shrink-0 shadow-sm border space-y-1 wf-bg-elevated wf-border">
+        <div className="rounded-[24px] p-3 no-drag shrink-0 shadow-sm border border-theme-sidebar space-y-1 wf-bg-elevated">
           <SideNavItem
             d={d}
             icon={Play}
@@ -938,7 +944,7 @@ function FilterChip({ d, label, icon: Icon, active, onClick, count }: { d: boole
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2.5 px-5 py-2.5 rounded-[12px] border text-[13px] font-medium transition-all shrink-0 ${active ? "border-blue-500 text-blue-500 shadow-sm" : d ? "border-white/[0.08] text-white/50 hover:bg-white/[0.04] hover:border-white/[0.12] hover:text-white/80" : "border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300 hover:text-slate-900 hover:shadow-sm"}`}
+      className={`flex items-center gap-2.5 px-5 py-2.5 rounded-[12px] border text-[13px] font-medium transition-all shrink-0 ${active ? "border-blue-500 text-blue-500 shadow-sm" : d ? "border-theme-sidebar text-white/50 hover:bg-white/[0.04] hover:border-theme hover:text-white/80" : "border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300 hover:text-slate-900 hover:shadow-sm"}`}
     >
       {Icon ? <Icon className={`w-4 h-4 ${active ? "text-blue-500" : d ? "text-white/30" : "text-slate-400"}`} /> : null}
       <span>{label}</span>
@@ -1122,7 +1128,7 @@ function MarketplaceTypeSegmentedControl({
   onChange: (type: MarketplaceContentType) => void;
 }) {
   return (
-    <div className={`inline-flex p-1 rounded-2xl border shadow-sm ${d ? "bg-white/[0.03] border-white/[0.08]" : "bg-slate-100/80 border-slate-200"}`}>
+    <div className={`inline-flex p-1 rounded-2xl border shadow-sm ${d ? "bg-white/[0.03] border-theme-sidebar" : "bg-slate-100/80 border-slate-200"}`}>
       {MARKETPLACE_CONTENT_TYPES.map((type) => {
         const Icon = type.icon;
         const isActive = value === type.id;

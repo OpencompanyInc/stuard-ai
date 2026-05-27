@@ -20,6 +20,7 @@ import { StorageView } from "./components/StorageView";
 import { MediaLibraryView } from "./components/MediaLibraryView";
 import { BotsView } from "./components/BotsView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
+import { HeaderActionsContext, type HeaderAction } from "./components/HeaderActions";
 import {
   LayoutDashboard,
   Clock,
@@ -34,8 +35,10 @@ import {
   Cloud,
   HardDrive,
   Image as ImageIcon,
-  Sparkles,
+  Bot,
+  ChevronRight,
 } from "lucide-react";
+import stuardLogo from "./assets/stuard-logo.png";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
@@ -221,7 +224,7 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
         {label}
       </span>
       {active && (
-        <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_rgba(0,122,204,0.45)]" />
+        <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_rgba(255,23,39,0.45)]" />
       )}
     </button>
   );
@@ -258,6 +261,8 @@ function DashboardApp() {
   const [creditsInfo, setCreditsInfo] = useState<null | { ok?: boolean; plan?: string; limit?: number; used?: number; remaining?: number; unlimited?: boolean; creditsPerUsd?: number }>(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
   const [appVersion, setAppVersion] = useState<string>('0.1.10');
+  // Primary CTAs published by the active page into the single top bar.
+  const [headerActions, setHeaderActions] = useState<HeaderAction[]>([]);
   const billingRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preferences
@@ -279,6 +284,9 @@ function DashboardApp() {
     setPyPackages,
     pyReqTxt,
     setPyReqTxt,
+    pyPackagesList,
+    pyPackagesLoading,
+    pyInstallMessage,
     pyInstalling,
     ffInstalling,
     mpStatus,
@@ -286,6 +294,9 @@ function DashboardApp() {
     mpLocalStatus,
     mpUpdateInfo,
     mpUpdating,
+    daStatus,
+    daInstalling,
+    daUninstalling,
     browserUseLocalStatus,
     browserUseUpdateInfo,
     browserUseUpdating,
@@ -301,6 +312,7 @@ function DashboardApp() {
     handleDisconnect,
     handleLearnMore,
     refreshPythonStatus,
+    refreshPythonPackages,
     refreshFfmpegStatus,
     refreshMediapipeStatus,
     ollamaStatus,
@@ -322,6 +334,9 @@ function DashboardApp() {
     installPython,
     runPython,
     updateMediapipe,
+    refreshDataAnalysisStatus,
+    setupDataAnalysis,
+    uninstallDataAnalysis,
     // profiles
     profiles,
     profilesLoading,
@@ -346,7 +361,12 @@ function DashboardApp() {
     whatsappInitiateLink,
     whatsappDisconnect,
     refreshWhatsAppStatus,
-  } = useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP });
+  } = useIntegrationsState({
+    session,
+    AGENT_HTTP,
+    CLOUD_AI_HTTP,
+    statusChecksEnabled: tab === 'integrations',
+  });
   // Calendar (Google-backed, Stuard blocks)
   const [calendarView, setCalendarView] = useState<'today' | 'month'>('month');
   const [calendarRefDate, setCalendarRefDateRaw] = useState<Date>(() => new Date());
@@ -397,8 +417,12 @@ function DashboardApp() {
   // Listen for navigation events from main process (when dashboard is already open)
   useEffect(() => {
     const unsub = window.desktopAPI?.onDashboardNavigate?.((data) => {
-      if (data?.tab && ['overview', 'history', 'planner', 'memories', 'integrations', 'settings'].includes(data.tab)) {
-        setTab(data.tab);
+      const tab = data?.tab;
+      if (
+        tab &&
+        ['overview', 'history', 'planner', 'tasks', 'bots', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(tab)
+      ) {
+        setTab(tab);
       }
     });
     return () => { unsub?.(); };
@@ -1352,7 +1376,7 @@ function DashboardApp() {
       key: 'intelligence',
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
-        { id: 'bots', label: 'Agents', icon: Sparkles },
+        { id: 'bots', label: 'Agents', icon: Bot },
       ],
     },
     {
@@ -1378,7 +1402,7 @@ function DashboardApp() {
     planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
     bots: { title: 'Agents', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
-    memories: { title: 'Memories', subtitle: 'Browse notes, profile details, and remembered context.' },
+    memories: { title: 'Memories', subtitle: 'Browse collections, context, and project knowledge.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
@@ -1392,6 +1416,20 @@ function DashboardApp() {
   };
   const showGlobalHeader = !['integrations', 'settings', 'bots', 'cloud'].includes(tab);
   const showRefresh = showGlobalHeader && !['planner', 'memories', 'media'].includes(tab);
+
+  // Unified top-bar context: page icon + live account status badges.
+  const CurrentTabIcon = sidebarSections.flatMap((s) => s.items).find((i) => i.id === tab)?.icon ?? LayoutDashboard;
+  const planRaw = String(creditsInfo?.plan || creditsFallback?.plan || 'Free');
+  const planLabel = planRaw.charAt(0).toUpperCase() + planRaw.slice(1);
+  const creditsRemaining = creditsInfo?.remaining ?? creditsFallback?.remaining;
+
+  // The single top bar shows the page's registered CTAs; if a page registers
+  // none, fall back to the global Refresh where it makes sense.
+  const effectiveHeaderActions: HeaderAction[] = headerActions.length > 0
+    ? headerActions
+    : (showRefresh && userEmail
+        ? [{ id: 'refresh', label: 'Refresh', icon: RefreshCw, onClick: handleRefresh, loading, variant: 'secondary' as const }]
+        : []);
 
 
   // Apply theme to body
@@ -1418,6 +1456,7 @@ function DashboardApp() {
   }, [themeMode, themeDarkShade, themeLightShade, themeText]);
 
   return (
+    <HeaderActionsContext.Provider value={{ setActions: setHeaderActions }}>
     <ErrorBoundary>
       <div className="dashboard-root w-screen h-screen overflow-hidden text-theme-fg font-sans">
         <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
@@ -1453,7 +1492,7 @@ function DashboardApp() {
           <div className="p-1 pt-3 mt-auto">
             {userEmail ? (
               <div className="dashboard-sidebar-section flex items-center gap-3 p-3 cursor-default group">
-                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary border border-[color:var(--dashboard-panel-border)] shadow-inner">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary border border-theme shadow-inner">
                   {userEmail[0].toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1491,6 +1530,63 @@ function DashboardApp() {
           <div className="dashboard-main-surface flex h-full flex-col overflow-hidden relative transition-colors duration-200">
           <div className="drag h-10 w-full shrink-0 absolute top-0 left-0 right-0 z-50 pointer-events-none" />
 
+          {/* Unified top bar — the single chrome that holds page context, status & every CTA */}
+          <header className="dashboard-topbar shrink-0">
+            {/* Left: brand mark → breadcrumb → status pill */}
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <img src={stuardLogo} alt="Stuard" className="h-7 w-7 rounded-[9px] object-cover shrink-0" />
+              <span className="text-[15px] font-semibold text-theme-fg tracking-tight leading-none">Stuard</span>
+              <ChevronRight className="w-4 h-4 text-theme-muted opacity-50 shrink-0" />
+              <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-theme-hover/40 text-theme-fg shrink-0">
+                <CurrentTabIcon className="w-[15px] h-[15px]" />
+              </div>
+              <span className="text-[15px] font-semibold text-theme-fg tracking-tight leading-none truncate">
+                {currentTabMeta.title}
+              </span>
+              {userEmail && (
+                <span className="dashboard-badge ml-1 shrink-0">{planLabel}</span>
+              )}
+            </div>
+
+            {/* Right: live status + every primary CTA (white pills) */}
+            <div className="flex items-center gap-2 shrink-0">
+              {userEmail && (
+                <>
+                  <span className="dashboard-badge hidden md:inline-flex">
+                    <span className="dashboard-badge-dot" />
+                    Online
+                  </span>
+                  {typeof creditsRemaining === 'number' && (
+                    <span className="dashboard-badge hidden lg:inline-flex">
+                      {creditsRemaining.toLocaleString()} credits
+                    </span>
+                  )}
+                </>
+              )}
+              {effectiveHeaderActions.map((action) => {
+                const ActionIcon = action.icon;
+                return (
+                  <button
+                    key={action.id}
+                    onClick={action.onClick}
+                    disabled={action.disabled || action.loading}
+                    className="dashboard-button-primary flex items-center gap-2 px-3.5 py-2 text-[13px] transition-all group active:scale-95 disabled:active:scale-100"
+                    title={action.title || action.label}
+                  >
+                    {ActionIcon && (
+                      <ActionIcon className={clsx(
+                        "w-3.5 h-3.5 transition-transform duration-500",
+                        action.id === 'refresh' && "group-hover:rotate-180",
+                        action.loading && "animate-spin",
+                      )} />
+                    )}
+                    {action.label && <span className="hidden sm:inline">{action.label}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </header>
+
           {/* Content Wrapper */}
           <div className="flex-1 flex flex-col min-h-0 relative">
             {tab === 'memories' ? (
@@ -1502,7 +1598,7 @@ function DashboardApp() {
                 <CloudEngineDashboard />
               </div>
             ) : (
-              <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+              <main className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-6">
                 <div className="h-full">
                   {!sessionLoaded && tab !== 'planner' ? (
                     <div className="flex flex-col items-center justify-center h-[70vh]" aria-hidden="true" />
@@ -1529,33 +1625,6 @@ function DashboardApp() {
                   ) : (
                     <ErrorBoundary>
                       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full">
-                        {/* Global Actions Header Area */}
-                        {showGlobalHeader && (
-                          <div className="flex items-start justify-between gap-4 mb-6 px-1">
-                            <div className="min-w-0">
-                              <h1 className="text-[30px] font-semibold text-theme-fg tracking-tight font-stuard leading-none">
-                                {currentTabMeta.title}
-                              </h1>
-                              <p className="mt-2 text-[13px] text-theme-muted font-medium flex items-center gap-2">
-                                <Sparkles className="w-3.5 h-3.5 text-primary/80 shrink-0" />
-                                <span>{currentTabMeta.subtitle}</span>
-                              </p>
-                            </div>
-
-                            {showRefresh && (
-                              <button
-                                onClick={handleRefresh}
-                                disabled={loading}
-                                className="dashboard-refresh-button flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium transition-all group active:scale-95"
-                                title="Sync Hub Data"
-                              >
-                                <RefreshCw className={clsx("w-3.5 h-3.5 transition-transform duration-500 group-hover:rotate-180", loading && "animate-spin")} />
-                                <span>Refresh</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-
                         {/* Tab Content Rendering */}
                         <div className="relative min-h-[calc(100%-80px)]">
                           {tab === 'overview' && userEmail && (
@@ -1679,6 +1748,9 @@ function DashboardApp() {
                                 setPyPackages={setPyPackages}
                                 pyReqTxt={pyReqTxt}
                                 setPyReqTxt={setPyReqTxt}
+                                pyPackagesList={pyPackagesList}
+                                pyPackagesLoading={pyPackagesLoading}
+                                pyInstallMessage={pyInstallMessage}
                                 pyRunCode={pyRunCode}
                                 setPyRunCode={setPyRunCode}
                                 pyInstalling={pyInstalling}
@@ -1688,6 +1760,7 @@ function DashboardApp() {
                                 pyRunning={pyRunning}
                                 pyRunResult={pyRunResult}
                                 refreshPythonStatus={refreshPythonStatus}
+                                refreshPythonPackages={refreshPythonPackages}
                                 refreshFfmpegStatus={refreshFfmpegStatus}
                                 refreshMediapipeStatus={refreshMediapipeStatus}
                                 setupPython={setupPython}
@@ -1737,6 +1810,12 @@ function DashboardApp() {
                                 mpUpdateInfo={mpUpdateInfo}
                                 mpUpdating={mpUpdating}
                                 updateMediapipe={updateMediapipe}
+                                daStatus={daStatus}
+                                daInstalling={daInstalling}
+                                daUninstalling={daUninstalling}
+                                refreshDataAnalysisStatus={refreshDataAnalysisStatus}
+                                setupDataAnalysis={setupDataAnalysis}
+                                uninstallDataAnalysis={uninstallDataAnalysis}
                               />
                             </>
                           )}
@@ -1753,6 +1832,7 @@ function DashboardApp() {
       </div>
       </div>
     </ErrorBoundary>
+    </HeaderActionsContext.Provider>
   );
 }
 

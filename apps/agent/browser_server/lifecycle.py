@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -128,6 +129,145 @@ async def _get_page_title(timeout: float | None = None) -> str:
         return str(await coro or "")
     except Exception:
         return ""
+
+
+def _normalize_session_id(value: Any) -> str:
+    session_id = str(value or "").strip()
+    if not session_id:
+        return ""
+    return session_id[:128]
+
+
+def _normalize_tab_index(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        index = int(value)
+    except Exception:
+        return None
+    return index if index >= 0 else None
+
+
+async def _cleanup_tab_sessions() -> set[str]:
+    """Drop expired sessions and ownership for tabs that no longer exist."""
+    browser = state._browser
+    if browser is None:
+        state._tab_session_targets.clear()
+        state._tab_target_owners.clear()
+        state._tab_session_touched.clear()
+        return set()
+
+    targets = await browser.list_targets()
+    live_target_ids = {str(t.get("id", "")) for t in targets if t.get("id")}
+    now = time.monotonic()
+    stale_sessions: list[str] = []
+
+    for session_id, target_id in list(state._tab_session_targets.items()):
+        touched = float(state._tab_session_touched.get(session_id, 0) or 0)
+        expired = touched > 0 and now - touched > state.TAB_SESSION_TTL_SECONDS
+        if target_id not in live_target_ids or expired:
+            stale_sessions.append(session_id)
+
+    for session_id in stale_sessions:
+        await _release_tab_session(session_id)
+
+    for target_id, owner in list(state._tab_target_owners.items()):
+        if target_id not in live_target_ids or state._tab_session_targets.get(owner) != target_id:
+            state._tab_target_owners.pop(target_id, None)
+
+    return live_target_ids
+
+
+async def _claim_tab_for_session(session_id: str, target_id: str) -> None:
+    previous_target = state._tab_session_targets.get(session_id)
+    if previous_target and previous_target != target_id:
+        state._tab_target_owners.pop(previous_target, None)
+
+    previous_owner = state._tab_target_owners.get(target_id)
+    if previous_owner and previous_owner != session_id:
+        state._tab_session_targets.pop(previous_owner, None)
+        state._tab_session_touched.pop(previous_owner, None)
+
+    state._tab_session_targets[session_id] = target_id
+    state._tab_target_owners[target_id] = session_id
+    state._tab_session_touched[session_id] = time.monotonic()
+
+
+async def _release_tab_session(session_id: str) -> bool:
+    session_id = _normalize_session_id(session_id)
+    if not session_id:
+        return False
+    target_id = state._tab_session_targets.pop(session_id, None)
+    state._tab_session_touched.pop(session_id, None)
+    if target_id and state._tab_target_owners.get(target_id) == session_id:
+        state._tab_target_owners.pop(target_id, None)
+    return target_id is not None
+
+
+async def _resolve_tab_for_session(body: dict[str, Any] | None = None) -> None:
+    """Select the page owned by session_id, creating/claiming a tab as needed.
+
+    Calls without session_id keep the legacy active-page behavior.
+    """
+    body = body or {}
+    session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
+    if not session_id:
+        return
+
+    browser = state._browser
+    if browser is None:
+        return
+
+    live_target_ids = await _cleanup_tab_sessions()
+    owned_target_id = state._tab_session_targets.get(session_id)
+    if owned_target_id and owned_target_id in live_target_ids:
+        state._page = await browser.activate_target(owned_target_id)
+        state._tab_session_touched[session_id] = time.monotonic()
+        return
+
+    tab_index = _normalize_tab_index(body.get("tab_index") if "tab_index" in body else body.get("tabIndex"))
+    targets = await browser.list_targets()
+
+    if tab_index is not None:
+        while len(targets) <= tab_index:
+            page = await browser.new_page("about:blank")
+            state._page = page
+            targets = await browser.list_targets()
+        target_id = str(targets[tab_index]["id"])
+    else:
+        if not targets:
+            page = await browser.new_page("about:blank")
+            state._page = page
+            targets = await browser.list_targets()
+
+        first_target_id = str(targets[0]["id"])
+        owner = state._tab_target_owners.get(first_target_id)
+        if owner in (None, session_id):
+            target_id = first_target_id
+        else:
+            page = await browser.new_page("about:blank")
+            state._page = page
+            targets = await browser.list_targets()
+            target_id = str(targets[-1]["id"])
+
+    await _claim_tab_for_session(session_id, target_id)
+    state._page = await browser.activate_target(target_id)
+
+
+async def _ensure_browser_session(body: dict[str, Any] | None = None) -> tuple[bool, Optional[str]]:
+    ok, err = await _ensure_browser()
+    if not ok:
+        return ok, err
+    try:
+        await _resolve_tab_for_session(body)
+    except Exception as exc:
+        return False, f"Browser tab session failed: {exc}"
+    return True, None
+
+
+async def _tab_owner_snapshot() -> dict[str, str]:
+    await _cleanup_tab_sessions()
+    return dict(state._tab_target_owners)
 
 
 async def _capture_screenshot(
@@ -670,3 +810,6 @@ async def _close_browser(profile_dir: Path | None = None) -> None:
         pass
 
     state._browser = state._page = None
+    state._tab_session_targets.clear()
+    state._tab_target_owners.clear()
+    state._tab_session_touched.clear()

@@ -1,12 +1,143 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { execLocalTool, hasClientBridge, makeLocalTool } from './shared';
+import { execLocalTool, getResolvedBridgeSecrets, hasClientBridge, makeLocalTool } from './shared';
 import { workflowMap } from '../workflow-system';
 import { embedMany } from 'ai';
 import { resolveEmbedder, cosineSimilarity } from '../../utils/embeddings';
+import { sendVMCommand } from '../../services/vm-command';
 
 // Consolidated: All workflow listing is now done via search_local_workflows
 // list_local_stuards is deprecated - stuards and workflows are the same concept now
+
+type VMWorkflowDeployment = {
+  id: string;
+  name: string;
+  description?: string;
+  triggers: string[];
+  status?: string;
+  sourceWorkflowId?: string | null;
+  score?: number;
+};
+
+function resolveWorkflowUserId(inputData?: any): string {
+  const secrets = getResolvedBridgeSecrets();
+  const candidates = [
+    secrets?.userId,
+    inputData?.__userId,
+  ];
+  for (const value of candidates) {
+    const userId = typeof value === 'string' ? value.trim() : '';
+    if (userId) return userId;
+  }
+  return '';
+}
+
+function vmWorkflowTriggers(deploy: any): string[] {
+  const bindings = Array.isArray(deploy?.trigger_bindings)
+    ? deploy.trigger_bindings
+    : Array.isArray(deploy?.triggerBindings)
+      ? deploy.triggerBindings
+      : [];
+  const triggers = bindings
+    .map((binding: any) => String(binding?.type || binding?.triggerType || binding?.id || '').trim())
+    .filter(Boolean);
+  return triggers.length ? Array.from(new Set(triggers)) : ['manual'];
+}
+
+function mapVMWorkflowDeployment(deploy: any): VMWorkflowDeployment | null {
+  const id = String(deploy?.id || '').trim();
+  if (!id) return null;
+  const kind = String(deploy?.kind || 'workflow').toLowerCase();
+  if (kind !== 'workflow') return null;
+  return {
+    id,
+    name: String(deploy?.name || id),
+    description: deploy?.description ? String(deploy.description) : undefined,
+    triggers: vmWorkflowTriggers(deploy),
+    status: deploy?.status ? String(deploy.status) : undefined,
+    sourceWorkflowId: deploy?.source_workflow_id || deploy?.sourceWorkflowId || null,
+  };
+}
+
+function lexicalWorkflowScore(workflow: VMWorkflowDeployment, query: string): number {
+  const q = query.toLowerCase().trim();
+  if (!q) return 1;
+  const haystack = [
+    workflow.id,
+    workflow.name,
+    workflow.description || '',
+    workflow.sourceWorkflowId || '',
+    workflow.triggers.join(' '),
+  ].join(' ').toLowerCase();
+  if (workflow.id.toLowerCase() === q || workflow.name.toLowerCase() === q) return 1;
+  if (workflow.name.toLowerCase().includes(q)) return 0.9;
+  if (haystack.includes(q)) return 0.7;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return 0;
+  const hits = tokens.filter((token) => haystack.includes(token)).length;
+  return hits / tokens.length;
+}
+
+async function listVMWorkflowDeployments(
+  userId: string,
+  timeoutMs = 15000,
+): Promise<{ ok: boolean; workflows: VMWorkflowDeployment[]; error?: string }> {
+  if (!userId) return { ok: false, workflows: [], error: 'missing_user_context' };
+  const result = await sendVMCommand(userId, 'deploy_list', {}, timeoutMs);
+  if (!result.ok) {
+    return { ok: false, workflows: [], error: result.error || 'vm_deploy_list_failed' };
+  }
+  const deploys = Array.isArray(result.result?.deploys) ? result.result.deploys : [];
+  return {
+    ok: true,
+    workflows: deploys
+      .map(mapVMWorkflowDeployment)
+      .filter(Boolean) as VMWorkflowDeployment[],
+  };
+}
+
+async function findVMWorkflowDeployment(
+  userId: string,
+  input: { id?: string; name?: string; timeoutMs?: number },
+): Promise<{ ok: boolean; workflow?: VMWorkflowDeployment; error?: string }> {
+  const listed = await listVMWorkflowDeployments(userId, input.timeoutMs || 15000);
+  if (!listed.ok) return { ok: false, error: listed.error };
+  const id = String(input.id || '').trim();
+  if (id) {
+    const byId = listed.workflows.find((workflow) => (
+      workflow.id === id || workflow.sourceWorkflowId === id
+    ));
+    if (byId) return { ok: true, workflow: byId };
+  }
+
+  const name = String(input.name || '').toLowerCase().trim();
+  if (name) {
+    const byName = listed.workflows.find((workflow) => workflow.name.toLowerCase() === name)
+      || listed.workflows.find((workflow) => workflow.name.toLowerCase().includes(name))
+      || listed.workflows
+        .map((workflow) => ({ workflow, score: lexicalWorkflowScore(workflow, name) }))
+        .sort((a, b) => b.score - a.score)[0]?.workflow;
+    if (byName) return { ok: true, workflow: byName };
+  }
+
+  return { ok: false, error: id ? `No VM workflow deployment found for id: ${id}` : `No VM workflow deployment found matching name: "${input.name || ''}"` };
+}
+
+async function triggerVMWorkflowDeployment(
+  userId: string,
+  workflow: VMWorkflowDeployment,
+  args: any,
+  source: string,
+  timeoutMs = 30000,
+): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const result = await sendVMCommand(userId, 'deploy_trigger', {
+    deployId: workflow.id,
+    payload: { args: args || {}, input: args || {} },
+    source,
+  }, timeoutMs);
+  if (!result.ok) return { ok: false, error: result.error || 'vm_deploy_trigger_failed' };
+  return { ok: true, result: result.result || { triggered: true } };
+}
 
 export const list_local_stuards = createTool({
   id: 'list_local_stuards',
@@ -16,7 +147,14 @@ export const list_local_stuards = createTool({
   execute: async (inputData, runCtx) => {
     // Redirect to search_local_workflows
     if (!hasClientBridge()) {
-      return { ok: true, workflows: [], _note: 'No desktop bridge available' };
+      const userId = resolveWorkflowUserId(inputData);
+      const listed = await listVMWorkflowDeployments(userId);
+      return {
+        ok: listed.ok,
+        workflows: listed.workflows,
+        mode: 'vm',
+        error: listed.error,
+      };
     }
     const writer = (runCtx as any)?.writer;
     return await execLocalTool('list_local_stuards', inputData as any, writer as any, 15000);
@@ -171,9 +309,32 @@ export const execute_workflow = createTool({
     const id = String(context.id || '').trim();
     if (!id) return { ok: false, error: 'missing_id' };
 
-    // Check for bridge first
     if (!hasClientBridge()) {
-      return { ok: false, error: 'No desktop bridge available. execute_workflow requires the Stuard desktop app.' };
+      const userId = resolveWorkflowUserId(context);
+      const found = await findVMWorkflowDeployment(userId, { id, timeoutMs: 15000 });
+      if (!found.ok || !found.workflow) {
+        return { ok: false, workflowId: id, status: 'error', error: found.error || 'workflow_not_found_on_vm' };
+      }
+      const triggered = await triggerVMWorkflowDeployment(
+        userId,
+        found.workflow,
+        context.args || {},
+        'execute_workflow',
+        30000,
+      );
+      return triggered.ok
+        ? {
+            ok: true,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            result: triggered.result,
+            status: 'started',
+          }
+        : {
+            ok: false,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            status: 'error',
+            error: triggered.error,
+          };
     }
 
     // Always wait; this is a tool-like execution.
@@ -188,72 +349,6 @@ export const execute_workflow = createTool({
       300000,
       { noFallback: true },
     );
-  },
-});
-
-export const find_workflow_semantic = createTool({
-  id: 'find_workflow_semantic',
-  description: 'Find the best matching local workflow for a natural language query using embeddings. Returns the selected workflow id and basic metadata.',
-  inputSchema: z.object({
-    query: z.string().min(1).describe('Natural language description of the workflow you want'),
-    topK: z.number().int().min(1).max(10).default(5).describe('How many matches to return'),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    best: z.any().optional(),
-    matches: z.array(z.any()).optional(),
-    error: z.string().optional(),
-  }),
-  execute: async (inputData, runCtx) => {
-    const writer = (runCtx as any)?.writer;
-    const { query, topK } = inputData as any;
-
-    if (!hasClientBridge()) {
-      return { ok: false, error: 'No desktop bridge available. find_workflow_semantic requires the Stuard desktop app.' };
-    }
-
-    const listRes = await execLocalTool('list_local_workflows', {}, writer as any, 15000, { noFallback: true });
-    const items = Array.isArray(listRes?.workflows) ? listRes.workflows : (Array.isArray(listRes?.items) ? listRes.items : []);
-    if (!items.length) return { ok: true, matches: [], best: null };
-
-    const texts = items.map((it: any) => {
-      const id = String(it?.id || '');
-      const name = String(it?.name || '');
-      const triggers = Array.isArray(it?.triggers) ? it.triggers.join(', ') : '';
-      const inputKeys = Array.isArray(it?.inputKeys) ? it.inputKeys.join(', ') : '';
-      return `id=${id}\nname=${name}\ntriggers=${triggers}\ninputKeys=${inputKeys}`;
-    });
-
-    try {
-      const { embedder } = await resolveEmbedder(writer as any);
-      const { embeddings } = await embedMany({ model: embedder as any, values: [String(query), ...texts] });
-      const qVec = embeddings[0];
-
-      const scored = items.map((it: any, idx: number) => {
-        const vec = embeddings[idx + 1];
-        const score = cosineSimilarity(qVec as any, vec as any);
-        return { ...it, score };
-      });
-
-      scored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-      const matches = scored.slice(0, Math.max(1, Number(topK || 5)));
-      return { ok: true, best: matches[0] || null, matches };
-    } catch {
-      // Fallback: simple keyword scoring (works even without embeddings API keys)
-      const q = String(query || '').toLowerCase();
-      const scored = items.map((it: any) => {
-        const name = String(it?.name || '').toLowerCase();
-        const id = String(it?.id || '').toLowerCase();
-        const triggers = Array.isArray(it?.triggers) ? it.triggers.join(' ').toLowerCase() : '';
-        const inputKeys = Array.isArray(it?.inputKeys) ? it.inputKeys.join(' ').toLowerCase() : '';
-        const hay = `${id} ${name} ${triggers} ${inputKeys}`;
-        const score = q && hay.includes(q) ? 1 : 0;
-        return { ...it, score };
-      });
-      scored.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-      const matches = scored.slice(0, Math.max(1, Number(topK || 5)));
-      return { ok: true, best: matches[0] || null, matches };
-    }
   },
 });
 
@@ -305,11 +400,34 @@ export const invoke_workflow = createTool({
     // NOTE: makeLocalTool throws when no desktop bridge is available.
     // Wrap it so callers get a normal tool result instead of an exception.
     if (!hasClientBridge()) {
-      return {
-        ok: false,
-        status: 'error' as const,
-        error: 'No desktop bridge available. invoke_workflow must be called via the Stuard desktop IPC bridge.',
-      };
+      const context = (inputData as any) || {};
+      const userId = resolveWorkflowUserId(context);
+      const workflowId = String(context.id || '').trim();
+      if (!workflowId) return { ok: false, status: 'error' as const, error: 'missing_id' };
+      const found = await findVMWorkflowDeployment(userId, { id: workflowId, timeoutMs: 15000 });
+      if (!found.ok || !found.workflow) {
+        return { ok: false, workflowId, status: 'error' as const, error: found.error || 'workflow_not_found_on_vm' };
+      }
+      const triggered = await triggerVMWorkflowDeployment(
+        userId,
+        found.workflow,
+        context.args || {},
+        'invoke_workflow',
+        context.waitForCompletion ? 30000 : 15000,
+      );
+      return triggered.ok
+        ? {
+            ok: true,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            status: 'started' as const,
+            result: triggered.result,
+          }
+        : {
+            ok: false,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            status: 'error' as const,
+            error: triggered.error,
+          };
     }
 
     const writer = (runCtx as any)?.writer;
@@ -321,7 +439,7 @@ export const invoke_workflow = createTool({
 
 export const search_local_workflows = createTool({
   id: 'search_local_workflows',
-  description: `List and search local Stuard workflows. Returns workflow metadata and schemas.
+  description: `Search local Stuard workflows semantically or lexically. Returns workflow metadata and schemas.
 
 Returns for each workflow:
 - id, name, description
@@ -329,10 +447,11 @@ Returns for each workflow:
 - inputSchema: input parameters the workflow accepts
 - outputSchema: output fields the workflow returns
 
-Use with empty query to list all workflows, or provide a query to filter by name/description.
+Use with empty query to browse workflows, or provide a query to search by meaning or exact text.
 Use this before run_workflow to discover what arguments a workflow needs.`,
   inputSchema: z.object({
-    query: z.string().optional().describe('Search query to filter workflows by name/description. If empty, returns all workflows.'),
+    query: z.string().optional().describe('Search query. If empty, returns recent workflows.'),
+    mode: z.enum(['semantic', 'lexical']).default('semantic').describe('semantic uses embeddings for natural language matching; lexical uses exact text/token matching.'),
     limit: z.number().int().min(1).max(50).default(10).describe('Maximum number of results to return'),
   }),
   outputSchema: z.object({
@@ -354,108 +473,83 @@ Use this before run_workflow to discover what arguments a workflow needs.`,
         type: z.string(),
         description: z.string().optional(),
       })).optional().describe('Output fields the workflow returns'),
+      score: z.number().optional(),
     })).optional(),
+    mode: z.string().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, runCtx) => {
     const writer = (runCtx as any)?.writer;
-    const { query, limit } = inputData as any;
+    const { query, limit, mode } = inputData as any;
+    const searchMode = mode === 'lexical' ? 'lexical' : 'semantic';
+    const trimmedQuery = typeof query === 'string' ? query.trim() : '';
+    const resultLimit = Math.max(1, Number(limit || 10));
 
-    // Check if we have a client bridge
     if (!hasClientBridge()) {
-      return { ok: true, workflows: [], _note: 'No desktop bridge available' };
-    }
-
-    // Get list of local workflows from desktop only (no Python agent fallback)
-    // Note: execListLocalWorkflows returns { workflows: [...] }, not { items: [...] }
-    const listRes = await execLocalTool('list_local_workflows', {}, writer as any, 15000, { noFallback: true });
-    const items = Array.isArray(listRes?.workflows) ? listRes.workflows : (Array.isArray(listRes?.items) ? listRes.items : []);
-    if (!items.length) return { ok: true, workflows: [] };
-
-    // Filter by query if provided
-    let filtered = items;
-    if (query && typeof query === 'string' && query.trim()) {
-      const q = query.toLowerCase().trim();
-      filtered = items.filter((it: any) => {
-        const name = String(it?.name || '').toLowerCase();
-        const id = String(it?.id || '').toLowerCase();
-        const desc = String(it?.description || '').toLowerCase();
-        return name.includes(q) || id.includes(q) || desc.includes(q);
-      });
-    }
-
-    // Limit results
-    const limited = filtered.slice(0, Math.max(1, Number(limit || 10)));
-
-    // For each workflow, fetch full details to get inputParams and outputSchema
-    const workflows = await Promise.all(limited.map(async (item: any) => {
-      try {
-        const detailRes = await execLocalTool('show_json_workflow_code', { id: item.id }, undefined, 10000);
-        const wf = detailRes?.workflow;
-
-        if (!wf) {
-          return {
-            id: item.id,
-            name: item.name || item.id,
-            description: item.description,
-            triggers: item.triggers || [],
-            inputSchema: [],
-            outputSchema: [],
-          };
-        }
-
-        // Extract inputParams from triggers
-        const triggers = Array.isArray(wf.triggers) ? wf.triggers : [];
-        const triggerTypes = triggers.map((t: any) => t.type || 'unknown');
-        
-        // Collect all inputParams from all triggers
-        const inputSchema: any[] = [];
-        for (const trigger of triggers) {
-          const params = (trigger as any).inputParams;
-          if (Array.isArray(params)) {
-            for (const param of params) {
-              inputSchema.push({
-                name: param.name,
-                type: param.type || 'string',
-                required: param.required || false,
-                defaultValue: param.defaultValue,
-                description: param.description,
-              });
-            }
-          }
-        }
-
-        // Get outputSchema from workflow
-        const outputSchema = Array.isArray(wf.outputSchema)
-          ? wf.outputSchema.map((field: any) => ({
-              name: field.name,
-              type: field.type || 'string',
-              description: field.description,
-            }))
-          : [];
-
-        return {
-          id: wf.id || item.id,
-          name: wf.name || item.name || item.id,
-          description: wf.description || item.description,
-          triggers: triggerTypes,
-          inputSchema,
-          outputSchema,
-        };
-      } catch {
-        // If detail fetch fails, return basic info
-        return {
-          id: item.id,
-          name: item.name || item.id,
-          description: item.description,
-          triggers: item.triggers || [],
-          inputSchema: [],
-          outputSchema: [],
-        };
+      const userId = resolveWorkflowUserId(inputData);
+      const listed = await listVMWorkflowDeployments(userId, 15000);
+      if (!listed.ok) {
+        return { ok: false, workflows: [], mode: 'vm', error: listed.error };
       }
-    }));
+      const workflows = listed.workflows
+        .map((workflow) => ({ ...workflow, score: lexicalWorkflowScore(workflow, trimmedQuery) }))
+        .filter((workflow) => !trimmedQuery || Number(workflow.score || 0) > 0)
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+        .slice(0, resultLimit);
+      return { ok: true, workflows, mode: 'vm' };
+    }
 
-    return { ok: true, workflows };
+    const localSearch = async (localQuery: string, localLimit: number) => {
+      const res = await execLocalTool(
+        'search_local_workflows',
+        { query: localQuery, limit: localLimit, mode: 'lexical' },
+        writer as any,
+        15000,
+        { noFallback: true },
+      );
+      return Array.isArray(res?.workflows) ? res.workflows : [];
+    };
+
+    if (searchMode === 'semantic' && trimmedQuery) {
+      const candidates = await localSearch('', 250);
+      if (!candidates.length) return { ok: true, workflows: [], mode: 'semantic' };
+
+      const texts = candidates.map((it: any) => {
+        const triggers = Array.isArray(it?.triggers) ? it.triggers.join(', ') : '';
+        const inputs = Array.isArray(it?.inputSchema)
+          ? it.inputSchema.map((p: any) => `${p?.name || ''}:${p?.description || p?.type || ''}`).join(', ')
+          : '';
+        const outputs = Array.isArray(it?.outputSchema)
+          ? it.outputSchema.map((p: any) => `${p?.name || ''}:${p?.description || p?.type || ''}`).join(', ')
+          : '';
+        return [
+          `id=${String(it?.id || '')}`,
+          `name=${String(it?.name || '')}`,
+          `description=${String(it?.description || '')}`,
+          `triggers=${triggers}`,
+          `inputs=${inputs}`,
+          `outputs=${outputs}`,
+        ].join('\n');
+      });
+
+      try {
+        const { embedder } = await resolveEmbedder(writer as any);
+        const { embeddings } = await embedMany({ model: embedder as any, values: [trimmedQuery, ...texts] });
+        const qVec = embeddings[0];
+        const workflows = candidates.map((it: any, idx: number) => ({
+          ...it,
+          score: cosineSimilarity(qVec as any, embeddings[idx + 1] as any),
+        })).sort((a: any, b: any) => Number(b.score || 0) - Number(a.score || 0))
+          .slice(0, resultLimit);
+        return { ok: true, workflows, mode: 'semantic' };
+      } catch {
+        const workflows = await localSearch(trimmedQuery, resultLimit);
+        return { ok: true, workflows, mode: 'lexical', error: 'semantic_search_unavailable_fell_back_to_lexical' };
+      }
+    }
+
+    const workflows = await localSearch(trimmedQuery, resultLimit);
+    return { ok: true, workflows, mode: 'lexical' };
   },
 });
 
@@ -481,21 +575,56 @@ Returns the workflow's return value (from return_value tool) or the final contex
     workflowId: z.string().optional(),
     workflowName: z.string().optional(),
     result: z.any().optional().describe('The workflow return value or final output'),
-    status: z.enum(['completed', 'error', 'timeout']).optional(),
+    status: z.enum(['started', 'completed', 'error', 'timeout']).optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, runCtx) => {
     const writer = (runCtx as any)?.writer;
     const { id, name, args, timeoutMs } = inputData as any;
 
-    // Check if we have a client bridge
-    if (!hasClientBridge()) {
-      return { ok: false, error: 'No desktop bridge available. run_workflow requires the Stuard desktop app.' };
-    }
-
     // Need either id or name
     if (!id && !name) {
       return { ok: false, error: 'Either id or name is required' };
+    }
+
+    if (!hasClientBridge()) {
+      const userId = resolveWorkflowUserId(inputData);
+      const found = await findVMWorkflowDeployment(userId, {
+        id,
+        name,
+        timeoutMs: 15000,
+      });
+      if (!found.ok || !found.workflow) {
+        return {
+          ok: false,
+          workflowId: id,
+          workflowName: name,
+          status: 'error' as const,
+          error: found.error || 'workflow_not_found_on_vm',
+        };
+      }
+      const triggered = await triggerVMWorkflowDeployment(
+        userId,
+        found.workflow,
+        args || {},
+        'run_workflow',
+        Math.min(Number(timeoutMs || 30000), 30000),
+      );
+      return triggered.ok
+        ? {
+            ok: true,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            workflowName: found.workflow.name,
+            result: triggered.result,
+            status: 'started' as const,
+          }
+        : {
+            ok: false,
+            workflowId: found.workflow.sourceWorkflowId || found.workflow.id,
+            workflowName: found.workflow.name,
+            status: 'error' as const,
+            error: triggered.error || 'Workflow execution failed on VM',
+          };
     }
 
     let workflowId = id;
@@ -503,14 +632,20 @@ Returns the workflow's return value (from return_value tool) or the final contex
 
     // If name provided but not id, search for the workflow
     if (!workflowId && name) {
-      const listRes = await execLocalTool('list_local_workflows', {}, writer as any, 15000, { noFallback: true });
-      const items = Array.isArray(listRes?.workflows) ? listRes.workflows : (Array.isArray(listRes?.items) ? listRes.items : []);
+      const searchRes = await execLocalTool(
+        'search_local_workflows',
+        { query: name, limit: 5, mode: 'lexical' },
+        writer as any,
+        15000,
+        { noFallback: true },
+      );
+      const items = Array.isArray(searchRes?.workflows) ? searchRes.workflows : [];
       
       const q = String(name).toLowerCase().trim();
       const match = items.find((it: any) => {
         const itName = String(it?.name || '').toLowerCase();
         return itName === q || itName.includes(q);
-      });
+      }) || items[0];
 
       if (!match) {
         return { ok: false, error: `No workflow found matching name: "${name}"` };
@@ -613,4 +748,4 @@ export const test_run_steps = createTool({
   },
 });
 
-// list_local_workflows removed - use search_local_workflows instead
+// Workflow discovery is handled by search_local_workflows.

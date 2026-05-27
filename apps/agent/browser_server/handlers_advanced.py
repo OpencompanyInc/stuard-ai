@@ -10,7 +10,7 @@ from browser_server.utils import (
     _resolve_selector_target, INTERACTIVE_ID_ATTR,
 )
 from browser_server.lifecycle import (
-    _ensure_browser, _get_page_url, _get_page_title,
+    _ensure_browser_session, _get_page_url, _get_page_title,
     _evaluate, _wait_for_selector, _smart_wait_for_element,
     _cdp_press_key,
     _close_browser,
@@ -877,7 +877,7 @@ async def handle_hover(req: web.Request) -> web.Response:
         return _err("selector, elementId, or text is required")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -952,7 +952,7 @@ async def handle_select_option(req: web.Request) -> web.Response:
         return _err("One of value, label, index, or search is required")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -986,7 +986,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
         return _err("selector or elementId is required for get_dropdown_options")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1100,7 +1100,7 @@ async def handle_get_interactive_elements(req: web.Request) -> web.Response:
     body = await _safe_json(req) if req.content_length else {}
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1676,7 +1676,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
         return _err("fields is required (object mapping selector/name to value, or array of {selector|elementId|name, value})")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1811,7 +1811,7 @@ async def handle_upload_file(req: web.Request) -> web.Response:
         return _err("file_path is required")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1832,7 +1832,7 @@ async def handle_wait_for(req: web.Request) -> web.Response:
     timeout = _clamp_int(body.get("timeout", 10000), 10000, 500, 60000)
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:

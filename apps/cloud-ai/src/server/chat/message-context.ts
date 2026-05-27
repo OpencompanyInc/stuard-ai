@@ -40,7 +40,7 @@ export async function buildInputMessages({
   prependCompactContextMessage(msg, inputMessages, enabledIntegrations);
   prependHiddenContext(msg, inputMessages);
 
-  if (agentType !== 'workflow') {
+  if (agentType !== 'workflow' && agentType !== 'skill') {
     inputMessages = await appendKnowledgeContext(prompt, inputMessages, conversationId);
   }
 

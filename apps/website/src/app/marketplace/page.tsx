@@ -27,11 +27,20 @@ export const metadata: Metadata = {
     description: 'Download Stuard AI to access free published workflow automations and AI tools built by the community. One-click install.',
     type: 'website',
     url: 'https://stuard.ai/marketplace',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Download Stuard AI Workflow Marketplace',
     description: 'Download Stuard AI to access free published workflow automations and AI tools built by the community.',
+    images: ['/og-image.png'],
   },
   alternates: {
     canonical: 'https://stuard.ai/marketplace',

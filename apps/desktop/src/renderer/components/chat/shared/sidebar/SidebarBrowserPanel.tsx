@@ -294,12 +294,12 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
   return (
     <div className={clsx('flex h-full min-h-0 flex-col overflow-hidden', className)}>
       {/* Address bar */}
-      <div className="shrink-0 border-b border-theme/10 bg-theme-card/95 px-3 py-2">
+      <div className="shrink-0 border-b border-theme-sidebar bg-theme-card/95 px-3 py-2">
         <div className="flex items-center gap-1.5">
           {isRunning && (
             <button
               onClick={handleReload}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-theme/10 bg-theme-bg text-theme-fg transition-colors hover:bg-theme-hover"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-theme-sidebar bg-theme-bg text-theme-fg transition-colors hover:bg-theme-hover"
               title="Reload"
             >
               <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} />
@@ -315,14 +315,14 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
               }}
               placeholder={isRunning ? 'Enter URL...' : 'Browser not running'}
               disabled={!isRunning}
-              className="w-full rounded-lg border border-theme/10 bg-theme-bg px-2.5 py-1.5 text-xs text-theme-fg outline-none placeholder:text-theme-muted focus:border-theme/25 disabled:opacity-50"
+              className="w-full rounded-lg border border-theme-sidebar bg-theme-bg px-2.5 py-1.5 text-xs text-theme-fg outline-none placeholder:text-theme-muted focus:border-theme disabled:opacity-50"
             />
           </div>
           {isRunning && (
             <>
               <button
                 onClick={handleOpenExternal}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-theme/10 bg-theme-bg text-theme-fg transition-colors hover:bg-theme-hover"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-theme-sidebar bg-theme-bg text-theme-fg transition-colors hover:bg-theme-hover"
                 title="Open in system browser"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -388,7 +388,7 @@ export const SidebarBrowserPanel: React.FC<SidebarBrowserPanelProps> = ({ classN
           /* Not running — show launch prompt */
           <div className="flex items-center justify-center h-full p-6">
             <div className="flex flex-col items-center gap-4 text-center max-w-[280px]">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-theme-card border border-theme/10">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-theme-card border border-theme-sidebar">
                 <Globe className="w-7 h-7 text-theme-muted" />
               </div>
               <div>

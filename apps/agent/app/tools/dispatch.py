@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Callable, Awaitable
 
-from . import gui, system, windows, desktop_control, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault
+from . import gui, system, windows, desktop_control, fs, clipboard, memory, knowledge, media, media_bus, tasks, workflows, context, concurrency, transform, loops, memory_conversations, file_scanner, file_search, subagents, screen_capture, agent_todo, ffmpeg, math_ops, http, streams, database, folder_limiter, mediapipe_tools, utils, vault, data_analysis
 
 
 # Tool metadata for discovery (category and description)
@@ -42,7 +42,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "file_read": ("system", "Read file contents with line numbers for AI agents"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
-    "glob": ("system", "Find files and folders using a glob pattern"),
+    "glob": ("system", "Find files by glob pattern (e.g. **/*.pdf). Requires root for **; **/* is rejected."),
     "grep": ("system", "Search text in files (regex or literal). Supports searching inside PDFs, XLSX, and XLS by extracting document text first."),
 
     # Filesystem Checkpoints
@@ -63,9 +63,26 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "get_local_time": ("system", "Get the current local time"),
     "python_status": ("system", "Check Python environment status"),
     "python_setup": ("system", "Setup a Python environment"),
+    "python_list_packages": ("system", "List installed Python packages in a managed venv"),
     "python_install": ("system", "Install Python packages in an environment"),
     "run_python_script": ("system", "Run Python code inline or from file"),
     "run_node_script": ("system", "Run Node.js code inline or from file"),
+
+    # Data Analysis (pandas/numpy/scipy + matplotlib/seaborn in dedicated venv — installed on demand)
+    "data_analysis_status": ("data_analysis", "Check data analysis env + required-package install status"),
+    "data_analysis_setup": ("data_analysis", "Create venv and install pandas/numpy/scipy/matplotlib/seaborn/openpyxl"),
+    "data_analysis_uninstall": ("data_analysis", "Remove the data analysis env and free disk space"),
+    "data_load": ("data_analysis", "Peek at a CSV/XLSX/JSON/Parquet file: columns, dtypes, shape, sample rows"),
+    "describe_data": ("data_analysis", "Pandas describe()-style summary stats for numeric columns"),
+    "correlate_data": ("data_analysis", "Correlation matrix (Pearson/Spearman/Kendall) for numeric columns"),
+    "plot_line": ("data_analysis", "Render a line chart (single or multi-series) to PNG"),
+    "plot_bar": ("data_analysis", "Render a bar chart (vertical or horizontal) to PNG"),
+    "plot_scatter": ("data_analysis", "Render a scatter plot with optional regression line to PNG"),
+    "plot_hist": ("data_analysis", "Render a histogram (with optional KDE overlay) to PNG"),
+    "plot_pie": ("data_analysis", "Render a pie or donut chart to PNG"),
+    "plot_heatmap": ("data_analysis", "Render a seaborn heatmap from a 2D matrix to PNG"),
+    "plot_box": ("data_analysis", "Render a box plot (single or grouped) to PNG"),
+    "run_data_python": ("data_analysis", "Run arbitrary Python with pandas/numpy/scipy/matplotlib/seaborn pre-loaded"),
 
     # Desktop controls
     "describe_desktop_control_capabilities": ("desktop", "Describe available desktop software-control backends"),
@@ -183,6 +200,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "project_list": ("data", "List projects"),
     "project_update": ("data", "Update a project"),
     "project_delete": ("data", "Delete a project"),
+    "project_context_add": ("data", "Attach a file or folder as indexed project context"),
     "memory_create": ("data", "Create a new memory entry (atomic note/fact/snippet)"),
     "memory_list": ("data", "List memories, optionally scoped to a project"),
     "memory_search": ("data", "Cosine-similarity search over memory embeddings"),
@@ -261,7 +279,7 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "loop_executor": ("flow", "Execute tools in a loop"),
 
     # Workflows / Stuards
-    "list_local_workflows": ("flow", "List local workflow files"),
+    "search_local_workflows": ("flow", "Search local workflow files"),
     "list_local_stuards": ("flow", "List local Stuard automations"),
     "import_workflow": ("flow", "Import a workflow from JSON"),
     "export_workflow": ("flow", "Export a workflow to JSON"),
@@ -456,9 +474,26 @@ _HANDLERS = {
     # Python runtime management
     "python_status": system.python_status,
     "python_setup": system.python_setup,
+    "python_list_packages": system.python_list_packages,
     "python_install": system.python_install,
     "run_python_script": system.run_python_script,
     "run_node_script": system.run_node_script,
+
+    # Data Analysis (pandas/numpy/scipy + matplotlib/seaborn, on-demand venv)
+    "data_analysis_status": data_analysis.data_analysis_status,
+    "data_analysis_setup": data_analysis.data_analysis_setup,
+    "data_analysis_uninstall": data_analysis.data_analysis_uninstall,
+    "data_load": data_analysis.data_load,
+    "describe_data": data_analysis.describe_data,
+    "correlate_data": data_analysis.correlate_data,
+    "plot_line": data_analysis.plot_line,
+    "plot_bar": data_analysis.plot_bar,
+    "plot_scatter": data_analysis.plot_scatter,
+    "plot_hist": data_analysis.plot_hist,
+    "plot_pie": data_analysis.plot_pie,
+    "plot_heatmap": data_analysis.plot_heatmap,
+    "plot_box": data_analysis.plot_box,
+    "run_data_python": data_analysis.run_data_python,
 
     # Desktop controls
     "describe_desktop_control_capabilities": desktop_control.describe_desktop_control_capabilities,
@@ -575,6 +610,7 @@ _HANDLERS = {
     "project_list": memory_conversations.project_list,
     "project_update": memory_conversations.project_update,
     "project_delete": memory_conversations.project_delete,
+    "project_context_add": memory_conversations.project_context_add,
     "memory_create": memory_conversations.memory_create,
     "memory_list": memory_conversations.memory_list,
     "memory_search": memory_conversations.memory_search,
@@ -655,7 +691,7 @@ _HANDLERS = {
     "loop_executor": loops.loop_executor,
 
     # Workflows / Stuards metadata (desktop integration)
-    "list_local_workflows": workflows.list_local_workflows,
+    "search_local_workflows": workflows.search_local_workflows,
     "list_local_stuards": workflows.list_local_stuards,
     "import_workflow": workflows.import_workflow,
     "export_workflow": workflows.export_workflow,
@@ -871,6 +907,20 @@ async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str
         "ffmpeg_trim_media",
         "ffmpeg_probe_media",
         "ffmpeg_extract_frames",
+
+        # Data Analysis tools (emit install progress)
+        "data_analysis_setup",
+        "data_load",
+        "describe_data",
+        "correlate_data",
+        "plot_line",
+        "plot_bar",
+        "plot_scatter",
+        "plot_hist",
+        "plot_pie",
+        "plot_heatmap",
+        "plot_box",
+        "run_data_python",
 
         # Stream tools
         "stream_create",

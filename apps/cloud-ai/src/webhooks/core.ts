@@ -229,6 +229,7 @@ export async function createWebhook(
     target_workflow_trigger_id?: string;
     require_signature?: boolean;
     allowed_ips?: string[];
+    is_active?: boolean;
     metadata?: Record<string, any>;
   }
 ): Promise<Webhook | null> {
@@ -252,6 +253,7 @@ export async function createWebhook(
         secret,
         require_signature: input.require_signature ?? false,
         allowed_ips: input.allowed_ips || null,
+        is_active: input.is_active ?? true,
         metadata: input.metadata || {},
       })
       .select()

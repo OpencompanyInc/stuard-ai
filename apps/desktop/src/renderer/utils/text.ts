@@ -3,4 +3,4 @@ export {
   normalizeMarkdownSpacing,
   escapeCurrencyDollars,
   prepareMarkdownForDisplay,
-} from '../../../../../shared/chat-ui/text';
+} from '@stuardai/chat-ui/text';

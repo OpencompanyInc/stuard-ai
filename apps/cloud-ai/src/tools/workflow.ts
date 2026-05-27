@@ -1,6 +1,6 @@
 /**
  * WORKFLOW MODIFY TOOL - Clean Rewrite
- * 
+ *
  * A single, robust tool for modifying workflows.
  * Simple operations, flat parameters, clear errors.
  */
@@ -15,7 +15,7 @@ import {
   analyzeWorkflowTopology,
   getFlowContextById,
   type WorkflowElementFlowContext,
-} from '../../../../shared/workflow-topology';
+} from '@stuardai/workflow-core/topology';
 
 // ============================================================================
 // Types
@@ -134,11 +134,11 @@ function generateWorkflowDiagram(wf: Workflow): string {
   // Build adjacency map: nodeId -> outgoing wires
   const outgoing = new Map<string, WorkflowWire[]>();
   const incoming = new Map<string, string[]>();
-  
+
   for (const wire of wires) {
     if (!outgoing.has(wire.from)) outgoing.set(wire.from, []);
     outgoing.get(wire.from)!.push(wire);
-    
+
     if (!incoming.has(wire.to)) incoming.set(wire.to, []);
     incoming.get(wire.to)!.push(wire.from);
   }
@@ -163,7 +163,7 @@ function generateWorkflowDiagram(wf: Workflow): string {
   for (const trigger of triggers) {
     const triggerLabel = `[${trigger.type.toUpperCase()}]`;
     const triggerStr = `  ◆ ${trigger.id} ${triggerLabel}`;
-    
+
     // Check for inputParams
     const inputParams = (trigger as any).inputParams;
     if (inputParams && Array.isArray(inputParams) && inputParams.length > 0) {
@@ -175,7 +175,7 @@ function generateWorkflowDiagram(wf: Workflow): string {
 
     // Get outgoing wires from this trigger
     const triggerWires = outgoing.get(trigger.id) || [];
-    
+
     if (triggerWires.length === 0) {
       lines.push(`║     └── (no connections)`.padEnd(74) + `║`);
     } else if (triggerWires.length === 1) {
@@ -202,36 +202,36 @@ function generateWorkflowDiagram(wf: Workflow): string {
   // Render node details
   lines.push(`╠══════════════════════════════════════════════════════════════════════╣`);
   lines.push(`║  NODE DETAILS:`.padEnd(74) + `║`);
-  
+
   for (const node of nodes) {
     const nodeWires = outgoing.get(node.id) || [];
     const incomingCount = incoming.get(node.id)?.length || 0;
-    
+
     let nodeIcon = '○';
     if (node.waitForAll) nodeIcon = '◎'; // Convergence point
     if (node.fallbackTo) nodeIcon = '◇'; // Has fallback
-    
+
     const nodeHeader = `  ${nodeIcon} ${node.id}: ${node.tool || 'noop'}`;
     lines.push(`║${nodeHeader}`.padEnd(74) + `║`);
-    
+
     // Show label if different from tool
     if (node.label && node.label !== node.tool) {
       lines.push(`║      label: "${node.label}"`.padEnd(74) + `║`);
     }
-    
+
     // Show key args (abbreviated)
     if (node.args && Object.keys(node.args).length > 0) {
       const argKeys = Object.keys(node.args).slice(0, 3);
       const argsStr = argKeys.map(k => `${k}: ${abbrev(node.args[k])}`).join(', ');
       lines.push(`║      args: { ${argsStr} }`.padEnd(74) + `║`);
     }
-    
+
     // Show incoming count for convergence points
     if (incomingCount > 1) {
       const converge = node.waitForAll ? ' [WAITS FOR ALL]' : ' [FIRST WINS]';
       lines.push(`║      ← ${incomingCount} incoming branches${converge}`.padEnd(74) + `║`);
     }
-    
+
     // Show outgoing wires
     if (nodeWires.length > 0) {
       for (const wire of nodeWires) {
@@ -248,7 +248,7 @@ function generateWorkflowDiagram(wf: Workflow): string {
   // Helper function to format wire labels
   function formatWireLabel(wire: WorkflowWire): string {
     const parts: string[] = [];
-    
+
     if (wire.loop) {
       if (wire.loop.type === 'forEach') {
         parts.push(`🔄forEach(${wire.loop.items || 'items'})`);
@@ -258,26 +258,26 @@ function generateWorkflowDiagram(wf: Workflow): string {
         parts.push(`🔄while(${wire.loop.conditionText || 'cond'})`);
       }
     }
-    
+
     if (wire.loopBreak) {
       parts.push(`⏹️loopBreak`);
     }
-    
+
     if (wire.guard) {
       if (typeof wire.guard === 'object' && wire.guard.if) {
-        const guardStr = typeof wire.guard.if === 'string' 
-          ? wire.guard.if 
+        const guardStr = typeof wire.guard.if === 'string'
+          ? wire.guard.if
           : JSON.stringify(wire.guard.if).slice(0, 20);
         parts.push(`[if: ${guardStr}]`);
       } else if (typeof wire.guard === 'object' && wire.guard.ai) {
         parts.push(`[AI: ${abbrev(wire.guard.ai.instruction || 'route')}]`);
       }
     }
-    
+
     if (wire.label) {
       parts.push(`"${wire.label}"`);
     }
-    
+
     return parts.join(' ');
   }
 
@@ -301,13 +301,13 @@ function generateWorkflowDiagram(wf: Workflow): string {
       return;
     }
     visited.add(nodeId);
-    
+
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return;
-    
+
     const nodeIcon = node.waitForAll ? '◎' : '○';
     lines.push(`║${indent}${nodeIcon} ${node.id} [${node.tool || 'noop'}]`.padEnd(74) + `║`);
-    
+
     const nodeWires = outgoing.get(nodeId) || [];
     if (nodeWires.length === 0) {
       lines.push(`║${indent}   └── (END)`.padEnd(74) + `║`);
@@ -524,10 +524,10 @@ function buildAffectedFlowReport(
 }
 
 // ============================================================================
-// THE TOOL
+// Session-scoped workflow storage
 // ============================================================================
 
-// Session-scoped workflow storage - allows modify_workflow to work without passing full JSON
+// Allows modify_workflow to work without passing full JSON.
 // Uses AsyncLocalStorage (via bridge state) for per-request isolation to prevent
 // cross-tab bleeding when concurrent requests share the same server process.
 // Module-level fallback is kept for non-request contexts (tests, direct calls).
@@ -561,18 +561,386 @@ export function clearSessionWorkflow(): void {
   _sessionWorkflowFallback = null;
 }
 
+// ============================================================================
+// applyOp — apply a SINGLE operation to a workflow in place.
+//
+// Shared by both the single-op and batch (`ops: [...]`) code paths. Mutates
+// `wf` and records touched element ids. Throws Error on a validation failure
+// (caller decides whether that aborts the whole call or is recorded as one
+// failed entry in a batch). Returns a human-readable message on success.
+// ============================================================================
+
+function applyOp(
+  wf: Workflow,
+  ctx: any,
+  touchedIds: Set<string>,
+  beforeWorkflow: Workflow,
+): string {
+  const op = ctx.op;
+
+  switch (op) {
+    // ==================================================================
+    // ADD_NODE
+    // ==================================================================
+    case 'add_node': {
+      const { tool, args, label, connectFrom, triggerType, triggerArgs } = ctx;
+      // Optional client-specified id. Lets a batch reference a freshly-added
+      // node in a later op (e.g. add_wire from it) without knowing the
+      // auto-generated id. Ignored if it collides with an existing element.
+      const wantId = typeof ctx.id === 'string' && ctx.id.trim() ? ctx.id.trim() : '';
+
+      // If triggerType is provided, add a trigger using the same op (treat trigger as step)
+      if (triggerType) {
+        const newTrigger: WorkflowTrigger = {
+          id: wantId && !elementExists(wf, wantId) ? wantId : genId('trig'),
+          type: triggerType,
+          label: label || `${triggerType} Trigger`,
+          args: {},
+          position: nextPosition(wf, 'trigger'),
+        };
+        // Hoist trigger root fields (e.g. inputParams) out of the args
+        // bag so they don't end up as custom args properties.
+        const argsBag: Record<string, any> = { ...(triggerArgs || args || {}) };
+        const remaining = hoistTriggerRootFields(newTrigger, argsBag);
+        newTrigger.args = remaining ?? argsBag;
+        wf.triggers.push(newTrigger);
+        addTouchedId(touchedIds, newTrigger.id);
+        let message = `Added trigger "${newTrigger.label}" (${newTrigger.id})`;
+
+        if (connectFrom && elementExists(wf, connectFrom)) {
+          wf.wires.push({ from: newTrigger.id, to: connectFrom });
+          addTouchedId(touchedIds, connectFrom);
+          message += ` wired to ${connectFrom}`;
+        }
+        return message;
+      }
+
+      if (!tool) throw new Error('tool is required for add_node');
+
+      const newNode: WorkflowNode = {
+        id: wantId && !elementExists(wf, wantId) ? wantId : genId('step'),
+        tool,
+        label: label || tool,
+        args: args || {},
+        position: nextPosition(wf, 'node'),
+      };
+
+      wf.nodes.push(newNode);
+      addTouchedId(touchedIds, newNode.id);
+      let message = `Added node "${newNode.label}" (${newNode.id})`;
+
+      if (connectFrom && elementExists(wf, connectFrom)) {
+        wf.wires.push({ from: connectFrom, to: newNode.id });
+        addTouchedId(touchedIds, connectFrom);
+        message += ` wired from ${connectFrom}`;
+      }
+      return message;
+    }
+
+    // ==================================================================
+    // UPDATE_NODE
+    // ==================================================================
+    case 'update_node': {
+      const nodeId = ctx.nodeId || ctx.stepId;
+      const { args, label, tool, triggerType, triggerArgs, path, value } = ctx;
+      if (!nodeId) throw new Error('nodeId is required for update_node');
+      addTouchedId(touchedIds, nodeId);
+
+      const idx = nodeIndex(wf, nodeId);
+      if (idx >= 0) {
+        const node = wf.nodes[idx];
+        let changed = false;
+        let message = '';
+
+        // Support path/value for single-field updates (e.g., path: "args.message", value: "Hello")
+        if (path !== undefined && value !== undefined) {
+          // path can be "args.message" or just "message" (assumes args)
+          const normalizedPath = path.startsWith('args.') ? path :
+                                 (path === 'label' || path === 'tool' || path === 'id') ? path : `args.${path}`;
+          setPath(node, normalizedPath, value);
+          changed = true;
+          message = `Updated node "${node.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
+        }
+
+        if (args) {
+          node.args = { ...node.args, ...args };
+          changed = true;
+        }
+        if (label) {
+          node.label = label;
+          changed = true;
+        }
+        if (tool) {
+          node.tool = tool;
+          changed = true;
+        }
+
+        if (!changed) {
+          throw new Error(`update_node called for "${nodeId}" but no changes specified. Provide args, label, tool, or path/value.`);
+        }
+
+        return message || `Updated node "${node.label}"`;
+      }
+
+      // If node not found, try updating a trigger with the same id (treat trigger as step)
+      const trigIdx = triggerIndex(wf, nodeId);
+      if (trigIdx < 0) throw new Error(`Step not found: ${nodeId}`);
+
+      const trigger = wf.triggers[trigIdx];
+      let changed = false;
+      let message = '';
+
+      // Support path/value for triggers too. Trigger root fields
+      // (label, type, id, position, inputParams) stay at the root;
+      // anything else gets nested under args.
+      if (path !== undefined && value !== undefined) {
+        const head = path.split('.')[0]?.split('[')[0] || '';
+        const normalizedPath = path.startsWith('args.') ? path :
+                               TRIGGER_ROOT_FIELDS.has(head) ? path : `args.${path}`;
+        setPath(trigger, normalizedPath, value);
+        changed = true;
+        message = `Updated trigger "${trigger.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
+      }
+
+      const nextArgs = triggerArgs || args;
+      if (nextArgs) {
+        // Hoist any root-level trigger fields (e.g. inputParams) that
+        // were passed in via args/triggerArgs so they don't pollute
+        // trigger.args as custom properties.
+        const argsBag: Record<string, any> = { ...nextArgs };
+        const remaining = hoistTriggerRootFields(trigger, argsBag);
+        trigger.args = { ...trigger.args, ...(remaining ?? argsBag) };
+        changed = true;
+      }
+      if (label) {
+        trigger.label = label;
+        changed = true;
+      }
+      const nextType = triggerType || (tool ? String(tool) : undefined);
+      if (nextType) {
+        trigger.type = nextType;
+        changed = true;
+      }
+
+      if (!changed) {
+        throw new Error(`update_node called for trigger "${nodeId}" but no changes specified. Provide args, triggerArgs, label, triggerType, or path/value.`);
+      }
+
+      return message || `Updated trigger "${trigger.label}"`;
+    }
+
+    // ==================================================================
+    // REMOVE_NODE
+    // ==================================================================
+    case 'remove_node': {
+      const nodeId = ctx.nodeId || ctx.stepId;
+      if (!nodeId) throw new Error('nodeId is required for remove_node');
+      addTouchedId(touchedIds, nodeId);
+      for (const wire of wf.wires) {
+        if (wire.from === nodeId || wire.to === nodeId) {
+          addTouchedId(touchedIds, wire.from);
+          addTouchedId(touchedIds, wire.to);
+        }
+      }
+
+      const idx = nodeIndex(wf, nodeId);
+      if (idx >= 0) {
+        const removed = wf.nodes.splice(idx, 1)[0];
+        wf.wires = wf.wires.filter(w => w.from !== nodeId && w.to !== nodeId);
+        return `Removed node "${removed.label}"`;
+      }
+
+      // If node not found, try removing a trigger with the same id (treat trigger as step)
+      const trigIdx = triggerIndex(wf, nodeId);
+      if (trigIdx < 0) throw new Error(`Step not found: ${nodeId}`);
+
+      const removedTrigger = wf.triggers.splice(trigIdx, 1)[0];
+      wf.wires = wf.wires.filter(w => w.from !== removedTrigger.id && w.to !== removedTrigger.id);
+      return `Removed trigger "${removedTrigger.label}"`;
+    }
+
+    // ==================================================================
+    // ADD_WIRE
+    // ==================================================================
+    case 'add_wire': {
+      const { from, to, guard } = ctx;
+      if (!from || !to) throw new Error('from and to are required for add_wire');
+      addTouchedId(touchedIds, from);
+      addTouchedId(touchedIds, to);
+
+      if (!elementExists(wf, from)) throw new Error(`Source not found: ${from}`);
+      if (!elementExists(wf, to)) throw new Error(`Target not found: ${to}`);
+
+      const exists = wf.wires.some(w => w.from === from && w.to === to);
+      if (exists) throw new Error(`Wire already exists: ${from} → ${to}`);
+
+      const wire: WorkflowWire = { from, to };
+      if (guard) wire.guard = sanitizeGuard(guard);
+      wf.wires.push(wire);
+
+      return `Connected ${from} → ${to}`;
+    }
+
+    // ==================================================================
+    // REMOVE_WIRE
+    // ==================================================================
+    case 'remove_wire': {
+      const { from, to } = ctx;
+      if (!from || !to) throw new Error('from and to are required for remove_wire');
+      addTouchedId(touchedIds, from);
+      addTouchedId(touchedIds, to);
+
+      const idx = wf.wires.findIndex(w => w.from === from && w.to === to);
+      if (idx < 0) throw new Error(`Wire not found: ${from} → ${to}`);
+
+      wf.wires.splice(idx, 1);
+      return `Disconnected ${from} → ${to}`;
+    }
+
+    // ==================================================================
+    // SET_PATH (direct JSON edit)
+    // ==================================================================
+    case 'set_path': {
+      const { path, value } = ctx;
+      if (!path) throw new Error('path is required for set_path');
+      if (value === undefined) throw new Error('value is required for set_path');
+
+      // Agents sometimes hand us a JSON-stringified array/object instead
+      // of the real value (e.g. value: '[{...}]'). Auto-parse so the
+      // session workflow holds the structured form, which the renderer
+      // and persistence layers expect.
+      let coercedValue = value;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed && (trimmed[0] === '[' || trimmed[0] === '{')) {
+          try { coercedValue = JSON.parse(trimmed); } catch { /* leave as string */ }
+        }
+      }
+
+      setPath(wf, path, coercedValue);
+      addTouchedIdsFromPath(touchedIds, path, beforeWorkflow, wf);
+      return `Set ${path} = ${JSON.stringify(coercedValue)}`;
+    }
+
+    // ==================================================================
+    // ADD_VARIABLE
+    // ==================================================================
+    case 'add_variable': {
+      const { varName, varType, varDefault } = ctx;
+      if (!varName) throw new Error('varName is required for add_variable');
+
+      if (!wf.variables) wf.variables = [];
+
+      const variable: WorkflowVariable = {
+        name: varName,
+        type: varType || 'string',
+        defaultValue: varDefault,
+      };
+      wf.variables.push(variable);
+
+      return `Added variable "${varName}"`;
+    }
+
+    // ==================================================================
+    // RENAME
+    // ==================================================================
+    case 'rename': {
+      const { name } = ctx;
+      if (!name) throw new Error('name is required for rename');
+
+      const oldName = wf.name;
+      wf.name = name;
+      return `Renamed "${oldName}" → "${name}"`;
+    }
+
+    default:
+      throw new Error(`Unknown operation: ${op}`);
+  }
+}
+
+// ============================================================================
+// THE TOOL
+// ============================================================================
+
+// Per-op field shape, reused for both the single-op (flat, top-level) form
+// and each entry of the batch `ops` array.
+const OP_ENUM = z.enum([
+  'add_node', 'update_node', 'remove_node',
+  'add_wire', 'remove_wire',
+  'set_path', 'add_variable', 'rename',
+]);
+
+const opItemShape = {
+  op: OP_ENUM.describe('Operation to perform'),
+
+  // add_node: optional client-specified id so you can reference this element
+  // (e.g. in a later add_wire) within the SAME batch call.
+  id: z.string().optional().describe('Optional id for add_node/trigger. Set it when you need to wire to this element later in the same batch. Must be unique; ignored if it collides with an existing id.'),
+
+  // Node operations
+  tool: z.string().optional().describe('Tool name for add_node'),
+  args: z.record(z.string(), z.any()).optional().describe('Tool args for add_node/update_node'),
+  label: z.string().optional().describe('Label for node/trigger'),
+  nodeId: z.string().optional().describe('Step/Node ID for update/remove (triggers use trig_*)'),
+  stepId: z.string().optional().describe('Alias for nodeId'),
+  connectFrom: z.string().optional().describe('Auto-wire from this ID'),
+
+  // Trigger operations
+  triggerType: z.string().optional().describe('Trigger type (used when adding/updating a trigger step)'),
+  triggerArgs: z.record(z.string(), z.any()).optional().describe('Trigger args (used when updating a trigger step)'),
+
+  // Wire operations
+  from: z.string().optional().describe('Wire source ID'),
+  to: z.string().optional().describe('Wire target ID'),
+  guard: z.any().optional().describe('Wire guard condition'),
+
+  // Path operations
+  path: z.string().optional().describe('JSON path for set_path'),
+  value: z.any().optional().describe('Value for set_path'),
+
+  // Variable operations
+  varName: z.string().optional().describe('Variable name'),
+  varType: z.string().optional().describe('Variable type: string, number, boolean, list, json'),
+  varDefault: z.any().optional().describe('Variable default value'),
+
+  // Rename
+  name: z.string().optional().describe('New workflow name for rename'),
+};
+
 export const workflowModifyTool = createTool({
   id: 'modify_workflow',
   description: `Modify the current workflow. The workflow is automatically loaded from session context.
 
-DO NOT pass the full workflow JSON - just pass the operation and parameters.
+DO NOT pass the full workflow JSON - just pass the operation(s) and parameters.
 
 TRIGGERS ARE STEPS: use update_node/remove_node with the trigger id (e.g. "trig_0").
+
+★ BATCH MULTIPLE CHANGES IN ONE CALL ★
+Building or restructuring a workflow with many steps? Pass an "ops" array and apply
+them ALL in a single call instead of one call per change. This is dramatically cheaper
+(one call, one returned diagram) and is the preferred way to author or heavily edit a flow.
+
+  {
+    ops: [
+      { op: "add_node", id: "analyze", tool: "analyze_media", args: { ... }, connectFrom: "trig_0" },
+      { op: "add_node", id: "save",    tool: "sql_query",    args: { ... }, connectFrom: "analyze" },
+      { op: "add_wire", from: "save", to: "confirm" }
+    ]
+  }
+
+  • Ops run in order against ONE workflow; later ops see earlier ops' changes.
+  • Give add_node an explicit "id" when a later op in the same batch must wire to it
+    (you can't reference an auto-generated id mid-batch).
+  • Best-effort: each op is reported in a "results" array; a failed op does not abort
+    the others. Read "results" and resend a corrective batch for any failures.
+
+Use the single-op form below for one-off edits.
 
 OPERATIONS:
 
 ADD_NODE - Add a new step (or a trigger if triggerType is provided)
   { op: "add_node", tool: "log", args: { message: "hi" }, connectFrom: "trig_0" }
+  { op: "add_node", id: "my_step", tool: "log", args: { message: "hi" } }  // explicit id
   { op: "add_node", triggerType: "keystroke", triggerArgs: { sequence: "go" } }
 
 UPDATE_NODE - Update existing node or trigger (MUST provide changes!)
@@ -605,57 +973,34 @@ STUARD FILE TARGETING:
   { op: "add_node", tool: "log", args: { message: "hi" }, stuardFile: "helpers/send-email.stuard" }`,
 
   inputSchema: z.object({
-    op: z.enum([
-      'add_node', 'update_node', 'remove_node',
-      'add_wire', 'remove_wire',
-      'set_path', 'add_variable', 'rename'
-    ]).describe('Operation to perform'),
+    ...opItemShape,
+
+    // op is optional at the top level — supply EITHER a single op (flat fields)
+    // OR an ops[] batch.
+    op: OP_ENUM.optional().describe('Single operation to perform (omit when using "ops").'),
+
+    // Batch: apply many operations in one call.
+    ops: z.array(z.object(opItemShape).partial().required({ op: true }))
+      .optional()
+      .describe('Batch of operations to apply in order in ONE call. Preferred for multi-step builds/edits.'),
 
     // Target stuard file (defaults to main workflow)
     stuardFile: z.string().optional().describe('Optional: relative path to the .stuard file to modify (e.g. "helpers/send-email.stuard"). Defaults to the main workflow if not specified.'),
 
-    // workflow is now OPTIONAL - will be loaded from session
+    // workflow is OPTIONAL - will be loaded from session
     workflow: z.any().optional().describe('Optional: workflow JSON. If not provided, uses the current session workflow.'),
     workflowId: z.string().optional().describe('Optional: workflow ID to look up from memory'),
-
-    // Node operations
-    tool: z.string().optional().describe('Tool name for add_node'),
-    args: z.record(z.string(), z.any()).optional().describe('Tool args for add_node/update_node'),
-    label: z.string().optional().describe('Label for node/trigger'),
-    nodeId: z.string().optional().describe('Step/Node ID for update/remove (triggers use trig_*)'),
-    stepId: z.string().optional().describe('Alias for nodeId'),
-    connectFrom: z.string().optional().describe('Auto-wire from this ID'),
-
-    // Trigger operations
-    triggerType: z.string().optional().describe('Trigger type (used when adding/updating a trigger step)'),
-    triggerArgs: z.record(z.string(), z.any()).optional().describe('Trigger args (used when updating a trigger step)'),
-
-    // Wire operations
-    from: z.string().optional().describe('Wire source ID'),
-    to: z.string().optional().describe('Wire target ID'),
-    guard: z.any().optional().describe('Wire guard condition'),
-
-    // Path operations
-    path: z.string().optional().describe('JSON path for set_path'),
-    value: z.any().optional().describe('Value for set_path'),
-
-    // Variable operations
-    varName: z.string().optional().describe('Variable name'),
-    varType: z.string().optional().describe('Variable type: string, number, boolean, list, json'),
-    varDefault: z.any().optional().describe('Variable default value'),
-
-    // Rename
-    name: z.string().optional().describe('New workflow name for rename'),
-  }).partial().required({ op: true }),  // Make all fields optional except 'op'
+  }).partial(),  // all fields optional; op/ops requirement enforced in execute
 
   outputSchema: z.object({
     ok: z.boolean(),
     stuardFile: z.string().optional().describe('Which .stuard file was modified (if specified)'),
     message: z.string().optional(),
     error: z.string().optional(),
+    results: z.any().optional().describe('Per-op {op, ok, message|error} array (batch mode)'),
     diagram: z.string().optional().describe('ASCII diagram of the workflow structure'),
     affectedFlow: z.any().optional().describe('Topology context for touched nodes/triggers after the mutation'),
-    workflow: z.any().optional().describe('The full modified workflow object for UI application'),
+    workflow: z.any().optional().describe('The full modified workflow object (UI channel; included in the return only when no writer is present)'),
   }).passthrough(),
 
   execute: async (inputData, { writer }) => {
@@ -713,291 +1058,59 @@ STUARD FILE TARGETING:
     const wf = cloneWorkflow(workflow);
     const beforeWorkflow = cloneWorkflow(wf);
     const touchedIds = new Set<string>();
-    log('start', { op, workflowId: wf.id, stuardFile: stuardFile || undefined });
+
+    // Resolve the operation list: explicit ops[] batch, or a single top-level op.
+    const rawOps: any[] = Array.isArray(ctx.ops) && ctx.ops.length > 0 ? ctx.ops : (op ? [ctx] : []);
+    const isBatch = Array.isArray(ctx.ops) && ctx.ops.length > 0;
+
+    if (rawOps.length === 0) {
+      return { ok: false, error: 'Provide either "op" (single change) or a non-empty "ops" array (batch).' };
+    }
+
+    log('start', {
+      op: isBatch ? `batch[${rawOps.length}]` : op,
+      workflowId: wf.id,
+      stuardFile: stuardFile || undefined,
+    });
 
     try {
-      let message = '';
-
-      switch (op) {
-        // ==================================================================
-        // ADD_NODE
-        // ==================================================================
-        case 'add_node': {
-          const { tool, args, label, connectFrom, triggerType, triggerArgs } = ctx;
-
-          // If triggerType is provided, add a trigger using the same op (treat trigger as step)
-          if (triggerType) {
-            const newTrigger: WorkflowTrigger = {
-              id: genId('trig'),
-              type: triggerType,
-              label: label || `${triggerType} Trigger`,
-              args: {},
-              position: nextPosition(wf, 'trigger'),
-            };
-            // Hoist trigger root fields (e.g. inputParams) out of the args
-            // bag so they don't end up as custom args properties.
-            const argsBag: Record<string, any> = { ...(triggerArgs || args || {}) };
-            const remaining = hoistTriggerRootFields(newTrigger, argsBag);
-            newTrigger.args = remaining ?? argsBag;
-            wf.triggers.push(newTrigger);
-            addTouchedId(touchedIds, newTrigger.id);
-            message = `Added trigger "${newTrigger.label}" (${newTrigger.id})`;
-
-            if (connectFrom && elementExists(wf, connectFrom)) {
-              wf.wires.push({ from: newTrigger.id, to: connectFrom });
-              addTouchedId(touchedIds, connectFrom);
-              message += ` wired to ${connectFrom}`;
-            }
-            break;
-          }
-
-          if (!tool) return { ok: false, error: 'tool is required for add_node' };
-
-          const newNode: WorkflowNode = {
-            id: genId('step'),
-            tool,
-            label: label || tool,
-            args: args || {},
-            position: nextPosition(wf, 'node'),
-          };
-
-          wf.nodes.push(newNode);
-          addTouchedId(touchedIds, newNode.id);
-          message = `Added node "${newNode.label}" (${newNode.id})`;
-
-          if (connectFrom && elementExists(wf, connectFrom)) {
-            wf.wires.push({ from: connectFrom, to: newNode.id });
-            addTouchedId(touchedIds, connectFrom);
-            message += ` wired from ${connectFrom}`;
-          }
-          break;
+      // Apply each op in order against the single cloned workflow. Best-effort:
+      // a failed op is recorded but does not abort the rest of the batch.
+      const opResults: { op: string; ok: boolean; message?: string; error?: string }[] = [];
+      for (let i = 0; i < rawOps.length; i++) {
+        const opCtx = rawOps[i] || {};
+        try {
+          const m = applyOp(wf, opCtx, touchedIds, beforeWorkflow);
+          opResults.push({ op: String(opCtx.op || 'unknown'), ok: true, message: m });
+        } catch (e: any) {
+          opResults.push({ op: String(opCtx.op || 'unknown'), ok: false, error: e?.message || 'operation failed' });
         }
+      }
 
-        // ==================================================================
-        // UPDATE_NODE
-        // ==================================================================
-        case 'update_node': {
-          const nodeId = ctx.nodeId || ctx.stepId;
-          const { args, label, tool, triggerType, triggerArgs, path, value } = ctx;
-          if (!nodeId) return { ok: false, error: 'nodeId is required for update_node' };
-          addTouchedId(touchedIds, nodeId);
+      const okCount = opResults.filter(r => r.ok).length;
+      const failCount = opResults.length - okCount;
 
-          const idx = nodeIndex(wf, nodeId);
-          if (idx >= 0) {
-            const node = wf.nodes[idx];
-            let changed = false;
+      // Nothing succeeded → don't touch the session; hand the errors back so the
+      // model can correct and retry. Matches the old single-op fail behavior.
+      if (okCount === 0) {
+        const err = isBatch
+          ? `All ${opResults.length} operations failed: ${opResults.map((r, i) => `[${i}] ${r.op}: ${r.error}`).join('; ')}`
+          : (opResults[0]?.error || 'Operation failed');
+        log('error', { error: err, batch: isBatch });
+        return { ok: false, error: err, results: isBatch ? opResults : undefined };
+      }
 
-            // Support path/value for single-field updates (e.g., path: "args.message", value: "Hello")
-            if (path !== undefined && value !== undefined) {
-              // path can be "args.message" or just "message" (assumes args)
-              const normalizedPath = path.startsWith('args.') ? path : 
-                                     (path === 'label' || path === 'tool' || path === 'id') ? path : `args.${path}`;
-              setPath(node, normalizedPath, value);
-              changed = true;
-              message = `Updated node "${node.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
-            }
-
-            if (args) {
-              node.args = { ...node.args, ...args };
-              changed = true;
-            }
-            if (label) {
-              node.label = label;
-              changed = true;
-            }
-            if (tool) {
-              node.tool = tool;
-              changed = true;
-            }
-
-            if (!changed) {
-              return { ok: false, error: `update_node called for "${nodeId}" but no changes specified. Provide args, label, tool, or path/value.` };
-            }
-
-            if (!message) message = `Updated node "${node.label}"`;
-            break;
-          }
-
-          // If node not found, try updating a trigger with the same id (treat trigger as step)
-          const trigIdx = triggerIndex(wf, nodeId);
-          if (trigIdx < 0) return { ok: false, error: `Step not found: ${nodeId}` };
-
-          const trigger = wf.triggers[trigIdx];
-          let changed = false;
-
-          // Support path/value for triggers too. Trigger root fields
-          // (label, type, id, position, inputParams) stay at the root;
-          // anything else gets nested under args.
-          if (path !== undefined && value !== undefined) {
-            const head = path.split('.')[0]?.split('[')[0] || '';
-            const normalizedPath = path.startsWith('args.') ? path :
-                                   TRIGGER_ROOT_FIELDS.has(head) ? path : `args.${path}`;
-            setPath(trigger, normalizedPath, value);
-            changed = true;
-            message = `Updated trigger "${trigger.label}": ${normalizedPath} = ${JSON.stringify(value)}`;
-          }
-
-          const nextArgs = triggerArgs || args;
-          if (nextArgs) {
-            // Hoist any root-level trigger fields (e.g. inputParams) that
-            // were passed in via args/triggerArgs so they don't pollute
-            // trigger.args as custom properties.
-            const argsBag: Record<string, any> = { ...nextArgs };
-            const remaining = hoistTriggerRootFields(trigger, argsBag);
-            trigger.args = { ...trigger.args, ...(remaining ?? argsBag) };
-            changed = true;
-          }
-          if (label) {
-            trigger.label = label;
-            changed = true;
-          }
-          const nextType = triggerType || (tool ? String(tool) : undefined);
-          if (nextType) {
-            trigger.type = nextType;
-            changed = true;
-          }
-
-          if (!changed) {
-            return { ok: false, error: `update_node called for trigger "${nodeId}" but no changes specified. Provide args, triggerArgs, label, triggerType, or path/value.` };
-          }
-
-          if (!message) message = `Updated trigger "${trigger.label}"`;
-          break;
-        }
-
-        // ==================================================================
-        // REMOVE_NODE
-        // ==================================================================
-        case 'remove_node': {
-          const nodeId = ctx.nodeId || ctx.stepId;
-          if (!nodeId) return { ok: false, error: 'nodeId is required for remove_node' };
-          addTouchedId(touchedIds, nodeId);
-          for (const wire of wf.wires) {
-            if (wire.from === nodeId || wire.to === nodeId) {
-              addTouchedId(touchedIds, wire.from);
-              addTouchedId(touchedIds, wire.to);
-            }
-          }
-
-          const idx = nodeIndex(wf, nodeId);
-          if (idx >= 0) {
-            const removed = wf.nodes.splice(idx, 1)[0];
-            wf.wires = wf.wires.filter(w => w.from !== nodeId && w.to !== nodeId);
-            message = `Removed node "${removed.label}"`;
-            break;
-          }
-
-          // If node not found, try removing a trigger with the same id (treat trigger as step)
-          const trigIdx = triggerIndex(wf, nodeId);
-          if (trigIdx < 0) return { ok: false, error: `Step not found: ${nodeId}` };
-
-          const removedTrigger = wf.triggers.splice(trigIdx, 1)[0];
-          wf.wires = wf.wires.filter(w => w.from !== removedTrigger.id && w.to !== removedTrigger.id);
-          message = `Removed trigger "${removedTrigger.label}"`;
-          break;
-        }
-
-        // ==================================================================
-        // ADD_WIRE
-        // ==================================================================
-        case 'add_wire': {
-          const { from, to, guard } = ctx;
-          if (!from || !to) return { ok: false, error: 'from and to are required for add_wire' };
-          addTouchedId(touchedIds, from);
-          addTouchedId(touchedIds, to);
-
-          if (!elementExists(wf, from)) return { ok: false, error: `Source not found: ${from}` };
-          if (!elementExists(wf, to)) return { ok: false, error: `Target not found: ${to}` };
-
-          const exists = wf.wires.some(w => w.from === from && w.to === to);
-          if (exists) return { ok: false, error: `Wire already exists: ${from} → ${to}` };
-
-          const wire: WorkflowWire = { from, to };
-          if (guard) wire.guard = sanitizeGuard(guard);
-          wf.wires.push(wire);
-
-          message = `Connected ${from} → ${to}`;
-          break;
-        }
-
-        // ==================================================================
-        // REMOVE_WIRE
-        // ==================================================================
-        case 'remove_wire': {
-          const { from, to } = ctx;
-          if (!from || !to) return { ok: false, error: 'from and to are required for remove_wire' };
-          addTouchedId(touchedIds, from);
-          addTouchedId(touchedIds, to);
-
-          const idx = wf.wires.findIndex(w => w.from === from && w.to === to);
-          if (idx < 0) return { ok: false, error: `Wire not found: ${from} → ${to}` };
-
-          wf.wires.splice(idx, 1);
-          message = `Disconnected ${from} → ${to}`;
-          break;
-        }
-
-        // ==================================================================
-        // SET_PATH (direct JSON edit)
-        // ==================================================================
-        case 'set_path': {
-          const { path, value } = ctx;
-          if (!path) return { ok: false, error: 'path is required for set_path' };
-          if (value === undefined) return { ok: false, error: 'value is required for set_path' };
-
-          // Agents sometimes hand us a JSON-stringified array/object instead
-          // of the real value (e.g. value: '[{...}]'). Auto-parse so the
-          // session workflow holds the structured form, which the renderer
-          // and persistence layers expect.
-          let coercedValue = value;
-          if (typeof value === 'string') {
-            const trimmed = value.trim();
-            if (trimmed && (trimmed[0] === '[' || trimmed[0] === '{')) {
-              try { coercedValue = JSON.parse(trimmed); } catch { /* leave as string */ }
-            }
-          }
-
-          setPath(wf, path, coercedValue);
-          addTouchedIdsFromPath(touchedIds, path, beforeWorkflow, wf);
-          message = `Set ${path} = ${JSON.stringify(coercedValue)}`;
-          break;
-        }
-
-        // ==================================================================
-        // ADD_VARIABLE
-        // ==================================================================
-        case 'add_variable': {
-          const { varName, varType, varDefault } = ctx;
-          if (!varName) return { ok: false, error: 'varName is required for add_variable' };
-
-          if (!wf.variables) wf.variables = [];
-
-          const variable: WorkflowVariable = {
-            name: varName,
-            type: varType || 'string',
-            defaultValue: varDefault,
-          };
-          wf.variables.push(variable);
-
-          message = `Added variable "${varName}"`;
-          break;
-        }
-
-        // ==================================================================
-        // RENAME
-        // ==================================================================
-        case 'rename': {
-          const { name } = ctx;
-          if (!name) return { ok: false, error: 'name is required for rename' };
-
-          const oldName = wf.name;
-          wf.name = name;
-          message = `Renamed "${oldName}" → "${name}"`;
-          break;
-        }
-
-        default:
-          return { ok: false, error: `Unknown operation: ${op}` };
+      // Build the summary message.
+      let message: string;
+      if (isBatch) {
+        const header = failCount > 0
+          ? `Applied ${okCount}/${opResults.length} operations (${failCount} failed):`
+          : `Applied ${okCount} operations:`;
+        message = header + '\n' + opResults
+          .map((r, i) => `  [${i}] ${r.ok ? '✓' : '✗'} ${r.op}: ${r.ok ? r.message : r.error}`)
+          .join('\n');
+      } else {
+        message = opResults[0].message || 'Done';
       }
 
       // Store in memory (per-request via ALS + global map)
@@ -1031,47 +1144,69 @@ STUARD FILE TARGETING:
         }
       }
 
-      // Generate diagram for visual understanding
-      const diagram = generateWorkflowDiagram(wf);
       const affectedFlow = buildAffectedFlowReport(beforeWorkflow, wf, touchedIds);
 
       // Node-tool sanity check — flags hallucinated tool names, orchestrator-
-      // only tools dropped into nodes, and empty/missing tool fields. Returned
-      // in the result so the agent reads it on its next turn and fixes the
-      // node instead of moving on with a silent no-op.
+      // only tools dropped into nodes, and empty/missing tool fields.
       const nodeIssues = validateNodeTools(wf);
       const issuesSummary = formatNodeIssuesSummary(nodeIssues);
       const finalMessage = issuesSummary ? `${message}${issuesSummary}` : message;
+      const diagram = generateWorkflowDiagram(wf);
 
-      const result = {
+      // The UI live-update channel needs the FULL workflow to repaint the canvas.
+      // The MODEL does not — echoing the whole workflow JSON into the model's
+      // tool-result on every edit was the dominant token cost (it gets re-sent
+      // with the full history on every subsequent turn → ~quadratic growth).
+      // So: full payload goes out over the tool_event writer; the returned
+      // result (which lands in the model's history) carries only the diagram +
+      // affected-flow + per-op results. When there is no writer (headless /
+      // direct calls / tests) we include the workflow as a fallback so non-UI
+      // callers still receive it.
+      const hasWriter = !!(writer && typeof (writer as any).write === 'function');
+
+      const uiResult = {
         ok: true as const,
         message: finalMessage,
         diagram,
         affectedFlow,
         workflow: wf,
+        results: isBatch ? opResults : undefined,
         nodeIssues: nodeIssues.length > 0 ? nodeIssues : undefined,
         persisted: inSubagent ? persisted : undefined,
         persistError: inSubagent ? persistError : undefined,
         ...(stuardFile ? { stuardFile } : {}),
       };
 
-      log('success', { workflowId: wf.id, message, persisted, stuardFile: stuardFile || undefined });
+      const modelResult = {
+        ok: true as const,
+        message: finalMessage,
+        diagram,
+        affectedFlow,
+        results: isBatch ? opResults : undefined,
+        nodeIssues: nodeIssues.length > 0 ? nodeIssues : undefined,
+        persisted: inSubagent ? persisted : undefined,
+        persistError: inSubagent ? persistError : undefined,
+        ...(stuardFile ? { stuardFile } : {}),
+        ...(hasWriter ? {} : { workflow: wf }),
+      };
 
-      // Emit event for immediate UI update (redundant path — also included in return value
-      // so the tool-result chunk carries the workflow even if writer is unavailable)
+      log('success', { workflowId: wf.id, okCount, failCount, persisted, stuardFile: stuardFile || undefined });
+
+      // Emit event for immediate UI update — carries the full workflow so the
+      // canvas can repaint even though the model-facing return omits it.
       await safeToolWrite(writer as any, {
         type: 'tool_event',
         tool: 'modify_workflow',
         status: 'completed',
         workflowId: wf.id,
         ...(stuardFile ? { stuardFile } : {}),
-        result,
+        result: uiResult,
       });
 
-      return result;
+      return modelResult;
 
     } catch (err: any) {
-      log('error', { error: err.message, op });
+      log('error', { error: err.message, op: isBatch ? 'batch' : op });
       return { ok: false, error: err.message };
     }
   },

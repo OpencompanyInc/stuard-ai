@@ -6,10 +6,10 @@ Memory usage: ~30-50MB. Inference: ~1-3ms per frame on modern CPU.
 
 Pipeline mirrors the standalone wakeword/ checkout:
     audio -> log-mel spectrogram -> DS-CNN -> EMA smoothing ->
-    RMS gate -> consecutive-frame thresholding -> trigger.
+    activity RMS gate -> consecutive-frame thresholding -> trigger.
 
 Usage:
-    python listen_numpy.py --weights models/kws_weights.npz --sensitivity 0.8
+    python listen_numpy.py --weights models/kws_weights.npz --sensitivity 0.88
 """
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ DEFAULT_EMA_ALPHA = 0.25
 DEFAULT_TRIGGER_COUNT = 8
 DEFAULT_COOLDOWN = 1.5
 DEFAULT_MIN_RMS = 0.003
+ACTIVITY_RMS_WINDOW = 0.20  # seconds; short-window speech gate for live detection
 INFERENCE_INTERVAL = 0.02  # 20ms between inferences
 
 
@@ -221,7 +222,7 @@ class WakeWordDetector:
     Streaming wake word detection.
 
     Pipeline: rolling 1.5s buffer -> log-mel -> DS-CNN -> EMA smoothing ->
-    RMS gate (silence suppression) -> consecutive-frame thresholding.
+    activity RMS gate (silence suppression) -> consecutive-frame thresholding.
     """
 
     def __init__(
@@ -272,6 +273,33 @@ class WakeWordDetector:
                 self._buffer[:-n] = self._buffer[n:]
                 self._buffer[-n:] = new_data
 
+    @staticmethod
+    def _rms(audio: np.ndarray) -> float:
+        """Return RMS amplitude for a mono float buffer."""
+        return float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32) ** 2) + 1e-12))
+
+    @staticmethod
+    def _peak_window_rms(audio: np.ndarray, window_samples: int) -> float:
+        """
+        Return the loudest short-window RMS inside the model buffer.
+
+        A full-window RMS gate gets diluted after silence because the live
+        buffer is mostly quiet at the start of an utterance. Using the peak
+        activity window makes the gate react as soon as speech enters.
+        """
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if audio.size == 0:
+            return 0.0
+
+        window_samples = max(1, min(int(window_samples), audio.size))
+        if window_samples == audio.size:
+            return WakeWordDetector._rms(audio)
+
+        power = audio * audio
+        cumsum = np.concatenate(([0.0], np.cumsum(power, dtype=np.float64)))
+        window_power = cumsum[window_samples:] - cumsum[:-window_samples]
+        return float(np.sqrt(np.max(window_power) / window_samples + 1e-12))
+
     def start(self, duration: Optional[float] = None) -> None:
         """Block-listen until stopped or `duration` seconds elapsed."""
         self._running = True
@@ -291,6 +319,7 @@ class WakeWordDetector:
         consec = 0
         ema: Optional[float] = None
         start_time = time.time()
+        activity_window_samples = int(round(ACTIVITY_RMS_WINDOW * SAMPLE_RATE))
 
         try:
             with sd.InputStream(**stream_kwargs):
@@ -303,16 +332,20 @@ class WakeWordDetector:
                     with self._buffer_lock:
                         current = self._buffer.copy()
 
-                    rms = float(np.sqrt(np.mean(current * current) + 1e-12))
+                    rms = self._rms(current)
+                    activity_rms = self._peak_window_rms(current, activity_window_samples)
                     t0 = time.perf_counter()
                     score = self.engine.predict(current)
                     infer_ms = (time.perf_counter() - t0) * 1000.0
 
-                    if rms < self.min_rms:
+                    if activity_rms < self.min_rms:
                         ema = None
                         decision = 0.0
                     elif self.ema_alpha > 0.0:
-                        ema = score if ema is None else (self.ema_alpha * score + (1.0 - self.ema_alpha) * float(ema))
+                        if ema is None or score >= ema:
+                            ema = score
+                        else:
+                            ema = self.ema_alpha * score + (1.0 - self.ema_alpha) * float(ema)
                         decision = float(ema)
                     else:
                         decision = score
@@ -353,7 +386,7 @@ class WakeWordDetector:
                         print(
                             f"\rscore={score:.3f}  decision={decision:.3f}  "
                             f"threshold={self.threshold:.3f}  consec={consec}  "
-                            f"rms={rms:.4f}  infer={infer_ms:.1f}ms     ",
+                            f"rms={rms:.4f}  activity={activity_rms:.4f}  infer={infer_ms:.1f}ms     ",
                             end="",
                             flush=True,
                         )

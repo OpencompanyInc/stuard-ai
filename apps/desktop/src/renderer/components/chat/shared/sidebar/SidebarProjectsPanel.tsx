@@ -7,8 +7,9 @@ import React, {
   useState,
 } from 'react';
 import clsx from 'clsx';
-import { ArrowLeft, FolderOpen, RefreshCw, Search } from 'lucide-react';
+import { FolderOpen, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import {
+  createProject,
   useProjects,
   type Project,
   type ProjectStatus,
@@ -63,7 +64,7 @@ export const SidebarProjectsPanel: React.FC<SidebarProjectsPanelProps> = ({ clas
     const q = query.trim().toLowerCase();
     if (!q) return projects;
     return projects.filter((p) => {
-      const hay = [p.name, p.description, p.goals, p.tags?.join(' ')]
+      const hay = [p.name, p.description, p.goals, p.instructions, p.tags?.join(' ')]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
@@ -111,6 +112,10 @@ export const SidebarProjectsPanel: React.FC<SidebarProjectsPanelProps> = ({ clas
           query={query}
           onQueryChange={setQuery}
           onReload={reload}
+          onCreated={(id) => {
+            setSelectedId(id);
+            void reload();
+          }}
           width={effectiveListWidth}
           fill={stacked}
         />
@@ -154,6 +159,7 @@ interface ProjectsListProps {
   query: string;
   onQueryChange: (q: string) => void;
   onReload: () => void;
+  onCreated: (projectId: string) => void;
   width: number;
   fill: boolean;
 }
@@ -167,18 +173,21 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
   query,
   onQueryChange,
   onReload,
+  onCreated,
   width,
   fill,
 }) => {
+  const [composing, setComposing] = useState(false);
+
   return (
     <div
       className={clsx(
-        'flex flex-col h-full min-h-0 border-r border-theme/5',
-        fill ? 'w-full' : 'shrink-0',
+        'flex flex-col h-full min-h-0',
+        fill ? 'w-full' : 'shrink-0 border-r border-theme-sidebar',
       )}
       style={fill ? undefined : { width, minWidth: width }}
     >
-      <div className="shrink-0 p-2.5 border-b border-theme/5 flex items-center gap-2">
+      <div className="shrink-0 p-2.5 border-b border-theme-sidebar flex items-center gap-2">
         <div className="relative flex-1 min-w-0">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted/60 pointer-events-none" />
           <input
@@ -189,6 +198,13 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
           />
         </div>
         <button
+          onClick={() => setComposing(true)}
+          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+          title="New project"
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+        <button
           onClick={onReload}
           className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
           title="Refresh"
@@ -196,6 +212,16 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
           <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} />
         </button>
       </div>
+
+      {composing && (
+        <NewProjectComposer
+          onCancel={() => setComposing(false)}
+          onCreated={(id) => {
+            setComposing(false);
+            onCreated(id);
+          }}
+        />
+      )}
 
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-1.5">
         {loading && projects.length === 0 && (
@@ -206,10 +232,18 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
             {error}
           </div>
         )}
-        {!loading && !error && projects.length === 0 && (
-          <div className="p-3 text-[11px] text-theme-muted/60">
-            No projects yet. Ask Stuard to create one.
-          </div>
+        {!loading && !error && projects.length === 0 && !composing && (
+          <button
+            onClick={() => setComposing(true)}
+            className="w-full m-1 p-3 rounded-[14px] text-left hover:bg-theme-hover/40 transition-colors"
+          >
+            <div className="flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
+              <Plus className="w-3.5 h-3.5" /> Create your first project
+            </div>
+            <div className="mt-1 text-[11px] text-theme-muted/70 leading-snug">
+              Each project keeps its own instructions, knowledge, files, tasks, and timeline. Stuard can capture them as you chat.
+            </div>
+          </button>
         )}
         {projects.map((p) => (
           <ProjectRow
@@ -224,20 +258,140 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
   );
 };
 
+const NewProjectComposer: React.FC<{
+  onCancel: () => void;
+  onCreated: (projectId: string) => void;
+}> = ({ onCancel, onCreated }) => {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => nameRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const project = await createProject({
+        name: trimmed,
+        description: description.trim() || undefined,
+        instructions: instructions.trim() || undefined,
+      });
+      if (project?.id) {
+        onCreated(project.id);
+      } else {
+        setError('Failed to create project');
+      }
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="shrink-0 px-2.5 pt-2.5 pb-2 bg-theme-card/30">
+      <div className="rounded-lg bg-theme-card/80 p-2.5 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[10.5px] font-bold uppercase tracking-wider text-theme-muted">
+            New project
+          </span>
+          <button
+            onClick={onCancel}
+            className="w-6 h-6 inline-flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+            title="Cancel"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <input
+          ref={nameRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder="Project name"
+          className="w-full px-2 py-1.5 text-[13px] font-semibold bg-transparent text-theme-fg placeholder:text-theme-muted/50 outline-none"
+        />
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void submit();
+            }
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder="One-line description (optional)"
+          rows={2}
+          className="w-full px-2 py-1.5 text-[12px] bg-transparent text-theme-fg placeholder:text-theme-muted/50 outline-none resize-none"
+        />
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void submit();
+            }
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder="Project instructions (optional)"
+          rows={3}
+          className="w-full px-2 py-1.5 text-[12px] bg-theme-hover/35 rounded-md text-theme-fg placeholder:text-theme-muted/50 outline-none resize-none"
+        />
+        {error && (
+          <div className="px-2 py-1 rounded-md bg-red-500/10 text-red-500 text-[11px]">
+            {error}
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-theme-muted/50">Enter to create · Esc to cancel</span>
+          <button
+            onClick={submit}
+            disabled={!name.trim() || submitting}
+            className="px-3 py-1 rounded-md text-[11px] font-semibold bg-theme-fg text-theme-bg disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity inline-flex items-center gap-1"
+          >
+            {submitting && <Loader2 className="w-3 h-3 animate-spin" />}
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ProjectRow: React.FC<{
   project: Project;
   active: boolean;
   onSelect: () => void;
 }> = ({ project, active, onSelect }) => {
-  const dot = STATUS_COLOR[project.status] ?? STATUS_COLOR.active;
+  // Active is the default — only show the status dot when it's something else,
+  // so the list stays quiet for normal projects.
+  const isNonActive = project.status && project.status !== 'active';
+  const dot = isNonActive ? STATUS_COLOR[project.status] : null;
   return (
     <button
       onClick={onSelect}
       className={clsx(
-        'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors border',
+        'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-colors',
         active
-          ? 'bg-theme-hover/80 text-theme-fg border-theme/20'
-          : 'text-theme-fg/90 border-transparent hover:bg-theme-hover/40 hover:border-theme/10',
+          ? 'bg-theme-active text-theme-fg'
+          : 'text-theme-fg/90 hover:bg-theme-hover/50',
       )}
     >
       <span className="text-base leading-none shrink-0" aria-hidden>
@@ -250,11 +404,25 @@ const ProjectRow: React.FC<{
             {project.description}
           </span>
         )}
+        <span className="mt-1 flex items-center gap-1.5 overflow-hidden">
+          {(project.pinned_paths || []).length > 0 && (
+            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
+              {(project.pinned_paths || []).length} files
+            </span>
+          )}
+          {project.instructions && (
+            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
+              instructions
+            </span>
+          )}
+        </span>
       </span>
-      <span
-        className={clsx('shrink-0 w-1.5 h-1.5 rounded-full', dot)}
-        title={project.status}
-      />
+      {dot && (
+        <span
+          className={clsx('shrink-0 w-1.5 h-1.5 rounded-full', dot)}
+          title={project.status}
+        />
+      )}
     </button>
   );
 };
@@ -287,7 +455,7 @@ const ResizeHandle: React.FC<{ onResize: (deltaX: number) => void }> = ({ onResi
       }}
       onPointerCancel={() => { lastXRef.current = null; }}
     >
-      <span className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-theme/10 group-hover:bg-theme/30 transition-colors" />
+      <span className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-[color:var(--sidebar-border)] group-hover:bg-[color:var(--border)] transition-colors" />
     </div>
   );
 };
@@ -301,10 +469,10 @@ const EmptyState: React.FC<{ count: number }> = ({ count }) => (
       <p className="text-sm font-semibold text-theme-muted">
         {count > 0 ? 'Pick a project' : 'No projects yet'}
       </p>
-      <p className="text-xs text-theme-muted/60 mt-1 max-w-[260px]">
+      <p className="text-xs text-theme-muted/60 mt-1 max-w-[280px]">
         {count > 0
-          ? 'Select one on the left to see its timeline, tasks, and memory.'
-          : 'Ask Stuard to create a project, or use the Python agent to migrate from Spaces.'}
+          ? 'Select one on the left to see its Timeline, Tasks, Notes, and Files.'
+          : 'Hit + above to create one, or ask Stuard to start one for you.'}
       </p>
     </div>
   </div>

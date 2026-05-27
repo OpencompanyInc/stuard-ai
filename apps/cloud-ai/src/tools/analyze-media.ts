@@ -33,7 +33,7 @@ async function executeAnalyzeMedia(
   });
 
   const isDetailed = mode === 'detailed';
-  const modelId = isDetailed ? 'gemini-3.1-pro-preview' : 'gemini-3.1-flash-lite-preview';
+  const modelId = isDetailed ? 'gemini-3.1-pro-preview' : 'gemini-3.1-flash-lite';
   const { parts: mediaParts, uploadedObjects } = await loadMediaSources(
     sources || [],
     writer,

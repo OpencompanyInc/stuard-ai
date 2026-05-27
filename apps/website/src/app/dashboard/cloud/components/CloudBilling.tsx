@@ -19,7 +19,7 @@ export function CloudBilling() {
   const load = async () => {
     try {
       const data = await getComputeUsage();
-      if (data.ok) setBilling(data);
+      if (data.ok) setBilling(data as BillingData);
     } catch (e) {
       console.error('Failed to load billing:', e);
     } finally {

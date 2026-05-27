@@ -10,6 +10,14 @@ export const metadata: Metadata = {
     description:
       'Pay what you want. Start free, scale as you grow. Larger amounts unlock better credit rates.',
     url: 'https://stuard.ai/pricing',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 

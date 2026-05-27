@@ -119,6 +119,14 @@ async function loadFileIcon(filePath: string, size: IconSize = "normal"): Promis
 
   const lower = cleaned.toLowerCase();
 
+  // `shell:` URIs (e.g. shell:AppsFolder\<aumid>) are launch targets, not file
+  // paths — `app.getFileIcon` cannot resolve them and historically blocked on
+  // a slow Shell COM round-trip before returning an empty image. Short-circuit
+  // here so callers fall back to whatever placeholder the renderer uses.
+  if (lower.startsWith("shell:")) {
+    return { ok: false, error: "shell_uri_unsupported" };
+  }
+
   // .lnk shortcut files: Windows natively resolves the embedded icon
   if (process.platform === "win32" && lower.endsWith(".lnk")) {
     try {

@@ -295,13 +295,13 @@ function setLS<T>(key: string, value: T) {
   } catch { }
 }
 
-const DEFAULT_WAKEWORD_SENSITIVITY = 0.80;
+const DEFAULT_WAKEWORD_SENSITIVITY = 0.88;
 
 function normalizeWakewordSensitivity(v: any): number {
   const n = Number(v);
   if (!Number.isFinite(n)) return DEFAULT_WAKEWORD_SENSITIVITY;
-  // Migrate previous defaults to the retrained-model default.
-  if (Math.abs(n - 0.88) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  // Migrate previous defaults to the standalone detector default.
+  if (Math.abs(n - 0.80) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
   if (Math.abs(n - 0.95) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
   return Math.max(0.3, Math.min(0.99, n));
 }

@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import type { ExecutionState } from "../layout/types";
 
+const MAX_LOG_LINES = 100;
+const MAX_LOG_CHARS = 4_000;
+
+function trimLogMessage(message: unknown): string {
+  const text = String(message || "");
+  if (text.length <= MAX_LOG_CHARS) return text;
+  return `${text.slice(0, MAX_LOG_CHARS)}\n[truncated ${text.length - MAX_LOG_CHARS} chars]`;
+}
+
 export function useWorkflowRuntime() {
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
   const [executionState, setExecutionState] = useState<ExecutionState | null>(null);
@@ -8,7 +17,7 @@ export function useWorkflowRuntime() {
 
   useEffect(() => {
     const unsub = (window as any).desktopAPI?.onWorkflowsLog?.((d: any) => {
-      setLogs((prev) => [...prev.slice(-100), { ts: new Date().toISOString(), msg: String(d?.message || "") }]);
+      setLogs((prev) => [...prev, { ts: new Date().toISOString(), msg: trimLogMessage(d?.message) }].slice(-MAX_LOG_LINES));
     });
 
     return () => {

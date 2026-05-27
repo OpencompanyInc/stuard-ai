@@ -9,6 +9,14 @@ export const metadata: Metadata = {
     title: 'Features - Stuard AI',
     description: 'Explore Stuard AI features: desktop automation, smart file operations, visual workflow builder, and durable memory.',
     url: 'https://stuard.ai/features',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 

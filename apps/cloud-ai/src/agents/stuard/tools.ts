@@ -5,7 +5,7 @@ import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
 import { google_get_userinfo, gmail_send_message, calendar_create_event, calendar_delete_event, tasks_list, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../../tools/google-tools';
-import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, stop_system_audio, describe_system_audio_capabilities, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, cli_agent_detect, cli_agent_start, cli_agent_send, cli_agent_read, cli_agent_status, cli_agent_stop, list_local_stuards, show_json_workflow_code, execute_workflow, find_workflow_semantic, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop, agent_list, agent_get_status, agent_create, agent_deploy, agent_pause, agent_delete, ask_agent, agent_ask, bot_list, bot_get_status, bot_create, bot_deploy, bot_pause, bot_delete, ask_bot, bot_ask, agent_memory_list, agent_memory_create, agent_memory_update, agent_memory_delete, agent_memory_log, bot_memory_list, bot_memory_create, bot_memory_update, bot_memory_delete, bot_memory_log } from '../../tools/device-tools';
+import { send_hotkey, list_directory, read_file, write_file, create_directory, open_file, move_file, copy_file, delete_file, capture_media, stop_capture, describe_media_capture_capabilities, capture_screen, stop_screen_capture, describe_screen_capture_capabilities, capture_system_audio, describe_system_audio_capabilities, stop_system_audio, run_command, run_python_script, list_terminals, read_terminal, terminal_create, terminal_list, terminal_get, terminal_read, terminal_send_input, terminal_send_raw, terminal_send_keys, terminal_wait_for, terminal_destroy, cli_agent_detect, cli_agent_start, cli_agent_send, cli_agent_read, cli_agent_status, cli_agent_wait_for, cli_agent_wait_idle, cli_agent_stop, list_local_stuards, show_json_workflow_code, execute_workflow, import_workflow, run_automation, stop_automation, invoke_workflow, search_local_workflows, run_workflow, search_past_conversations, get_conversation_context, calendar_crud, task_crud, task_reminders, planner_list_items, list_open_windows, bring_window_to_foreground, smart_bring_window_to_foreground, get_window_info, set_window_bounds, file_index_add_root, file_index_remove_root, file_index_list_roots, file_index_scan, file_index_stats, file_search, file_search_by_filename, file_search_by_kind, file_search_recent, file_search_similar, process_pending_file_index, semantic_file_search, file_read, file_edit, glob, grep, agent_todo, get_mouse_position, computer_use, click_at_coordinates, double_click_at_coordinates, type_text, scroll, drag_and_drop, agent_list, agent_get_status, agent_create, agent_deploy, agent_pause, agent_delete, ask_agent, agent_ask, bot_list, bot_get_status, bot_create, bot_deploy, bot_pause, bot_delete, ask_bot, bot_ask, agent_memory_list, agent_memory_create, agent_memory_update, agent_memory_delete, agent_memory_log, bot_memory_list, bot_memory_create, bot_memory_update, bot_memory_delete, bot_memory_log } from '../../tools/device-tools';
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_analyze_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for, browser_use_execute_script } from '../../tools/device-tools';
 import { describe_desktop_control_capabilities, get_desktop_wallpaper, set_desktop_wallpaper, get_system_volume, set_system_volume, list_bluetooth_devices, connect_bluetooth_device, disconnect_bluetooth_device, get_display_brightness, set_display_brightness, get_power_status } from '../../tools/device-tools';
@@ -17,8 +17,10 @@ import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_call_control, telnyx_phone_status, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_get_media_url, whatsapp_download_media, whatsapp_status, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_voice_call, whatsapp_make_call, whatsapp_send_template } from '../../tools/whatsapp-tools';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 import * as xTools from '../../tools/x-tools';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
+import { data_analysis_status, data_analysis_setup, data_analysis_uninstall, data_load, describe_data, correlate_data, plot_line, plot_bar, plot_scatter, plot_hist, plot_pie, plot_heatmap, plot_box, run_data_python } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { http_request } from '../../tools/http-tools';
 import { vm_status, vm_execute_tool, vm_upload_file, vm_download_file } from '../../tools/vm-tools';
@@ -29,7 +31,7 @@ import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } from '../../tools/meta-tools';
 import { searchWorkflowDocs } from '../workflow-agent/docs';
 import { deployWorkflow } from '../workflow-agent/deploy';
-import { executeStep, inspectWorkflow, listWorkflows, loadWorkflow } from '../workflow-agent/tools';
+import { executeStep, inspectWorkflow, searchWorkflows, loadWorkflow } from '../workflow-agent/tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
 import { withToolInputCoercionMap } from '../../tools/zod-utils';
@@ -135,6 +137,8 @@ const RAW_ALL_TOOLS = {
   cli_agent_send,
   cli_agent_read,
   cli_agent_status,
+  cli_agent_wait_for,
+  cli_agent_wait_idle,
   cli_agent_stop,
 
   // Calendar / Tasks / Reminders
@@ -195,7 +199,6 @@ const RAW_ALL_TOOLS = {
   list_local_stuards,  // Deprecated, kept for backwards compat
   show_json_workflow_code,
   execute_workflow,
-  find_workflow_semantic,
   // Automation control
   import_workflow,
   run_automation,
@@ -325,6 +328,21 @@ const RAW_ALL_TOOLS = {
   whatsapp_send_template,
   // X/Twitter
   ...xTools,
+  // Data analysis (pandas/numpy/scipy/matplotlib/seaborn in a dedicated venv)
+  data_analysis_status,
+  data_analysis_setup,
+  data_analysis_uninstall,
+  data_load,
+  describe_data,
+  correlate_data,
+  plot_line,
+  plot_bar,
+  plot_scatter,
+  plot_hist,
+  plot_pie,
+  plot_heatmap,
+  plot_box,
+  run_data_python,
 } as const;
 
 export const ALL_TOOLS = withToolInputCoercionMap(RAW_ALL_TOOLS);
@@ -516,7 +534,7 @@ export function getTools(
       if (name.startsWith('telnyx_')) tools[name] = tool;
     }
   }
-  if (enabledIntegrations.includes('whatsapp')) {
+  if (WHATSAPP_INTEGRATION_ENABLED && enabledIntegrations.includes('whatsapp')) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('whatsapp_')) tools[name] = tool;
     }
@@ -581,7 +599,7 @@ export async function getToolsForQuery(
     outlook: ['outlook_'],
     github: ['github_'],
     telnyx: ['telnyx_'],
-    whatsapp: ['whatsapp_'],
+    ...(WHATSAPP_INTEGRATION_ENABLED ? { whatsapp: ['whatsapp_'] } : {}),
     x: ['x_'],
     notion: ['notion_'],
     linear: ['linear_'],
@@ -615,17 +633,23 @@ export async function getToolsForQuery(
  * throwing "Tool X not found".
  */
 export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<string, any> {
-  return withToolInputCoercionMap({
+  const baseTools: Record<string, any> = {
     ...ALL_TOOLS,
     create_workflow: createWorkflowTool,
     load_workflow: loadWorkflow,
     modify_workflow: workflowModifyTool,
     inspect_workflow: inspectWorkflow,
     execute_step: executeStep,
-    list_workflows: listWorkflows,
+    search_workflows: searchWorkflows,
     deploy_workflow: deployWorkflow,
     search_workflow_nodes,
     search_workflow_docs: searchWorkflowDocs,
     ...mcpTools,
-  });
+  };
+  if (!WHATSAPP_INTEGRATION_ENABLED) {
+    for (const name of Object.keys(baseTools)) {
+      if (name.startsWith('whatsapp_')) delete baseTools[name];
+    }
+  }
+  return withToolInputCoercionMap(baseTools);
 }

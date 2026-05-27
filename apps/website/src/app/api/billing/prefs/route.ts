@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await admin()
     .from('profiles')
     .select(PREF_COLUMNS.join(','))
-    .eq('id', userId)
+    .eq('user_id', userId)
     .maybeSingle();
 
   if (error) {

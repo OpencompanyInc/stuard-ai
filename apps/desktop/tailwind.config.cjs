@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ["./src/renderer/**/*.{ts,tsx,html}"],
+  content: [
+    "./src/renderer/**/*.{ts,tsx,html}",
+    "../../packages/chat-ui/**/*.{ts,tsx}",
+  ],
   darkMode: ['class', '[data-theme="dark"]'],
   theme: {
     extend: {
@@ -36,6 +39,9 @@ module.exports = {
       colors: {
         surface: "rgba(20,20,20,0.6)",
         accent: "#0ea5e9", // sky-500
+        "pill-bg": "rgb(var(--compact-pill-bg) / <alpha-value>)",
+        "pill-fg": "rgb(var(--compact-pill-fg) / <alpha-value>)",
+        "pill-muted": "rgb(var(--compact-pill-fg-muted) / <alpha-value>)",
       },
       boxShadow: {
         soft: "0 10px 24px rgba(0,0,0,0.18)",

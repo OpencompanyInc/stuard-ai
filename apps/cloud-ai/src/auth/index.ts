@@ -60,6 +60,39 @@ export interface TokenInfo {
   expiresInSeconds: number;
 }
 
+type VerifiedClaims = {
+  sub?: string;
+  email?: string;
+  exp?: number;
+  [key: string]: any;
+};
+
+function mapAuthError(error: any): AuthResult {
+  const errorMsg = String(error?.message || '').toLowerCase();
+
+  if (errorMsg.includes('expired') || errorMsg.includes('jwt expired')) {
+    return {
+      success: false,
+      error: AuthErrorCode.EXPIRED_TOKEN,
+      message: 'Access token has expired. Please sign in again.',
+    };
+  }
+
+  if (errorMsg.includes('invalid') || errorMsg.includes('malformed')) {
+    return {
+      success: false,
+      error: AuthErrorCode.INVALID_TOKEN,
+      message: 'Invalid access token',
+    };
+  }
+
+  return {
+    success: false,
+    error: AuthErrorCode.UNAUTHORIZED,
+    message: error?.message || 'Authentication failed',
+  };
+}
+
 /**
  * Verify a Supabase access token and return detailed auth result
  * Distinguishes between invalid tokens and expired tokens for proper client handling
@@ -83,59 +116,26 @@ export async function verifyAccessToken(token: string): Promise<AuthResult> {
   }
 
   try {
-    // Use getUser to validate the token server-side
-    const { data, error } = await supabaseAnon.auth.getUser(token);
+    // getClaims verifies the JWT via JWKS when possible, avoiding the per-message
+    // Auth service / user DB lookup that getUser performs.
+    const { data, error } = await supabaseAnon.auth.getClaims(token);
 
-    if (error) {
-      // Check for specific error types
-      const errorMsg = error.message?.toLowerCase() || '';
-      
-      if (errorMsg.includes('expired') || errorMsg.includes('jwt expired')) {
-        return { 
-          success: false, 
-          error: AuthErrorCode.EXPIRED_TOKEN, 
-          message: 'Access token has expired. Please sign in again.' 
-        };
-      }
-      
-      if (errorMsg.includes('invalid') || errorMsg.includes('malformed')) {
-        return { 
-          success: false, 
-          error: AuthErrorCode.INVALID_TOKEN, 
-          message: 'Invalid access token' 
-        };
-      }
+    if (error) return mapAuthError(error);
 
-      return { 
-        success: false, 
-        error: AuthErrorCode.UNAUTHORIZED, 
-        message: error.message || 'Authentication failed' 
-      };
-    }
-
-    if (!data?.user) {
+    const claims = data?.claims as VerifiedClaims | undefined;
+    if (!claims?.sub) {
       return { 
         success: false, 
         error: AuthErrorCode.INVALID_TOKEN, 
-        message: 'No user found for this token' 
+        message: 'No user found for this token'
       };
-    }
-
-    // Extract token expiry from JWT (if possible)
-    let expiresAt: number | undefined;
-    try {
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-      expiresAt = payload.exp ? payload.exp * 1000 : undefined; // Convert to milliseconds
-    } catch {
-      // Token parsing failed, continue without expiry info
     }
 
     return {
       success: true,
-      userId: data.user.id,
-      email: data.user.email || undefined,
-      user: data.user,
-      expiresAt,
+      userId: claims.sub,
+      email: typeof claims.email === 'string' ? claims.email : undefined,
+      expiresAt: typeof claims.exp === 'number' ? claims.exp * 1000 : undefined,
     };
   } catch (err) {
     console.error('[auth] Token verification error:', err);

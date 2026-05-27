@@ -35,6 +35,34 @@ let _syncRunning = false;
 let _lastPushSucceededAt = 0;
 const MIN_PUSH_INTERVAL_MS = 30_000;
 
+type AgentDataPushResult = {
+    ok: boolean;
+    skipped?: boolean;
+    reason?: string;
+    bytes?: number;
+    error?: string;
+};
+
+type AgentDataPushOptions = {
+    /** When true, skip export/archive/upload unless the cloud engine is running. */
+    requireRunningVm?: boolean;
+};
+
+async function fetchCloudEngineStatus(token: string, apiBase: string): Promise<string | null> {
+    try {
+        const statusResp = await fetch(`${apiBase}/v1/cloud-engine/status`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(8_000),
+        });
+        if (!statusResp.ok) return null;
+        const statusData: any = await statusResp.json().catch(() => ({}));
+        return String(statusData?.engine?.status || '') || null;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Serialize all sync work (push + pull) on a single queue. Prevents races
  * where a download clobbers a fresh local write that hasn't uploaded yet,
@@ -256,10 +284,11 @@ async function handleAgentDataUpdated(msg?: any): Promise<void> {
         };
 
         const dbFiles = new Set([
-            'knowledge.db', 'memory.db', 'file_index.db',
+            'knowledge.db', 'memory.db', 'file_index.db', 'workflow.db',
             'knowledge.db-wal', 'knowledge.db-shm',
             'memory.db-wal', 'memory.db-shm',
             'file_index.db-wal', 'file_index.db-shm',
+            'workflow.db-wal', 'workflow.db-shm',
         ]);
         let copied = 0;
         let skipped = 0;
@@ -327,6 +356,7 @@ function getChangedDesktopAgentDataFiles(agentDir: string): Set<string> {
         'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
         'memory.db', 'memory.db-wal', 'memory.db-shm',
         'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+        'workflow.db', 'workflow.db-wal', 'workflow.db-shm',
     ];
     const changed = new Set<string>();
     for (const name of filesToWatch) {
@@ -344,6 +374,7 @@ function getChangedDesktopAgentDataFiles(agentDir: string): Set<string> {
     for (const group of [
         ['knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm'],
         ['file_index.db', 'file_index.db-wal', 'file_index.db-shm'],
+        ['workflow.db', 'workflow.db-wal', 'workflow.db-shm'],
     ]) {
         if (!group.some((name) => changed.has(name))) continue;
         for (const name of group) {
@@ -354,22 +385,33 @@ function getChangedDesktopAgentDataFiles(agentDir: string): Set<string> {
     return changed;
 }
 
-async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full'): Promise<boolean> {
+async function performDesktopAgentDataPushToVM(
+    mode: AgentDataSyncMode = 'full',
+    opts: AgentDataPushOptions = {},
+): Promise<AgentDataPushResult> {
     const token = await getAuthToken();
-    if (!token) return false;
+    if (!token) return { ok: false, error: 'not_authenticated' };
 
     const apiBase = getCloudAiHttpBase();
     const agentDir = getDesktopAgentDataDir();
 
     if (!(await pathExists(agentDir))) {
         logger.warn('[cloud-webhooks] Agent data dir does not exist');
-        return false;
+        return { ok: false, error: 'agent_data_dir_missing' };
     }
 
     const changedNames = mode === 'delta' ? getChangedDesktopAgentDataFiles(agentDir) : new Set<string>();
     if (mode === 'delta' && changedNames.size === 0) {
         logger.info('[cloud-webhooks] Delta agent-data push skipped: no changed files');
-        return true;
+        return { ok: true, skipped: true, reason: 'no_changed_files' };
+    }
+
+    if (opts.requireRunningVm) {
+        const engineStatus = await fetchCloudEngineStatus(token, apiBase);
+        if (engineStatus !== 'running') {
+            logger.info(`[cloud-webhooks] Agent data push skipped: VM not running (${engineStatus || 'no engine'})`);
+            return { ok: true, skipped: true, reason: 'engine_not_running' };
+        }
     }
 
     const tmpDir = app.getPath('temp');
@@ -452,10 +494,10 @@ async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full')
             signal: AbortSignal.timeout(15_000),
         });
 
-        if (!urlResp.ok) return false;
+        if (!urlResp.ok) return { ok: false, error: `agent_data_url_http_${urlResp.status}` };
         const urlData = await urlResp.json() as any;
         const uploadUrl = mode === 'delta' ? (urlData.deltaUploadUrl || urlData.uploadUrl) : urlData.uploadUrl;
-        if (!uploadUrl) return false;
+        if (!uploadUrl) return { ok: false, error: 'agent_data_url_missing' };
 
         const uploadResp = await fetch(uploadUrl, {
             method: 'PUT',
@@ -470,24 +512,14 @@ async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full')
 
         if (!uploadResp.ok) {
             logger.error(`[cloud-webhooks] Agent data upload failed: ${uploadResp.status}`);
-            return false;
+            return { ok: false, error: `upload_http_${uploadResp.status}`, bytes: stats.size };
         }
 
         let shouldNotifyVm = true;
-        let engineStatus = '';
-        try {
-            const statusResp = await fetch(`${apiBase}/v1/cloud-engine/status`, {
-                method: 'GET',
-                headers: { 'Authorization': `Bearer ${token}` },
-                signal: AbortSignal.timeout(8_000),
-            });
-            if (statusResp.ok) {
-                const statusData: any = await statusResp.json().catch(() => ({}));
-                engineStatus = String(statusData?.engine?.status || '');
-                shouldNotifyVm = engineStatus === 'running';
-            }
-        } catch (e: any) {
-            logger.warn(`[cloud-webhooks] Could not check VM status before agent-data notify: ${e?.message}`);
+        let engineStatus = await fetchCloudEngineStatus(token, apiBase) || '';
+        shouldNotifyVm = engineStatus === 'running';
+        if (!shouldNotifyVm && !engineStatus) {
+            logger.warn('[cloud-webhooks] Could not check VM status before agent-data notify');
         }
 
         let pushOutcome = 'uploaded to cloud storage';
@@ -516,23 +548,23 @@ async function performDesktopAgentDataPushToVM(mode: AgentDataSyncMode = 'full')
 
         _lastPushSucceededAt = Date.now();
         logger.info(`[cloud-webhooks] Desktop agent data ${mode} ${pushOutcome}`);
-        return true;
+        return { ok: true, bytes: stats.size };
     } catch (e: any) {
         logger.error(`[cloud-webhooks] Push agent data to VM failed: ${e?.message}`);
-        return false;
+        return { ok: false, error: e?.message || 'push_failed' };
     } finally {
         await fsp.rm(stageDir, { recursive: true, force: true }).catch(() => undefined);
         await fsp.unlink(tmpFile).catch(() => undefined);
     }
 }
 
-export async function pushDesktopAgentDataToVM(): Promise<boolean> {
-    let ok = false;
+export async function pushDesktopAgentDataToVM(opts: AgentDataPushOptions = {}): Promise<AgentDataPushResult> {
+    let result: AgentDataPushResult = { ok: false, error: 'not_started' };
     await enqueueSync('desktop-agent-data-push', async () => {
-        ok = await performDesktopAgentDataPushToVM();
-        if (ok) snapshotDesktopMtimes();
+        result = await performDesktopAgentDataPushToVM('full', opts);
+        if (result.ok && !result.skipped) snapshotDesktopMtimes();
     });
-    return ok;
+    return result;
 }
 
 // ── Desktop Periodic Agent Data Sync (Desktop → GCS → VM) ──────────────────
@@ -553,6 +585,7 @@ function hasDesktopAgentDataChanged(): boolean {
         'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
         'memory.db', 'memory.db-wal', 'memory.db-shm',
         'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+        'workflow.db', 'workflow.db-wal', 'workflow.db-shm',
     ];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
@@ -573,6 +606,7 @@ function snapshotDesktopMtimes(): void {
         'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
         'memory.db', 'memory.db-wal', 'memory.db-shm',
         'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+        'workflow.db', 'workflow.db-wal', 'workflow.db-shm',
     ];
     for (const name of filesToWatch) {
         const filePath = path.join(agentDir, name);
@@ -589,8 +623,8 @@ async function periodicDesktopAgentDataSync(): Promise<void> {
 
 async function syncDesktopAgentDataIfChanged(): Promise<void> {
     if (!hasDesktopAgentDataChanged()) return;
-    const ok = await performDesktopAgentDataPushToVM('delta');
-    if (ok) snapshotDesktopMtimes();
+    const result = await performDesktopAgentDataPushToVM('delta', { requireRunningVm: true });
+    if (result.ok && !result.skipped) snapshotDesktopMtimes();
 }
 
 function startDesktopAgentDataSync(): void {

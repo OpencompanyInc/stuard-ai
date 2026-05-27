@@ -48,6 +48,22 @@ function isOpenBridge(ws: BridgeWebSocket | undefined): ws is BridgeWebSocket {
   return ws.readyState === openState;
 }
 
+function abortWithReason(controller: AbortController | null | undefined, reason: string) {
+  if (!controller) return;
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch { }
+  }
+}
+
+function getAbortReason(signal: AbortSignal | null | undefined): string {
+  const reason = (signal as any)?.reason;
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason?.message === 'string') return reason.message;
+  return signal?.aborted ? 'aborted' : '';
+}
+
 export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const {
     ws,
@@ -84,7 +100,13 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   const toolCallsMap = new Map<string, any>();
   const streamChunks: StreamChunkRecord[] = [];
   const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
-  const sourceLabel = agentType === 'workflow' ? 'Workflow Architect' : agentType === 'bot' ? 'Bot Agent' : 'Chat';
+  const sourceLabel = agentType === 'workflow'
+    ? 'Workflow Architect'
+    : agentType === 'skill'
+      ? 'Skill Architect'
+      : agentType === 'bot'
+        ? 'Bot Agent'
+        : 'Chat';
   const billingExcluded = !!(agent as any)?.__billingExcluded;
   const billingTracker = new LiveUsageBillingTracker({
     userId: authUser?.userId ?? null,
@@ -206,7 +228,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
         if (runtime.didSendFinal) return;
         runtime.didSendFinal = true;
         try {
-          abortController?.abort();
+          abortWithReason(abortController, 'hard_timeout');
         } catch { }
         try {
           deleteAbortController(ws, requestId);
@@ -221,6 +243,12 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           result: { text: timeoutText, steps: [], finishReason: 'timeout' },
           timedOut: true,
         }, requestId);
+        setRequestTerminalResult({
+          text: timeoutText,
+          finishReason: 'timeout',
+          model: chosenModelId || routedTier,
+          conversationId: conversationId || undefined,
+        });
       }, hardTimeoutMs);
     }
 
@@ -380,7 +408,13 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
           userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
           assistantMetadata: buildMetadata(),
-          source: agentType === 'workflow' ? 'workflow' : agentType === 'bot' ? 'proactive' : 'stuard',
+          source: agentType === 'workflow'
+            ? 'workflow'
+            : agentType === 'skill'
+              ? 'skill'
+              : agentType === 'bot'
+                ? 'proactive'
+                : 'stuard',
         });
       },
     };
@@ -427,7 +461,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     try {
       for await (const chunk of fullStream as any) {
         if (abortController.signal.aborted) {
-          console.log('[cloud-ai] Stream loop detected abort, breaking');
+          console.log(`[cloud-ai] Stream loop detected abort, breaking | reason=${getAbortReason(abortController.signal) || 'unknown'}`);
           break;
         }
 
@@ -501,7 +535,19 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     }
 
     if (abortController?.signal.aborted) {
-      console.log('[cloud-ai] Stream aborted by user (loop break)');
+      const abortReason = getAbortReason(abortController.signal) || 'unknown';
+      console.log(`[cloud-ai] Stream aborted (loop break) | reason=${abortReason}`);
+      if (runtime.didSendFinal) {
+        try {
+          if (hardTimeout) clearTimeout(hardTimeout);
+        } catch { }
+        deleteAbortController(ws, requestId);
+        await billingTracker.settleToUsageList(finishedSteps, {
+          trigger: abortReason === 'hard_timeout' ? 'timeout' : 'abort_after_final',
+          partial: true,
+        });
+        return;
+      }
       runtime.didSendFinal = true;
       try {
         if (hardTimeout) clearTimeout(hardTimeout);
@@ -591,7 +637,15 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     deleteAbortController(ws, requestId);
 
     if (error?.name === 'AbortError' || abortController?.signal.aborted) {
-      console.log('[cloud-ai] Stream aborted by user');
+      const abortReason = getAbortReason(abortController?.signal) || 'unknown';
+      console.log(`[cloud-ai] Stream aborted | reason=${abortReason}`);
+      if (runtime.didSendFinal) {
+        await billingTracker.settleToUsageList(finishedSteps, {
+          trigger: abortReason === 'hard_timeout' ? 'timeout' : 'abort_after_final',
+          partial: true,
+        });
+        return;
+      }
       const partialText = runtime.aggregatedText ? runtime.aggregatedText.trim() : '';
 
       if (partialText) {
@@ -711,8 +765,12 @@ function appendCompletedToolCallsToHistory(history: any[], toolCallsMap: Map<str
 
   for (const toolCall of completedToolCalls) {
     let resultText = typeof toolCall.result === 'string' ? toolCall.result : JSON.stringify(toolCall.result ?? '');
-    if (resultText.length > 2000) {
-      resultText = resultText.slice(0, 1800) + `\n...[truncated, ${resultText.length} chars total]`;
+    const toolName = String(toolCall.tool || '');
+    const isRichExtract = toolName === 'scrape_url' || toolName === 'web_search';
+    const maxKeep = isRichExtract ? 14_000 : 1800;
+    const maxBeforeTrim = isRichExtract ? 16_000 : 2000;
+    if (resultText.length > maxBeforeTrim) {
+      resultText = resultText.slice(0, maxKeep) + `\n...[truncated, ${resultText.length} chars total]`;
     }
 
     history.push({
@@ -747,6 +805,10 @@ function fireAndForgetConversationTitle(
   ws: PreparedChatRequest['ws'],
   requestId: string | undefined,
 ) {
+  // Fully non-blocking: the conversation row already has a provisional title
+  // (the first words of the user message) set at creation time, so the UI
+  // never shows "Untitled" while this LLM call is in flight. When the result
+  // arrives we overwrite both the DB row and the UI tab.
   (async () => {
     try {
       const titlePrompt = `User message:\n${prompt}`;
@@ -761,7 +823,7 @@ function fireAndForgetConversationTitle(
       const title = normalizeThreadTitle((result as any)?.text);
       if (title) {
         await setConversationTitle(userId, conversationId, title);
-        send(ws, { type: 'title', conversationId, title }, requestId);
+        send(ws, { type: 'title', conversationId, title, provisional: false }, requestId);
       }
     } catch { }
   })();

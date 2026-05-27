@@ -191,9 +191,12 @@ async def http_reminders_list() -> JSONResponse:
 
 # Python runtime management API
 @router.get("/runtime/python/status")
-async def http_python_status() -> JSONResponse:
+async def http_python_status(envId: str | None = None) -> JSONResponse:
     try:
-        res = await system_tools.python_status({})
+        payload: Dict[str, Any] = {}
+        if envId:
+            payload["envId"] = envId
+        res = await system_tools.python_status(payload)
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -203,6 +206,18 @@ async def http_python_status() -> JSONResponse:
 async def http_python_setup(payload: Dict[str, Any] | None = None) -> JSONResponse:
     try:
         res = await system_tools.python_setup(payload or {})
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.get("/runtime/python/packages")
+async def http_python_list_packages(envId: str | None = None) -> JSONResponse:
+    try:
+        payload: Dict[str, Any] = {}
+        if envId:
+            payload["envId"] = envId
+        res = await system_tools.python_list_packages(payload)
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -320,6 +335,18 @@ async def http_knowledge_bio(limit: int = 50) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+@router.get("/knowledge/context")
+async def http_knowledge_context(limit: int = 12) -> JSONResponse:
+    """Diverse memory samples across bio, project, procedural, and event facts."""
+    try:
+        from ..storage import knowledge_db
+
+        items = knowledge_db.get_diverse_context_facts(limit=max(1, min(limit, 24)))
+        return JSONResponse({"ok": True, "items": items})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e), "items": []}, status_code=500)
+
+
 @router.get("/knowledge/entities")
 async def http_knowledge_entities(type: Optional[str] = None, limit: int = 100) -> JSONResponse:
     try:
@@ -397,6 +424,7 @@ async def http_knowledge_events(limit: int = 100) -> JSONResponse:
         return JSONResponse({"ok": True, "facts": [f.__dict__ for f in facts] if facts else []})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 
 
 @router.get("/knowledge/graph")

@@ -17,7 +17,8 @@
       "WebFetch(domain:ai.google.dev)",
       "Bash(gcloud resource-manager:*)",
       "mcp__supabase__list_tables",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git -C /c/Users/solar/StuardAI-V2 grep -il \"dashboard\" -- \"*.tsx\" \"*.ts\" \"*.jsx\")"
     ]
   }
 }

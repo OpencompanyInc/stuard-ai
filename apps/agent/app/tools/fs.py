@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import fnmatch
-import glob
+import hashlib
 import json
 import mimetypes
 import os
@@ -15,7 +15,8 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
-from typing import Any, Dict, Optional
+from pathlib import PurePath
+from typing import Any, Dict, List, Optional
 
 from .folder_limiter import FolderLimiter, current_session_id
 
@@ -55,6 +56,36 @@ def _check_folder_write(path: str, args: Optional[Dict[str, Any]] = None) -> Non
         raise ValueError(limiter.describe_denial(path, "write"))
 
 
+def _clamp_positive_int(val: Any, default: int, hard_max: int) -> int:
+    """Parse an int arg, fall back to default, and enforce a server-side hard max."""
+    try:
+        n = int(val) if val is not None else default
+    except (TypeError, ValueError):
+        n = default
+    if n <= 0:
+        n = default
+    return min(n, hard_max)
+
+
+def _truncate_string_output(value: str, max_chars: int) -> Dict[str, Any]:
+    """Return a string capped for model consumption with truncation metadata."""
+    if len(value) <= max_chars:
+        return {"value": value, "truncated": False}
+    return {
+        "value": value[:max_chars],
+        "truncated": True,
+        "originalLength": len(value),
+    }
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _is_safe_path(path: str) -> bool:
     """
     Check if a path is safe to access (not a system directory).
@@ -79,12 +110,21 @@ def _is_safe_path(path: str) -> bool:
     return True
 
 MAX_READ_FILE_BINARY_BYTES = int(os.getenv("READ_FILE_BINARY_MAX_BYTES", "68157440"))  # 65MB default
+LLM_READ_FILE_BINARY_INLINE_MAX = int(os.getenv("READ_FILE_BINARY_INLINE_MAX_BYTES", "65536"))  # 64KB
 MAX_READ_FILE_LINES = int(os.getenv("READ_FILE_MAX_LINES", "500"))
 MAX_AGENTIC_FILE_LINES = 650  # Stricter limit for agentic file tools
 MAX_READ_FILE_DOCUMENT_BYTES = int(os.getenv("READ_FILE_DOCUMENT_MAX_BYTES", "52428800"))  # 50MB
-MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "20000"))
-MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "2000"))
+MAX_GLOB_RESULTS = int(os.getenv("GLOB_MAX_RESULTS", "500"))
+MAX_GLOB_RESULTS_HARD = int(os.getenv("GLOB_MAX_RESULTS_HARD", "2000"))
+GLOB_TIMEOUT_SEC = int(os.getenv("GLOB_TIMEOUT_SEC", "30"))
+_BROAD_GLOB_PATTERNS = frozenset({
+    "*", "**", "**/*", "**/**", "**/**/*", "./**", "./**/*",
+})
+MAX_GREP_RESULTS = int(os.getenv("GREP_MAX_RESULTS", "200"))
+MAX_GREP_RESULTS_HARD = int(os.getenv("GREP_MAX_RESULTS_HARD", "500"))
 MAX_GREP_FILE_BYTES = int(os.getenv("GREP_MAX_FILE_BYTES", "5242880"))  # 5MB
+DEFAULT_LIST_DIRECTORY_LIMIT = int(os.getenv("LIST_DIRECTORY_DEFAULT_LIMIT", "500"))
+MAX_LIST_DIRECTORY_LIMIT = int(os.getenv("LIST_DIRECTORY_MAX_LIMIT", "2000"))
 
 # Directories the grep tool always skips. Dominant cost on real repos — pruning
 # these in os.walk cuts file counts by >100x on node-heavy projects.
@@ -1013,6 +1053,18 @@ async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
     if not _is_safe_path(p):
         raise ValueError(f"Access denied to system path: {p}")
     _check_folder_read(p, args)
+
+    limit = _clamp_positive_int(
+        args.get("limit"),
+        DEFAULT_LIST_DIRECTORY_LIMIT,
+        MAX_LIST_DIRECTORY_LIMIT,
+    )
+    try:
+        offset = int(args.get("offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
     names = []
     try:
         for name in os.listdir(p):
@@ -1021,14 +1073,29 @@ async def list_directory(args: Dict[str, Any]) -> Dict[str, Any]:
             names.append({"name": name, "type": typ})
     except FileNotFoundError:
         raise ValueError(f"path not found: {p}")
-    if not names:
+
+    total = len(names)
+    if total == 0:
         return {
             "ok": True,
             "items": [],
+            "count": 0,
+            "truncated": False,
             "empty": True,
             "message": f"Directory is empty: {p}. Nothing to inspect — do not re-list; either report this to the user or take a different action.",
         }
-    return {"ok": True, "items": names}
+
+    page = names[offset:offset + limit]
+    truncated = (offset + len(page)) < total
+    result: Dict[str, Any] = {
+        "ok": True,
+        "items": page,
+        "count": len(page),
+        "truncated": truncated,
+    }
+    if truncated or offset > 0:
+        result["total"] = total
+    return result
 
 
 async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -1123,6 +1190,202 @@ async def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "content": content, "total_lines": total_lines, **base_result}
 
 
+def _normalize_glob_pattern(pattern: str) -> str:
+    return pattern.replace("\\", "/").strip().lstrip("./")
+
+
+def _is_broad_glob_pattern(pattern: str) -> bool:
+    """True when the pattern matches essentially everything under a tree."""
+    norm = _normalize_glob_pattern(pattern)
+    if norm in _BROAD_GLOB_PATTERNS:
+        return True
+    return bool(re.fullmatch(r"\*\*(/\*)?", norm))
+
+
+def _path_matches_glob(rel_path: str, pattern: str) -> bool:
+    rel = rel_path.replace("\\", "/")
+    pat = pattern.replace("\\", "/")
+    if "**" not in pat and "/" not in pat:
+        return fnmatch.fnmatch(os.path.basename(rel), pat)
+    try:
+        return PurePath(rel).match(pat)
+    except (ValueError, NotImplementedError):
+        return fnmatch.fnmatch(rel, pat)
+
+
+def _glob_append_item(
+    items: List[Dict[str, str]],
+    full_path: str,
+    *,
+    include_files: bool,
+    include_dirs: bool,
+    max_results: int,
+) -> bool:
+    """Append one match. Returns True if the result cap was reached."""
+    if not _is_safe_path(full_path):
+        return False
+    typ = "dir" if os.path.isdir(full_path) else "file"
+    if typ == "dir" and not include_dirs:
+        return False
+    if typ == "file" and not include_files:
+        return False
+    items.append({"path": full_path, "type": typ})
+    return len(items) >= max_results
+
+
+def _glob_ripgrep(
+    search_root: str,
+    pattern: str,
+    *,
+    max_results: int,
+    include_files: bool,
+    include_dirs: bool,
+) -> Optional[Dict[str, Any]]:
+    """Fast path via `rg --files`. Returns None if ripgrep is unavailable."""
+    if not include_files:
+        return None
+    rg = shutil.which("rg")
+    if not rg:
+        return None
+
+    cmd: list[str] = [
+        rg, "--files", "--no-messages", "--no-ignore", "--hidden",
+    ]
+    for d in EXCLUDED_GREP_DIRS:
+        cmd.extend(["-g", f"!{d}"])
+    cmd.extend(["-g", pattern, "--", search_root])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=GLOB_TIMEOUT_SEC,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    if proc.returncode not in (0, 1):
+        return None
+
+    items: List[Dict[str, str]] = []
+    truncated = False
+    stdout = proc.stdout.decode("utf-8", errors="replace")
+    for raw in stdout.splitlines():
+        fp = raw.strip()
+        if not fp:
+            continue
+        if _glob_append_item(
+            items, fp,
+            include_files=include_files,
+            include_dirs=include_dirs,
+            max_results=max_results,
+        ):
+            truncated = True
+            break
+
+    return {
+        "ok": True,
+        "items": items,
+        "count": len(items),
+        "truncated": truncated,
+        "engine": "ripgrep",
+    }
+
+
+def _glob_walk(
+    search_root: str,
+    pattern: str,
+    *,
+    recursive: bool,
+    max_results: int,
+    include_files: bool,
+    include_dirs: bool,
+) -> Dict[str, Any]:
+    """Walk the tree with junk-dir pruning and stop as soon as max_results is hit."""
+    items: List[Dict[str, str]] = []
+    truncated = False
+    use_double_star = "**" in pattern.replace("\\", "/")
+
+    if not recursive or not use_double_star:
+        try:
+            names = os.listdir(search_root)
+        except OSError as e:
+            return {"ok": False, "error": f"glob_failed: {str(e)}"}
+        for name in names:
+            full = os.path.join(search_root, name)
+            rel = name
+            if not _path_matches_glob(rel, pattern):
+                continue
+            if _glob_append_item(
+                items, full,
+                include_files=include_files,
+                include_dirs=include_dirs,
+                max_results=max_results,
+            ):
+                truncated = True
+                break
+        return {
+            "ok": True,
+            "items": items,
+            "count": len(items),
+            "truncated": truncated,
+            "engine": "walk",
+        }
+
+    for dir_root, dirnames, filenames in os.walk(search_root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_GREP_DIRS]
+
+        if include_dirs:
+            for name in dirnames:
+                rel = os.path.relpath(os.path.join(dir_root, name), search_root)
+                if not _path_matches_glob(rel, pattern):
+                    continue
+                full = os.path.join(dir_root, name)
+                if _glob_append_item(
+                    items, full,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                    max_results=max_results,
+                ):
+                    truncated = True
+                    return {
+                        "ok": True,
+                        "items": items,
+                        "count": len(items),
+                        "truncated": truncated,
+                        "engine": "walk",
+                    }
+
+        if include_files:
+            for name in filenames:
+                rel = os.path.relpath(os.path.join(dir_root, name), search_root)
+                if not _path_matches_glob(rel, pattern):
+                    continue
+                full = os.path.join(dir_root, name)
+                if _glob_append_item(
+                    items, full,
+                    include_files=include_files,
+                    include_dirs=include_dirs,
+                    max_results=max_results,
+                ):
+                    truncated = True
+                    return {
+                        "ok": True,
+                        "items": items,
+                        "count": len(items),
+                        "truncated": truncated,
+                        "engine": "walk",
+                    }
+
+    return {
+        "ok": True,
+        "items": items,
+        "count": len(items),
+        "truncated": truncated,
+        "engine": "walk",
+    }
+
+
 async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
     pattern = str(args.get("pattern") or args.get("glob") or "").strip()
     if not pattern:
@@ -1136,42 +1399,80 @@ async def glob_paths(args: Dict[str, Any]) -> Dict[str, Any]:
         include_files = True
     if include_dirs is None:
         include_dirs = True
-    max_results = int(args.get("max_results") or MAX_GLOB_RESULTS)
-    if max_results <= 0:
-        max_results = MAX_GLOB_RESULTS
+    max_results = _clamp_positive_int(
+        args.get("max_results"),
+        MAX_GLOB_RESULTS,
+        MAX_GLOB_RESULTS_HARD,
+    )
 
-    if root:
-        root = os.path.expanduser(root)
-        if not _is_safe_path(root):
-            return {"ok": False, "error": f"Access denied to system path: {root}"}
-        _check_folder_read(root, args)
-        pattern_path = os.path.join(root, pattern) if not os.path.isabs(pattern) else pattern
+    pattern_norm = _normalize_glob_pattern(pattern)
+    uses_recursive_glob = "**" in pattern_norm
+
+    if _is_broad_glob_pattern(pattern):
+        return {
+            "ok": False,
+            "error": "pattern_too_broad",
+            "message": (
+                f"Pattern '{pattern}' matches every file and is too expensive. "
+                "Use a narrower pattern (e.g. '**/*.pdf', '*.txt') or list_directory "
+                "for a single folder."
+            ),
+        }
+
+    if uses_recursive_glob and not root:
+        return {
+            "ok": False,
+            "error": "recursive_glob_needs_root",
+            "message": (
+                "Recursive patterns (with '**') require a 'root' directory. "
+                "Pass root to limit the search scope."
+            ),
+        }
+
+    if os.path.isabs(pattern):
+        search_root = os.path.dirname(pattern) or os.getcwd()
+        match_pattern = os.path.basename(pattern)
+    elif root:
+        search_root = os.path.expanduser(root)
+        match_pattern = pattern
     else:
-        pattern_path = pattern
+        search_root = os.getcwd()
+        match_pattern = pattern
 
-    pattern_path = os.path.expanduser(pattern_path)
+    search_root = os.path.abspath(os.path.expanduser(search_root))
+    if not _is_safe_path(search_root):
+        return {"ok": False, "error": f"Access denied to system path: {search_root}"}
+    _check_folder_read(search_root, args)
 
-    try:
-        matches = glob.glob(pattern_path, recursive=recursive)
-    except Exception as e:
-        return {"ok": False, "error": f"glob_failed: {str(e)}"}
+    if not os.path.isdir(search_root):
+        return {"ok": False, "error": f"root not found or not a directory: {search_root}"}
 
-    items = []
-    truncated = False
-    for m in sorted(matches):
-        if not _is_safe_path(m):
-            continue
-        typ = "dir" if os.path.isdir(m) else "file"
-        if typ == "dir" and not include_dirs:
-            continue
-        if typ == "file" and not include_files:
-            continue
-        items.append({"path": m, "type": typ})
-        if len(items) >= max_results:
-            truncated = True
-            break
+    if not recursive and uses_recursive_glob:
+        return {
+            "ok": False,
+            "error": "recursive_disabled",
+            "message": "Pattern uses '**' but recursive=false. Enable recursive or narrow the pattern.",
+        }
 
-    return {"ok": True, "items": items, "count": len(items), "truncated": truncated}
+    if os.getenv("STUARD_GLOB_DISABLE_RG") != "1":
+        rg_result = _glob_ripgrep(
+            search_root,
+            match_pattern,
+            max_results=max_results,
+            include_files=include_files,
+            include_dirs=include_dirs,
+        )
+        if rg_result is not None:
+            return rg_result
+
+    return _glob_walk(
+        search_root,
+        match_pattern,
+        recursive=recursive,
+        max_results=max_results,
+        include_files=include_files,
+        include_dirs=include_dirs,
+    )
 
 
 def _normalize_glob_list(val: Any) -> list[str]:
@@ -1312,9 +1613,11 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
 
     include_glob = args.get("include_glob") or args.get("includeGlob")
     exclude_glob = args.get("exclude_glob") or args.get("excludeGlob")
-    max_results = int(args.get("max_results") or MAX_GREP_RESULTS)
-    if max_results <= 0:
-        max_results = MAX_GREP_RESULTS
+    max_results = _clamp_positive_int(
+        args.get("max_results"),
+        MAX_GREP_RESULTS,
+        MAX_GREP_RESULTS_HARD,
+    )
     max_file_size = int(args.get("max_file_size") or MAX_GREP_FILE_BYTES)
     if max_file_size < 0:
         max_file_size = MAX_GREP_FILE_BYTES
@@ -1684,14 +1987,33 @@ async def read_file_binary(args: Dict[str, Any]) -> Dict[str, Any]:
     _check_folder_read(p, args)
     if not os.path.isfile(p):
         raise ValueError(f"path not found: {p}")
+
     size = os.path.getsize(p)
+    mime, _ = mimetypes.guess_type(p)
+    mime_type = mime or "application/octet-stream"
+    inline = bool(args.get("inline"))
+
+    if size > LLM_READ_FILE_BINARY_INLINE_MAX and not inline:
+        return {
+            "ok": True,
+            "path": p,
+            "size": size,
+            "mimeType": mime_type,
+            "sha256": _file_sha256(p),
+            "truncated": True,
+            "hint": (
+                f"File exceeds {LLM_READ_FILE_BINARY_INLINE_MAX} byte inline limit. "
+                f"Pass inline=true to read full contents (up to {MAX_READ_FILE_BINARY_BYTES} bytes)."
+            ),
+        }
+
     if size > MAX_READ_FILE_BINARY_BYTES:
         return {"ok": False, "error": "file_too_large", "path": p, "size": size, "max": MAX_READ_FILE_BINARY_BYTES}
+
     with open(p, "rb") as f:
         data = f.read()
-    mime, _ = mimetypes.guess_type(p)
     b64 = base64.b64encode(data).decode("ascii")
-    return {"ok": True, "data": b64, "mimeType": mime or "application/octet-stream", "path": p, "size": len(data)}
+    return {"ok": True, "data": b64, "mimeType": mime_type, "path": p, "size": len(data), "truncated": False}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

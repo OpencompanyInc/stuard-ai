@@ -6,7 +6,7 @@ import { writeLog } from '../../utils/logger';
 import { handleChatMessage } from '../chat/handle-chat-message';
 import { handleAuthMessage } from './auth-handler';
 import { handleBridgedToolExecution } from './bridged-tool-handler';
-import { abortAllRequests, abortAndCleanup, cleanupSocketState, conversations, countActiveRequests, enqueueInterjection, getOnlyActiveRequestId, wsAlive } from './state';
+import { abortAndCleanup, cleanupSocketState, conversations, countActiveRequests, enqueueInterjection, getOnlyActiveRequestId, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
 import { abortRunningSubagentsForRequest, enqueueSubagentSteer, isSubagentRunning } from '../../orchestrator/subagent-runtime';
 import { abortHeadlessTasksForRequest } from '../../tools/deploy-headless-agent';
@@ -43,9 +43,9 @@ export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
     ws.on('close', () => {
       writeLog('ws_disconnected');
-      try { abortRunningSubagentsForRequest(ws); } catch { }
-      try { abortHeadlessTasksForRequest(ws); } catch { }
-      cleanupSocketState(ws);
+      try { abortRunningSubagentsForRequest(ws, undefined, 'socket_closed'); } catch { }
+      try { abortHeadlessTasksForRequest(ws, undefined, 'socket_closed'); } catch { }
+      cleanupSocketState(ws, 'socket_closed');
     });
   } catch { }
 
@@ -74,9 +74,9 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
   if (kind === 'stop' || kind === 'abort') {
     const stopRequestId = typeof msg?.requestId === 'string' ? msg.requestId : undefined;
     if (stopRequestId) {
-      const aborted = abortAndCleanup(ws, stopRequestId);
-      const subagentsAborted = abortRunningSubagentsForRequest(ws, stopRequestId);
-      const headlessAborted = abortHeadlessTasksForRequest(ws, stopRequestId);
+      const aborted = abortAndCleanup(ws, stopRequestId, 'client_stop');
+      const subagentsAborted = abortRunningSubagentsForRequest(ws, stopRequestId, 'client_stop');
+      const headlessAborted = abortHeadlessTasksForRequest(ws, stopRequestId, 'client_stop');
       console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted} | subagents=${subagentsAborted} | headless=${headlessAborted}`);
       send(ws, { type: 'stopped', success: aborted || subagentsAborted > 0 || headlessAborted > 0, requestId: stopRequestId, subagentsAborted, headlessAborted });
     } else {
@@ -89,10 +89,19 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
         send(ws, { type: 'stopped', success: false, message: 'requestId required: multiple active streams', activeCount });
         return;
       }
+      if (activeCount !== 1) {
+        send(ws, { type: 'stopped', success: false, message: 'no active stream' });
+        return;
+      }
+
       const soleRequestId = getOnlyActiveRequestId(ws);
-      const aborted = activeCount === 1 ? abortAndCleanup(ws, soleRequestId) : false;
-      const subagentsAborted = abortRunningSubagentsForRequest(ws, soleRequestId);
-      const headlessAborted = abortHeadlessTasksForRequest(ws, soleRequestId);
+      const aborted = abortAndCleanup(ws, soleRequestId, 'client_stop');
+      const subagentsAborted = soleRequestId
+        ? abortRunningSubagentsForRequest(ws, soleRequestId, 'client_stop')
+        : 0;
+      const headlessAborted = soleRequestId
+        ? abortHeadlessTasksForRequest(ws, soleRequestId, 'client_stop')
+        : 0;
       if (aborted || subagentsAborted > 0 || headlessAborted > 0) {
         console.log(`[cloud-ai] Bare stop aborted sole active work: stream=${aborted} requestId=${soleRequestId || '∅'} subagents=${subagentsAborted} headless=${headlessAborted}`);
         send(ws, { type: 'stopped', success: true, requestId: soleRequestId, subagentsAborted, headlessAborted });

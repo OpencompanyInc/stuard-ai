@@ -53,6 +53,16 @@ export function getMimeType(ext: string): string {
     webp: 'image/webp',
     bmp: 'image/bmp',
     svg: 'image/svg+xml',
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    flac: 'audio/flac',
+    aac: 'audio/aac',
+    opus: 'audio/opus',
+    m4a: 'audio/mp4',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
   };
   return mimeMap[ext.toLowerCase()] || 'application/octet-stream';
 }

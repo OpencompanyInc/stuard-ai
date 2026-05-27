@@ -89,7 +89,7 @@ describe('pricing module', () => {
 
   describe('getDefaultModelForCategory', () => {
     it('should return correct default for fast category', () => {
-      expect(getDefaultModelForCategory('fast')).toBe('google/gemini-3.1-flash-lite-preview');
+      expect(getDefaultModelForCategory('fast')).toBe('google/gemini-3.1-flash-lite');
     });
 
     it('should return correct default for balanced category', () => {

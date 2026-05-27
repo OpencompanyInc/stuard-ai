@@ -10,6 +10,14 @@ export const metadata: Metadata = {
     description:
       'Everything you need to work faster. Stuard unifies your apps, files, tabs, and workflows.',
     url: 'https://stuard.ai/how-it-works',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 

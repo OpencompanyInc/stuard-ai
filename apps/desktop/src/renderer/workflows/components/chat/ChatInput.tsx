@@ -44,7 +44,6 @@ async function droppedFileToAttachedImage(file: File): Promise<AttachedImage | n
       path: String(inferredPath || file.name || 'image'),
       name: file.name || 'image',
       dataUrl,
-      data: dataUrl,
       mimeType: file.type || 'image/png',
     };
   } catch {
@@ -128,7 +127,6 @@ export const ChatInput = forwardRef<ChatInputRef, {
           addImages(images.map((img: any) => ({
             path: String(img?.path || img?.name || 'image'),
             name: String(img?.name || 'image'),
-            data: typeof img?.data === 'string' ? img.data : undefined,
             dataUrl: buildImageDataUrl(typeof img?.data === 'string' ? img.data : undefined, typeof img?.mimeType === 'string' ? img.mimeType : undefined),
             mimeType: typeof img?.mimeType === 'string' ? img.mimeType : undefined,
           })));

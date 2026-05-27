@@ -576,20 +576,21 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'github_create_issue', label: 'Create Issue', icon: GitPullRequest, args: { owner: '', repo: '', title: '', body: '' } },
     ],
   },
-  {
-    id: 'whatsapp',
-    label: 'WhatsApp',
-    icon: Phone,
-    color: 'emerald',
-    items: [
-      { k: 'cloud.tool', t: 'whatsapp_status', label: 'Check Status', icon: Phone, args: {} },
-      { k: 'cloud.tool', t: 'whatsapp_send_message', label: 'Send Message', icon: MessageSquare, args: { message: '', preview_url: false } },
-      { k: 'cloud.tool', t: 'whatsapp_send_media', label: 'Send Media', icon: Camera, args: { type: 'image', url: '', caption: '' } },
-      { k: 'cloud.tool', t: 'whatsapp_send_reaction', label: 'Send Reaction', icon: Activity, args: { message_id: '', emoji: '👍' } },
-      { k: 'cloud.tool', t: 'whatsapp_mark_read', label: 'Mark Read', icon: CheckCircle, args: { message_id: '' } },
-      { k: 'cloud.tool', t: 'whatsapp_upload_media', label: 'Upload Media', icon: Download, args: { url: '', mime_type: '' } },
-    ],
-  },
+  // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
+  // {
+  //   id: 'whatsapp',
+  //   label: 'WhatsApp',
+  //   icon: Phone,
+  //   color: 'emerald',
+  //   items: [
+  //     { k: 'cloud.tool', t: 'whatsapp_status', label: 'Check Status', icon: Phone, args: {} },
+  //     { k: 'cloud.tool', t: 'whatsapp_send_message', label: 'Send Message', icon: MessageSquare, args: { message: '', preview_url: false } },
+  //     { k: 'cloud.tool', t: 'whatsapp_send_media', label: 'Send Media', icon: Camera, args: { type: 'image', url: '', caption: '' } },
+  //     { k: 'cloud.tool', t: 'whatsapp_send_reaction', label: 'Send Reaction', icon: Activity, args: { message_id: '', emoji: '👍' } },
+  //     { k: 'cloud.tool', t: 'whatsapp_mark_read', label: 'Mark Read', icon: CheckCircle, args: { message_id: '' } },
+  //     { k: 'cloud.tool', t: 'whatsapp_upload_media', label: 'Upload Media', icon: Download, args: { url: '', mime_type: '' } },
+  //   ],
+  // },
   {
     id: 'telnyx',
     label: 'SMS / Call',
@@ -684,7 +685,7 @@ export const PALETTE_GROUPS: { id: string; label: string; categoryIds: string[] 
   { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use'] },
   { id: 'media_ai', label: 'Media Tooling & Local AI', categoryIds: ['ffmpeg', 'mediapipe', 'ollama', 'tts'] },
   { id: 'google', label: 'Google', categoryIds: ['gmail', 'google_drive', 'google_calendar', 'google_sheets', 'google_docs', 'google_tasks'] },
-  { id: 'integrations', label: 'Integrations', categoryIds: ['outlook', 'github', 'whatsapp', 'telnyx', 'facebook', 'instagram', 'threads', 'x', 'reddit'] },
+  { id: 'integrations', label: 'Integrations', categoryIds: ['outlook', 'github', 'telnyx', 'facebook', 'instagram', 'threads', 'x', 'reddit'] },
 ];
 
 /** Lookup: category id → group id. Used by the palette to render dividers. */

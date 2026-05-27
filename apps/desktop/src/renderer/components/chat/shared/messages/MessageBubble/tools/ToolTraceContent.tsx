@@ -4,7 +4,15 @@ import { FileEditDiffPreview } from '../previews/FileEditDiffPreview';
 import { WriteFilePreview } from '../previews/WriteFilePreview';
 import { ReadFilePreview } from '../previews/ReadFilePreview';
 import { AnalyzeMediaPreview } from '../previews/AnalyzeMediaPreview';
+import {
+  extractTerminalStatus,
+  extractTerminalText,
+  getTerminalPanelTitle,
+  getTerminalWaitingHint,
+  TERMINAL_OUTPUT_TOOL_NAMES,
+} from '../helpers/terminalOutput';
 import { LIVE_OUTPUT_TOOL_NAMES, LiveOutputPanel } from './LiveOutputPanel';
+import { TerminalOutputPanel } from './TerminalOutputPanel';
 import { ToolPayloadPreview } from './ToolPayloadPreview';
 
 export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) => {
@@ -27,7 +35,13 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
     (tool.status === 'running' || tool.status === 'called')
     && LIVE_OUTPUT_TOOL_NAMES.has(tool.tool)
   ) {
-    return <LiveOutputPanel output={tool.liveOutput || ''} toolName={tool.tool} />;
+    return (
+      <LiveOutputPanel
+        output={tool.liveOutput || ''}
+        toolName={tool.tool}
+        placeholder={getTerminalWaitingHint(tool.tool, tool.args) || undefined}
+      />
+    );
   }
 
   if (tool.status === 'completed') {
@@ -70,6 +84,21 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
 
     if (tool.tool === 'analyze_media' || tool.tool === 'browser_use_analyze_screenshot') {
       return <AnalyzeMediaPreview args={args} result={tool.result} />;
+    }
+
+    if (TERMINAL_OUTPUT_TOOL_NAMES.has(tool.tool)) {
+      const terminalText = extractTerminalText(tool.result, tool.liveOutput) ?? '';
+      const status = extractTerminalStatus(tool.result);
+      if (terminalText || status) {
+        return (
+          <TerminalOutputPanel
+            output={terminalText}
+            title={getTerminalPanelTitle(tool.tool, tool.args, tool.result)}
+            status={status}
+            placeholder={getTerminalWaitingHint(tool.tool, tool.args) || undefined}
+          />
+        );
+      }
     }
 
     return (

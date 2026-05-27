@@ -32,18 +32,6 @@ vi.mock('./bridge', () => ({
   hasClientBridge: vi.fn(() => false),
 }));
 
-function createQueryBuilder(response: { data: any; error: any }) {
-  const builder: any = {
-    select: vi.fn(() => builder),
-    eq: vi.fn(() => builder),
-    order: vi.fn(() => builder),
-    limit: vi.fn(() => builder),
-    then: (resolve: (value: any) => any, reject?: (reason: any) => any) =>
-      Promise.resolve(response).then(resolve, reject),
-  };
-  return builder;
-}
-
 describe('search_tools Supabase-backed discovery', () => {
   beforeEach(() => {
     getSupabaseServiceMock.mockReset();
@@ -51,66 +39,23 @@ describe('search_tools Supabase-backed discovery', () => {
     embedManyMock.mockReset();
   });
 
-  it('lists categories from tool_embeddings instead of the in-memory registry', async () => {
-    const builder = createQueryBuilder({
-      data: [
-        { category: 'Workflow' },
-        { category: 'AI' },
-        { category: 'Workflow' },
-      ],
-      error: null,
-    });
-    const fromMock = vi.fn(() => builder);
-
+  it('requires a non-empty query', async () => {
     getSupabaseServiceMock.mockReturnValue({
-      from: fromMock,
+      from: vi.fn(),
       rpc: vi.fn(),
     });
 
-    const result = await (search_tools as any).execute({ list_categories: true });
+    const result = await (search_tools as any).execute({ category: 'System' });
 
-    expect(fromMock).toHaveBeenCalledWith('tool_embeddings');
-    expect(builder.select).toHaveBeenCalledWith('category');
-    expect(builder.eq).toHaveBeenCalledWith('enabled', true);
-    expect(result.tools).toEqual([
-      { name: 'AI', description: '', category: 'AI' },
-      { name: 'Workflow', description: '', category: 'Workflow' },
-    ]);
+    expect(result.error).toBe(true);
+    expect(result.message).toContain('query');
   });
 
-  it('lists category-filtered tools from tool_embeddings when no free-text query is provided', async () => {
-    const builder = createQueryBuilder({
-      data: [
-        { name: 'run_command', description: 'Run a shell command', category: 'System' },
-        { name: 'run_python_script', description: 'Execute Python', category: 'System' },
-      ],
-      error: null,
-    });
-    const fromMock = vi.fn(() => builder);
-
-    getSupabaseServiceMock.mockReturnValue({
-      from: fromMock,
-      rpc: vi.fn(),
-    });
-
-    const result = await (search_tools as any).execute({ category: 'System', limit: 5 });
-
-    expect(fromMock).toHaveBeenCalledWith('tool_embeddings');
-    expect(builder.select).toHaveBeenCalledWith('name, description, category');
-    expect(builder.eq).toHaveBeenCalledWith('enabled', true);
-    expect(builder.order).toHaveBeenCalledWith('name', { ascending: true });
-    expect(builder.limit).toHaveBeenCalledWith(5);
-    expect(builder.eq).toHaveBeenCalledWith('category', 'System');
-    expect(result.tools).toEqual([
-      { name: 'run_command', description: 'Run a shell command', category: 'System' },
-      { name: 'run_python_script', description: 'Execute Python', category: 'System' },
-    ]);
-  });
-
-  it('uses the search_tools pgvector RPC for free-text tool search', async () => {
+  it('uses the search_tools pgvector RPC for required query search', async () => {
+    const longDescription = 'Go to a URL. '.repeat(40);
     const rpcMock = vi.fn(async () => ({
       data: [
-        { name: 'browser_use_navigate', description: 'Go to a URL', category: 'GUI' },
+        { name: 'browser_use_navigate', description: longDescription, category: 'GUI' },
       ],
       error: null,
     }));
@@ -122,7 +67,7 @@ describe('search_tools Supabase-backed discovery', () => {
     resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
     embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
 
-    const result = await (search_tools as any).execute({ query: 'open a website', limit: 7 });
+    const result = await (search_tools as any).execute({ query: '  open a website  ' });
 
     expect(resolveEmbedderMock).toHaveBeenCalledTimes(1);
     expect(embedManyMock).toHaveBeenCalledWith({
@@ -132,14 +77,51 @@ describe('search_tools Supabase-backed discovery', () => {
     expect(rpcMock).toHaveBeenCalledWith('search_tools', {
       query_embedding: [0.11, 0.22, 0.33],
       match_threshold: 0.25,
-      match_count: 7,
+      match_count: 8,
       filter_category: null,
       filter_kind: null,
       enabled_only: true,
     });
-    expect(result.tools).toEqual([
-      { name: 'browser_use_navigate', description: 'Go to a URL', category: 'GUI' },
-    ]);
+    expect(result.tools[0]).toEqual({
+      name: 'browser_use_navigate',
+      description: longDescription.slice(0, 240),
+      category: 'GUI',
+    });
+    expect(result.tools[0].description.length).toBe(240);
+  });
+
+  it('passes category and kind filters to semantic search', async () => {
+    const rpcMock = vi.fn(async () => ({
+      data: [
+        { name: 'run_command', description: 'Run a shell command', category: 'System' },
+      ],
+      error: null,
+    }));
+
+    getSupabaseServiceMock.mockReturnValue({
+      from: vi.fn(),
+      rpc: rpcMock,
+    });
+    resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
+    embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
+
+    const result = await (search_tools as any).execute({
+      query: 'shell command',
+      category: 'System',
+      kind: 'local',
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith('search_tools', {
+      query_embedding: [0.11, 0.22, 0.33],
+      match_threshold: 0.25,
+      match_count: 8,
+      filter_category: 'System',
+      filter_kind: 'local',
+      enabled_only: true,
+    });
+    expect(result.tools[0]).toEqual(
+      { name: 'run_command', description: 'Run a shell command', category: 'System' },
+    );
   });
 
   it('merges local registry keyword matches when vector results are stale', async () => {
@@ -155,9 +137,17 @@ describe('search_tools Supabase-backed discovery', () => {
     resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
     embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
 
-    const result = await (search_tools as any).execute({ query: 'image generation', limit: 5 });
+    const result = await (search_tools as any).execute({ query: 'image generation' });
 
     expect(result.tools.some((tool: any) => tool.name === 'generate_image')).toBe(true);
+  });
+
+  it('matches keyword fallback by useful tokens instead of requiring the whole query phrase', async () => {
+    getSupabaseServiceMock.mockReturnValue(null);
+
+    const result = await (search_tools as any).execute({ query: 'video recording webcam capture media recording' });
+
+    expect(result.tools.some((tool: any) => tool.name === 'capture_media')).toBe(true);
   });
 
   it('returns schema-enriched workflow node search results in one call', async () => {
@@ -175,9 +165,8 @@ describe('search_tools Supabase-backed discovery', () => {
     resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
     embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
 
-    const result = await (search_workflow_nodes as any).execute({ query: 'open a website', limit: 1 });
+    const result = await (search_workflow_nodes as any).execute({ query: 'open a website' });
 
-    expect(result.nodes).toHaveLength(1);
     expect(result.nodes[0].name).toBe('browser_use_navigate');
     expect(result.nodes[0].category).toBe('GUI');
     expect(result.nodes[0].location).toBe('device');

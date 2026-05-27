@@ -51,7 +51,7 @@ function buildConfig(args: any): WakewordConfig {
     || path.join(wakewordDir, 'models', 'kws_weights.npz');
 
   return {
-    sensitivity: clampNumber(args?.sensitivity, 0.80, 0.3, 0.99),
+    sensitivity: clampNumber(args?.sensitivity, 0.88, 0.3, 0.99),
     cooldown: clampNumber(args?.cooldown, 1.5, 0.25, 30),
     triggerCount: Math.round(clampNumber(args?.triggerCount ?? args?.trigger_count ?? args?.['trigger-count'], 8, 1, 25)),
     weightsPath,

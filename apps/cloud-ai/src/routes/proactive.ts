@@ -24,6 +24,7 @@ import { buildProactiveMessageContent, expandProactiveAllowedToolNames, generate
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 import { stripMarkdownForSms } from './sms-utils';
 import { getBridgeSecrets } from '../tools/bridge';
 import { normalizeUsage } from '../utils/usage';
@@ -180,7 +181,7 @@ async function deliverProactiveNotifications(
       }
     } catch {}
   }
-  if (requested.has('whatsapp')) {
+  if (WHATSAPP_INTEGRATION_ENABLED && requested.has('whatsapp')) {
     const waText = stripMarkdownForSms(message);
     const waFooter = '\n\n(Proactive mode. Reply to respond, or text /agent to switch.)';
     const maxWaBody = 4096 - waFooter.length;
@@ -433,7 +434,7 @@ function createChannelSelectionTool(enabledChannels: string[]) {
         // Fall back to the best available channel for this urgency
         if (urgency === 'critical' && enabledChannels.includes('call')) channel = 'call';
         else if ((urgency === 'critical' || urgency === 'high') && enabledChannels.includes('sms')) channel = 'sms';
-        else if ((urgency === 'critical' || urgency === 'high') && enabledChannels.includes('whatsapp')) channel = 'whatsapp';
+        else if ((urgency === 'critical' || urgency === 'high') && WHATSAPP_INTEGRATION_ENABLED && enabledChannels.includes('whatsapp')) channel = 'whatsapp';
         else channel = 'app';
       }
       chosenChannel = channel;
@@ -543,7 +544,8 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 
     // Create channel selection + session summary tools
     const enabledChannels = (Array.isArray(notificationChannels) ? notificationChannels : ['app'])
-      .map((c: any) => String(c).toLowerCase().trim()).filter(Boolean);
+      .map((c: any) => String(c).toLowerCase().trim()).filter(Boolean)
+      .filter((c) => WHATSAPP_INTEGRATION_ENABLED || c !== 'whatsapp');
     const channelSelector = createChannelSelectionTool(enabledChannels);
     const sessionSummaryTool = createSessionSummaryTool();
 
@@ -572,7 +574,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       execute: async (inputData, runCtx) => {
         const toolName = String((inputData as any)?.tool_name || '').trim();
         if (!isProactiveToolAllowed(toolName, allowedTools)) {
-          throw new Error(`Tool '${toolName}' is not allowed for this bot.`);
+          throw new Error(`Tool '${toolName}' is not allowed for this agent.`);
         }
         const result = await (get_tool_schema as any).execute?.(inputData, runCtx);
         // Dynamically register the tool into the agent's tool map so the LLM can call it directly
@@ -597,7 +599,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
           return {
             success: false,
             tool: toolName,
-            error: `Tool '${toolName}' is not allowed for this bot.`,
+            error: `Tool '${toolName}' is not allowed for this agent.`,
           };
         }
         // Also register the tool for future direct calls

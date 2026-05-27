@@ -37,6 +37,8 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   cli_agent_send: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'input'],
   cli_agent_read: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'status'],
   cli_agent_status: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'status'],
+  cli_agent_wait_for: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'wait', 'follow', 'status'],
+  cli_agent_wait_idle: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'wait', 'idle', 'done', 'finished', 'ready'],
   cli_agent_stop: ['cli', 'coding agent', 'codex', 'cursor', 'antigravity', 'claude', 'delegate', 'stop'],
 
   // Browser automation
@@ -64,6 +66,14 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   cloud_storage_list: ['cloud storage', 'stuard storage'],
   cloud_storage_delete: ['cloud storage', 'stuard storage'],
   cloud_storage_set_visibility: ['cloud storage', 'stuard storage'],
+
+  // Webhooks / integrations
+  create_webhook: ['webhook', 'workflow trigger', 'automation trigger', 'http callback', 'integration'],
+  list_webhooks: ['webhook', 'workflow trigger', 'automation trigger', 'integration'],
+  update_webhook: ['webhook', 'workflow trigger', 'automation trigger', 'integration'],
+  delete_webhook: ['webhook', 'workflow trigger', 'automation trigger', 'integration'],
+  configure_webhook_provider: ['webhook', 'stripe', 'twilio', 'provider', 'integration'],
+  get_webhook_provider: ['webhook', 'stripe', 'twilio', 'provider', 'integration'],
 
   // VM operations
   vm_status: ['vm', 'cloud vm', 'always on', 'remote desktop', 'headless'],
@@ -262,6 +272,21 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
  * Add alternative phrases, common user queries, and related terms.
  */
 const SEMANTIC_HINTS: Record<string, string[]> = {
+  // Webhooks
+  create_webhook: [
+    'create webhook endpoint',
+    'public webhook url',
+    'external service triggers workflow',
+    'HTTP POST trigger for workflow',
+    'cloud webhook callback',
+    'For local website request-response workflows, use a webhook trigger with mode local and the desktop /webhooks/call/:flowId URL documented in search_workflow_docs.',
+  ],
+  list_webhooks: ['list webhook endpoints', 'show workflow webhook URLs', 'webhook history', 'configured callbacks'],
+  update_webhook: ['edit webhook endpoint', 'change workflow webhook target', 'enable disable webhook', 'webhook security'],
+  delete_webhook: ['remove webhook endpoint', 'delete callback URL'],
+  configure_webhook_provider: ['configure stripe webhook', 'configure twilio webhook', 'provider callback mapping'],
+  get_webhook_provider: ['check webhook provider', 'stripe webhook settings', 'twilio webhook settings'],
+
   // Gmail / Google Profile
   google_list_profiles: ['list google users', 'list connected accounts', 'who am i', 'what google profiles do i have', 'google accounts'],
   google_get_userinfo: ['user profile', 'google profile', 'my account info', 'who am i', 'my email'],

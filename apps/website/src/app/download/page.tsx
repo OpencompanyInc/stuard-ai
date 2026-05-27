@@ -10,6 +10,14 @@ export const metadata: Metadata = {
     title: 'Download - Stuard AI',
     description: 'Download Stuard AI for Windows. The local-first desktop assistant.',
     url: 'https://stuard.ai/download',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Stuard AI',
+      },
+    ],
   },
 };
 
@@ -93,7 +101,7 @@ export default function DownloadPage() {
                   className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-gray-900 text-white font-semibold rounded-xl hover:bg-black transition-colors shadow-lg"
                 >
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+                    <path d="M3 3h8.5v8.5H3V3zm9.5 0H21v8.5h-8.5V3zM3 12.5h8.5V21H3v-8.5zm9.5 0H21V21h-8.5v-8.5z" />
                   </svg>
                   Download for Windows
                 </a>

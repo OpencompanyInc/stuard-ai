@@ -1,3 +1,5 @@
+import { clsx } from 'clsx';
+import { useEffect, useState } from 'react';
 import { Loader2, LogIn, Sparkles } from 'lucide-react';
 import CommandPalette from '../CommandPalette';
 import HotkeysHelp from '../HotkeysHelp';
@@ -6,7 +8,7 @@ import { WorkflowOverlay } from '../WorkflowOverlay/WorkflowOverlay';
 import { NotificationProvider, NotificationController } from '../NotificationSystem';
 import { InteractiveTour } from '../onboarding/InteractiveTour';
 import { OnboardingTooltipContainer } from '../onboarding';
-import { AskUserPrompt } from '../chat/modes/window/parts/AskUserPrompt';
+import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
 import { ActiveProjectChip, ExitProjectToast } from '../chat/modes/window/parts/ActiveProjectBar';
 import { ChatView } from '../chat/modes/window/ChatView';
 import { LauncherView } from '../chat/modes/launcher/LauncherView';
@@ -33,6 +35,9 @@ export function AppShell(props: any) {
     askUserPrompt,
     setAskUserPrompt,
     lastError,
+    showCreditsLimitNotice,
+    onDismissCreditsLimitNotice,
+    onAddCredits,
     handleSignIn,
     hasMessages,
     messages,
@@ -49,11 +54,11 @@ export function AppShell(props: any) {
     handleNewChat,
     handleToggleVoice,
     voice,
+    chatMenuOpen,
+    setChatMenuOpen,
     convList,
     loadingConvs,
     handleSelectConversation,
-    chatMenuOpen,
-    setChatMenuOpen,
     chatStatusText,
     ai,
     connectionStatus,
@@ -98,10 +103,12 @@ export function AppShell(props: any) {
     steerTarget,
     setSteerTarget,
     internalSidebarOpen,
+    internalSidebarWidth,
     activeSidebarTab,
     handleToggleInternalSidebar,
     handleCloseInternalSidebar,
     handleSwitchSidebarTab,
+    handleInternalSidebarResize,
     activeProject,
     conversationId,
     handleExitProjectMode,
@@ -110,11 +117,11 @@ export function AppShell(props: any) {
     handlePaste,
     signedIn,
     conversationTitle,
-    handleDeleteConversation,
     inputStatusText,
     inputStatusIcon,
     inputStatusUrgency,
     inputStatusMinutesUntil,
+    inputStatusItems,
     isRecording,
     handleMicClick,
     accessToken,
@@ -132,9 +139,41 @@ export function AppShell(props: any) {
     updateState,
     miniOutputText,
     miniOutputHasContent,
+    miniOutputStreaming,
+    miniOutputPrompt,
     showMiniOutput,
-    setShowMiniOutput
+    setShowMiniOutput,
+    backgroundTaskCount,
+    compactHubTabs,
   } = props;
+
+  // Track maximized state so we can drop the floating padding/rounding when
+  // the user maximizes the window — otherwise "maximize" still shows the
+  // floating card with a gap to the screen edges.
+  const [overlayMaximized, setOverlayMaximized] = useState(false);
+  useEffect(() => {
+    if (overlayMode !== 'window') {
+      setOverlayMaximized(false);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const isMax = await (window as any).desktopAPI?.overlayIsMaximized?.();
+        if (!cancelled) setOverlayMaximized(!!isMax);
+      } catch { /* ignore */ }
+    };
+    void refresh();
+    const unsub = (window as any).desktopAPI?.onOverlayMaximizedChanged?.(({ maximized }: { maximized: boolean }) => {
+      setOverlayMaximized(!!maximized);
+    });
+    return () => {
+      cancelled = true;
+      try { unsub?.(); } catch { /* ignore */ }
+    };
+  }, [overlayMode]);
+
+  const isMaximizedWindow = overlayMode === 'window' && overlayMaximized;
 
   return (
     <NotificationProvider>
@@ -150,32 +189,48 @@ export function AppShell(props: any) {
         {/* Resize handles for user-resizable window - invisible but draggable edges */}
         {showResizeGrips && (
           <>
-            {/* Top edge */}
-            <div className="absolute top-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            {/* Bottom edge */}
-            <div className="absolute bottom-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            {/* Left edge */}
-            <div className="absolute top-2 bottom-2 left-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            {/* Right edge */}
-            <div className="absolute top-2 bottom-2 right-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            {/* Corner handles - larger for easier grabbing */}
-            <div className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            <div className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            <div className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
-            <div className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+            {overlayMode === 'window' ? (
+              <>
+                {/* Window mode: corner grips only so edge strips do not block the input bar */}
+                <div className="absolute top-0 left-0 w-4 h-4 cursor-nwse-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute top-0 right-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+              </>
+            ) : (
+              <>
+                <div className="absolute top-0 left-2 right-2 h-1 cursor-ns-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute bottom-0 left-2 right-2 h-1 cursor-ns-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute top-2 bottom-2 left-0 w-1 cursor-ew-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute top-2 bottom-2 right-0 w-1 cursor-ew-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-[51]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-[51]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-[51]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                <div className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-[51]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+              </>
+            )}
           </>
         )}
-        <div
-          className="w-full h-full overflow-hidden bg-transparent flex flex-col"
-        >
+        <div className="w-full h-full overflow-hidden bg-transparent flex flex-col">
           {overlayMode === 'sidebar' || overlayMode === 'window' ? (
-            <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">
-              {/* Resize indicator in bottom-right corner */}
+            <div
+              className={clsx(
+                'relative h-full w-full overflow-hidden mode-transition overlay-responsive flex flex-col min-h-0',
+                // Window mode floats free, so give the panel a little extra breathing
+                // room (20px) for the drop shadow to fade into; the docked sidebar
+                // stays at 16px, which the ~15px shadow still fits inside.
+                isMaximizedWindow ? 'p-0' : overlayMode === 'window' ? 'p-5' : 'p-4',
+              )}
+              data-overlay-maximized={isMaximizedWindow ? 'true' : 'false'}
+            >
               {showResizeGrips && (
                 <div className="resize-indicator" title="Drag corner to resize" />
               )}
-              {/* Main Content - Full Width */}
-              <div className="flex flex-col h-full w-full relative smooth-resize">
+              {/* Main Content - Full Width (above resize grips; interactive, not drag region) */}
+              <div
+                className="flex flex-col flex-1 min-h-0 w-full relative smooth-resize z-[60]"
+                style={{ WebkitAppRegion: 'no-drag' } as any}
+              >
                 {/* Permission Approval Overlay â€” shows the first queued approval; next auto-appears on dismiss */}
                 {approvalQueue.length > 0 && (() => {
                   const ap = approvalQueue[0];
@@ -200,9 +255,9 @@ export function AppShell(props: any) {
                   );
                 })()}
 
-                {/* In-app Ask User Prompt (shown when window is focused) */}
-                {askUserPrompt && (
-                  <div className="absolute inset-x-0 bottom-16 z-50 px-2">
+                {/* In-app Ask User Prompt — launcher fallback (ChatView handles it when hasMessages) */}
+                {askUserPrompt && !hasMessages && (
+                  <div className="absolute inset-x-0 bottom-16 z-[70] px-2 pointer-events-auto">
                     <AskUserPrompt
                       prompt={askUserPrompt}
                       onRespond={(id, result) => {
@@ -210,17 +265,6 @@ export function AppShell(props: any) {
                         setAskUserPrompt(null);
                       }}
                     />
-                  </div>
-                )}
-
-                {/* Error Notifications */}
-                {lastError?.code === 'monthly_credit_limit_exceeded' && (
-                  <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
-                    <div className="rounded-lg border border-rose-500/30 bg-black/90 backdrop-blur-md p-4">
-                      <h3 className="text-rose-400 font-semibold text-sm">Monthly Credits Exceeded</h3>
-                      <p className="text-white/70 text-xs mt-1 mb-3">You have used all your credits for this month.</p>
-                      <button onClick={() => { try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { } }} className="w-full py-1.5 bg-rose-500 hover:bg-rose-400 rounded text-xs text-black font-bold">Upgrade Plan</button>
-                    </div>
                   </div>
                 )}
 
@@ -270,13 +314,12 @@ export function AppShell(props: any) {
                     onVoiceMuteToggle={voice.toggleMute}
                     voiceTranscripts={voice.transcripts}
                     voiceActiveTools={voice.activeTools}
+                    chatMenuOpen={chatMenuOpen}
+                    onChatMenuOpenChange={setChatMenuOpen}
                     conversations={convList}
                     loadingConversations={loadingConvs}
                     onSelectConversation={handleSelectConversation}
-                    chatMenuOpen={chatMenuOpen}
-                    onChatMenuOpenChange={setChatMenuOpen}
                     statusText={chatStatusText}
-                    modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
                     connectionStatus={connectionStatus}
                     chatMode={chatMode}
                     onChatModeChange={handleChatModeChange as any}
@@ -320,14 +363,24 @@ export function AppShell(props: any) {
                     steerTarget={steerTarget}
                     onSteerTargetChange={setSteerTarget}
                     internalSidebarOpen={internalSidebarOpen}
+                    internalSidebarWidth={internalSidebarWidth}
                     activeSidebarTab={activeSidebarTab}
                     onToggleInternalSidebar={handleToggleInternalSidebar}
                     onCloseInternalSidebar={handleCloseInternalSidebar}
                     onSwitchSidebarTab={handleSwitchSidebarTab}
+                    onInternalSidebarResize={handleInternalSidebarResize}
                     activeProject={activeProject}
                     activeConversationId={conversationId}
                     onExitProjectMode={handleExitProjectMode}
                     onOpenProjectHome={handleOpenProjectHome}
+                    showCreditsLimitNotice={showCreditsLimitNotice}
+                    onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+                    onAddCredits={onAddCredits}
+                    askUserPrompts={askUserPrompt ? [{ id: askUserPrompt.id, tool: 'ask_user', args: askUserPrompt.args, status: 'pending' }] : []}
+                    onAskUserRespond={(id, result) => {
+                      (window as any).desktopAPI?.respondToAskUser?.(id, result);
+                      setAskUserPrompt(null);
+                    }}
                   />
                 ) : (
                   <LauncherView
@@ -337,6 +390,12 @@ export function AppShell(props: any) {
                     contextPaths={contextPaths}
                     onAddContext={handleAddContext}
                     onRemoveContext={handleRemoveContext}
+                    attachments={attachments}
+                    onAttachFiles={handleAttachFiles}
+                    onAttachImages={handleAttachImages}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    onPaste={handlePaste}
+                    onDrop={handleDrop}
                     commands={commands}
                     statusText={inputStatusText}
                     connectionStatus={connectionStatus}
@@ -344,6 +403,12 @@ export function AppShell(props: any) {
                     isRecording={isRecording}
                     accessToken={accessToken}
                     overlayMode={overlayMode}
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSwitchTab={switchTab}
+                    onCloseTab={closeTab}
+                    onAddTab={addTab}
+                    onCollapse={handleShowCompact}
                     voiceActive={false}
                     onToggleVoice={handleToggleVoice}
                     voiceState={voice.state}
@@ -354,12 +419,13 @@ export function AppShell(props: any) {
                     voiceActiveTool={voice.activeTool}
                     voiceActiveTools={voice.activeTools}
                     voiceLastTool={voice.lastTool}
-                    conversations={convList}
-                    loadingConversations={loadingConvs}
-                    onSelectConversation={handleSelectConversation}
                     chatMenuOpen={chatMenuOpen}
                     onChatMenuOpenChange={setChatMenuOpen}
                     onNewChat={handleNewChat}
+                    conversations={convList}
+                    loadingConversations={loadingConvs}
+                    activeConversationId={conversationId}
+                    onSelectConversation={handleSelectConversation}
                     onOpenDashboard={handleOpenDashboard}
                     onToggleExpand={handleShowWindow}
                     onToggleSidebar={handleToggleInternalSidebar}
@@ -377,8 +443,13 @@ export function AppShell(props: any) {
 
                     // Internal Sidebar
                     activeSidebarTab={activeSidebarTab}
+                    internalSidebarWidth={internalSidebarWidth}
                     onCloseInternalSidebar={handleCloseInternalSidebar}
                     onSwitchSidebarTab={handleSwitchSidebarTab}
+                    onInternalSidebarResize={handleInternalSidebarResize}
+                    showCreditsLimitNotice={showCreditsLimitNotice}
+                    onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+                    onAddCredits={onAddCredits}
                   />
                 )}
               </div>
@@ -407,8 +478,8 @@ export function AppShell(props: any) {
                 conversationTitle={conversationTitle}
                 conversations={convList}
                 loadingConversations={loadingConvs}
+                activeConversationId={conversationId}
                 onSelectConversation={handleSelectConversation}
-                onDeleteConversation={handleDeleteConversation}
                 onNewChat={handleNewChat}
                 onStopGeneration={stopGeneration}
                 onChatMenuOpenChange={setChatMenuOpen}
@@ -421,6 +492,8 @@ export function AppShell(props: any) {
                 statusIcon={inputStatusIcon}
                 statusUrgency={inputStatusUrgency}
                 statusMinutesUntil={inputStatusMinutesUntil}
+                statusItems={inputStatusItems}
+                isAiWorking={isStreaming}
                 connectionStatus={connectionStatus}
                 queueDepth={queueDepth}
                 queuedMessages={queuedMessages}
@@ -443,9 +516,13 @@ export function AppShell(props: any) {
                 accessToken={accessToken}
                 miniOutputText={miniOutputText}
                 miniOutputHasContent={miniOutputHasContent}
-                miniOutputStreaming={isStreaming && !!(currentResponse || '').trim()}
+                miniOutputStreaming={miniOutputStreaming}
+                miniOutputPrompt={miniOutputPrompt}
                 showMiniOutput={showMiniOutput}
                 setShowMiniOutput={setShowMiniOutput}
+                backgroundTaskCount={backgroundTaskCount}
+                compactHubTabs={compactHubTabs}
+                currentToolCalls={currentToolCalls}
                 onSubmitToolOutput={submitToolOutput}
                 onGenUIResponse={handleGenUIResponse}
               />

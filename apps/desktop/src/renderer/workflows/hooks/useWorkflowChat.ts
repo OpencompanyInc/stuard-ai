@@ -4,7 +4,7 @@ import type { ModelSourcePreference, ReasoningLevel } from '../../hooks/usePrefe
 import { mergeStreamingText } from '../../utils/streamMerge';
 import { StreamItem, ToolEvent } from '../components/ChatPanel';
 import { specToDesignerModel } from '../utils/conversions';
-import { formatWorkflowSchematic, type WorkflowValidationIssue } from '../../../../../../shared/workflow-topology';
+import { formatWorkflowSchematic, type WorkflowValidationIssue } from '@stuardai/workflow-core/topology';
 import {
   ChatSession,
   createSession,
@@ -75,6 +75,142 @@ function toFriendlyChatError(err: any): string {
   }
 
   return rawMessage || 'something went wrong while processing your request.';
+}
+
+const MAX_MESSAGES_IN_MEMORY = 60;
+const STREAM_FLUSH_MS = 90;
+const MAX_ASSISTANT_TEXT_CHARS = 48_000;
+const MAX_REASONING_CHARS = 18_000;
+const MAX_PART_TEXT_CHARS = 18_000;
+const MAX_TOOL_JSON_CHARS = 36_000;
+const MAX_WORKFLOW_SNAPSHOT_JSON_CHARS = 240_000;
+
+function clipText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n\n[truncated ${value.length - maxChars} chars]`;
+}
+
+function appendBoundedText(current: string, chunk: string, maxChars: number): string {
+  if (!chunk) return current;
+  if (current.length >= maxChars) return current;
+  const remaining = maxChars - current.length;
+  if (chunk.length <= remaining) return current + chunk;
+  return `${current}${chunk.slice(0, remaining)}\n\n[truncated additional output]`;
+}
+
+function compactLargeValue(value: any, maxJsonChars = MAX_TOOL_JSON_CHARS): any {
+  if (value == null) return value;
+  if (typeof value === 'string') return clipText(value, Math.min(maxJsonChars, MAX_ASSISTANT_TEXT_CHARS));
+  if (typeof value !== 'object') return value;
+
+  try {
+    const json = JSON.stringify(value);
+    if (json.length <= maxJsonChars) return value;
+  } catch {
+    return '[unserializable value]';
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      __truncated: true,
+      itemCount: value.length,
+      preview: value.slice(0, 24).map((item) => compactLargeValue(item, Math.max(1_000, Math.floor(maxJsonChars / 24)))),
+    };
+  }
+
+  const out: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const lower = key.toLowerCase();
+    if (
+      lower.includes('base64') ||
+      lower === 'data' ||
+      lower === 'dataurl' ||
+      lower === 'imagedata' ||
+      lower === 'audiodata' ||
+      lower === 'videodata' ||
+      lower === 'buffer'
+    ) {
+      out[key] = typeof entry === 'string' ? `[omitted ${entry.length} chars]` : '[omitted binary payload]';
+      continue;
+    }
+    if (lower === 'workflow' || lower === 'spec') {
+      const spec: any = entry;
+      out[`${key}Summary`] = spec && typeof spec === 'object'
+        ? {
+          triggers: Array.isArray(spec.triggers) ? spec.triggers.length : undefined,
+          nodes: Array.isArray(spec.nodes) ? spec.nodes.length : undefined,
+          steps: Array.isArray(spec.steps) ? spec.steps.length : undefined,
+          wires: Array.isArray(spec.wires) ? spec.wires.length : undefined,
+        }
+        : '[omitted large workflow payload]';
+      continue;
+    }
+    out[key] = compactLargeValue(entry, Math.max(1_000, Math.floor(maxJsonChars / 8)));
+  }
+  out.__truncated = true;
+  return out;
+}
+
+function compactToolResult(tool: string, result: any): any {
+  if (!result || typeof result !== 'object') return compactLargeValue(result);
+  const normalizedTool = String(tool || '').toLowerCase();
+  if (normalizedTool === 'workflow_modify' || normalizedTool === 'modify_workflow' || normalizedTool === 'create_workflow') {
+    const workflow = result.workflow || result.spec;
+    return {
+      ok: result.ok,
+      message: result.message || (workflow ? 'Updates applied successfully' : undefined),
+      error: result.error,
+      errorDetails: compactLargeValue(result.errorDetails, 10_000),
+      changes: compactLargeValue(result.changes, 16_000),
+      diagram: compactLargeValue(result.diagram, 16_000),
+      affectedFlow: compactLargeValue(result.affectedFlow, 16_000),
+      workflowSummary: workflow && typeof workflow === 'object'
+        ? {
+          triggers: Array.isArray(workflow.triggers) ? workflow.triggers.length : undefined,
+          nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : undefined,
+          steps: Array.isArray(workflow.steps) ? workflow.steps.length : undefined,
+          wires: Array.isArray(workflow.wires) ? workflow.wires.length : undefined,
+        }
+        : undefined,
+    };
+  }
+  return compactLargeValue(result);
+}
+
+function compactStreamItem(item: StreamItem): StreamItem {
+  if (item.type === 'text') return { type: 'text', content: clipText(item.content || '', MAX_PART_TEXT_CHARS) };
+  if (item.type === 'reasoning') return { type: 'reasoning', content: clipText(item.content || '', MAX_REASONING_CHARS) };
+  return {
+    type: 'tool',
+    event: {
+      ...item.event,
+      args: compactLargeValue(item.event.args, 10_000),
+      argsText: typeof item.event.argsText === 'string' ? clipText(item.event.argsText, 10_000) : item.event.argsText,
+      result: compactToolResult(item.event.tool, item.event.result),
+      workflowBefore: item.event.workflowBefore,
+    },
+  };
+}
+
+function compactStreamItems(items: StreamItem[]): StreamItem[] {
+  return items.slice(-80).map(compactStreamItem);
+}
+
+function trimMessagesForMemory(messages: Message[]): Message[] {
+  if (messages.length <= MAX_MESSAGES_IN_MEMORY) return messages;
+  const first = messages[0]?.role === 'assistant' ? [messages[0]] : [];
+  return [...first, ...messages.slice(-(MAX_MESSAGES_IN_MEMORY - first.length))];
+}
+
+function cloneWorkflowSnapshot(workflow: any): any {
+  if (!workflow) return undefined;
+  try {
+    const json = JSON.stringify(workflow);
+    if (json.length > MAX_WORKFLOW_SNAPSHOT_JSON_CHARS) return undefined;
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
 }
 
 export function useWorkflowChat({
@@ -177,44 +313,33 @@ export function useWorkflowChat({
     setMessages([{ role: 'assistant', content: 'Hi! I\'m your Workflow Architect. Describe what you want to change or add to this workflow.' }]);
   }, [workflowId]);
 
-  // Save messages to current session whenever they change
+  // Save completed chat state, not every live stream chunk. Persisting draft
+  // deltas during generation was a large source of stringify churn and RAM use.
   useEffect(() => {
     if (!currentSessionId) return;
+    if (messages.length <= 1) return;
 
-    const hasStreamingDraft = busy && (streamItems.length > 0 || reasoningText.trim().length > 0);
-    const draftContent = streamItems
-      .filter((item): item is Extract<StreamItem, { type: 'text' }> => item.type === 'text')
-      .map(item => item.content)
-      .join('');
+    const timer = window.setTimeout(() => {
+      const storableMessages = trimMessagesForMemory(messages).map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? clipText(m.content, MAX_ASSISTANT_TEXT_CHARS) : '',
+        images: Array.isArray(m.images)
+          ? m.images.map(img => ({ path: img.path, name: img.name, mimeType: img.mimeType }))
+          : undefined,
+        parts: Array.isArray(m.parts) ? compactStreamItems(m.parts as StreamItem[]) : undefined,
+        reasoning: typeof m.reasoning === 'string' ? clipText(m.reasoning, MAX_REASONING_CHARS) : undefined,
+        draft: undefined,
+        usage: m.usage,
+        modelId: m.modelId,
+      }));
+      saveSession(currentSessionId, storableMessages);
+      if (workflowId) {
+        setPastSessions(getSessionsForWorkflow(workflowId));
+      }
+    }, busy ? 2_000 : 250);
 
-    const persistedMessages: Message[] = hasStreamingDraft
-      ? [...messages, {
-        role: 'assistant',
-        content: draftContent,
-        parts: streamItems.length > 0 ? [...streamItems] : undefined,
-        reasoning: reasoningText || undefined,
-        draft: true,
-      }]
-      : messages;
-
-    if (persistedMessages.length <= 1) return;
-
-    const storableMessages = persistedMessages.map(m => ({
-      role: m.role,
-      content: m.content,
-      images: m.images,
-      parts: m.parts,
-      reasoning: m.reasoning,
-      draft: m.draft,
-      usage: m.usage,
-      modelId: m.modelId,
-    }));
-    saveSession(currentSessionId, storableMessages);
-    // Refresh past sessions list
-    if (workflowId) {
-      setPastSessions(getSessionsForWorkflow(workflowId));
-    }
-  }, [messages, currentSessionId, workflowId, streamItems, reasoningText, busy]);
+    return () => window.clearTimeout(timer);
+  }, [messages, currentSessionId, workflowId, busy]);
 
   // Create a new chat session for current workflow
   const newSession = useCallback(() => {
@@ -293,7 +418,7 @@ export function useWorkflowChat({
       ? `\n\n[Attached ${attachedImages.length} image(s) for reference: ${attachedImages.map((i: any) => i.name).join(', ')}]`
       : '';
     const displayContent = text + imageRefs;
-    const newMessages = [...messages, { role: 'user' as const, content: displayContent, images: attachedImages }];
+    const newMessages = trimMessagesForMemory([...messages, { role: 'user' as const, content: displayContent, images: attachedImages }]);
     setMessages(newMessages);
 
     // Declare outside try so catch can access accumulated work for error recovery
@@ -302,6 +427,25 @@ export function useWorkflowChat({
     let currentReasoning = "";
     let finalUsage: Record<string, any> | undefined;
     let finalModelId: string | undefined;
+    let streamFlushTimer: number | null = null;
+
+    const flushStreamState = () => {
+      if (streamFlushTimer !== null) {
+        window.clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+      }
+      setStreamItems(compactStreamItems(currentItems));
+      setReasoningText(clipText(currentReasoning, MAX_REASONING_CHARS));
+    };
+
+    const scheduleStreamState = () => {
+      if (streamFlushTimer !== null) return;
+      streamFlushTimer = window.setTimeout(() => {
+        streamFlushTimer = null;
+        setStreamItems(compactStreamItems(currentItems));
+        setReasoningText(clipText(currentReasoning, MAX_REASONING_CHARS));
+      }, STREAM_FLUSH_MS);
+    };
 
     try {
       // Build context prompts (reused from ChatPanel)
@@ -472,7 +616,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
               payload.images = attachedImages.map((img: any) => ({
                 name: img.name,
                 path: img.path,
-                data: img.data,
+                data: img.data || img.dataUrl,
                 mimeType: img.mimeType
               }));
             }
@@ -525,7 +669,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                       } else {
                         currentItems.push({ type: 'tool', event: approvalEvent });
                       }
-                      setStreamItems([...currentItems]);
+                      flushStreamState();
 
                       const allowed = await requestLocalToolApproval({
                         id,
@@ -600,14 +744,17 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
               if (evt.event === 'delta') {
                 const chunk = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!chunk) return;
-                fullText += chunk;
+                fullText = appendBoundedText(fullText, chunk, MAX_ASSISTANT_TEXT_CHARS);
                 const last = currentItems[currentItems.length - 1];
                 if (last && last.type === 'text') {
-                  currentItems[currentItems.length - 1] = { ...last, content: last.content + chunk };
+                  currentItems[currentItems.length - 1] = {
+                    ...last,
+                    content: appendBoundedText(last.content, chunk, MAX_PART_TEXT_CHARS),
+                  };
                 } else {
-                  currentItems.push({ type: 'text', content: chunk });
+                  currentItems.push({ type: 'text', content: appendBoundedText('', chunk, MAX_PART_TEXT_CHARS) });
                 }
-                setStreamItems([...currentItems]);
+                scheduleStreamState();
 
               } else if (evt.event === 'reasoning' || evt.event === 'reasoning_start' || evt.event === 'reasoning_end') {
                 if (evt.event === 'reasoning_start') {
@@ -616,7 +763,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                   const last = currentItems[currentItems.length - 1];
                   if (!last || last.type !== 'reasoning' || (last as any).content) {
                     currentItems.push({ type: 'reasoning', content: '' });
-                    setStreamItems([...currentItems]);
+                    scheduleStreamState();
                   }
                   setShowReasoning(true);
                   return;
@@ -625,8 +772,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 const r = typeof evt.data?.text === 'string' ? evt.data.text : '';
                 if (!r) return;
                 // Keep aggregated reasoningText for persisted message metadata / backward compat.
-                currentReasoning = mergeStreamingText(currentReasoning, r);
-                setReasoningText(currentReasoning);
+                currentReasoning = clipText(mergeStreamingText(currentReasoning, r), MAX_REASONING_CHARS);
                 // Append to the last reasoning chunk if it is the most recent item,
                 // otherwise open a new reasoning chunk. This way each tool call naturally
                 // breaks up the chain-of-thought into separate inline blocks.
@@ -634,12 +780,12 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 if (last && last.type === 'reasoning') {
                   currentItems[currentItems.length - 1] = {
                     type: 'reasoning',
-                    content: mergeStreamingText(last.content, r),
+                    content: clipText(mergeStreamingText(last.content, r), MAX_REASONING_CHARS),
                   };
                 } else {
                   currentItems.push({ type: 'reasoning', content: r });
                 }
-                setStreamItems([...currentItems]);
+                scheduleStreamState();
                 setShowReasoning(true);
 
               } else if (evt.event === 'tool_event') {
@@ -775,9 +921,9 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                     event: {
                       ...existing,
                       status: rawStatus || existing.status,
-                      args: d.args ?? existing.args,
-                      argsText: newArgsText,
-                      result: d.result ?? existing.result,
+                      args: compactLargeValue(d.args ?? existing.args, 10_000),
+                      argsText: typeof newArgsText === 'string' ? clipText(newArgsText, 10_000) : newArgsText,
+                      result: d.result !== undefined ? compactToolResult(tool, d.result) : existing.result,
                       // Preserve the workflowBefore snapshot
                       workflowBefore: existing.workflowBefore
                     }
@@ -785,9 +931,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 } else if (id) {
                   // For workflow modification tools, capture current model as snapshot for undo
                   const isModifyTool = tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'create_workflow';
-                  const workflowSnapshot = isModifyTool && model
-                    ? JSON.parse(JSON.stringify(model))
-                    : undefined;
+                  const workflowSnapshot = isModifyTool && model ? cloneWorkflowSnapshot(model) : undefined;
 
                   currentItems.push({
                     type: 'tool',
@@ -795,15 +939,15 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                       ts: new Date().toISOString(),
                       tool,
                       status: rawStatus,
-                      args: d.args ?? d.step ?? undefined,
-                      argsText: typeof d.args === 'string' ? d.args : '',
+                      args: compactLargeValue(d.args ?? d.step ?? undefined, 10_000),
+                      argsText: typeof d.args === 'string' ? clipText(d.args, 10_000) : '',
                       id,
-                      result: d.result,
+                      result: compactToolResult(tool, d.result),
                       workflowBefore: workflowSnapshot
                     }
                   });
                 }
-                setStreamItems([...currentItems]);
+                flushStreamState();
               }
 
             } else if (msg.type === 'final') {
@@ -832,7 +976,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 type: 'text',
                 content: '\n\n⚠️ Received an unexpected response chunk, continuing...\n',
               });
-              setStreamItems([...currentItems]);
+              flushStreamState();
             }
           }
         };
@@ -861,6 +1005,10 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
 
       // Finish
       wsRef.current = null;
+      if (streamFlushTimer !== null) {
+        window.clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+      }
       setStreamItems([]);
       let responseText = abortedRef.current ? (fullText || '(Stopped by user)') : (fullText || "Done.");
       let newSpec = null as any;
@@ -879,26 +1027,30 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
         responseText += "\n\n(Workflow updated)";
       }
 
-      setMessages(prev => [...prev, {
+      setMessages(prev => trimMessagesForMemory([...prev, {
         role: 'assistant',
-        content: responseText,
-        parts: currentItems.length > 0 ? currentItems : undefined,
-        reasoning: currentReasoning || undefined,
+        content: clipText(responseText, MAX_ASSISTANT_TEXT_CHARS),
+        parts: currentItems.length > 0 ? compactStreamItems(currentItems) : undefined,
+        reasoning: currentReasoning ? clipText(currentReasoning, MAX_REASONING_CHARS) : undefined,
         usage: finalUsage,
         modelId: finalModelId,
-      }]);
+      }]));
 
     } catch (e: any) {
       const friendly = `Error: ${toFriendlyChatError(e)}`;
       // Preserve accumulated tool events and reasoning so users see what the AI did before failing
-      setMessages(prev => [...prev, {
+      setMessages(prev => trimMessagesForMemory([...prev, {
         role: 'assistant',
         content: friendly,
-        parts: currentItems.length > 0 ? [...currentItems] : undefined,
-        reasoning: currentReasoning || undefined
-      }]);
+        parts: currentItems.length > 0 ? compactStreamItems(currentItems) : undefined,
+        reasoning: currentReasoning ? clipText(currentReasoning, MAX_REASONING_CHARS) : undefined
+      }]));
     } finally {
       wsRef.current = null;
+      if (streamFlushTimer !== null) {
+        window.clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+      }
       for (const pending of approvalResolversRef.current.values()) {
         window.clearTimeout(pending.timer);
         pending.resolve(false);

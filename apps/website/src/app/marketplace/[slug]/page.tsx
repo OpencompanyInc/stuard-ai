@@ -107,11 +107,20 @@ export async function generateMetadata({
       publishedTime: workflow.published_at,
       authors: [workflow.publisher_name],
       tags: workflow.tags,
+      images: [
+        {
+          url: '/og-image.png',
+          width: 1200,
+          height: 630,
+          alt: `${workflow.name} on Stuard AI`,
+        },
+      ],
     },
     twitter: {
       card: 'summary_large_image',
       title: workflow.name,
       description,
+      images: ['/og-image.png'],
     },
     alternates: {
       canonical: `https://stuard.ai/marketplace/${workflow.slug}`,

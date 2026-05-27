@@ -10,7 +10,7 @@ from aiohttp import web
 from browser_server import state
 from browser_server.utils import _safe_json, _ok, _err, _clamp_int, _make_json_safe
 from browser_server.lifecycle import (
-    _ensure_browser, _page_is_alive, _get_page_url, _get_page_title,
+    _ensure_browser_session, _page_is_alive, _get_page_url, _get_page_title,
     _evaluate, _wait_for_selector, _capture_screenshot, _cdp_click_at,
 )
 
@@ -19,7 +19,7 @@ async def handle_screenshot(req: web.Request) -> web.Response:
     body = await _safe_json(req) if req.content_length else {}
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -122,7 +122,7 @@ async def handle_click_at(req: web.Request) -> web.Response:
     click_type = str(body.get("type", "click"))
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -183,7 +183,7 @@ async def handle_content(req: web.Request) -> web.Response:
     body = await _safe_json(req) if req.content_length else {}
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -631,7 +631,7 @@ async def handle_execute_script(req: web.Request) -> web.Response:
     )
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -665,7 +665,7 @@ async def handle_scroll(req: web.Request) -> web.Response:
     selector = body.get("selector")
 
     async with state._lock:
-        ok, err = await _ensure_browser()
+        ok, err = await _ensure_browser_session(body)
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:

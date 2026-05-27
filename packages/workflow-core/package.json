@@ -1,0 +1,22 @@
+{
+  "name": "@stuardai/workflow-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./topology": "./src/topology.ts",
+    "./compiler": "./src/compiler.ts",
+    "./guards": "./src/guards.ts",
+    "./shortcuts": "./src/shortcuts.ts",
+    "./builder": "./src/builder.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

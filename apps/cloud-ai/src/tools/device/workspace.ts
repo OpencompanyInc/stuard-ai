@@ -47,9 +47,11 @@ export const workspace_delete_file = makeLocalTool(
 
 export const workspace_list_files = makeLocalTool(
   'workspace_list_files',
-  'List files and folders in the current workflow\'s workspace directory (or a subpath).',
+  'List files and folders in the current workflow\'s workspace directory (or a subpath). Returns up to 500 entries by default (hard max 2000). Use limit/offset to paginate.',
   z.object({
     path: z.string().optional().describe('Subpath to list (default: workspace root)'),
+    limit: z.number().int().positive().optional().describe('Max entries to return (default 500, hard max 2000)'),
+    offset: z.number().int().nonnegative().optional().describe('Number of entries to skip (default 0)'),
     flowId: z.string().optional().describe('Auto-injected by engine'),
   }),
   z.object({
@@ -61,6 +63,9 @@ export const workspace_list_files = makeLocalTool(
       size: z.number().optional(),
       updatedAt: z.string().optional(),
     })).optional(),
+    count: z.number().optional(),
+    truncated: z.boolean().optional(),
+    total: z.number().optional(),
     error: z.string().optional(),
   }),
 );

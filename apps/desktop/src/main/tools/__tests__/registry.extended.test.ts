@@ -93,6 +93,8 @@ describe('Tool Registry - Extended Tests', () => {
       'cli_agent_send',
       'cli_agent_read',
       'cli_agent_status',
+      'cli_agent_wait_for',
+      'cli_agent_wait_idle',
       'cli_agent_stop',
     ];
 

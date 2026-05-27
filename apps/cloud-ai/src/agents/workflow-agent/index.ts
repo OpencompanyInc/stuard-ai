@@ -29,7 +29,7 @@ import {
   setActiveBridge,
   withActiveBridgeContext,
 } from '../../tools/device/shared';
-import { executeStep, listWorkflows, inspectWorkflow, loadWorkflow } from './tools';
+import { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
 import { searchWorkflowDocs } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
@@ -72,6 +72,15 @@ function normalizeWorkflowAgentOptions(modelIdOrOptions?: string | WorkflowAgent
   return modelIdOrOptions || {};
 }
 
+function compactForLog(value: any, maxLength = 4000): string {
+  try {
+    const json = JSON.stringify(value);
+    return json.length > maxLength ? `${json.slice(0, maxLength)}...<truncated ${json.length - maxLength} chars>` : json;
+  } catch {
+    return String(value);
+  }
+}
+
 function createLoggedTool(tool: any, name: string) {
   const inputSchema = tool.inputSchema || tool.parameters;
   return {
@@ -79,10 +88,10 @@ function createLoggedTool(tool: any, name: string) {
     ...(inputSchema ? { inputSchema: coerceToolInputSchema(inputSchema) } : {}),
     execute: async (args: any, runCtx?: any) => {
       const normalizedArgs = inputSchema ? normalizeToolInputForSchema(inputSchema, args) : args;
-      console.log(`[workflow-agent] Tool call: ${name}`, JSON.stringify(normalizedArgs, null, 2));
+      console.log(`[workflow-agent] Tool call: ${name}`, compactForLog(normalizedArgs));
       try {
         const result = await tool.execute(normalizedArgs, runCtx);
-        console.log(`[workflow-agent] Tool result: ${name}`, JSON.stringify(result, null, 2));
+        console.log(`[workflow-agent] Tool result: ${name}`, compactForLog(result));
         return result;
       } catch (error) {
         console.error(`[workflow-agent] Tool error: ${name}`, error);
@@ -171,8 +180,8 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
     modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
     // 7. Execute step (sis execute)
     execute_step: createLoggedTool(executeStep, 'execute_step'),
-    // 8. List workflows
-    list_workflows: createLoggedTool(listWorkflows, 'list_workflows'),
+    // 8. Search workflows
+    search_workflows: createLoggedTool(searchWorkflows, 'search_workflows'),
     // 9. Stop workflow (canonical name - matches the delegate pack)
     stop_automation: createLoggedTool(stop_automation, 'stop_automation'),
     // 10. Web search
@@ -249,8 +258,12 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
     ? `${WORKFLOW_SYSTEM_PROMPT}\n\n${options.instructionsSuffix}`
     : WORKFLOW_SYSTEM_PROMPT;
 
-  // Determine if we should use thinking mode
+  // Determine if we should use thinking mode. Keep thought text out of the
+  // stream by default; exposing it can dominate workflow-agent token usage
+  // without improving the edited workflow.
   const useThinking = provider === 'google' && modelId.includes('gemini-3');
+  const includeThoughts = String(process.env.WORKFLOW_INCLUDE_THOUGHTS || '').toLowerCase() === 'true';
+  const thinkingLevel = process.env.WORKFLOW_THINKING_LEVEL || 'medium';
 
   // Create agent with enhanced logging
   const agent = new Agent({
@@ -268,7 +281,7 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
   // Add message logging and inject providerOptions for thinking at stream level
   const originalStream = agent.stream.bind(agent);
   (agent as any).stream = async (input: any, options?: any) => {
-    console.log('[workflow-agent] Input message:', JSON.stringify(input, null, 2));
+    console.log('[workflow-agent] Input message:', compactForLog(input, 6000));
     
     // Inject thinkingConfig at the stream call level for Gemini 3 models
     const mergedOptions = useThinking
@@ -279,8 +292,8 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
             google: {
               ...options?.providerOptions?.google,
               thinkingConfig: {
-                includeThoughts: true,
-                thinkingLevel: 'high',
+                includeThoughts,
+                thinkingLevel,
               },
             },
           },
@@ -316,7 +329,7 @@ export async function getWorkflowAgentForUser(
 }
 
 // Re-export tools for external use
-export { executeStep, listWorkflows, inspectWorkflow, loadWorkflow } from './tools';
+export { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
 export { searchWorkflowDocs } from './docs';
 export { deployWorkflow } from './deploy';
 export { workflowModifyTool } from '../../tools/workflow';

@@ -195,12 +195,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                             },
                             code: ({ node, inline, className, children, ...props }: any) => {
                               return inline ? (
-                                  <code className="bg-slate-100 text-slate-800 px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-slate-200 shadow-sm align-middle" {...props}>
+                                  <code className="bg-theme-hover text-theme-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-theme shadow-sm align-middle" {...props}>
                                       {children}
                                   </code>
                               ) : (
-                                  <pre className="block p-3 rounded-lg bg-white border border-slate-200 shadow-sm overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7] my-2">
-                                      <code className={clsx(className, "text-[12px] text-slate-800")} {...props}>
+                                  <pre className="block p-3 rounded-lg bg-theme-card border border-theme shadow-sm overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7] my-2">
+                                      <code className={clsx(className, "text-[12px] text-theme-fg")} {...props}>
                                           {children}
                                       </code>
                                   </pre>

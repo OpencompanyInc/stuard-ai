@@ -1,10 +1,14 @@
 /**
  * WorkflowCanvas - The visual canvas for rendering workflow nodes and wires
  */
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { MousePointer2, ZoomIn, ZoomOut, Maximize2, Trash2, LayoutGrid } from "lucide-react";
 import { DiscoverTips } from "./DiscoverTips";
 import { WorkflowNode } from "./WorkflowNodeCard";
+import { WorkflowMinimap } from "./WorkflowMinimap";
+import { WorkflowGroupBox } from "./WorkflowGroupBox";
+import { buildGroupRender, resolveEndpoint } from "../utils/groupGeometry";
+import { useWorkflowGroupsContext } from "../WorkflowGroupsContext";
 import type { DesignerModel, DesignerWire } from "../types";
 import type { StepExecutionStatus } from "./WorkflowNodeCard";
 import type { AlignmentGuide } from "../utils/alignment";
@@ -35,10 +39,11 @@ interface WorkflowCanvasProps {
   alignmentGuides?: AlignmentGuide[];
   zoom?: number;
   selectedWireIndex?: number | null;
-  onWheel?: (e: React.WheelEvent) => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onZoomReset?: () => void;
+  onZoomFit?: () => void;
+  bindWheelTarget?: (el: HTMLDivElement | null) => () => void;
   onAutoOrganize?: () => void;
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
@@ -64,7 +69,7 @@ interface WorkflowCanvasProps {
 
 export function WorkflowCanvas({
   model, selectedId, selectedNodeId, selectedNodeIds, connectingFrom, reconnecting, executionState, size,
-  canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onWheel, onZoomIn, onZoomOut, onZoomReset, onAutoOrganize,
+  canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onZoomIn, onZoomOut, onZoomReset, onZoomFit, bindWheelTarget, onAutoOrganize,
   onDragOver, onDrop, onMouseMove, onMouseUp, onMouseLeave, onCanvasClick,
   onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu,
   connectingStreamFrom, onNodeStreamConnect,
@@ -74,6 +79,17 @@ export function WorkflowCanvas({
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
   const safeWires: DesignerWire[] = Array.isArray((model as any)?.wires) ? ((model as any).wires as DesignerWire[]) : [];
+
+  // Editor-only visual groups (sidecar — never part of the model/AI).
+  const groupsCtx = useWorkflowGroupsContext();
+  const groups = groupsCtx?.groups ?? [];
+  const groupRender = useMemo(() => buildGroupRender(groups, model), [groups, model]);
+  const nodesById = useMemo(() => {
+    const m = new Map<string, { id: string; position: { x: number; y: number } }>();
+    for (const tr of model.triggers) m.set(tr.id, tr);
+    for (const nd of model.nodes) m.set(nd.id, nd);
+    return m;
+  }, [model]);
 
   // Compute which nodes have stream wires connected (for showing stream ports)
   const streamPortInfo = useMemo(() => {
@@ -121,30 +137,69 @@ export function WorkflowCanvas({
     h: size.h * zoom
   };
 
-  const gridSize = 24 * zoom;
+  const GRID_STEP = 24;
+  const [gridOffset, setGridOffset] = useState({ x: 0, y: 0 });
+
+  const syncGrid = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    setGridOffset({
+      x: -(el.scrollLeft % GRID_STEP),
+      y: -(el.scrollTop % GRID_STEP),
+    });
+  }, [canvasRef]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    syncGrid();
+    el.addEventListener("scroll", syncGrid, { passive: true });
+    window.addEventListener("resize", syncGrid);
+    return () => {
+      el.removeEventListener("scroll", syncGrid);
+      window.removeEventListener("resize", syncGrid);
+    };
+  }, [canvasRef, syncGrid, zoom, scaledSize.w, scaledSize.h]);
+
+  const wheelCleanupRef = useRef<(() => void) | null>(null);
+  const mergedCanvasRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      (canvasRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      wheelCleanupRef.current?.();
+      wheelCleanupRef.current = bindWheelTarget?.(node) ?? null;
+    },
+    [canvasRef, bindWheelTarget],
+  );
+
+  useEffect(() => () => wheelCleanupRef.current?.(), []);
 
   return (
     <div className="w-full h-full relative overflow-hidden wf-bg-canvas" data-onboarding="workflow-canvas">
-      {/* Scrollable canvas area */}
+      {/* Scrollable canvas area — dot grid tiles infinitely across the viewport */}
       <div
-        ref={canvasRef}
-        className="absolute inset-0 overflow-auto scrollbar-minimal"
-        style={{ cursor: 'default' }}
+        ref={mergedCanvasRef}
+        className="absolute inset-0 overflow-auto scrollbar-minimal wf-dot-grid"
+        style={{
+          cursor: 'default',
+          backgroundSize: `${GRID_STEP}px ${GRID_STEP}px`,
+          backgroundPosition: `${gridOffset.x}px ${gridOffset.y}px`,
+        }}
         onDragOver={onDragOver}
         onDrop={onDrop}
         onMouseMove={(e) => {
-          const rect = canvasRef.current?.getBoundingClientRect();
-          if (rect) {
-            const cx = (e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0)) / zoom;
-            const cy = (e.clientY - rect.top + (canvasRef.current?.scrollTop || 0)) / zoom;
-            setMousePos({ x: cx, y: cy });
+          if (connectingStreamFrom) {
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (rect) {
+              const cx = (e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0)) / zoom;
+              const cy = (e.clientY - rect.top + (canvasRef.current?.scrollTop || 0)) / zoom;
+              setMousePos({ x: cx, y: cy });
+            }
           }
           onMouseMove?.(e);
         }}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseLeave}
         onClick={onCanvasClick}
-        onWheel={onWheel}
         onContextMenu={onCanvasContextMenu}
         onMouseDown={(e) => {
           // Prevent browser auto-scroll on middle click
@@ -154,25 +209,11 @@ export function WorkflowCanvas({
           }
         }}
       >
-        {/* Spacer div - establishes the correct scrollable area matching zoomed content */}
+        {/* Scrollable content wrapper */}
+        <div style={{ width: scaledSize.w, height: scaledSize.h, position: 'relative' }}>
+        {/* Scaled Content Container */}
         <div
-          style={{ width: scaledSize.w, height: scaledSize.h, pointerEvents: 'none' }}
-          aria-hidden
-        />
-
-        {/* Dot Grid Background - scales with zoom, covers full scrollable area */}
-        <div
-          className="absolute inset-0 pointer-events-none wf-dot-grid"
-          style={{
-            width: scaledSize.w,
-            height: scaledSize.h,
-            backgroundSize: `${gridSize}px ${gridSize}px`
-          }}
-        />
-
-        {/* Scaled Content Container - positioned absolutely over the spacer */}
-        <div
-          className="absolute top-0 left-0 origin-top-left"
+          className="absolute top-0 left-0 origin-top-left wf-canvas-content"
           style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'top left',
@@ -180,6 +221,27 @@ export function WorkflowCanvas({
             height: size.h,
           }}
         >
+          {/* Expanded group frames — drawn behind wires + nodes */}
+          {groupRender.expandedFrames.map(({ group, box }) => {
+            const selected = group.memberIds.length > 0 && group.memberIds.every(id => selectedNodeIds.has(id));
+            return (
+            <WorkflowGroupBox
+              key={group.id}
+              group={group}
+              box={box}
+              variant="frame"
+              memberCount={groupRender.memberCountByGroupId.get(group.id) || group.memberIds.length}
+              zoom={zoom}
+              selected={selected}
+              onSelect={() => groupsCtx?.selectGroup(group)}
+              onToggleCollapse={() => groupsCtx?.toggleCollapsed(group.id)}
+              onRename={(name) => groupsCtx?.renameGroup(group.id, name)}
+              onUngroup={() => groupsCtx?.ungroup(group.id)}
+              onMoveBy={(dx, dy) => groupsCtx?.moveGroupBy(group.id, dx, dy)}
+            />
+            );
+          })}
+
           <svg className="absolute inset-0 pointer-events-none overflow-visible" width={size.w} height={size.h}>
             {/* Wire animation defs */}
             <defs>
@@ -298,9 +360,13 @@ export function WorkflowCanvas({
               }
 
               return safeWires.map((w, i) => {
-                const all = [...model.triggers, ...model.nodes];
-                const f = all.find(n => n.id === w.from);
-                const t = all.find(n => n.id === w.to);
+                // Group-aware endpoints: hide wires fully internal to a collapsed
+                // group; re-route wires crossing a collapsed boundary to the tile.
+                const gFrom = groupRender.collapsedGroupByMember.get(w.from);
+                const gTo = groupRender.collapsedGroupByMember.get(w.to);
+                if (gFrom && gTo && gFrom.id === gTo.id) return null;
+                const f = resolveEndpoint(w.from, nodesById, groupRender);
+                const t = resolveEndpoint(w.to, nodesById, groupRender);
                 if (!f || !t) return null;
 
                 const isStreamWire = !!(w as any).stream;
@@ -835,6 +901,7 @@ export function WorkflowCanvas({
 
           {/* Render trigger nodes */}
           {model.triggers.map(n => {
+            if (groupRender.hiddenNodeIds.has(n.id)) return null;
             // Check if this node is a valid reconnect target
             const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
             const isReconnectTarget = reconnecting && wire && (
@@ -866,6 +933,7 @@ export function WorkflowCanvas({
 
           {/* Render step nodes */}
           {model.nodes.map(n => {
+            if (groupRender.hiddenNodeIds.has(n.id)) return null;
             // Check if this node is a valid reconnect target
             const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
             const isReconnectTarget = reconnecting && wire && (
@@ -890,6 +958,27 @@ export function WorkflowCanvas({
                 onContextMenu={e => onNodeContextMenu?.(n.id, e)}
                 onConnect={() => onNodeConnect?.(n.id)}
                 onStreamConnect={() => onNodeStreamConnect?.(n.id)}
+              />
+            );
+          })}
+
+          {/* Collapsed group tiles — stand in for hidden members */}
+          {groupRender.collapsedTiles.map(({ group, box }) => {
+            const selected = group.memberIds.length > 0 && group.memberIds.every(id => selectedNodeIds.has(id));
+            return (
+              <WorkflowGroupBox
+                key={group.id}
+                group={group}
+                box={box}
+                variant="collapsed"
+                memberCount={groupRender.memberCountByGroupId.get(group.id) || group.memberIds.length}
+                zoom={zoom}
+                selected={selected}
+                onSelect={() => groupsCtx?.selectGroup(group)}
+                onToggleCollapse={() => groupsCtx?.toggleCollapsed(group.id)}
+                onRename={(name) => groupsCtx?.renameGroup(group.id, name)}
+                onUngroup={() => groupsCtx?.ungroup(group.id)}
+                onMoveBy={(dx, dy) => groupsCtx?.moveGroupBy(group.id, dx, dy)}
               />
             );
           })}
@@ -947,6 +1036,7 @@ export function WorkflowCanvas({
             </div>
           )}
         </div>
+        </div>
       </div>
 
       {/* Zoom Controls - non-scrolling overlay */}
@@ -964,16 +1054,16 @@ export function WorkflowCanvas({
           </>
         )}
         <button
-          onClick={onZoomReset}
+          onClick={onZoomFit ?? onZoomReset}
           className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
-          title="Fit to screen"
+          title="Fit workflow to view"
         >
           <Maximize2 className="w-4 h-4" />
         </button>
         <button
           onClick={onZoomOut}
           className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
-          title="Zoom out (Ctrl + Scroll)"
+          title="Zoom out (Ctrl + scroll, Alt + scroll)"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
@@ -987,11 +1077,16 @@ export function WorkflowCanvas({
         <button
           onClick={onZoomIn}
           className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
-          title="Zoom in (Ctrl + Scroll)"
+          title="Zoom in (Ctrl + scroll, Alt + scroll)"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Minimap - non-scrolling navigation overlay (only once there's something to map) */}
+      {(model.triggers.length > 0 || model.nodes.length > 0) && (
+        <WorkflowMinimap model={model} size={size} zoom={zoom} canvasRef={canvasRef} />
+      )}
 
       {connectingFrom && (
         <div className="absolute top-8 left-1/2 -translate-x-1/2 text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none wf-overlay-chip-strong">

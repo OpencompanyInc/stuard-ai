@@ -10,9 +10,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest"
   },
   "dependencies": {
+    "@stuardai/chat-ui": "workspace:*",
+    "@stuardai/cloud-client": "workspace:*",
+    "@stuardai/cloud-runtime-ui": "workspace:*",
+    "@stuardai/vm-chat": "workspace:*",
+    "@stuardai/workflow-core": "workspace:*",
+    "@stuardai/bots-ui": "workspace:*",
     "@polar-sh/nextjs": "^0.9.3",
     "@polar-sh/sdk": "^0.42.1",
     "@stripe/stripe-js": "^7.8.0",

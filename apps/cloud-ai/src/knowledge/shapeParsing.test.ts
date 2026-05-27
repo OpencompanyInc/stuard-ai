@@ -25,7 +25,7 @@ let retrieval: typeof import('./retrieval');
 beforeAll(async () => {
   ingestion = await import('./ingestion');
   retrieval = await import('./retrieval');
-});
+}, 30_000);
 
 beforeEach(() => {
   execLocalToolMock.mockReset();

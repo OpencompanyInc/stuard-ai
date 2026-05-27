@@ -152,40 +152,40 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         info: {
             icon: Info,
             accentColor: '#3b82f6',
-            iconBg: 'bg-blue-50',
-            iconText: 'text-blue-600',
+            iconBg: 'bg-blue-500/10',
+            iconText: 'text-blue-600 dark:text-blue-400',
             progressBg: 'bg-blue-500',
             label: 'Information',
         },
         success: {
             icon: CheckCircle,
             accentColor: '#10b981',
-            iconBg: 'bg-emerald-50',
-            iconText: 'text-emerald-600',
+            iconBg: 'bg-emerald-500/10',
+            iconText: 'text-emerald-600 dark:text-emerald-400',
             progressBg: 'bg-emerald-500',
             label: 'Success',
         },
         warning: {
             icon: AlertTriangle,
             accentColor: '#f59e0b',
-            iconBg: 'bg-amber-50',
-            iconText: 'text-amber-600',
+            iconBg: 'bg-amber-500/10',
+            iconText: 'text-amber-600 dark:text-amber-400',
             progressBg: 'bg-amber-500',
             label: 'Warning',
         },
         error: {
             icon: AlertOctagon,
             accentColor: '#ef4444',
-            iconBg: 'bg-red-50',
-            iconText: 'text-red-600',
+            iconBg: 'bg-red-500/10',
+            iconText: 'text-red-600 dark:text-red-400',
             progressBg: 'bg-red-500',
             label: 'Error',
         },
         neutral: {
             icon: Bell,
             accentColor: '#6b7280',
-            iconBg: 'bg-gray-100',
-            iconText: 'text-gray-600',
+            iconBg: 'bg-theme-hover',
+            iconText: 'text-theme-muted',
             progressBg: 'bg-gray-400',
             label: 'Notification',
         },
@@ -203,7 +203,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             case 'danger':
                 return { className: clsx(base, 'bg-red-500 text-white hover:bg-red-600 shadow-sm'), style: undefined };
             default:
-                return { className: clsx(base, 'bg-gray-100 text-gray-700 hover:bg-gray-200'), style: undefined };
+                return { className: clsx(base, 'bg-theme-hover text-theme-fg hover:bg-theme-active'), style: undefined };
         }
     };
 
@@ -219,8 +219,8 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             }}
             className={clsx(
                 'relative w-full min-w-[340px] max-w-[400px]',
-                'bg-white rounded-lg',
-                'border border-gray-200 border-l-[4px]',
+                'bg-theme-card rounded-lg',
+                'border border-theme border-l-[4px]',
                 'shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
                 'pointer-events-auto',
                 'overflow-hidden',
@@ -229,7 +229,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         >
             {/* Auto-dismiss progress bar */}
             {notification.duration > 0 && (
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-gray-100">
+                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-theme-hover">
                     <div
                         ref={progressRef}
                         className={clsx('h-full w-full rounded-full', config.progressBg)}
@@ -243,7 +243,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                 <div className="flex items-start gap-3">
                     {/* Icon or Image */}
                     {imageSrc && !imageFailed ? (
-                        <div className="shrink-0 w-10 h-10 rounded-lg overflow-hidden ring-1 ring-gray-200">
+                        <div className="shrink-0 w-10 h-10 rounded-lg overflow-hidden ring-1 ring-theme/30">
                             <img
                                 src={imageSrc}
                                 alt=""
@@ -267,14 +267,14 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
                     {/* Text content */}
                     <div className="flex-1 min-w-0 max-h-[68vh] overflow-y-auto custom-scrollbar pr-1">
-                        <h4 className="font-semibold text-[13px] text-gray-900 leading-tight truncate">
+                        <h4 className="font-semibold text-[13px] text-theme-fg leading-tight truncate">
                             {notification.title}
                         </h4>
                         {notification.message && (
                             <div className="mt-0.5">
                                 <div
                                     className={clsx(
-                                        'text-[12.5px] text-gray-600 leading-snug transition-[max-height] duration-200',
+                                        'text-[12.5px] text-theme-muted leading-snug transition-[max-height] duration-200',
                                         !expandedMessage && shouldShowExpand && 'max-h-[92px] overflow-hidden'
                                     )}
                                 >
@@ -283,31 +283,31 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
                                         components={{
                                             p: ({ node, ...props }) => <p {...props} className="m-0 mb-1.5 last:mb-0" />,
-                                            strong: ({ node, ...props }) => <strong {...props} className="font-bold text-gray-900" />,
+                                            strong: ({ node, ...props }) => <strong {...props} className="font-bold text-theme-fg" />,
                                             em: ({ node, ...props }) => <em {...props} className="italic" />,
-                                            h1: ({ node, ...props }) => <h1 {...props} className="text-[14px] font-bold text-gray-900 mt-2 mb-1" />,
-                                            h2: ({ node, ...props }) => <h2 {...props} className="text-[13px] font-bold text-gray-900 mt-2 mb-1" />,
-                                            h3: ({ node, ...props }) => <h3 {...props} className="text-[12.5px] font-semibold text-gray-800 mt-1.5 mb-0.5" />,
+                                            h1: ({ node, ...props }) => <h1 {...props} className="text-[14px] font-bold text-theme-fg mt-2 mb-1" />,
+                                            h2: ({ node, ...props }) => <h2 {...props} className="text-[13px] font-bold text-theme-fg mt-2 mb-1" />,
+                                            h3: ({ node, ...props }) => <h3 {...props} className="text-[12.5px] font-semibold text-theme-fg mt-1.5 mb-0.5" />,
                                             blockquote: ({ node, ...props }) => (
-                                                <blockquote {...props} className="border-l-2 border-gray-300 pl-2.5 my-1.5 text-gray-500 italic" />
+                                                <blockquote {...props} className="border-l-2 border-theme/30 pl-2.5 my-1.5 text-theme-muted italic" />
                                             ),
-                                            hr: ({ node, ...props }) => <hr {...props} className="border-gray-200 my-2" />,
+                                            hr: ({ node, ...props }) => <hr {...props} className="border-theme/30 my-2" />,
                                             ul: ({ node, ...props }) => <ul {...props} className="m-0 ml-4 list-disc" />,
                                             ol: ({ node, ...props }) => <ol {...props} className="m-0 ml-4 list-decimal" />,
                                             li: ({ node, ...props }) => <li {...props} className="mb-0.5" />,
                                             pre: ({ node, children, ...props }) => (
-                                                <pre {...props} className="my-1.5 p-2.5 rounded-lg bg-slate-50 border border-slate-200 overflow-x-auto text-[11px] leading-relaxed">
+                                                <pre {...props} className="my-1.5 p-2.5 rounded-lg bg-theme-hover border border-theme/20 overflow-x-auto text-[11px] leading-relaxed">
                                                     {children}
                                                 </pre>
                                             ),
                                             code: ({ node, inline, className, children, ...props }: any) => {
                                                 return inline ? (
-                                                    <code className="bg-slate-100 text-slate-800 px-[5px] py-[1px] rounded text-[85%] font-mono font-medium border border-slate-200" {...props}>
+                                                    <code className="bg-theme-hover text-theme-fg px-[5px] py-[1px] rounded text-[85%] font-mono font-medium border border-theme/20" {...props}>
                                                         {children}
                                                     </code>
                                                 ) : (
                                                     <code className={clsx(
-                                                        'block text-[11px] text-slate-800 font-mono whitespace-pre leading-[1.6]',
+                                                        'block text-[11px] text-theme-fg font-mono whitespace-pre leading-[1.6]',
                                                         className
                                                     )} {...props}>
                                                         {children}
@@ -326,7 +326,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                                 <img
                                                     {...props}
                                                     src={resolveNotificationImageSrc(src) || src}
-                                                    className="max-w-full h-auto rounded-md my-1.5 border border-gray-200"
+                                                    className="max-w-full h-auto rounded-md my-1.5 border border-theme/20"
                                                     loading="lazy"
                                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                                                 />
@@ -337,10 +337,10 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                                 </div>
                                             ),
                                             th: ({ node, ...props }) => (
-                                                <th {...props} className="text-left font-semibold text-gray-800 px-2 py-1 border-b border-gray-300 bg-gray-50" />
+                                                <th {...props} className="text-left font-semibold text-theme-fg px-2 py-1 border-b border-theme/30 bg-theme-hover/50" />
                                             ),
                                             td: ({ node, ...props }) => (
-                                                <td {...props} className="px-2 py-1 border-b border-gray-100 text-gray-600" />
+                                                <td {...props} className="px-2 py-1 border-b border-theme/10 text-theme-muted" />
                                             ),
                                         }}
                                     >
@@ -359,7 +359,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                         )}
 
                         {notification.structuredContent && (
-                            <div className="mt-2.5 max-h-[320px] overflow-y-auto custom-scrollbar rounded-lg border border-gray-200 bg-gray-50/70 p-2">
+                            <div className="mt-2.5 max-h-[320px] overflow-y-auto custom-scrollbar rounded-lg border border-theme/20 bg-theme-hover/50 p-2">
                                 <GenUIErrorBoundary componentName={notification.structuredContent.toolName}>
                                     <GenUIContainer
                                         toolName={notification.structuredContent.toolName}
@@ -374,7 +374,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
                         {/* Custom progress bar (for progress notifications) */}
                         {typeof notification.progress === 'number' && (
-                            <div className="mt-2.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="mt-2.5 h-1.5 bg-theme-hover rounded-full overflow-hidden">
                                 <div
                                     className={clsx('h-full rounded-full transition-all duration-300', config.progressBg)}
                                     style={{ width: `${Math.min(100, Math.max(0, notification.progress))}%` }}
@@ -395,8 +395,8 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         placeholder={notification.input.placeholder || 'Type here...'}
                                         className={clsx(
                                             'flex-1 px-2.5 py-1.5 text-xs rounded-md',
-                                            'bg-gray-50 border border-gray-200',
-                                            'text-gray-900 placeholder:text-gray-400',
+                                            'bg-theme-input border border-theme/30',
+                                            'text-theme-fg placeholder:text-theme-muted',
                                             'focus:outline-none focus:ring-2 focus:ring-offset-0',
                                             'transition-all'
                                         )}

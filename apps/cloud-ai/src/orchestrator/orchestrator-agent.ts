@@ -18,8 +18,10 @@ import {
   PROJECT_MODE_GUIDANCE,
   type ProjectContextPayload,
   type JournalEntryPayload,
+  type ProjectRetrievedContextPayload,
 } from '../agents/stuard/prompts';
 import type { ModelChoice } from '../router/model-router';
+import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
 import { wrapToolWithBridge } from './subagent-runtime';
 
@@ -36,6 +38,9 @@ import {
   memory_add,
   project_search,
   search_project_conversations,
+  pin_file,
+  add_project_context,
+  unpin_file,
 } from '../tools/device/projects';
 import { task_crud, task_reminders } from '../tools/device/productivity';
 import { ask_user } from '../tools/ask-user';
@@ -133,6 +138,7 @@ export interface OrchestratorPromptOptions {
   conversationId?: string | null;
   activeProject?: ProjectContextPayload | null;
   recentJournal?: JournalEntryPayload[];
+  retrievedContext?: ProjectRetrievedContextPayload | null;
 }
 
 function buildOrchestratorPrompt(
@@ -149,6 +155,7 @@ function buildOrchestratorPrompt(
     return buildProjectModeSystemPrompt(promptOptions.activeProject, {
       conversationId: promptOptions.conversationId,
       recentJournal: promptOptions.recentJournal,
+      retrievedContext: promptOptions.retrievedContext,
       enabledIntegrations,
       skills,
       bots: bots.map((b) => ({ id: b.id, name: b.name, kind: b.kind, status: b.status })),
@@ -185,9 +192,11 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 |-------------|---------|
 | browser     | Web browsing, form filling, page scraping, screenshots |
 | file_ops    | Reading/writing files, code editing, terminal commands, compute |
+| cli_agent   | Drive installed coding-agent CLIs (Codex, Cursor Agent, Antigravity, Claude Code) for codebase Q&A and agentic coding tasks — runs interactively so it uses the user's own subscription |
 | workflow    | **Creating**, modifying, and testing StuardAI automation workflows (the Workflow Architect) |
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
 | ffmpeg      | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames |
+| data_analysis | Analyze and visualize data — load CSV/XLSX/JSON, describe/correlate, render line/bar/scatter/hist/pie/heatmap/box charts via pandas/numpy/scipy/matplotlib/seaborn |
 | vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
 | agent       | Proactive agent status/ask workflows, including agent ids/names and manual wake-ups |
 | bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
@@ -195,13 +204,21 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | outlook     | Outlook mail & calendar |
 | github      | Repos, issues, PRs, branches, actions |
 | meta        | Facebook, Instagram, Threads |
-| whatsapp    | WhatsApp messaging |
-| telnyx      | SMS, voice calls |
+${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
 | reddit      | Subreddits, posts, comments |
 | discord     | Discord bot operations |
 | x           | X/Twitter tweets, timelines, users, DMs |
 
-Each subagent has its own focused tool set and can ask you questions via ask_orchestrator if it needs information or a decision. When that happens, the delegate tool returns with the question — use reply_to_subagent to answer.
+Each subagent can call **ask_orchestrator** when it needs information or a decision. When that happens, **delegate** returns early with the question and a **questionId**.
+
+### Subagent Questions (ask_orchestrator)
+
+When delegate pauses with a subagent question:
+1. Read the question (and any choices) from the delegate result.
+2. If you already have the answer from conversation context, your own tools, or a safe default — call **reply_to_subagent** with that answer and the **questionId**.
+3. If the subagent needs something only the **user** can provide (credentials, confirmation, preference, ambiguous choice) — call **ask_user** first. Map subagent \`choices\` to ask_user \`options\` (\`{id, label}\`) when present; use \`confirm\` for yes/no, \`text\` for free-form.
+4. Pass the user's answer (or a concise summary) to **reply_to_subagent** with the same **questionId**. Never invent user answers.
+5. If ask_user is dismissed or fails, still **reply_to_subagent** with that outcome so the subagent can adapt.
 
 ### Parallel Delegation
 
@@ -217,7 +234,9 @@ For quick, standalone operations that don't need a full subagent context:
 
 ## ask_user — Interactive Input
 
-Only when you genuinely need user input. Types: \`confirm\` (yes/no), \`choices\` (pick from options), \`text\` (free input), or multi-page \`pages\` for wizards/forms.
+Use when **you** need user input, or when a **subagent question** (via ask_orchestrator) requires the user's decision, credentials, or confirmation — ask_user first, then reply_to_subagent.
+
+Types: \`confirm\` (yes/no), \`choices\` (pick from options), \`text\` (free input), or multi-page \`pages\` for wizards/forms.
 - confirm: \`{ message: "Delete 5 files?", type: "confirm" }\`
 - choices: \`{ message: "Which theme?", type: "choices", options: [{id:"dark",label:"Dark"},{id:"light",label:"Light"}] }\`
 - text: \`{ message: "Project name?", type: "text", placeholder: "my-app" }\`
@@ -238,7 +257,7 @@ DEFAULT for any structured data. Prefer over plain text for tables, stats, lists
 ## Local Workflows — search_local_workflows / run_workflow
 
 User-authored Stuard workflows act as custom tools. When a request matches something the user has already automated, run it instead of reinventing the steps.
-- \`search_local_workflows({ query?, limit? })\` — list/filter local workflows. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
+- \`search_local_workflows({ query?, mode?, limit? })\` — search local workflows semantically or lexically. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
 - \`run_workflow({ id | name, args?, timeoutMs? })\` — execute a workflow synchronously. Match \`args\` keys to the workflow's \`inputSchema\` names.
 - Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
 
@@ -252,8 +271,9 @@ ${botSection}
 3. **Parallelize** — pass multiple tasks in delegate when they don't depend on each other
 4. **Provide context** — pass conversation history and user preferences to subagents
 5. **Summarize results** — present subagent results clearly
-6. **Rich output** — chat_ui for structured data, <<path>> for media, ask_user for input. Visual over plain text.
-7. Warm, concise, actionable. Never expose internal IDs.
+6. **Subagent questions** — ask_user when the user must decide; reply_to_subagent to unblock the subagent
+7. **Rich output** — chat_ui for structured data, <<path>> for media, ask_user for input. Visual over plain text.
+8. Warm, concise, actionable. Never expose internal IDs.
 
 **Formatting**: ==highlight== | **bold** | <<media path>> | $math$ or $$block math$$${skillLine}`;
 }
@@ -322,6 +342,9 @@ function getOrchestratorActiveTools(
     tools.journal_add = journal_add;
     tools.memory_add = memory_add;
     tools.project_search = project_search;
+    tools.pin_file = pin_file;
+    tools.add_project_context = add_project_context;
+    tools.unpin_file = unpin_file;
 
     // When Project Mode is **active**, surface task management and project-scoped
     // conversation search natively. These are technically available via the

@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Key, Loader2, Plus, Trash2, CheckCircle2, AlertCircle, Lock, ShieldCheck, X, Sparkles, Copy, FolderOpen, RefreshCw } from 'lucide-react';
+import { Key, Loader2, Plus, Trash2, CheckCircle2, AlertCircle, Lock, ShieldCheck, X, Copy, FolderOpen, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
 import { supabase } from '../../lib/supabaseClient';
 import {
@@ -27,7 +27,7 @@ import {
 } from '../../utils/byok-api';
 
 const SectionHeader = ({ title, description }: { title: string; description: string }) => (
-  <div className="mb-6 border-b border-theme/50 pb-4">
+  <div className="mb-6 border-b border-theme-sidebar pb-4">
     <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">{title}</h3>
     <p className="text-[13px] text-theme-muted font-medium">{description}</p>
   </div>
@@ -431,7 +431,6 @@ function CodexCard({ onChange }: { onChange: () => void }) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
             <div className="text-[14px] font-semibold text-theme-fg tracking-tight">ChatGPT (Codex sign-in)</div>
             {signedIn && (
               <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-500 tracking-tight">

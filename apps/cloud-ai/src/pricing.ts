@@ -129,13 +129,13 @@ const LEGACY_MAPPING: Record<string, string> = {
 export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
-    if (category === 'fast') return 'google/gemini-3.1-flash-lite-preview';
+    if (category === 'fast') return 'google/gemini-3.1-flash-lite';
     if (category === 'balanced') return 'xai/grok-4-1-fast';
     if (category === 'smart') return 'google/gemini-3.1-pro-preview';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
-  return 'google/gemini-3.1-flash-lite-preview';
+  return 'google/gemini-3.1-flash-lite';
 }
 
 export function priceForModel(modelId: string): Price {

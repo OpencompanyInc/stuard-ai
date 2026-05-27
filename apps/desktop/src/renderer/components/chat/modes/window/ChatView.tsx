@@ -18,12 +18,13 @@ import type {
 import { useModelRegistry } from "../../../../hooks/useModelRegistry";
 import { ChatTabs } from "./parts/ChatTabs";
 import { ChatHeaderActions } from "./parts/ChatHeaderActions";
+import { ChatHeaderMenu } from "./parts/ChatHeaderMenu";
 import { ChatInputArea } from "./parts/ChatInputArea";
 import { FileNavigatorOverlay } from "./parts/FileNavigatorOverlay";
 import { SidebarTabsPanel } from "../../shared/sidebar/SidebarTabsPanel";
 import { TasksView, TaskSubTab } from "../../../TasksView";
 import { SubagentDashboard } from "./parts/SubagentDashboard";
-import { AskUserPrompt } from "./parts/AskUserPrompt";
+import { AskUserPrompt } from "@stuardai/chat-ui/AskUserPrompt";
 import { useSubagentDashboard } from "../../../../hooks/useSubagentDashboard";
 import { buildContextUsageMetrics } from "../../../../utils/contextUsage";
 import { useFileNavigator } from "../../../../hooks/useFileNavigator";
@@ -76,7 +77,7 @@ interface ChatViewProps {
   voiceActiveTools?: VoiceToolEvent[];
 
   // Attachments
-  attachments?: Array<{ type: "image" | "file"; name: string }>;
+  attachments?: Array<{ type: "image" | "file"; name: string; mimeType?: string; source?: string }>;
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
@@ -89,16 +90,14 @@ interface ChatViewProps {
   onCancelQueuedMessage?: (id: string) => void;
 
   // History Props
-  conversations: any[];
-  loadingConversations: boolean;
-  onSelectConversation: (id: string) => void;
   chatMenuOpen: boolean;
   onChatMenuOpenChange: (open: boolean) => void;
-  onDeleteConversation?: (id: string) => void;
+  conversations?: Array<{ id: string; title?: string; created_at?: string }>;
+  loadingConversations?: boolean;
+  onSelectConversation?: (id: string) => void;
 
   // Status/Model
   statusText?: string;
-  modelName?: string;
   contextUsage?: Record<string, any>;
   contextModelId?: string;
   connectionStatus?: "connected" | "connecting" | "disconnected" | "error";
@@ -160,16 +159,22 @@ interface ChatViewProps {
 
   // Internal Sidebar
   internalSidebarOpen?: boolean;
+  internalSidebarWidth?: number;
   activeSidebarTab?: "terminal" | "todo" | "projects";
   onToggleInternalSidebar?: () => void;
   onCloseInternalSidebar?: () => void;
   onSwitchSidebarTab?: (tab: "terminal" | "todo" | "projects") => void;
+  onInternalSidebarResize?: (deltaX: number) => void;
 
   // Project Mode lock-in
   activeProject?: Project | null;
   activeConversationId?: string | null;
   onExitProjectMode?: () => void;
   onOpenProjectHome?: () => void;
+
+  showCreditsLimitNotice?: boolean;
+  onDismissCreditsLimitNotice?: () => void;
+  onAddCredits?: () => void;
 }
 
 const ChatViewInner: React.FC<ChatViewProps> = ({
@@ -204,14 +209,12 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   onVoiceMuteToggle,
   voiceTranscripts,
   voiceActiveTools,
-  conversations,
-  loadingConversations,
-  onSelectConversation,
   chatMenuOpen,
   onChatMenuOpenChange,
-  onDeleteConversation,
+  conversations = [],
+  loadingConversations = false,
+  onSelectConversation = () => {},
   statusText = "Online",
-  modelName = "",
   contextUsage,
   contextModelId,
   connectionStatus = "connected",
@@ -252,15 +255,20 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   // Internal Sidebar
   internalSidebarOpen = false,
+  internalSidebarWidth = 304,
   activeSidebarTab = "projects",
   onToggleInternalSidebar,
   onCloseInternalSidebar,
   onSwitchSidebarTab,
+  onInternalSidebarResize,
   // Project Mode lock-in
   activeProject,
   activeConversationId,
   onExitProjectMode,
   onOpenProjectHome,
+  showCreditsLimitNotice = false,
+  onDismissCreditsLimitNotice,
+  onAddCredits,
 }) => {
   // Responsive layout based on overlay mode
   const isSidebarMode = overlayMode === "sidebar";
@@ -399,12 +407,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     };
   }, []);
 
-  const selectedModelLabel = (() => {
-    if (selectedModelId === "auto") return "Auto";
-    const m = modelById.get(selectedModelId);
-    return m ? m.name : selectedModelId;
-  })();
-
   const contextMetrics = useMemo(
     () =>
       buildContextUsageMetrics({
@@ -415,15 +417,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       }),
     [contextUsage, contextModelId, modelById],
   );
-
-  const displayModelName = (() => {
-    const serverChosen = (modelName || "").trim();
-    if (selectedModelId === "auto") {
-      if (serverChosen) return `Auto \u2022 ${serverChosen}`;
-      return "Auto";
-    }
-    return selectedModelLabel;
-  })();
 
   // --- File Navigator (@ context) ---
   const {
@@ -457,38 +450,38 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           activeTab={activeSidebarTab}
           onSwitchTab={onSwitchSidebarTab || (() => {})}
           translucentMode={translucentMode}
+          width={internalSidebarWidth}
+          onResize={onInternalSidebarResize}
         />
 
         {overlayMode === "window" || overlayMode === "sidebar" ? (
           <div
             className={clsx(
-              "flex-1 min-w-0 min-h-0 flex flex-col gap-3 p-3 bg-theme-bg backdrop-blur-3xl border transition-colors duration-200",
-              activeProject ? "border-theme/10" : "border-theme/10",
-              // Seamless sidebar: no left rounding when sidebar is open
+              "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme overflow-hidden launcher-compact-skin",
+              "p-4 gap-3",
               internalSidebarOpen
-                ? "rounded-r-[28px] rounded-l-none border-l-0 overflow-hidden"
-                : "rounded-[28px] overflow-hidden",
+                ? "rounded-r-[32px] rounded-l-none border-l-0"
+                : "rounded-[32px]",
+              translucentMode
+                ? "bg-theme-bg backdrop-blur-2xl"
+                : "bg-theme-bg",
             )}
-            style={
-              activeProject
+            style={{
+              ...(translucentMode
                 ? {
-                    borderColor: `${activeProject.color}22`,
+                    background:
+                      "color-mix(in srgb, var(--background) 76%, transparent)",
                   }
-                : undefined
-            }
+                : {}),
+              ...(activeProject
+                ? { borderColor: `${activeProject.color}22` }
+                : {}),
+            }}
           >
-            {/* Top Card: Header & Messages */}
-            <div
-              className={clsx(
-                "flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative transition-all duration-300",
-                isSidebarMode ? "rounded-[16px]" : "rounded-[24px]",
-                translucentMode
-                  ? "bg-theme-bg backdrop-blur-xl border border-theme/5"
-                  : "bg-theme-card border border-theme/10",
-              )}
-            >
+            {/* Header & Messages — single launcher surface, no nested card */}
+            <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative gap-3">
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/10 backdrop-blur-sm w-full min-w-0">
+              <div className="flex items-center justify-between px-0.5 shrink-0 w-full min-w-0">
                 <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
                   <ChatTabs
                     tabs={tabs}
@@ -498,18 +491,18 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     onAddTab={onAddTab}
                   />
                 </div>
-                <ChatHeaderActions
+                <ChatHeaderMenu
                   onToggleSidebar={onToggleInternalSidebar}
                   sidebarOpen={internalSidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
-                  overlayMode={overlayMode}
                   chatMenuOpen={chatMenuOpen}
                   onChatMenuOpenChange={onChatMenuOpenChange}
                   conversations={conversations}
                   loadingConversations={loadingConversations}
+                  activeConversationId={activeConversationId}
                   onSelectConversation={onSelectConversation}
-                  onDeleteConversation={onDeleteConversation}
+                  onNewChat={onNewChat}
                 />
               </div>
 
@@ -575,7 +568,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 )}
 
               {/* Messages or Tasks View */}
-              <div className="flex-1 min-h-0 overflow-hidden relative">
+              <div className="flex-1 min-h-0 overflow-hidden relative px-1">
                 {viewMode === "tasks" ? (
                   <div className="h-full overflow-y-auto custom-scrollbar">
                     <TasksView
@@ -609,7 +602,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       currentToolCalls={currentToolCalls}
                       currentStreamChunks={currentStreamChunks}
                       thinkingStartTime={thinkingStartTime}
-                      className="h-full px-4 py-3 scrollbar-hidden overflow-x-hidden"
+                      className="h-full py-3 scrollbar-hidden min-w-0"
                       onSubmitToolOutput={onSubmitToolOutput}
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}
@@ -632,54 +625,60 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 />
               ))}
 
-            {/* Bottom Card: Status & Input */}
-            <ChatInputArea
-              query={query}
-              setQuery={setQuery}
-              onSend={onSend}
-              onSteer={handleSteerFromComposer}
-              activeSubagents={combinedActiveSubagents}
-              steerTarget={steerTarget}
-              onSteerTargetChange={onSteerTargetChange}
-              onStop={onStop}
-              isStreaming={isStreaming}
-              voiceActive={voiceActive}
-              onToggleVoice={onToggleVoice}
-              voiceState={voiceState}
-              voiceAudioLevel={voiceAudioLevel}
-              voiceMuted={voiceMuted}
-              onVoiceMuteToggle={onVoiceMuteToggle}
-              voiceTranscripts={voiceTranscripts}
-              voiceActiveTools={voiceActiveTools}
-              attachments={attachments}
-              onRemoveAttachment={onRemoveAttachment}
-              onAttachFiles={onAttachFiles}
-              onAttachImages={onAttachImages}
-              onPaste={onPaste}
-              onDrop={onDrop}
-              queueDepth={queueDepth}
-              queuedMessages={queuedMessages}
-              onCancelQueuedMessage={onCancelQueuedMessage}
-              statusText={statusText}
-              connectionStatus={connectionStatus}
-              displayModelName={displayModelName}
-              contextMetrics={contextMetrics}
-              translucentMode={translucentMode}
-              showFileNav={showFileNav}
-              textareaRef={textareaRef}
-              selectedModelId={selectedModelId}
-              onChatModeChange={onChatModeChange}
-              modelSource={modelSource}
-              onModelSourceChange={onModelSourceChange}
-              reasoningLevel={reasoningLevel}
-              onReasoningLevelChange={onReasoningLevelChange}
-              fileNavRef={fileNavRef}
-              activeTabId={activeTabId}
-              contextPaths={contextPaths}
-              onRemoveContext={onRemoveContext}
-              onOpenFileNav={handleOpenFileNav}
-              onCloseFileNav={handleCloseFileNav}
-            />
+            {/* Bottom Input — launcher input surface */}
+            <div className="shrink-0 w-full mt-auto">
+              <ChatInputArea
+                launcherSkin
+                query={query}
+                setQuery={setQuery}
+                onSend={onSend}
+                onSteer={handleSteerFromComposer}
+                activeSubagents={combinedActiveSubagents}
+                steerTarget={steerTarget}
+                onSteerTargetChange={onSteerTargetChange}
+                onStop={onStop}
+                isStreaming={isStreaming}
+                voiceActive={voiceActive}
+                onToggleVoice={onToggleVoice}
+                voiceState={voiceState}
+                voiceAudioLevel={voiceAudioLevel}
+                voiceMuted={voiceMuted}
+                onVoiceMuteToggle={onVoiceMuteToggle}
+                voiceTranscripts={voiceTranscripts}
+                voiceActiveTools={voiceActiveTools}
+                attachments={attachments}
+                onRemoveAttachment={onRemoveAttachment}
+                onAttachFiles={onAttachFiles}
+                onAttachImages={onAttachImages}
+                onPaste={onPaste}
+                onDrop={onDrop}
+                queueDepth={queueDepth}
+                queuedMessages={queuedMessages}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                statusText={statusText}
+                connectionStatus={connectionStatus}
+                contextMetrics={contextMetrics}
+                translucentMode={translucentMode}
+                showFileNav={showFileNav}
+                textareaRef={textareaRef}
+                selectedModelId={selectedModelId}
+                onChatModeChange={onChatModeChange}
+                modelSource={modelSource}
+                onModelSourceChange={onModelSourceChange}
+                reasoningLevel={reasoningLevel}
+                onReasoningLevelChange={onReasoningLevelChange}
+                fileNavRef={fileNavRef}
+                activeTabId={activeTabId}
+                contextPaths={contextPaths}
+                onRemoveContext={onRemoveContext}
+                onOpenFileNav={handleOpenFileNav}
+                onCloseFileNav={handleCloseFileNav}
+                showCreditsLimitNotice={showCreditsLimitNotice}
+                onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+                onAddCredits={onAddCredits}
+                currentToolCalls={currentToolCalls}
+              />
+            </div>
           </div>
         ) : (
           <>
@@ -707,7 +706,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               }
             >
               {/* Top Header */}
-              <div className="flex items-center justify-between px-2 py-2 border-b border-black/5 bg-white/40 backdrop-blur-sm w-full min-w-0">
+              <div className="flex items-center justify-between px-2 py-2 border-b border-theme/30 bg-theme-card/50 backdrop-blur-sm w-full min-w-0">
                 <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
                   <ChatTabs
                     tabs={tabs}
@@ -727,8 +726,9 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onChatMenuOpenChange={onChatMenuOpenChange}
                   conversations={conversations}
                   loadingConversations={loadingConversations}
+                  activeConversationId={activeConversationId}
                   onSelectConversation={onSelectConversation}
-                  onDeleteConversation={onDeleteConversation}
+                  onNewChat={onNewChat}
                 />
               </div>
 
@@ -881,7 +881,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onCancelQueuedMessage={onCancelQueuedMessage}
               statusText={statusText}
               connectionStatus={connectionStatus}
-              displayModelName={displayModelName}
               contextMetrics={contextMetrics}
               translucentMode={translucentMode}
               showFileNav={showFileNav}
@@ -898,6 +897,10 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               onRemoveContext={onRemoveContext}
               onOpenFileNav={handleOpenFileNav}
               onCloseFileNav={handleCloseFileNav}
+              showCreditsLimitNotice={showCreditsLimitNotice}
+              onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+              onAddCredits={onAddCredits}
+              currentToolCalls={currentToolCalls}
             />
           </>
         )}

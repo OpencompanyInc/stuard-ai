@@ -96,10 +96,13 @@ function resolveBot(args: any): Bot | null {
 }
 
 function botNotFound(args: any): Record<string, any> {
+  const availableAgents = botService.list().map((bot) => ({ id: bot.id, name: bot.name, status: bot.status }));
   return {
     ok: false,
     error: 'bot_not_found',
-    availableBots: botService.list().map((bot) => ({ id: bot.id, name: bot.name, status: bot.status })),
+    message: 'Agent not found.',
+    availableAgents,
+    availableBots: availableAgents,
     requested: {
       agent_id: args?.agent_id || args?.agentId || args?.bot_id || args?.botId || args?.id || null,
       name: args?.name || args?.bot_name || args?.mention || null,
@@ -138,7 +141,7 @@ function buildTriggers(args: any): BotTrigger[] {
   }
 
   if (kind === 'webhook' || trigger.type === 'webhook') {
-    const slug = cleanString(trigger.slug || schedule.slug) || `bot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const slug = cleanString(trigger.slug || schedule.slug) || `agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     return [{
       id: genTriggerId(),
       type: 'webhook',
@@ -151,6 +154,45 @@ function buildTriggers(args: any): BotTrigger[] {
       enabled: true,
       label: cleanString(trigger.label || schedule.label) || 'Webhook',
       requiresCloud: true,
+    }];
+  }
+
+  if (kind === 'fs.watch' || kind === 'file' || kind === 'folder' || trigger.type === 'fs.watch') {
+    const watchPath = cleanString(trigger.path || trigger.folder || trigger.file || schedule.path || args?.path);
+    const pattern = cleanString(trigger.pattern || schedule.pattern || args?.pattern);
+    const events = arrayOfStrings(trigger.events || schedule.events || args?.events);
+    return [{
+      id: genTriggerId(),
+      type: 'fs.watch',
+      args: {
+        path: watchPath,
+        pattern: pattern || '**/*',
+        recursive: trigger.recursive !== false && schedule.recursive !== false && args?.recursive !== false,
+        ...(events && events.length > 0 ? { events } : { events: ['add', 'change', 'unlink'] }),
+        debounceMs: Number(trigger.debounceMs || schedule.debounceMs || args?.debounceMs || 750),
+      },
+      enabled: true,
+      label: cleanString(trigger.label || schedule.label) || 'File/folder watch',
+      requiresCloud: false,
+    }];
+  }
+
+  if (kind === 'command.watch' || kind === 'script' || kind === 'command' || trigger.type === 'command.watch') {
+    const cmd = cleanString(trigger.cmd || trigger.command || schedule.cmd || args?.cmd || args?.command) || 'python';
+    const commandArgs = arrayOfStrings(trigger.args || schedule.args || args?.command_args || args?.commandArgs);
+    const fireOn = arrayOfStrings(trigger.fireOn || schedule.fireOn || args?.fire_on || args?.fireOn);
+    return [{
+      id: genTriggerId(),
+      type: 'command.watch',
+      args: {
+        cmd,
+        args: commandArgs || [],
+        cwd: cleanString(trigger.cwd || schedule.cwd || args?.cwd),
+        fireOn: fireOn && fireOn.length > 0 ? fireOn : ['stdout'],
+      },
+      enabled: true,
+      label: cleanString(trigger.label || schedule.label) || 'Custom script',
+      requiresCloud: false,
     }];
   }
 
@@ -261,7 +303,7 @@ export async function execBotList(args: any, _ctx: RouterContext): Promise<any> 
     .list()
     .filter((bot) => includePaused || bot.status !== 'paused')
     .map((bot) => summarizeBot(bot, includeConfig ? botService.resolveConfig(bot.id) : null));
-  return { ok: true, bots, total: bots.length };
+  return { ok: true, agents: bots, bots, total: bots.length };
 }
 
 export async function execBotGetStatus(args: any, _ctx: RouterContext): Promise<any> {
@@ -424,6 +466,6 @@ export async function execBotAsk(args: any, _ctx: RouterContext): Promise<any> {
     requestedWakeUp: !!wakeUp,
     wakeUp,
     ...snapshot,
-    guidance: 'Use this snapshot to answer the user as the mentioned bot status/source of truth. If requestedWakeUp is true, tell the user a manual bot run was started.',
+    guidance: 'Use this snapshot to answer the user as the mentioned agent status/source of truth. If requestedWakeUp is true, tell the user a manual agent run was started.',
   };
 }
