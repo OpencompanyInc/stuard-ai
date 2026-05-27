@@ -10,3 +10,4 @@ export * from './expr';
 export * from './helpers';
 export * from './decide';
 export * from './designer';
+export * from './loop';

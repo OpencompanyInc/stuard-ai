@@ -10,8 +10,10 @@ import {
   isCatchAllGuard,
   designerModelToStuardSpec,
   sanitizeGuard,
+  executeLoop,
   type StuardStep,
   type StuardSpec,
+  type RunChainResult,
 } from '@stuardai/workflow-core/runtime';
 
 const SPEC: StuardSpec = { id: 'wf', steps: [] };
@@ -214,6 +216,103 @@ describe('designerModelToStuardSpec', () => {
     expect(spec.autostart).toBe(false);
     expect((spec.steps![0] as any).kind).toBe('cloud');
     expect((spec.steps![0] as any).designerType).toBe('cloud.tool');
+  });
+});
+
+describe('executeLoop (shared driver — desktop semantics)', () => {
+  const body: StuardStep = { id: 'body', tool: 'noop', next: [] };
+  const loopHooks = (runChain: (s: StuardStep, c: any) => Promise<RunChainResult>) => ({
+    logFn: () => {},
+    isAborted: () => false,
+    runChain,
+  });
+
+  it('forEach iterates over every resolved item and sets loop context', async () => {
+    const seen: Array<{ item: any; index: any }> = [];
+    const ctx: any = { src: { list: ['a', 'b', 'c'] } };
+    await executeLoop(
+      body, ctx,
+      { type: 'forEach', items: '{{src.list}}' },
+      new Map(), 'prev',
+      loopHooks(async (_s, c) => { seen.push({ item: c.loop.item, index: c.loop.index }); c[body.id] = c.loop.item; return { ok: true }; }),
+    );
+    expect(seen).toEqual([{ item: 'a', index: 0 }, { item: 'b', index: 1 }, { item: 'c', index: 2 }]);
+    // loop context cleaned up; last item exposed as the step's value
+    expect(ctx.loop).toBeUndefined();
+    expect(ctx.body).toBe('c');
+    expect(ctx.body_loop_results).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does NOT expose top-level item/index/$loop (desktop shape only)', async () => {
+    const ctx: any = {};
+    let snapshot: any = {};
+    await executeLoop(
+      body, ctx, { type: 'forEach', items: '["x"]' }, new Map(), 'p',
+      loopHooks(async (_s, c) => { snapshot = { item: c.item, index: c.index, $loop: c.$loop, loopItem: c.loop.item }; return { ok: true }; }),
+    );
+    expect(snapshot.loopItem).toBe('x');     // ctx.loop.item present
+    expect(snapshot.item).toBeUndefined();   // no top-level item
+    expect(snapshot.index).toBeUndefined();  // no top-level index
+    expect(snapshot.$loop).toBeUndefined();  // no $loop
+  });
+
+  it('repeat runs N times and exposes only index', async () => {
+    const indices: any[] = [];
+    await executeLoop(
+      body, {}, { type: 'repeat', count: 3 }, new Map(), 'p',
+      loopHooks(async (_s, c) => { indices.push(c.loop.index); expect(c.loop.item).toBeUndefined(); return { ok: true }; }),
+    );
+    expect(indices).toEqual([0, 1, 2]);
+  });
+
+  it('while runs until the condition goes false', async () => {
+    const ctx: any = { n: 0 };
+    let calls = 0;
+    await executeLoop(
+      body, ctx, { type: 'while', conditionText: 'n < 3' }, new Map(), 'p',
+      loopHooks(async (_s, c) => { calls++; c.n = c.n + 1; return { ok: true }; }),
+    );
+    expect(calls).toBe(3);
+    expect(ctx.n).toBe(3);
+  });
+
+  it('honors maxIterations as a safety cap', async () => {
+    let calls = 0;
+    await executeLoop(
+      body, {}, { type: 'while', conditionText: 'true', maxIterations: 5 }, new Map(), 'p',
+      loopHooks(async () => { calls++; return { ok: true }; }),
+    );
+    expect(calls).toBe(5);
+  });
+
+  it('a mid-body loopBreak is the post-loop continuation, NOT an early exit (desktop semantics)', async () => {
+    let calls = 0;
+    const res = await executeLoop(
+      body, {}, { type: 'forEach', items: '[1,2,3]' }, new Map(), 'p',
+      loopHooks(async () => { calls++; return { ok: true, breakEdge: { to: 'after' } }; }),
+    );
+    expect(calls).toBe(3);                 // ran ALL iterations (no early exit)
+    expect(res.breakEdge).toEqual({ to: 'after' }); // continuation captured
+  });
+
+  it('source-step loopBreak edge is used as continuation even with zero iterations', async () => {
+    const map = new Map<string, StuardStep>([
+      ['prev', { id: 'prev', tool: 'noop', next: [{ to: 'body' }, { to: 'after', loopBreak: true }] }],
+    ]);
+    const res = await executeLoop(
+      body, {}, { type: 'forEach', items: '[]' }, map, 'prev',
+      loopHooks(async () => ({ ok: true })),
+    );
+    expect(res.breakEdge).toEqual({ to: 'after' });
+  });
+
+  it('stops iterating when an iteration fails', async () => {
+    let calls = 0;
+    await executeLoop(
+      body, {}, { type: 'forEach', items: '[1,2,3]' }, new Map(), 'p',
+      loopHooks(async () => { calls++; return calls === 2 ? { ok: false, error: 'boom' } : { ok: true }; }),
+    );
+    expect(calls).toBe(2); // stopped after the failing iteration
   });
 });
 

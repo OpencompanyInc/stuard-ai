@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EngineContext, StuardSpec, StuardStep, StuardEdge, LoopConfig, StreamWireConfig } from './types';
 import { emitStepEvent, emitFlowEvent, emitStreamEvent } from './events';
-import { safeStuardId, summarizeOutput, interpolateForTool, getAtPath, evalIfGuard } from './utils';
+import { safeStuardId, summarizeOutput, interpolateForTool, getAtPath, evalIfGuard, pathResolveOptions } from './utils';
 import { execTool, getToolKind, execLocalTool, getVariable } from '../tool-router';
 import { executeStep } from './execution';
+import { executeLoop as coreExecuteLoop } from '@stuardai/workflow-core/runtime';
 
 export * from './types';
 export * from './events';
@@ -705,7 +706,10 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     return { ok: true };
   }
 
-  // Execute a loop on a step
+  // Execute a loop on a step — driver shared with the VM engine via
+  // @stuardai/workflow-core (desktop semantics). Desktop keeps its own
+  // executeLoopChain closure as the per-iteration body runner, supplies its
+  // abort signal + $vars resolver, and emits the completion event via onComplete.
   async function executeLoop(
     spec: StuardSpec,
     step: StuardStep,
@@ -715,180 +719,15 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     map: Map<string, StuardStep>,
     prevStepId: string
   ): Promise<{ breakEdge?: { to: string } }> {
-    const { type, items, itemVar = 'item', indexVar = 'index', count, conditionText, maxIterations = 100, delayMs = 0 } = loop;
-    
-    engineCtx.logFn(`[${step.id}] 🔄 Starting ${type} loop (max: ${maxIterations})`);
-    
-    let iterations = 0;
-    const results: any[] = [];
-    let breakEdge: { to: string } | undefined;
-    
-    // Find loopBreak edge from the source step (prevStepId) - this tells us where to go after loop completes
-    const sourceStep = map.get(prevStepId);
-    if (sourceStep && Array.isArray(sourceStep.next)) {
-      const loopBreakEdge = sourceStep.next.find((e: any) => e.loopBreak === true);
-      if (loopBreakEdge) {
-        breakEdge = { to: loopBreakEdge.to };
-        engineCtx.logFn(`[${step.id}] 🔄 Found loopBreak edge → ${loopBreakEdge.to} (will execute after loop)`);
-      }
-    }
-    
-    // Initialize loop context
-    ctx.loop = ctx.loop || {};
-    
-    if (type === 'forEach') {
-      // Resolve items - could be a template like {{step.result}}
-      let itemsArray: any[] = [];
-      if (items) {
-        const resolved = interpolateForTool({ items }, ctx, 'loop');
-        const resolvedItems = resolved.items;
-        
-        if (Array.isArray(resolvedItems)) {
-          itemsArray = resolvedItems;
-        } else if (typeof resolvedItems === 'string') {
-          // Try to parse as JSON array
-          try {
-            const parsed = JSON.parse(resolvedItems);
-            itemsArray = Array.isArray(parsed) ? parsed : [parsed];
-          } catch {
-            itemsArray = [resolvedItems];
-          }
-        } else if (resolvedItems !== null && resolvedItems !== undefined) {
-          itemsArray = [resolvedItems];
-        }
-      }
-      
-      engineCtx.logFn(`[${step.id}] 🔄 forEach: ${itemsArray.length} items`);
-      
-      for (let i = 0; i < Math.min(itemsArray.length, maxIterations); i++) {
-        if (controller.signal.aborted) break;
-        
-        // Set loop context variables
-        ctx.loop[itemVar] = itemsArray[i];
-        ctx.loop[indexVar] = i;
-        ctx.loop.item = itemsArray[i]; // Always set as 'item' too for convenience
-        ctx.loop.index = i;
-        
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1}/${itemsArray.length}`);
-        
-        // Execute chain of steps until loopBreak or back to start
-        const chainOut = await executeLoopChain(spec, step, ctx, engineCtx, map, step.id);
-        
-        if (!chainOut.ok) {
-          engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1} failed: ${chainOut.error}`);
-          break;
-        }
-        
-        // Capture breakEdge from first iteration (all should be same)
-        if (chainOut.breakEdge && !breakEdge) {
-          breakEdge = chainOut.breakEdge;
-        }
-        
-        results.push(ctx[step.id]);
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1} completed`);
-        
-        if (delayMs > 0 && i < itemsArray.length - 1) {
-          await new Promise(r => setTimeout(r, delayMs));
-        }
-        
-        iterations++;
-      }
-    } else if (type === 'repeat') {
-      const repeatCount = Math.min(count || 1, maxIterations);
-      engineCtx.logFn(`[${step.id}] 🔄 repeat: ${repeatCount} times`);
-      
-      for (let i = 0; i < repeatCount; i++) {
-        if (controller.signal.aborted) break;
-        
-        ctx.loop[indexVar] = i;
-        ctx.loop.index = i;
-        
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1}/${repeatCount}`);
-        
-        const chainOut = await executeLoopChain(spec, step, ctx, engineCtx, map, step.id);
-        
-        if (!chainOut.ok) {
-          engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1} failed: ${chainOut.error}`);
-          break;
-        }
-        
-        if (chainOut.breakEdge && !breakEdge) {
-          breakEdge = chainOut.breakEdge;
-        }
-        
-        results.push(ctx[step.id]);
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${i + 1} completed`);
-        
-        if (delayMs > 0 && i < repeatCount - 1) {
-          await new Promise(r => setTimeout(r, delayMs));
-        }
-        
-        iterations++;
-      }
-    } else if (type === 'while') {
-      engineCtx.logFn(`[${step.id}] 🔄 while loop`);
-      
-      while (iterations < maxIterations) {
-        if (controller.signal.aborted) break;
-        
-        // Check condition using the same expression evaluator as guards
-        if (conditionText) {
-          // Strip {{ }} wrapper if present, then evaluate as expression
-          const expr = conditionText.trim().replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
-          let condResult = false;
-          try {
-            // First try as a full expression (supports "workflow.is_running == true", "$vars.count > 5", etc.)
-            condResult = evalIfGuard(expr, ctx);
-          } catch {
-            // Fallback: interpolate and do truthy check (for simple {{$vars.flag}} style)
-            const resolved = interpolateForTool({ cond: conditionText }, ctx, 'loop');
-            const condValue = resolved.cond;
-            condResult = !!condValue && condValue !== 'false' && condValue !== '0';
-          }
-          if (!condResult) {
-            engineCtx.logFn(`[${step.id}] 🔄 while condition false (${expr}), stopping`);
-            break;
-          }
-        }
-        
-        ctx.loop[indexVar] = iterations;
-        ctx.loop.index = iterations;
-        
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${iterations + 1}`);
-        
-        const chainOut = await executeLoopChain(spec, step, ctx, engineCtx, map, step.id);
-        
-        if (!chainOut.ok) {
-          engineCtx.logFn(`[${step.id}] 🔄 Iteration ${iterations + 1} failed: ${chainOut.error}`);
-          break;
-        }
-        
-        if (chainOut.breakEdge && !breakEdge) {
-          breakEdge = chainOut.breakEdge;
-        }
-        
-        results.push(ctx[step.id]);
-        engineCtx.logFn(`[${step.id}] 🔄 Iteration ${iterations + 1} completed`);
-        
-        if (delayMs > 0) {
-          await new Promise(r => setTimeout(r, delayMs));
-        }
-        
-        iterations++;
-      }
-    }
-    
-    // Store loop results
-    ctx[`${step.id}_loop_results`] = results;
-    ctx[step.id] = results.length > 0 ? results[results.length - 1] : ctx[step.id];
-    
-    // Clear loop context after loop completes
-    delete ctx.loop;
-    
-    engineCtx.logFn(`[${step.id}] 🔄 Loop completed: ${iterations} iterations`);
-    emitStepEvent(spec.id, step.id, 'completed', { result: { iterations, results } } as any);
-    
-    return { breakEdge };
+    return coreExecuteLoop(step, ctx, loop, map, prevStepId, {
+      logFn: engineCtx.logFn,
+      isAborted: () => controller.signal.aborted,
+      pathOpts: pathResolveOptions,
+      runChain: (bodyStep, c) => executeLoopChain(spec, bodyStep, c, engineCtx, map, bodyStep.id),
+      onComplete: (stepId, iterations, results) => {
+        emitStepEvent(spec.id, stepId, 'completed', { result: { iterations, results } } as any);
+      },
+    });
   }
 
   try {

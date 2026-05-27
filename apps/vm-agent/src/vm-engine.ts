@@ -57,6 +57,7 @@ import {
   safeStuardId,
   decideNext,
   designerModelToStuardSpec as coreDesignerModelToStuardSpec,
+  executeLoop as coreExecuteLoop,
 } from '@stuardai/workflow-core/runtime';
 
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
@@ -1590,6 +1591,11 @@ async function executeLoopChain(
   return { ok: true };
 }
 
+// Loop driver is shared with the desktop engine via @stuardai/workflow-core
+// (desktop semantics: run all iterations; a loopBreak edge is the post-loop
+// continuation, NOT an early exit). The VM keeps its own executeLoopChain as
+// the injected per-iteration body runner. isAborted is false here — the VM's
+// loop never observed an abort signal mid-loop (matches prior behavior).
 async function executeLoop(
   spec: StuardSpec,
   loopBodyStep: StuardStep,
@@ -1599,107 +1605,12 @@ async function executeLoop(
   map: Map<string, StuardStep>,
   prevStepId: string,
   deployDir?: string
-): Promise<{ breakEdge?: StuardEdge }> {
-  const maxIter = loopCfg.maxIterations || 100;
-  const delayMs = loopCfg.delayMs || 0;
-  const itemVar = loopCfg.itemVar || 'item';
-  const indexVar = loopCfg.indexVar || 'index';
-  const results: any[] = [];
-  let iterations = 0;
-  let breakEdge: StuardEdge | undefined;
-  let defaultBreakEdge: StuardEdge | undefined;
-
-  const sourceStep = map.get(prevStepId);
-  if (sourceStep && Array.isArray(sourceStep.next)) {
-    defaultBreakEdge = sourceStep.next.find(e => e.loopBreak);
-  }
-
-  const resolveItems = (): any[] => {
-    if (!loopCfg.items) return [];
-    const resolved = interpolateForTool({ items: loopCfg.items }, ctx, 'loop').items;
-    if (Array.isArray(resolved)) return resolved;
-    if (typeof resolved === 'string') {
-      try {
-        const parsed = JSON.parse(resolved);
-        return Array.isArray(parsed) ? parsed : [parsed];
-      } catch {
-        return resolved ? [resolved] : [];
-      }
-    }
-    return resolved == null ? [] : [resolved];
-  };
-
-  const setLoopContext = (i: number, item: any, length: number) => {
-    ctx.loop = ctx.loop || {};
-    ctx.loop[itemVar] = item;
-    ctx.loop[indexVar] = i;
-    ctx.loop.item = item;
-    ctx.loop.index = i;
-    ctx.loop.length = length;
-    ctx[itemVar] = item;
-    ctx[indexVar] = i;
-    ctx.$loop = { index: i, item, length };
-  };
-
-  const runIteration = async (i: number, item: any, length: number) => {
-    setLoopContext(i, item, length);
-    const chainOut = await executeLoopChain(spec, loopBodyStep, ctx, engineCtx, map, loopBodyStep.id, deployDir);
-    if (chainOut.breakEdge && !breakEdge) breakEdge = chainOut.breakEdge;
-    if (chainOut.ok) {
-      results.push(ctx[loopBodyStep.id]);
-      iterations++;
-    } else {
-      engineCtx.logFn(`[${loopBodyStep.id}] loop iteration ${i + 1} failed: ${chainOut.error}`);
-    }
-    return chainOut.ok;
-  };
-
-  engineCtx.logFn(`[${loopBodyStep.id}] Starting ${loopCfg.type} loop (max ${maxIter})`);
-
-  if (loopCfg.type === 'forEach') {
-    const items = resolveItems();
-    engineCtx.logFn(`[${loopBodyStep.id}] forEach: ${items.length} items`);
-    const limit = Math.min(items.length, maxIter);
-    for (let i = 0; i < limit; i++) {
-      const ok = await runIteration(i, items[i], items.length);
-      if (!ok || breakEdge || (ctx as any).__terminated) break;
-      if (delayMs > 0 && i < limit - 1) await new Promise(r => setTimeout(r, delayMs));
-    }
-  } else if (loopCfg.type === 'repeat') {
-    const count = Math.min(loopCfg.count || 1, maxIter);
-    engineCtx.logFn(`[${loopBodyStep.id}] repeat: ${count} times`);
-    for (let i = 0; i < count; i++) {
-      const ok = await runIteration(i, null, count);
-      if (!ok || breakEdge || (ctx as any).__terminated) break;
-      if (delayMs > 0 && i < count - 1) await new Promise(r => setTimeout(r, delayMs));
-    }
-  } else if (loopCfg.type === 'while') {
-    for (let i = 0; i < maxIter; i++) {
-      const expr = String(loopCfg.conditionText || 'false').trim().replace(/^\{\{/, '').replace(/\}\}$/, '').trim();
-      let shouldRun = false;
-      try {
-        shouldRun = evalIfGuard(expr, ctx);
-      } catch {
-        const resolved = interpolateForTool({ cond: loopCfg.conditionText || '' }, ctx, 'loop').cond;
-        shouldRun = !!resolved && resolved !== 'false' && resolved !== '0';
-      }
-      if (!shouldRun) {
-        engineCtx.logFn(`[${loopBodyStep.id}] while: condition false at iteration ${i}`);
-        break;
-      }
-      const ok = await runIteration(i, null, maxIter);
-      if (!ok || breakEdge || (ctx as any).__terminated) break;
-      if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-
-  ctx[`${loopBodyStep.id}_loop_results`] = results;
-  if (results.length > 0) ctx[loopBodyStep.id] = results[results.length - 1];
-  delete ctx.loop;
-  delete ctx.$loop;
-  engineCtx.logFn(`[${loopBodyStep.id}] Loop completed: ${iterations} iteration(s)`);
-
-  return { breakEdge: breakEdge || defaultBreakEdge };
+): Promise<{ breakEdge?: { to: string } }> {
+  return coreExecuteLoop(loopBodyStep, ctx, loopCfg, map, prevStepId, {
+    logFn: engineCtx.logFn,
+    isAborted: () => false,
+    runChain: (bodyStep, c) => executeLoopChain(spec, bodyStep, c, engineCtx, map, bodyStep.id, deployDir),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
