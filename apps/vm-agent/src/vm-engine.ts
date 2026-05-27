@@ -41,23 +41,18 @@ import type {
 } from '@stuardai/workflow-core/runtime';
 export type { LoopConfig, StreamWireConfig, StuardEdge, StuardStep, StuardSpec };
 
-// Shared runtime helpers — safe expression parser, path resolution, template
-// interpolation, JSONLogic + guard evaluation. Canonical impls live in
-// @stuardai/workflow-core so the desktop + VM engines evaluate workflows
-// identically. The VM passes no $vars resolver, so `$vars.X` reads from the
-// per-run ctx.$vars proxy (deploy-scoped variables).
+// Shared workflow runtime — the engine core is single-sourced with the desktop
+// engine in @stuardai/workflow-core so both evaluate/route/loop/execute steps
+// identically. The VM wires its own tool dispatch + AI routing into the shared
+// skeletons; expression eval, interpolation, guards, edge-selection, the
+// DesignerModel converter, and the loop driver all live in the package. (The VM
+// passes no $vars resolver, so `$vars.X` reads from the per-run ctx.$vars proxy.)
 import {
-  evaluateSafe,
-  getAtPath,
-  interpolateForTool,
-  deepMerge,
-  jsonLogic,
-  evalIfGuard,
   summarizeOutput,
-  safeStuardId,
-  decideNext,
   designerModelToStuardSpec as coreDesignerModelToStuardSpec,
   executeLoop as coreExecuteLoop,
+  executeStep as coreExecuteStep,
+  type ExecuteStepResult as CoreExecuteStepResult,
 } from '@stuardai/workflow-core/runtime';
 
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
@@ -1377,13 +1372,39 @@ async function execTool(
 // Step Execution (ported from desktop engine/execution.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface ExecuteStepResult {
-  edges: StuardEdge[];
-  ctx: any;
-  ok: boolean;
-  error?: string;
+type ExecuteStepResult = CoreExecuteStepResult;
+
+// VM tool dispatch — owns orchestration (run_sequential/run_parallel), noop, and
+// execTool routing with deployDir + kind. Injected into the shared executeStep
+// skeleton. Args are already interpolated by the skeleton.
+async function vmDispatchTool(
+  spec: StuardSpec,
+  step: StuardStep,
+  mergedArgs: any,
+  ctx: any,
+  toolName: string,
+  engineCtx: EngineContext,
+  deployDir?: string,
+): Promise<any> {
+  const kind = step.kind || getToolKind(toolName);
+  if (kind === 'orchestration') {
+    if (toolName === 'run_sequential') return execRunSequential(spec, step, mergedArgs, ctx, engineCtx, deployDir);
+    if (toolName === 'run_parallel') return execRunParallel(spec.id, mergedArgs, ctx, engineCtx, deployDir);
+    return { ok: false, error: `unknown_orchestration: ${toolName}` };
+  }
+  if (toolName === 'noop' || !toolName) return { ok: true };
+  return execTool(
+    toolName,
+    { ...mergedArgs, flowId: spec.id, __workflowToolCall: true },
+    engineCtx,
+    deployDir,
+    step.kind,
+  );
 }
 
+// Per-step executor — skeleton shared with the desktop engine via
+// @stuardai/workflow-core (interpolation, terminate/return handling, decideNext,
+// legacy-field derivation). The VM injects its tool dispatch + AI routing.
 async function executeStep(
   spec: StuardSpec,
   step: StuardStep,
@@ -1391,64 +1412,11 @@ async function executeStep(
   engineCtx: EngineContext,
   deployDir?: string
 ): Promise<ExecuteStepResult> {
-  try {
-    const toolName = step.tool || 'noop';
-    const mergedArgs = interpolateForTool(deepMerge(step.args || {}, ctx?.__argsPatch?.[step.id] || {}), ctx, toolName);
-
-    const kind = step.kind || getToolKind(toolName);
-    let result: any;
-
-    if (kind === 'orchestration') {
-      if (toolName === 'run_sequential') {
-        result = await execRunSequential(spec, step, mergedArgs, ctx, engineCtx, deployDir);
-      } else if (toolName === 'run_parallel') {
-        result = await execRunParallel(spec.id, mergedArgs, ctx, engineCtx, deployDir);
-      } else {
-        result = { ok: false, error: `unknown_orchestration: ${toolName}` };
-      }
-    } else if (toolName === 'noop' || !toolName) {
-      result = { ok: true };
-    } else {
-      result = await execTool(
-        toolName,
-        { ...mergedArgs, flowId: spec.id, __workflowToolCall: true },
-        engineCtx,
-        deployDir,
-        step.kind,
-      );
-    }
-
-    ctx[step.id] = result;
-
-    // Handle return_value — terminates the branch and sets the return payload
-    if (toolName === 'return_value' || result?.action === 'return') {
-      (ctx as any).__return = (result && typeof result === 'object' && 'value' in result) ? result.value : result;
-      (ctx as any).__terminated = true;
-      return { ok: true, ctx, edges: [] };
-    }
-
-    // Handle termination
-    if (result?.terminated || toolName === 'end') {
-      (ctx as any).__terminated = true;
-      return { ok: true, ctx, edges: [] };
-    }
-
-    // Check failure
-    if (!result?.ok) {
-      return { ok: false, error: String(result?.error || `${toolName}_failed`), ctx, edges: [] };
-    }
-
-    // Decide next edges — shared edge-selection (same semantics as desktop).
-    // VM passes no pathOpts (so `$vars` reads from the ctx proxy) and adapts its
-    // own aiDecideNext (which omits the `spec` arg) to the hook signature.
-    const decided = await decideNext(spec, step, ctx, {
-      logFn: engineCtx.logFn,
-      aiDecideNext: (_spec, st, c, options, aiCfg) => aiDecideNext(st, c, options, aiCfg, engineCtx),
-    });
-    return { ok: decided.ok, error: decided.error, ctx: decided.ctx, edges: decided.edges };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message || 'step_failed'), ctx, edges: [] };
-  }
+  return coreExecuteStep(spec, step, ctx, {
+    logFn: engineCtx.logFn,
+    dispatchTool: (sp, st, args, c, toolName) => vmDispatchTool(sp, st, args, c, toolName, engineCtx, deployDir),
+    aiDecideNext: (_spec, st, c, options, aiCfg) => aiDecideNext(st, c, options, aiCfg, engineCtx),
+  });
 }
 
 // Edge selection (isCatchAllGuard + decideNext) now lives in

@@ -11,6 +11,7 @@ import {
   designerModelToStuardSpec,
   sanitizeGuard,
   executeLoop,
+  executeStep,
   type StuardStep,
   type StuardSpec,
   type RunChainResult,
@@ -313,6 +314,58 @@ describe('executeLoop (shared driver — desktop semantics)', () => {
       loopHooks(async () => { calls++; return calls === 2 ? { ok: false, error: 'boom' } : { ok: true }; }),
     );
     expect(calls).toBe(2); // stopped after the failing iteration
+  });
+});
+
+describe('executeStep (shared skeleton — desktop terminate semantics)', () => {
+  const stepHooks = (dispatchTool: (sp: any, st: any, a: any, c: any, t: string) => Promise<any>) => ({
+    logFn: () => {},
+    dispatchTool,
+    aiDecideNext: async () => ({ ok: false, error: 'no_ai' }),
+  });
+  const mkStep = (over: Partial<StuardStep> = {}): StuardStep => ({ id: 's', tool: 'noop', next: [], ...over });
+
+  it('interpolates args before dispatch and stores the result in ctx[stepId]', async () => {
+    let receivedArgs: any;
+    const ctx: any = { src: { name: 'Ada' } };
+    const step = mkStep({ id: 'greet', tool: 'log', args: { msg: 'hi {{src.name}}' }, next: [] });
+    await executeStep(SPEC, step, ctx, stepHooks(async (_sp, _st, args) => { receivedArgs = args; return { ok: true, echoed: args.msg }; }));
+    expect(receivedArgs.msg).toBe('hi Ada');
+    expect(ctx.greet).toEqual({ ok: true, echoed: 'hi Ada' });
+  });
+
+  it('return_value records ctx.__return but does NOT set ctx.__terminated (desktop semantics)', async () => {
+    const ctx: any = {};
+    const step = mkStep({ id: 'r', tool: 'return_value', next: [] });
+    const out = await executeStep(SPEC, step, ctx, stepHooks(async () => ({ ok: true, action: 'return', value: 42 })));
+    expect(ctx.__return).toBe(42);
+    expect(ctx.__terminated).toBeUndefined();
+    expect(out.ok).toBe(true);
+  });
+
+  it('a result with terminated (or the end tool) sets __terminated and ends the branch', async () => {
+    const ctx: any = {};
+    const out = await executeStep(SPEC, mkStep({ tool: 'end' }), ctx, stepHooks(async () => ({ ok: true, terminated: true })));
+    expect(ctx.__terminated).toBe(true);
+    expect(out.edges).toEqual([]);
+  });
+
+  it('propagates dispatch failure', async () => {
+    const out = await executeStep(SPEC, mkStep({ tool: 'http_request' }), {}, stepHooks(async () => ({ ok: false, error: 'network' })));
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('network');
+  });
+
+  it('custom_ui timeout/closed is NOT treated as a failure', async () => {
+    const out = await executeStep(SPEC, mkStep({ tool: 'custom_ui' }), {}, stepHooks(async () => ({ ok: false, action: 'timeout' })));
+    expect(out.ok).toBe(true);
+  });
+
+  it('derives legacy nextId/loop fields from the chosen edges', async () => {
+    const step = mkStep({ id: 'a', tool: 'noop', next: [{ to: 'b' }] });
+    const out = await executeStep(SPEC, step, {}, stepHooks(async () => ({ ok: true })));
+    expect(out.edges.map(e => e.to)).toEqual(['b']);
+    expect(out.nextId).toBe('b');
   });
 });
 
