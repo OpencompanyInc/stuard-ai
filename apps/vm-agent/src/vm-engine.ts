@@ -27,6 +27,21 @@ import { mintVMToken } from './lib/vm-token-mint';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Shared workflow data types (StuardSpec/Step/Edge/LoopConfig/StreamWireConfig)
+// are the cross-engine execution contract — sourced from @stuardai/workflow-core
+// so the desktop engine and this VM engine stay in lockstep. Imported for local
+// use AND re-exported so existing `import { StuardSpec } from './vm-engine'`
+// consumers keep working.
+import type {
+  LoopConfig,
+  StreamWireConfig,
+  StuardEdge,
+  StuardStep,
+  StuardSpec,
+} from '@stuardai/workflow-core/runtime';
+export type { LoopConfig, StreamWireConfig, StuardEdge, StuardStep, StuardSpec };
+
+// Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
 export interface RouterContext {
   agentWsUrl: string;
   cloudAiUrl: string;
@@ -40,57 +55,6 @@ export interface RouterContext {
 
 export interface EngineContext extends RouterContext {
   stuardsDir: string;
-}
-
-export interface LoopConfig {
-  type: 'forEach' | 'repeat' | 'while';
-  items?: string;
-  itemVar?: string;
-  indexVar?: string;
-  count?: number;
-  conditionText?: string;
-  maxIterations?: number;
-  delayMs?: number;
-}
-
-export interface StreamWireConfig {
-  sourceField?: string;
-  mode?: 'reactive' | 'batch';
-  bufferSize?: number;
-  format?: 'base64' | 'ref';
-}
-
-export interface StuardEdge {
-  to: string;
-  guard?: any;
-  label?: string;
-  loop?: LoopConfig;
-  loopBreak?: boolean;
-  loopFanoutMode?: 'wait' | 'parallel';
-  stream?: StreamWireConfig;
-}
-
-export interface StuardStep {
-  id: string;
-  label?: string;
-  tool?: string;
-  kind?: 'cloud' | 'local' | 'vm-native' | 'orchestration' | 'desktop-relay';
-  designerType?: string;
-  args?: any;
-  next?: StuardEdge[];
-  fallback?: { to: string };
-  waitForAll?: boolean;
-}
-
-export interface StuardSpec {
-  id: string;
-  name?: string;
-  version?: string;
-  autostart?: boolean;
-  triggers?: Array<{ type: string; args?: any; id?: string; start?: string; startNodes?: string[]; inputParams?: any[] }>;
-  steps?: StuardStep[];
-  start?: string;
-  globals?: { ai?: any; [key: string]: any };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

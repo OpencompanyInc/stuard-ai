@@ -77,6 +77,14 @@ async function build() {
       outfile: OUTFILE,
       format: 'cjs',
       external: ['node-pty'],
+      // Shared workflow runtime lives in the workspace package @stuardai/workflow-core.
+      // vm-agent has no node_modules symlink for it (and ships as a standalone
+      // obfuscated bundle), so resolve the subpaths straight from source — esbuild
+      // transpiles + inlines the TS. Keep in sync with tsconfig "paths".
+      alias: {
+        '@stuardai/workflow-core/runtime': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'runtime', 'index.ts'),
+        '@stuardai/workflow-core': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'index.ts'),
+      },
     });
 
     const stats = fs.statSync(OUTFILE);

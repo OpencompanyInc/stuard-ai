@@ -9,7 +9,12 @@
     "strict": true,
     "resolveJsonModule": true,
     "types": ["node"],
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@stuardai/workflow-core/runtime": ["../../packages/workflow-core/src/runtime/index.ts"],
+      "@stuardai/workflow-core": ["../../packages/workflow-core/src/index.ts"]
+    }
   },
   "include": ["src/**/*"]
 }

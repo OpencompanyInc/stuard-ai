@@ -11,7 +11,8 @@
     "./compiler": "./src/compiler.ts",
     "./guards": "./src/guards.ts",
     "./shortcuts": "./src/shortcuts.ts",
-    "./builder": "./src/builder.ts"
+    "./builder": "./src/builder.ts",
+    "./runtime": "./src/runtime/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
