@@ -1,26 +1,14 @@
 import { z } from 'zod';
 import { makeLocalTool } from './device/shared';
 
-export const PROACTIVE_TASK_TOOL_NAMES = [
-  'proactive_task_list',
-  'proactive_task_update',
-  'proactive_task_create',
-  'proactive_task_delete',
-] as const;
-
-/**
- * Bot's private kanban + run-log tools. Distinct from proactive_task_*
- * (which are user-facing tasks): bot_memory_* is the *bot's own* working
- * memory across runs, surfaced in the Kanban tab of BotsView. Always
- * force-included for proactive runs so the bot can remember.
- */
-export const BOT_MEMORY_TOOL_NAMES = [
-  'bot_memory_list',
-  'bot_memory_create',
-  'bot_memory_update',
-  'bot_memory_delete',
-  'bot_memory_log',
-] as const;
+// The proactive default-kit tool names are single-sourced in @stuardai/bots-core
+// so desktop (local agent) and cloud-ai stay in lockstep. Imported for local use
+// (mergeForcedToolNames below) and re-exported so existing cloud-ai importers of
+// these constants are unaffected.
+//   PROACTIVE_TASK_TOOL_NAMES — the user-facing task board.
+//   BOT_MEMORY_TOOL_NAMES     — the bot's private kanban + run-log working memory.
+import { PROACTIVE_TASK_TOOL_NAMES, BOT_MEMORY_TOOL_NAMES } from '@stuardai/bots-core';
+export { PROACTIVE_TASK_TOOL_NAMES, BOT_MEMORY_TOOL_NAMES };
 
 export function hasProactiveModeMarker(hiddenContext: unknown): boolean {
   return typeof hiddenContext === 'string' && (

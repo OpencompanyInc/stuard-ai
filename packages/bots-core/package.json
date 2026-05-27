@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./bot-memory": "./src/bot-memory.ts",
-    "./schedule": "./src/schedule.ts"
+    "./schedule": "./src/schedule.ts",
+    "./proactive-tools": "./src/proactive-tools.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

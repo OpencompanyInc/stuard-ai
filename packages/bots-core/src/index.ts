@@ -5,3 +5,4 @@
  */
 export * from './bot-memory';
 export * from './schedule';
+export * from './proactive-tools';

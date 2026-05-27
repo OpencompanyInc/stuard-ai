@@ -1,4 +1,4 @@
-import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../tools/proactive-task-tools';
+import { PROACTIVE_CORE_TOOL_NAMES } from '@stuardai/bots-core';
 
 /**
  * Internal tools that should ALWAYS be available to bot/proactive agents.
@@ -15,18 +15,7 @@ import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../tools/proac
  * injected into the system prompt at all. The tools themselves stay available
  * so the agent can self-recover if it ever needs to look something up.
  */
-const PROACTIVE_CORE_TOOLS = [
-  ...PROACTIVE_TASK_TOOL_NAMES,
-  ...BOT_MEMORY_TOOL_NAMES,
-  'search_tools',
-  'get_tool_schema',
-  'execute_tool',
-  'get_skill_info',
-  'choose_notification_channel',
-  'write_session_summary',
-  'search_past_conversations',
-  'get_conversation_context',
-] as const;
+const PROACTIVE_CORE_TOOLS = PROACTIVE_CORE_TOOL_NAMES;
 
 export function isBlockedProactiveToolName(name: string): boolean {
   const trimmed = String(name || '').trim();

@@ -96,6 +96,9 @@ importers:
       '@polar-sh/sdk':
         specifier: ^0.46.7
         version: 0.46.7
+      '@stuardai/bots-core':
+        specifier: workspace:*
+        version: link:../../packages/bots-core
       '@stuardai/workflow-core':
         specifier: workspace:*
         version: link:../../packages/workflow-core

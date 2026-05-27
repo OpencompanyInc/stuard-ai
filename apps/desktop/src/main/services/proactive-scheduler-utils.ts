@@ -1,4 +1,5 @@
 import type { RouterContext } from '../tools/types';
+import { PROACTIVE_CORE_TOOL_NAMES } from '@stuardai/bots-core';
 
 const DEFAULT_PROACTIVE_NOTIFICATION_MESSAGE = 'I checked in and I’m ready to help. Open Chat if you want me to continue.';
 
@@ -310,29 +311,12 @@ export interface AgentToolRequest {
   args: any;
 }
 
-// Tools that stay available to bots regardless of the per-bot allowedTools
-// These are the bot's "default kit": user task board, private kanban, cross-run
-// memory recall, plus the bookkeeping tools the scheduler relies on. External
-// tools are added on top by exact name or explicit prefix.
-const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set([
-  'proactive_task_list',
-  'proactive_task_update',
-  'proactive_task_create',
-  'proactive_task_delete',
-  'bot_memory_list',
-  'bot_memory_create',
-  'bot_memory_update',
-  'bot_memory_delete',
-  'bot_memory_log',
-  'write_session_summary',
-  'choose_notification_channel',
-  'search_tools',
-  'get_tool_schema',
-  'execute_tool',
-  'get_skill_info',
-  'search_past_conversations',
-  'get_conversation_context',
-]);
+// Tools that stay available to bots regardless of the per-bot allowedTools —
+// the bot's "default kit" (task board, private kanban, cross-run memory recall,
+// plus the bookkeeping tools the scheduler relies on). Single-sourced with
+// cloud-ai via @stuardai/bots-core so the set is identical across runtimes.
+// External tools are added on top by exact name or explicit prefix.
+const LOCAL_PROACTIVE_INTERNAL_TOOLS = new Set<string>(PROACTIVE_CORE_TOOL_NAMES);
 
 function localHumanizeToolName(name: string): string {
   return String(name || '')
