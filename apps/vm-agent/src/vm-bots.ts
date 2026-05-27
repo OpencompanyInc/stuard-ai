@@ -1,8 +1,8 @@
 /**
  * VM Bot Scheduler
  *
- * Runs the user's cloud-target bots on the VM autonomously. Replaces the old
- * single-config `vm-proactive.ts` with a multi-bot scheduler that:
+ * Runs the user's cloud-target bots on the VM autonomously. A multi-bot
+ * scheduler that:
  *
  *  - Persists `bots.json` (the cloud-target subset of the user's bots) on disk
  *  - Registers a node-cron job per `schedule.cron` trigger (TZ-aware)

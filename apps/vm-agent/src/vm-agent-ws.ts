@@ -1,8 +1,8 @@
 /**
  * Shared Python Agent WebSocket communication for VM.
  *
- * Extracted so both vm-agent.ts and vm-proactive.ts can
- * call the Python agent without circular imports.
+ * Extracted so vm-agent.ts and the bot scheduler can call the
+ * Python agent without circular imports.
  */
 
 import { WebSocket } from 'ws';

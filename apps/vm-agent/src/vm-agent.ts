@@ -39,7 +39,6 @@ import { collectMetrics, initMetrics } from './metrics-collector';
 import { ShellExecutor } from './shell-executor';
 import { DeployExecutor } from './deploy-executor';
 import { getVMMemoryStore, type MemoryEntry } from './vm-memory';
-import { getVMProactiveScheduler } from './vm-proactive';
 import { getVMBotScheduler, type VMBot } from './vm-bots';
 import { handleVMBotMemoryCommand } from './vm-bot-memory';
 import { saveSkills as saveVMSkills, loadSkills as loadVMSkills, getStats as getVMSkillsStats, type Skill as VMSkill } from './vm-skills';
@@ -380,22 +379,6 @@ async function handleCommand(command: string, args: any): Promise<any> {
         return { ok: false, error: 'agent_ws_not_connected' };
       }
     }
-
-    // ── Proactive Commands ──────────────────────────────────────────────
-    case 'proactive_status':
-      return handleProactiveStatus();
-    case 'proactive_config':
-      return handleProactiveConfig(args);
-    case 'proactive_wakeup':
-      return await handleProactiveWakeup();
-    case 'proactive_tasks':
-      return handleProactiveTasks(args);
-    case 'proactive_task_add':
-      return handleProactiveTaskAdd(args);
-    case 'proactive_task_update':
-      return handleProactiveTaskUpdate(args);
-    case 'proactive_task_delete':
-      return handleProactiveTaskDelete(args);
 
     // ── Agent Commands (multi-agent scheduler; legacy bots_* aliases kept) ─
     case 'agents_status':
@@ -1140,61 +1123,8 @@ async function handleMemoryMessagesList(args: any): Promise<any> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Proactive Handlers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function handleProactiveStatus(): any {
-  return { ok: true, ...getVMProactiveScheduler().getStatus() };
-}
-
-function handleProactiveConfig(args: any): any {
-  const scheduler = getVMProactiveScheduler();
-  if (args.updates) {
-    return { ok: true, config: scheduler.updateConfig(args.updates) };
-  }
-  return { ok: true, config: scheduler.getConfig() };
-}
-
-async function handleProactiveWakeup(): Promise<any> {
-  const result = await getVMProactiveScheduler().wakeup();
-  return { ok: true, result };
-}
-
-function handleProactiveTasks(args: any): any {
-  return {
-    ok: true,
-    tasks: getVMProactiveScheduler().listTasks({
-      status: args.status,
-      priority: args.priority,
-    }),
-  };
-}
-
-function handleProactiveTaskAdd(args: any): any {
-  const task = getVMProactiveScheduler().addTask({
-    title: String(args.title || ''),
-    description: String(args.description || ''),
-    status: args.status || 'pending',
-    priority: args.priority || 'medium',
-    source: args.source || 'user',
-    dueAt: args.dueAt,
-    metadata: args.metadata,
-  });
-  return { ok: true, task };
-}
-
-function handleProactiveTaskUpdate(args: any): any {
-  const task = getVMProactiveScheduler().updateTask(args.id, args.updates || {});
-  return task ? { ok: true, task } : { ok: false, error: 'not_found' };
-}
-
-function handleProactiveTaskDelete(args: any): any {
-  return { ok: getVMProactiveScheduler().deleteTask(args.id) };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // User timezone — synced from the desktop on bot deploys so VM cron schedules
-// and any process.env.TZ-aware code (vm-proactive quiet hours, vm-engine time
+// and any process.env.TZ-aware code (vm-engine time
 // tools, …) follow the user's *current* zone, not whatever was baked in at
 // VM-provision time. Persisted so it survives agent restarts.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2304,7 +2234,6 @@ const server = http.createServer(async (req, res) => {
   // Health probe — no auth required
   if (method === 'GET' && url === '/health') {
     const memStore = getVMMemoryStore();
-    const proactive = getVMProactiveScheduler();
     json(res, 200, {
       ok: true,
       agentVersion: AGENT_VERSION,
@@ -2313,16 +2242,13 @@ const server = http.createServer(async (req, res) => {
       timestamp: Date.now(),
       capabilities: [
         'chat', 'execute', 'deploy', 'terminal', 'memory',
-        'proactive', 'sync', 'desktop-bridge',
+        'bots', 'sync', 'desktop-bridge',
       ],
       memory: {
         totalMemories: memStore.getStats().totalMemories,
         totalConversations: memStore.getStats().totalConversations,
       },
-      proactive: {
-        enabled: proactive.getStatus().enabled,
-        pendingTasks: proactive.getStatus().pendingTasks,
-      },
+      bots: getVMBotScheduler().getStatus().botCount,
       deploys: deployExecutor.list().length,
       pythonAgent: isAgentWsConnected() ? 'connected' : 'disconnected',
     });
@@ -2434,31 +2360,6 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, result });
     } catch (e: any) {
       json(res, 500, { ok: false, error: e?.message });
-    }
-    return;
-  }
-
-  // ── Proactive Endpoints ──────────────────────────────────────────────
-
-  if (method === 'GET' && url === '/proactive/status') {
-    try {
-      const result = await handleCommand('proactive_status', {});
-      json(res, 200, { ok: true, result });
-    } catch (e: any) {
-      json(res, 500, { ok: false, error: e?.message });
-    }
-    return;
-  }
-
-  if (method === 'POST' && url.startsWith('/proactive/')) {
-    try {
-      const body = await readBody(req);
-      const action = url.slice('/proactive/'.length).replace(/\/$/, '');
-      const command = `proactive_${action.replace(/\//g, '_')}`;
-      const result = await handleCommand(command, body);
-      json(res, 200, { ok: true, result });
-    } catch (e: any) {
-      json(res, 500, { ok: false, error: e?.message || 'proactive_operation_failed' });
     }
     return;
   }
@@ -2898,19 +2799,8 @@ export function startAgent(): void {
   const memStore = getVMMemoryStore();
   console.log(`[vm-agent] Memory store: ${memStore.getStats().totalMemories} memories, ${memStore.getStats().totalConversations} conversations`);
 
-  // Initialize proactive scheduler (legacy single-config path; will retire
-  // once all users have migrated to the multi-bot scheduler below).
-  const proactive = getVMProactiveScheduler();
-  const proactiveConfig = proactive.getConfig();
-  if (proactiveConfig.enabled) {
-    proactive.start();
-    console.log(`[vm-agent] Proactive scheduler: enabled (interval=${proactiveConfig.intervalMs}ms)`);
-  } else {
-    console.log('[vm-agent] Proactive scheduler: disabled (enable via proactive_config command)');
-  }
-
-  // Initialize multi-bot scheduler — runs every cloud-target bot the desktop
-  // has synced via the `bots_sync` command on its own intervals/cron triggers.
+  // Initialize the multi-bot scheduler — runs every cloud-target bot the
+  // desktop has synced via `bots_sync` on its own intervals/cron triggers.
   const botScheduler = getVMBotScheduler();
   botScheduler.start();
   const botStatus = botScheduler.getStatus();
@@ -2956,7 +2846,6 @@ export function startAgent(): void {
     console.log(`[vm-agent] Received ${sig}, shutting down...`);
     deployExecutor.stopAll();
     shellExecutor.destroyAll();
-    proactive.destroy();
     botScheduler.destroy();
     memStore.destroy();
     // Final sync of agent databases before exit
