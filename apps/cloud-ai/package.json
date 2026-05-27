@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
-    "build": "tsup src/server.ts --format esm --minify --sourcemap --out-dir dist --external better-sqlite3",
+    "build": "tsup",
     "start": "node dist/server.js",
     "clean": "rimraf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
