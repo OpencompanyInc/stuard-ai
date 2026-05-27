@@ -45,6 +45,9 @@ jobs:
       - name: Chat UI parity
         run: node scripts/check-chat-ui-parity.mjs
 
+      - name: Workflow tool parity
+        run: node scripts/check-workflow-tool-parity.mjs
+
       - name: Typecheck
         run: pnpm turbo run typecheck
 
