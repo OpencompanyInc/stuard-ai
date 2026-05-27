@@ -585,8 +585,9 @@ export const botService = {
 
 /**
  * Mirrors the bot's primary schedule.interval trigger back into BotConfig.interval
- * so legacy callers (e.g. ProactiveView reading proactiveService.getConfig())
- * see a consistent value. If there's no interval trigger, falls back to 'manual'.
+ * so callers that read the flat interval (e.g. the VM deploy payload's
+ * intervalFromBotTriggers fallback) see a consistent value. If there's no
+ * interval trigger, falls back to 'manual'.
  */
 function syncLegacyIntervalMirror(svc: typeof botService, botId: string): void {
   const bot = svc.get(botId);
