@@ -21,6 +21,7 @@ import { runWithSecrets } from '../tools/bridge';
 import type { ModelChoice } from '../router/model-router';
 import { getDefaultModelForCategory } from '../pricing';
 import { buildProactiveMessageContent, expandProactiveAllowedToolNames, generateWithToolRecovery, isProactiveToolAllowed } from './proactive-utils';
+import { SCHEDULE_INTERVAL_MS } from '@stuardai/bots-core';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { telnyx_send_sms, telnyx_voice_call } from '../tools/telnyx-tools';
 import { whatsapp_send_message } from '../tools/whatsapp-tools';
@@ -969,11 +970,11 @@ Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake
       notificationChannels,
     } = body;
 
-    // Map desktop config shape to VM ProactiveConfig shape
-    const intervalMap: Record<string, number> = {
-      '10m': 10 * 60_000, '15m': 15 * 60_000, '30m': 30 * 60_000,
-      '1h': 60 * 60_000, '2h': 2 * 60 * 60_000, 'random': 20 * 60_000,
-    };
+    // Map desktop config shape to the legacy VM ProactiveConfig shape. Base
+    // intervals come from the shared @stuardai/bots-core table; 'random' is a
+    // fixed 20m here because the legacy single-config scheduler uses a plain
+    // setInterval and can't redraw a per-fire delay (the multi-bot path does).
+    const intervalMap: Record<string, number> = { ...SCHEDULE_INTERVAL_MS, random: 20 * 60_000 };
 
     const vmUpdates: Record<string, any> = {};
     if (typeof enabled === 'boolean') vmUpdates.enabled = enabled;

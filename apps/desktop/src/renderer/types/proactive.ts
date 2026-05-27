@@ -146,12 +146,7 @@ export const SCHEDULE_LABELS: Record<ScheduleInterval, string> = {
   'manual': 'Manual only',
 };
 
-export const INTERVAL_MS: Record<ScheduleInterval, number> = {
-  '10m': 10 * 60_000,
-  '15m': 15 * 60_000,
-  '30m': 30 * 60_000,
-  '1h': 60 * 60_000,
-  '2h': 2 * 60 * 60_000,
-  'random': 0,
-  'manual': 0,
-};
+// (Removed the unused INTERVAL_MS table — it was an unreferenced duplicate of
+// the schedule-interval math now single-sourced in @stuardai/bots-core/schedule.
+// Use intervalDelayMs / SCHEDULE_INTERVAL_MS from the package if a renderer
+// surface ever needs interval→ms again.)
