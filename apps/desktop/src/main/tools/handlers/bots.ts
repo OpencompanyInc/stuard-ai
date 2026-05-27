@@ -61,7 +61,6 @@ function summarizeBot(bot: Bot, config?: BotConfig | null): Record<string, any> 
     lastRunAt: bot.lastRunAt ?? null,
     nextRunAt: bot.nextRunAt ?? null,
     vmDeployedAt: bot.vmDeployedAt ?? null,
-    isLegacyDefault: !!bot.isLegacyDefault,
     triggers: (bot.triggers || []).map(summarizeTrigger),
     config: config ? summarizeConfig(config) : undefined,
   };

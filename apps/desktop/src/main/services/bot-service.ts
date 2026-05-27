@@ -105,12 +105,6 @@ export interface Bot {
    * not a swap. `vmDeployedAt` records the last successful push.
    */
   vmDeployedAt?: string | null;
-  /**
-   * The legacy default bot delegates its config to proactiveService so the
-   * existing proactive-data.json remains the single source of truth during
-   * migration. New bots store their config inline.
-   */
-  isLegacyDefault?: boolean;
   config?: BotConfig;
 }
 
@@ -123,8 +117,30 @@ interface BotsFile {
 
 export const DEFAULT_BOT_ID = 'bot_default';
 
-const DEFAULT_BOT_NAME = 'Stuard';
-const DEFAULT_BOT_EMOJI = '🤖';
+// Identity of the agent Stuard ships with — a proactive companion that checks
+// in on a schedule. It's a normal bot the user can rename, reconfigure, pause,
+// or delete; these are just the seed values for a fresh install.
+const DEFAULT_BOT_NAME = 'Proactive';
+const DEFAULT_BOT_EMOJI = '🔔';
+// Fallback name for an unnamed/corrupt bot row (create() always supplies one).
+const FALLBACK_BOT_NAME = 'Agent';
+
+/**
+ * The default Proactive agent's personality + operating contract. Distinct from
+ * the generic proactive scaffolding the scheduler injects for every bot
+ * (buildLocalProactiveHiddenContext); this is what makes THIS bot "Proactive".
+ * Encodes the human-in-the-loop rule: it proposes destructive/outbound actions
+ * for approval instead of performing them autonomously during an unattended run.
+ */
+const DEFAULT_PROACTIVE_SYSTEM_PROMPT = [
+  "You are Stuard's built-in proactive companion. You wake up on a schedule to check in on the user, surface time-sensitive things, and quietly move their work forward between conversations.",
+  '',
+  'How you operate:',
+  "- CHECK IN, don't nag. Lead with a useful observation, real progress, or a finished draft — never an empty \"just checking in\" ping. If nothing is genuinely worth surfacing this run, skip the notification.",
+  '- PROACTIVELY SET REMINDERS. When you notice something time-sensitive — a deadline, a follow-up, an appointment — use the reminder tool to set a reminder instead of relying on the user to remember.',
+  '- CONFIRM BEFORE ACTING. Never autonomously perform destructive or outbound/write actions: deleting, sending messages or emails, posting, modifying or overwriting files, purchases, or anything hard to undo. Prepare it and ask first — create a task or set a reminder describing exactly what you propose to do, notify the user, and only carry it out once they have confirmed.',
+  '- READ-ONLY WORK NEEDS NO CONFIRMATION. Researching, drafting, summarizing, organizing your private kanban, and setting reminders are always fair game — do them and report the result.',
+].join('\n');
 
 const DEFAULT_BOT_CONFIG: BotConfig = {
   interval: '30m',
@@ -137,6 +153,40 @@ const DEFAULT_BOT_CONFIG: BotConfig = {
   notificationChannels: ['app'],
   memoryEnabled: true,
 };
+
+/**
+ * Seed (or re-seed) the shipped default Proactive agent. Used by fresh-install
+ * initialization and by the idempotent upgrade path for installs that still
+ * have the old blank default bot.
+ */
+function buildDefaultProactiveBot(now: string): Bot {
+  return {
+    id: DEFAULT_BOT_ID,
+    name: DEFAULT_BOT_NAME,
+    emoji: DEFAULT_BOT_EMOJI,
+    systemPrompt: DEFAULT_PROACTIVE_SYSTEM_PROMPT,
+    storedFacts: '',
+    triggers: [{
+      id: `trig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'schedule.interval',
+      args: { every: '30m' },
+      enabled: true,
+      label: 'Schedule',
+      requiresCloud: false,
+    }],
+    status: 'paused',
+    createdAt: now,
+    updatedAt: now,
+    lastRunAt: null,
+    nextRunAt: null,
+    vmDeployedAt: null,
+    config: {
+      ...DEFAULT_BOT_CONFIG,
+      // Ships able to set reminders so it can act on time-sensitive things.
+      allowedTools: ['task_reminders'],
+    },
+  };
+}
 
 // ─── Persistence ───────────────────────────────────────────────────────────
 
@@ -168,19 +218,13 @@ function saveBotsFile(file: BotsFile): void {
 function normalizeBot(raw: any): Bot {
   const now = new Date().toISOString();
   const config = raw?.config ? normalizeConfig(raw.config) : undefined;
-  const isLegacyDefault = !!raw?.isLegacyDefault;
-  // For the legacy default bot, the authoritative interval lives in
-  // proactive-data.json. Pull it so the synthesized trigger matches reality.
-  let legacyInterval: string | undefined;
-  if (isLegacyDefault) {
-    try {
-      legacyInterval = proactiveService.getConfig().config.interval;
-    } catch { /* fall back to default */ }
-  }
-  const triggers = normalizeTriggers(raw?.triggers, { ...raw, legacyInterval }, config);
+  const isDefault = String(raw?.id || '') === DEFAULT_BOT_ID;
+  const triggers = normalizeTriggers(raw?.triggers, raw, config);
   return {
     id: String(raw?.id || ''),
-    name: typeof raw?.name === 'string' && raw.name.trim() ? raw.name : DEFAULT_BOT_NAME,
+    name: typeof raw?.name === 'string' && raw.name.trim()
+      ? raw.name
+      : (isDefault ? DEFAULT_BOT_NAME : FALLBACK_BOT_NAME),
     emoji: typeof raw?.emoji === 'string' && raw.emoji ? raw.emoji : DEFAULT_BOT_EMOJI,
     systemPrompt: typeof raw?.systemPrompt === 'string' ? raw.systemPrompt : '',
     storedFacts: typeof raw?.storedFacts === 'string' ? raw.storedFacts : '',
@@ -191,7 +235,6 @@ function normalizeBot(raw: any): Bot {
     lastRunAt: raw?.lastRunAt ?? null,
     nextRunAt: raw?.nextRunAt ?? null,
     vmDeployedAt: raw?.vmDeployedAt ?? null,
-    isLegacyDefault,
     config,
   };
 }
@@ -307,95 +350,56 @@ function normalizeConfig(raw: any): BotConfig {
 // ─── Migration ─────────────────────────────────────────────────────────────
 
 /**
- * Builds the initial bots.json from the existing proactive-data.json.
- * The legacy default bot delegates its config to proactiveService so we don't
- * duplicate state; new bots will store config inline going forward.
+ * Builds the initial bots.json for a fresh install: just the shipped default
+ * Proactive agent, with its config stored inline like every other bot.
  */
 function buildInitialBotsFile(): BotsFile {
-  const now = new Date().toISOString();
-  // Read the legacy config so we can mirror status/lastRunAt/nextRunAt onto
-  // the bot header (config itself stays in proactive-data.json for now).
-  let status: BotStatus = 'paused';
-  let lastRunAt: string | null = null;
-  let nextRunAt: string | null = null;
-  try {
-    const { config } = proactiveService.getConfig();
-    status = config.enabled ? 'running' : 'paused';
-    lastRunAt = config.lastWakeUpAt ?? null;
-    nextRunAt = config.nextWakeUpAt ?? null;
-  } catch (e) {
-    logger.warn('[bot-service] Could not read legacy proactive config during migration:', e);
-  }
-
-  // Synthesize an initial schedule.interval trigger from the legacy interval
-  // so the migrated default bot keeps firing on schedule out of the box.
-  let legacyInterval = '30m';
-  try { legacyInterval = proactiveService.getConfig().config.interval || '30m'; } catch { /* fallback */ }
-  const initialTrigger: BotTrigger = {
-    id: `trig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    type: 'schedule.interval',
-    args: { every: legacyInterval },
-    enabled: true,
-    label: 'Schedule',
-    requiresCloud: false,
-  };
-
-  const defaultBot: Bot = {
-    id: DEFAULT_BOT_ID,
-    name: DEFAULT_BOT_NAME,
-    emoji: DEFAULT_BOT_EMOJI,
-    systemPrompt: '',
-    storedFacts: '',
-    triggers: [initialTrigger],
-    status,
-    createdAt: now,
-    updatedAt: now,
-    lastRunAt,
-    nextRunAt,
-    isLegacyDefault: true,
-  };
-
-  return { version: 1, bots: [defaultBot] };
+  return { version: 1, bots: [buildDefaultProactiveBot(new Date().toISOString())] };
 }
 
 /**
- * Returns the bots file, migrating from the legacy single-config layout if
- * this is the first run after upgrade. Once bots.json exists, even an empty
- * list is intentional because the legacy default agent can now be deleted.
+ * Returns the bots file, initializing it on first run. Once bots.json exists,
+ * even an empty list is intentional because the default agent can be deleted.
  */
 function getOrInitBotsFile(): BotsFile {
   const existing = loadBotsFile();
-  if (existing) return existing;
+  if (existing) return upgradeDefaultBotIfNeeded(existing);
   const fresh = buildInitialBotsFile();
   saveBotsFile(fresh);
-  logger.info('[bot-service] Initialized bots.json with default bot from legacy proactive config');
+  logger.info('[bot-service] Initialized bots.json with the default Proactive agent');
   return fresh;
 }
 
-// ─── Config bridging (legacy default vs new bots) ──────────────────────────
-
-function legacyConfigToBotConfig(): BotConfig {
-  const { config } = proactiveService.getConfig();
-  return {
-    interval: config.interval as ScheduleInterval,
-    executionTarget: config.executionTarget,
-    modelMode: config.modelMode,
-    modelId: config.modelId,
-    instructions: config.instructions || '',
-    contextPermissions: { ...config.contextPermissions },
-    allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [],
-    notificationChannels: Array.isArray(config.notificationChannels) && config.notificationChannels.length
-      ? (config.notificationChannels as NotificationChannel[])
-      : ['app'],
-    memoryEnabled: true,
+/**
+ * Idempotent in-place upgrade for installs created before the Proactive default
+ * agent existed: the old default bot shipped with a blank system prompt and
+ * delegated its config to proactiveService. If we still see that shape, give it
+ * the Proactive identity so the user gets the new behavior without losing run
+ * history. No-ops once seeded or if the user customized the prompt or deleted
+ * the bot.
+ */
+function upgradeDefaultBotIfNeeded(file: BotsFile): BotsFile {
+  const idx = file.bots.findIndex(b => b.id === DEFAULT_BOT_ID);
+  if (idx < 0) return file; // user deleted the default bot — respect that
+  const bot = file.bots[idx];
+  if (bot.systemPrompt && bot.systemPrompt.trim()) return file; // already seeded/customized
+  const seed = buildDefaultProactiveBot(bot.createdAt || new Date().toISOString());
+  file.bots[idx] = {
+    ...bot,
+    name: bot.name && bot.name !== 'Stuard' ? bot.name : seed.name,
+    emoji: bot.emoji && bot.emoji !== '🤖' ? bot.emoji : seed.emoji,
+    systemPrompt: seed.systemPrompt,
+    triggers: bot.triggers.length ? bot.triggers : seed.triggers,
+    config: {
+      ...(seed.config as BotConfig),
+      ...(bot.config || {}),
+      allowedTools: Array.from(new Set([...(bot.config?.allowedTools || []), 'task_reminders'])),
+    },
+    updatedAt: new Date().toISOString(),
   };
-}
-
-function applyConfigPatchToLegacy(patch: Partial<BotConfig>): BotConfig {
-  // memoryEnabled and skillIds are bot-row fields, not in legacy proactive config.
-  const { memoryEnabled: _omitMem, skillIds: _omitSkills, ...legacyPatch } = patch;
-  proactiveService.updateConfig(legacyPatch as any);
-  return legacyConfigToBotConfig();
+  saveBotsFile(file);
+  logger.info('[bot-service] Upgraded the legacy default bot to the Proactive agent');
+  return file;
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -444,7 +448,6 @@ export const botService = {
       updatedAt: now,
       lastRunAt: null,
       nextRunAt: null,
-      isLegacyDefault: false,
       config,
     };
     file.bots.push(bot);
@@ -460,7 +463,6 @@ export const botService = {
       ...file.bots[idx],
       ...patch,
       id: file.bots[idx].id,
-      isLegacyDefault: file.bots[idx].isLegacyDefault,
       updatedAt: new Date().toISOString(),
     };
     file.bots[idx] = next;
@@ -478,65 +480,25 @@ export const botService = {
     return { ok: true };
   },
 
-  /**
-   * Resolves the bot's effective config. For the legacy default bot this
-   * reads through proactiveService (proactive-data.json); for new bots it
-   * returns the inline config stored on the bot row.
-   */
+  /** Resolves the bot's effective config from its inline config row. */
   resolveConfig(id: string): BotConfig | null {
     const bot = this.get(id);
     if (!bot) return null;
-    if (bot.isLegacyDefault) {
-      const cfg = legacyConfigToBotConfig();
-      // memoryEnabled and skillIds are bot-level; pull from row
-      return {
-        ...cfg,
-        memoryEnabled: bot.config?.memoryEnabled !== false,
-        skillIds: bot.config?.skillIds,
-      };
-    }
     return bot.config || { ...DEFAULT_BOT_CONFIG };
   },
 
   updateConfig(id: string, patch: Partial<BotConfig>): BotConfig | null {
     const bot = this.get(id);
     if (!bot) return null;
-
-    if (bot.isLegacyDefault) {
-      const nextCfg = applyConfigPatchToLegacy(patch);
-      // memoryEnabled and skillIds live on the bot row even for the legacy default
-      if (patch.memoryEnabled !== undefined || patch.skillIds !== undefined) {
-        this.update(id, {
-          config: {
-            ...(bot.config || DEFAULT_BOT_CONFIG),
-            ...(patch.memoryEnabled !== undefined ? { memoryEnabled: patch.memoryEnabled } : {}),
-            ...(patch.skillIds !== undefined ? { skillIds: patch.skillIds } : {}),
-          },
-        });
-      }
-      const stored = this.get(id)?.config;
-      return {
-        ...nextCfg,
-        memoryEnabled: stored?.memoryEnabled !== false,
-        skillIds: stored?.skillIds,
-      };
-    }
-
     const merged: BotConfig = { ...DEFAULT_BOT_CONFIG, ...(bot.config || {}), ...patch };
     this.update(id, { config: merged });
     return merged;
   },
 
-  /**
-   * Sets the bot's status. For the legacy default bot, also flips
-   * proactiveService's `enabled` flag so the existing scheduler keeps working.
-   */
+  /** Sets the bot's status (running/paused/errored). */
   setStatus(id: string, status: BotStatus): Bot | null {
     const bot = this.get(id);
     if (!bot) return null;
-    if (bot.isLegacyDefault) {
-      proactiveService.updateConfig({ enabled: status === 'running' });
-    }
     return this.update(id, { status });
   },
 

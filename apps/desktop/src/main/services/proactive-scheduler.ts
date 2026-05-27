@@ -1407,14 +1407,9 @@ async function executeWakeUp(opts: {
       modelId: executionResult.modelId || modelSelection.modelId || undefined,
     });
 
-    // Stamp lastRunAt on the bot row. For the legacy default bot, also mirror
-    // to proactive-data.json's lastWakeUpAt so the existing UI keeps showing
-    // "last run" until the multi-bot UI lands in Phase 2.
+    // Stamp lastRunAt on the bot row.
     const lastRunAt = new Date().toISOString();
     botService.recordRun(botId, { lastRunAt });
-    if (bot.isLegacyDefault) {
-      proactiveService.setLastWakeUp(lastRunAt);
-    }
     emitStage(logId, 'complete');
 
     // Use agent's urgency-based channel choice if available, otherwise fall back to configured channels
@@ -1561,15 +1556,9 @@ async function executeWakeUp(opts: {
     if (freshBot && freshBot.status === 'running' && every && every !== 'manual') {
       const next = computeNextWakeUp(every);
       botService.recordRun(botId, { nextRunAt: next });
-      if (freshBot.isLegacyDefault) {
-        proactiveService.setNextWakeUp(next);
-      }
       broadcastUpdate({ type: 'next-wakeup-scheduled', botId, nextWakeUpAt: next });
     } else {
       botService.recordRun(botId, { nextRunAt: null });
-      if (freshBot?.isLegacyDefault) {
-        proactiveService.setNextWakeUp(null);
-      }
     }
   }
 }
@@ -1619,7 +1608,6 @@ function checkSchedule() {
       if (!bot.nextRunAt) {
         const next = computeNextWakeUp(every);
         botService.recordRun(bot.id, { nextRunAt: next });
-        if (bot.isLegacyDefault) proactiveService.setNextWakeUp(next);
         continue;
       }
 
