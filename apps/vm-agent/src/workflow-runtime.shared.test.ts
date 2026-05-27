@@ -8,6 +8,8 @@ import {
   deepMerge,
   decideNext,
   isCatchAllGuard,
+  designerModelToStuardSpec,
+  sanitizeGuard,
   type StuardStep,
   type StuardSpec,
 } from '@stuardai/workflow-core/runtime';
@@ -122,6 +124,96 @@ describe('deepMerge', () => {
   it('merges nested objects and replaces arrays', () => {
     expect(deepMerge({ a: { x: 1 }, list: [1, 2] }, { a: { y: 2 }, list: [9] }))
       .toEqual({ a: { x: 1, y: 2 }, list: [9] });
+  });
+});
+
+describe('sanitizeGuard', () => {
+  it('strips LLM double-quoting from operator keys, recursively', () => {
+    expect(sanitizeGuard({ '"=="': [{ '"var"': 'x' }, 1] })).toEqual({ '==': [{ var: 'x' }, 1] });
+  });
+  it('passes through "always" and primitives', () => {
+    expect(sanitizeGuard('always')).toBe('always');
+    expect(sanitizeGuard(5 as any)).toBe(5);
+  });
+});
+
+describe('designerModelToStuardSpec', () => {
+  it('converts nodes+wires to steps with normalized guards', () => {
+    const model = {
+      id: 'wf1', name: 'Test', version: '2',
+      nodes: [
+        { id: 'a', tool: 'log', args: { msg: 'hi' } },
+        { id: 'b', tool: 'noop' },
+      ],
+      wires: [
+        { from: 'a', to: 'b' }, // no guard → 'always'
+      ],
+      triggers: [],
+    };
+    const spec = designerModelToStuardSpec(model);
+    expect(spec.id).toBe('wf1');
+    expect(spec.version).toBe('2');
+    expect(spec.steps?.find(s => s.id === 'a')?.next?.[0]).toEqual({ to: 'b', guard: 'always' });
+    // no inbound wire → 'a' is the start
+    expect(spec.start).toBe('a');
+  });
+
+  it('wraps raw JSONLogic guards in {if} and treats {===:[true,true]} as always', () => {
+    const model = {
+      id: 'g', nodes: [{ id: 'a', tool: 'noop' }, { id: 'b', tool: 'noop' }, { id: 'c', tool: 'noop' }],
+      wires: [
+        { from: 'a', to: 'b', guard: { '==': [{ var: 'x' }, 1] } },
+        { from: 'a', to: 'c', guard: { '===': [true, true] } },
+      ],
+      triggers: [],
+    };
+    const a = designerModelToStuardSpec(model).steps!.find(s => s.id === 'a')!;
+    expect(a.next!.find(e => e.to === 'b')!.guard).toEqual({ if: { '==': [{ var: 'x' }, 1] } });
+    expect(a.next!.find(e => e.to === 'c')!.guard).toBe('always');
+  });
+
+  it('carries loop, loopBreak, and stream edge config through', () => {
+    const model = {
+      id: 'l', nodes: [{ id: 'a', tool: 'noop' }, { id: 'b', tool: 'noop' }],
+      wires: [{ from: 'a', to: 'b', loop: { type: 'forEach', items: '{{xs}}' }, loopBreak: true, stream: { sourceField: 'sid' } }],
+      triggers: [],
+    };
+    const e = designerModelToStuardSpec(model).steps!.find(s => s.id === 'a')!.next![0];
+    expect(e.loop).toMatchObject({ type: 'forEach', items: '{{xs}}', itemVar: 'item', maxIterations: 100 });
+    expect(e.loopBreak).toBe(true);
+    expect(e.stream).toMatchObject({ sourceField: 'sid', mode: 'reactive' });
+  });
+
+  it('creates a synthetic parallel start when a trigger fans out', () => {
+    const model = {
+      id: 't',
+      nodes: [{ id: 'x', tool: 'noop' }, { id: 'y', tool: 'noop' }],
+      wires: [{ from: 'trig1', to: 'x' }, { from: 'trig1', to: 'y' }],
+      triggers: [{ id: 'trig1', type: 'manual' }],
+    };
+    const spec = designerModelToStuardSpec(model, { triggerId: 'trig1' });
+    expect(spec.start).toBe('_trigger_parallel_start');
+    const synth = spec.steps!.find(s => s.id === '_trigger_parallel_start')!;
+    expect(synth.next!.map(e => e.to).sort()).toEqual(['x', 'y']);
+  });
+
+  it('desktop mode respects model.autostart and adds no kind', () => {
+    const model = { id: 'k', nodes: [{ id: 'a', tool: 'web_search', type: 'cloud.tool' }], wires: [], triggers: [], autostart: true };
+    const spec = designerModelToStuardSpec(model);
+    expect(spec.autostart).toBe(true);
+    expect((spec.steps![0] as any).kind).toBeUndefined();
+    expect((spec.steps![0] as any).designerType).toBeUndefined();
+  });
+
+  it('VM mode injects normalizeKind + forces autostart false', () => {
+    const model = { id: 'k', nodes: [{ id: 'a', tool: 'web_search', type: 'cloud.tool' }], wires: [], triggers: [], autostart: true };
+    const spec = designerModelToStuardSpec(model, {
+      normalizeKind: (v: any) => (v === 'cloud.tool' ? 'cloud' : undefined),
+      autostart: false,
+    });
+    expect(spec.autostart).toBe(false);
+    expect((spec.steps![0] as any).kind).toBe('cloud');
+    expect((spec.steps![0] as any).designerType).toBe('cloud.tool');
   });
 });
 

@@ -9,3 +9,4 @@ export * from './types';
 export * from './expr';
 export * from './helpers';
 export * from './decide';
+export * from './designer';

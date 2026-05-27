@@ -56,6 +56,7 @@ import {
   summarizeOutput,
   safeStuardId,
   decideNext,
+  designerModelToStuardSpec as coreDesignerModelToStuardSpec,
 } from '@stuardai/workflow-core/runtime';
 
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
@@ -1702,147 +1703,18 @@ async function executeLoop(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DesignerModel → StuardSpec converter (ported from desktop workflows.ts)
+// DesignerModel → StuardSpec converter
 // ─────────────────────────────────────────────────────────────────────────────
-
-function sanitizeGuard(g: any): any {
-  if (!g || typeof g !== 'object') return g;
-  const result: any = {};
-  for (const [key, value] of Object.entries(g)) {
-    // Fix LLM double-quoting: '"=="' → '=='
-    const cleanKey = key.replace(/^"(.*)"$/, '$1');
-    if (Array.isArray(value)) {
-      result[cleanKey] = value.map(v => {
-        if (typeof v === 'string') return v.replace(/^"(.*)"$/, '$1');
-        if (v && typeof v === 'object') return sanitizeGuard(v);
-        return v;
-      });
-    } else if (value && typeof value === 'object') {
-      result[cleanKey] = sanitizeGuard(value);
-    } else {
-      result[cleanKey] = value;
-    }
-  }
-  return result;
-}
+// Shared with the desktop engine via @stuardai/workflow-core/runtime. The VM
+// injects normalizeStepKind (so steps carry a routing `kind`) and forces
+// autostart:false (deploy-executor owns lifecycle on the VM).
 
 export function designerModelToStuardSpec(m: any, triggerId?: string): StuardSpec {
-  const id = String(m?.id || '').trim() || 'stuard_' + Math.random().toString(36).slice(2, 8);
-  const name = String(m?.name || 'My Stuard');
-  const version = String(m?.version || '1');
-  const nodes = Array.isArray(m?.nodes) ? m.nodes : [];
-  const wires = Array.isArray(m?.wires) ? m.wires : [];
-  const triggersIn = Array.isArray(m?.triggers) ? m.triggers : [];
-
-  const steps: StuardStep[] = nodes.map((n: any) => {
-    const fromId = String(n?.id || '');
-    const outs = wires.filter((w: any) => String(w?.from || '') === fromId && !(w as any)?.callNode);
-    const next: StuardEdge[] = outs.map((w: any) => {
-      const to = String(w?.to || '');
-      const gRaw = (w as any)?.guard;
-      const g = (gRaw && typeof gRaw === 'object') ? sanitizeGuard(gRaw) : gRaw;
-      let guard: any = 'always';
-      if (g && typeof g === 'object') {
-        if (g.if) guard = { if: g.if };
-        else if (g.ai) guard = { ai: g.ai };
-        else {
-          const isEmpty = !g || Object.keys(g).length === 0;
-          const isAlwaysTrue = isEmpty || (g['==='] && Array.isArray(g['===']) && g['==='][0] === true && g['==='][1] === true);
-          guard = isAlwaysTrue ? 'always' : { if: g };
-        }
-      }
-      const edge: any = { to, guard };
-      if ((w as any)?.label) edge.label = String((w as any).label);
-      if ((w as any)?.loop?.type) {
-        const loop = (w as any).loop;
-        edge.loop = {
-          type: loop.type, items: loop.items,
-          itemVar: loop.itemVar || 'item', indexVar: loop.indexVar || 'index',
-          count: loop.count, conditionText: loop.conditionText,
-          maxIterations: loop.maxIterations || 100, delayMs: loop.delayMs || 0,
-        };
-      }
-      if ((w as any)?.loopBreak) edge.loopBreak = true;
-      const loopFanoutMode = (w as any)?.loopFanoutMode;
-      if (loopFanoutMode === 'wait' || loopFanoutMode === 'parallel') {
-        edge.loopFanoutMode = loopFanoutMode;
-      }
-      if ((w as any)?.stream && typeof (w as any).stream === 'object') {
-        const s = (w as any).stream;
-        edge.stream = { sourceField: s.sourceField || 'streamId', mode: s.mode || 'reactive' };
-        if (s.bufferSize) edge.stream.bufferSize = s.bufferSize;
-      }
-      return edge;
-    });
-    const designerType = String(n?.type || '').trim();
-    const step: any = {
-      id: fromId,
-      tool: String(n?.tool || 'noop'),
-      args: n?.args || {},
-      next,
-    };
-    const normalizedKind = normalizeStepKind(designerType || n?.kind);
-    if (normalizedKind) step.kind = normalizedKind;
-    if (designerType) step.designerType = designerType;
-    if (n?.label) step.label = String(n.label);
-    if (n?.waitForAll === true) step.waitForAll = true;
-    if (n?.fallbackTo) step.fallback = { to: String(n.fallbackTo).trim() };
-    return step;
+  return coreDesignerModelToStuardSpec(m, {
+    triggerId,
+    normalizeKind: normalizeStepKind,
+    autostart: false,
   });
-
-  // Find start node
-  const triggerIdsSet = new Set(triggersIn.map((t: any) => String(t?.id || '')).filter(Boolean));
-  let startNodeId: string | undefined;
-
-  if (triggerId) {
-    const triggerWires = wires.filter((w: any) => String(w?.from || '') === triggerId);
-    const targets: string[] = [...new Set(triggerWires.map((w: any) => String(w?.to || '')).filter(Boolean))] as string[];
-    if (targets.length > 1) {
-      const synId = '_trigger_parallel_start';
-      steps.unshift({ id: synId, tool: 'noop', args: {}, next: targets.map(t => ({ to: t, guard: 'always' as any })) });
-      startNodeId = synId;
-    } else if (targets.length === 1) {
-      startNodeId = targets[0];
-    }
-  }
-
-  if (!startNodeId) {
-    const triggerTargets = wires
-      .filter((w: any) => triggerIdsSet.has(String(w?.from || '')) || String(w?.from || '').startsWith('trig_'))
-      .map((w: any) => String(w?.to || '')).filter(Boolean);
-    const unique: string[] = [...new Set(triggerTargets)] as string[];
-    if (unique.length > 1) {
-      const synId = '_trigger_parallel_start';
-      steps.unshift({ id: synId, tool: 'noop', args: {}, next: unique.map(t => ({ to: t, guard: 'always' as any })) });
-      startNodeId = synId;
-    } else if (unique.length === 1) {
-      startNodeId = unique[0];
-    }
-  }
-
-  if (!startNodeId) {
-    const nodeWires = wires.filter((w: any) => !triggerIdsSet.has(String(w?.from || '')) && !String(w?.from || '').startsWith('trig_'));
-    const inbound = new Set(nodeWires.map((w: any) => String(w?.to || '')).filter(Boolean));
-    const startNode = nodes.find((n: any) => !inbound.has(String(n?.id || ''))) || nodes[0];
-    startNodeId = startNode ? String(startNode.id) : undefined;
-  }
-
-  const triggers = triggersIn.map((t: any) => {
-    const tid = String(t?.id || '');
-    const triggerWires = wires.filter((w: any) => String(w?.from || '') === tid);
-    const triggerStarts = triggerWires.map((w: any) => String(w?.to || '')).filter(Boolean);
-    return {
-      id: tid,
-      type: String(t?.type || ''),
-      args: t?.args || {},
-      inputParams: Array.isArray(t?.inputParams) ? t.inputParams
-        : Array.isArray(t?.args?.inputParams) ? t.args.inputParams : undefined,
-      start: triggerStarts[0],
-      startNodes: triggerStarts.length > 1 ? triggerStarts : undefined,
-    };
-  });
-
-  return { id, name, version, autostart: false, triggers, steps, start: startNodeId };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
