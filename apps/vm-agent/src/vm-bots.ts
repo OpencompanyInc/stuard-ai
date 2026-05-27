@@ -23,6 +23,7 @@ import { mintVMToken } from './lib/vm-token-mint';
 import { buildVMMemoryContext } from './vm-agent-ws';
 import { getActiveSkillsForBot } from './vm-skills';
 import { appendVMBotRunLog, deleteVMBotMemory, formatVMBotMemoryForPrompt, mergeVMBotMemory } from './vm-bot-memory';
+import { intervalDelayMs } from '@stuardai/bots-core';
 
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { /* optional — interval triggers still work */ }
@@ -97,22 +98,9 @@ const LOG_FILE = 'bots.log';
 
 const TICK_MS = 30_000;
 
-const INTERVAL_TO_MS: Record<string, number> = {
-  '10m': 10 * 60_000,
-  '15m': 15 * 60_000,
-  '30m': 30 * 60_000,
-  '1h': 60 * 60_000,
-  '2h': 2 * 60 * 60_000,
-  // 'random' fires at a uniformly-distributed point in [10m, 30m] after the
-  // last run — same convention the desktop scheduler uses.
-};
-
-function intervalToMs(every: string): number | null {
-  if (every === 'random') {
-    return 10 * 60_000 + Math.floor(Math.random() * 20 * 60_000);
-  }
-  return INTERVAL_TO_MS[every] ?? null;
-}
+// Interval→delay math (incl. the 'random' check-in window) is single-sourced
+// with the desktop scheduler in @stuardai/bots-core/schedule — see
+// computeNextIntervalRunAt below for the VM's last-run anchoring.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scheduler
@@ -575,7 +563,7 @@ function computeNextIntervalRunAt(bot: VMBot, anchor: string | null | undefined)
   );
   if (!intervalTrigger) return null;
   const every = String(intervalTrigger.args?.every || bot.config.interval || '30m');
-  const ms = intervalToMs(every);
+  const ms = intervalDelayMs(every);
   if (ms === null) return null;
   const baseMs = anchor ? new Date(anchor).getTime() : Date.now();
   if (!Number.isFinite(baseMs)) return new Date(Date.now() + ms).toISOString();

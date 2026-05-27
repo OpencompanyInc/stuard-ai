@@ -15,6 +15,7 @@ import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
 import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
+import { intervalDelayMs } from '@stuardai/bots-core';
 import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, isProactiveSkipResponse, splitProactiveStructuredContent } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
@@ -64,18 +65,11 @@ async function sendTelnyxNotification(
 }
 
 const POLL_INTERVAL_MS = 15_000;
-const MAX_RANDOM_MS = 90 * 60_000;
-const MIN_RANDOM_MS = 10 * 60_000;
 const AGENT_RESPONSE_TIMEOUT_MS = 180_000;
 const PROACTIVE_REPLY_TIMEOUT_MS = 120_000;
 
-const INTERVAL_MS: Record<string, number> = {
-  '10m': 10 * 60_000,
-  '15m': 15 * 60_000,
-  '30m': 30 * 60_000,
-  '1h': 60 * 60_000,
-  '2h': 2 * 60 * 60_000,
-};
+// Interval→delay math (incl. the 'random' check-in window) lives in
+// @stuardai/bots-core/schedule, single-sourced with the VM scheduler.
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isRunning = false;
@@ -621,15 +615,9 @@ async function captureScreenshot(): Promise<string | null> {
 // ─── Schedule Helpers ───────────────────────────────────────────────────────
 
 function computeNextWakeUp(interval: string): string | null {
-  if (interval === 'manual') return null;
-  const now = Date.now();
-  if (interval === 'random') {
-    const delay = MIN_RANDOM_MS + Math.random() * (MAX_RANDOM_MS - MIN_RANDOM_MS);
-    return new Date(now + delay).toISOString();
-  }
-  const ms = INTERVAL_MS[interval];
-  if (!ms) return null;
-  return new Date(now + ms).toISOString();
+  const ms = intervalDelayMs(interval);
+  if (ms === null) return null;
+  return new Date(Date.now() + ms).toISOString();
 }
 
 function humanizeAgentToolName(tool: string): string {

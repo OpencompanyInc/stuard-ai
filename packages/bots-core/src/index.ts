@@ -4,3 +4,4 @@
  * concerns (storage, transports, scheduling I/O) are injected by each host.
  */
 export * from './bot-memory';
+export * from './schedule';
