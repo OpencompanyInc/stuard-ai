@@ -84,6 +84,8 @@ async function build() {
       alias: {
         '@stuardai/workflow-core/runtime': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'runtime', 'index.ts'),
         '@stuardai/workflow-core': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'index.ts'),
+        '@stuardai/bots-core/bot-memory': path.join(ROOT, '..', '..', 'packages', 'bots-core', 'src', 'bot-memory.ts'),
+        '@stuardai/bots-core': path.join(ROOT, '..', '..', 'packages', 'bots-core', 'src', 'index.ts'),
       },
     });
 

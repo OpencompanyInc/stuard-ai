@@ -11,6 +11,8 @@ export default defineConfig({
     alias: [
       { find: '@stuardai/workflow-core/runtime', replacement: r('../../packages/workflow-core/src/runtime/index.ts') },
       { find: '@stuardai/workflow-core', replacement: r('../../packages/workflow-core/src/index.ts') },
+      { find: '@stuardai/bots-core/bot-memory', replacement: r('../../packages/bots-core/src/bot-memory.ts') },
+      { find: '@stuardai/bots-core', replacement: r('../../packages/bots-core/src/index.ts') },
     ],
   },
 });

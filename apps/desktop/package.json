@@ -25,6 +25,7 @@
     "obfuscate": "javascript-obfuscator ./dist/main --output ./dist/main --compact true --control-flow-flattening true --dead-code-injection true --string-array true --string-array-encoding base64 && javascript-obfuscator ./dist/preload --output ./dist/preload --compact true --control-flow-flattening true --dead-code-injection true --string-array true --string-array-encoding base64 && javascript-obfuscator ./dist/renderer/assets --output ./dist/renderer/assets --compact true --control-flow-flattening true --dead-code-injection true --string-array true --string-array-encoding none"
   },
   "dependencies": {
+    "@stuardai/bots-core": "workspace:*",
     "@stuardai/bots-ui": "workspace:*",
     "@stuardai/chat-ui": "workspace:*",
     "@stuardai/cloud-client": "workspace:*",

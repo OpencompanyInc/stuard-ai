@@ -13,7 +13,9 @@
     "baseUrl": ".",
     "paths": {
       "@stuardai/workflow-core/runtime": ["../../packages/workflow-core/src/runtime/index.ts"],
-      "@stuardai/workflow-core": ["../../packages/workflow-core/src/index.ts"]
+      "@stuardai/workflow-core": ["../../packages/workflow-core/src/index.ts"],
+      "@stuardai/bots-core/bot-memory": ["../../packages/bots-core/src/bot-memory.ts"],
+      "@stuardai/bots-core": ["../../packages/bots-core/src/index.ts"]
     }
   },
   "include": ["src/**/*"]
