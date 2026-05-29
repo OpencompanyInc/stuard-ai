@@ -72,6 +72,7 @@ const KNOWN_LOCAL_NODE_TOOLS = new Set<string>([
   'update_custom_ui',
   'ai_inference',
   'invoke_workflow',
+  'call_function',
   'callNode',
 ]);
 

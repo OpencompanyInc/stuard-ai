@@ -70,6 +70,7 @@ export const LOCAL_TOOL_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'grep', label: 'Search In Files', args: { path: '', pattern: '' } },
   { k: 'local.tool', t: 'create_directory', label: 'Create Folder', args: { path: '' } },
   { k: 'local.tool', t: 'move_file', label: 'Move File', args: { src: '', dest: '' } },
+  { k: 'local.tool', t: 'open_file', label: 'Open File', args: { path: '' } },
   { k: 'local.tool', t: 'run_command', label: 'Run Command', args: { command: 'echo hello', shell: 'auto', isPermissionRequired: false, description: '' } },
   { k: 'local.tool', t: 'launch_application_or_uri', label: 'Launch App / URL', args: { target: '', args: [] } },
   { k: 'local.tool', t: 'workspace_read_file', label: 'Read Workspace File', args: { path: 'data/config.json' } },

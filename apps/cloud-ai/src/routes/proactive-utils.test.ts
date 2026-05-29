@@ -220,12 +220,36 @@ describe('expandProactiveAllowedToolNames', () => {
     expect(result).not.toContain('browser_get_content');
     expect(result).toContain('browser_use_navigate');
   });
+
+  it('drops user knowledge write tools from bot allowed tools', () => {
+    const result = expandProactiveAllowedToolNames([
+      'knowledge_add_instruction',
+      'knowledge_remember_about_user',
+      'knowledge_update_profile',
+      'knowledge_add_project_fact',
+      'knowledge_stats',
+    ]);
+
+    expect(result).not.toContain('knowledge_add_instruction');
+    expect(result).not.toContain('knowledge_remember_about_user');
+    expect(result).not.toContain('knowledge_update_profile');
+    expect(result).not.toContain('knowledge_add_project_fact');
+    expect(result).toContain('knowledge_stats');
+  });
 });
 
 describe('isBlockedProactiveToolName', () => {
   it('blocks legacy browser tools but allows browser_use tools', () => {
     expect(isBlockedProactiveToolName('browser_get_content')).toBe(true);
     expect(isBlockedProactiveToolName('browser_use_navigate')).toBe(false);
+  });
+
+  it('blocks user knowledge writes while allowing knowledge stats', () => {
+    expect(isBlockedProactiveToolName('knowledge_add_instruction')).toBe(true);
+    expect(isBlockedProactiveToolName('knowledge_remember_about_user')).toBe(true);
+    expect(isBlockedProactiveToolName('knowledge_update_profile')).toBe(true);
+    expect(isBlockedProactiveToolName('knowledge_add_project_fact')).toBe(true);
+    expect(isBlockedProactiveToolName('knowledge_stats')).toBe(false);
   });
 });
 

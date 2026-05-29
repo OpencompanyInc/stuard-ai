@@ -37,11 +37,14 @@ async def conversation_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new conversation."""
     try:
         db = get_memory_db()
+        source = args.get("source", "stuard")
         conv = db.create_conversation(
             title=args.get("title"),
             model=args.get("model"),
             conversation_id=args.get("conversation_id"),
-            source=args.get("source", "stuard")
+            source=source,
+            owner_type=args.get("owner_type"),
+            owner_id=args.get("owner_id"),
         )
         return {"ok": True, "conversation": conv.to_dict()}
     except Exception as e:
@@ -143,7 +146,10 @@ async def conversation_update(args: Dict[str, Any]) -> Dict[str, Any]:
             conversation_id=conversation_id,
             title=args.get("title"),
             status=args.get("status"),
-            embedding=args.get("embedding")
+            embedding=args.get("embedding"),
+            source=args.get("source"),
+            owner_type=args.get("owner_type"),
+            owner_id=args.get("owner_id"),
         )
         
         if not conv:
@@ -356,7 +362,15 @@ async def segment_list_recent(args: Dict[str, Any]) -> Dict[str, Any]:
         since = args.get("since")
         before = args.get("before")
 
-        segments = db.list_recent_segments(limit=limit, since=since, before=before)
+        owner_type = args.get("owner_type", "stuard")
+        owner_id = args.get("owner_id")
+        segments = db.list_recent_segments(
+            limit=limit,
+            since=since,
+            before=before,
+            owner_type=owner_type,
+            owner_id=str(owner_id) if owner_id else None,
+        )
         return {
             "ok": True,
             "segments": [s.to_dict() for s in segments],
@@ -383,12 +397,16 @@ async def segment_search(args: Dict[str, Any]) -> Dict[str, Any]:
         threshold = float(args.get("threshold", 0.6))
         project_id = args.get("project_id")
         project_id = str(project_id) if project_id else None
+        owner_type = args.get("owner_type", "stuard")
+        owner_id = args.get("owner_id")
 
         results = db.search_segments(
             query_vector=embedding,
             limit=limit,
             threshold=threshold,
             project_id=project_id,
+            owner_type=owner_type,
+            owner_id=str(owner_id) if owner_id else None,
         )
         
         return {
@@ -419,6 +437,8 @@ async def segment_build_topic_drawers(args: Dict[str, Any]) -> Dict[str, Any]:
             cluster_threshold=args.get("cluster_threshold", 0.82),
             max_clusters_per_topic=args.get("max_clusters_per_topic", 12),
             segments_scan_limit=args.get("segments_scan_limit", 2000),
+            owner_type=args.get("owner_type", "stuard"),
+            owner_id=str(args.get("owner_id")) if args.get("owner_id") else None,
         )
         return {"ok": True, "drawers": drawers, "count": len(drawers)}
     except Exception as e:
@@ -441,7 +461,13 @@ async def segment_search_drawers_by_embedding(args: Dict[str, Any]) -> Dict[str,
         db = get_memory_db()
 
         # Build drawers to get segment data (including embeddings)
-        segments = db.list_recent_segments_with_embeddings(limit=2000)
+        owner_type = args.get("owner_type", "stuard")
+        owner_id = args.get("owner_id")
+        segments = db.list_recent_segments_with_embeddings(
+            limit=2000,
+            owner_type=owner_type,
+            owner_id=str(owner_id) if owner_id else None,
+        )
 
         # Group segments by topic and compute centroid
         import numpy as _np
@@ -481,7 +507,9 @@ async def segment_search_drawers_by_embedding(args: Dict[str, Any]) -> Dict[str,
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         # Also check pre-computed collection summaries
-        collection_hits = db.search_collection_summaries_by_vector(vector, limit=limit, threshold=0.5)
+        # Collection summaries are currently unscoped, so avoid returning stale
+        # cross-owner summaries into a bot/agent memory view.
+        collection_hits = []
 
         return {
             "ok": True,

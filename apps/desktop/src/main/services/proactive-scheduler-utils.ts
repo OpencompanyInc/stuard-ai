@@ -361,12 +361,63 @@ export function extractAgentToolRequest(msg: any): AgentToolRequest | null {
   };
 }
 
+// Sensitive local tools a bot run must clear with its per-agent permission gate
+// before they execute. Mirrors DEFAULT_BOT_AUTO_APPROVE_TOOLS in bot-service.
+const BOT_FILE_MUTATING_TOOLS = new Set([
+  'write_file', 'write_file_base64', 'create_directory', 'copy_file', 'file_edit', 'move_file', 'delete_file',
+]);
+const BOT_COMMAND_TERMINAL_TOOLS = new Set([
+  'run_command', 'run_system_command',
+  'terminal_create', 'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys', 'terminal_destroy',
+]);
+
+export function isSensitiveBotTool(tool: string): boolean {
+  const t = String(tool || '').trim().toLowerCase();
+  return BOT_FILE_MUTATING_TOOLS.has(t) || BOT_COMMAND_TERMINAL_TOOLS.has(t);
+}
+
+export interface BotPermissionGate {
+  mode: 'auto' | 'selective' | 'manual';
+  autoApprove: string[];
+  /** Pops the blocking approval prompt; resolve true to proceed, false to deny. */
+  requestApproval: (toolName: string, args: any) => Promise<boolean>;
+}
+
+/** Whether a tool must pop an approval prompt given the agent's permission gate. */
+export function botToolNeedsApproval(tool: string, gate?: BotPermissionGate | null): boolean {
+  if (!gate) return false;
+  if (!isSensitiveBotTool(tool)) return false;
+  if (gate.mode === 'auto') return false;
+  if (gate.mode === 'selective') {
+    const t = String(tool || '').trim().toLowerCase();
+    const approved = (gate.autoApprove || []).map((x) => String(x || '').trim().toLowerCase());
+    if (approved.includes(t)) return false;
+  }
+  return true; // 'manual', or 'selective' without the tool listed
+}
+
 export async function executeAgentToolRequest(
   request: AgentToolRequest,
   ctx: RouterContext,
   execTool: (toolName: string, args: any, ctx: RouterContext) => Promise<any>,
   allowedTools?: string[],
+  gate?: BotPermissionGate | null,
 ): Promise<{ type: 'tool_result'; id: string; result: any }> {
+  // Per-agent permission gate: pop a blocking approval prompt for sensitive
+  // tools unless the agent's mode auto-approves them. Returns null to proceed,
+  // or a denied tool_result to short-circuit.
+  const gateOrDeny = async (toolName: string, args: any) => {
+    if (!botToolNeedsApproval(toolName, gate)) return null;
+    let allowed = false;
+    try { allowed = await gate!.requestApproval(toolName, args); } catch { allowed = false; }
+    if (allowed) return null;
+    return {
+      type: 'tool_result' as const,
+      id: request.id,
+      result: { ok: false, error: 'access_denied', denied: true },
+    };
+  };
+
   try {
     if (request.tool === 'search_tools') {
       const query = String(request.args?.query || '').trim();
@@ -406,6 +457,8 @@ export async function executeAgentToolRequest(
           result: { ok: false, error: `Tool '${toolName}' is not allowed for this agent.` },
         };
       }
+      const denied = await gateOrDeny(toolName, args);
+      if (denied) return denied;
       const result = await execTool(toolName, args, ctx);
       return { type: 'tool_result', id: request.id, result };
     }
@@ -423,6 +476,8 @@ export async function executeAgentToolRequest(
         result: { ok: false, error: `Tool '${request.tool}' is not allowed for this agent.` },
       };
     }
+    const denied = await gateOrDeny(request.tool, request.args);
+    if (denied) return denied;
     const result = await execTool(request.tool, request.args, ctx);
     return { type: 'tool_result', id: request.id, result };
   } catch (e: any) {

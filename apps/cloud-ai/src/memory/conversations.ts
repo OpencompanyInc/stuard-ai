@@ -35,6 +35,15 @@ export interface Conversation {
   synced_at?: string | null;
   needs_sync?: boolean;
   source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
+  owner_type?: MemoryOwnerType | null;
+  owner_id?: string | null;
+}
+
+export type MemoryOwnerType = 'stuard' | 'bot' | 'agent' | 'workflow' | 'skill';
+
+export interface MemoryOwnerScope {
+  owner_type?: MemoryOwnerType;
+  owner_id?: string | null;
 }
 
 export interface Message {
@@ -86,6 +95,13 @@ export interface SpaceItem {
   position?: number;
   created_at: string;
   updated_at: string;
+}
+
+function serializeOwnerScope(owner?: MemoryOwnerScope): Record<string, string | null> {
+  if (!owner?.owner_type) return {};
+  const out: Record<string, string | null> = { owner_type: owner.owner_type };
+  if (owner.owner_id !== undefined) out.owner_id = owner.owner_id ? String(owner.owner_id) : null;
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -331,7 +347,8 @@ export async function createConversation(
   title?: string,
   model?: string,
   conversationId?: string,
-  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard',
+  owner?: MemoryOwnerScope,
 ): Promise<Conversation | null> {
   try {
     const result = await execLocalTool('conversation_create', {
@@ -339,6 +356,7 @@ export async function createConversation(
       model,
       conversation_id: conversationId,
       source,
+      ...serializeOwnerScope(owner),
     });
     
     if (result?.ok && result.conversation) {
@@ -369,6 +387,9 @@ export async function updateConversation(
     title?: string;
     status?: 'active' | 'archived' | 'deleted';
     embedding?: number[];
+    source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
+    owner_type?: MemoryOwnerType;
+    owner_id?: string | null;
   }
 ): Promise<Conversation | null> {
   try {
@@ -558,9 +579,14 @@ export async function listRecentSegments(options?: {
   limit?: number;
   since?: string;
   before?: string;
+  owner?: MemoryOwnerScope;
 }): Promise<ConversationSegment[]> {
   try {
-    const result = await execLocalTool('segment_list_recent', options || {});
+    const { owner, ...rest } = options || {};
+    const result = await execLocalTool('segment_list_recent', {
+      ...rest,
+      ...serializeOwnerScope(owner),
+    });
     if (result?.ok && result.segments) {
       return result.segments as ConversationSegment[];
     }
@@ -572,7 +598,7 @@ export async function listRecentSegments(options?: {
 
 export async function searchSegments(
   query: string,
-  options?: { limit?: number; threshold?: number }
+  options?: { limit?: number; threshold?: number; owner?: MemoryOwnerScope }
 ): Promise<Array<{ segment: ConversationSegment; score: number }>> {
   const embedding = await generateEmbedding(query);
   if (!embedding.length) return [];
@@ -587,7 +613,7 @@ export async function searchSegments(
  */
 export async function searchSegmentsByEmbedding(
   embedding: number[],
-  options?: { limit?: number; threshold?: number }
+  options?: { limit?: number; threshold?: number; owner?: MemoryOwnerScope }
 ): Promise<Array<{ segment: ConversationSegment; score: number }>> {
   if (!embedding.length) return [];
 
@@ -595,6 +621,7 @@ export async function searchSegmentsByEmbedding(
     embedding,
     limit: options?.limit ?? 10,
     threshold: options?.threshold ?? 0.6,
+    ...serializeOwnerScope(options?.owner),
   }, undefined, 300000, { silent: true });
 
   if (result?.ok && result.results) {
@@ -948,7 +975,8 @@ export async function getMemoryStats(): Promise<{
 export async function ensureLocalConversation(
   conversationId: string,
   model?: string,
-  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard'
+  source: 'stuard' | 'workflow' | 'skill' | 'proactive' = 'stuard',
+  owner?: MemoryOwnerScope,
 ): Promise<Conversation | null> {
   try {
     // Check if conversation exists locally
@@ -956,8 +984,18 @@ export async function ensureLocalConversation(
     
     if (!conversation) {
       // Create it locally
-      conversation = await createConversation(undefined, model, conversationId, source);
+      conversation = await createConversation(undefined, model, conversationId, source, owner);
       writeLog('local_conversation_created', { conversationId });
+    } else if (owner?.owner_type && (
+      conversation.owner_type !== owner.owner_type
+      || (owner.owner_id !== undefined && (conversation.owner_id || null) !== (owner.owner_id || null))
+      || conversation.source !== source
+    )) {
+      conversation = await updateConversation(conversationId, {
+        source,
+        owner_type: owner.owner_type,
+        owner_id: owner.owner_id ?? null,
+      }) || conversation;
     }
     
     return conversation;
@@ -981,11 +1019,17 @@ export async function storeMessageLocally(
     metadata?: Record<string, any>;
     model?: string;
     source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
+    owner?: MemoryOwnerScope;
   }
 ): Promise<boolean> {
   try {
     // Ensure conversation exists first
-    const conversation = await ensureLocalConversation(conversationId, options?.model, options?.source || 'stuard');
+    const conversation = await ensureLocalConversation(
+      conversationId,
+      options?.model,
+      options?.source || 'stuard',
+      options?.owner,
+    );
     if (!conversation) {
       writeLog('store_message_no_conversation', { conversationId });
       return false;
@@ -1008,12 +1052,18 @@ export async function storeMessageLocally(
 // TOPIC NORMALIZATION — prevent topic fragmentation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let _topicCache: { topics: string[]; expiresAt: number } = { topics: [], expiresAt: 0 };
+const _topicCache = new Map<string, { topics: string[]; expiresAt: number }>();
 const TOPIC_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-async function getExistingTopics(): Promise<string[]> {
-  if (Date.now() < _topicCache.expiresAt && _topicCache.topics.length > 0) {
-    return _topicCache.topics;
+function ownerCacheKey(owner?: MemoryOwnerScope): string {
+  return `${owner?.owner_type || 'stuard'}:${owner?.owner_id || ''}`;
+}
+
+async function getExistingTopics(owner?: MemoryOwnerScope): Promise<string[]> {
+  const key = ownerCacheKey(owner);
+  const cached = _topicCache.get(key);
+  if (cached && Date.now() < cached.expiresAt && cached.topics.length > 0) {
+    return cached.topics;
   }
 
   try {
@@ -1021,14 +1071,15 @@ async function getExistingTopics(): Promise<string[]> {
       limit_topics: 200,
       limit_segments_per_topic: 0,
       segments_scan_limit: 2000,
+      ...serializeOwnerScope(owner),
     }, undefined, 10000, { silent: true });
 
     const drawers: any[] = result?.drawers || [];
     const topics = drawers.map((d: any) => String(d.topic || '').trim()).filter(Boolean);
-    _topicCache = { topics, expiresAt: Date.now() + TOPIC_CACHE_TTL_MS };
+    _topicCache.set(key, { topics, expiresAt: Date.now() + TOPIC_CACHE_TTL_MS });
     return topics;
   } catch {
-    return _topicCache.topics; // return stale cache on error
+    return cached?.topics || []; // return stale cache on error
   }
 }
 
@@ -1036,8 +1087,8 @@ async function getExistingTopics(): Promise<string[]> {
  * Normalize proposed topics against existing topic names.
  * Uses case-insensitive substring matching to merge near-duplicates.
  */
-async function normalizeTopics(proposedTopics: string[]): Promise<string[]> {
-  const existing = await getExistingTopics();
+async function normalizeTopics(proposedTopics: string[], owner?: MemoryOwnerScope): Promise<string[]> {
+  const existing = await getExistingTopics(owner);
   if (existing.length === 0) return proposedTopics;
 
   const existingLower = existing.map((t) => t.toLowerCase());
@@ -1073,11 +1124,17 @@ async function normalizeTopics(proposedTopics: string[]): Promise<string[]> {
 
 export async function processConversationTurn(
   conversationId: string,
-  messages: Array<{ role: string; content: any }>
+  messages: Array<{ role: string; content: any }>,
+  options?: { source?: 'stuard' | 'workflow' | 'skill' | 'proactive'; owner?: MemoryOwnerScope },
 ): Promise<void> {
   try {
     // Ensure conversation exists locally first
-    const conversation = await ensureLocalConversation(conversationId);
+    const conversation = await ensureLocalConversation(
+      conversationId,
+      undefined,
+      options?.source || 'stuard',
+      options?.owner,
+    );
     if (!conversation) {
       writeLog('process_turn_no_conversation', { conversationId });
       return;
@@ -1119,7 +1176,7 @@ export async function processConversationTurn(
     );
 
     // Normalize topics to prevent fragmentation (React.js -> React, etc.)
-    analysis.topics = await normalizeTopics(analysis.topics);
+    analysis.topics = await normalizeTopics(analysis.topics, options?.owner);
 
     writeLog('segment_analysis', {
       conversationId,
@@ -1314,7 +1371,7 @@ export async function processConversationTurn(
  */
 export async function buildCollectionContext(
   queryEmbedding: number[],
-  options?: { maxTopics?: number }
+  options?: { maxTopics?: number; owner?: MemoryOwnerScope }
 ): Promise<string> {
   const maxTopics = options?.maxTopics ?? 3;
 
@@ -1322,6 +1379,7 @@ export async function buildCollectionContext(
     const result = await execLocalTool('segment_search_drawers_by_embedding', {
       vector: queryEmbedding,
       limit: maxTopics,
+      ...serializeOwnerScope(options?.owner),
     }, undefined, 10000);
 
     if (!result?.ok) return '';

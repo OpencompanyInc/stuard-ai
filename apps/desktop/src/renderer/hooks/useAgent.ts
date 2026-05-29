@@ -387,6 +387,8 @@ interface SendMessageOptions {
   modelSource?: 'stuard' | 'api_key' | 'subscription';
   modelConfig?: any;
   reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+  /** Compact quick send: skip memory retrieval + post-turn ingestion (auth/credits still apply). */
+  skipMemoryIngestion?: boolean;
   silent?: boolean;
   targetTabId?: string;
   queueFront?: boolean;
@@ -2302,7 +2304,13 @@ export function useAgent(options?: string | UseAgentOptions) {
                           if ((window as any).desktopAPI?.execTool) {
                             const listResult = await (window as any).desktopAPI.execTool('checkpoint_list', {});
                             if (listResult?.ok && listResult?.checkpoints?.length > 0) {
-                              turnCheckpointIdRef.current = listResult.checkpoints[0].id;
+                              // Checkpoints are sorted newest-first. Pick the newest one
+                              // attributed to the main chat so a concurrent workflow/bot
+                              // checkpoint can't be mistaken for this turn's changes.
+                              const chatCp = listResult.checkpoints.find(
+                                (cp: any) => !cp?.actor?.type || cp.actor.type === 'chat'
+                              );
+                              if (chatCp) turnCheckpointIdRef.current = chatCp.id;
                             }
                           }
                         } catch (e) {
@@ -3436,6 +3444,12 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
       if (options.reasoningLevel && typeof options.reasoningLevel === 'string') {
         payload.reasoningLevel = options.reasoningLevel;
+      }
+      if (options.skipMemoryIngestion === true) {
+        payload.skipMemoryIngestion = true;
+        payload.maxSteps = 1;
+        if (!payload.context || typeof payload.context !== 'object') payload.context = {};
+        payload.context.quickResponse = true;
       }
       try {
         if (!payload.context || typeof payload.context !== 'object') payload.context = {};

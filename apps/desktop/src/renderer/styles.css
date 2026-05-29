@@ -110,7 +110,7 @@
 
   --radius-card: 1.5rem;
   --radius-button: 0.75rem;
-  --dashboard-shell-bg: #050505;
+  --dashboard-shell-bg: #000000;
   --dashboard-panel: rgba(10, 10, 10, 0.96);
   --dashboard-panel-solid: #1b1b1b;
   --dashboard-panel-border: #3e3e3e;
@@ -145,7 +145,8 @@
 }
 
 [data-theme='light'] .launcher-compact-skin {
-  --compact-pill-bg: 232 236 242;
+  /* Tailwind gray-100 */
+  --compact-pill-bg: 243 244 246;
   --compact-pill-fg: 26 26 26;
   --compact-pill-fg-muted: 100 116 139;
   --compact-pill-hover: #dde3eb;
@@ -158,6 +159,7 @@
   --input-bg: #ffffff;
   --sidebar-item-hover: #d8dee8;
   --sidebar-item-active: #ccd4e0;
+  --user-message-bubble-bg: #ffffff;
   --border: rgba(15, 23, 42, 0.14);
   /* Layered contact → mid → soft cast for real elevation. The widest layer's
      reach (offset + blur ≈ 15px) stays inside even the docked sidebar's 16px
@@ -184,6 +186,38 @@
 
 .compact-rich-content-cta:active {
   transform: scale(0.98);
+}
+
+/* Window chat: messages scroll under the floating composer */
+.chat-floating-input-fade {
+  height: 80px;
+  background: linear-gradient(
+    to top,
+    var(--background) 0%,
+    color-mix(in srgb, var(--background) 72%, transparent) 42%,
+    transparent 100%
+  );
+}
+
+.chat-floating-composer {
+  pointer-events: none;
+}
+
+.chat-floating-composer > * {
+  pointer-events: auto;
+}
+
+[data-theme='light'] .launcher-compact-skin .chat-floating-composer .launcher-input-surface {
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.08),
+    0 8px 24px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='dark'] .launcher-compact-skin .chat-floating-composer .launcher-input-surface {
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.4);
 }
 
 /* Input card lifts off the gray shell in light mode */
@@ -760,6 +794,10 @@ button.input-status-float:not(:disabled) {
   background-color: var(--sidebar-item-active);
 }
 
+.bg-theme-user-bubble {
+  background-color: var(--user-message-bubble-bg, var(--sidebar-item-active));
+}
+
 .text-theme-fg {
   color: var(--foreground);
 }
@@ -935,10 +973,7 @@ button.input-status-float:not(:disabled) {
 }
 
 .dashboard-root {
-  background:
-    radial-gradient(circle at top left, var(--dashboard-glow) 0%, transparent 26%),
-    radial-gradient(circle at 72% 18%, var(--dashboard-glow) 0%, transparent 18%),
-    var(--dashboard-shell-bg);
+  background: var(--dashboard-shell-bg);
 }
 
 .dashboard-sidebar {
@@ -991,7 +1026,7 @@ button.input-status-float:not(:disabled) {
 
 .dashboard-sidebar-item.is-active {
   background: var(--dashboard-sidebar-item-active);
-  border-color: var(--dashboard-panel-border);
+  border-color: transparent;
   color: var(--foreground);
   box-shadow: none;
 }
@@ -1091,13 +1126,13 @@ button.input-status-float:not(:disabled) {
 
 .dashboard-card-muted {
   background: color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent);
-  border: 1px solid var(--dashboard-panel-border);
+  border: none;
   border-radius: 18px;
 }
 
 .dashboard-pill {
   background: var(--dashboard-sidebar-item-active);
-  border: 1px solid var(--dashboard-panel-border);
+  border: none;
   border-radius: 999px;
 }
 
@@ -1105,7 +1140,7 @@ button.input-status-float:not(:disabled) {
 .dashboard-button-primary {
   background: #ffffff;
   color: #131210;
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: none;
   border-radius: 999px;
   font-weight: 600;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.6);
@@ -1130,9 +1165,52 @@ button.input-status-float:not(:disabled) {
   background: var(--dashboard-hover);
 }
 
+/* Paired CTAs inside dashboard cards — same footprint; only secondary is outlined */
+.dashboard-card-cta {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.dashboard-card-cta:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.dashboard-card .dashboard-button-primary.dashboard-card-cta {
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.dashboard-card .dashboard-button-primary.dashboard-card-cta:hover:not(:disabled) {
+  background: #f5f5f4;
+  opacity: 1;
+}
+
+.dashboard-card .dashboard-button-secondary.dashboard-card-cta {
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 88%, transparent);
+}
+
+.dashboard-card .dashboard-button-secondary.dashboard-card-cta:hover:not(:disabled) {
+  background: var(--dashboard-hover);
+  transform: none;
+}
+
 .dashboard-refresh-button {
   background: color-mix(in srgb, var(--dashboard-panel-solid) 70%, transparent);
-  border: 1px solid var(--dashboard-panel-border);
+  border: none;
   color: var(--foreground);
   border-radius: 999px;
   box-shadow: var(--dashboard-shadow-soft);
@@ -1162,7 +1240,7 @@ button.input-status-float:not(:disabled) {
 }
 
 :root:not([style*="--custom-gradient-start"])[data-theme='dark'] .dashboard-root {
-  --dashboard-shell-bg: #131210;                  /* off-black */
+  --dashboard-shell-bg: #000000;
   --dashboard-panel-solid: #1c1b18;
   --dashboard-panel: rgba(22, 21, 19, 0.96);
   --dashboard-panel-border: #3e3e3e; /* VS Code grey — matches --border / --card-border */
@@ -1177,9 +1255,9 @@ button.input-status-float:not(:disabled) {
   align-items: center;
   gap: 1rem;
   padding: 2.6rem 1.5rem 0.85rem;   /* top clears the 40px window drag strip */
-  border-bottom: 1px solid var(--dashboard-panel-border);
-  background: color-mix(in srgb, var(--dashboard-panel-solid) 55%, transparent);
-  backdrop-filter: blur(18px);
+  border-bottom: none;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 /* Floating page icon — soft brand gradient + glow for depth */
@@ -1225,7 +1303,7 @@ button.input-status-float:not(:disabled) {
   line-height: 1;
   white-space: nowrap;
   background: color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent);
-  border: 1px solid var(--dashboard-panel-border);
+  border: none;
   color: var(--foreground-muted);
 }
 
@@ -1354,76 +1432,84 @@ button.input-status-float:not(:disabled) {
    ======================================================================== */
 
 [data-wf-theme='light'] {
-  --wf-bg:            #F4F4F5;
+  /* Neutral studio surfaces + a subtle brand-red accent — mirrors the
+     compact / launcher / window overlay skin (no VS Code blue). */
+  --wf-bg:            #eef1f5;
   --wf-bg-elevated:   #ffffff;
-  --wf-bg-sunken:     #e8e8ea;
+  --wf-bg-sunken:     #e4e8ee;
   --wf-bg-glass:      rgba(255,255,255,0.92);
   --wf-bg-overlay:    rgba(15,23,42,0.04);
-  --wf-fg:            #0f172a;
+  --wf-fg:            #1a1a1a;
   --wf-fg-muted:      #64748b;
-  --wf-fg-faint:      #64748b;
-  --wf-border:        #e2e8f0;
-  --wf-border-subtle: rgba(0,0,0,0.06);
-  --wf-hover:         #f1f5f9;
-  --wf-canvas:        #f8f9fb;
-  --wf-canvas-dot:    rgba(15,23,42,0.16);
+  --wf-fg-faint:      #94a3b8;
+  --wf-border:        rgba(15,23,42,0.10);
+  --wf-border-subtle: rgba(15,23,42,0.06);
+  --wf-hover:         #e8ecf2;
+  --wf-canvas:        #f4f6f9;
+  --wf-canvas-dot:    rgba(15,23,42,0.14);
   --wf-node-bg:       #ffffff;
-  --wf-node-border:   #e2e8f0;
+  --wf-node-border:   rgba(15,23,42,0.10);
   --wf-node-text:     #1e293b;
   --wf-node-sub:      #64748b;
   --wf-node-handle:   #111827;
-  --wf-accent:        #3b82f6;
-  --wf-accent-soft:   rgba(59,130,246,0.08);
+  --wf-accent:        #ff383c;
+  --wf-accent-soft:   rgba(255,56,60,0.08);
   --wf-glass-blur:    blur(20px);
   --wf-panel-bg:      rgba(255,255,255,0.92);
-  --wf-panel-border:  #e2e8f0;
+  --wf-panel-border:  rgba(15,23,42,0.10);
   --wf-input-bg:      #ffffff;
-  --wf-input-border:  #e2e8f0;
+  --wf-input-border:  rgba(15,23,42,0.12);
   --wf-chip-bg:       transparent;
-  --wf-chip-border:   #e2e8f0;
-  --wf-wire-default:  #64748b;
+  --wf-chip-border:   rgba(15,23,42,0.10);
+  --wf-wire-default:  #94a3b8;
   --wf-wire-icon-bg:  #ffffff;
-  --wf-wire-icon-border: #94a3b8;
+  --wf-wire-icon-border: #cbd5e1;
   --wf-wire-icon-fg:  #64748b;
   --wf-wire-handle-bg: #ffffff;
+  --primary:            #ff383c;
+  --primary-foreground: #ffffff;
 }
 
 [data-wf-theme='dark'] {
   color-scheme: dark;
-  --wf-bg:            #0d0d0f;
-  --border:           #3e3e3e;
+  /* Warm-neutral off-black surfaces (matches the launcher pill #171717 family)
+     with a subtle brand-red accent — no cool VS Code blue. */
+  --wf-bg:            #171717;
+  --border:           #2b2b2b;
   --sidebar-border:   #2b2b2b;
-  --wf-bg-elevated:   rgba(255,255,255,0.04);
-  --wf-bg-sunken:     #080809;
-  --wf-bg-glass:      rgba(255,255,255,0.06);
+  --wf-bg-elevated:   #1e1e1e;
+  --wf-bg-sunken:     #0f0f0f;
+  --wf-bg-glass:      rgba(30,30,30,0.72);
   --wf-bg-overlay:    rgba(255,255,255,0.04);
-  --wf-fg:            #f1f5f9;
-  --wf-fg-muted:      rgba(255,255,255,0.50);
-  --wf-fg-faint:      rgba(255,255,255,0.25);
-  --wf-border:        rgba(255,255,255,0.06);
-  --wf-border-subtle: rgba(255,255,255,0.04);
+  --wf-fg:            #f5f5f5;
+  --wf-fg-muted:      rgba(255,255,255,0.55);
+  --wf-fg-faint:      rgba(255,255,255,0.32);
+  --wf-border:        rgba(255,255,255,0.07);
+  --wf-border-subtle: rgba(255,255,255,0.045);
   --wf-hover:         rgba(255,255,255,0.06);
-  --wf-canvas:        #000000;
+  --wf-canvas:        #0d0d0d;
   --wf-canvas-dot:    rgba(255,255,255,0.06);
-  --wf-node-bg:       #0a0a0a;
+  --wf-node-bg:       #141414;
   --wf-node-border:   rgba(255,255,255,0.08);
   --wf-node-text:     #f1f5f9;
   --wf-node-sub:      rgba(255,255,255,0.50);
-  --wf-node-handle:   #0a0a0a;
-  --wf-accent:        #60a5fa;
-  --wf-accent-soft:   rgba(96,165,250,0.10);
+  --wf-node-handle:   #141414;
+  --wf-accent:        #ff4a4e;
+  --wf-accent-soft:   rgba(255,74,78,0.12);
   --wf-glass-blur:    blur(24px);
-  --wf-panel-bg:      rgba(255,255,255,0.06);
-  --wf-panel-border:  rgba(255,255,255,0.10);
-  --wf-input-bg:      rgba(255,255,255,0.05);
+  --wf-panel-bg:      rgba(28,28,28,0.78);
+  --wf-panel-border:  rgba(255,255,255,0.08);
+  --wf-input-bg:      #1e1e1e;
   --wf-input-border:  rgba(255,255,255,0.08);
   --wf-chip-bg:       transparent;
   --wf-chip-border:   rgba(255,255,255,0.08);
-  --wf-wire-default:  #94a3b8;
-  --wf-wire-icon-bg:  #0a0a0a;
-  --wf-wire-icon-border: #475569;
-  --wf-wire-icon-fg:  #94a3b8;
-  --wf-wire-handle-bg: #0a0a0a;
+  --wf-wire-default:  #6b7280;
+  --wf-wire-icon-bg:  #141414;
+  --wf-wire-icon-border: #4b5563;
+  --wf-wire-icon-fg:  #9ca3af;
+  --wf-wire-handle-bg: #141414;
+  --primary:            #ff4a4e;
+  --primary-foreground: #ffffff;
   /* App theme-* utilities (ModelSelector, etc.) → workflow palette */
   --foreground: var(--wf-fg);
   --foreground-muted: var(--wf-fg-muted);
@@ -1548,9 +1634,9 @@ button.input-status-float:not(:disabled) {
 
 .wf-sidebar-btn-active {
   color: var(--wf-fg);
-  background: var(--wf-accent-soft);
-  border: 1px solid color-mix(in srgb, var(--wf-accent) 45%, var(--wf-border));
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--wf-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--wf-fg) 8%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow: none;
 }
 
 .wf-resize-handle:hover {
@@ -1648,15 +1734,21 @@ button.input-status-float:not(:disabled) {
   border-left: 1px solid var(--wf-border-subtle);
 }
 
+/* Primary action = calm monochrome (off-black in light, near-white in dark).
+   Brand red is reserved for hover/accent whispers, not solid fills. */
 .wf-primary-btn {
-  background: var(--wf-accent);
-  color: #fff;
-  border: 1px solid color-mix(in srgb, var(--wf-accent) 70%, transparent);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--wf-accent) 24%, transparent);
+  background: var(--wf-fg);
+  color: var(--wf-bg);
+  border: 1px solid transparent;
+  transition: opacity 0.18s ease, transform 0.12s ease;
 }
 
 .wf-primary-btn:hover {
-  filter: brightness(1.06);
+  opacity: 0.9;
+}
+
+.wf-primary-btn:active {
+  transform: translateY(0.5px);
 }
 
 .wf-surface-muted {
@@ -1691,6 +1783,82 @@ button.input-status-float:not(:disabled) {
 
 .wf-hover-fg:hover {
   color: var(--wf-fg);
+}
+
+/* ── Studio overlay-language surfaces ─────────────────────────────────────
+   Mirror the compact / launcher suggestion-chip aesthetic: frosted neutral
+   cards on neutral surfaces, with the brand red kept to a *subtle* hover /
+   active accent rather than a dominant fill. */
+.wf-accent-fg   { color: var(--wf-accent); }
+.wf-accent-soft-bg { background: var(--wf-accent-soft); }
+
+.wf-card {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 92%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--wf-fg) 5%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.wf-card-interactive {
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.wf-card-interactive:hover {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 98%, transparent);
+  border-color: color-mix(in srgb, var(--wf-accent) 50%, var(--wf-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wf-accent) 32%, transparent);
+  transform: translateY(-1px);
+}
+
+.wf-card-active {
+  border-color: color-mix(in srgb, var(--wf-accent) 45%, var(--wf-border)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wf-accent) 14%, transparent);
+}
+
+/* Home-hub feature tile — neutral glass surface, brand red shows only on the
+   icon chip + on hover, never as a heavy gradient fill. */
+.wf-feature-tile {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--wf-bg-elevated) 90%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--wf-fg) 5%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  backdrop-filter: var(--wf-glass-blur);
+  -webkit-backdrop-filter: var(--wf-glass-blur);
+  transition: background-color 0.22s ease, border-color 0.22s ease,
+    box-shadow 0.22s ease, transform 0.22s ease;
+}
+
+.wf-feature-tile:hover {
+  border-color: color-mix(in srgb, var(--wf-accent) 52%, var(--wf-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wf-accent) 34%, transparent);
+  transform: translateY(-1px);
+}
+
+/* Icon chip stays neutral at rest; red only blooms on hover (like the
+   launcher suggestion-chip icon). */
+.wf-feature-tile__icon {
+  background: color-mix(in srgb, var(--wf-fg) 6%, transparent);
+  border: 1px solid var(--wf-border-subtle);
+  color: var(--wf-fg-muted);
+  transition: background-color 0.22s ease, border-color 0.22s ease, color 0.22s ease, transform 0.22s ease;
+}
+
+.wf-feature-tile:hover .wf-feature-tile__icon {
+  background: color-mix(in srgb, var(--wf-accent) 10%, var(--wf-bg-elevated));
+  border-color: color-mix(in srgb, var(--wf-accent) 26%, var(--wf-border));
+  color: var(--wf-accent);
+  transform: scale(1.04);
+}
+
+/* Neutral icon chip for list/card rows — quiet by default. */
+.wf-icon-chip {
+  background: color-mix(in srgb, var(--wf-fg) 6%, transparent);
+  color: var(--wf-fg-muted);
 }
 
 

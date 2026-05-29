@@ -52,6 +52,11 @@ import {
   designerModelToStuardSpec as coreDesignerModelToStuardSpec,
   executeLoop as coreExecuteLoop,
   executeStep as coreExecuteStep,
+  executeFromTrigger as coreExecuteFromTrigger,
+  execRunSequential as coreExecRunSequential,
+  execRunParallel as coreExecRunParallel,
+  execLoopExecutor as coreExecLoopExecutor,
+  type OrchestrationHooks as CoreOrchestrationHooks,
   type ExecuteStepResult as CoreExecuteStepResult,
 } from '@stuardai/workflow-core/runtime';
 
@@ -1390,7 +1395,20 @@ async function vmDispatchTool(
   if (kind === 'orchestration') {
     if (toolName === 'run_sequential') return execRunSequential(spec, step, mergedArgs, ctx, engineCtx, deployDir);
     if (toolName === 'run_parallel') return execRunParallel(spec.id, mergedArgs, ctx, engineCtx, deployDir);
+    if (toolName === 'loop_executor') return execLoopExecutor(spec.id, mergedArgs, ctx, engineCtx, deployDir);
     return { ok: false, error: `unknown_orchestration: ${toolName}` };
+  }
+  // call_function runs a workflow subgraph from a trigger. The executor (incl.
+  // waitForAll convergence) is shared with desktop via workflow-core; the VM
+  // injects its own per-step executor (with deployDir) and omits UI step events
+  // (its deploy UI polls separately).
+  if (toolName === 'call_function') {
+    const triggerId = String(mergedArgs?.triggerId || '').trim();
+    if (!triggerId) return { ok: false, error: 'missing triggerId for call_function' };
+    return coreExecuteFromTrigger(spec, triggerId, mergedArgs?.inputs || {}, ctx, {
+      logFn: engineCtx.logFn,
+      executeStep: (sp, st, c) => executeStep(sp, st, c, engineCtx, deployDir),
+    });
   }
   if (toolName === 'noop' || !toolName) return { ok: true };
   return execTool(
@@ -1428,78 +1446,27 @@ async function executeStep(
 // Orchestration — run_sequential, run_parallel
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function execRunSequential(
-  spec: StuardSpec,
-  parentStep: StuardStep,
-  args: any,
-  ctx: any,
-  engineCtx: EngineContext,
-  deployDir?: string
-): Promise<any> {
-  const stepsArr = Array.isArray(args?.steps) ? args.steps : [];
-  const continueOnError = !!args?.continueOnError;
-  const results: any[] = [];
-  let firstError: string | undefined;
+// Orchestration runners (run_sequential / run_parallel / loop_executor) are
+// shared with desktop via @stuardai/workflow-core/runtime. The VM injects its
+// per-step executor + tool dispatch (with deployDir) and supplies normalizeKind
+// so sub-steps keep their VM routing kind.
+const orchestrationHooks = (engineCtx: EngineContext, deployDir?: string): CoreOrchestrationHooks => ({
+  logFn: engineCtx.logFn,
+  executeStep: (sp, st, c) => executeStep(sp, st, c, engineCtx, deployDir),
+  execTool: (toolName, args, kind) => execTool(toolName, args, engineCtx, deployDir, kind as StuardStep['kind']),
+  normalizeKind: normalizeStepKind,
+});
 
-  for (let i = 0; i < stepsArr.length; i++) {
-    const s = stepsArr[i];
-    const toolName = String(s?.tool || '').trim();
-    if (!toolName) continue;
-
-    const subStep: StuardStep = {
-      id: String(s?.id || `${parentStep.id}__${i}`),
-      tool: toolName,
-      args: s?.args || {},
-      kind: normalizeStepKind(s?.kind),
-    };
-    let subExec: ExecuteStepResult;
-    try {
-      subExec = await executeStep(spec, subStep, ctx, engineCtx, deployDir);
-    } catch (e: any) {
-      subExec = { ok: false, error: String(e?.message || 'failed'), ctx, edges: [] };
-    }
-
-    ctx = subExec.ctx || ctx;
-    const subResult = ctx[subStep.id];
-    results.push({ tool: toolName, ok: !!subExec.ok, result: subResult, error: subExec.error });
-
-    if (!subExec.ok) {
-      if (!firstError) firstError = String(subExec.error || `${toolName}_failed`);
-      if (!continueOnError) break;
-    }
-  }
-
-  return { ok: results.every(r => r.ok) || continueOnError, results, firstError };
+function execRunSequential(spec: StuardSpec, parentStep: StuardStep, args: any, ctx: any, engineCtx: EngineContext, deployDir?: string): Promise<any> {
+  return coreExecRunSequential(spec, parentStep, args, ctx, orchestrationHooks(engineCtx, deployDir));
 }
 
-async function execRunParallel(
-  flowId: string,
-  args: any,
-  ctx: any,
-  engineCtx: EngineContext,
-  deployDir?: string
-): Promise<any> {
-  const stepsArr = Array.isArray(args?.steps) ? args.steps : [];
-  engineCtx.logFn(`run_parallel: Starting ${stepsArr.length} tasks`);
+function execRunParallel(flowId: string, args: any, ctx: any, engineCtx: EngineContext, deployDir?: string): Promise<any> {
+  return coreExecRunParallel(flowId, args, ctx, orchestrationHooks(engineCtx, deployDir));
+}
 
-  const results = await Promise.all(stepsArr.map(async (s: any, i: number) => {
-    const toolName = String(s?.tool || '').trim();
-    if (!toolName) return { tool: '', ok: true, result: undefined };
-    try {
-      const subResult = await execTool(
-        toolName,
-        { ...(s?.args || {}), flowId, __workflowToolCall: true },
-        engineCtx,
-        deployDir,
-        normalizeStepKind(s?.kind),
-      );
-      return { tool: toolName, ok: subResult?.ok ?? true, result: subResult };
-    } catch (e: any) {
-      return { tool: toolName, ok: false, result: { ok: false, error: String(e?.message) } };
-    }
-  }));
-
-  return { ok: results.every(r => r.ok), results };
+function execLoopExecutor(flowId: string, args: any, ctx: any, engineCtx: EngineContext, deployDir?: string): Promise<any> {
+  return coreExecLoopExecutor(flowId, args, ctx, orchestrationHooks(engineCtx, deployDir));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,10 @@ import type { ToolCall } from '@stuardai/chat-ui/types';
 export function ChatUiBlock({ tool }: { tool: ToolCall }) {
   const [showRaw, setShowRaw] = useState(false);
 
-  const args = (tool.args || {}) as Record<string, any>;
+  const args = useMemo(
+    () => (tool.args || {}) as Record<string, any>,
+    [tool.args],
+  );
   const component = String(args.component || args.name || 'chat_ui');
   const title = String(args.title || args.label || '').trim();
   const description = String(args.description || args.subtitle || '').trim();

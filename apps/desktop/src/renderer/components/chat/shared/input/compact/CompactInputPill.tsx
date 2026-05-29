@@ -43,6 +43,8 @@ interface CompactInputPillProps {
   onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onHeightChange: (height: number) => void;
   placeholder: string;
+  /** Faded auxiliary hint shown while the user is typing (compact mode). */
+  typingHint?: string;
 
   /** Steer is offered while a response is still streaming. */
   miniOutputStreaming: boolean;
@@ -75,6 +77,7 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
   onPaste,
   onHeightChange,
   placeholder,
+  typingHint,
   miniOutputStreaming,
   onSteer,
   voiceActive,
@@ -122,6 +125,11 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
           <div
             className="flex items-center w-full no-drag"
             style={{ gap: 8, height: 36 }}
+            onKeyDownCapture={(e) => {
+              if (e.key === 'Tab' && !e.shiftKey && signedIn) {
+                onKeyDown(e as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+              }
+            }}
           >
             {!signedIn ? (
               <button
@@ -137,6 +145,7 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
+                      tabIndex={-1}
                       className="w-6 h-6 flex items-center justify-center text-pill-fg/90 hover:text-pill-fg transition-colors flex-shrink-0"
                       title="Attach"
                     >
@@ -172,6 +181,14 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                   className="flex-1 relative flex items-center justify-center min-h-[36px] rounded-[12px]"
                   style={{ padding: 6, gap: 4 }}
                 >
+                  {typingHint && query.trim().length > 0 && (
+                    <span
+                      className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] leading-none font-normal text-pill-fg/35 whitespace-nowrap select-none"
+                      aria-hidden
+                    >
+                      {typingHint}
+                    </span>
+                  )}
                   <TextareaAutosize
                     ref={textareaRef}
                     value={query}
@@ -182,9 +199,10 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                     onPaste={onPaste}
                     onHeightChange={onHeightChange}
                     placeholder={placeholder}
+                    tabIndex={0}
                     className={clsx(
                       'w-full bg-transparent outline-none text-[12px] leading-4 p-0 resize-none scrollbar-hidden font-normal text-pill-fg placeholder:text-pill-fg',
-                      query.length > 0 ? 'text-left' : 'text-center',
+                      query.length > 0 ? 'text-left pr-[7.5rem]' : 'text-center',
                     )}
                     style={{
                       fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif",
@@ -197,6 +215,7 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                 {miniOutputStreaming && onSteer && query.trim() && (
                   <button
                     type="button"
+                    tabIndex={-1}
                     className="w-8 h-8 rounded-[10px] flex items-center justify-center text-pill-fg/80 hover:text-pill-fg hover:bg-pill-fg/10 transition-all active:scale-95 flex-shrink-0"
                     title="Steer current step"
                     onClick={onSteer}
@@ -208,6 +227,7 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                 {onToggleVoice && (
                   <button
                     type="button"
+                    tabIndex={-1}
                     className={clsx(
                       'compact-voice-btn relative z-10 w-9 h-9 rounded-[14px] flex items-center justify-center flex-shrink-0',
                       voiceActive && 'compact-voice-btn--active',

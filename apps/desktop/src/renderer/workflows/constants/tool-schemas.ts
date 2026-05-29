@@ -1020,6 +1020,21 @@ if (TOOL_SCHEMAS['launch_application_or_uri']) {
   };
 }
 
+if (TOOL_SCHEMAS['open_file']) {
+  TOOL_SCHEMAS['open_file'].label = 'Open File';
+  TOOL_SCHEMAS['open_file'].description = 'Open a file or folder with the system default app (Photos for PNG, browser for HTML, Explorer for folders, etc.).';
+  TOOL_SCHEMAS['open_file'].args = {
+    path: {
+      type: 'path',
+      label: 'File or Folder',
+      description: 'Local path to open. Supports templates like {{$workspace.assets}}/report.png.',
+      required: true,
+      placeholder: 'C:/Users/name/Pictures/photo.png',
+    },
+  };
+  TOOL_SCHEMAS['open_file'].outputs = ['ok', 'opened', 'method', 'error'];
+}
+
 // Command tools - explicit approval toggle plus an optional approval description
 for (const toolId of ['run_command']) {
   if (TOOL_SCHEMAS[toolId]) {

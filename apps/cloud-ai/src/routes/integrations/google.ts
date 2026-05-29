@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
-import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
+import { storeOAuthTokensOnVM } from '../cloud-engine';
+import { stageTokensForClaim } from './oauth-claim-store';
+import { listVMOAuthAccountsForUser } from '../../tools/vm-oauth';
 import { authenticateHttpLegacy, requireAuth, sendJson, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import { PUBLIC_BASE_URL, WEBSITE_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_PATH, INTEGRATION_STATE_SECRET } from '../../utils/config';
@@ -51,25 +52,30 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
       const rawScopes = parsedUrl.searchParams.get('scopes') || '';
       const profileLabel = parsedUrl.searchParams.get('profile') || undefined;
 
-      // If ?profiles=1, return all connected profiles for Google
+      // Tokens are device-held. The server can authoritatively answer only for
+      // a running VM (server-reachable). For desktop-held tokens it returns
+      // deviceLocal:true so the client resolves status from its local store.
+      const vmAccounts = await listVMOAuthAccountsForUser(userId, 'google').catch(() => []);
+
+      // If ?profiles=1, return all connected profiles for Google (VM view).
       if (parsedUrl.searchParams.get('profiles') === '1') {
-        const accounts = await listExternalAccounts(userId, 'google');
-        const profiles = accounts.map(a => ({
+        const profiles = vmAccounts.map(a => ({
           profile: a.profile_label,
           isDefault: a.is_default,
           email: a.account_email || null,
           scopes: a.scopes,
           connected: true,
         }));
-        const body = JSON.stringify({ ok: true, profiles });
+        const body = JSON.stringify({ ok: true, profiles, deviceLocal: vmAccounts.length === 0 });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
         res.end(body);
         return true;
       }
 
-      let acc: any = null;
-      let connected = false;
-      try { acc = await getExternalAccount(userId, 'google', profileLabel); connected = !!acc; } catch {}
+      const acc: any = vmAccounts.find(a => !profileLabel || a.profile_label === profileLabel)
+        || (profileLabel ? null : vmAccounts.find(a => a.is_default) || vmAccounts[0] || null);
+      const connected = !!acc;
+      const deviceLocal = vmAccounts.length === 0;
 
       const required = rawScopes ? normalize(rawScopes) : scopesForTarget(target);
       let hasScopes = connected;
@@ -96,6 +102,9 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
         profile: acc?.profile_label || null,
         isDefault: acc?.is_default ?? null,
         email: acc?.account_email || null,
+        // True when the server has no VM view; the desktop should resolve
+        // connection state from its local encrypted OAuth store instead.
+        deviceLocal,
       });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
       res.end(body);
@@ -270,34 +279,14 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
         accountEmail = String(userInfo?.email || '') || null;
       } catch {}
 
-      // ─── Merge scopes with existing ones so connecting a new Google product
-      //     doesn't wipe out scopes from previously-connected products ───
-      let mergedScopes = scopes;
-      let finalRefreshToken = refresh_token || null;
-      try {
-        const existing = await getExternalAccount(userId, 'google', profileLabel);
-        if (existing) {
-          const existingScopes = Array.isArray(existing.scopes) ? existing.scopes.map(String) : [];
-          mergedScopes = Array.from(new Set([...existingScopes, ...scopes]));
-          // Preserve the existing refresh token if Google didn't return a new one
-          if (!finalRefreshToken && existing.refresh_token) {
-            finalRefreshToken = existing.refresh_token;
-          }
-        }
-      } catch {}
+      // Scope-merge + refresh-token preservation across re-connects is handled
+      // by the device/VM store itself (store_oauth_tokens with replace:false
+      // unions scopes and keeps a prior refresh token). The server no longer
+      // reads Supabase to merge — tokens live only on the device.
+      const mergedScopes = scopes;
+      const finalRefreshToken = refresh_token || null;
 
       if (storageTarget === 'vm') {
-        const account = {
-          userId,
-          provider: 'google',
-          access_token,
-          scopes: mergedScopes,
-          refresh_token: finalRefreshToken,
-          expires_at,
-          meta: { token_type: tokenBody.token_type || 'Bearer', storage_target: 'vm' },
-          profileLabel,
-          accountEmail,
-        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'google',
           profileLabel,
@@ -316,27 +305,24 @@ export async function handleGoogleRoutes(req: IncomingMessage, res: ServerRespon
           res.end();
           return true;
         }
-        try {
-          await upsertExternalAccount(account);
-        } catch (saveErr: any) {
-          console.error('[google] Failed to save VM token backup:', saveErr?.message || saveErr);
-          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
-          res.end();
-          return true;
-        }
         res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=google&profile=${encodeURIComponent(profileLabel)}&target=vm`, 'Cache-Control': 'no-store' });
         res.end();
         return true;
       }
 
-      try { await upsertExternalAccount({ userId, provider: 'google', access_token, scopes: mergedScopes, refresh_token: finalRefreshToken, expires_at, meta: { token_type: tokenBody.token_type || 'Bearer' }, profileLabel, accountEmail }); } catch (saveErr: any) {
-        console.error('[google] Failed to save token:', saveErr?.message || saveErr);
-        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=google&message=${encodeURIComponent('Could not save token: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
-        res.end();
-        return true;
-      }
-      // Auto-sync OAuth tokens to running VM (fire-and-forget)
-      pushOAuthTokensToVM(userId).catch(() => {});
+      // Desktop target: stage the token for the desktop to claim over the
+      // authenticated /integrations/oauth/claim endpoint. Held in memory only
+      // (TTL), never written to Supabase. The desktop stores it locally encrypted.
+      stageTokensForClaim(userId, [{
+        provider: 'google',
+        profileLabel,
+        isDefault: true,
+        accessToken: access_token,
+        refreshToken: finalRefreshToken,
+        expiresAt: expires_at,
+        scopes: mergedScopes,
+        accountEmail,
+      }]);
       res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=google&profile=${encodeURIComponent(profileLabel)}`, 'Cache-Control': 'no-store' });
       res.end();
       return true;

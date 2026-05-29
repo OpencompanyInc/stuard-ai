@@ -38,6 +38,8 @@ interface MessageListProps {
   currentStreamChunks?: StreamChunk[];
   thinkingStartTime?: number;
   className?: string;
+  /** Extra space at the bottom so the last messages can scroll above a floating composer. */
+  scrollInsetBottom?: number;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
   onEditMessage?: (messageId: string, newText: string) => void;
@@ -204,6 +206,7 @@ const MessageList: React.FC<MessageListProps> = ({
   currentToolCalls,
   currentStreamChunks,
   className,
+  scrollInsetBottom = 0,
   onSubmitToolOutput,
   onGenUIResponse,
   onEditMessage,
@@ -297,6 +300,16 @@ const MessageList: React.FC<MessageListProps> = ({
     [],
   );
 
+  const ScrollFooter = useCallback(() => {
+    if (!scrollInsetBottom || scrollInsetBottom <= 0) return null;
+    return <div style={{ height: scrollInsetBottom }} aria-hidden />;
+  }, [scrollInsetBottom]);
+
+  const listComponents = useMemo<Components<VirtuosoItem>>(() => ({
+    ...virtuosoComponents,
+    Footer: ScrollFooter,
+  }), [ScrollFooter]);
+
   const scrollerClass = `${className || 'h-full no-drag custom-scrollbar py-2 select-text'} min-w-0 max-w-full box-border overflow-x-clip`;
 
   return (
@@ -311,9 +324,13 @@ const MessageList: React.FC<MessageListProps> = ({
         initialTopMostItemIndex={Math.max(0, items.length - 1)}
         overscan={{ main: 600, reverse: 200 }}
         increaseViewportBy={{ top: 400, bottom: 200 }}
-        components={virtuosoComponents}
+        components={listComponents}
         className={scrollerClass}
-        style={{ height: '100%', overflowX: 'clip' }}
+        style={{
+          height: '100%',
+          overflowX: 'clip',
+          ...(scrollInsetBottom > 0 ? { scrollPaddingBottom: scrollInsetBottom } : {}),
+        }}
       />
     </div>
   );

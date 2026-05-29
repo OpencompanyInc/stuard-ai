@@ -194,6 +194,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'grep', label: 'Search In Files', icon: Search, args: { path: '', pattern: '' } },
       { k: 'local.tool', t: 'create_directory', label: 'Create Folder', icon: FolderPlus, args: { path: '' } },
       { k: 'local.tool', t: 'move_file', label: 'Move File', icon: Package, args: { src: '', dest: '' } },
+      { k: 'local.tool', t: 'open_file', label: 'Open File', icon: FolderOpen, args: { path: '' } },
       { k: 'local.tool', t: 'run_command', label: 'Run Command', icon: Terminal, args: { command: 'echo hello', isPermissionRequired: false, description: '' } },
       { k: 'local.tool', t: 'launch_application_or_uri', label: 'Launch App/URL', icon: Rocket, args: { target: '' } },
       // Workflow workspace (sandboxed, per-workflow)

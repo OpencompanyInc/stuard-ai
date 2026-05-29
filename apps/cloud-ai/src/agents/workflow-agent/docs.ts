@@ -976,6 +976,10 @@ SCRIPT TOOLS:
   run_python_script { filePath: "{{$workspace.scripts}}/do.py", packages: ["pandas"] } // uses persistent default venv unless envId is set
   run_node_script   { filePath: "{{$workspace.scripts}}/do.js" }
 
+OPEN OUTPUT FILES:
+  open_file { path: "{{$workspace.assets}}/report.png" }  // default app for that file type
+  launch_application_or_uri { target: "https://example.com" }  // apps, URLs, or arbitrary targets
+
 TIP: Prefer workspace tools over absolute paths — the workflow becomes portable
 (works on any machine). If the user shares the .stuard file, the workspace
 folder travels with it.
@@ -2517,6 +2521,11 @@ export const searchWorkflowDocs = createTool({
         content: z.string(),
       }),
     ),
+    // Further matches beyond the content budget — fetch full content on demand
+    // by calling search_workflow_docs again with the section id.
+    more: z
+      .array(z.object({ id: z.string(), title: z.string() }))
+      .optional(),
     availableSections: z
       .array(z.object({ id: z.string(), title: z.string() }))
       .optional(),
@@ -2558,13 +2567,29 @@ export const searchWorkflowDocs = createTool({
       };
     }
 
+    // Content budget: always return the top hit in full, then include further
+    // hits only while under budget. Remaining matches come back as lightweight
+    // `more` pointers the model can fetch by id. This caps the worst case
+    // (large custom_ui sections) without changing typical small multi-section
+    // results, which still fit under the budget.
+    const DOC_CONTENT_BUDGET = 7000; // chars (~1.75k tokens)
+    const sections: Array<{ id: string; title: string; content: string }> = [];
+    const more: Array<{ id: string; title: string }> = [];
+    let used = 0;
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (i === 0 || used + r.content.length <= DOC_CONTENT_BUDGET) {
+        sections.push({ id: r.id, title: r.title, content: r.content });
+        used += r.content.length;
+      } else {
+        more.push({ id: r.id, title: r.title });
+      }
+    }
+
     return {
       ok: true,
-      sections: results.map(r => ({
-        id: r.id,
-        title: r.title,
-        content: r.content,
-      })),
+      sections,
+      ...(more.length > 0 ? { more } : {}),
     };
   },
 });

@@ -99,6 +99,7 @@ export function listVMBotRunLog(botId: string, limit = 20): BotRunLogEntry[] {
 export function exportVMBotMemory(botId: string, limit = 50): BotMemoryRecord {
   // Chronological run log (oldest first) to match the prior VM export shape.
   return {
+    profile: store.getProfile(botId),
     cards: store.listCards(botId),
     runLog: store.listRunLog(botId, limit).reverse(),
   };
@@ -114,6 +115,21 @@ export function mergeVMBotMemory(botId: string, record: Partial<BotMemoryRecord>
 
 export function formatVMBotMemoryForPrompt(botId: string, opts: { runLogLimit?: number; cardLimitPerColumn?: number } = {}): string {
   return store.formatForPrompt(botId, opts);
+}
+
+export function getVMBotProfile(botId: string) {
+  return store.getProfile(botId);
+}
+
+export function updateVMBotProfile(botId: string, patch: any) {
+  return store.updateProfile(botId, {
+    name: typeof patch?.name === 'string' ? patch.name : undefined,
+    preferences: typeof patch?.preferences === 'string' ? patch.preferences : undefined,
+    facts: typeof patch?.facts === 'string' ? patch.facts : undefined,
+    systemPrompt: typeof patch?.systemPrompt === 'string'
+      ? patch.systemPrompt
+      : (typeof patch?.system_prompt === 'string' ? patch.system_prompt : undefined),
+  });
 }
 
 export function handleVMBotMemoryCommand(command: string, args: any): any {
@@ -158,6 +174,12 @@ export function handleVMBotMemoryCommand(command: string, args: any): any {
         notes: typeof args?.notes === 'string' ? args.notes : undefined,
       });
       return entry ? { ok: true, entry } : { ok: false, error: 'invalid_input' };
+    }
+    case 'bot_memory_profile_get':
+      return { ok: true, profile: getVMBotProfile(botId) };
+    case 'bot_memory_profile_update': {
+      const profile = updateVMBotProfile(botId, args || {});
+      return { ok: true, profile };
     }
     case 'bot_memory_export':
       return { ok: true, ...exportVMBotMemory(botId) };

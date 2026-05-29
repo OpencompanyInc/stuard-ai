@@ -4,6 +4,7 @@ export type WorkflowLauncherScope = "workflows" | "shared" | "deployed";
 export type WorkflowLauncherFilterId =
   | "all"
   | "shared"
+  | "deployed"
   | "triggered"
   | "running"
   | "idle"
@@ -136,6 +137,8 @@ export function matchesWorkflowFilter(
       return true;
     case "shared":
       return Boolean(item.marketplaceSlug);
+    case "deployed":
+      return Boolean(deployStatus?.deployed);
     case "triggered":
       return getWorkflowAutomationTriggerKeys(item, deployStatus).length > 0;
     case "running":
@@ -154,6 +157,8 @@ export function getWorkflowFilterLabel(filterId: WorkflowLauncherFilterId): stri
       return "All";
     case "shared":
       return "Shared";
+    case "deployed":
+      return "Deployed";
     case "triggered":
       return "Triggers";
     case "running":
@@ -187,6 +192,10 @@ export function buildWorkflowFilterChips(
   }
 
   if (scope === "workflows") {
+    const deployedCount = items.filter((item) => Boolean(deployStatuses?.[item.id]?.deployed)).length;
+    if (deployedCount > 0) {
+      chips.push({ id: "deployed", label: "Deployed", count: deployedCount });
+    }
     const sharedCount = items.filter((item) => Boolean(item.marketplaceSlug)).length;
     if (sharedCount > 0) {
       chips.push({ id: "shared", label: "Shared", count: sharedCount });

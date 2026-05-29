@@ -1,11 +1,14 @@
 import type { IBotsPlatform } from '@stuardai/bots-ui/platform';
 import { getCloudAiHttp } from '../utils/cloud';
 import { supabase } from '../lib/supabaseClient';
+import { confirmDialog, alertDialog } from '../workflows/components/ConfirmDialog';
 
 type DesktopApi = typeof window.desktopAPI;
 
 export function createDesktopBotsPlatform(api: DesktopApi = window.desktopAPI): IBotsPlatform {
   return {
+    confirm: (opts) => confirmDialog(opts),
+    notify: (opts) => alertDialog(opts),
     list: () => api.botsList(),
     create: (payload) => api.botsCreate(payload),
     update: (id, patch) => api.botsUpdate(id, patch),
@@ -38,7 +41,7 @@ export function createDesktopBotsPlatform(api: DesktopApi = window.desktopAPI): 
       const { data } = await supabase.auth.getSession();
       return data?.session?.access_token || null;
     },
-    getCloudAiBaseUrl: () => getCloudAiHttp,
+    getCloudAiBaseUrl: () => getCloudAiHttp(),
     onBotMemoryChanged: (cb) => api.onBotMemoryChanged?.(cb) ?? (() => {}),
     onProactiveUpdate: (cb) => api.onProactiveUpdate?.(cb) ?? (() => {}),
     onSkillsUpdated: (cb) => api.onSkillsUpdated?.(cb) ?? (() => {}),

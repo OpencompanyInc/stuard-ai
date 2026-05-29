@@ -24,6 +24,7 @@ import { MemoryTab } from './MemoryTab';
 import { SettingsTab } from './SettingsTab';
 import { TaskDetailModal } from './TaskDetailModal';
 import { useBotsPlatform } from './BotsPlatformContext';
+import { platformConfirm, platformNotify } from './dialogs';
 
 type DetailTab = 'activity' | 'kanban' | 'memory' | 'settings';
 
@@ -223,13 +224,19 @@ export function BotDetailView({
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${bot.name}"? This cannot be undone.`)) return;
+    const ok = await platformConfirm(platform, {
+      title: `Delete “${bot.name}”?`,
+      message: 'This permanently removes the agent and its tasks. This can’t be undone.',
+      confirmLabel: 'Delete agent',
+      tone: 'danger',
+    });
+    if (!ok) return;
     const res = await platform.delete(bot.id);
     if (res?.ok) {
       await onChange();
       onBack();
     } else if (res?.error) {
-      alert(res.error);
+      await platformNotify(platform, { title: 'Couldn’t delete agent', message: res.error, tone: 'danger' });
     }
   };
 

@@ -6,7 +6,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import {
   Search, Plus, Trash2, Wand2, MessageSquare, Terminal, Eye, Brain,
   GripVertical, X, Save, ToggleLeft, ToggleRight, AlertCircle, Check,
-  Zap, FileText, Settings, ChevronDown, Sparkles,
+  Zap, FileText, Settings, ChevronDown, Lightbulb,
   Code, MousePointer, Image, Mail, Globe, Database, Mic, Video,
   FolderOpen, Play, Clock, ArrowRight, Cpu, Box, Layers, Send,
   BarChart, HardDrive, Cloud, Webhook, Type, ListChecks, Bot,
@@ -73,7 +73,7 @@ const CATEGORY_ICONS: Record<string, any> = {
   vision: Eye,
   data: Database,
   integrations: Cloud,
-  ui: Sparkles,
+  ui: LayoutGrid,
   utils: Zap,
   core: Cpu,
 };
@@ -102,7 +102,7 @@ function getToolIcon(toolId: string, category: string): any {
     calendar_list_events: Clock,
     text_to_speech: Mic,
     play_audio: Play,
-    custom_ui: Sparkles,
+    custom_ui: LayoutGrid,
     http_request: Webhook,
     type_text: Type,
     send_hotkey: Zap,
@@ -400,15 +400,15 @@ export function SkillsLibrary({
 
   const tabs: { id: SkillsTab; label: string; count: number; icon: any; description: string }[] = [
     { id: 'all',       label: 'All Skills',  count: buckets.all.length,      icon: LayoutGrid, description: 'Approved skills ready to use' },
-    { id: 'suggested', label: 'Suggested',   count: buckets.pending.length,  icon: Sparkles,   description: 'Auto-detected skills awaiting your approval' },
+    { id: 'suggested', label: 'Suggested',   count: buckets.pending.length,  icon: Lightbulb,  description: 'Auto-detected skills awaiting your approval' },
     { id: 'inactive',  label: 'Inactive',    count: buckets.inactive.length, icon: PowerOff,   description: 'Skills you have toggled off' },
   ];
 
   return (
     <>
-      {/* Tabs */}
-      <div className="px-8 pb-3 shrink-0">
-        <div className={`inline-flex p-1 rounded-xl border ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-100/70 border-slate-200'}`}>
+      {/* Tabs + create */}
+      <div className="px-8 pb-3 shrink-0 flex items-center justify-between gap-3">
+        <div className="inline-flex p-0.5 rounded-full wf-surface-muted">
           {tabs.map(t => {
             const Icon = t.icon;
             const isActive = tab === t.id;
@@ -417,39 +417,32 @@ export function SkillsLibrary({
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  isActive
-                    ? d
-                      ? 'bg-white/[0.08] text-white shadow-sm'
-                      : 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                    : d
-                      ? 'text-white/55 hover:text-white/80'
-                      : 'text-slate-500 hover:text-slate-800'
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  isActive ? 'wf-bg-elevated wf-fg shadow-sm' : 'wf-fg-muted wf-hover-fg'
                 }`}
                 title={t.description}
               >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? (isPendingTab ? 'text-violet-500' : '') : ''}`} />
+                <Icon className="w-3.5 h-3.5" />
                 <span>{t.label}</span>
                 {t.count > 0 && (
-                  <span
-                    className={`ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-semibold ${
-                      isPendingTab
-                        ? d ? 'bg-violet-500/20 text-violet-300' : 'bg-violet-100 text-violet-700'
-                        : isActive
-                          ? d ? 'bg-white/[0.12] text-white' : 'bg-slate-200 text-slate-700'
-                          : d ? 'bg-white/[0.06] text-white/60' : 'bg-slate-200/80 text-slate-500'
-                    }`}
-                  >
+                  <span className={`ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-semibold wf-icon-chip ${isActive ? 'wf-fg' : 'wf-fg-faint'}`}>
                     {t.count}
                   </span>
                 )}
                 {isPendingTab && t.count > 0 && !isActive && (
-                  <span className={`w-1.5 h-1.5 rounded-full ${d ? 'bg-violet-400' : 'bg-violet-500'} animate-pulse`} />
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--wf-fg-faint)' }} />
                 )}
               </button>
             );
           })}
         </div>
+        <button
+          type="button"
+          onClick={onCreateSkill}
+          className="wf-primary-btn inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold shrink-0"
+        >
+          <Plus className="w-4 h-4" /> New Skill
+        </button>
       </div>
 
       {/* Skills Info Bar */}
@@ -464,15 +457,11 @@ export function SkillsLibrary({
         {buckets.pending.length > 0 && tab !== 'suggested' && (
           <button
             onClick={() => setTab('suggested')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
-              d ? 'bg-violet-500/10 border-violet-500/25 hover:bg-violet-500/15' : 'bg-violet-50 border-violet-200 hover:bg-violet-100'
-            }`}
+            className="wf-card wf-card-interactive flex items-center gap-2 px-3 py-2 rounded-full wf-fg-muted hover:wf-fg"
           >
-            <Sparkles className={`w-3.5 h-3.5 ${d ? 'text-violet-400' : 'text-violet-500'}`} />
-            <span className={`text-xs font-medium ${d ? 'text-violet-300' : 'text-violet-700'}`}>
-              {buckets.pending.length} pending review
-            </span>
-            <ArrowRight className={`w-3 h-3 ${d ? 'text-violet-300' : 'text-violet-600'}`} />
+            <Lightbulb className="w-3.5 h-3.5" />
+            <span className="text-xs font-medium">{buckets.pending.length} pending review</span>
+            <ArrowRight className="w-3 h-3" />
           </button>
         )}
         <p className="text-sm wf-fg-muted">
@@ -486,94 +475,68 @@ export function SkillsLibrary({
 
       {/* Grid */}
       <div className="flex-1 px-8 pb-8 overflow-y-auto scrollbar-minimal">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12">
-
-          {/* Create Skill Card — only in All tab */}
-          {tab === 'all' && !search && (
-            <div
-              onClick={onCreateSkill}
-              className={`group relative h-[220px] rounded-xl cursor-pointer flex flex-col items-center justify-center transition-all border border-dashed ${
-                d ? 'border-white/[0.12] hover:border-white/[0.2] bg-white/[0.02] hover:bg-white/[0.04]'
-                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50'
-              }`}
-            >
-              <div className={`w-10 h-10 rounded-full border flex items-center justify-center mb-3 shadow-sm group-hover:scale-105 transition-transform duration-200 ${
-                d ? 'bg-white/[0.06] border-white/[0.08]' : 'bg-white border-slate-200'
-              }`}>
-                <Plus className="w-5 h-5 wf-fg-muted" />
-              </div>
-              <span className="font-medium text-sm wf-fg">Create New Skill</span>
-              <span className="text-xs mt-1 wf-fg-muted">Define a reusable behavior</span>
-            </div>
-          )}
-
-          {/* Skill Cards */}
-          {filteredSkills.map((skill) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              tab={tab}
-              d={d}
-              onEdit={onEditSkill}
-              onDelete={onDeleteSkill}
-              onToggle={onToggleSkill}
-              onApprove={onApproveSkill}
-              onPublish={onPublishSkill}
-            />
-          ))}
-
-          {/* Empty States per tab */}
-          {filteredSkills.length === 0 && (
-            <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
-              <div className={`w-14 h-14 shadow-sm rounded-full flex items-center justify-center mb-4 border ${
-                tab === 'suggested'
-                  ? d ? 'bg-violet-500/10 border-violet-500/20' : 'bg-violet-50 border-violet-200'
-                  : 'wf-bg-elevated wf-border'
-              }`}>
-                {search ? (
-                  <Search className="w-5 h-5 wf-fg-faint" />
-                ) : tab === 'suggested' ? (
-                  <Sparkles className={`w-5 h-5 ${d ? 'text-violet-400' : 'text-violet-500'}`} />
-                ) : tab === 'inactive' ? (
-                  <PowerOff className="w-5 h-5 wf-fg-faint" />
-                ) : (
-                  <Inbox className="w-5 h-5 wf-fg-faint" />
-                )}
-              </div>
-              <h3 className="text-sm font-semibold wf-fg">
-                {search
-                  ? 'No skills found'
-                  : tab === 'suggested' ? 'No suggestions yet'
-                  : tab === 'inactive' ? 'No inactive skills'
-                  : 'No skills yet'}
-              </h3>
-              <p className="text-xs mt-1 max-w-sm wf-fg-muted">
-                {search
-                  ? 'Try adjusting your search query.'
-                  : tab === 'suggested' ? 'Stuard will surface skills here as it learns patterns from your conversations.'
-                  : tab === 'inactive' ? 'Skills toggled off will appear here for easy re-enabling.'
-                  : 'Create your first skill to define a reusable behavior for Stuard.'}
-              </p>
-              {!search && tab === 'all' && (
-                <button
-                  onClick={onCreateSkill}
-                  className={`mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    d ? 'bg-white text-slate-900 hover:bg-white/90' : 'bg-slate-900 text-white hover:bg-slate-800'
-                  }`}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Create skill
-                </button>
+        {filteredSkills.length === 0 ? (
+          /* Empty state per tab */
+          <div className="py-16 flex flex-col items-center justify-center text-center">
+            <div className="w-14 h-14 shadow-sm rounded-full flex items-center justify-center mb-4 border wf-bg-elevated wf-border">
+              {search ? (
+                <Search className="w-5 h-5 wf-fg-faint" />
+              ) : tab === 'suggested' ? (
+                <Lightbulb className="w-5 h-5 wf-fg-faint" />
+              ) : tab === 'inactive' ? (
+                <PowerOff className="w-5 h-5 wf-fg-faint" />
+              ) : (
+                <Inbox className="w-5 h-5 wf-fg-faint" />
               )}
             </div>
-          )}
-        </div>
+            <h3 className="text-sm font-semibold wf-fg">
+              {search
+                ? 'No skills found'
+                : tab === 'suggested' ? 'No suggestions yet'
+                : tab === 'inactive' ? 'No inactive skills'
+                : 'No skills yet'}
+            </h3>
+            <p className="text-xs mt-1 max-w-sm wf-fg-muted">
+              {search
+                ? 'Try adjusting your search query.'
+                : tab === 'suggested' ? 'Stuard will surface skills here as it learns patterns from your conversations.'
+                : tab === 'inactive' ? 'Skills toggled off will appear here for easy re-enabling.'
+                : 'Create your first skill to define a reusable behavior for Stuard.'}
+            </p>
+            {!search && tab === 'all' && (
+              <button
+                onClick={onCreateSkill}
+                className="wf-primary-btn mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Create skill
+              </button>
+            )}
+          </div>
+        ) : (
+          /* List */
+          <div className="wf-card rounded-[16px] overflow-hidden">
+            {filteredSkills.map((skill) => (
+              <SkillRow
+                key={skill.id}
+                skill={skill}
+                tab={tab}
+                d={d}
+                onEdit={onEditSkill}
+                onDelete={onDeleteSkill}
+                onToggle={onToggleSkill}
+                onApprove={onApproveSkill}
+                onPublish={onPublishSkill}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
 }
 
-interface SkillCardProps {
+interface SkillRowProps {
   skill: Skill;
   tab: SkillsTab;
   d: boolean;
@@ -584,174 +547,137 @@ interface SkillCardProps {
   onPublish?: (skill: Skill) => void;
 }
 
-function SkillCard({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPublish }: SkillCardProps) {
+/**
+ * SkillRow — a calm, neutral list row (no card chrome, no brand-red tints).
+ * The skill's own colour shows only as a quiet icon tint for identity; status
+ * uses muted neutrals, with semantic green/red reserved for published/failed.
+ */
+function SkillRow({ skill, tab, d, onEdit, onDelete, onToggle, onApprove, onPublish }: SkillRowProps) {
   const IconComponent = SKILL_ICONS.find(i => i.name === skill.icon)?.icon || Wand2;
   const colorClasses = getSkillColorClasses(skill.color, d);
   const isPending = tab === 'suggested';
   const publishStatus = skill.metadata?.publishStatus as 'published' | 'failed' | undefined;
   const lastPublishError = (skill.metadata?.lastPublishError as string | undefined) || '';
+  const metaTime = skill.source === 'auto'
+    ? `Learned ${formatRelativeTime(skill.metadata?.generatedAt || skill.createdAt)}`
+    : (skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}` : '');
 
   return (
     <div
       onClick={() => onEdit(skill)}
-      className={`group relative rounded-xl border shadow-sm hover:shadow transition-all flex flex-col h-[220px] cursor-pointer overflow-hidden ${
-        isPending
-          ? d ? 'bg-violet-500/[0.04] border-violet-500/[0.18] hover:border-violet-500/30' : 'bg-violet-50/40 border-violet-200 hover:border-violet-300'
-          : d ? 'bg-white/[0.04] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-slate-200 hover:border-slate-300'
-      }`}
+      className="group flex items-center gap-3.5 px-4 py-3 cursor-pointer transition-colors wf-hover-bg border-b wf-border-subtle last:border-b-0"
     >
-      <div className={`absolute top-0 left-0 right-0 h-1 ${
-        isPending ? 'bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500'
-          : skill.isActive ? colorClasses.bg : (d ? 'bg-white/[0.06]' : 'bg-slate-200')
-      }`} />
+      {/* Icon — quiet skill-colour tint, dimmed when inactive */}
+      <div className={`w-9 h-9 rounded-[11px] flex items-center justify-center shrink-0 border ${colorClasses.bgSoft} ${colorClasses.border} ${!skill.isActive && !isPending ? 'opacity-50' : ''}`}>
+        <IconComponent className={`w-[18px] h-[18px] ${colorClasses.icon}`} />
+      </div>
 
-      <div className="p-4 flex flex-col flex-1 mt-1">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClasses.bgSoft} border ${colorClasses.border} relative shrink-0`}>
-              <IconComponent className={`w-5 h-5 ${colorClasses.icon}`} />
-              {skill.source === 'auto' && (
-                <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center ring-2 ring-white dark:ring-slate-900" title="Auto-generated">
-                  <Sparkles className="w-2.5 h-2.5 text-white" />
-                </div>
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold text-sm wf-fg truncate">{skill.name}</h3>
-                {isPending ? (
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                    d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/25' : 'bg-violet-100 text-violet-700 border border-violet-200'
-                  }`}>
-                    <Sparkles className="w-2.5 h-2.5" />
-                    Pending
-                  </span>
-                ) : skill.source === 'auto' ? (
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                    d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/20' : 'bg-violet-50 text-violet-600 border border-violet-200'
-                  }`}>
-                    <Sparkles className="w-2.5 h-2.5" />
-                    Auto
-                  </span>
-                ) : null}
-                {!isPending && publishStatus === 'published' ? (
-                  <span
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                      d ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    }`}
-                    title="Published to Marketplace"
-                  >
-                    <Check className="w-2.5 h-2.5" />
-                    Published
-                  </span>
-                ) : null}
-                {!isPending && publishStatus === 'failed' ? (
-                  <span
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                      d ? 'bg-rose-500/15 text-rose-300 border border-rose-500/25' : 'bg-rose-50 text-rose-700 border border-rose-200'
-                    }`}
-                    title={lastPublishError || 'Last publish attempt failed'}
-                  >
-                    <AlertCircle className="w-2.5 h-2.5" />
-                    Publish Failed
-                  </span>
-                ) : null}
-              </div>
-              <span className="text-xs wf-fg-muted truncate block">
-                {skill.steps.length} steps
-                {skill.source === 'auto' && skill.metadata?.confidence != null && (
-                  <> · {Math.round(skill.metadata.confidence * 100)}% confidence</>
-                )}
-              </span>
-            </div>
-          </div>
-          {!isPending && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggle(skill.id); }}
-              className={`p-1 rounded-md transition-colors shrink-0 ${skill.isActive ? 'text-emerald-500 hover:bg-emerald-500/10' : 'wf-fg-faint hover:bg-white/10'}`}
-              title={skill.isActive ? 'Active' : 'Inactive'}
+      {/* Main */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="font-semibold text-[13.5px] wf-fg truncate">{skill.name}</h3>
+          {(isPending || skill.source === 'auto') && (
+            <span className="wf-icon-chip inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider wf-fg-muted shrink-0">
+              <Lightbulb className="w-2.5 h-2.5" />
+              {isPending ? 'Pending' : 'Auto'}
+            </span>
+          )}
+          {!isPending && publishStatus === 'published' && (
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider shrink-0 ${
+                d ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              }`}
+              title="Published to Marketplace"
             >
-              {skill.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-            </button>
+              <Check className="w-2.5 h-2.5" />
+              Published
+            </span>
+          )}
+          {!isPending && publishStatus === 'failed' && (
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider shrink-0 ${
+                d ? 'bg-rose-500/15 text-rose-300 border border-rose-500/25' : 'bg-rose-50 text-rose-700 border border-rose-200'
+              }`}
+              title={lastPublishError || 'Last publish attempt failed'}
+            >
+              <AlertCircle className="w-2.5 h-2.5" />
+              Failed
+            </span>
           )}
         </div>
-
-        <p className="text-xs line-clamp-2 leading-relaxed mb-3 flex-1 wf-fg-muted">{skill.description}</p>
-
-        <div className={`px-3 py-2 rounded-lg border mb-3 ${d ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-slate-50 border-slate-100'}`}>
-          <div className="flex items-center gap-1.5 mb-1">
-            <Zap className="w-3 h-3 wf-fg-faint" />
-            <span className="text-[10px] font-medium uppercase tracking-wider wf-fg-faint">Trigger</span>
-          </div>
-          <p className="text-xs line-clamp-1 wf-fg-muted">{skill.trigger}</p>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] wf-fg-faint">
+          <span className="shrink-0">{skill.steps.length} step{skill.steps.length !== 1 ? 's' : ''}</span>
+          {skill.trigger && (
+            <>
+              <span className="opacity-50 shrink-0">·</span>
+              <span className="truncate">{skill.trigger}</span>
+            </>
+          )}
         </div>
+      </div>
 
-        {/* Footer / Actions */}
-        {isPending ? (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={(e) => { e.stopPropagation(); onApprove?.(skill); }}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors shadow-sm"
-              title="Approve and add to library"
-            >
-              <CheckCheck className="w-3.5 h-3.5" />
-              Approve
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onEdit(skill); }}
-              className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
-                d ? 'bg-white/[0.05] text-white/75 hover:bg-white/[0.08]' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-              }`}
-              title="Edit before approving"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Review
-            </button>
+      {/* Right — actions */}
+      {isPending ? (
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); onApprove?.(skill); }}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors shadow-sm"
+            title="Approve and add to library"
+          >
+            <CheckCheck className="w-3.5 h-3.5" />
+            Approve
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(skill); }}
+            className="wf-card wf-card-interactive inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium wf-fg-muted hover:wf-fg"
+            title="Edit before approving"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Review
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(skill.id); }}
+            className="inline-flex items-center justify-center p-1.5 rounded-full transition-colors wf-fg-faint hover:text-rose-400 hover:bg-rose-500/10"
+            title="Dismiss"
+          >
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 shrink-0">
+          {metaTime && <span className="hidden md:block text-[11px] wf-fg-faint mr-1">{metaTime}</span>}
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onPublish && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onPublish(skill); }}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold transition-colors ${
+                  publishStatus === 'published'
+                    ? d ? 'text-emerald-300 hover:bg-emerald-500/10' : 'text-emerald-600 hover:bg-emerald-50'
+                    : 'wf-fg-muted hover:wf-fg wf-hover-bg'
+                }`}
+                title={publishStatus === 'published' ? 'Push a new version to the Marketplace' : 'Publish to Marketplace'}
+              >
+                <Upload className="w-3 h-3" />
+                {publishStatus === 'published' ? 'Update' : 'Publish'}
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(skill.id); }}
-              className={`inline-flex items-center justify-center p-1.5 rounded-md transition-colors ${
-                d ? 'text-white/45 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
-              }`}
-              title="Dismiss"
+              className="p-1.5 rounded-full transition-colors wf-fg-faint hover:text-rose-400 hover:bg-rose-500/10"
+              title="Delete skill"
             >
-              <XCircle className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
-        ) : (
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] wf-fg-faint truncate">
-              {skill.source === 'auto' ? (
-                <>Learned {skill.metadata?.generatedAt ? formatRelativeTime(skill.metadata.generatedAt) : formatRelativeTime(skill.createdAt)}</>
-              ) : (
-                skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}` : ''
-              )}
-            </span>
-            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-              {onPublish && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onPublish(skill); }}
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
-                    publishStatus === 'published'
-                      ? d ? 'text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10' : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
-                      : d ? 'text-blue-300 hover:text-blue-200 hover:bg-blue-500/10' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
-                  }`}
-                  title={publishStatus === 'published' ? 'Push a new version to the Marketplace' : 'Publish to Marketplace'}
-                >
-                  <Upload className="w-3 h-3" />
-                  {publishStatus === 'published' ? 'Update' : 'Publish'}
-                </button>
-              )}
-              <button
-                onClick={(e) => { e.stopPropagation(); onDelete(skill.id); }}
-                className={`p-1 rounded transition-colors ${d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
-                title="Delete Skill"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle(skill.id); }}
+            className={`p-1 rounded-md transition-colors shrink-0 ${skill.isActive ? 'text-emerald-500 hover:bg-emerald-500/10' : 'wf-fg-faint wf-hover-bg'}`}
+            title={skill.isActive ? 'Active — click to disable' : 'Inactive — click to enable'}
+          >
+            {skill.isActive ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -896,9 +822,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
             {onPublish && (
               <button
                 onClick={() => onPublish(editedSkill)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-colors text-xs font-medium border ${
-                  d ? 'border-blue-500/30 text-blue-300 hover:bg-blue-500/10' : 'bg-white border-blue-200 text-blue-600 hover:bg-blue-50'
-                }`}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-colors text-xs font-medium border wf-border wf-fg-muted hover:text-[color:var(--wf-accent)] hover:bg-[var(--wf-accent-soft)]"
                 title="Publish to Marketplace"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -922,34 +846,32 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
 
           {/* Auto-Skill Origin Banner */}
           {editedSkill.source === 'auto' && (
-            <div className={`p-3 rounded-lg border space-y-2 ${
-              d ? 'bg-violet-500/10 border-violet-500/25' : 'bg-violet-50 border-violet-200'
-            }`}>
+            <div className="wf-surface-muted p-3 rounded-[12px] space-y-2">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center">
-                  <Sparkles className="w-3.5 h-3.5 text-white" />
+                <div className="wf-icon-chip w-6 h-6 rounded-full flex items-center justify-center">
+                  <Lightbulb className="w-3.5 h-3.5 wf-fg-muted" />
                 </div>
                 <div>
-                  <span className={`text-xs font-semibold ${d ? 'text-violet-300' : 'text-violet-700'}`}>Auto-Generated Skill</span>
-                  <p className={`text-[10px] ${d ? 'text-violet-400' : 'text-violet-500'}`}>Learned from conversation patterns</p>
+                  <span className="text-xs font-semibold wf-fg">Auto-Generated Skill</span>
+                  <p className="text-[10px] wf-fg-muted">Learned from conversation patterns</p>
                 </div>
               </div>
               {editedSkill.metadata?.confidence != null && (
-                <div className={`flex items-center gap-3 text-[10px] ${d ? 'text-violet-400' : 'text-violet-600'}`}>
-                  <span>Confidence: <strong>{Math.round(editedSkill.metadata.confidence * 100)}%</strong></span>
+                <div className="flex items-center gap-3 text-[10px] wf-fg-muted">
+                  <span>Confidence: <strong className="wf-fg">{Math.round(editedSkill.metadata.confidence * 100)}%</strong></span>
                   {editedSkill.metadata.generatedAt && (
                     <span>Detected: {formatRelativeTime(editedSkill.metadata.generatedAt)}</span>
                   )}
                 </div>
               )}
               {editedSkill.metadata?.antiPatterns && editedSkill.metadata.antiPatterns.length > 0 && (
-                <div className={`pt-1 border-t ${d ? 'border-violet-500/25' : 'border-violet-200'}`}>
-                  <span className={`text-[10px] font-medium flex items-center gap-1 mb-1 ${d ? 'text-violet-300' : 'text-violet-600'}`}>
+                <div className="pt-1 border-t wf-border-subtle">
+                  <span className="text-[10px] font-medium flex items-center gap-1 mb-1 wf-fg-muted">
                     <AlertCircle className="w-3 h-3" /> Mistakes to avoid
                   </span>
                   <ul className="space-y-0.5">
                     {editedSkill.metadata.antiPatterns.slice(0, 3).map((ap: string, i: number) => (
-                      <li key={i} className={`text-[10px] pl-3 ${d ? 'text-violet-400' : 'text-violet-500'}`}>· {ap}</li>
+                      <li key={i} className="text-[10px] pl-3 wf-fg-muted">· {ap}</li>
                     ))}
                   </ul>
                 </div>
@@ -1082,19 +1004,17 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                 </button>
               );
             })}
-            <div className={`w-px h-5 mx-1 ${d ? 'bg-white/[0.08]' : 'bg-slate-200'}`} />
+            <div className="w-px h-5 mx-1" style={{ background: 'var(--wf-border)' }} />
             <button
               onClick={() => { setShowAI(v => !v); setTimeout(() => chatInputRef.current?.focus(), 100); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
                 showAI
-                  ? 'bg-indigo-600 text-white border border-indigo-700 shadow-sm'
-                  : d
-                    ? 'bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.06] wf-fg-muted'
-                    : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700/80'
+                  ? 'wf-surface-muted wf-fg'
+                  : 'wf-card wf-card-interactive wf-fg-muted hover:wf-fg'
               }`}
               title="AI Assistant"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Bot className="w-3.5 h-3.5" />
               AI
             </button>
           </div>
@@ -1399,7 +1319,7 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
     >
       <div
         className="rounded-2xl border shadow-2xl w-[560px] max-w-[92vw] overflow-hidden"
-        style={{ background: d ? '#0f1117' : '#ffffff', borderColor: 'var(--wf-border)', color: 'var(--wf-fg)' }}
+        style={{ background: d ? '#1b1b1b' : '#ffffff', borderColor: 'var(--wf-border)', color: 'var(--wf-fg)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -1408,7 +1328,7 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ${
               isUpdate
                 ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
-                : 'bg-gradient-to-br from-blue-500 to-violet-600 shadow-blue-500/20'
+                : 'bg-gradient-to-br from-[#ff5a5e] to-[#ff383c] shadow-rose-500/25'
             }`}>
               <Upload className="w-4.5 h-4.5 text-white" />
             </div>
@@ -1563,7 +1483,7 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg ${
                 isUpdate
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-emerald-500/20'
-                  : 'bg-gradient-to-r from-blue-500 to-violet-600 hover:from-blue-600 hover:to-violet-700 shadow-blue-500/20'
+                  : 'bg-gradient-to-r from-[#ff5a5e] to-[#ff383c] hover:from-[#ff6b6f] hover:to-[#ff4a4e] shadow-rose-500/25'
               }`}
             >
               {busy ? <Wand2 className="w-4 h-4 animate-pulse" /> : <Upload className="w-4 h-4" />}

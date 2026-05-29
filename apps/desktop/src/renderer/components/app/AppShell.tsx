@@ -96,6 +96,7 @@ export function AppShell(props: any) {
     query,
     setQuery,
     handleSend,
+    handleQuickSend,
     handleSteer,
     stopGeneration,
     isStreaming,
@@ -466,6 +467,7 @@ export function AppShell(props: any) {
                 query={query}
                 setQuery={setQuery}
                 onSend={handleSend}
+                onQuickSend={handleQuickSend}
                 onSteer={handleSteer}
                 attachments={attachments}
                 onRemoveAttachment={handleRemoveAttachment}

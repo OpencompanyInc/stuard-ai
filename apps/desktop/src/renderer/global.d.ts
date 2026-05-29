@@ -88,7 +88,7 @@ declare global {
       onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string }) => void) => () => void;
       openDashboard: (options?: { tab?: string }) => Promise<void>;
       openOnboarding: () => Promise<void>;
-      openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => Promise<void>;
+      openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => Promise<void>;
       openSpaces: () => Promise<void>;
       closeSpaces: () => Promise<void>;
       toggleSpaces: () => Promise<void>;
@@ -300,6 +300,7 @@ declare global {
       botsUpdateTrigger: (id: string, triggerId: string, patch: any) => Promise<{ ok: boolean; trigger?: any; error?: string }>;
       botsRemoveTrigger: (id: string, triggerId: string) => Promise<{ ok: boolean; error?: string }>;
       botsGetAvailableTools: () => Promise<{ ok: boolean; tools?: string[]; error?: string }>;
+      integrationsSyncToolNames: (names: string[]) => Promise<{ ok: boolean; error?: string }>;
       botsTestSetup: (input: any) => Promise<{ ok: boolean; summary?: string; checks?: any[]; error?: string }>;
       botsRunPreflightProbe: (payload: {
         request: { probe: string; args?: Record<string, any> };

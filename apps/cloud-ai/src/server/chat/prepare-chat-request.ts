@@ -39,6 +39,8 @@ import { buildProviderOptions, resolveMaxSteps } from './provider-options';
 import { pickDefaultModelId, send, type TierChoice, normalizeTierChoice } from '../socket/helpers';
 import { registerWebhookState, sendRunStateSync } from '../socket/auth-handler';
 import type { AgentType, AuthUser, PreparedChatRequest } from './types';
+import type { MemoryOwnerScope } from '../../memory/conversations';
+import { isQuickChatRequest } from './quick-request';
 
 interface PrepareChatRequestArgs {
   ws: WebSocket;
@@ -117,6 +119,8 @@ export async function prepareChatRequest({
     return null;
   }
 
+  const quickRequest = isQuickChatRequest(msg);
+
   const { authUser, authResult } = await resolveAuth(msg);
   if (authUser?.userId) {
     secretBag.userId = authUser.userId;
@@ -149,8 +153,8 @@ export async function prepareChatRequest({
   const hydrationConvId = typeof msg?.conversationId === 'string' ? msg.conversationId.trim() : '';
   const needsHydration = !!(authUser && hydrationConvId && history.length === 0);
 
-  let integrationsPromise: Promise<{ enabledIntegrations: string[]; mcpTools: Record<string, any> }> =
-    Promise.resolve({ enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any> });
+  let integrationsPromise: Promise<{ enabledIntegrations: string[]; mcpTools: Record<string, any>; customTools: Record<string, any>; customCatalog: Array<{ name: string; description: string; category: string; inputSchema?: any }> }> =
+    Promise.resolve({ enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any>, customTools: {} as Record<string, any>, customCatalog: [] });
   let hydrationPromise: Promise<any[] | null> = Promise.resolve(null);
 
   if (authUser) {
@@ -222,7 +226,19 @@ export async function prepareChatRequest({
   // Drain the in-flight per-user reads kicked off above the access gate. By
   // the time the router (which often makes an LLM call) returns, these are
   // typically already resolved, so the await is usually free.
-  const { enabledIntegrations, mcpTools } = await integrationsPromise;
+  // Quick sends skip integration/MCP loading — not needed for fast Q&A.
+  const { enabledIntegrations, mcpTools, customTools, customCatalog } = quickRequest
+    ? { enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any>, customTools: {} as Record<string, any>, customCatalog: [] as Array<{ name: string; description: string; category: string; inputSchema?: any }> }
+    : await integrationsPromise;
+
+  // Stash deployed custom-integration tools on the per-request secret bag so
+  // search_tools / execute_tool can surface + run them without bloating the
+  // lean active tool set. The whole turn runs inside withClientBridge(secretBag),
+  // and wrapped tools capture this same bag via getBridgeSecrets().
+  if (customTools && Object.keys(customTools).length > 0) {
+    secretBag.__customTools = customTools;
+    secretBag.__customCatalog = customCatalog;
+  }
 
   // Hydrate from durable storage when this is a fresh socket (typical for the VM
   // bridge, which opens a brand-new WS per chat turn) and the caller already has
@@ -249,7 +265,7 @@ export async function prepareChatRequest({
   }
 
   send(ws, { type: 'progress', event: 'ack', data: { ts: Date.now() } }, requestId);
-  if (process.env.SIS_PARALLEL_EMBEDDINGS === '1') {
+  if (process.env.SIS_PARALLEL_EMBEDDINGS === '1' && !quickRequest) {
     void getOrCreateQueryEmbedding(prompt).catch(() => null);
   }
 
@@ -279,17 +295,22 @@ export async function prepareChatRequest({
     attachmentDescriptorsForMeta,
     agentType,
   });
+  const memoryOwner = resolveMemoryOwner(agentType, msg);
 
   // Project Mode: if this conversation is already stamped with a project_id,
   // pull the project + recent journal so the orchestrator prompt can lock onto
   // it. Skipped for fresh conversations (no project yet) and for bot/workflow
   // agents which don't run the orchestrator prompt.
-  const promptOptions = await resolveProjectPromptOptions({
-    agentType,
-    conversationId,
-    conversationCreatedNow,
-    prompt,
-  });
+  // Quick sends skip project memory retrieval — that's the slow path users
+  // are trying to avoid with Tab.
+  const promptOptions: OrchestratorPromptOptions = quickRequest
+    ? { conversationId: conversationId || null, quickResponse: true }
+    : await resolveProjectPromptOptions({
+      agentType,
+      conversationId,
+      conversationCreatedNow,
+      prompt,
+    });
 
   const agent = await resolveAgent({
     agentType,
@@ -321,6 +342,7 @@ export async function prepareChatRequest({
     agentType,
     agent,
     conversationId,
+    memoryOwner,
   });
 
   if (authUser && conversationId && !conversationCreatedNow) {
@@ -366,6 +388,7 @@ export async function prepareChatRequest({
     contextPathsForMeta,
     resource,
     thread,
+    memoryOwner,
     maxSteps: resolveMaxSteps(msg, agentType),
     providerOptions: buildProviderOptions({
       agentType,
@@ -377,6 +400,19 @@ export async function prepareChatRequest({
       msg,
     }),
   };
+}
+
+function resolveMemoryOwner(agentType: AgentType, msg: any): MemoryOwnerScope {
+  const ctx = msg?.context || {};
+  if (agentType === 'bot') {
+    const agentId = String(ctx?.agentId || ctx?.agent_id || '').trim();
+    if (agentId) return { owner_type: 'agent', owner_id: agentId };
+    const botId = String(ctx?.proactiveBotId || ctx?.botId || ctx?.bot_id || ctx?.id || '').trim();
+    return { owner_type: 'bot', owner_id: botId || 'default' };
+  }
+  if (agentType === 'workflow') return { owner_type: 'workflow' };
+  if (agentType === 'skill') return { owner_type: 'skill' };
+  return { owner_type: 'stuard' };
 }
 
 async function resolveAuth(msg: any): Promise<{ authUser: AuthUser | null; authResult: any }> {
@@ -460,6 +496,11 @@ async function loadIntegrations(userId: string) {
   const providers = ['github', 'google', 'outlook', 'telnyx', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
   let enabledIntegrations: string[] = [];
   let mcpTools: Record<string, any> = {};
+  // Deployed custom integrations. Compiled to tools but kept OUT of the lean
+  // orchestrator prompt — they're surfaced via search_tools / execute_tool
+  // (the same discovery dance native tools use). See meta-tools.ts.
+  let customTools: Record<string, any> = {};
+  let customCatalog: Array<{ name: string; description: string; category: string; inputSchema?: any }> = [];
 
   try {
     const checks = await Promise.all(providers.map((provider) => getExternalAccount(userId, provider)));
@@ -477,7 +518,19 @@ async function loadIntegrations(userId: string) {
     console.warn('[cloud-ai] Failed to load MCP tools:', error);
   }
 
-  return { enabledIntegrations, mcpTools };
+  try {
+    const { compileInstalledToTools } = await import('../../integrations/compile-tools');
+    const compiled = await compileInstalledToTools(userId);
+    customTools = compiled.tools;
+    customCatalog = compiled.catalog;
+    if (customCatalog.length > 0) {
+      console.log(`[cloud-ai] Loaded ${customCatalog.length} custom-integration tools`);
+    }
+  } catch (error) {
+    console.warn('[cloud-ai] Failed to load custom integration tools:', error);
+  }
+
+  return { enabledIntegrations, mcpTools, customTools, customCatalog };
 }
 
 function appendNewUserMessagesToHistory(history: any[], messages: any[]) {
@@ -861,6 +914,20 @@ async function resolveAgent({
       allowedTools: Array.isArray(ctx?.allowedTools) ? ctx.allowedTools : [],
       mcpTools,
     });
+  }
+
+  if (promptOptions?.quickResponse || isQuickChatRequest(msg)) {
+    return await getOrchestratorAgentForUser(
+      routedTier,
+      [],
+      {},
+      chosenModelId,
+      [],
+      [],
+      userId,
+      modelSource,
+      { ...(promptOptions || {}), quickResponse: true },
+    );
   }
 
   await ensureExecutionToolsRegistered();

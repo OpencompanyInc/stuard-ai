@@ -15,6 +15,7 @@ import {
   GmailEditor,
 } from './trigger-editors';
 import { useBotsPlatform } from './BotsPlatformContext';
+import { platformNotify } from './dialogs';
 
 export function TriggersSection({ bot, onChanged }: { bot: Bot; onChanged: () => Promise<void> | void }) {
   const platform = useBotsPlatform();
@@ -31,7 +32,10 @@ export function TriggersSection({ bot, onChanged }: { bot: Bot; onChanged: () =>
       const trigger = res.trigger as { id?: string };
       if (type !== 'manual' && trigger.id) setEditingId(trigger.id);
     } else if (res?.error === 'invalid_input') {
-      alert('That trigger type is already on this agent. Pick a different one or edit the existing trigger.');
+      await platformNotify(platform, {
+        title: 'Trigger already added',
+        message: 'That trigger type is already on this agent. Pick a different one or edit the existing trigger.',
+      });
     }
   };
 
@@ -39,7 +43,10 @@ export function TriggersSection({ bot, onChanged }: { bot: Bot; onChanged: () =>
     if (readOnly || !platform.removeTrigger) return;
     const res = await platform.removeTrigger(bot.id, triggerId);
     if (!res?.ok) {
-      alert('An agent must keep at least one trigger. Switch this one to "Manual" if you want no automation.');
+      await platformNotify(platform, {
+        title: 'Keep at least one trigger',
+        message: 'An agent must keep at least one trigger. Switch this one to “Manual” if you want no automation.',
+      });
       return;
     }
     await onChanged();

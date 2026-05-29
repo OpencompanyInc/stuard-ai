@@ -58,7 +58,7 @@ const MUTED_FG = 'rgb(var(--compact-pill-fg-muted))';
 const TEXT_FG = 'rgb(var(--compact-pill-fg))';
 
 // User-message bubble in compact response panel.
-const USER_BUBBLE_BG = '#E5E7EB'; // Tailwind gray-200
+const USER_BUBBLE_BG = '#FFFFFF';
 const USER_BUBBLE_FG = '#171717';
 
 const PANEL_MAX_HEIGHT = 460;

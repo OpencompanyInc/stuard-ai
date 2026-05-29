@@ -45,6 +45,8 @@ interface InputAreaProps {
   query: string;
   setQuery: (q: string) => void;
   onSend: () => void;
+  /** Compact mode: Tab sends with fast tier, skipping memory I/O. */
+  onQuickSend?: () => void;
   onSteer?: () => void;
   attachments: Array<{ type: 'image' | 'file'; name: string; mimeType?: string; source?: string }>;
   onRemoveAttachment: (index: number) => void;
@@ -145,6 +147,7 @@ import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_ROW_WITH_ICON, FIGMA_KBD } fro
 import { AttachmentBar } from './AttachmentBar';
 import { FolderPermissionsButton } from './FolderPermissionsButton';
 import { CompactSearchDropdown } from './compact/CompactSearchDropdown';
+import { qaError, qaLog, qaWarn } from './compact/compactQuickActionsDebug';
 import { CompactStatusPill } from './compact/CompactStatusPill';
 import { CompactInputPill } from './compact/CompactInputPill';
 import { CompactDragCorner } from './compact/CompactDragCorner';
@@ -218,7 +221,7 @@ function compactSearchUrl(engineId: string | null | undefined, query: string): s
 
 const InputArea = forwardRef(function InputArea(
   {
-    query, setQuery, onSend, onSteer,
+    query, setQuery, onSend, onQuickSend, onSteer,
     attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
     onPaste, onDrop,
     signedIn, onSignIn,
@@ -258,7 +261,7 @@ const InputArea = forwardRef(function InputArea(
   ref: React.ForwardedRef<HTMLTextAreaElement>
 ) {
 
-  const { tabs: openTabs, activeTabId } = useChatTabs();
+  const { tabs: openTabs, activeTabId, switchTab } = useChatTabs();
 
   const conn = connectionStatus || 'connected';
   const isConnSpinner = conn === 'connecting';
@@ -289,12 +292,28 @@ const InputArea = forwardRef(function InputArea(
   // Ref to track showFileNav inside handleKeyDown (declared later as state)
   const showFileNavRef = useRef(false);
 
-  // Selection state for the search-options dropdown (arrow keys / hover)
+  // Selection state for the search-options dropdown (arrow keys / hover).
+  // selectedIndexRef must stay in sync immediately — handleKeyDown reads it on
+  // Enter; a useEffect-only sync lags hover/arrow updates so Enter can fire
+  // "Ask Stuard" while an application row looks highlighted.
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selectedIndexRef = useRef(0);
   const selectableItemsRef = useRef<{ key: string; onSelect: () => void }[]>([]);
   const showSearchOptionsRef = useRef(false);
-  useEffect(() => { selectedIndexRef.current = selectedIndex; }, [selectedIndex]);
+  const commitDropdownSelectionRef = useRef<(source?: string) => boolean>(() => false);
+  const lastDropdownCommitAtRef = useRef(0);
+  const setSelectedIndexSynced = useCallback((value: number | ((prev: number) => number)) => {
+    if (typeof value === 'function') {
+      setSelectedIndex((prev) => {
+        const next = value(prev);
+        selectedIndexRef.current = next;
+        return next;
+      });
+    } else {
+      selectedIndexRef.current = value;
+      setSelectedIndex(value);
+    }
+  }, []);
 
   // Load index stats on mount
   useEffect(() => {
@@ -456,6 +475,16 @@ const InputArea = forwardRef(function InputArea(
           setAppResults(apps);
           setFileResults(files);
           setFileSearchMode('quick');
+          qaLog('search:unified_results', {
+            query: q,
+            appCount: apps.length,
+            fileCount: files.length,
+            apps: apps.slice(0, 8).map((a: any) => ({
+              name: a.name,
+              launchTarget: a.launchTarget,
+              path: a.path,
+            })),
+          });
         } else {
           setAppResults([]);
           setFileResults([]);
@@ -675,16 +704,35 @@ const InputArea = forwardRef(function InputArea(
   }, [fileResults, appResults]);
 
   // Handle launching an app from search results
-  const handleLaunchApp = useCallback(async (launchTarget: string) => {
+  const handleLaunchApp = useCallback(async (launchTarget: string, source = 'unknown') => {
+    const target = String(launchTarget || '').trim();
+    qaLog('launchApp:start', { source, target: target || '(empty)' });
     try {
-      const api = (window as any).desktopAPI;
-      if (api?.launchApp) {
-        await api.launchApp(launchTarget);
-      } else if (api?.execTool) {
-        await api.execTool('open_file', { path: launchTarget });
+      if (!target) {
+        qaWarn('launchApp:skip', { source, reason: 'empty_target' });
+        return;
       }
-      (window as any).desktopAPI?.hide?.();
-    } catch { }
+      const api = (window as any).desktopAPI;
+      let result: unknown;
+      if (api?.launchApp) {
+        qaLog('launchApp:invoke', { source, method: 'desktopAPI.launchApp' });
+        result = await api.launchApp(target);
+      } else if (api?.execTool) {
+        qaLog('launchApp:invoke', { source, method: 'desktopAPI.execTool.open_file' });
+        result = await api.execTool('open_file', { path: target });
+      } else {
+        qaWarn('launchApp:skip', { source, reason: 'no_launch_api' });
+        return;
+      }
+      qaLog('launchApp:result', { source, target, result });
+    } catch (err) {
+      qaError('launchApp:error', err, { source, target });
+    } finally {
+      if (target) {
+        qaLog('launchApp:hide_overlay', { source, target });
+        (window as any).desktopAPI?.hide?.();
+      }
+    }
   }, []);
 
   // Handle adding a file result as context
@@ -731,6 +779,7 @@ const InputArea = forwardRef(function InputArea(
   const hubResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userDismissedHubRef = useRef(false);
   const wasStreamingRef = useRef(false);
+  const lastQuickSendAtRef = useRef(0);
   const [quickResponseHeight, setQuickResponseHeight] = useState(0);
   const quickResponseHeightRef = useRef(0);
   useEffect(() => { compactHubOpenRef.current = compactHubOpen; }, [compactHubOpen]);
@@ -775,6 +824,8 @@ const InputArea = forwardRef(function InputArea(
   }, [signedIn, backgroundTaskCount, compactHubTabs, miniOutputStreaming, miniOutputText, miniOutputHasContent, compactHubOpen, isAiWorking]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isEnter = e.key === 'Enter' || e.code === 'NumpadEnter';
+
     // Arrow key navigation for dropdowns
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (showFileNavRef.current && fileNavRef.current) {
@@ -788,25 +839,44 @@ const InputArea = forwardRef(function InputArea(
           e.preventDefault();
           const delta = e.key === 'ArrowDown' ? 1 : -1;
           const next = (selectedIndexRef.current + delta + total) % total;
-          setSelectedIndex(next);
+          const rowKey = selectableItemsRef.current[next]?.key;
+          qaLog('keydown:arrow', {
+            handler: 'textarea',
+            direction: e.key,
+            from: selectedIndexRef.current,
+            to: next,
+            total,
+            rowKey,
+          });
+          setSelectedIndexSynced(next);
           return;
         }
+        qaWarn('keydown:arrow', { handler: 'textarea', reason: 'no_selectable_items', total });
       }
     }
 
     // Enter to select current item in file nav
-    if (e.key === 'Enter' && !e.shiftKey && showFileNavRef.current && fileNavRef.current) {
+    if (isEnter && !e.shiftKey && showFileNavRef.current && fileNavRef.current) {
+      qaLog('keydown:enter', { handler: 'textarea', branch: 'file_nav' });
       e.preventDefault();
       fileNavRef.current.selectCurrent();
       return;
     }
 
-    // Enter to select highlighted dropdown row when search-options is open
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && showSearchOptionsRef.current) {
-      const item = selectableItemsRef.current[selectedIndexRef.current];
-      if (item) {
+    // Enter to select highlighted dropdown row when search-options is open.
+    if (isEnter && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const committed = commitDropdownSelectionRef.current('textarea-keydown');
+      qaLog('keydown:enter', {
+        handler: 'textarea',
+        branch: 'quick_actions_commit',
+        showSearchOptionsRef: showSearchOptionsRef.current,
+        selectableCount: selectableItemsRef.current.length,
+        selectedIndex: selectedIndexRef.current,
+        committed,
+      });
+      if (committed) {
         e.preventDefault();
-        item.onSelect();
+        e.stopPropagation();
         return;
       }
     }
@@ -826,8 +896,48 @@ const InputArea = forwardRef(function InputArea(
       }
     }
 
+    // Ctrl/Cmd+Tab cycles chat tabs (Ctrl+Shift+Tab goes backwards). Must be
+    // handled before the plain-Tab quick-send below so the modifier isn't
+    // swallowed as a quick search.
+    if (e.key === 'Tab' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (openTabs.length > 1 && activeTabId) {
+        const idx = openTabs.findIndex((t) => t.id === activeTabId);
+        if (idx !== -1) {
+          const dir = e.shiftKey ? -1 : 1;
+          const next = openTabs[(idx + dir + openTabs.length) % openTabs.length];
+          if (next) switchTab(next.id);
+        }
+      }
+      return;
+    }
+
+    // Tab = quick send (compact mode only) — always intercept; never cycle pill icons.
+    // Plain Tab only (Ctrl/Cmd+Tab is tab-cycling, handled above).
+    if (
+      overlayMode === 'compact'
+      && e.key === 'Tab'
+      && !e.shiftKey
+      && !e.ctrlKey
+      && !e.metaKey
+      && !showFileNavRef.current
+      && onQuickSend
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      const now = Date.now();
+      if (now - lastQuickSendAtRef.current < 250) return;
+      lastQuickSendAtRef.current = now;
+      userDismissedHubRef.current = false;
+      openCompactHub(true);
+      onQuickSend();
+      return;
+    }
+
     // Web Search Shortcut (Ctrl+Enter) — steer when streaming, otherwise open search
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    if (isEnter && (e.ctrlKey || e.metaKey)) {
+      qaLog('keydown:enter', { handler: 'textarea', branch: 'ctrl_enter_web_or_steer' });
       e.preventDefault();
       if (miniOutputStreaming && onSteer && query.trim()) {
         onSteer();
@@ -854,13 +964,20 @@ const InputArea = forwardRef(function InputArea(
       return;
     }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (isEnter && !e.shiftKey) {
+      qaLog('keydown:enter', {
+        handler: 'textarea',
+        branch: 'fallback_onSend',
+        showSearchOptionsRef: showSearchOptionsRef.current,
+        selectableCount: selectableItemsRef.current.length,
+        query: query.trim(),
+      });
       e.preventDefault();
       userDismissedHubRef.current = false;
       openCompactHub(true);
       onSend();
     }
-  }, [onSend, onSteer, query, setQuery, miniOutputStreaming, openCompactHub, closeCompactHub]);
+  }, [onSend, onQuickSend, onSteer, query, setQuery, miniOutputStreaming, openCompactHub, closeCompactHub, overlayMode, openTabs, activeTabId, switchTab, setSelectedIndexSynced]);
 
   // File Navigation State for @ mentions
   const [showFileNav, setShowFileNav] = useState(false);
@@ -1015,6 +1132,7 @@ const InputArea = forwardRef(function InputArea(
 
   // Show search options dropdown when user has typed something (not @ mentions)
   const showSearchOptions = !expanded && query.trim().length >= 2 && !showFileNav;
+  showSearchOptionsRef.current = showSearchOptions;
   const typingActive = query.trim().length > 0;
 
   // Auto-open quick response when the assistant starts streaming.
@@ -1629,7 +1747,15 @@ const InputArea = forwardRef(function InputArea(
     appResults.forEach((a: any, idx: number) => {
       items.push({
         key: `app-${a.path || a.name || idx}`,
-        onSelect: () => { handleLaunchApp(a.launchTarget || a.path); setQuery(''); },
+        onSelect: () => {
+          qaLog('click:app_row', {
+            name: a.name,
+            launchTarget: a.launchTarget,
+            path: a.path,
+          });
+          void handleLaunchApp(a.launchTarget || a.path, 'click');
+          setQuery('');
+        },
       });
     });
     const bookmarksStart = items.length;
@@ -1699,14 +1825,162 @@ const InputArea = forwardRef(function InputArea(
     setQuery,
   ]);
 
-  // Keep refs in sync so handleKeyDown (memoized) sees fresh values.
-  useEffect(() => { selectableItemsRef.current = dropdownSelection.items; }, [dropdownSelection.items]);
-  useEffect(() => { showSearchOptionsRef.current = showSearchOptions; }, [showSearchOptions]);
+  // Keep dropdown row refs in sync during render (not useEffect) so Enter/arrow
+  // handlers see the same rows the portal is showing, including apps that just loaded.
+  selectableItemsRef.current = dropdownSelection.items;
+  commitDropdownSelectionRef.current = (source = 'unknown') => {
+    const { items, offsets } = dropdownSelection;
+    const snapshot = {
+      source,
+      showSearchOptions,
+      showSearchOptionsRef: showSearchOptionsRef.current,
+      selectedIndex: selectedIndexRef.current,
+      itemCount: items.length,
+      itemKeys: items.map((i) => i.key),
+      appsStart: offsets.appsStart,
+      appCount: appResults.length,
+      apps: appResults.slice(0, 8).map((a: any) => ({
+        name: a.name,
+        launchTarget: a.launchTarget,
+        path: a.path,
+      })),
+    };
 
-  // Reset selection to first item whenever the item list changes or the dropdown reopens.
+    if (!showSearchOptions) {
+      qaWarn('commit:abort', { ...snapshot, reason: 'showSearchOptions_false' });
+      return false;
+    }
+    const now = Date.now();
+    if (now - lastDropdownCommitAtRef.current < 80) {
+      qaLog('commit:debounced', snapshot);
+      return true;
+    }
+    if (items.length === 0) {
+      qaWarn('commit:abort', { ...snapshot, reason: 'no_items' });
+      return false;
+    }
+    const idx = Math.min(Math.max(selectedIndexRef.current, 0), items.length - 1);
+    const row = items[idx];
+    if (!row) {
+      qaWarn('commit:abort', { ...snapshot, reason: 'row_missing', idx });
+      return false;
+    }
+
+    qaLog('commit:row', { ...snapshot, idx, rowKey: row.key });
+
+    // Applications: launch from live appResults (same path as click) so Enter
+    // cannot drift from a stale onSelect closure when results stream in.
+    if (row.key.startsWith('app-')) {
+      const appIdx = idx - offsets.appsStart;
+      const app = appResults[appIdx];
+      const target = String(app?.launchTarget || app?.path || '').trim();
+      if (app && target) {
+        lastDropdownCommitAtRef.current = now;
+        qaLog('commit:launch_app', {
+          source,
+          idx,
+          appIdx,
+          rowKey: row.key,
+          name: app.name,
+          target,
+        });
+        void handleLaunchApp(target, `enter:${source}`);
+        setQuery('');
+        return true;
+      }
+      qaWarn('commit:app_fallback_onSelect', {
+        source,
+        idx,
+        appIdx,
+        rowKey: row.key,
+        app: app
+          ? { name: app.name, launchTarget: app.launchTarget, path: app.path }
+          : null,
+        reason: !app ? 'app_missing' : 'empty_target',
+      });
+    }
+
+    lastDropdownCommitAtRef.current = now;
+    qaLog('commit:onSelect', { source, idx, rowKey: row.key });
+    row.onSelect();
+    return true;
+  };
+
+  // Compact overlay: capture Enter at window level when the search dropdown is
+  // open so it still commits even if the React tree reorders or swallows bubbling.
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [dropdownSelection.items.length, showSearchOptions]);
+    if (expanded || overlayMode !== 'compact' || !showSearchOptions) return;
+    qaLog('listener:window_capture', { attached: true, overlayMode, query: query.trim() });
+    const onWindowKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.code !== 'NumpadEnter') return;
+      if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = document.activeElement;
+      const inCompactHitArea = !!(el instanceof HTMLElement && el.closest('[data-compact-hit-area]'));
+      const isTextarea = el instanceof HTMLTextAreaElement;
+      if (!isTextarea || !inCompactHitArea) {
+        qaLog('listener:window_capture:skip', {
+          key: e.key,
+          code: e.code,
+          activeTag: el?.tagName,
+          isTextarea,
+          inCompactHitArea,
+          defaultPrevented: e.defaultPrevented,
+        });
+        return;
+      }
+      if (e.defaultPrevented) {
+        qaLog('listener:window_capture:skip', { reason: 'already_prevented' });
+        return;
+      }
+      const committed = commitDropdownSelectionRef.current('window-capture');
+      qaLog('listener:window_capture:enter', { committed, defaultPrevented: e.defaultPrevented });
+      if (!committed) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', onWindowKeyDown, true);
+    return () => {
+      qaLog('listener:window_capture', { attached: false });
+      window.removeEventListener('keydown', onWindowKeyDown, true);
+    };
+  }, [showSearchOptions, expanded, overlayMode, query]);
+
+  useEffect(() => {
+    if (overlayMode !== 'compact') return;
+    qaLog('dropdown:visibility', {
+      showSearchOptions,
+      query: query.trim(),
+      showFileNav,
+      expanded,
+      itemCount: dropdownSelection.items.length,
+      selectedIndex: selectedIndexRef.current,
+      appCount: appResults.length,
+    });
+  }, [
+    overlayMode,
+    showSearchOptions,
+    query,
+    showFileNav,
+    expanded,
+    dropdownSelection.items.length,
+    appResults.length,
+  ]);
+
+  // Reset the highlight to the first row when the dropdown opens or the query
+  // changes. Intentionally NOT keyed on item-list length: async results (files,
+  // marketplace, icons) stream in a beat after the apps, and resetting on every
+  // length change used to snap the highlight off an app the user had just
+  // arrow-keyed to — so Enter hit "Ask Stuard" and dismissed instead of launching.
+  useEffect(() => {
+    setSelectedIndexSynced(0);
+  }, [query, showSearchOptions, setSelectedIndexSynced]);
+
+  // As results stream in/out, keep the selection in range without losing the
+  // user's spot (clamp rather than reset to 0).
+  useEffect(() => {
+    const total = dropdownSelection.items.length;
+    setSelectedIndexSynced((i) => (total === 0 ? 0 : Math.min(i, total - 1)));
+  }, [dropdownSelection.items.length, setSelectedIndexSynced]);
 
   // Input bar height - must match the actual rendered height of the input section
   // Base: container p-2 (8px) + input card min-h (114px) + extra padding (~18px) = ~140px
@@ -1830,7 +2104,7 @@ const InputArea = forwardRef(function InputArea(
             query={query}
             setQuery={setQuery}
             selectedIndex={selectedIndex}
-            setSelectedIndex={setSelectedIndex}
+            setSelectedIndex={setSelectedIndexSynced}
             offsets={dropdownSelection.offsets}
             onAskStuard={() => handleSearchOption('chat')}
             onWebSearch={() => handleSearchOption('web', activeEngine.id)}
@@ -1846,7 +2120,10 @@ const InputArea = forwardRef(function InputArea(
             appResults={appResults}
             fileLoading={fileLoading}
             fileIconDataUrls={fileIconDataUrls}
-            onLaunchApp={handleLaunchApp}
+            onLaunchApp={(target) => {
+              qaLog('click:app_portal', { target });
+              void handleLaunchApp(target, 'portal-click');
+            }}
             matchingBookmarks={matchingBookmarks}
             onExecuteBookmark={executeBookmark}
             fileResults={fileResults}
@@ -1919,7 +2196,23 @@ const InputArea = forwardRef(function InputArea(
           placement={dropdownPlacement}
           onQuickResponseHeightChange={handleQuickResponseHeightChange}
         >
-        <div className="w-full relative z-[5]">
+        <div
+          className="w-full relative z-[5]"
+          onKeyDownCapture={(e) => {
+            const isEnter = e.key === 'Enter' || e.code === 'NumpadEnter';
+            if (!isEnter || !showSearchOptions) return;
+            if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+            const committed = commitDropdownSelectionRef.current('pill-capture');
+            qaLog('keydown:enter', {
+              handler: 'pill-capture',
+              committed,
+              showSearchOptions,
+            });
+            if (!committed) return;
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
           <CompactTitleBar
             show={showCompactTitleBar}
             bumpHeight={COMPACT_TITLE_BUMP_HEIGHT}
@@ -1958,7 +2251,12 @@ const InputArea = forwardRef(function InputArea(
                   ? 'Queue after this turn…'
                   : isAiWorking
                     ? ''
-                    : 'Ask anything'
+                    : 'Just Ask Stuard'
+            }
+            typingHint={
+              showFileNav || miniOutputStreaming || isAiWorking
+                ? undefined
+                : 'Tab for quick answer'
             }
             miniOutputStreaming={!!miniOutputStreaming}
             onSteer={onSteer}

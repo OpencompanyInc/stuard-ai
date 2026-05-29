@@ -33,8 +33,26 @@ import { resolveEmbedder } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory } from './tool-registry';
-import { execLocalTool, hasClientBridge } from './bridge';
+import { execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
+
+// ─── Deployed custom-integration tools (request-scoped) ────────────────────
+// Compiled in prepare-chat-request.loadIntegrations() and stashed on the
+// per-request secret bag. Surfaced via search_tools and run via execute_tool so
+// they stay out of the lean orchestrator prompt.
+interface CustomCatalogEntry { name: string; description: string; category: string; inputSchema?: any }
+function getCustomCatalog(): CustomCatalogEntry[] {
+    try {
+        const c = (getBridgeSecrets() as any)?.__customCatalog;
+        return Array.isArray(c) ? c : [];
+    } catch { return []; }
+}
+function getCustomTools(): Record<string, any> {
+    try {
+        const t = (getBridgeSecrets() as any)?.__customTools;
+        return t && typeof t === 'object' ? t : {};
+    } catch { return {}; }
+}
 
 const MEMORY_AI_TOOL_IDS = new Set([
     'memory_retrieval',
@@ -445,7 +463,7 @@ Object.values(deviceTools).forEach(t => {
         return;
     }
 
-    if (['list_directory', 'read_file', 'write_file', 'create_directory', 'move_file', 'copy_file', 'delete_file', 'folder_permission_add', 'folder_permission_remove', 'folder_permission_list', 'folder_permission_set_enabled', 'folder_permission_check'].includes(name)) {
+    if (['list_directory', 'read_file', 'write_file', 'create_directory', 'open_file', 'move_file', 'copy_file', 'delete_file', 'folder_permission_add', 'folder_permission_remove', 'folder_permission_list', 'folder_permission_set_enabled', 'folder_permission_check'].includes(name)) {
         registerTool(t, 'FileSystem');
     } else if (['file_index_add_root', 'file_index_remove_root', 'file_index_list_roots', 'file_index_scan', 'file_index_get_pending', 'file_index_stats', 'file_index_update', 'file_search', 'file_search_by_filename', 'file_search_by_kind', 'file_search_recent', 'file_search_details', 'file_search_similar', 'process_pending_file_index', 'process_pending_file_index_batch', 'sync_file_index_batch_jobs', 'semantic_file_search'].includes(name)) {
         registerTool(t, 'FileSearch');
@@ -636,6 +654,18 @@ export const search_tools = createTool({
                 }
             }
 
+            // Deployed custom-integration tools (treated as 'cloud' kind).
+            if (!kind || kind === 'cloud') {
+                for (const entry of getCustomCatalog()) {
+                    if (category && entry.category !== category) continue;
+                    const haystack = `${entry.name} ${entry.category} ${entry.description}`.toLowerCase();
+                    const exact = q && haystack.includes(q) ? 4 : 0;
+                    const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+                    if (q && exact === 0 && tokenScore === 0) continue;
+                    results.push({ ...compactToolSearchEntry(entry), score: exact + tokenScore });
+                }
+            }
+
             return { tools: results.sort((a, b) => b.score - a.score).slice(0, SEARCH_TOOL_RESULT_LIMIT).map(({ score: _score, ...entry }) => entry) };
         };
 
@@ -671,9 +701,78 @@ export const search_tools = createTool({
     },
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Compact schema signatures for bulk node discovery.
+//
+// Raw draft-07 JSON Schema is verbose ($schema, additionalProperties, nested
+// `type` wrappers, required[] arrays, etc.) and search_workflow_nodes attaches
+// it for input AND output of up to 8 candidates per call — a large, repeated
+// cost in the agent's history. A field signature carries everything the model
+// needs to wire a node (name, required-ness, type, enum, default, range, short
+// description) at ~4-5x fewer tokens and is easier to read. get_tool_schema
+// still returns the full JSON Schema for a single tool when a deep dive is
+// warranted.
+function jsonSchemaTypeName(v: any): string {
+    if (!v || typeof v !== 'object') return 'any';
+    if (Array.isArray(v.enum)) return `enum[${v.enum.map((e: any) => String(e)).join('|')}]`;
+    if (v.const !== undefined) return `const ${JSON.stringify(v.const)}`;
+    if (v.type === 'array') return `${jsonSchemaTypeName(v.items || {})}[]`;
+    if (Array.isArray(v.anyOf)) return v.anyOf.map(jsonSchemaTypeName).join('|');
+    if (Array.isArray(v.oneOf)) return v.oneOf.map(jsonSchemaTypeName).join('|');
+    if (typeof v.type === 'string') return v.type;
+    if (v.properties) return 'object';
+    return 'any';
+}
+
+function jsonSchemaFieldSig(v: any, depth: number): string {
+    if (!v || typeof v !== 'object') return 'any';
+    let type = jsonSchemaTypeName(v);
+    // Expand one level of nested objects so the model sees their shape inline.
+    if (v.type === 'object' && v.properties && depth < 1) {
+        const nested = compactSchemaSignature(v, depth + 1);
+        if (nested && typeof nested === 'object') {
+            type = `{ ${Object.entries(nested).map(([k, s]) => `${k}: ${s}`).join(', ')} }`;
+        }
+    }
+    const extras: string[] = [];
+    if (v.default !== undefined) extras.push(`default ${JSON.stringify(v.default)}`);
+    if (typeof v.minimum === 'number' || typeof v.maximum === 'number') {
+        extras.push(`${v.minimum ?? ''}..${v.maximum ?? ''}`);
+    }
+    const meta = extras.length ? ` (${extras.join(', ')})` : '';
+    const rawDesc = typeof v.description === 'string' ? v.description.trim().replace(/\s+/g, ' ') : '';
+    // Cap per-field descriptions for lean discovery; the full text is always
+    // available via get_tool_schema when the model needs the exact wording.
+    const desc = rawDesc ? ` — ${rawDesc.length > 110 ? rawDesc.slice(0, 110) + '…' : rawDesc}` : '';
+    return `${type}${meta}${desc}`;
+}
+
+/**
+ * Convert a JSON Schema object into a compact `{ field(?): "type (meta) — desc" }`
+ * signature. Optional fields are suffixed with "?". Returns a short type string
+ * for non-object schemas, or undefined for empty/missing input.
+ */
+export function compactSchemaSignature(schema: any, depth = 0): any {
+    if (!schema || typeof schema !== 'object') return undefined;
+    const node = (Array.isArray(schema.anyOf) && schema.anyOf.length === 1) ? schema.anyOf[0]
+        : (Array.isArray(schema.oneOf) && schema.oneOf.length === 1) ? schema.oneOf[0]
+            : schema;
+    const props = node.properties;
+    if (props && typeof props === 'object') {
+        const required = new Set(Array.isArray(node.required) ? node.required : []);
+        const out: Record<string, string> = {};
+        for (const [key, raw] of Object.entries<any>(props)) {
+            out[required.has(key) ? key : `${key}?`] = jsonSchemaFieldSig(raw, depth);
+        }
+        return out;
+    }
+    if (Object.keys(node).length === 0) return undefined;
+    return jsonSchemaTypeName(node);
+}
+
 export const search_workflow_nodes = createTool({
     id: 'search_workflow_nodes',
-    description: 'Search workflow node/tool types by semantic query or filters and return category, runtime type, and input/output schemas in one call.',
+    description: 'Search workflow node/tool types by semantic query or filters. Returns category, runtime type, and a compact input/output signature ({ field(?): "type (default/range) — description" }) per candidate in one call. For the full JSON Schema of a single tool, use get_tool_schema.',
     inputSchema: z.object({
         query: z.string().min(1).describe('Required free-text query for semantic node search.'),
         category: z.string().optional().describe('Filter nodes to a specific category.'),
@@ -717,14 +816,14 @@ export const search_workflow_nodes = createTool({
 
             if (includeSchema) {
                 if (registryTool) {
-                    inputSchema = registryTool.inputSchema ? zodToJsonSchema(registryTool.inputSchema) : {};
-                    outputSchema = registryTool.outputSchema ? zodToJsonSchema(registryTool.outputSchema) : undefined;
+                    inputSchema = registryTool.inputSchema ? compactSchemaSignature(zodToJsonSchema(registryTool.inputSchema)) : undefined;
+                    outputSchema = registryTool.outputSchema ? compactSchemaSignature(zodToJsonSchema(registryTool.outputSchema)) : undefined;
                 } else if (hasClientBridge()) {
                     try {
                         const info = await execLocalTool('get_tool_info', { name }) as any;
                         if (info && !info.error) {
-                            inputSchema = info.args || info.inputSchema || {};
-                            outputSchema = info.outputSchema;
+                            inputSchema = compactSchemaSignature(info.args || info.inputSchema);
+                            outputSchema = compactSchemaSignature(info.outputSchema);
                         }
                     } catch {}
                 }
@@ -764,6 +863,16 @@ export const get_tool_schema = createTool({
         const tool = getToolRegistry().get(tool_name);
 
         if (!tool) {
+            // Deployed custom-integration tool?
+            const customTool = getCustomTools()[tool_name];
+            if (customTool) {
+                return {
+                    name: tool_name,
+                    description: customTool.description || tool_name,
+                    inputSchema: customTool.inputSchema ? zodToJsonSchema(customTool.inputSchema) : {},
+                    outputSchema: customTool.outputSchema ? zodToJsonSchema(customTool.outputSchema) : undefined,
+                };
+            }
             // Try the bridge for local-only tools
             if (hasClientBridge()) {
                 try {
@@ -813,6 +922,17 @@ export const execute_tool = createTool({
             }
             try {
                 const result = await tool.execute(toolArgs, runCtx);
+                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
+            } catch (err: any) {
+                return { success: false, tool: tool_name, error: err.message || String(err) };
+            }
+        }
+
+        // Deployed custom-integration tool?
+        const customTool = getCustomTools()[tool_name];
+        if (customTool && typeof customTool.execute === 'function') {
+            try {
+                const result = await customTool.execute(toolArgs, runCtx);
                 return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };

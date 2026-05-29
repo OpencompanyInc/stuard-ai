@@ -1,11 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getExternalAccount, upsertExternalAccount, listExternalAccounts } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
 import { PUBLIC_BASE_URL as CFG_PUBLIC_BASE_URL, GOOGLE_CLIENT_ID as CFG_GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET as CFG_GOOGLE_CLIENT_SECRET } from '../utils/config';
-import { refreshGoogleTokenIfNeeded } from '../routes/integrations/google-shared';
-import { getVMOAuthAccount, listVMOAuthAccounts, shouldUseVMOAuth, storeVMOAuthAccount } from './vm-oauth';
+import { getClientOAuthAccount, listClientOAuthAccounts, storeClientOAuthAccount, shouldUseVMOAuth } from './vm-oauth';
 
 const GOOGLE_API = 'https://www.googleapis.com';
 const GOOGLE_CLIENT_ID = CFG_GOOGLE_CLIENT_ID || '';
@@ -34,7 +32,7 @@ async function requireUserId(): Promise<string> {
  * Resolve which OAuth profile to use. Priority:
  * 1. Explicit profileLabel argument (from tool input)
  * 2. Profile set in bridge secrets context (from user instruction)
- * 3. undefined → getExternalAccount will use the default
+ * 3. undefined → the client store will use the default profile
  */
 function resolveProfile(explicit?: string): string | undefined {
   if (explicit) return explicit;
@@ -44,8 +42,8 @@ function resolveProfile(explicit?: string): string | undefined {
   } catch { return undefined; }
 }
 
-async function getGoogleAccountOrThrow(userId: string, profileLabel?: string) {
-  const acc = await getVMOAuthAccount('google', profileLabel) || await getExternalAccount(userId, 'google', profileLabel);
+async function getGoogleAccountOrThrow(profileLabel?: string) {
+  const acc = await getClientOAuthAccount('google', profileLabel);
   if (!acc) throw new Error('google_not_connected');
   return acc;
 }
@@ -89,7 +87,7 @@ async function ensureConnectedAndScopes(required: string[], profileLabel?: strin
     throw error;
   }
   const profile = resolveProfile(profileLabel);
-  const acc = await getVMOAuthAccount('google', profile) || await getExternalAccount(userId, 'google', profile);
+  const acc = await getClientOAuthAccount('google', profile);
   if (!acc) {
     const connectPath = buildConnectPath(required);
     return { ok: false, error: 'google_not_connected', connectPath, url: `${PUBLIC_BASE}${connectPath}` } as const;
@@ -113,12 +111,13 @@ async function ensureConnectedAndScopes(required: string[], profileLabel?: strin
 }
 
 async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLabel?: string) {
-  const userId = await requireUserId();
+  // Validate user context (throws missing_user_context) before touching tokens.
+  await requireUserId();
   const profile = resolveProfile(profileLabel);
-  let acc = await getGoogleAccountOrThrow(userId, profile);
-  let accessToken = acc.meta?.source === 'vm'
-    ? acc.access_token
-    : await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
+  let acc = await getGoogleAccountOrThrow(profile);
+  // Tokens are device-held; use the stored access token directly and refresh
+  // reactively on 401 below (no Supabase-backed proactive refresh).
+  let accessToken = acc.access_token;
 
   async function doFetch(token: string) {
     const headers: Record<string, string> = {
@@ -153,26 +152,13 @@ async function googleAuthorizedFetch(url: string, init?: RequestInit, profileLab
         const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
         const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
         try {
-          if (acc.meta?.source === 'vm') {
-            await storeVMOAuthAccount('google', {
-              ...acc,
-              access_token: newAccess,
-              refresh_token: refresh_token || null,
-              expires_at,
-            });
-          } else {
-            await upsertExternalAccount({
-              userId,
-              provider: 'google',
-              access_token: newAccess,
-              scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
-              refresh_token: refresh_token || null,
-              expires_at,
-              meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
-              profileLabel: acc.profile_label || 'default',
-              accountEmail: acc.account_email || null,
-            });
-          }
+          // Persist the refreshed token back to wherever it lives (desktop or VM).
+          await storeClientOAuthAccount('google', {
+            ...acc,
+            access_token: newAccess,
+            refresh_token: refresh_token || null,
+            expires_at,
+          });
         } catch { }
         acc = { ...acc, access_token: newAccess, expires_at, refresh_token };
         accessToken = newAccess;
@@ -206,10 +192,8 @@ export const google_list_profiles = createTool({
   description: 'List all connected Google profiles/accounts for the current user. Returns profile labels and emails. IMPORTANT: Call this first when the user has multiple Google accounts to determine which profile label to pass to other Google tools (gmail_*, calendar_*, drive_*, etc.).',
   inputSchema: z.object({}),
   execute: async () => {
-    const userId = await requireUserId();
-    const accounts = shouldUseVMOAuth()
-      ? await listVMOAuthAccounts('google')
-      : await listExternalAccounts(userId, 'google');
+    await requireUserId();
+    const accounts = await listClientOAuthAccounts('google');
     const profiles = accounts.map(a => ({
       profile: a.profile_label,
       isDefault: a.is_default,
@@ -813,12 +797,10 @@ function guessMimeType(filename: string): string {
 }
 
 async function googleAuthorizedBinaryFetch(url: string, profileLabel?: string): Promise<Buffer> {
-  const userId = await requireUserId();
+  await requireUserId();
   const profile = resolveProfile(profileLabel);
-  let acc = await getGoogleAccountOrThrow(userId, profile);
-  let accessToken = acc.meta?.source === 'vm'
-    ? acc.access_token
-    : await refreshGoogleTokenIfNeeded(userId, acc, acc.profile_label);
+  let acc = await getGoogleAccountOrThrow(profile);
+  let accessToken = acc.access_token;
 
   async function doFetch(token: string) {
     return fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -844,23 +826,12 @@ async function googleAuthorizedBinaryFetch(url: string, profileLabel?: string): 
         const expires_at = new Date(Date.now() + expiresIn * 1000).toISOString();
         const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
         try {
-          if (acc.meta?.source === 'vm') {
-            await storeVMOAuthAccount('google', {
-              ...acc,
-              access_token: newAccess,
-              refresh_token: refresh_token || null,
-              expires_at,
-            });
-          } else {
-            await upsertExternalAccount({
-              userId, provider: 'google', access_token: newAccess,
-              scopes: Array.isArray(acc.scopes) ? acc.scopes : [],
-              refresh_token: refresh_token || null, expires_at,
-              meta: { token_type: tBody.token_type || (acc.meta?.token_type || 'Bearer') },
-              profileLabel: acc.profile_label || 'default',
-              accountEmail: acc.account_email || null,
-            });
-          }
+          await storeClientOAuthAccount('google', {
+            ...acc,
+            access_token: newAccess,
+            refresh_token: refresh_token || null,
+            expires_at,
+          });
         } catch { }
         accessToken = newAccess;
         res = await doFetch(accessToken);

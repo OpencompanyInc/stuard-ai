@@ -116,6 +116,14 @@ create table if not exists public.external_accounts (
   unique (user_id, provider, profile_label)
 );
 
+create index if not exists idx_external_accounts_default
+  on public.external_accounts (user_id, provider, is_default)
+  where is_default = true;
+
+create unique index if not exists idx_external_accounts_one_default
+  on public.external_accounts (user_id, provider)
+  where is_default = true;
+
 alter table public.external_accounts enable row level security;
 
 create policy if not exists external_accounts_owner_select on public.external_accounts

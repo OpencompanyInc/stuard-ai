@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { handleWebhooks } from './webhooks';
 import { handleHealth } from './health';
 import { handleCredits } from './credits';
+import { handleOAuthClaimRoute } from './integrations/oauth-claim';
 import { handleGithubRoutes } from './integrations/github';
 import { handleGoogleRoutes } from './integrations/google';
 import { handleOutlookRoutes } from './integrations/outlook';
@@ -46,6 +47,7 @@ import { handlePolarWebhook } from './polar-webhook';
 import { handleByokRoutes } from './byok';
 import { handleIntegrationsDraftRoutes } from './integrations-draft';
 import { handleIntegrationsAssistRoutes } from './integrations-assist';
+import { handleIntegrationsInstalledRoutes } from './integrations-installed';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handlePolarWebhook(req, res, parsedUrl)) return true;
@@ -57,6 +59,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleAccountRoutes(req, res, parsedUrl)) return true;
   if (await handleBetaRoutes(req, res, parsedUrl)) return true;
   if (await handleOpsRoutes(req, res, parsedUrl)) return true;
+  if (await handleOAuthClaimRoute(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
@@ -80,6 +83,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleByokRoutes(req, res, parsedUrl)) return true;
   if (await handleIntegrationsDraftRoutes(req, res, parsedUrl)) return true;
   if (await handleIntegrationsAssistRoutes(req, res, parsedUrl)) return true;
+  if (await handleIntegrationsInstalledRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudEngineRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleStorageRoutes(req, res, parsedUrl)) return true;

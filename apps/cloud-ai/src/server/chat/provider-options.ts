@@ -1,5 +1,6 @@
 import { DEFAULT_MAX_STEPS, MAX_STEPS_CAP } from '../../utils/config';
 import type { AgentType } from './types';
+import { isQuickChatRequest } from './quick-request';
 
 interface ProviderOptionsArgs {
   agentType: AgentType;
@@ -12,6 +13,8 @@ interface ProviderOptionsArgs {
 }
 
 export function resolveMaxSteps(msg: any, agentType: AgentType) {
+  if (isQuickChatRequest(msg)) return 1;
+
   const requestedMaxSteps = msg?.maxSteps ?? msg?.limits?.maxSteps;
   let maxSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : DEFAULT_MAX_STEPS;
 

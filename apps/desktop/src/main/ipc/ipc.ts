@@ -1,4 +1,4 @@
-﻿
+
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
@@ -16,6 +16,7 @@ import { setupCodexIpc } from "../codex/codex-service";
 import logger from "../utils/logger";
 import { getFileIconCached, getFilePreviewCached } from "../services/icon-cache";
 import * as fs from "fs";
+import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
 import { syncMainAuthSession } from "../services/auth-session";
@@ -31,6 +32,7 @@ import {
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
 import { pushDesktopAgentDataToVM, requestAgentDataPush } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
+import { setCustomIntegrationToolNames, listCustomIntegrationToolNames } from "../tools/custom-integrations";
 import { testBotSetupPreflight } from "../services/bot-setup-preflight";
 import { runBotPreflightProbe, type BotPreflightProbeRequest } from "../services/bot-preflight-probes";
 import {
@@ -321,7 +323,7 @@ export function setupIpc() {
 
   // System windows
   ipcMain.handle("system:openDashboard", (_e, options?: { tab?: string }) => openDashboardWindow(options));
-  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => openWorkflowsWindow(options));
+  ipcMain.handle("system:openWorkflows", (_e, options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => openWorkflowsWindow(options));
   ipcMain.handle("system:openOnboarding", () => openOnboardingWindow());
   ipcMain.handle("system:closeOnboarding", () => closeOnboardingWindow());
   ipcMain.handle("system:openVoiceTest", () => openVoiceTestWindow());
@@ -1360,7 +1362,13 @@ export function setupIpc() {
     proactiveService.getWakeUpLog(typeof limit === 'number' ? limit : 20)
   );
   ipcMain.handle('proactive:triggerNow', (_e, botId?: string) => triggerManualWakeUp(botId));
-  ipcMain.handle('proactive:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
+  ipcMain.handle('proactive:getAvailableTools', () => ({ ok: true, tools: [...proactiveAvailableTools, ...listCustomIntegrationToolNames()] }));
+  // Renderer syncs the user's deployed custom-integration tool names here so
+  // execTool can route them to cloud-ai and the bot tool picker can list them.
+  ipcMain.handle('integrations:syncToolNames', (_e, names: string[]) => {
+    try { setCustomIntegrationToolNames(Array.isArray(names) ? names : []); return { ok: true }; }
+    catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
   ipcMain.handle('proactive:isRunning', () => ({ ok: true, running: isProactiveSchedulerRunning() }));
   ipcMain.handle('proactive:reply', async (_e, payload: { wakeUpId: string; text: string }) => {
     const wakeUpId = String(payload?.wakeUpId || '').trim();
@@ -1481,7 +1489,7 @@ export function setupIpc() {
   // Available tools for the bot tools picker. Mirrors proactive:getAvailableTools
   // because the underlying registry is process-global; both views show the
   // same union, minus the proactive_task_* helpers (those are kanban plumbing).
-  ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: proactiveAvailableTools }));
+  ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: [...proactiveAvailableTools, ...listCustomIntegrationToolNames()] }));
   ipcMain.handle('bots:testSetup', (_e, input: any) => {
     try {
       return testBotSetupPreflight(input || {}, proactiveAvailableTools);
@@ -1690,19 +1698,47 @@ export function setupIpc() {
   });
 
   ipcMain.handle('apps:launch', async (_e, launchTarget: string) => {
+    const target = String(launchTarget || '').trim();
+    logger.info('[CompactQuickActions] apps:launch', { target });
     try {
-      if (!launchTarget) return { ok: false, error: 'No launch target' };
-      if (launchTarget.startsWith('shell:')) {
-        // UWP / shell folder apps
-        await shell.openExternal(launchTarget);
-      } else if (fs.existsSync(launchTarget)) {
-        // Direct executable or .app path
-        await shell.openPath(launchTarget);
-      } else {
-        await shell.openExternal(launchTarget);
+      if (!target) {
+        logger.warn('[CompactQuickActions] apps:launch aborted — empty target');
+        return { ok: false, error: 'No launch target' };
       }
-      return { ok: true };
+      let method: 'explorer' | 'shell.openPath' | 'shell.openExternal' | 'openExternal-fallback';
+      if (target.startsWith('shell:') && process.platform === 'win32') {
+        // UWP / Store / AppsFolder apps live in the Windows shell namespace and
+        // cannot be launched via ShellExecute — shell.openExternal('shell:...')
+        // fails with "The system cannot find the path specified. (0x3)".
+        // explorer.exe resolves the shell: path and launches the app.
+        method = 'explorer';
+        const child = spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' });
+        child.on('error', (err) =>
+          logger.warn('[CompactQuickActions] apps:launch explorer spawn error', {
+            target,
+            error: String((err as any)?.message || err),
+          }),
+        );
+        child.unref();
+      } else if (target.startsWith('shell:')) {
+        method = 'shell.openExternal';
+        await shell.openExternal(target);
+      } else if (fs.existsSync(target)) {
+        method = 'shell.openPath';
+        // openPath resolves to an error string (it does not throw) on failure.
+        const openErr = await shell.openPath(target);
+        if (openErr) throw new Error(openErr);
+      } else {
+        method = 'openExternal-fallback';
+        await shell.openExternal(target);
+      }
+      logger.info('[CompactQuickActions] apps:launch ok', { target, method });
+      return { ok: true, method };
     } catch (e: any) {
+      logger.warn('[CompactQuickActions] apps:launch failed', {
+        target,
+        error: String(e?.message || e),
+      });
       return { ok: false, error: String(e?.message || e) };
     }
   });

@@ -12,6 +12,7 @@ import type { BotTrigger } from './types';
 import { TRIGGER_META } from './constants';
 import { Pill } from './primitives';
 import { buildLogPreview, formatDuration } from './helpers';
+import { RunDetailMarkdown } from './RunDetailMarkdown';
 
 export function TaskDetailModal({
   log,
@@ -56,7 +57,12 @@ export function TaskDetailModal({
   const title = log.agentMessage?.split(/\n+/)[0]?.slice(0, 200)
     || (isRunning && liveText ? liveText.split(/\n+/)[0].slice(0, 200) : '')
     || buildLogPreview(log);
-  const body = log.agentMessage && log.agentMessage.split(/\n+/).slice(1).join('\n').trim();
+  const body = log.agentMessage ? log.agentMessage.split(/\n+/).slice(1).join('\n').trim() : '';
+  const markdownSource =
+    body
+    || (isRunning && liveText ? liveText : '')
+    || (typeof log.agentMessage === 'string' ? log.agentMessage : '');
+  const showPlainTitle = Boolean(body);
   // The full stage pipeline fires in the same second on a fast run, so a list of
   // "...0s" pills (with retries re-emitting the same stage) was pure noise. Keep
   // only the current stage, shown as a single live line until output streams in.
@@ -75,10 +81,10 @@ export function TaskDetailModal({
       style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
     >
       <div
-        className="relative w-full max-w-[520px] rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card p-6 shadow-2xl animate-in zoom-in-95 duration-150"
+        className="relative flex max-h-[min(640px,90vh)] w-full max-w-[520px] flex-col overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card p-6 shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex shrink-0 items-center justify-between gap-3">
           <span className={clsx('text-[12px] font-semibold', statusColor)}>{statusLabel}</span>
 
           <div className="flex items-center gap-2">
@@ -113,29 +119,34 @@ export function TaskDetailModal({
           </button>
         </div>
 
-        <div className="mt-5 text-[14px] font-medium leading-6 text-theme-fg">{title}</div>
-        {body && (
-          <p className="mt-3 whitespace-pre-wrap text-[14px] leading-7 text-theme-fg/85">{body}</p>
-        )}
-        {!body && isRunning && liveText && (
-          <p className="mt-3 whitespace-pre-wrap text-[14px] leading-7 text-theme-fg/85">
-            {liveText}
-            <span className="ml-1 inline-block h-3.5 w-[3px] translate-y-0.5 animate-pulse rounded-sm bg-amber-300/80 align-baseline" />
-          </p>
-        )}
-        {!body && !liveText && isRunning && currentStageLabel && (
-          <p className="mt-3 flex items-center gap-2 text-[13px] text-theme-muted">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {currentStageLabel}
-          </p>
-        )}
-        {log.failureReason && (
-          <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-[12px] text-red-300">
-            {log.failureReason}
-          </div>
-        )}
+        <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-minimal">
+          {showPlainTitle && title && (
+            <div className="text-[14px] font-medium leading-6 text-theme-fg">{title}</div>
+          )}
+          {markdownSource ? (
+            <div className={clsx(showPlainTitle && title && 'mt-3')}>
+              <RunDetailMarkdown content={markdownSource} />
+              {isRunning && liveText && (
+                <span className="ml-0.5 inline-block h-3.5 w-[3px] translate-y-0.5 animate-pulse rounded-sm bg-amber-300/80 align-baseline" />
+              )}
+            </div>
+          ) : !showPlainTitle && title ? (
+            <div className="text-[14px] font-medium leading-6 text-theme-fg">{title}</div>
+          ) : null}
+          {!markdownSource && isRunning && currentStageLabel && (
+            <p className="mt-3 flex items-center gap-2 text-[13px] text-theme-muted">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {currentStageLabel}
+            </p>
+          )}
+          {log.failureReason && (
+            <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2">
+              <RunDetailMarkdown content={String(log.failureReason)} tone="error" />
+            </div>
+          )}
+        </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-5 flex shrink-0 flex-wrap gap-2">
           <Pill>
             <TriggerIcon className="h-3 w-3" />
             {triggerLabel}

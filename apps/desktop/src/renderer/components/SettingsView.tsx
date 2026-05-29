@@ -9,6 +9,7 @@ import { BillingSettings } from "./BillingSettings";
 import { useModelRegistry } from "../hooks/useModelRegistry";
 import { ApiKeysSection } from "./settings/ApiKeysSection";
 import { GlobalHotkeySection } from "./settings/GlobalHotkeySection";
+import { CheckpointsSection } from "./settings/CheckpointsSection";
 import { ModelProviderLogo } from "./ModelProviderLogo";
 
 type UpdateChannel = "stable" | "beta" | "staging";
@@ -362,16 +363,29 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
       setActiveIdx(0);
       return;
     }
+    const margin = 12;
+    const gap = 8;
     const update = () => {
       const r = triggerRef.current?.getBoundingClientRect();
       if (!r) return;
       const panelW = Math.max(r.width, 320);
-      const panelH = 380;
-      const spaceBelow = window.innerHeight - r.bottom;
-      const openUp = spaceBelow < panelH + 24 && r.top > panelH + 24;
-      const left = Math.max(12, Math.min(r.left, window.innerWidth - panelW - 12));
-      const top = openUp ? r.top - panelH - 8 : r.bottom + 8;
-      setPos({ position: "fixed", left, top, width: panelW, zIndex: 10010 });
+      const spaceBelow = window.innerHeight - r.bottom - margin;
+      const spaceAbove = r.top - margin;
+      const openUp = spaceBelow < 280 && spaceAbove > spaceBelow;
+      const available = Math.max(200, (openUp ? spaceAbove : spaceBelow) - gap);
+      const panelMaxHeight = Math.min(480, available, window.innerHeight - margin * 2);
+      const left = Math.max(margin, Math.min(r.left, window.innerWidth - panelW - margin));
+      const top = openUp
+        ? Math.max(margin, r.top - gap - panelMaxHeight)
+        : Math.min(window.innerHeight - margin - panelMaxHeight, r.bottom + gap);
+      setPos({
+        position: "fixed",
+        left,
+        top,
+        width: panelW,
+        maxHeight: panelMaxHeight,
+        zIndex: 10010,
+      });
     };
     update();
     setTimeout(() => inputRef.current?.focus(), 30);
@@ -443,9 +457,9 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
           <div
             ref={panelRef}
             style={pos}
-            className="rounded-2xl border border-theme bg-theme-card/95 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+            className="rounded-2xl border border-theme bg-theme-card/95 backdrop-blur-xl shadow-2xl overflow-hidden flex flex-col min-h-0 animate-in fade-in zoom-in-95 duration-150"
           >
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-theme-sidebar bg-theme-hover/30">
+            <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2 border-b border-theme-sidebar bg-theme-hover/30">
               <div className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">
                 {tierLabel} model
               </div>
@@ -458,7 +472,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
               </button>
             </div>
 
-            <div className="px-2.5 pt-2.5">
+            <div className="shrink-0 px-2.5 pt-2.5">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted" />
                 <input
@@ -472,7 +486,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-1.5 max-h-[320px] custom-scrollbar">
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5 memory-context-scrollbar">
               {grouped.length === 0 ? (
                 <div className="py-10 text-center">
                   <div className="text-[12px] text-theme-muted font-medium">No matches for "{query}"</div>
@@ -532,7 +546,7 @@ function ModelDropdown({ value, options, modelById, onChange, tierLabel }: Model
               )}
             </div>
 
-            <div className="px-3 py-2 border-t border-theme-sidebar bg-theme-hover/20 text-[10px] text-theme-muted font-medium flex items-center justify-between">
+            <div className="shrink-0 px-3 py-2 border-t border-theme-sidebar bg-theme-hover/20 text-[10px] text-theme-muted font-medium flex items-center justify-between">
               <span>↑↓ navigate · ↵ select · esc close</span>
               <span>{flatList.length} model{flatList.length === 1 ? "" : "s"}</span>
             </div>
@@ -1480,7 +1494,7 @@ function BillingTab() {
 // MAIN COMPONENT (MemoriesView-style layout)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type SettingsTab = 'general' | 'providers' | 'billing' | 'updates';
+type SettingsTab = 'general' | 'providers' | 'checkpoints' | 'billing' | 'updates';
 
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -1488,6 +1502,7 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'providers', label: 'Providers' },
+    { id: 'checkpoints', label: 'Checkpoints' },
     { id: 'billing', label: 'Billing' },
     { id: 'updates', label: 'Updates' },
   ];
@@ -1496,6 +1511,8 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
     switch (activeTab) {
       case 'providers':
         return <ApiKeysSection />;
+      case 'checkpoints':
+        return <CheckpointsSection />;
       case 'billing':
         return <BillingTab />;
       case 'updates':

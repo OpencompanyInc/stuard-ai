@@ -14,6 +14,40 @@ function getCloudAiUrl(ctx: RouterContext): string {
 }
 
 /**
+ * Execute a deployed custom-integration tool. Posts the compiled tool name +
+ * args to /v1/integrations/run; cloud-ai resolves the stored encrypted secrets
+ * and runs the declarative executor. Returns the executor result (which carries
+ * its own `ok`) so the workflow engine reads success/failure correctly.
+ */
+export async function execCustomIntegrationTool(tool: string, args: any, ctx: RouterContext): Promise<any> {
+  try {
+    const url = `${getCloudAiUrl(ctx)}/v1/integrations/run`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (ctx.accessToken) headers['Authorization'] = `Bearer ${ctx.accessToken}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120000);
+    try {
+      const resp = await net.fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: tool, args: args || {} }),
+        signal: controller.signal as any,
+      });
+      const json: any = await resp.json().catch(() => null);
+      if (!resp.ok || !json?.ok) {
+        return { ok: false, error: json?.detail || json?.error || `integration_error_${resp.status}` };
+      }
+      // json.result is the ExecutorResult { ok, status, body, headers, error, elapsed_ms }
+      return json.result ?? { ok: true };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/**
  * Execute a tool via Cloud AI HTTP endpoint
  */
 export async function execCloudTool(tool: string, args: any, ctx: RouterContext): Promise<any> {

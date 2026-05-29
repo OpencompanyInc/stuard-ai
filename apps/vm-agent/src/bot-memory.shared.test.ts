@@ -74,6 +74,22 @@ describe('bot-memory store (shared @stuardai/bots-core)', () => {
     expect(merged.cards.find(x => x.id === c.id)?.title).toBe('updated');
   });
 
+  it('keeps fixed profile slots separate from kanban cards', () => {
+    const s = memStore();
+    const profile = s.updateProfile('b', {
+      name: 'Research Agent',
+      preferences: 'Prefer terse summaries.',
+      systemPrompt: 'Always cite sources.',
+    });
+    expect(profile.name).toBe('Research Agent');
+    expect(s.listCards('b')).toEqual([]);
+    const prompt = s.formatForPrompt('b');
+    expect(prompt).toContain('PERSONAL MEMORY SLOTS');
+    expect(prompt).toContain('Research Agent');
+    expect(prompt).toContain('Prefer terse summaries.');
+    expect(prompt).toContain('Always cite sources.');
+  });
+
   it('clearForBot drops everything for that bot only', () => {
     const s = memStore();
     s.createCard('b1', { title: 'x' }, 'bot');

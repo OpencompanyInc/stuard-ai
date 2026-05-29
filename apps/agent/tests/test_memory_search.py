@@ -87,6 +87,51 @@ def test_segment_vector_search_skips_dimension_mismatch(tmp_path):
     assert score > 0.99
 
 
+def test_segment_search_is_scoped_by_conversation_owner(tmp_path):
+    from app.storage.memory_db import MemoryDB
+
+    db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+    main = db.create_conversation(title="main", model="m")
+    bot = db.create_conversation(title="bot", model="m", source="proactive", owner_type="bot", owner_id="bot-1")
+
+    emb = [0.1, 0.2, 0.3]
+    db.create_segment(main.id, 0, "main memory", ["main"], embedding=emb, end_turn=1)
+    db.create_segment(bot.id, 0, "bot memory", ["bot"], embedding=emb, end_turn=1)
+
+    main_results = db.search_segments(query_vector=emb, limit=5, threshold=0.99)
+    assert [seg.summary for seg, _ in main_results] == ["main memory"]
+
+    bot_results = db.search_segments(
+        query_vector=emb,
+        limit=5,
+        threshold=0.99,
+        owner_type="bot",
+        owner_id="bot-1",
+    )
+    assert [seg.summary for seg, _ in bot_results] == ["bot memory"]
+
+
+def test_topic_drawers_are_scoped_by_conversation_owner(tmp_path):
+    from app.storage.memory_db import MemoryDB
+
+    db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+    main = db.create_conversation(title="main", model="m")
+    bot = db.create_conversation(title="bot", model="m", source="proactive", owner_type="bot", owner_id="bot-1")
+
+    emb = [0.1, 0.2, 0.3]
+    db.create_segment(main.id, 0, "main ferrari note", ["Ferrari"], embedding=emb, end_turn=1)
+    db.create_segment(bot.id, 0, "bot ev note", ["Electric Vehicles"], embedding=emb, end_turn=1)
+
+    main_topics = [d["topic"] for d in db.build_topic_drawers()]
+    bot_topics = [
+        d["topic"]
+        for d in db.build_topic_drawers(owner_type="bot", owner_id="bot-1")
+    ]
+
+    assert main_topics == ["Ferrari"]
+    assert bot_topics == ["Electric Vehicles"]
+
+
 @pytest.mark.skipif(
     os.getenv("RUN_LOCAL_MEMORY_DB_DIAGNOSTICS") != "1",
     reason="Set RUN_LOCAL_MEMORY_DB_DIAGNOSTICS=1 to inspect your real local memory.db",

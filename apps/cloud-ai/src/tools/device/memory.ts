@@ -101,6 +101,14 @@ async function hydrateConversationTitles<T extends { conversation_id: string; ti
   }));
 }
 
+function ownerScopeFromToolInput(input: any): memoryService.MemoryOwnerScope | undefined {
+  const botId = String(input?.__proactiveBotId || input?.proactiveBotId || '').trim();
+  if (botId) return { owner_type: 'bot', owner_id: botId };
+  const agentId = String(input?.__agentId || input?.agentId || input?.agent_id || '').trim();
+  if (agentId) return { owner_type: 'agent', owner_id: agentId };
+  return undefined;
+}
+
 export const search_past_conversations = createTool({
   id: 'search_past_conversations',
   description:
@@ -158,6 +166,7 @@ export const search_past_conversations = createTool({
       const mode = String(filter?.mode || 'auto');
       const since = filter?.since ? String(filter.since) : undefined;
       const before = filter?.before ? String(filter.before) : undefined;
+      const owner = ownerScopeFromToolInput(c);
 
       const stats0 = await memoryService.getMemoryStats().catch(() => null);
 
@@ -180,7 +189,7 @@ export const search_past_conversations = createTool({
 
       const useRecent = mode === 'recent' || (mode === 'auto' && (!query || recencyIntent));
       if (useRecent) {
-        const segs = await memoryService.listRecentSegments({ limit, since, before });
+        const segs = await memoryService.listRecentSegments({ limit, since, before, owner });
         const results = segs.map((segment, i) => ({
           conversation_id: segment.conversation_id,
           title: null as string | null,
@@ -215,6 +224,7 @@ export const search_past_conversations = createTool({
       const segmentResults = await memoryService.searchSegmentsByEmbedding(queryEmbedding, {
         limit,
         threshold: 0.2,
+        owner,
       });
 
       if (segmentResults.length === 0 && stats0 && stats0.messages > 0 && stats0.segments === 0) {
@@ -226,6 +236,7 @@ export const search_past_conversations = createTool({
             await memoryService.processConversationTurn(
               latest.id,
               msgs.map((m) => ({ role: m.role, content: m.content })),
+              { owner },
             );
           }
         } catch { }
@@ -233,7 +244,7 @@ export const search_past_conversations = createTool({
 
       const segmentResults2 =
         segmentResults.length === 0
-          ? await memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit, threshold: 0.0 })
+          ? await memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit, threshold: 0.0, owner })
           : segmentResults;
 
       const segmentResults3 =

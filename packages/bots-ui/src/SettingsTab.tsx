@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import {
-  AlertTriangle, BellRing, Brain, Cloud, IdCard, Trash2, Wrench, Zap,
+  AlertTriangle, BellRing, Brain, Cloud, IdCard, Trash2, Wrench, Zap, ShieldCheck,
 } from 'lucide-react';
 import {
   NOTIFICATION_CHANNEL_LABELS,
@@ -21,6 +21,7 @@ type SettingsSection =
   | 'about'
   | 'triggers'
   | 'capabilities'
+  | 'permissions'
   | 'deployment'
   | 'notifications'
   | 'danger';
@@ -35,6 +36,7 @@ const SECTIONS: Array<{
   { id: 'about', label: 'About', description: 'Name, emoji & personality', icon: IdCard },
   { id: 'triggers', label: 'When it runs', description: 'Schedule, webhooks & more', icon: Zap },
   { id: 'capabilities', label: 'Capabilities', description: 'Tools & skills', icon: Wrench },
+  { id: 'permissions', label: 'Permissions', description: 'What it can do on its own', icon: ShieldCheck },
   { id: 'deployment', label: 'Where it lives', description: 'Local computer + cloud VM', icon: Cloud },
   { id: 'notifications', label: 'Notifications', description: 'How the agent tells you things', icon: BellRing },
   { id: 'danger', label: 'Danger zone', description: 'Delete this agent', icon: AlertTriangle, tone: 'danger' },
@@ -113,6 +115,9 @@ export function SettingsTab({
                 onChange={(skillIds) => onUpdateConfig({ skillIds })}
               />
             </div>
+          )}
+          {active === 'permissions' && (
+            <PermissionsSection config={config} onUpdateConfig={onUpdateConfig} />
           )}
           {active === 'deployment' && (
             <div className="space-y-6">
@@ -196,6 +201,103 @@ export function SettingsTab({
         </div>
       </div>
     </div>
+  );
+}
+
+const PERMISSION_MODE_OPTIONS: Array<{ value: NonNullable<BotConfig['permissionMode']>; label: string }> = [
+  { value: 'auto', label: 'Automatic — never ask' },
+  { value: 'selective', label: 'Selective — ask for some' },
+  { value: 'manual', label: 'Manual — ask every time' },
+];
+
+// Sensitive tools an agent can run during a local run. Mirrors the gate in
+// proactive-scheduler-utils (file-mutating + run_command + terminal).
+const SENSITIVE_TOOL_OPTIONS: Array<{ id: string; label: string; description: string }> = [
+  { id: 'write_file', label: 'Write file', description: 'Create or overwrite text files' },
+  { id: 'write_file_base64', label: 'Write binary file', description: 'Write binary/base64 content' },
+  { id: 'create_directory', label: 'Create folder', description: 'Make a new directory' },
+  { id: 'copy_file', label: 'Copy file', description: 'Duplicate a file' },
+  { id: 'file_edit', label: 'Edit file', description: 'Modify file contents in place' },
+  { id: 'move_file', label: 'Move / rename file', description: 'Move or rename (can overwrite)' },
+  { id: 'delete_file', label: 'Delete file', description: 'Remove files or folders' },
+  { id: 'run_command', label: 'Run command', description: 'Execute shell commands' },
+  { id: 'terminal_create', label: 'Open terminal', description: 'Start a terminal session' },
+  { id: 'terminal_send_input', label: 'Terminal input', description: 'Type into a terminal' },
+];
+
+function PermissionsSection({
+  config,
+  onUpdateConfig,
+}: {
+  config: BotConfig;
+  onUpdateConfig: (patch: Partial<BotConfig>) => void;
+}) {
+  const mode = config.permissionMode || 'selective';
+  const autoApprove = Array.isArray(config.autoApproveTools)
+    ? config.autoApproveTools.map(t => String(t || '').toLowerCase())
+    : [];
+  const approvedSet = new Set(autoApprove);
+
+  const toggleTool = (id: string) => {
+    const next = new Set(approvedSet);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    onUpdateConfig({ autoApproveTools: [...next] });
+  };
+
+  return (
+    <section className="space-y-5">
+      <div>
+        <h3 className="flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
+          <ShieldCheck className="h-4 w-4" /> What can it do on its own?
+        </h3>
+        <p className="mt-1 text-[12px] text-theme-muted">
+          Before this agent writes or deletes files, runs commands, or uses the terminal during a run,
+          it checks this. When it isn’t auto-allowed, you get a notification to approve or deny.
+        </p>
+      </div>
+
+      <ConfigRow
+        label="Permission mode"
+        description="How often the agent should ask before doing something sensitive."
+        control={
+          <Select<NonNullable<BotConfig['permissionMode']>>
+            value={mode}
+            options={PERMISSION_MODE_OPTIONS}
+            onChange={value => onUpdateConfig({ permissionMode: value })}
+          />
+        }
+      />
+
+      {mode === 'selective' && (
+        <div>
+          <div className="mb-2 text-[12px] font-medium text-theme-fg">Auto-allow these tools</div>
+          <div className="space-y-2.5">
+            {SENSITIVE_TOOL_OPTIONS.map(tool => (
+              <ConfigRow
+                key={tool.id}
+                label={tool.label}
+                description={tool.description}
+                control={
+                  <Toggle
+                    checked={approvedSet.has(tool.id)}
+                    onChange={() => toggleTool(tool.id)}
+                  />
+                }
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === 'auto' && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <p className="text-[12px] text-theme-muted">
+            This agent will write/delete files and run commands without asking. Only use this for agents you trust.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -5,7 +5,6 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
 import QueuePanel from '../../../../QueuePanel';
-import { CheckpointManager } from '../../../../CheckpointManager';
 import { ModelSelector } from '../../../../ModelSelector';
 import { ContextItem, FileNavRef } from '../../../../FileNavigator';
 import type { ModelSourcePreference, ReasoningLevel } from '../../../../../hooks/usePreferences';
@@ -466,13 +465,19 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     onDrop?.(e);
   }, [onDrop]);
 
+  const statusLabelText = statusText?.trim() || '';
+  const showStatusLabel =
+    hasInFlightToolCalls(currentToolCalls)
+    || connectionStatus !== 'connected'
+    || statusLabelText.length > 0;
+
   return (
     <div className="flex flex-col shrink-0 gap-2">
       <div className="input-status-float">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {hasInFlightToolCalls(currentToolCalls) ? (
             <ToolRunningIndicator toolCalls={currentToolCalls} className="min-w-0" />
-          ) : (
+          ) : showStatusLabel ? (
             <>
               {connectionStatus !== 'connected' && (
                 <div className={clsx(
@@ -485,21 +490,22 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               {connectionStatus === 'connecting' ? (
                 <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
               ) : null}
-              <span className={clsx(
-                "truncate text-[11px] font-bold uppercase tracking-widest",
-                connectionStatus === 'connected' ? 'text-theme-muted' :
-                  connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
-                    connectionStatus === 'error' ? 'text-red-600' :
-                      'text-theme-muted'
-              )}>
-                {statusText}
-              </span>
+              {statusLabelText ? (
+                <span className={clsx(
+                  "truncate text-[11px] font-bold uppercase tracking-widest",
+                  connectionStatus === 'connected' ? 'text-theme-muted' :
+                    connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
+                      connectionStatus === 'error' ? 'text-red-600' :
+                        'text-theme-muted'
+                )}>
+                  {statusLabelText}
+                </span>
+              ) : null}
             </>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <ContextUsageIndicator metrics={contextMetrics} compact />
-          <CheckpointManager />
         </div>
       </div>
 

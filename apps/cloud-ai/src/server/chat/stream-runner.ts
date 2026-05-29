@@ -9,6 +9,7 @@ import { normalizeThreadTitle, THREAD_TITLE_SYSTEM } from '../../utils/thread-ti
 import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
 import { withClientBridge, getBridgeWs, getBridgeSecrets } from '../../tools/bridge';
+import { getSessionWorkflow, getWorkflowById } from '../../tools/workflow';
 import {
   addAssistantMessage,
   addUserMessage,
@@ -32,6 +33,7 @@ import {
   type InterjectionPayload,
 } from './interjections';
 import type { PreparedChatRequest, StreamChunkRecord } from './types';
+import { isQuickChatRequest } from './quick-request';
 
 interface RuntimeState {
   didSendFinal: boolean;
@@ -41,6 +43,34 @@ interface RuntimeState {
 }
 
 type BridgeWebSocket = import('ws').WebSocket;
+
+// Workflow-mutation tools return a COMPACT result to the model (no full
+// workflow JSON) to avoid quadratic token growth — see workflow.ts. But the
+// desktop canvas needs the full workflow to repaint and mark the editor dirty.
+// The tool stores the mutated workflow in session state, so before forwarding
+// the tool-result to the client we re-attach it. Only the client-bound copy
+// gets the workflow; the result persisted to model history stays compact.
+const WORKFLOW_MUTATION_TOOLS = new Set(['modify_workflow', 'workflow_modify']);
+
+export function attachWorkflowForClient(toolName: string, result: any): any {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  if (!WORKFLOW_MUTATION_TOOLS.has(toolName)) return result;
+  // Only successful mutations carry a workflow; errors are forwarded untouched.
+  if (result.ok !== true) return result;
+  // Respect a workflow the tool already attached (e.g. headless/no-writer path).
+  if (result.workflow) return result;
+  // Resolve the FRESH workflow by id first. The workflow-agent runs each tool
+  // inside its own withClientBridge (fresh ALS `state` Map), so the tool's
+  // session write never reaches this request-level context — getSessionWorkflow()
+  // here returns the PRE-edit workflow that prepare-chat-request stored and would
+  // clobber the canvas. The tool always `workflowMap.set(wf.id, wf)`, so keying
+  // off the id returned in the result yields the just-modified copy. Fall back to
+  // the session only when no id is present.
+  const byId = typeof result.workflowId === 'string' ? getWorkflowById(result.workflowId) : null;
+  const workflow = byId || getSessionWorkflow();
+  if (!workflow) return result;
+  return { ...result, workflow };
+}
 
 function isOpenBridge(ws: BridgeWebSocket | undefined): ws is BridgeWebSocket {
   if (!ws) return false;
@@ -81,6 +111,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     modelSource,
     conversationId,
     conversationCreatedNow,
+    memoryOwner,
     modelLabel,
     contextPathsForMeta,
     resource,
@@ -397,25 +428,30 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           } catch { }
         }
 
-        startKnowledgeIngestion(history, conversationId, finalUsage?.totalTokens, {
-          bridgeWs,
-          userId: authUser?.userId,
-        });
-        startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
-          bridgeWs,
-          // SMS/mobile turns have their own local ingest path after `final`.
-          userId: msg?.mobileSource ? undefined : authUser?.userId,
-          userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
-          userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
-          assistantMetadata: buildMetadata(),
-          source: agentType === 'workflow'
-            ? 'workflow'
-            : agentType === 'skill'
-              ? 'skill'
-              : agentType === 'bot'
-                ? 'proactive'
-                : 'stuard',
-        });
+        if (!isQuickChatRequest(msg)) {
+          if (agentType === 'stuard') {
+            startKnowledgeIngestion(history, conversationId, finalUsage?.totalTokens, {
+              bridgeWs,
+              userId: authUser?.userId,
+            });
+          }
+          startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
+            bridgeWs,
+            // SMS/mobile turns have their own local ingest path after `final`.
+            userId: msg?.mobileSource ? undefined : authUser?.userId,
+            userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
+            userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
+            assistantMetadata: buildMetadata(),
+            owner: memoryOwner,
+            source: agentType === 'workflow'
+              ? 'workflow'
+              : agentType === 'skill'
+                ? 'skill'
+                : agentType === 'bot'
+                  ? 'proactive'
+                  : 'stuard',
+          });
+        }
       },
     };
 
@@ -446,7 +482,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       };
     };
 
-    if (agentType !== 'workflow') {
+    if (agentType !== 'workflow' && !isQuickChatRequest(msg)) {
       streamOptions.memory = { resource, thread };
     }
 
@@ -998,6 +1034,7 @@ function startLocalMemoryPersistence(
     userMetadata?: Record<string, any>;
     assistantMetadata?: Record<string, any>;
     source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
+    owner?: memoryService.MemoryOwnerScope;
   },
 ) {
   startWithPostRunBridge(options?.bridgeWs, options?.userId, () => {
@@ -1007,6 +1044,7 @@ function startLocalMemoryPersistence(
           attachments: options?.userAttachments,
           metadata: options?.userMetadata,
           source: options?.source,
+          owner: options?.owner,
         }).catch((error) => {
           console.error('[cloud-ai] Failed to store user message locally:', error);
         });
@@ -1016,13 +1054,17 @@ function startLocalMemoryPersistence(
         memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
           metadata: options?.assistantMetadata,
           source: options?.source,
+          owner: options?.owner,
         }).catch((error) => {
           console.error('[cloud-ai] Failed to store assistant message locally:', error);
         });
       }
 
       const fullHistory = [...history];
-      memoryService.processConversationTurn(localConversationId, fullHistory).catch((error) => {
+      memoryService.processConversationTurn(localConversationId, fullHistory, {
+        source: options?.source,
+        owner: options?.owner,
+      }).catch((error) => {
         console.error('[cloud-ai] Local memory processing failed:', error);
       });
     } catch (error) {
@@ -1044,7 +1086,7 @@ function appendTextChunk(text: string, runtime: RuntimeState, streamChunks: Stre
   }
 }
 
-function handleStreamChunk({
+export function handleStreamChunk({
   chunk,
   ws,
   requestId,
@@ -1195,7 +1237,7 @@ function handleStreamChunk({
           send(ws, {
             type: 'progress',
             event: 'tool_event',
-            data: { tool: toolName, status: 'completed', toolCallId, result: toolResult },
+            data: { tool: toolName, status: 'completed', toolCallId, result: attachWorkflowForClient(toolName, toolResult) },
           }, requestId);
         }
         handledChunk = true;

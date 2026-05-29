@@ -74,6 +74,18 @@ export interface BotConfig {
    * - [ids…]     → only these skills (intersected with globally-active)
    */
   skillIds?: string[];
+  /**
+   * How autonomous this agent is when it hits a sensitive tool (writing/deleting
+   * files, running commands, using the terminal) during a local run:
+   * - 'auto'      → never ask; run everything.
+   * - 'selective' → auto-run the tools in `autoApproveTools`; pop a blocking
+   *                 approval prompt for any other sensitive tool.
+   * - 'manual'    → pop a blocking approval prompt for every sensitive tool.
+   * Read-only/non-sensitive tools never prompt regardless of mode.
+   */
+  permissionMode: 'auto' | 'selective' | 'manual';
+  /** Sensitive tool names auto-approved when `permissionMode === 'selective'`. */
+  autoApproveTools: string[];
 }
 
 export interface Bot {
@@ -142,6 +154,17 @@ const DEFAULT_PROACTIVE_SYSTEM_PROMPT = [
   '- READ-ONLY WORK NEEDS NO CONFIRMATION. Researching, drafting, summarizing, organizing your private kanban, and setting reminders are always fair game — do them and report the result.',
 ].join('\n');
 
+// Default sensitive tools auto-approved in 'selective' mode: common file
+// writes/edits. Destructive (move/delete), run_command, and terminal_* are
+// intentionally NOT here, so they still pop a blocking approval prompt.
+export const DEFAULT_BOT_AUTO_APPROVE_TOOLS = [
+  'write_file',
+  'write_file_base64',
+  'create_directory',
+  'copy_file',
+  'file_edit',
+];
+
 const DEFAULT_BOT_CONFIG: BotConfig = {
   interval: '30m',
   executionTarget: 'local',
@@ -152,6 +175,8 @@ const DEFAULT_BOT_CONFIG: BotConfig = {
   allowedTools: [],
   notificationChannels: ['app'],
   memoryEnabled: true,
+  permissionMode: 'selective',
+  autoApproveTools: [...DEFAULT_BOT_AUTO_APPROVE_TOOLS],
 };
 
 /**
@@ -344,6 +369,12 @@ function normalizeConfig(raw: any): BotConfig {
     memoryEnabled: raw?.memoryEnabled !== false,
     // Preserve `undefined` (legacy → inherit) vs `[]` (explicit opt-out).
     skillIds: Array.isArray(raw?.skillIds) ? raw.skillIds.map((x: any) => String(x)) : undefined,
+    permissionMode: (raw?.permissionMode === 'auto' || raw?.permissionMode === 'manual' || raw?.permissionMode === 'selective')
+      ? raw.permissionMode
+      : DEFAULT_BOT_CONFIG.permissionMode,
+    autoApproveTools: Array.isArray(raw?.autoApproveTools)
+      ? raw.autoApproveTools.map((x: any) => String(x).trim().toLowerCase()).filter(Boolean)
+      : [...DEFAULT_BOT_AUTO_APPROVE_TOOLS],
   };
 }
 

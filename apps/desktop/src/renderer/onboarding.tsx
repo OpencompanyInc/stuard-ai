@@ -1,9 +1,10 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { motion } from "framer-motion";
 import "./styles.css";
 import { OnboardingProvider } from "./components/onboarding";
 import { ConversationalOnboarding } from "./components/onboarding/ConversationalOnboarding";
+import { CoachingTour } from "./components/onboarding/CoachingTour";
 import { usePreferences } from "./hooks/usePreferences";
 
 // Toggle the Electron click-through state based on whether the cursor is over
@@ -49,16 +50,19 @@ function OnboardingApp() {
   const { setOnboardingComplete, setTourComplete } = usePreferences();
   useClickThroughTracker();
 
-  // "Open Stuard" — finish onboarding but leave the in-app tour to run.
-  const handleComplete = () => {
-    setOnboardingComplete(true);
-    try { (window as any).desktopAPI.closeOnboarding(); } catch {}
-  };
+  // Two phases inside this overlay: the welcome scenes, then the coaching demo
+  // (which replaces the old in-app InteractiveTour).
+  const [phase, setPhase] = useState<'welcome' | 'coaching'>('welcome');
 
-  // Skip → skip everything including the tour.
-  const handleSkip = () => {
+  // Welcome "Open Stuard" hands off into the coaching demo — don't close yet.
+  const handleWelcomeDone = () => setPhase('coaching');
+
+  // Finish everything → mark complete, reveal + focus the real pill. Coaching IS
+  // the tour, so mark tourComplete too and the legacy InteractiveTour won't run.
+  const finish = () => {
     setOnboardingComplete(true);
     setTourComplete(true);
+    try { (window as any).desktopAPI.show(); } catch {}
     try { (window as any).desktopAPI.closeOnboarding(); } catch {}
   };
 
@@ -81,10 +85,14 @@ function OnboardingApp() {
         }
       `}</style>
       <div className="h-full w-full">
-        <ConversationalOnboarding
-          onComplete={handleComplete}
-          onSkip={handleSkip}
-        />
+        {phase === 'welcome' ? (
+          <ConversationalOnboarding
+            onComplete={handleWelcomeDone}
+            onSkip={finish}
+          />
+        ) : (
+          <CoachingTour onComplete={finish} onSkip={finish} />
+        )}
       </div>
     </motion.div>
   );

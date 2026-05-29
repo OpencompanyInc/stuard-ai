@@ -11,17 +11,15 @@ import {
   LayoutDashboard,
   Link,
   ListTodo,
-  Rocket,
+  Plug,
   Settings,
-  Share2,
-  Sparkles,
   Store,
   Wand2,
 } from 'lucide-react';
 
 export type CompactNavGroup = 'dashboard' | 'studio';
 
-export type StudioView = 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills';
+export type StudioView = 'home' | 'workflows' | 'agents' | 'skills' | 'tools' | 'marketplace';
 
 export type DashboardTab =
   | 'overview'
@@ -29,7 +27,6 @@ export type DashboardTab =
   | 'planner'
   | 'tasks'
   | 'memories'
-  | 'bots'
   | 'cloud'
   | 'media'
   | 'storage'
@@ -123,15 +120,6 @@ const DASHBOARD_NAV: Omit<CompactStuardNavItem, 'run'>[] = [
     keywords: ['memories', 'memory', 'notes', 'remember', 'context'],
   },
   {
-    id: 'dash-bots',
-    group: 'dashboard',
-    title: 'Agents',
-    subtitle: 'Dashboard · build & deploy agents',
-    icon: Bot,
-    tile: '#2563EB',
-    keywords: ['agents', 'agent', 'bots', 'bot', 'proactive'],
-  },
-  {
     id: 'dash-cloud',
     group: 'dashboard',
     title: 'Cloud Engine',
@@ -183,8 +171,8 @@ const STUDIO_NAV: Omit<CompactStuardNavItem, 'run'>[] = [
     id: 'studio-home',
     group: 'studio',
     title: 'Stuard Studio',
-    subtitle: 'Open workflow studio',
-    icon: Sparkles,
+    subtitle: 'Open the studio home',
+    icon: LayoutDashboard,
     tile: '#7C3AED',
     keywords: ['stuard', 'studio', 'workflow', 'workflows', 'automation', 'builder'],
   },
@@ -195,7 +183,16 @@ const STUDIO_NAV: Omit<CompactStuardNavItem, 'run'>[] = [
     subtitle: 'Studio · your workflow projects',
     icon: Layers,
     tile: '#7C3AED',
-    keywords: ['my', 'workflows', 'projects', 'flows', 'local'],
+    keywords: ['my', 'workflows', 'projects', 'flows', 'local', 'deployed', 'shared'],
+  },
+  {
+    id: 'studio-agents',
+    group: 'studio',
+    title: 'Agents',
+    subtitle: 'Studio · build & deploy agents',
+    icon: Bot,
+    tile: '#7C3AED',
+    keywords: ['agents', 'agent', 'bots', 'bot', 'proactive', 'scout'],
   },
   {
     id: 'studio-skills',
@@ -207,22 +204,13 @@ const STUDIO_NAV: Omit<CompactStuardNavItem, 'run'>[] = [
     keywords: ['skills', 'skill', 'behaviors', 'reusable'],
   },
   {
-    id: 'studio-deployed',
+    id: 'studio-tools',
     group: 'studio',
-    title: 'Deployed Workflows',
-    subtitle: 'Studio · live & running automations',
-    icon: Rocket,
+    title: 'Custom Tools',
+    subtitle: 'Studio · build custom integrations',
+    icon: Plug,
     tile: '#7C3AED',
-    keywords: ['deployed', 'deploy', 'live', 'running', 'production', 'start', 'stop'],
-  },
-  {
-    id: 'studio-shared',
-    group: 'studio',
-    title: 'Shared Workflows',
-    subtitle: 'Studio · shared with your team',
-    icon: Share2,
-    tile: '#7C3AED',
-    keywords: ['shared', 'share', 'team', 'collaboration'],
+    keywords: ['tools', 'tool', 'custom', 'integration', 'integrations', 'builder', 'api', 'connector'],
   },
   {
     id: 'studio-marketplace',
@@ -241,7 +229,6 @@ const TAB_BY_NAV_ID: Record<string, DashboardTab> = {
   'dash-planner': 'planner',
   'dash-tasks': 'tasks',
   'dash-memories': 'memories',
-  'dash-bots': 'bots',
   'dash-cloud': 'cloud',
   'dash-media': 'media',
   'dash-storage': 'storage',
@@ -250,11 +237,11 @@ const TAB_BY_NAV_ID: Record<string, DashboardTab> = {
 };
 
 const VIEW_BY_NAV_ID: Record<string, StudioView | undefined> = {
-  'studio-home': undefined,
+  'studio-home': 'home',
   'studio-workflows': 'workflows',
+  'studio-agents': 'agents',
   'studio-skills': 'skills',
-  'studio-deployed': 'deployed',
-  'studio-shared': 'shared',
+  'studio-tools': 'tools',
   'studio-marketplace': 'marketplace',
 };
 

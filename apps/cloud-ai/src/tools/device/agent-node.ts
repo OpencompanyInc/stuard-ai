@@ -137,6 +137,14 @@ Examples:
           }
         }
       } catch {}
+      // Deployed custom-integration tools.
+      try {
+        if (userId) {
+          const { compileInstalledToTools } = await import('../../integrations/compile-tools');
+          const compiled = await compileInstalledToTools(userId);
+          if (Object.keys(compiled.tools).length > 0) mcpTools = { ...mcpTools, ...compiled.tools };
+        }
+      } catch {}
 
       // Determine tools — empty array means pure reasoning (no tools)
       const resolvedTools = Array.isArray(toolsAllowed) && toolsAllowed.length === 0

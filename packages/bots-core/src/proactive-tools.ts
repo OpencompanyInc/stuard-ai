@@ -26,6 +26,8 @@ export const BOT_MEMORY_TOOL_NAMES = [
   'bot_memory_update',
   'bot_memory_delete',
   'bot_memory_log',
+  'bot_memory_profile_get',
+  'bot_memory_profile_update',
 ] as const;
 
 /**

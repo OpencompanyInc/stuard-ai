@@ -115,18 +115,20 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           </div>
 
           <div className="flex items-center gap-3 mt-6 relative z-10">
-            <button 
+            <button
+              type="button"
               onClick={openPricing}
-              className="dashboard-button-primary flex-1 py-3 px-4 rounded-2xl text-[14px] font-semibold hover:opacity-95 transition-all duration-300 active:scale-[0.98] inline-flex items-center justify-center gap-2"
+              className="dashboard-button-primary dashboard-card-cta"
             >
-              <Lock className="w-4 h-4" />
+              <Lock className="w-4 h-4 shrink-0" />
               Unlock Pro
             </button>
-            <button 
+            <button
+              type="button"
               onClick={openPricing}
-              className="dashboard-button-secondary flex-1 py-3 px-4 rounded-2xl text-[14px] font-semibold hover:scale-[1.01] transition-all duration-300 active:scale-[0.98] inline-flex items-center justify-center gap-2"
+              className="dashboard-button-secondary dashboard-card-cta"
             >
-              <WalletCards className="w-4 h-4" />
+              <WalletCards className="w-4 h-4 shrink-0" />
               Add Credits
             </button>
           </div>

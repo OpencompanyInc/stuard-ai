@@ -3,6 +3,7 @@ module.exports = {
   content: [
     "./src/renderer/**/*.{ts,tsx,html}",
     "../../packages/chat-ui/**/*.{ts,tsx}",
+    "../../packages/bots-ui/**/*.{ts,tsx}",
   ],
   darkMode: ['class', '[data-theme="dark"]'],
   theme: {

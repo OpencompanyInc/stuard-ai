@@ -139,6 +139,22 @@ export interface OrchestratorPromptOptions {
   activeProject?: ProjectContextPayload | null;
   recentJournal?: JournalEntryPayload[];
   retrievedContext?: ProjectRetrievedContextPayload | null;
+  /** Compact Tab quick send: plain Q&A, no tools or delegation. */
+  quickResponse?: boolean;
+}
+
+function buildQuickResponsePrompt(): string {
+  const now = new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  });
+  return `You are Stuard — a helpful assistant in **quick-response mode**.
+
+**Date/Time**: ${now}
+
+Answer the user's question directly in plain text. Be concise and accurate.
+You have **no tools** in this mode — do not attempt tool calls, delegation, subagents, or multi-step plans.
+If the request requires actions on the user's device, browsing, files, or integrations, say so briefly and suggest they use full mode (Enter) instead.`;
 }
 
 function buildOrchestratorPrompt(
@@ -427,10 +443,39 @@ export async function getOrchestratorAgentForUser(
   modelSource?: ModelSourcePreference | string | null,
   promptOptions: OrchestratorPromptOptions = {},
 ): Promise<Agent> {
-  const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
-  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
   const selectedModel = await getModelForUser(model, modelId, userId, modelSource);
   const name = getAgentName(model);
+
+  if (promptOptions.quickResponse) {
+    const instructions = [
+      {
+        role: 'system',
+        content: buildQuickResponsePrompt(),
+        providerOptions: {
+          anthropic: { cacheControl: { type: 'ephemeral' } },
+        },
+      },
+    ];
+
+    const agent = new Agent({
+      id: `orchestrator-${name}-quick`,
+      name: `Orchestrator ${name} (quick)`,
+      instructions: instructions as any,
+      model: selectedModel as any,
+      tools: {},
+    });
+
+    (agent as any).__diagTools = {};
+    (agent as any).__diagInstructions = instructions;
+    (agent as any).__activeToolNames = undefined;
+    (agent as any).__executionToolNames = [];
+    (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
+    (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
+    return agent;
+  }
+
+  const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
+  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
 
   const bridgeWs = getBridgeWs();
   const bridgeSecrets = getBridgeSecrets();

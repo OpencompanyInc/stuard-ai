@@ -2,9 +2,10 @@
  * Tool Palette Sidebar Component for the workflow builder
  */
 import React, { useEffect, useState, useMemo, forwardRef, useImperativeHandle, useRef } from "react";
-import { Search, X, ChevronRight, GripVertical, Box, Lock, Package, Workflow } from "lucide-react";
+import { Search, X, ChevronRight, GripVertical, Box, Lock, Package, Workflow, Plug } from "lucide-react";
 import { PALETTE_CATEGORIES, CATEGORY_COLORS, PALETTE_GROUPS, type PaletteCategory, type PaletteCategoryItem } from "../constants/paletteCategories";
 import { getFunctionNodeIcon } from "../constants/functionNodeStyle";
+import { fetchInstalledIntegrations, toToolEntries } from "../../utils/installedIntegrations";
 
 export interface ToolPaletteRef {
   focusSearch: () => void;
@@ -19,6 +20,7 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['installed', 'triggers', 'flow']));
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [installedFunctionItems, setInstalledFunctionItems] = useState<PaletteCategoryItem[]>([]);
+  const [integrationItems, setIntegrationItems] = useState<PaletteCategoryItem[]>([]);
 
   useImperativeHandle(ref, () => ({
     focusSearch: () => searchInputRef.current?.focus(),
@@ -147,6 +149,40 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
     };
   }, [workflowId]);
 
+  // Deployed custom integrations → palette nodes. Dropping one creates a
+  // cloud.tool node whose tool id is the compiled `${slug}_${tool}` name;
+  // execTool routes it to cloud-ai's /v1/integrations/run.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshIntegrations = async () => {
+      try {
+        const list = await fetchInstalledIntegrations();
+        const items: PaletteCategoryItem[] = toToolEntries(list).map((entry) => {
+          const props = entry.args?.properties && typeof entry.args.properties === 'object' ? entry.args.properties : {};
+          const defaultArgs: Record<string, any> = {};
+          for (const key of Object.keys(props)) defaultArgs[key] = '';
+          return {
+            k: 'cloud.tool' as const,
+            t: entry.name,
+            label: entry.label,
+            icon: Plug,
+            args: defaultArgs,
+          };
+        });
+        if (!cancelled) setIntegrationItems(items);
+      } catch {
+        if (!cancelled) setIntegrationItems([]);
+      }
+    };
+    refreshIntegrations();
+    const onChanged = () => refreshIntegrations();
+    window.addEventListener('stuard:integrations-changed' as any, onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('stuard:integrations-changed' as any, onChanged);
+    };
+  }, []);
+
   const paletteCategories = useMemo(() => {
     const installedItems = installedFunctionItems.length > 0
       ? installedFunctionItems
@@ -168,8 +204,19 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
     };
 
     const baseCategories = ffmpegConnected ? PALETTE_CATEGORIES : PALETTE_CATEGORIES.filter((c) => c.id !== 'ffmpeg');
-    return [installedCategory, ...baseCategories];
-  }, [ffmpegConnected, installedFunctionItems]);
+    const cats: PaletteCategory[] = [installedCategory];
+    if (integrationItems.length > 0) {
+      cats.push({
+        id: 'integrations',
+        label: 'Integrations',
+        icon: Plug,
+        color: 'indigo',
+        items: integrationItems,
+      });
+    }
+    cats.push(...baseCategories);
+    return cats;
+  }, [ffmpegConnected, installedFunctionItems, integrationItems]);
 
   const toggleCategory = (id: string) => {
     setExpandedCategories(prev => {

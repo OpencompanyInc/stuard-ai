@@ -51,6 +51,8 @@ const store = createBotMemoryStore({
 
 // Public API — preserves the existing surface; clearForBot stays void-returning.
 export const botMemoryService = {
+  getProfile: store.getProfile,
+  updateProfile: store.updateProfile,
   listCards: store.listCards,
   getCard: store.getCard,
   createCard: store.createCard,

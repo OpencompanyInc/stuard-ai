@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, useReducedMotion, type Transition, type Variants } from 'framer-motion';
-import { useMemo, type ElementType, type ReactNode } from 'react';
+import { type ElementType, type ReactNode } from 'react';
 
 type Direction = 'up' | 'down' | 'left' | 'right' | 'none';
 
@@ -76,21 +76,33 @@ export default function SectionReveal({
         },
     };
 
-    const MotionTag = useMemo(
-        () => motion.create(as as React.ElementType),
-        [as],
-    );
+    const motionProps = {
+        id,
+        className,
+        initial: 'hidden' as const,
+        whileInView: 'visible' as const,
+        viewport: { once, amount, margin: '0px 0px -10% 0px' },
+        variants,
+    };
 
-    return (
-        <MotionTag
-            id={id}
-            className={className}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once, amount, margin: '0px 0px -10% 0px' }}
-            variants={variants}
-        >
-            {children}
-        </MotionTag>
-    );
+    switch (as) {
+        case 'section':
+            return <motion.section {...motionProps}>{children}</motion.section>;
+        case 'article':
+            return <motion.article {...motionProps}>{children}</motion.article>;
+        case 'header':
+            return <motion.header {...motionProps}>{children}</motion.header>;
+        case 'footer':
+            return <motion.footer {...motionProps}>{children}</motion.footer>;
+        case 'main':
+            return <motion.main {...motionProps}>{children}</motion.main>;
+        case 'aside':
+            return <motion.aside {...motionProps}>{children}</motion.aside>;
+        case 'ul':
+            return <motion.ul {...motionProps}>{children}</motion.ul>;
+        case 'li':
+            return <motion.li {...motionProps}>{children}</motion.li>;
+        default:
+            return <motion.div {...motionProps}>{children}</motion.div>;
+    }
 }

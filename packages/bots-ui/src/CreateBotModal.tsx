@@ -495,11 +495,12 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
       style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
+        className="flex w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
+        style={{ height: 'min(680px, 88vh)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 border-b border-theme/15 px-6 pb-4 pt-5">
+        <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-theme/15 px-6 pb-4 pt-5">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-theme-muted">
               <span className={clsx('h-1.5 w-1.5 rounded-full', step === 'describe' ? 'bg-primary' : 'bg-emerald-500')} />
@@ -528,7 +529,10 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
         </div>
 
         {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 scrollbar-minimal">
+        <div
+          className="memory-context-scrollbar px-6 py-5"
+          style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable' }}
+        >
           {step === 'describe' ? (
             <DescribeStep
               name={name}

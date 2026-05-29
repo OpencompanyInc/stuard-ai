@@ -35,11 +35,15 @@ import {
   agent_memory_update,
   agent_memory_delete,
   agent_memory_log,
+  agent_memory_profile_get,
+  agent_memory_profile_update,
   bot_memory_list,
   bot_memory_create,
   bot_memory_update,
   bot_memory_delete,
   bot_memory_log,
+  bot_memory_profile_get,
+  bot_memory_profile_update,
 } from '../tools/bot-memory-tools';
 import { upsertSmsUserState } from '../supabase';
 import { buildKnowledgeContext } from '../knowledge/retrieval';
@@ -641,18 +645,22 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       agent_memory_update: wrapBotScopedTool('agent_memory_update', agent_memory_update, { botId, userId: auth.userId }),
       agent_memory_delete: wrapBotScopedTool('agent_memory_delete', agent_memory_delete, { botId, userId: auth.userId }),
       agent_memory_log: wrapBotScopedTool('agent_memory_log', agent_memory_log, { botId, userId: auth.userId }),
+      agent_memory_profile_get: wrapBotScopedTool('agent_memory_profile_get', agent_memory_profile_get, { botId, userId: auth.userId }),
+      agent_memory_profile_update: wrapBotScopedTool('agent_memory_profile_update', agent_memory_profile_update, { botId, userId: auth.userId }),
       bot_memory_list: wrapBotScopedTool('bot_memory_list', bot_memory_list, { botId, userId: auth.userId }),
       bot_memory_create: wrapBotScopedTool('bot_memory_create', bot_memory_create, { botId, userId: auth.userId }),
       bot_memory_update: wrapBotScopedTool('bot_memory_update', bot_memory_update, { botId, userId: auth.userId }),
       bot_memory_delete: wrapBotScopedTool('bot_memory_delete', bot_memory_delete, { botId, userId: auth.userId }),
       bot_memory_log: wrapBotScopedTool('bot_memory_log', bot_memory_log, { botId, userId: auth.userId }),
+      bot_memory_profile_get: wrapBotScopedTool('bot_memory_profile_get', bot_memory_profile_get, { botId, userId: auth.userId }),
+      bot_memory_profile_update: wrapBotScopedTool('bot_memory_profile_update', bot_memory_profile_update, { botId, userId: auth.userId }),
       choose_notification_channel: channelSelector.tool,
       write_session_summary: sessionSummaryTool.tool,
       search_tools: proactiveSearchTools,
       get_tool_schema: proactiveGetToolSchema,
       execute_tool: proactiveExecuteTool,
       get_skill_info,
-      search_past_conversations,
+      search_past_conversations: wrapBotScopedTool('search_past_conversations', search_past_conversations, { botId, userId: auth.userId }),
       get_conversation_context,
     };
     const expandedAllowedTools = expandProactiveAllowedToolNames(allowedTools);
@@ -699,10 +707,11 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
   * agent_memory_update({ id, ... }) — move cards between columns or edit notes.
   * agent_memory_delete({ id }) — drop a card (prefer "completed" so history sticks).
   * agent_memory_log({ summary, outcome }) — append a one-line wrap-up after each run.
+  * agent_memory_profile_get / agent_memory_profile_update — maintain YOUR fixed personal memory slots: name, preferences, facts, and systemPrompt. Store durable identity/preference/system-prompt notes here, not as kanban cards.
 - **search_past_conversations / get_conversation_context** — recall what happened in prior runs / chats.
 - **choose_notification_channel / write_session_summary** — pick how to reach the user, and journal the run.
 
-Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Agents → Kanban tab.`;
+Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. Use profile slots for who you are and standing preferences; use kanban cards for active work. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Agents → Kanban tab.`;
 
     systemPrompt += `\n\n${formatBotAllowedToolsSection(allowedTools)}`;
 
@@ -744,8 +753,15 @@ Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake
               queryEmbedding,
             }).catch(() => null),
             queryEmbedding
-              ? memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: 3, threshold: 0.6 }).catch(() => [])
-              : memoryService.listRecentSegments({ limit: 3 }).catch(() => []),
+              ? memoryService.searchSegmentsByEmbedding(queryEmbedding, {
+                limit: 3,
+                threshold: 0.6,
+                owner: { owner_type: 'bot', owner_id: String(botId || 'default') },
+              }).catch(() => [])
+              : memoryService.listRecentSegments({
+                limit: 3,
+                owner: { owner_type: 'bot', owner_id: String(botId || 'default') },
+              }).catch(() => []),
           ]);
 
           const parts: string[] = [];

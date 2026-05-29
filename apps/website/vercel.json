@@ -1,7 +1,7 @@
 {
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
+  "buildCommand": "pnpm -F stuard-ai-website build",
+  "devCommand": "pnpm -F stuard-ai-website dev",
+  "installCommand": "npx --yes pnpm@8.15.0 install --frozen-lockfile",
   "framework": "nextjs",
   "regions": ["iad1"],
 

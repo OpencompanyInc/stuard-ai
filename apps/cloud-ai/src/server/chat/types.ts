@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 
 import type { ModelChoice } from '../../router/model-router';
+import type { MemoryOwnerScope } from '../../memory/conversations';
 import type { TierChoice } from '../socket/helpers';
 
 export type AgentType = 'stuard' | 'workflow' | 'skill' | 'bot';
@@ -41,4 +42,5 @@ export interface PreparedChatRequest {
   thread: string;
   maxSteps: number;
   providerOptions: any;
+  memoryOwner?: MemoryOwnerScope;
 }

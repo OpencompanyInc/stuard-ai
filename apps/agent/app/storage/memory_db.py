@@ -41,6 +41,8 @@ MessageRole = Literal['user', 'assistant', 'system', 'tool']
 SpaceType = Literal['project', 'topic', 'research', 'reference', 'custom']
 SpaceItemType = Literal['note', 'source', 'link', 'file', 'fact', 'snippet', 'folder']
 AddedBy = Literal['user', 'ai']
+ConversationSource = Literal['stuard', 'workflow', 'skill', 'proactive']
+ConversationOwnerType = Literal['stuard', 'bot', 'agent', 'workflow', 'skill']
 
 # Project Mode types — successor to Spaces. See backfill_spaces_to_projects.py.
 ProjectStatus = Literal['active', 'paused', 'archived']
@@ -93,6 +95,8 @@ class Conversation:
     parent_id: Optional[str] = None
     type: ConversationType = 'chat'
     source: ConversationSource = 'stuard'
+    owner_type: Optional[ConversationOwnerType] = 'stuard'
+    owner_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -378,6 +382,38 @@ class MemoryDB:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
+
+    def _conversation_scope_clause(
+        self,
+        alias: str = "c",
+        owner_type: Optional[str] = "stuard",
+        owner_id: Optional[str] = None,
+    ) -> Tuple[str, List[Any]]:
+        """Return SQL that keeps segment recall inside one agent/bot memory scope."""
+        if owner_type == "any":
+            return "", []
+
+        prefix = f"{alias}." if alias else ""
+        owner = str(owner_type or "stuard").strip()
+        scoped_id = str(owner_id).strip() if owner_id is not None and str(owner_id).strip() else None
+
+        if owner == "stuard":
+            clauses = [
+                f"({prefix}type = 'chat' OR {prefix}type IS NULL)",
+                f"({prefix}owner_type = ? OR ({prefix}owner_type IS NULL AND ({prefix}source = ? OR {prefix}source IS NULL)))",
+            ]
+            params: List[Any] = ["stuard", "stuard"]
+            if scoped_id:
+                clauses.append(f"{prefix}owner_id = ?")
+                params.append(scoped_id)
+            return " AND ".join(clauses), params
+
+        clauses = [f"{prefix}owner_type = ?"]
+        params = [owner]
+        if scoped_id:
+            clauses.append(f"COALESCE({prefix}owner_id, '') = ?")
+            params.append(scoped_id)
+        return " AND ".join(clauses), params
     
     def _init_schema(self) -> None:
         """Initialize database schema."""
@@ -408,7 +444,9 @@ class MemoryDB:
                     needs_sync INTEGER DEFAULT 0,
                     parent_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
                     type TEXT DEFAULT 'chat' CHECK(type IN ('chat', 'subagent')),
-                    source TEXT DEFAULT 'stuard' CHECK(source IN ('stuard', 'workflow', 'skill', 'proactive'))
+                    source TEXT DEFAULT 'stuard' CHECK(source IN ('stuard', 'workflow', 'skill', 'proactive')),
+                    owner_type TEXT,
+                    owner_id TEXT
                 )
             """)
             
@@ -429,6 +467,14 @@ class MemoryDB:
                 cur.execute("UPDATE conversations SET source = 'stuard' WHERE source IS NULL OR TRIM(source) = ''")
             except sqlite3.OperationalError:
                 pass
+            try:
+                cur.execute("ALTER TABLE conversations ADD COLUMN owner_type TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                cur.execute("ALTER TABLE conversations ADD COLUMN owner_id TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             # B1: track the highest turn index already fed through knowledge
             # extraction so subsequent turns only re-extract incremental content.
@@ -729,6 +775,7 @@ class MemoryDB:
             # Indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_date ON conversations(created_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_status ON conversations(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner_type, owner_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, turn_index)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_seg_conv ON conversation_segments(conversation_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_items_space ON space_items(space_id)")
@@ -803,11 +850,24 @@ class MemoryDB:
         conversation_id: Optional[str] = None,
         parent_id: Optional[str] = None,
         conv_type: ConversationType = 'chat',
-        source: ConversationSource = 'stuard'
+        source: ConversationSource = 'stuard',
+        owner_type: Optional[ConversationOwnerType] = None,
+        owner_id: Optional[str] = None
     ) -> Conversation:
         """Create a new conversation or sub-agent."""
         cid = conversation_id or str(uuid.uuid4())
         now = _now_iso()
+        resolved_owner_type = owner_type
+        if not resolved_owner_type:
+            if source in ('workflow', 'skill'):
+                resolved_owner_type = source
+            elif source == 'proactive':
+                resolved_owner_type = 'bot'
+            else:
+                resolved_owner_type = 'stuard'
+        resolved_owner_id = owner_id
+        if resolved_owner_type == 'bot' and not resolved_owner_id:
+            resolved_owner_id = 'default'
         
         title_enc = _encrypt_content(title, self._crypto) if title else None
 
@@ -816,9 +876,10 @@ class MemoryDB:
         with self._get_conn() as conn:
             try:
                 conn.execute(
-                    """INSERT INTO conversations (id, title_enc, model, created_at, updated_at, parent_id, type, source)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (cid, title_enc, model, now, now, parent_id, conv_type, source)
+                    """INSERT INTO conversations
+                       (id, title_enc, model, created_at, updated_at, parent_id, type, source, owner_type, owner_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (cid, title_enc, model, now, now, parent_id, conv_type, source, resolved_owner_type, resolved_owner_id)
                 )
                 conn.commit()
                 inserted = True
@@ -832,7 +893,8 @@ class MemoryDB:
             return Conversation(
                 id=cid, title=title, model=model,
                 created_at=now, updated_at=now,
-                parent_id=parent_id, type=conv_type, source=source
+                parent_id=parent_id, type=conv_type, source=source,
+                owner_type=resolved_owner_type, owner_id=resolved_owner_id
             )
 
         existing = self.get_conversation(cid)
@@ -857,6 +919,8 @@ class MemoryDB:
         parent_id = row['parent_id'] if 'parent_id' in row.keys() else None
         conv_type = row['type'] if 'type' in row.keys() else 'chat'
         source = row['source'] if 'source' in row.keys() else 'stuard'
+        owner_type = row['owner_type'] if 'owner_type' in row.keys() else None
+        owner_id = row['owner_id'] if 'owner_id' in row.keys() else None
         
         return Conversation(
             id=row['id'],
@@ -872,7 +936,9 @@ class MemoryDB:
             needs_sync=bool(row['needs_sync']),
             parent_id=parent_id,
             type=conv_type or 'chat',
-            source=source or 'stuard'
+            source=source or 'stuard',
+            owner_type=owner_type,
+            owner_id=owner_id
         )
     
     def list_conversations(
@@ -881,7 +947,9 @@ class MemoryDB:
         limit: int = 50,
         offset: int = 0,
         conv_type: Optional[ConversationType] = None,
-        source: Optional[ConversationSource] = None
+        source: Optional[ConversationSource] = None,
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None
     ) -> List[Conversation]:
         """List conversations. By default excludes sub-agents unless conv_type specified."""
         with self._get_conn() as conn:
@@ -902,6 +970,13 @@ class MemoryDB:
             if source:
                 conditions.append("source = ?")
                 params.append(source)
+
+            if owner_type:
+                conditions.append("owner_type = ?")
+                params.append(owner_type)
+                if owner_id:
+                    conditions.append("owner_id = ?")
+                    params.append(owner_id)
             
             where_clause = " AND ".join(conditions) if conditions else "1=1"
             params.extend([limit, offset])
@@ -918,6 +993,8 @@ class MemoryDB:
             parent_id = row['parent_id'] if 'parent_id' in row.keys() else None
             row_type = row['type'] if 'type' in row.keys() else 'chat'
             row_source = row['source'] if 'source' in row.keys() else 'stuard'
+            row_owner_type = row['owner_type'] if 'owner_type' in row.keys() else None
+            row_owner_id = row['owner_id'] if 'owner_id' in row.keys() else None
             result.append(Conversation(
                 id=row['id'],
                 title=title,
@@ -932,7 +1009,9 @@ class MemoryDB:
                 needs_sync=bool(row['needs_sync']),
                 parent_id=parent_id,
                 type=row_type or 'chat',
-                source=row_source or 'stuard'
+                source=row_source or 'stuard',
+                owner_type=row_owner_type,
+                owner_id=row_owner_id
             ))
         
         return result
@@ -942,7 +1021,10 @@ class MemoryDB:
         conversation_id: str,
         title: Optional[str] = None,
         status: Optional[ConversationStatus] = None,
-        embedding: Optional[List[float]] = None
+        embedding: Optional[List[float]] = None,
+        source: Optional[ConversationSource] = None,
+        owner_type: Optional[ConversationOwnerType] = None,
+        owner_id: Optional[str] = None
     ) -> Optional[Conversation]:
         """Update conversation."""
         updates = ["updated_at = ?"]
@@ -957,6 +1039,15 @@ class MemoryDB:
         if embedding is not None:
             updates.append("embedding = ?")
             values.append(_serialize_vector(embedding))
+        if source is not None:
+            updates.append("source = ?")
+            values.append(source)
+        if owner_type is not None:
+            updates.append("owner_type = ?")
+            values.append(owner_type)
+        if owner_id is not None:
+            updates.append("owner_id = ?")
+            values.append(owner_id if owner_id != '' else None)
         
         updates.append("needs_sync = 1")
         values.append(conversation_id)
@@ -1058,6 +1149,8 @@ class MemoryDB:
         limit: int = 10,
         threshold: float = 0.6,
         project_id: Optional[str] = None,
+        owner_type: Optional[str] = "stuard",
+        owner_id: Optional[str] = None,
     ) -> List[Tuple[ConversationSegment, float]]:
         """Search conversation segments by embedding similarity.
 
@@ -1067,17 +1160,22 @@ class MemoryDB:
         query_np = np.array(query_vector, dtype=np.float32)
 
         with self._get_conn() as conn:
+            scope_clause, scope_params = self._conversation_scope_clause("c", owner_type, owner_id)
+            where = ["cs.embedding IS NOT NULL"]
+            params: List[Any] = []
             if project_id:
-                rows = conn.execute(
-                    """SELECT cs.* FROM conversation_segments cs
-                       JOIN conversations c ON cs.conversation_id = c.id
-                       WHERE cs.embedding IS NOT NULL AND c.project_id = ?""",
-                    (project_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM conversation_segments WHERE embedding IS NOT NULL"
-                ).fetchall()
+                where.append("c.project_id = ?")
+                params.append(project_id)
+            if scope_clause:
+                where.append(scope_clause)
+                params.extend(scope_params)
+            where_sql = " AND ".join(where)
+            rows = conn.execute(
+                f"""SELECT cs.* FROM conversation_segments cs
+                   JOIN conversations c ON cs.conversation_id = c.id
+                   WHERE {where_sql}""",
+                tuple(params),
+            ).fetchall()
         
         results = []
         for row in rows:
@@ -1351,6 +1449,8 @@ class MemoryDB:
         limit: int = 10,
         since: Optional[str] = None,
         before: Optional[str] = None,
+        owner_type: Optional[str] = "stuard",
+        owner_id: Optional[str] = None,
     ) -> List[ConversationSegment]:
         limit = max(1, min(int(limit), 200))
 
@@ -1371,14 +1471,23 @@ class MemoryDB:
         before_ts = _parse_iso_ts(before)
 
         with self._get_conn() as conn:
+            scope_clause, scope_params = self._conversation_scope_clause("c", owner_type, owner_id)
+            where_sql = f"WHERE {scope_clause}" if scope_clause else ""
             if since_ts is None and before_ts is None:
                 rows = conn.execute(
-                    "SELECT * FROM conversation_segments ORDER BY created_at DESC LIMIT ?",
-                    (limit,),
+                    f"""SELECT cs.* FROM conversation_segments cs
+                       JOIN conversations c ON cs.conversation_id = c.id
+                       {where_sql}
+                       ORDER BY cs.created_at DESC LIMIT ?""",
+                    tuple(scope_params + [limit]),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM conversation_segments ORDER BY created_at DESC",
+                    f"""SELECT cs.* FROM conversation_segments cs
+                       JOIN conversations c ON cs.conversation_id = c.id
+                       {where_sql}
+                       ORDER BY cs.created_at DESC""",
+                    tuple(scope_params),
                 ).fetchall()
 
         filtered: List[Tuple[float, ConversationSegment]] = []
@@ -1412,6 +1521,8 @@ class MemoryDB:
         limit: int = 500,
         since: Optional[str] = None,
         before: Optional[str] = None,
+        owner_type: Optional[str] = "stuard",
+        owner_id: Optional[str] = None,
     ) -> List[ConversationSegment]:
         limit = max(1, min(int(limit), 5000))
 
@@ -1432,9 +1543,14 @@ class MemoryDB:
         before_ts = _parse_iso_ts(before)
 
         with self._get_conn() as conn:
+            scope_clause, scope_params = self._conversation_scope_clause("c", owner_type, owner_id)
+            where_sql = f"WHERE {scope_clause}" if scope_clause else ""
             rows = conn.execute(
-                "SELECT * FROM conversation_segments ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                f"""SELECT cs.* FROM conversation_segments cs
+                   JOIN conversations c ON cs.conversation_id = c.id
+                   {where_sql}
+                   ORDER BY cs.created_at DESC LIMIT ?""",
+                tuple(scope_params + [limit]),
             ).fetchall()
 
         filtered: List[Tuple[float, ConversationSegment]] = []
@@ -1479,6 +1595,8 @@ class MemoryDB:
         cluster_threshold: float = 0.82,
         max_clusters_per_topic: int = 12,
         segments_scan_limit: int = 2000,
+        owner_type: Optional[str] = "stuard",
+        owner_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         q = str(query or '').strip().lower()
         limit_topics = max(1, min(int(limit_topics), 200))
@@ -1491,7 +1609,11 @@ class MemoryDB:
             cluster_threshold = 0.82
         cluster_threshold = max(0.0, min(cluster_threshold, 0.999))
 
-        segments = self.list_recent_segments_with_embeddings(limit=segments_scan_limit)
+        segments = self.list_recent_segments_with_embeddings(
+            limit=segments_scan_limit,
+            owner_type=owner_type,
+            owner_id=owner_id,
+        )
 
         def _cosine(a: List[float], b: List[float]) -> float:
             try:

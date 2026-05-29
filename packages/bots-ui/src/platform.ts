@@ -8,8 +8,24 @@ export type BlueprintPreflightProbeResult = {
   detail: string;
 };
 
+export interface BotsConfirmOptions {
+  title?: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: 'danger' | 'default';
+}
+
 export interface IBotsPlatform {
   readOnly?: boolean;
+
+  /**
+   * Modern confirm/alert UI. When provided, the host app renders its own
+   * on-brand dialog instead of the native window.confirm/alert. Optional —
+   * callers fall back to the native dialog when these are absent.
+   */
+  confirm?(opts: BotsConfirmOptions): Promise<boolean>;
+  notify?(opts: Omit<BotsConfirmOptions, 'cancelLabel'>): Promise<void>;
 
   list(): Promise<BotsJsonResponse<{ bots?: Bot[] }>>;
   create?(payload: Record<string, unknown>): Promise<BotsJsonResponse<{ bot?: Bot }>>;
@@ -59,7 +75,7 @@ export interface IBotsPlatform {
   /** Auth token for cloud-ai blueprint SSE (desktop create-agent). */
   getAccessToken?(): Promise<string | null>;
   /** cloud-ai HTTP base URL for blueprint SSE (desktop create-agent). */
-  getCloudAiBaseUrl?(): () => string;
+  getCloudAiBaseUrl?(): string;
 
   onBotMemoryChanged?(cb: (data: { botId: string }) => void): () => void;
   onProactiveUpdate?(cb: (data: unknown) => void): () => void;

@@ -5,7 +5,8 @@ import { handleSpeechConnection } from '../routes/speech';
 import { handleTerminalConnection } from '../routes/terminal-relay';
 import { handleCloudPreviewWsUpgrade } from '../routes/cloud-preview';
 import { handleVoiceConnection } from '../routes/voice-bridge';
-import { PORT } from '../utils/config';
+import { PORT, REQUIRE_AUTH, IS_DEVELOPMENT, ENVIRONMENT } from '../utils/config';
+import { assertAuthSecretConfigured } from '../auth';
 import { startVMHealthMonitor } from '../services/vm-health';
 import { initVoiceProviders } from '../voice';
 import { telnyxBridgeWss } from '../routes/integrations/telnyx-bridge';
@@ -13,6 +14,16 @@ import { verifyTelnyxConfig } from '../routes/integrations/telnyx';
 import { startReminderCron } from '../services/cloud-reminders';
 
 export function startCloudAiServer() {
+  // Boot-time security guards. Fail fast on a forgeable OAuth state secret in a
+  // deployed env; warn loudly if chat auth was explicitly disabled outside dev.
+  assertAuthSecretConfigured();
+  if (!REQUIRE_AUTH && !IS_DEVELOPMENT) {
+    console.warn(
+      `[cloud-ai] ⚠️  REQUIRE_AUTH is disabled in '${ENVIRONMENT}': chat requests ` +
+        'will be processed WITHOUT verifying a Supabase token. Only intended for local dev.',
+    );
+  }
+
   initVoiceProviders();
 
   const server = createHttpServer();

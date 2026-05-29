@@ -8,6 +8,7 @@ import { CreateBotModal } from './CreateBotModal';
 import { BotDetailView } from './BotDetailView';
 import { BotsPlatformProvider, useBotsPlatform } from './BotsPlatformContext';
 import type { IBotsPlatform } from './platform';
+import { platformConfirm, platformNotify } from './dialogs';
 
 export interface BotsViewProps {
   scope?: BotsViewScope;
@@ -48,13 +49,19 @@ function BotsViewInner({ scope = 'all' }: { scope?: BotsViewScope }) {
   const selectedBot = useMemo(() => bots.find(b => b.id === selectedBotId) || null, [bots, selectedBotId]);
 
   const handleDeleteFromList = useCallback(async (bot: Bot) => {
-    if (!confirm(`Delete "${bot.name}"? This cannot be undone.`)) return;
+    const ok = await platformConfirm(platform, {
+      title: `Delete “${bot.name}”?`,
+      message: 'This permanently removes the agent and its tasks. This can’t be undone.',
+      confirmLabel: 'Delete agent',
+      tone: 'danger',
+    });
+    if (!ok) return;
     const res = await platform.delete(bot.id);
     if (res?.ok) {
       if (selectedBotId === bot.id) setSelectedBotId(null);
       await refresh();
     } else if (res?.error) {
-      alert(res.error);
+      await platformNotify(platform, { title: 'Couldn’t delete agent', message: res.error, tone: 'danger' });
     }
   }, [refresh, selectedBotId, platform]);
 

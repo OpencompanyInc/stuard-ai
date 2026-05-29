@@ -16,16 +16,22 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   AlertCircle, Check, ChevronDown, ChevronRight, Code2, Copy, FileJson,
-  Globe, Key, Loader2, Play, Plug, Plus, Save, Send, Sparkles, Trash2,
+  Globe, Key, Loader2, Play, Plug, Plus, Save, Send, Boxes, Trash2,
   Wand2, X, Zap, Lock, Hash, ToggleLeft, AlignLeft, MessageSquare, Rocket,
   Upload, Bot, ArrowUp, CheckCircle2, Search, ExternalLink, Link2, Brain,
 } from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import { supabase } from "../../lib/supabaseClient";
 import { getCloudAiHttp } from "../../utils/cloud";
+import {
+  fetchInstalledIntegrations,
+  deployIntegration,
+  uninstallIntegration,
+} from "../../utils/installedIntegrations";
 import { ModelSelector } from "../../components/ModelSelector";
 import type { ModelSourcePreference, ReasoningLevel } from "../../hooks/usePreferences";
 import { Shimmer } from "../../components/ai-elements/Shimmer";
+import { confirmDialog } from "./ConfirmDialog";
 import {
   ChainOfThought,
   ChainOfThoughtHeader,
@@ -34,7 +40,6 @@ import {
 } from "../../components/ai-elements/ChainOfThought";
 
 const DRAFTS_KEY = "stuard:integration_drafts";
-const INSTALLED_KEY = "stuard:installed_integrations";
 
 const IB_BUTTON =
   "border wf-border-subtle wf-fg-muted wf-hover-bg hover:wf-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
@@ -303,18 +308,9 @@ function saveDrafts(d: DraftMap): void {
   try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(d)); } catch { /* quota */ }
 }
 
-// Locally-installed integrations — a separate store from drafts. Stores the
-// manifest AND user-supplied secrets so the integration is ready to call.
-// Plaintext for the test phase only; flagged in the UI. The encrypted vault
-// swaps in here later without changing the read interface.
-interface InstalledEntry { manifest: any; secrets: Record<string, string>; installedAt: number; }
-interface InstalledMap { [slug: string]: InstalledEntry; }
-function loadInstalled(): InstalledMap {
-  try { const r = localStorage.getItem(INSTALLED_KEY); return r ? (JSON.parse(r) || {}) : {}; } catch { return {}; }
-}
-function saveInstalled(d: InstalledMap): void {
-  try { localStorage.setItem(INSTALLED_KEY, JSON.stringify(d)); } catch { /* quota */ }
-}
+// Deployed integrations now live server-side (custom_integrations table, secrets
+// encrypted with per-user envelope encryption). The modal reads/writes them via
+// the helpers in utils/installedIntegrations.ts; only drafts remain in localStorage.
 
 async function getToken(): Promise<string | null> {
   try { const { data } = await supabase.auth.getSession(); return data?.session?.access_token || null; }
@@ -357,6 +353,8 @@ interface IntegrationBuilderModalProps {
   onModelSourceChange?: (source: ModelSourcePreference) => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
+  /** When provided, the builder opens seeded with this manifest (edit flow). */
+  seedManifest?: any | null;
 }
 
 export function IntegrationBuilderModal({
@@ -368,6 +366,7 @@ export function IntegrationBuilderModal({
   onModelSourceChange,
   reasoningLevel,
   onReasoningLevelChange,
+  seedManifest,
 }: IntegrationBuilderModalProps) {
   const { isDark } = useWorkflowTheme();
   const d = isDark;
@@ -389,17 +388,28 @@ export function IntegrationBuilderModal({
   const [runError, setRunError] = useState<string | null>(null);
 
   // Right pane tab + AI assistant + installed map + transient toast
-  const [rightTab, setRightTab] = useState<"test" | "ai">("test");
+  const [rightTab, setRightTab] = useState<"test" | "ai">("ai");
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [aiInput, setAiInput] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
-  const [installed, setInstalled] = useState<InstalledMap>({});
+  // Deployed integrations come from the secure server-side store, keyed by slug.
+  const [installed, setInstalled] = useState<Record<string, { enabled: boolean }>>({});
+  const [deploying, setDeploying] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const showToast = useCallback((kind: "success" | "error", text: string) => {
     setToast({ kind, text });
     window.setTimeout(() => setToast(null), 3200);
+  }, []);
+
+  const refreshInstalled = useCallback(async () => {
+    const list = await fetchInstalledIntegrations();
+    const map: Record<string, { enabled: boolean }> = {};
+    for (const i of list) map[i.slug] = { enabled: i.enabled };
+    setInstalled(map);
+    // Let the workflow palette + bot tool picker re-pull the deployed set.
+    try { window.dispatchEvent(new CustomEvent("stuard:integrations-changed")); } catch { /* noop */ }
   }, []);
 
   // ─── Initialize on open ─────────────────────────────────────────────────
@@ -407,23 +417,30 @@ export function IntegrationBuilderModal({
     if (!open) return;
     const m = loadDrafts();
     setDrafts(m);
-    const slugs = Object.keys(m);
-    if (slugs.length > 0) {
-      const first = slugs[0];
-      setActiveSlug(first);
-      setDraft(fromManifest(m[first]));
+    // Edit flow: a deployed integration's manifest seeds the form directly so
+    // the user can revise and re-deploy it (drafts live in localStorage, but a
+    // deployed integration may not have a local draft).
+    if (seedManifest && typeof seedManifest === "object") {
+      setActiveSlug(typeof seedManifest.slug === "string" ? seedManifest.slug : null);
+      setDraft(fromManifest(seedManifest));
+      setShowPresets(false);
     } else {
+      // "New tool": always start from a clean slate. (Existing drafts remain
+      // reachable via the draft selector in the header — we must NOT silently
+      // re-open the first saved draft here, or "New" feels like it edits an
+      // existing tool.)
       setActiveSlug(null);
+      setDraft(PRESETS[0].build());
       setShowPresets(true);
     }
     setDirty(false);
     setResult(null);
     setRunError(null);
-    setInstalled(loadInstalled());
+    void refreshInstalled();
     setAiMessages([]);
     setAiInput("");
     setAiError(null);
-    setRightTab("test");
+    setRightTab("ai");
   }, [open]);
 
   // ─── Mutators ───────────────────────────────────────────────────────────
@@ -463,9 +480,15 @@ export function IntegrationBuilderModal({
     setShowPresets(false);
   }, [drafts]);
 
-  const onDeleteActive = useCallback(() => {
+  const onDeleteActive = useCallback(async () => {
     if (!activeSlug) return;
-    if (!confirm(`Delete draft "${activeSlug}"?`)) return;
+    const ok = await confirmDialog({
+      title: `Delete draft “${drafts[activeSlug]?.name || activeSlug}”?`,
+      message: "This removes the saved draft from this device. Deployed tools stay live until you uninstall them.",
+      confirmLabel: "Delete draft",
+      tone: "danger",
+    });
+    if (!ok) return;
     const next = { ...drafts };
     delete next[activeSlug];
     setDrafts(next);
@@ -475,36 +498,45 @@ export function IntegrationBuilderModal({
     else { setActiveSlug(null); setShowPresets(true); }
   }, [activeSlug, drafts, onSelectDraft]);
 
-  // ─── Deploy locally ────────────────────────────────────────────────────
+  // ─── Deploy (secure server-side store) ─────────────────────────────────
+  // The manifest + credentials are POSTed to cloud-ai, which encrypts secrets
+  // with per-user envelope encryption and makes the tools available to the main
+  // agent (via search_tools/execute_tool), bots, and workflows.
   const isInstalled = !!installed[draft.slug];
-  const onDeployLocally = useCallback(() => {
+  const onDeployLocally = useCallback(async () => {
     if (!draft.slug.trim()) { showToast("error", "Slug is required before deploying"); return; }
     if (!draft.tools.length) { showToast("error", "Add at least one tool before deploying"); return; }
+    setDeploying(true);
     const manifest = toManifest(draft);
-    const next: InstalledMap = {
-      ...installed,
-      [draft.slug]: { manifest, secrets: { ...secrets }, installedAt: Date.now() },
-    };
-    setInstalled(next);
-    saveInstalled(next);
-    // Also persist as a draft so it survives modal re-open
+    const res = await deployIntegration(manifest, secrets);
+    setDeploying(false);
+    if (!res.ok) { showToast("error", res.error || "Deploy failed."); return; }
+    // Keep a local draft copy so it survives modal re-open.
     const nextDrafts = { ...drafts, [draft.slug]: manifest };
     setDrafts(nextDrafts);
     saveDrafts(nextDrafts);
     setActiveSlug(draft.slug);
     setDirty(false);
-    showToast("success", `Deployed "${draft.name || draft.slug}" locally. Use Test for now — chat-agent wiring is the next step.`);
-  }, [draft, installed, secrets, drafts, showToast]);
+    await refreshInstalled();
+    showToast("success", `Deployed "${draft.name || draft.slug}". Its tools are now available to the agent, bots, and workflows.`);
+  }, [draft, secrets, drafts, showToast, refreshInstalled]);
 
-  const onUninstall = useCallback(() => {
+  const onUninstall = useCallback(async () => {
     if (!isInstalled) return;
-    if (!confirm(`Remove "${draft.slug}" from your installed integrations?`)) return;
-    const next = { ...installed };
-    delete next[draft.slug];
-    setInstalled(next);
-    saveInstalled(next);
+    const ok0 = await confirmDialog({
+      title: `Uninstall “${draft.name || draft.slug}”?`,
+      message: "Its tools will stop working for your agents, bots, and workflows. You can re-deploy anytime.",
+      confirmLabel: "Uninstall",
+      tone: "danger",
+    });
+    if (!ok0) return;
+    setDeploying(true);
+    const ok = await uninstallIntegration(draft.slug);
+    setDeploying(false);
+    if (!ok) { showToast("error", "Uninstall failed."); return; }
+    await refreshInstalled();
     showToast("success", `Uninstalled "${draft.slug}".`);
-  }, [draft.slug, installed, isInstalled, showToast]);
+  }, [draft.slug, isInstalled, showToast, refreshInstalled]);
 
   // ─── Publish (clipboard until marketplace lands) ───────────────────────
   const onPublish = useCallback(async () => {
@@ -826,59 +858,79 @@ export function IntegrationBuilderModal({
       style={{ background: d ? "rgba(2, 6, 23, 0.78)" : "rgba(15, 23, 42, 0.18)" }}
     >
       <div
-        className="w-full max-w-[1320px] rounded-[24px] border shadow-2xl overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200 relative"
-        style={{ background: d ? "#0f1117" : "#ffffff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+        className="wf-bg-elevated wf-fg w-full max-w-[1320px] rounded-[24px] border wf-border shadow-2xl overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200 relative"
       >
         {/* ── Header ─────────────────────────────────────────────────── */}
-        <div className="px-5 py-3 border-b flex items-center justify-between gap-3 shrink-0" style={{ background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" }}>
-          <div className="flex items-center gap-3 min-w-0">
-            <Plug className="w-5 h-5 wf-fg-muted shrink-0" />
-            <div className="text-[15px] font-semibold wf-fg truncate">Integration Builder</div>
-            <span className="text-[11px] px-2 py-0.5 rounded-full border wf-border-subtle wf-fg-muted">test phase</span>
+        <div className="shrink-0 border-b wf-border" style={{ background: "var(--wf-bg)" }}>
+          {/* Title row */}
+          <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="wf-feature-tile__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]">
+                <Plug className="w-5 h-5" strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[16px] font-semibold wf-fg truncate leading-none">Integration Builder</h2>
+                  {isInstalled && (
+                    <span className="text-[10.5px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 flex items-center gap-1 font-medium shrink-0">
+                      <CheckCircle2 className="w-3 h-3" /> Deployed
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[12px] wf-fg-muted leading-none truncate">
+                  Connect any HTTP API and ship its tools to agents, workflows &amp; chat.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="relative">
+                <select
+                  value={activeSlug ?? ""}
+                  onChange={(e) => e.target.value ? onSelectDraft(e.target.value) : setShowPresets(true)}
+                  className="wf-input text-[12px] rounded-full pl-3.5 pr-8 py-1.5 appearance-none cursor-pointer max-w-[190px] truncate"
+                >
+                  <option value="">— New draft —</option>
+                  {Object.keys(drafts).map(s => (<option key={s} value={s}>{drafts[s]?.name || s}</option>))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 wf-fg-faint" />
+              </div>
+              <button onClick={onClose} className={`p-1.5 rounded-full ${IB_ICON_BUTTON}`} title="Close"><X className="w-5 h-5" /></button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={activeSlug ?? ""}
-              onChange={(e) => e.target.value ? onSelectDraft(e.target.value) : setShowPresets(true)}
-              className="text-[12px] rounded-lg px-2 py-1.5 border wf-border-subtle"
-              style={{ background: d ? "#0a0c10" : "#fff", color: "var(--wf-fg)" }}
-            >
-              <option value="">— New draft —</option>
-              {Object.keys(drafts).map(s => (<option key={s} value={s}>{drafts[s]?.name || s}</option>))}
-            </select>
-            <button onClick={() => setShowPresets(true)} className={`px-2 py-1.5 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`} title="Start from a preset">
-              <Plus className="w-3.5 h-3.5" /> New
-            </button>
-            <button onClick={() => setViewMode(v => v === "form" ? "json" : "form")} className={`px-2 py-1.5 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`} title="Toggle view">
-              {viewMode === "form" ? <><Code2 className="w-3.5 h-3.5" /> JSON</> : <><Sparkles className="w-3.5 h-3.5" /> Form</>}
-            </button>
-            <button onClick={onSave} disabled={!draft.slug} className="px-2 py-1.5 rounded-lg text-[12px] flex items-center gap-1 wf-primary-btn disabled:opacity-40 disabled:cursor-not-allowed" title="Save draft (Cmd/Ctrl+S)">
-              <Save className="w-3.5 h-3.5" /> Save{dirty ? "*" : ""}
-            </button>
-            <button
-              onClick={isInstalled ? onUninstall : onDeployLocally}
-              disabled={!draft.slug}
-              className={`px-2 py-1.5 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`}
-              title={isInstalled ? "Click to uninstall — currently deployed locally" : "Save manifest + credentials as an installed integration on this machine"}
-            >
-              {isInstalled ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Rocket className="w-3.5 h-3.5" />}
-              {isInstalled ? "Installed" : "Deploy"}
-            </button>
-            <button
-              onClick={onPublish}
-              disabled={!draft.slug}
-              className={`px-2 py-1.5 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`}
-              title="Copy manifest for sharing (full marketplace publish coming soon)"
-            >
-              <Upload className="w-3.5 h-3.5" /> Publish
-            </button>
-            {activeSlug && (
-              <button onClick={onDeleteActive} className="px-2 py-1.5 rounded-lg text-[12px] hover:bg-rose-500/15 text-rose-400" title="Delete draft">
-                <Trash2 className="w-3.5 h-3.5" />
+
+          {/* Toolbar row */}
+          <div className="px-5 pb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="inline-flex items-center rounded-full p-0.5 wf-surface-muted">
+                <SegBtn active={viewMode === "form"} onClick={() => setViewMode("form")} icon={<AlignLeft className="w-3.5 h-3.5" />} label="Form" />
+                <SegBtn active={viewMode === "json"} onClick={() => setViewMode("json")} icon={<Code2 className="w-3.5 h-3.5" />} label="JSON" />
+              </div>
+              <button onClick={() => setShowPresets(true)} className={`px-3 py-1.5 rounded-full text-[12px] flex items-center gap-1.5 ${IB_BUTTON}`} title="Start from a preset">
+                <Plus className="w-3.5 h-3.5" /> New
               </button>
-            )}
-            <div className="w-px h-5 mx-1" style={{ background: "var(--wf-border)" }} />
-            <button onClick={onClose} className={`p-1.5 rounded-lg ${IB_ICON_BUTTON}`} title="Close"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={onSave} disabled={!draft.slug} className={`px-3 py-1.5 rounded-full text-[12px] flex items-center gap-1.5 ${IB_BUTTON}`} title="Save draft (Cmd/Ctrl+S)">
+                <Save className="w-3.5 h-3.5" /> Save{dirty ? " •" : ""}
+              </button>
+              <button onClick={onPublish} disabled={!draft.slug} className={`px-3 py-1.5 rounded-full text-[12px] flex items-center gap-1.5 ${IB_BUTTON}`} title="Copy manifest for sharing (full marketplace publish coming soon)">
+                <Upload className="w-3.5 h-3.5" /> Publish
+              </button>
+              {activeSlug && (
+                <button onClick={onDeleteActive} className="p-1.5 rounded-full text-rose-400 hover:bg-rose-500/15 transition-colors" title="Delete draft">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                onClick={isInstalled ? onUninstall : onDeployLocally}
+                disabled={!draft.slug || deploying}
+                className={`px-4 py-1.5 rounded-full text-[12px] font-semibold flex items-center gap-1.5 ${isInstalled ? IB_BUTTON : "wf-primary-btn disabled:opacity-40 disabled:cursor-not-allowed"}`}
+                title={isInstalled ? "Click to uninstall — tools are live for the agent, bots & workflows" : "Encrypt + store credentials server-side and expose this integration's tools"}
+              >
+                {deploying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isInstalled ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Rocket className="w-3.5 h-3.5" />}
+                {deploying ? "Working…" : isInstalled ? "Deployed" : "Deploy"}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -888,7 +940,7 @@ export function IntegrationBuilderModal({
         ) : (
           <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: "3fr 2fr", borderColor: 'var(--wf-border)' }}>
             {/* LEFT — Build pane (form OR raw JSON) */}
-            <div className="flex flex-col min-h-0 overflow-auto custom-scrollbar" style={{ borderRight: '1px solid var(--wf-border)' }}>
+            <div className="flex flex-col min-h-0" style={{ borderRight: '1px solid var(--wf-border)' }}>
               {viewMode === "form" ? (
                 <FormView
                   draft={draft}
@@ -898,15 +950,17 @@ export function IntegrationBuilderModal({
                   dark={d}
                 />
               ) : (
-                <JsonView draft={draft} setDraft={(d2) => { setDraft(d2); setDirty(true); }} dark={d} />
+                <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
+                  <JsonView draft={draft} setDraft={(d2) => { setDraft(d2); setDirty(true); }} dark={d} />
+                </div>
               )}
             </div>
 
             {/* RIGHT — Test runner or AI assistant */}
             <div className="flex flex-col min-h-0">
               <div className="flex items-center gap-1 px-3 pt-2 pb-0 border-b wf-border-subtle">
+                <RightTabButton active={rightTab === "ai"} onClick={() => setRightTab("ai")} icon={<Bot className="w-3.5 h-3.5" />} label="Build with AI" />
                 <RightTabButton active={rightTab === "test"} onClick={() => setRightTab("test")} icon={<Zap className="w-3.5 h-3.5" />} label="Test" />
-                <RightTabButton active={rightTab === "ai"} onClick={() => setRightTab("ai")} icon={<Bot className="w-3.5 h-3.5" />} label="AI assistant" />
               </div>
               {rightTab === "test" ? (
                 <TestPane
@@ -963,7 +1017,19 @@ function RightTabButton({ active, onClick, icon, label }: { active: boolean; onC
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1.5 text-[12px] font-medium flex items-center gap-1.5 rounded-t-lg border-b-2 transition-colors ${active ? "wf-fg border-[var(--wf-accent)]" : "wf-fg-muted border-transparent hover:wf-fg"}`}
+      className={`px-3 py-1.5 text-[12px] font-medium flex items-center gap-1.5 rounded-t-lg border-b-2 transition-colors ${active ? "wf-fg border-[var(--wf-accent)]" : "wf-fg-muted border-transparent wf-hover-fg"}`}
+    >
+      {icon}{label}
+    </button>
+  );
+}
+
+/** Pill segmented-control button used in the builder header (Form / JSON). */
+function SegBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1 rounded-full text-[12px] font-medium flex items-center gap-1.5 transition-colors ${active ? "wf-bg-elevated wf-fg shadow-sm" : "wf-fg-muted wf-hover-fg"}`}
     >
       {icon}{label}
     </button>
@@ -979,21 +1045,26 @@ function PresetPicker({ dark, onPick, onCancel, hasExisting }: {
   return (
     <div className="flex-1 min-h-0 overflow-auto custom-scrollbar p-10 flex flex-col items-center">
       <div className="max-w-[760px] w-full">
-        <h2 className="text-[20px] font-semibold wf-fg mb-2">Choose a starting point</h2>
-        <p className="text-[13px] wf-fg-muted mb-8">Pick the shape that matches the API you want to call. You can change everything later.</p>
+        <h2 className="text-[20px] font-semibold wf-fg mb-2">How does this service sign you in?</h2>
+        <p className="text-[13px] wf-fg-muted mb-8">
+          Pick whichever sounds right — if you’re not sure, choose “API key” or just switch to <span className="wf-fg font-medium">Build with AI</span> and describe what you want. You can change everything later.
+        </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {PRESETS.map(p => (
             <button
               key={p.id}
               onClick={() => onPick(p.id)}
-              className="text-left p-4 rounded-2xl border hover:border-[color-mix(in_srgb,var(--wf-accent)_45%,var(--wf-border))] transition-colors group"
-              style={{ background: dark ? "#0a0c10" : "#fafafa", borderColor: "var(--wf-border)" }}
+              className="wf-card wf-card-interactive group text-left p-4 rounded-[18px]"
             >
-              <div className="text-[14px] font-semibold wf-fg mb-1 flex items-center gap-2">
-                <Key className="w-4 h-4 wf-fg-muted" />
-                {p.label}
+              <div className="flex items-start gap-3">
+                <span className="wf-icon-chip group-hover:text-[color:var(--wf-accent)] transition-colors flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px]">
+                  <Key className="w-[18px] h-[18px]" strokeWidth={1.75} />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[14px] font-semibold wf-fg mb-1 leading-tight">{p.label}</div>
+                  <div className="text-[12px] wf-fg-muted leading-relaxed">{p.description}</div>
+                </div>
               </div>
-              <div className="text-[12px] wf-fg-muted">{p.description}</div>
             </button>
           ))}
         </div>
@@ -1010,6 +1081,14 @@ function PresetPicker({ dark, onPick, onCancel, hasExisting }: {
 // ════════════════════════════════════════════════════════════════════════
 // Form view — collapsible sections
 // ════════════════════════════════════════════════════════════════════════
+const FORM_STEPS = [
+  { id: "identity", label: "Basics", icon: Boxes, hint: "Give your tool a name and a one-line description." },
+  { id: "auth", label: "Connect", icon: Lock, hint: "How should Stuard sign in to this service? Most use an API key." },
+  { id: "hosts", label: "Web access", icon: Globe, hint: "Which web addresses is this tool allowed to reach?" },
+  { id: "tools", label: "Actions", icon: Wand2, hint: "The things your agents and workflows can do with it." },
+  { id: "ping", label: "Test connection", icon: Send, hint: "Optional: a quick check to confirm your keys work." },
+] as const;
+
 function FormView({ draft, update, openSection, setOpenSection, dark }: {
   draft: Draft;
   update: (fn: (d: Draft) => Draft) => void;
@@ -1017,75 +1096,177 @@ function FormView({ draft, update, openSection, setOpenSection, dark }: {
   setOpenSection: (s: string) => void;
   dark: boolean;
 }) {
+  const doneMap: Record<string, boolean> = {
+    identity: !!(draft.name.trim() && draft.slug.trim()),
+    auth: draft.auth.strategy.type === "none" || draft.auth.fields.length > 0,
+    hosts: draft.outbound_hosts.filter(Boolean).length > 0,
+    tools: draft.tools.length > 0,
+    ping: true,
+  };
+  const steps = FORM_STEPS.map((s) => ({ ...s, done: doneMap[s.id] }));
+  let activeIdx = steps.findIndex((s) => s.id === openSection);
+  if (activeIdx < 0) activeIdx = 0;
+  const current = steps[activeIdx];
+  const go = (delta: number) => {
+    const next = steps[Math.min(steps.length - 1, Math.max(0, activeIdx + delta))];
+    if (next) setOpenSection(next.id);
+  };
+  const StepIcon = current.icon;
+
   return (
-    <div className="p-5 space-y-2">
-      <Section title="Identity" icon={<Sparkles className="w-3.5 h-3.5 text-amber-300" />} open={openSection === "identity"} onToggle={() => setOpenSection(openSection === "identity" ? "" : "identity")} dark={dark}>
-        <Grid2>
-          <Field label="Name" hint="Shown to users">
-            <Input value={draft.name} onChange={v => update(d => ({ ...d, name: v }))} placeholder="My Integration" />
-          </Field>
-          <Field label="Slug" hint="URL-safe id; used for env vars">
-            <Input value={draft.slug} onChange={v => update(d => ({ ...d, slug: v.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))} placeholder="my-integration" mono />
-          </Field>
-          <Field label="Version" hint="Semver">
-            <Input value={draft.version} onChange={v => update(d => ({ ...d, version: v }))} placeholder="0.1.0" mono />
-          </Field>
-          <Field label="Category">
-            <Input value={draft.category} onChange={v => update(d => ({ ...d, category: v }))} placeholder="Payments / DevOps / Email …" />
-          </Field>
-          <Field label="Icon" hint="Emoji or lucide id">
-            <Input value={draft.icon} onChange={v => update(d => ({ ...d, icon: v }))} placeholder="🧩" />
-          </Field>
-        </Grid2>
-        <Field label="Description" hint="One line about what this integration does">
-          <Input value={draft.description} onChange={v => update(d => ({ ...d, description: v }))} placeholder="Send transactional email via …" />
-        </Field>
-      </Section>
+    <div className="flex flex-col min-h-0 flex-1">
+      {/* Stepper */}
+      <div className="px-6 pt-5 pb-4 border-b wf-border-subtle">
+        <StepRail steps={steps} activeId={current.id} onPick={setOpenSection} />
+      </div>
 
-      <Section title="Authentication" icon={<Lock className="w-3.5 h-3.5 text-rose-300" />} open={openSection === "auth"} onToggle={() => setOpenSection(openSection === "auth" ? "" : "auth")} dark={dark}>
-        <AuthEditor auth={draft.auth} setAuth={a => update(d => ({ ...d, auth: a }))} />
-      </Section>
+      {/* Active step */}
+      <div className="flex-1 min-h-0 overflow-auto custom-scrollbar px-6 py-6">
+        <div className="mb-6 flex items-start gap-3.5">
+          <span className="wf-icon-chip flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px]">
+            <StepIcon className="w-5 h-5" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[18px] font-semibold wf-fg leading-tight">{current.label}</h3>
+            <p className="mt-1 text-[13px] wf-fg-muted leading-relaxed">{current.hint}</p>
+          </div>
+        </div>
 
-      <Section title="Allowed hosts" icon={<Globe className="w-3.5 h-3.5 wf-fg-muted" />} open={openSection === "hosts"} onToggle={() => setOpenSection(openSection === "hosts" ? "" : "hosts")} dark={dark}>
-        <HostsEditor hosts={draft.outbound_hosts} setHosts={hs => update(d => ({ ...d, outbound_hosts: hs }))} />
-      </Section>
-
-      <Section
-        title={`Tools (${draft.tools.length})`}
-        icon={<Wand2 className="w-3.5 h-3.5 wf-fg-muted" />}
-        open={openSection === "tools"}
-        onToggle={() => setOpenSection(openSection === "tools" ? "" : "tools")}
-        dark={dark}
-        right={
-          <button
-            onClick={(e) => { e.stopPropagation(); update(d => ({ ...d, tools: [...d.tools, { ...EMPTY_TOOL, name: `tool_${d.tools.length + 1}` }] })); setOpenSection("tools"); }}
-            className={`px-2 py-1 rounded-md text-[11px] flex items-center gap-1 ${IB_BUTTON}`}
-          >
-            <Plus className="w-3 h-3" /> Add tool
-          </button>
-        }
-      >
-        {draft.tools.length === 0 ? (
-          <div className="text-[12.5px] wf-fg-faint italic">No tools yet — click <strong>Add tool</strong>.</div>
-        ) : (
-          <div className="space-y-2">
-            {draft.tools.map((t, i) => (
-              <ToolEditor
-                key={i}
-                tool={t}
-                authFields={draft.auth.fields}
-                onChange={(nt) => update(d => ({ ...d, tools: d.tools.map((x, j) => j === i ? nt : x) }))}
-                onDelete={() => update(d => ({ ...d, tools: d.tools.filter((_, j) => j !== i) }))}
-                dark={dark}
-              />
-            ))}
+        {current.id === "identity" && (
+          <div className="space-y-4">
+            <Grid2>
+              <Field label="Name" hint="Shown to users">
+                <Input value={draft.name} onChange={v => update(d => ({ ...d, name: v }))} placeholder="My Integration" />
+              </Field>
+              <Field label="Slug" hint="URL-safe id; used for env vars">
+                <Input value={draft.slug} onChange={v => update(d => ({ ...d, slug: v.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))} placeholder="my-integration" mono />
+              </Field>
+              <Field label="Version" hint="Semver">
+                <Input value={draft.version} onChange={v => update(d => ({ ...d, version: v }))} placeholder="0.1.0" mono />
+              </Field>
+              <Field label="Category">
+                <Input value={draft.category} onChange={v => update(d => ({ ...d, category: v }))} placeholder="Payments / DevOps / Email …" />
+              </Field>
+              <Field label="Icon" hint="Emoji or lucide id">
+                <Input value={draft.icon} onChange={v => update(d => ({ ...d, icon: v }))} placeholder="🧩" />
+              </Field>
+            </Grid2>
+            <Field label="Description" hint="One line about what this integration does">
+              <Input value={draft.description} onChange={v => update(d => ({ ...d, description: v }))} placeholder="Send transactional email via …" />
+            </Field>
           </div>
         )}
-      </Section>
 
-      <Section title="Ping probe (optional)" icon={<Send className="w-3.5 h-3.5 text-sky-300" />} open={openSection === "ping"} onToggle={() => setOpenSection(openSection === "ping" ? "" : "ping")} dark={dark}>
-        <PingEditor ping={draft.ping} setPing={p => update(d => ({ ...d, ping: p }))} />
-      </Section>
+        {current.id === "auth" && (
+          <AuthEditor auth={draft.auth} setAuth={a => update(d => ({ ...d, auth: a }))} />
+        )}
+
+        {current.id === "hosts" && (
+          <HostsEditor hosts={draft.outbound_hosts} setHosts={hs => update(d => ({ ...d, outbound_hosts: hs }))} />
+        )}
+
+        {current.id === "tools" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[12.5px] wf-fg-muted">
+                {draft.tools.length} tool{draft.tools.length !== 1 ? "s" : ""}
+              </span>
+              <button
+                onClick={() => update(d => ({ ...d, tools: [...d.tools, { ...EMPTY_TOOL, name: `tool_${d.tools.length + 1}` }] }))}
+                className={`px-2.5 py-1.5 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`}
+              >
+                <Plus className="w-3.5 h-3.5" /> Add tool
+              </button>
+            </div>
+            {draft.tools.length === 0 ? (
+              <div className="rounded-2xl border border-dashed wf-border p-8 text-center">
+                <div className="wf-icon-chip mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-[13px]">
+                  <Wand2 className="w-5 h-5" />
+                </div>
+                <p className="text-[13px] wf-fg-muted">No tools yet. Add the first action this integration exposes.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {draft.tools.map((t, i) => (
+                  <ToolEditor
+                    key={i}
+                    tool={t}
+                    authFields={draft.auth.fields}
+                    onChange={(nt) => update(d => ({ ...d, tools: d.tools.map((x, j) => j === i ? nt : x) }))}
+                    onDelete={() => update(d => ({ ...d, tools: d.tools.filter((_, j) => j !== i) }))}
+                    dark={dark}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {current.id === "ping" && (
+          <PingEditor ping={draft.ping} setPing={p => update(d => ({ ...d, ping: p }))} />
+        )}
+      </div>
+
+      {/* Footer nav */}
+      <div className="flex items-center justify-between gap-3 px-6 py-3.5 border-t wf-border-subtle">
+        <button
+          onClick={() => go(-1)}
+          disabled={activeIdx <= 0}
+          className={`px-3.5 py-2 rounded-lg text-[12.5px] flex items-center gap-1.5 ${IB_BUTTON}`}
+        >
+          <ChevronRight className="w-3.5 h-3.5 rotate-180" /> Back
+        </button>
+        <span className="text-[11.5px] wf-fg-faint">Step {activeIdx + 1} of {steps.length}</span>
+        <button
+          onClick={() => go(1)}
+          disabled={activeIdx >= steps.length - 1}
+          className="px-4 py-2 rounded-lg text-[12.5px] font-semibold flex items-center gap-1.5 wf-primary-btn disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Next <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Guided step rail — turns the section accordion into a wizard-like flow
+// ════════════════════════════════════════════════════════════════════════
+function StepRail({ steps, activeId, onPick }: {
+  steps: Array<{ id: string; label: string; done: boolean }>;
+  activeId: string;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+      {steps.map((s, i) => {
+        const active = s.id === activeId;
+        return (
+          <React.Fragment key={s.id}>
+            <button
+              onClick={() => onPick(s.id)}
+              className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                active
+                  ? "wf-fg font-semibold border-[color:var(--wf-border)] bg-[var(--wf-hover)]"
+                  : "wf-border-subtle wf-fg-muted hover:bg-[var(--wf-hover)]"
+              }`}
+              title={s.label}
+            >
+              <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold ${
+                s.done
+                  ? "bg-emerald-500/20 text-emerald-400"
+                  : active
+                    ? "wf-accent-soft-bg text-[color:var(--wf-accent)]"
+                    : "wf-fg-faint border wf-border-subtle"
+              }`}>
+                {s.done ? <Check className="w-2.5 h-2.5" /> : i + 1}
+              </span>
+              {s.label}
+            </button>
+            {i < steps.length - 1 && <div className="h-px w-3 shrink-0" style={{ background: "var(--wf-border)" }} />}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -1103,7 +1284,7 @@ function Section({ title, icon, open, onToggle, dark, right, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border" style={{ background: dark ? "#0a0c10" : "#fafafa", borderColor: "var(--wf-border)" }}>
+    <div className="wf-card rounded-[14px]">
       <button onClick={onToggle} className="w-full px-3 py-2.5 flex items-center justify-between text-left">
         <div className="flex items-center gap-2 text-[13px] font-semibold wf-fg">
           {open ? <ChevronDown className="w-3.5 h-3.5 wf-fg-faint" /> : <ChevronRight className="w-3.5 h-3.5 wf-fg-faint" />}
@@ -1140,8 +1321,7 @@ function Input({ value, onChange, placeholder, mono, type, password }: {
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full text-[12.5px] px-3 py-2 rounded-lg ${IB_INPUT} ${mono ? "font-mono" : ""}`}
-      style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+      className={`w-full text-[12.5px] px-3 py-2 rounded-[10px] ${IB_INPUT} ${mono ? "font-mono" : ""}`}
     />
   );
 }
@@ -1152,8 +1332,7 @@ function Select<T extends string>({ value, onChange, options, mono }: {
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className={`w-full text-[12.5px] px-3 py-2 rounded-lg ${IB_INPUT} ${mono ? "font-mono" : ""}`}
-      style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+      className={`w-full text-[12.5px] px-3 py-2 rounded-[10px] ${IB_INPUT} ${mono ? "font-mono" : ""}`}
     >
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -1169,8 +1348,7 @@ function TextArea({ value, onChange, placeholder, rows = 4, mono }: {
       placeholder={placeholder}
       rows={rows}
       spellCheck={false}
-      className={`w-full text-[12.5px] px-3 py-2 rounded-lg ${IB_INPUT} resize-y ${mono ? "font-mono" : ""}`}
-      style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+      className={`w-full text-[12.5px] px-3 py-2 rounded-[10px] ${IB_INPUT} resize-y ${mono ? "font-mono" : ""}`}
     />
   );
 }
@@ -1341,8 +1519,7 @@ function HostsEditor({ hosts, setHosts }: { hosts: string[]; setHosts: (h: strin
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
           placeholder="api.example.com"
-          className={`flex-1 text-[12.5px] font-mono px-3 py-2 rounded-lg ${IB_INPUT}`}
-          style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+          className={`flex-1 text-[12.5px] font-mono px-3 py-2 rounded-[10px] ${IB_INPUT}`}
         />
         <button onClick={add} className={`px-3 py-2 rounded-lg text-[12px] flex items-center gap-1 ${IB_BUTTON}`}>
           <Plus className="w-3.5 h-3.5" /> Add
@@ -1368,7 +1545,7 @@ function ToolEditor({ tool, authFields, onChange, onDelete, dark }: {
     { value: "PATCH", label: "PATCH" }, { value: "DELETE", label: "DELETE" }, { value: "HEAD", label: "HEAD" },
   ];
   return (
-    <div className="rounded-lg border" style={{ background: dark ? "#070a0f" : "#fff", borderColor: "var(--wf-border)" }}>
+    <div className="wf-card rounded-[12px]">
       <div className="px-3 py-2 flex items-center gap-2">
         <button onClick={() => setOpen(o => !o)} className="wf-fg-faint">
           {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -1417,13 +1594,13 @@ function ToolEditor({ tool, authFields, onChange, onDelete, dark }: {
                       onChange={(e) => onChange({ ...tool, args: tool.args.map((x, j) => j === i ? { ...x, name: e.target.value.replace(/[^a-zA-Z0-9_]/g, "_") } : x) })}
                       placeholder="arg_name"
                       className="text-[12px] font-mono px-2 py-1.5 rounded border"
-                      style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+                      style={{ background: "var(--wf-bg-elevated, #141414)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
                     />
                     <select
                       value={a.type}
                       onChange={(e) => onChange({ ...tool, args: tool.args.map((x, j) => j === i ? { ...x, type: e.target.value as ArgType } : x) })}
                       className="text-[12px] px-2 py-1.5 rounded border"
-                      style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+                      style={{ background: "var(--wf-bg-elevated, #141414)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
                     >
                       <option value="string">string</option>
                       <option value="number">number</option>
@@ -1499,8 +1676,8 @@ function KvList({ title, pairs, onChange, keyPlaceholder, valuePlaceholder }: {
         <div className="space-y-1">
           {pairs.map((p, i) => (
             <div key={i} className="grid grid-cols-[1fr_1.4fr_auto] gap-1.5 items-center">
-              <input value={p.k} onChange={(e) => onChange(pairs.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} placeholder={keyPlaceholder} className="text-[12px] font-mono px-2 py-1.5 rounded border" style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }} />
-              <input value={p.v} onChange={(e) => onChange(pairs.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} placeholder={valuePlaceholder} className="text-[12px] font-mono px-2 py-1.5 rounded border" style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }} />
+              <input value={p.k} onChange={(e) => onChange(pairs.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} placeholder={keyPlaceholder} className="text-[12px] font-mono px-2 py-1.5 rounded border" style={{ background: "var(--wf-bg-elevated, #141414)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }} />
+              <input value={p.v} onChange={(e) => onChange(pairs.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} placeholder={valuePlaceholder} className="text-[12px] font-mono px-2 py-1.5 rounded border" style={{ background: "var(--wf-bg-elevated, #141414)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }} />
               <button onClick={() => onChange(pairs.filter((_, j) => j !== i))} className="text-rose-400 hover:text-rose-300"><Trash2 className="w-3 h-3" /></button>
             </div>
           ))}
@@ -1526,7 +1703,7 @@ function BodyEditor({ body, setBody, method }: { body: BodyForm; setBody: (b: Bo
             else setBody({ kind: "text", contentType: "text/plain", value: "" });
           }}
           className="text-[11.5px] px-2 py-1 rounded border"
-          style={{ background: "var(--wf-bg-elevated, #0a0c10)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+          style={{ background: "var(--wf-bg-elevated, #141414)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
         >
           <option value="none">None</option>
           <option value="json">JSON</option>
@@ -1647,7 +1824,7 @@ function JsonView({ draft, setDraft, dark }: { draft: Draft; setDraft: (d: Draft
         readOnly={!pasteMode}
         spellCheck={false}
         className="flex-1 w-full p-3 font-mono text-[12.5px] leading-[1.55] rounded-lg border resize-none focus:outline-none"
-        style={{ background: dark ? "#070a0f" : "#fafafa", borderColor: "var(--wf-border)", color: "var(--wf-fg)", tabSize: 2 }}
+        style={{ background: dark ? "#0f0f0f" : "#fafafa", borderColor: "var(--wf-border)", color: "var(--wf-fg)", tabSize: 2 }}
       />
     </div>
   );
@@ -1692,7 +1869,7 @@ function TestPane({ dark, draft, secrets, setSecrets, selectedTool, setSelectedT
               value={secrets[f.name] || ""}
               onChange={(e) => setSecrets({ ...secrets, [f.name]: e.target.value })}
               className={`w-full text-[12.5px] font-mono px-3 py-2 rounded-lg ${IB_INPUT}`}
-              style={{ background: dark ? "#0a0c10" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+              style={{ background: dark ? "#141414" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
             />
             {f.hint && <div className="text-[10.5px] wf-fg-faint">{f.hint}</div>}
           </div>
@@ -1707,7 +1884,7 @@ function TestPane({ dark, draft, secrets, setSecrets, selectedTool, setSelectedT
             value={selectedTool}
             onChange={(e) => setSelectedTool(e.target.value)}
             className="w-full text-[12.5px] px-3 py-2 rounded-lg border"
-            style={{ background: dark ? "#0a0c10" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+            style={{ background: dark ? "#141414" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
             disabled={!draft.tools.length}
           >
             {!draft.tools.length && <option value="">(add a tool first)</option>}
@@ -1779,7 +1956,7 @@ function TestPane({ dark, draft, secrets, setSecrets, selectedTool, setSelectedT
 }
 
 function ArgInput({ arg, value, onChange, dark }: { arg: ToolArg; value: any; onChange: (v: any) => void; dark: boolean }) {
-  const baseStyle = { background: dark ? "#0a0c10" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" };
+  const baseStyle = { background: dark ? "#141414" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" };
   const icon =
     arg.type === "boolean" ? <ToggleLeft className="w-3 h-3" /> :
     arg.type === "string" ? <AlignLeft className="w-3 h-3" /> :
@@ -1823,7 +2000,7 @@ function ResponseView({ result, dark }: { result: any; dark: boolean }) {
         {status !== null && <span>HTTP {status}</span>}
         {typeof result?.elapsed_ms === "number" && <span>{result.elapsed_ms} ms</span>}
       </div>
-      <pre className="flex-1 overflow-auto font-mono text-[12px] leading-[1.55] p-3 rounded-lg border" style={{ background: dark ? "#070a0f" : "#fafafa", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}>
+      <pre className="flex-1 overflow-auto font-mono text-[12px] leading-[1.55] p-3 rounded-lg border" style={{ background: dark ? "#0f0f0f" : "#fafafa", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}>
 {txt}
       </pre>
     </div>
@@ -1934,7 +2111,7 @@ function AIPane({
             placeholder="Ask the assistant to add a tool, look up a doc, or fix an error…"
             rows={2}
             className={`w-full text-[12.5px] px-3 py-2 pr-12 rounded-xl ${IB_INPUT} resize-none`}
-            style={{ background: dark ? "#0a0c10" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+            style={{ background: dark ? "#141414" : "#fff", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
           />
           {busy ? (
             <button
@@ -1951,7 +2128,7 @@ function AIPane({
               className="absolute right-2 bottom-2 p-1.5 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
               style={{
                 background: "color-mix(in srgb, var(--wf-fg, #fff) 88%, transparent)",
-                color: dark ? "#0a0c10" : "#fff",
+                color: dark ? "#141414" : "#fff",
               }}
               title="Send (Enter)"
             >
@@ -2062,7 +2239,7 @@ function AssistantTurn({ msg, dark }: { msg: AiAssistantMsg; dark: boolean }) {
       {msg.text && !msg.isStreaming && (
         <div
           className="text-[13px] leading-[1.6] wf-fg rounded-xl px-3 py-2.5 prose prose-sm max-w-none prose-p:my-1 prose-headings:font-semibold prose-headings:text-[13px] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[11px] prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[11px]"
-          style={{ background: dark ? "#0a0c10" : "#f4f4f5" }}
+          style={{ background: dark ? "#141414" : "#f4f4f5" }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
         </div>
@@ -2071,7 +2248,7 @@ function AssistantTurn({ msg, dark }: { msg: AiAssistantMsg; dark: boolean }) {
       {msg.isStreaming && msg.text && (
         <div
           className="text-[13px] leading-[1.6] wf-fg-muted rounded-xl px-3 py-2.5 whitespace-pre-wrap break-words"
-          style={{ background: dark ? "#0a0c10" : "#f4f4f5" }}
+          style={{ background: dark ? "#141414" : "#f4f4f5" }}
         >
           {msg.text}
           <span className="inline-block w-1.5 h-3 ml-0.5 align-middle animate-pulse" style={{ background: "currentColor", opacity: 0.6 }} />

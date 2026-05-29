@@ -1,0 +1,10 @@
+.codex-pytest-tmp/
+pytest-cache-files-*/
+_tmp_docs/
+apps/agent/.pytest-local/
+apps/agent/.pytest-run-*/
+apps/agent/.pytest-tmp/
+apps/agent/test-temp-pytest/
+apps/agent/tests/_tmp_docs/
+apps/agent/_tmp_ws_forward_tests/
+apps/agent/%TEMP%/

@@ -16,7 +16,7 @@ import { proactiveService } from './proactive-service';
 import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
 import { intervalDelayMs } from '@stuardai/bots-core';
-import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, isProactiveSkipResponse, splitProactiveStructuredContent } from './proactive-scheduler-utils';
+import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, isProactiveSkipResponse, splitProactiveStructuredContent, type BotPermissionGate } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
 import type { RouterContext } from '../tools/types';
@@ -162,6 +162,43 @@ function normalizeProactiveModelMode(value: any): ProactiveModelMode {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'auto' || raw === 'fast' || raw === 'balanced' || raw === 'smart') return raw;
   return 'balanced';
+}
+
+/**
+ * Build the per-agent permission gate for a local run from its config. The
+ * gate decides whether a sensitive tool (write/delete files, run_command,
+ * terminal) runs straight away or pops a blocking approval prompt — the same
+ * allow/deny notification the main chat uses (requestToolApproval).
+ */
+function buildBotPermissionGate(config: any, botName: string): BotPermissionGate {
+  const mode: BotPermissionGate['mode'] =
+    config?.permissionMode === 'auto' || config?.permissionMode === 'manual' || config?.permissionMode === 'selective'
+      ? config.permissionMode
+      : 'selective';
+  const autoApprove = Array.isArray(config?.autoApproveTools)
+    ? config.autoApproveTools.map((x: any) => String(x || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const label = String(botName || '').trim() || 'Your agent';
+  return {
+    mode,
+    autoApprove,
+    requestApproval: async (toolName: string, args: any) => {
+      try {
+        const { requestToolApproval } = await import('./tool-approval');
+        const human = String(toolName || 'a tool').replace(/_/g, ' ');
+        return await requestToolApproval({
+          id: `bot-approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          tool: toolName,
+          toolOriginal: toolName,
+          approvalArgs: args && typeof args === 'object' ? args : undefined,
+          description: `${label} wants to use ${human}.`,
+          timeoutMs: 55_000,
+        });
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 function buildModelSelection(config: any): { model?: ProactiveModelMode; modelId?: string; modelConfig?: ChatModelsSettings } {
@@ -489,7 +526,9 @@ ${contextToUse}
           accessToken: token || undefined,
           logFn: (msg) => logger.info(`[proactive-scheduler reply] ${msg}`),
           proactiveBotId: botId,
+          preapproved: true,
         };
+        const permissionGate = buildBotPermissionGate(config, botName);
 
         const onMessage = async (raw: WebSocket.RawData) => {
           if (resolved) return;
@@ -504,6 +543,7 @@ ${contextToUse}
                 toolCtx,
                 execTool,
                 Array.isArray(config.allowedTools) ? config.allowedTools : [],
+                permissionGate,
               );
               try {
                 ws.send(JSON.stringify(toolResult));
@@ -741,7 +781,14 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
     // Tools invoked during this run (e.g. proactive_task_create) inherit the
     // botId so kanban mutations are scoped to the calling bot.
     proactiveBotId: typeof payload?.botId === 'string' ? payload.botId : undefined,
+    // The per-agent gate below is authoritative for bot runs — tell the local
+    // tool bridge not to pop a second Python-side approval prompt.
+    preapproved: true,
   };
+  const permissionGate = buildBotPermissionGate(
+    payload?.config || {},
+    typeof payload?.botName === 'string' ? payload.botName : '',
+  );
 
   return new Promise<WakeUpExecutionResult>((resolve) => {
     let resolved = false;
@@ -826,6 +873,7 @@ async function executeLocal(logId: string, payload: any): Promise<WakeUpExecutio
             toolCtx,
             execTool,
             Array.isArray(payload?.config?.allowedTools) ? payload.config.allowedTools : [],
+            permissionGate,
           );
           try {
             ws.send(JSON.stringify(toolResult));
@@ -1287,6 +1335,13 @@ async function executeWakeUp(opts: {
     // We keep them in separate fields so each path can render them under
     // clear headings (`## USER INSTRUCTIONS` vs `## YOUR PRIVATE KANBAN`)
     // instead of dumping everything into one undifferentiated blob.
+    if (config.memoryEnabled) {
+      botMemoryService.updateProfile(botId, {
+        name: bot.name,
+        systemPrompt: bot.systemPrompt || '',
+        preferences: bot.storedFacts || '',
+      });
+    }
     const kanbanSection = config.memoryEnabled ? botMemoryService.formatForPrompt(botId) : '';
     const focusInstructions = [
       bot.systemPrompt?.trim() ? `# Identity & objective\n${bot.systemPrompt.trim()}` : '',
@@ -1303,6 +1358,9 @@ async function executeWakeUp(opts: {
         modelMode: normalizeProactiveModelMode((config as any).modelMode),
         modelId: String((config as any).modelId || '').trim(),
         modelConfig: modelSelection.modelConfig,
+        // Per-bot tool autonomy — read by executeLocal's approval gate.
+        permissionMode: config.permissionMode,
+        autoApproveTools: config.autoApproveTools,
       },
       kanbanContext: kanbanSection || undefined,
       context: {

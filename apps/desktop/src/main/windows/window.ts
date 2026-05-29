@@ -929,6 +929,12 @@ export function closeVoiceTestWindow() {
 }
 
 export function openDashboardWindow(options?: { tab?: string }) {
+  // Agents moved out of the dashboard into Stuard Studio. Redirect stale deep
+  // links (the old 'bots' tab + the retired 'proactive' view) to Studio Agents.
+  if (options?.tab === 'bots' || options?.tab === 'proactive') {
+    openWorkflowsWindow({ view: 'agents' });
+    return;
+  }
   const initialTab = options?.tab || '';
 
   if (dashboardWin && !dashboardWin.isDestroyed()) {
@@ -1007,7 +1013,7 @@ export function openDashboardWindow(options?: { tab?: string }) {
   dashboardWin = d;
 }
 
-export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) {
+export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) {
   const initialSlug = options?.marketplaceSlug || '';
   const initialWorkflowId = options?.workflowId || '';
   const initialView = options?.view || '';

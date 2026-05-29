@@ -3,6 +3,8 @@ import { buildKnowledgeContext, computeCompositeScore, hasTemporalIntent, mmrRer
 import { buildAttachmentParts } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import type { AgentType } from './types';
+import type { MemoryOwnerScope } from '../../memory/conversations';
+import { isQuickChatRequest } from './quick-request';
 
 interface BuildInputMessagesArgs {
   msg: any;
@@ -18,6 +20,7 @@ interface BuildInputMessagesArgs {
    * boost (P6).
    */
   conversationId?: string | null;
+  memoryOwner?: MemoryOwnerScope;
 }
 
 export async function buildInputMessages({
@@ -29,6 +32,7 @@ export async function buildInputMessages({
   agentType,
   agent,
   conversationId,
+  memoryOwner,
 }: BuildInputMessagesArgs) {
   const recentHistory = history.slice(-50) as any[];
   let inputMessages: any[] = providedMessages && providedMessages.length > 0
@@ -40,8 +44,8 @@ export async function buildInputMessages({
   prependCompactContextMessage(msg, inputMessages, enabledIntegrations);
   prependHiddenContext(msg, inputMessages);
 
-  if (agentType !== 'workflow' && agentType !== 'skill') {
-    inputMessages = await appendKnowledgeContext(prompt, inputMessages, conversationId);
+  if (agentType !== 'workflow' && agentType !== 'skill' && !isQuickChatRequest(msg)) {
+    inputMessages = await appendKnowledgeContext(prompt, inputMessages, conversationId, memoryOwner);
   }
 
   logTokenBreakdown(inputMessages, agent);
@@ -228,7 +232,12 @@ const SECTION_RENDER_ORDER = [
   'PENDING_MEMORIES',
 ];
 
-async function appendKnowledgeContext(prompt: string, inputMessages: any[], activeConversationId?: string | null) {
+async function appendKnowledgeContext(
+  prompt: string,
+  inputMessages: any[],
+  activeConversationId?: string | null,
+  memoryOwner?: MemoryOwnerScope,
+) {
   const useParallelEmbeddings = process.env.SIS_PARALLEL_EMBEDDINGS === '1';
 
   if (useParallelEmbeddings && prompt) {
@@ -244,11 +253,11 @@ async function appendKnowledgeContext(prompt: string, inputMessages: any[], acti
           queryEmbedding,
           activeConversationId,
         }).catch(() => null),
-        memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD })
+        memoryService.searchSegmentsByEmbedding(queryEmbedding, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD, owner: memoryOwner })
           .catch(() => [] as Awaited<ReturnType<typeof memoryService.searchSegmentsByEmbedding>>),
         // P5: pre-computed topic-level digests. Cheap (one bridge call, no LLM).
         // Skipped silently on bridge errors so it never blocks the prompt.
-        memoryService.buildCollectionContext(queryEmbedding, { maxTopics: 2 })
+        memoryService.buildCollectionContext(queryEmbedding, { maxTopics: 2, owner: memoryOwner })
           .catch(() => ''),
       ]);
 
@@ -279,7 +288,7 @@ async function appendKnowledgeContext(prompt: string, inputMessages: any[], acti
   try {
     const query = String(prompt || '').trim();
     if (query) {
-      segmentMatches = await memoryService.searchSegments(query, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD });
+      segmentMatches = await memoryService.searchSegments(query, { limit: SEGMENT_FETCH_LIMIT, threshold: SEGMENT_FETCH_THRESHOLD, owner: memoryOwner });
     }
   } catch { }
 

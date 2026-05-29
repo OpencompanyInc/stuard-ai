@@ -109,7 +109,6 @@ export const CompactStatusPill: React.FC<CompactStatusPillProps> = ({
         onFocus={() => onHoverChange(true)}
         onBlur={() => onHoverChange(false)}
         onClick={() => onClick(item)}
-        title={item.ariaLabel || item.text}
         aria-expanded={statusExpanded}
         aria-label={item.ariaLabel || item.text}
       >

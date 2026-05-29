@@ -181,7 +181,7 @@ const NotificationListener = () => {
                         variant: 'primary',
                         keepNotification: true,
                         onClick: () => {
-                            (window as any).desktopAPI?.openDashboard?.({ tab: 'proactive' });
+                            (window as any).desktopAPI?.openWorkflows?.({ view: 'agents' });
                         },
                     },
                 ],

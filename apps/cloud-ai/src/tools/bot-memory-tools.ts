@@ -59,6 +59,19 @@ const logOutput = z.object({
   error: z.string().optional(),
 });
 
+const profileSchema = z.object({
+  name: z.string().optional(),
+  preferences: z.string().optional(),
+  facts: z.string().optional(),
+  systemPrompt: z.string().optional(),
+});
+
+const profileOutput = z.object({
+  ok: z.boolean(),
+  profile: profileSchema.optional(),
+  error: z.string().optional(),
+});
+
 export const bot_memory_list = makeLocalTool(
   'bot_memory_list',
   'List the cards on YOUR private kanban (your working memory across runs). Optionally filter by status. These are your own notes — separate from the user\'s task board (use proactive_task_list for that).',
@@ -122,6 +135,29 @@ export const bot_memory_log = makeLocalTool(
   { noFallback: true },
 );
 
+export const bot_memory_profile_get = makeLocalTool(
+  'bot_memory_profile_get',
+  'Read YOUR fixed personal memory slots: name, preferences, facts, and systemPrompt. These are separate from kanban cards and should describe who you are and how you should behave.',
+  z.object({}),
+  profileOutput,
+  10000,
+  { noFallback: true },
+);
+
+export const bot_memory_profile_update = makeLocalTool(
+  'bot_memory_profile_update',
+  'Update YOUR fixed personal memory slots. Use these hardcoded slots for durable identity/preference/system-prompt style memory instead of creating kanban cards.',
+  z.object({
+    name: z.string().optional(),
+    preferences: z.string().optional(),
+    facts: z.string().optional(),
+    systemPrompt: z.string().optional().describe('Durable self-instructions/system prompt notes for this bot.'),
+  }),
+  profileOutput,
+  10000,
+  { noFallback: true },
+);
+
 export const agent_memory_list = makeLocalTool(
   'agent_memory_list',
   'List the cards on YOUR private kanban (your working memory across runs). Optionally filter by status. These are your own notes - separate from the user task board (use proactive_task_list for that).',
@@ -181,6 +217,29 @@ export const agent_memory_log = makeLocalTool(
     notes: z.string().optional().describe('Optional richer context for your future self.'),
   }),
   logOutput,
+  10000,
+  { noFallback: true },
+);
+
+export const agent_memory_profile_get = makeLocalTool(
+  'agent_memory_profile_get',
+  'Read YOUR fixed personal memory slots: name, preferences, facts, and systemPrompt. These are separate from kanban cards and should describe who you are and how you should behave.',
+  z.object({}),
+  profileOutput,
+  10000,
+  { noFallback: true },
+);
+
+export const agent_memory_profile_update = makeLocalTool(
+  'agent_memory_profile_update',
+  'Update YOUR fixed personal memory slots. Use these hardcoded slots for durable identity/preference/system-prompt style memory instead of creating kanban cards.',
+  z.object({
+    name: z.string().optional(),
+    preferences: z.string().optional(),
+    facts: z.string().optional(),
+    systemPrompt: z.string().optional().describe('Durable self-instructions/system prompt notes for this agent.'),
+  }),
+  profileOutput,
   10000,
   { noFallback: true },
 );

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import {
@@ -54,86 +54,132 @@ function pickFirstName(name: string | null | undefined, fallback: string): strin
   return raw.split(/\s+/)[0] || fallback;
 }
 
-// ─── Typewriter ────────────────────────────────────────────────────────────
+// ─── Light-develop reveal ───────────────────────────────────────────────────
+// A warm light edge sweeps left→right and the text "develops" behind it, then
+// stays. Replaces the old typewriter. The sweep is driven imperatively through
+// refs so React doesn't re-render on every animation frame.
 
-function useTypewriter(text: string, opts: { speed?: number; startDelay?: number } = {}) {
-  const { speed = 38, startDelay = 250 } = opts;
-  const [shown, setShown] = useState('');
-  const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    setShown('');
-    setDone(false);
-    let cancelled = false;
-    let t: ReturnType<typeof setTimeout> | undefined;
-
-    const tick = (i: number) => {
-      if (cancelled) return;
-      if (i > text.length) { setDone(true); return; }
-      setShown(text.slice(0, i));
-      t = setTimeout(() => tick(i + 1), speed);
-    };
-
-    t = setTimeout(() => tick(1), startDelay);
-    return () => { cancelled = true; if (t) clearTimeout(t); };
-  }, [text, speed, startDelay]);
-
-  return { shown, done };
+interface DevelopTiming {
+  holdMs?: number;        // beat to read each phrase before it fades out
+  tailMs?: number;        // pause after the final phrase before onComplete
+  revealBase?: number;    // base reveal duration, ms
+  revealPerChar?: number; // extra reveal time per character, ms
 }
 
-// Cycles through a list of phrases: types each, holds, backspaces, advances.
-// Calls onComplete after the last phrase finishes typing (and stays shown).
-function useTypewriterSequence(phrases: string[], opts: {
-  typeSpeed?: number; deleteSpeed?: number; holdMs?: number; gapMs?: number; tailMs?: number; startDelay?: number; onComplete?: () => void;
-} = {}) {
-  const {
-    typeSpeed = 42,
-    deleteSpeed = 26,
-    holdMs = 2200,    // give the user a real beat to read
-    gapMs = 550,      // breathing room between phrases
-    tailMs = 1800,    // pause after the FINAL phrase before advancing scenes
-    startDelay = 320,
-    onComplete,
-  } = opts;
-  const [shown, setShown] = useState('');
+function LightDevelopLine({
+  phrases,
+  single = false,
+  onRevealed,
+  onComplete,
+  timing,
+}: {
+  phrases: string[];
+  single?: boolean;
+  onRevealed?: () => void;
+  onComplete?: () => void;
+  timing?: DevelopTiming;
+}) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const glowRef = useRef<HTMLSpanElement>(null);
+
+  // Keep latest callbacks without restarting the animation loop.
+  const onRevealedRef = useRef(onRevealed); onRevealedRef.current = onRevealed;
+  const onCompleteRef = useRef(onComplete); onCompleteRef.current = onComplete;
+
+  const { holdMs = 1500, tailMs = 1100, revealBase = 320, revealPerChar = 9 } = timing || {};
+  const key = phrases.join('|');
 
   useEffect(() => {
+    const textEl = textRef.current;
+    const glowEl = glowRef.current;
+    if (!textEl) return;
     let cancelled = false;
-    let t: ReturnType<typeof setTimeout> | undefined;
-    const wait = (ms: number) => new Promise<void>(r => { t = setTimeout(r, ms); });
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    const wait = (ms: number) => new Promise<void>(r => { timer = setTimeout(r, ms); });
+
+    const reveal = (text: string) => new Promise<void>(resolve => {
+      textEl.textContent = text;
+      textEl.style.opacity = '1';
+      if (reduce) {
+        textEl.style.maskImage = 'none'; textEl.style.webkitMaskImage = 'none';
+        if (glowEl) glowEl.style.opacity = '0';
+        resolve();
+        return;
+      }
+      const dur = revealBase + text.length * revealPerChar;
+      const width = textEl.offsetWidth;
+      const start = performance.now();
+      if (glowEl) glowEl.style.opacity = '0.9';
+      const frame = (now: number) => {
+        if (cancelled) { resolve(); return; }
+        const p = Math.min(1.12, (now - start) / dur);
+        const pct = p * 100;
+        const mask = `linear-gradient(90deg, #000 ${pct - 7}%, rgba(0,0,0,0) ${pct + 5}%)`;
+        textEl.style.maskImage = mask; textEl.style.webkitMaskImage = mask;
+        if (glowEl) {
+          glowEl.style.left = `${Math.min(width, p * width)}px`;
+          glowEl.style.opacity = p >= 1.05 ? '0' : '0.9';
+        }
+        if (p >= 1.12) {
+          textEl.style.maskImage = 'none'; textEl.style.webkitMaskImage = 'none';
+          resolve();
+          return;
+        }
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    });
+
+    const fadeOut = async () => {
+      textEl.style.transition = 'opacity 0.3s ease';
+      textEl.style.opacity = '0';
+      await wait(320);
+      textEl.style.transition = '';
+    };
 
     const run = async () => {
-      await wait(startDelay);
-      for (let p = 0; p < phrases.length; p++) {
+      for (let i = 0; i < phrases.length; i++) {
         if (cancelled) return;
-        const phrase = phrases[p];
-        for (let i = 1; i <= phrase.length; i++) {
-          if (cancelled) return;
-          setShown(phrase.slice(0, i));
-          await wait(typeSpeed);
-        }
-        if (p === phrases.length - 1) {
+        await reveal(phrases[i]);
+        if (cancelled) return;
+        if (single) { onRevealedRef.current?.(); return; }
+        if (i === phrases.length - 1) {
           await wait(tailMs);
           if (cancelled) return;
-          onComplete?.();
+          onCompleteRef.current?.();
           return;
         }
         await wait(holdMs);
         if (cancelled) return;
-        for (let i = phrase.length - 1; i >= 0; i--) {
-          if (cancelled) return;
-          setShown(phrase.slice(0, i));
-          await wait(deleteSpeed);
-        }
-        await wait(gapMs);
+        await fadeOut();
       }
     };
     void run();
-    return () => { cancelled = true; if (t) clearTimeout(t); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  return shown;
+    return () => { cancelled = true; cancelAnimationFrame(raf); if (timer) clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, single]);
+
+  return (
+    <span className="relative inline-block">
+      <p
+        ref={textRef}
+        className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[42ch] mx-auto"
+        style={{ textShadow: '0 2px 24px rgba(40,10,12,0.7), 0 0 2px rgba(0,0,0,0.5)' }}
+      />
+      <span
+        ref={glowRef}
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 h-[1.6em] w-[60px] -translate-x-1/2 -translate-y-1/2 opacity-0"
+        style={{
+          background: 'radial-gradient(closest-side, rgba(255,180,160,0.55), rgba(255,180,160,0) 72%)',
+          filter: 'blur(6px)',
+        }}
+      />
+    </span>
+  );
 }
 
 // ─── Red atmospheric glow ─────────────────────────────────────────────────
@@ -271,17 +317,7 @@ function RedGlow() {
 // ─── Stuard line ───────────────────────────────────────────────────────────
 
 function StuardLine({ text, onTypingDone }: { text: string; onTypingDone?: () => void }) {
-  const { shown, done } = useTypewriter(text);
-  useEffect(() => { if (done) onTypingDone?.(); }, [done, onTypingDone]);
-  return (
-    <p
-      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[42ch] mx-auto"
-      style={{ textShadow: '0 2px 24px rgba(40,10,12,0.7), 0 0 2px rgba(0,0,0,0.5)' }}
-    >
-      {shown}
-      <span className="inline-block w-[2px] h-[0.95em] bg-white/55 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
-    </p>
-  );
+  return <LightDevelopLine phrases={[text]} single onRevealed={onTypingDone} />;
 }
 
 function StuardLineSequence({
@@ -291,18 +327,9 @@ function StuardLineSequence({
 }: {
   phrases: string[];
   onComplete: () => void;
-  timing?: Parameters<typeof useTypewriterSequence>[1];
+  timing?: DevelopTiming;
 }) {
-  const shown = useTypewriterSequence(phrases, { ...timing, onComplete });
-  return (
-    <p
-      className="text-center text-[clamp(1.05rem,1.55vw,1.3rem)] font-extralight leading-relaxed text-white/95 max-w-[42ch] mx-auto"
-      style={{ textShadow: '0 2px 24px rgba(40,10,12,0.7), 0 0 2px rgba(0,0,0,0.5)' }}
-    >
-      {shown}
-      <span className="inline-block w-[2px] h-[0.95em] bg-white/55 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
-    </p>
-  );
+  return <LightDevelopLine phrases={phrases} onComplete={onComplete} timing={timing} />;
 }
 
 // ─── Wake-word listening indicator ────────────────────────────────────────
@@ -618,7 +645,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
           <SceneShell stepKey="story">
             <StuardLineSequence
               phrases={storyPhrases}
-              timing={{ holdMs: 1900, tailMs: 1400, typeSpeed: 36 }}
+              timing={{ holdMs: 1900, tailMs: 1400 }}
               onComplete={() => setScene('acknowledge')}
             />
           </SceneShell>
@@ -652,6 +679,14 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
                 <ListenIndicator active={listening} />
               )}
             </div>
+            {!wakewordHeard && (
+              <button
+                onClick={() => setScene('hotkey-intro')}
+                className="mt-7 text-[12px] tracking-wide text-white/40 transition-colors duration-300 hover:text-white/70"
+              >
+                Skip voice setup
+              </button>
+            )}
           </SceneShell>
         );
 
@@ -670,6 +705,14 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
                 <ListenIndicator active={listening} />
               )}
             </div>
+            {!wakewordHeard && (
+              <button
+                onClick={() => setScene('hotkey-intro')}
+                className="mt-7 text-[12px] tracking-wide text-white/40 transition-colors duration-300 hover:text-white/70"
+              >
+                Skip voice setup
+              </button>
+            )}
           </SceneShell>
         );
 

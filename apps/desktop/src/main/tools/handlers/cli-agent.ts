@@ -260,6 +260,7 @@ async function sendInitialPromptWhenReady(
   prompt: string,
   readyTimeoutMs: number,
   fallbackDelayMs: number,
+  submitDelayMs: number,
   ctx: RouterContext,
 ): Promise<void> {
   const session = cliSessions.get(sessionId);
@@ -294,16 +295,43 @@ async function sendInitialPromptWhenReady(
     return;
   }
 
-  const ok = ptyManager.write(live.terminalSessionId, `${prompt}\r`);
+  // Type the prompt and submit it as TWO separate PTY writes with a gap in
+  // between — do NOT send `${prompt}\r` in one write. Ink-based REPLs (Claude
+  // Code especially) treat a single large byte burst as a *paste*: a `\r`
+  // arriving in the same chunk as the text is absorbed into the input as a
+  // literal newline instead of firing "submit", so the prompt ends up sitting
+  // in the input box unsent — yet the PTY write returns ok, so the harness
+  // wrongly marked it 'sent'. Writing the text, letting the paste window
+  // close, then sending Enter on its own makes the CR register as a submit
+  // keystroke. This is exactly the manual "send text → send a separate Enter"
+  // sequence that works.
+  const typed = ptyManager.write(live.terminalSessionId, prompt);
+  if (!typed) {
+    live.initialPrompt = {
+      ...live.initialPrompt,
+      state: 'failed',
+      readyWaitedMs: readyWaited,
+      readyMatched,
+      error: 'write_failed_or_session_not_running',
+    };
+    ctx.logFn(`${spec.label} session ${sessionId}: prompt write failed`);
+    return;
+  }
+
+  await new Promise((r) => setTimeout(r, submitDelayMs));
+
+  const submitted = ptyManager.write(live.terminalSessionId, '\r');
   live.initialPrompt = {
     ...live.initialPrompt,
-    state: ok ? 'sent' : 'failed',
-    sentAt: ok ? Date.now() : undefined,
+    state: submitted ? 'sent' : 'failed',
+    sentAt: submitted ? Date.now() : undefined,
     readyWaitedMs: readyWaited,
     readyMatched,
-    error: ok ? undefined : 'write_failed_or_session_not_running',
+    error: submitted ? undefined : 'submit_write_failed_or_session_not_running',
   };
-  ctx.logFn(`${spec.label} session ${sessionId}: prompt ${ok ? 'sent' : 'failed'} after ${readyWaited}ms ready-wait`);
+  ctx.logFn(
+    `${spec.label} session ${sessionId}: prompt ${submitted ? 'sent' : 'submit-failed'} after ${readyWaited}ms ready-wait (typed text + separate Enter, ${submitDelayMs}ms gap)`,
+  );
 }
 
 const cliSessions = new Map<string, CliAgentSession>();
@@ -682,7 +710,14 @@ export async function execCliAgentStart(args: any, ctx: RouterContext): Promise<
         0,
         Number(args?.promptDelayMs ?? args?.prompt_delay_ms ?? 1200) || 1200,
       );
-      void sendInitialPromptWhenReady(id, spec, prompt, readyTimeoutMs, fallbackDelayMs, ctx)
+      // Gap between typing the prompt text and sending the submit Enter. Must
+      // be long enough for the REPL's paste-detection window to close so the
+      // Enter is read as a distinct keystroke (see sendInitialPromptWhenReady).
+      const submitDelayMs = Math.max(
+        0,
+        Number(args?.submitDelayMs ?? args?.submit_delay_ms ?? 400) || 400,
+      );
+      void sendInitialPromptWhenReady(id, spec, prompt, readyTimeoutMs, fallbackDelayMs, submitDelayMs, ctx)
         .catch((e) => {
           const live = cliSessions.get(id);
           if (live?.initialPrompt?.state === 'pending') {

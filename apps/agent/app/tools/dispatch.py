@@ -854,6 +854,15 @@ _TOOL_METADATA["list_tools"] = ("core", "List all available tools with optional 
 _TOOL_METADATA["get_tool_info"] = ("core", "Get detailed information about a specific tool")
 _TOOL_METADATA["list_tool_categories"] = ("core", "List all tool categories with counts")
 
+# Desktop-local OAuth token store. Internal infra commands (intentionally NOT in
+# _TOOL_METADATA so they stay out of the agent's tool catalog) — cloud-ai calls
+# these over the bridge to keep OAuth tokens on the device instead of Supabase.
+from ..storage import oauth_db as _oauth_db  # noqa: E402
+_HANDLERS["store_oauth_tokens"] = _oauth_db.store_oauth_tokens_handler
+_HANDLERS["get_oauth_token"] = _oauth_db.get_oauth_token_handler
+_HANDLERS["oauth_list"] = _oauth_db.oauth_list_handler
+_HANDLERS["remove_oauth_tokens"] = _oauth_db.remove_oauth_tokens_handler
+
 
 async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
     handler = _HANDLERS.get(tool)

@@ -369,11 +369,15 @@ export {
   agent_memory_update,
   agent_memory_delete,
   agent_memory_log,
+  agent_memory_profile_get,
+  agent_memory_profile_update,
   bot_memory_list,
   bot_memory_create,
   bot_memory_update,
   bot_memory_delete,
   bot_memory_log,
+  bot_memory_profile_get,
+  bot_memory_profile_update,
 } from './bot-memory-tools';
 
 // ═══════════════════════════════════════════════════════════════════════════════

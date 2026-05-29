@@ -561,6 +561,25 @@ export function clearSessionWorkflow(): void {
   _sessionWorkflowFallback = null;
 }
 
+/**
+ * Resolve a workflow by id from the shared module-level map.
+ *
+ * Why this exists: workflow-agent tools run inside their OWN withClientBridge
+ * (a fresh `state` Map — see agents/workflow-agent/index.ts), so a tool's
+ * `setBridgeState(_BRIDGE_KEY, wf)` write lands in a throwaway store and never
+ * reaches the request-level ALS that the stream relay reads. The relay's
+ * `getSessionWorkflow()` therefore returns the PRE-edit workflow that
+ * prepare-chat-request stored, which would clobber the canvas with stale data.
+ * The tool always also `workflowMap.set(wf.id, wf)`, so keying off the workflow
+ * id gives the freshly-modified copy while staying isolated per workflow (no
+ * cross-tab bleeding the way the bare module fallback would risk).
+ */
+export function getWorkflowById(id: string): Workflow | null {
+  if (!id || typeof id !== 'string') return null;
+  const fromMap = workflowMap.get(id);
+  return fromMap && typeof fromMap === 'object' ? (fromMap as Workflow) : null;
+}
+
 // ============================================================================
 // applyOp — apply a SINGLE operation to a workflow in place.
 //
@@ -915,26 +934,13 @@ DO NOT pass the full workflow JSON - just pass the operation(s) and parameters.
 
 TRIGGERS ARE STEPS: use update_node/remove_node with the trigger id (e.g. "trig_0").
 
-★ BATCH MULTIPLE CHANGES IN ONE CALL ★
-Building or restructuring a workflow with many steps? Pass an "ops" array and apply
-them ALL in a single call instead of one call per change. This is dramatically cheaper
-(one call, one returned diagram) and is the preferred way to author or heavily edit a flow.
+BATCH: pass an "ops" array to apply many changes in ONE call (preferred & far cheaper —
+ops run in order, later ops see earlier ones, give a freshly-added node an explicit "id"
+to wire to it within the same batch). Each op is reported in "results"; a failed op does
+not abort the rest. Use the single-op form (top-level "op") for one-off edits.
 
-  {
-    ops: [
-      { op: "add_node", id: "analyze", tool: "analyze_media", args: { ... }, connectFrom: "trig_0" },
-      { op: "add_node", id: "save",    tool: "sql_query",    args: { ... }, connectFrom: "analyze" },
-      { op: "add_wire", from: "save", to: "confirm" }
-    ]
-  }
-
-  • Ops run in order against ONE workflow; later ops see earlier ops' changes.
-  • Give add_node an explicit "id" when a later op in the same batch must wire to it
-    (you can't reference an auto-generated id mid-batch).
-  • Best-effort: each op is reported in a "results" array; a failed op does not abort
-    the others. Read "results" and resend a corrective batch for any failures.
-
-Use the single-op form below for one-off edits.
+  { ops: [ { op: "add_node", id: "save", tool: "sql_query", args: {...}, connectFrom: "trig_0" },
+           { op: "add_wire", from: "save", to: "confirm" } ] }
 
 OPERATIONS:
 
@@ -967,10 +973,7 @@ ADD_VARIABLE - Add workflow variable
 RENAME - Change workflow name
   { op: "rename", name: "New Name" }
 
-STUARD FILE TARGETING:
-  By default, modify_workflow edits the main workflow (main.stuard).
-  To modify a sub-workflow .stuard file, pass stuardFile:
-  { op: "add_node", tool: "log", args: { message: "hi" }, stuardFile: "helpers/send-email.stuard" }`,
+Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); defaults to the main workflow.`,
 
   inputSchema: z.object({
     ...opItemShape,
@@ -1166,6 +1169,7 @@ STUARD FILE TARGETING:
 
       const uiResult = {
         ok: true as const,
+        workflowId: wf.id,
         message: finalMessage,
         diagram,
         affectedFlow,
@@ -1179,6 +1183,10 @@ STUARD FILE TARGETING:
 
       const modelResult = {
         ok: true as const,
+        // Carry the id (tiny string, safe for model history) so the stream
+        // relay can re-attach the FRESH workflow by id for the UI even though
+        // the model-facing result intentionally omits the full workflow JSON.
+        workflowId: wf.id,
         message: finalMessage,
         diagram,
         affectedFlow,

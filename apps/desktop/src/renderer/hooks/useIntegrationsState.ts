@@ -147,6 +147,37 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           : []),
       ]);
 
+      // Device-local Google status: tokens are held in the local encrypted
+      // store, which cloud-ai can't see over plain HTTP (it returns
+      // deviceLocal). Resolve per-product connection from the local store and
+      // OR it into the server view. Scope→product mapping mirrors the server's
+      // SCOPE_MAP in routes/integrations/google.ts — keep in sync.
+      try {
+        const resp = await fetch(`${AGENT_HTTP}/v1/tools/exec`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: 'oauth_list', args: {} }),
+        });
+        const j = await resp.json().catch(() => null);
+        const tokens = j && (j as any).ok && Array.isArray((j as any).tokens) ? (j as any).tokens : [];
+        const google = tokens.find((t: any) => String(t?.provider || '').toLowerCase() === 'google');
+        if (google) {
+          const scopes = new Set((Array.isArray(google.scopes) ? google.scopes : []).map((s: any) => String(s)));
+          const has = (s: string) => scopes.has(s);
+          const localGoogle: Record<string, boolean> = {
+            gmail: has('https://www.googleapis.com/auth/gmail.send'),
+            'google-drive': has('https://www.googleapis.com/auth/drive.file'),
+            'google-calendar': has('https://www.googleapis.com/auth/calendar.events'),
+            'google-sheets': has('https://www.googleapis.com/auth/spreadsheets'),
+            'google-docs': has('https://www.googleapis.com/auth/documents'),
+            'google-tasks': has('https://www.googleapis.com/auth/tasks'),
+          };
+          for (const [slug, connected] of Object.entries(localGoogle)) {
+            if (connected) serverConnected[slug] = true;
+          }
+        }
+      } catch {}
+
       setConnectedMap((prev) => {
         const next: Record<string, boolean> = {};
         // Preserve local-only integration states
@@ -181,7 +212,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         return next;
       });
     } catch {}
-  }, [session?.access_token, CLOUD_AI_HTTP]);
+  }, [session?.access_token, CLOUD_AI_HTTP, AGENT_HTTP]);
 
   useEffect(() => {
     if (!statusChecksEnabled) return;
@@ -1217,6 +1248,37 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    // Device-local OAuth: after the browser consent completes, cloud-ai stages
+    // the freshly-minted token for one-time pickup. Claim it over the
+    // authenticated endpoint and write it into the local encrypted store via the
+    // local agent — the token never lands in Supabase. Returns true once stored.
+    const claimAndStoreLocally = async (): Promise<boolean> => {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/oauth/claim`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const j = await resp.json().catch(() => null);
+          const tokens = j && (j as any).ok && Array.isArray((j as any).tokens) ? (j as any).tokens : [];
+          if (tokens.length > 0) {
+            try {
+              const storeResp = await fetch(`${AGENT_HTTP}/v1/tools/exec`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool: 'store_oauth_tokens', args: { replace: false, tokens } }),
+              });
+              const sj = await storeResp.json().catch(() => null);
+              return !!(sj && (sj as any).ok);
+            } catch {
+              return false;
+            }
+          }
+        } catch {}
+        await sleep(2000);
+      }
+      return false;
+    };
+
     const pollStatus = async (url: string, slugKey: string) => {
       for (let attempt = 0; attempt < 30; attempt++) {
         try {
@@ -1337,7 +1399,21 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/google/connect?token=${encodeURIComponent(token)}&target=${encodeURIComponent(target)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}${profileParam}`, slug);
+      // Desktop holds the token locally: claim + store it. On success mark
+      // connected (the cloud status can't see device-held tokens). If nothing is
+      // claimed (e.g. a VM-primary user), fall back to cloud status polling,
+      // which reflects the VM's authoritative view.
+      const stored = await claimAndStoreLocally();
+      if (stored) {
+        setConnectedMap((prev) => {
+          const next = { ...prev, [slug]: true };
+          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      } else {
+        await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}${profileParam}`, slug);
+      }
       await refreshProfiles('google');
       await syncConnectedFromServer(token);
       return;

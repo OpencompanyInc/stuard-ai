@@ -29,6 +29,27 @@ export async function execBotMemoryList(args: any, ctx: RouterContext): Promise<
   return { ok: true, cards: botMemoryService.listCards(scope.botId, status ? { status } : {}) };
 }
 
+export async function execBotMemoryProfileGet(_args: any, ctx: RouterContext): Promise<any> {
+  const scope = requireBotId(ctx);
+  if (!scope.ok) return scope;
+  return { ok: true, profile: botMemoryService.getProfile(scope.botId) };
+}
+
+export async function execBotMemoryProfileUpdate(args: any, ctx: RouterContext): Promise<any> {
+  const scope = requireBotId(ctx);
+  if (!scope.ok) return scope;
+  const patch: Record<string, string> = {};
+  if (typeof args?.name === 'string') patch.name = args.name;
+  if (typeof args?.preferences === 'string') patch.preferences = args.preferences;
+  if (typeof args?.facts === 'string') patch.facts = args.facts;
+  if (typeof args?.systemPrompt === 'string') patch.systemPrompt = args.systemPrompt;
+  if (typeof args?.system_prompt === 'string') patch.systemPrompt = args.system_prompt;
+  if (Object.keys(patch).length === 0) return { ok: false, error: 'no profile fields provided' };
+  const profile = botMemoryService.updateProfile(scope.botId, patch);
+  broadcastMemoryChanged(scope.botId);
+  return { ok: true, profile };
+}
+
 export async function execBotMemoryCreate(args: any, ctx: RouterContext): Promise<any> {
   const scope = requireBotId(ctx);
   if (!scope.ok) return scope;

@@ -278,6 +278,12 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
         _folder_session_ctx.set(_session_id)
         session.folder_session_ids.add(_session_id)
 
+        # Attribute any filesystem checkpoints created during this tool call to the
+        # calling actor (chat / workflow:<id> / bot:<id>) so the Settings checkpoint
+        # center can group file changes by source. Cleared in the finally below.
+        from ..tools.fs import CheckpointManager
+        CheckpointManager.set_actor(msg.get("actor"))
+
         try:
             if tool.startswith("stream_"):
                 # Stream tools (especially stream_read) can block waiting for data.
@@ -289,6 +295,8 @@ async def handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> No
         except Exception as e:
             logger.exception("tool_exec_error id=%s tool=%s", req_id, tool)
             result = {"ok": False, "error": str(e)}
+        finally:
+            CheckpointManager.set_actor(None)
 
         safe_result = sanitize_result(result)
         logger.info("tool_exec_complete id=%s tool=%s ok=%s", req_id, tool, isinstance(result, dict) and bool(result.get("ok")))

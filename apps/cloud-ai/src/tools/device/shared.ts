@@ -214,6 +214,33 @@ export function getLocalToolSpec(tool: any): LocalToolSpec | undefined {
   return (tool as any).__localToolSpec as LocalToolSpec | undefined;
 }
 
+/**
+ * Run a bridge tool resolving the client WS through the full fallback chain
+ * (ALS → scoped ALS → module-level stack → desktopWs-by-userId), so it works
+ * even when Mastra's delegation has broken AsyncLocalStorage propagation.
+ *
+ * Unlike `execLocalTool` directly, this never falls through to the localhost
+ * dev agent: when no bridge is resolvable it returns `execLocalTool`'s
+ * no-bridge result so callers can treat it as "not available" cleanly. Used for
+ * infra calls like OAuth token fetches that must reach the device, not 127.0.0.1.
+ */
+export async function execClientBridgeTool(
+  id: string,
+  args: any,
+  options?: { timeoutMs?: number; silent?: boolean },
+): Promise<any> {
+  const timeoutMs = options?.timeoutMs ?? 10_000;
+  const ctx = getResolvedBridgeContext();
+  if (ctx?.ws && ctx.ws.readyState === 1) {
+    return withClientBridge(
+      ctx.ws,
+      () => execLocalTool(id, args, undefined, timeoutMs, { silent: options?.silent, noFallback: true }),
+      ctx.secrets,
+    );
+  }
+  return execLocalTool(id, args, undefined, timeoutMs, { silent: options?.silent, noFallback: true });
+}
+
 export async function execLocalToolWithCapturedBridge(
   id: string,
   inputData: any,

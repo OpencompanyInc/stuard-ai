@@ -54,13 +54,34 @@ function ensureAgentWs(url: string): Promise<WebSocket> {
   return agentReady;
 }
 
+interface CheckpointActor {
+  type: 'chat' | 'workflow' | 'bot';
+  id?: string;
+  label?: string;
+}
+
+/**
+ * Identify who is invoking this tool so filesystem checkpoints can be grouped by
+ * source in the Settings checkpoint center: bot runs carry ctx.proactiveBotId,
+ * workflow steps pass flowId/__workflowToolCall in args, everything else is chat.
+ */
+function deriveCheckpointActor(args: any, ctx: RouterContext): CheckpointActor {
+  if (ctx.proactiveBotId) {
+    return { type: 'bot', id: ctx.proactiveBotId, label: ctx.sourceLabel };
+  }
+  if (args?.__workflowToolCall || args?.flowId) {
+    return { type: 'workflow', id: args?.flowId ? String(args.flowId) : undefined, label: ctx.sourceLabel };
+  }
+  return { type: 'chat' };
+}
+
 /**
  * Execute a tool via the Python agent WebSocket
  */
 export async function execLocalTool(tool: string, args: any, ctx: RouterContext, timeoutMs?: number): Promise<any> {
   const ws = await ensureAgentWs(ctx.agentWsUrl);
   const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const payload = { type: 'tool_exec', id, tool, args };
+  const payload = { type: 'tool_exec', id, tool, args, actor: deriveCheckpointActor(args, ctx) };
   
   // Calculate timeout - longer for scripts with packages
   let effectiveTimeout = timeoutMs || 60000;
@@ -188,15 +209,23 @@ const resetTimeout = (ms: number) => {
             ctx.logFn(`❌ Media tools error: ${(data as any)?.error || 'unknown'}`);
           } else if (status === 'approval_required') {
             if (timeoutId) clearTimeout(timeoutId);
-            ctx.logFn(`${tool}: waiting for permission...`);
-            const allow = await requestToolApproval({
-              id,
-              tool,
-              toolOriginal: String(data.toolOriginal || tool),
-              approvalArgs: (data.args && typeof data.args === 'object') ? data.args : undefined,
-              description: typeof data.description === 'string' ? data.description : undefined,
-              timeoutMs: 55_000,
-            });
+            // Bot/proactive runs gate sensitive tools on the desktop side
+            // (executeAgentToolRequest) BEFORE calling execTool. When that gate
+            // already approved a call, ctx.preapproved is set — auto-allow the
+            // Python agent's gate instead of popping a duplicate prompt.
+            const allow = ctx.preapproved === true
+              ? true
+              : await (() => {
+                  ctx.logFn(`${tool}: waiting for permission...`);
+                  return requestToolApproval({
+                    id,
+                    tool,
+                    toolOriginal: String(data.toolOriginal || tool),
+                    approvalArgs: (data.args && typeof data.args === 'object') ? data.args : undefined,
+                    description: typeof data.description === 'string' ? data.description : undefined,
+                    timeoutMs: 55_000,
+                  });
+                })();
             if (done) return;
             try {
               ws.send(JSON.stringify({ type: 'approval_response', id, allow }));

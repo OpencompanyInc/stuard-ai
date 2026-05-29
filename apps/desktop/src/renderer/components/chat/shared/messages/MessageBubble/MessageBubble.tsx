@@ -372,7 +372,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   role === 'user'
                     ? (isEditing
                       ? "rounded-2xl px-4 py-3 bg-theme-input text-theme-fg w-full font-medium"
-                      : "rounded-2xl px-5 py-3.5 bg-theme-active text-theme-fg w-fit font-medium mr-2")
+                      : "rounded-2xl px-5 py-3.5 bg-theme-user-bubble text-theme-fg w-fit font-medium mr-2")
                     : "bg-transparent text-theme-fg w-fit font-normal px-0 py-1 ml-2",
                 ),
             );

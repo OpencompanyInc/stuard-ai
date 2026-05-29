@@ -17,8 +17,13 @@ import { PROACTIVE_CORE_TOOL_NAMES } from '@stuardai/bots-core';
  */
 const PROACTIVE_CORE_TOOLS = PROACTIVE_CORE_TOOL_NAMES;
 
+const ALLOWED_PROACTIVE_KNOWLEDGE_TOOLS = new Set<string>([
+  'knowledge_stats',
+]);
+
 export function isBlockedProactiveToolName(name: string): boolean {
   const trimmed = String(name || '').trim();
+  if (trimmed.startsWith('knowledge_') && !ALLOWED_PROACTIVE_KNOWLEDGE_TOOLS.has(trimmed)) return true;
   return trimmed.startsWith('browser_') && !trimmed.startsWith('browser_use_');
 }
 

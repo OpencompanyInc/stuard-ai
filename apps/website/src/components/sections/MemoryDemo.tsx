@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 
 const Icons = {
   Sparkles: (props: any) => (
@@ -131,9 +132,11 @@ export default function MemoryDemo() {
 
         {/* Chat Header */}
         <div className="flex items-center gap-2 mb-4">
-          <img
+          <Image
             src="/stuard-logo.png"
             alt="Stuard"
+            width={32}
+            height={32}
             className="w-8 h-8"
           />
           <div>

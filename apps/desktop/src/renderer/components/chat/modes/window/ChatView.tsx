@@ -4,6 +4,7 @@
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import { clsx } from "clsx";
 import { Sparkles } from "lucide-react";
@@ -431,6 +432,88 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     handleOpenFileNav,
   } = useFileNavigator({ query, setQuery, onAddContext });
 
+  const isLauncherChatLayout =
+    overlayMode === "window" || overlayMode === "sidebar";
+  const floatingComposerRef = useRef<HTMLDivElement>(null);
+  const [composerInset, setComposerInset] = useState(152);
+  const pendingAskUserPrompts = askUserPrompts.filter(
+    (p) => p.status === "pending" && p.tool === "ask_user",
+  );
+
+  useEffect(() => {
+    if (!isLauncherChatLayout) return;
+    const el = floatingComposerRef.current;
+    if (!el) return;
+    const measure = () => setComposerInset(el.offsetHeight + 16);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [
+    isLauncherChatLayout,
+    viewMode,
+    attachments?.length,
+    contextPaths.length,
+    queueDepth,
+    pendingAskUserPrompts.length,
+    showCreditsLimitNotice,
+    statusText,
+  ]);
+
+  const chatInputArea = (
+    <ChatInputArea
+      launcherSkin={isLauncherChatLayout}
+      query={query}
+      setQuery={setQuery}
+      onSend={onSend}
+      onSteer={handleSteerFromComposer}
+      activeSubagents={combinedActiveSubagents}
+      steerTarget={steerTarget}
+      onSteerTargetChange={onSteerTargetChange}
+      onStop={onStop}
+      isStreaming={isStreaming}
+      voiceActive={voiceActive}
+      onToggleVoice={onToggleVoice}
+      voiceState={voiceState}
+      voiceAudioLevel={voiceAudioLevel}
+      voiceMuted={voiceMuted}
+      onVoiceMuteToggle={onVoiceMuteToggle}
+      voiceTranscripts={voiceTranscripts}
+      voiceActiveTools={voiceActiveTools}
+      attachments={attachments}
+      onRemoveAttachment={onRemoveAttachment}
+      onAttachFiles={onAttachFiles}
+      onAttachImages={onAttachImages}
+      onPaste={onPaste}
+      onDrop={onDrop}
+      queueDepth={queueDepth}
+      queuedMessages={queuedMessages}
+      onCancelQueuedMessage={onCancelQueuedMessage}
+      statusText={statusText}
+      connectionStatus={connectionStatus}
+      contextMetrics={contextMetrics}
+      translucentMode={translucentMode}
+      showFileNav={showFileNav}
+      textareaRef={textareaRef}
+      selectedModelId={selectedModelId}
+      onChatModeChange={onChatModeChange}
+      modelSource={modelSource}
+      onModelSourceChange={onModelSourceChange}
+      reasoningLevel={reasoningLevel}
+      onReasoningLevelChange={onReasoningLevelChange}
+      fileNavRef={fileNavRef}
+      activeTabId={activeTabId}
+      contextPaths={contextPaths}
+      onRemoveContext={onRemoveContext}
+      onOpenFileNav={handleOpenFileNav}
+      onCloseFileNav={handleCloseFileNav}
+      showCreditsLimitNotice={showCreditsLimitNotice}
+      onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+      onAddCredits={onAddCredits}
+      currentToolCalls={currentToolCalls}
+    />
+  );
+
   return (
     <>
       <FileNavigatorOverlay
@@ -567,117 +650,79 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   </div>
                 )}
 
-              {/* Messages or Tasks View */}
-              <div className="flex-1 min-h-0 overflow-hidden relative px-1">
-                {viewMode === "tasks" ? (
-                  <div className="h-full overflow-y-auto custom-scrollbar">
-                    <TasksView
-                      compact
-                      defaultSubTab={tasksSubTab}
-                      onSubTabChange={setTasksSubTab}
-                    />
-                  </div>
-                ) : (
-                  <>
-                    {/* Pinned SubAgent Dashboard */}
-                    <SubagentDashboard
-                      tasks={subagentDash.tasks}
-                      visibleTasks={subagentDash.visibleTasks}
-                      activeTask={subagentDash.activeTask}
-                      activeTaskId={subagentDash.activeTaskId}
-                      setActiveTaskId={subagentDash.setActiveTaskId}
-                      collapsed={subagentDash.collapsed}
-                      setCollapsed={subagentDash.setCollapsed}
-                      dismissed={subagentDash.dismissed}
-                      setDismissed={subagentDash.setDismissed}
-                      dismissTask={subagentDash.dismissTask}
-                      hasRunning={subagentDash.hasRunning}
-                      refresh={subagentDash.refresh}
-                      loading={subagentDash.loading}
-                    />
-                    <MessageList
-                      messages={messages}
-                      currentResponse={currentResponse}
-                      currentReasoning={currentReasoning}
-                      currentToolCalls={currentToolCalls}
-                      currentStreamChunks={currentStreamChunks}
-                      thinkingStartTime={thinkingStartTime}
-                      className="h-full py-3 scrollbar-hidden min-w-0"
-                      onSubmitToolOutput={onSubmitToolOutput}
-                      onGenUIResponse={onGenUIResponse}
-                      onEditMessage={onEditMessage}
-                      onRevertFiles={onRevertFiles}
-                      onRedoFiles={onRedoFiles}
-                    />
-                  </>
+              {/* Messages / tasks — scroll full height; composer floats on top */}
+              <div className="flex-1 min-h-0 relative overflow-hidden">
+                <div className="absolute inset-0 flex flex-col overflow-hidden px-1">
+                  {viewMode === "tasks" ? (
+                    <div
+                      className="flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+                      style={{ paddingBottom: composerInset }}
+                    >
+                      <TasksView
+                        compact
+                        defaultSubTab={tasksSubTab}
+                        onSubTabChange={setTasksSubTab}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <SubagentDashboard
+                        tasks={subagentDash.tasks}
+                        visibleTasks={subagentDash.visibleTasks}
+                        activeTask={subagentDash.activeTask}
+                        activeTaskId={subagentDash.activeTaskId}
+                        setActiveTaskId={subagentDash.setActiveTaskId}
+                        collapsed={subagentDash.collapsed}
+                        setCollapsed={subagentDash.setCollapsed}
+                        dismissed={subagentDash.dismissed}
+                        setDismissed={subagentDash.setDismissed}
+                        dismissTask={subagentDash.dismissTask}
+                        hasRunning={subagentDash.hasRunning}
+                        refresh={subagentDash.refresh}
+                        loading={subagentDash.loading}
+                      />
+                      <div className="flex-1 min-h-0">
+                        <MessageList
+                          messages={messages}
+                          currentResponse={currentResponse}
+                          currentReasoning={currentReasoning}
+                          currentToolCalls={currentToolCalls}
+                          currentStreamChunks={currentStreamChunks}
+                          thinkingStartTime={thinkingStartTime}
+                          className="h-full py-3 scrollbar-hidden min-w-0"
+                          scrollInsetBottom={composerInset}
+                          onSubmitToolOutput={onSubmitToolOutput}
+                          onGenUIResponse={onGenUIResponse}
+                          onEditMessage={onEditMessage}
+                          onRevertFiles={onRevertFiles}
+                          onRedoFiles={onRedoFiles}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {viewMode === "chat" && (
+                  <div
+                    className="chat-floating-input-fade absolute inset-x-0 bottom-0 z-[5]"
+                    aria-hidden
+                  />
                 )}
+
+                <div
+                  ref={floatingComposerRef}
+                  className="chat-floating-composer absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2"
+                >
+                  {pendingAskUserPrompts.map((p) => (
+                    <AskUserPrompt
+                      key={p.id}
+                      prompt={p}
+                      onRespond={onAskUserRespond!}
+                    />
+                  ))}
+                  {chatInputArea}
+                </div>
               </div>
-            </div>
-
-            {/* ask_user prompts */}
-            {askUserPrompts
-              .filter((p) => p.status === "pending" && p.tool === "ask_user")
-              .map((p) => (
-                <AskUserPrompt
-                  key={p.id}
-                  prompt={p}
-                  onRespond={onAskUserRespond!}
-                />
-              ))}
-
-            {/* Bottom Input — launcher input surface */}
-            <div className="shrink-0 w-full mt-auto">
-              <ChatInputArea
-                launcherSkin
-                query={query}
-                setQuery={setQuery}
-                onSend={onSend}
-                onSteer={handleSteerFromComposer}
-                activeSubagents={combinedActiveSubagents}
-                steerTarget={steerTarget}
-                onSteerTargetChange={onSteerTargetChange}
-                onStop={onStop}
-                isStreaming={isStreaming}
-                voiceActive={voiceActive}
-                onToggleVoice={onToggleVoice}
-                voiceState={voiceState}
-                voiceAudioLevel={voiceAudioLevel}
-                voiceMuted={voiceMuted}
-                onVoiceMuteToggle={onVoiceMuteToggle}
-                voiceTranscripts={voiceTranscripts}
-                voiceActiveTools={voiceActiveTools}
-                attachments={attachments}
-                onRemoveAttachment={onRemoveAttachment}
-                onAttachFiles={onAttachFiles}
-                onAttachImages={onAttachImages}
-                onPaste={onPaste}
-                onDrop={onDrop}
-                queueDepth={queueDepth}
-                queuedMessages={queuedMessages}
-                onCancelQueuedMessage={onCancelQueuedMessage}
-                statusText={statusText}
-                connectionStatus={connectionStatus}
-                contextMetrics={contextMetrics}
-                translucentMode={translucentMode}
-                showFileNav={showFileNav}
-                textareaRef={textareaRef}
-                selectedModelId={selectedModelId}
-                onChatModeChange={onChatModeChange}
-                modelSource={modelSource}
-                onModelSourceChange={onModelSourceChange}
-                reasoningLevel={reasoningLevel}
-                onReasoningLevelChange={onReasoningLevelChange}
-                fileNavRef={fileNavRef}
-                activeTabId={activeTabId}
-                contextPaths={contextPaths}
-                onRemoveContext={onRemoveContext}
-                onOpenFileNav={handleOpenFileNav}
-                onCloseFileNav={handleCloseFileNav}
-                showCreditsLimitNotice={showCreditsLimitNotice}
-                onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
-                onAddCredits={onAddCredits}
-                currentToolCalls={currentToolCalls}
-              />
             </div>
           </div>
         ) : (
@@ -851,57 +896,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 />
               ))}
 
-            {/* Bottom Card: Status & Input */}
-            <ChatInputArea
-              query={query}
-              setQuery={setQuery}
-              onSend={onSend}
-              onSteer={handleSteerFromComposer}
-              activeSubagents={combinedActiveSubagents}
-              steerTarget={steerTarget}
-              onSteerTargetChange={onSteerTargetChange}
-              onStop={onStop}
-              isStreaming={isStreaming}
-              voiceActive={voiceActive}
-              onToggleVoice={onToggleVoice}
-              voiceState={voiceState}
-              voiceAudioLevel={voiceAudioLevel}
-              voiceMuted={voiceMuted}
-              onVoiceMuteToggle={onVoiceMuteToggle}
-              voiceTranscripts={voiceTranscripts}
-              voiceActiveTools={voiceActiveTools}
-              attachments={attachments}
-              onRemoveAttachment={onRemoveAttachment}
-              onAttachFiles={onAttachFiles}
-              onAttachImages={onAttachImages}
-              onPaste={onPaste}
-              onDrop={onDrop}
-              queueDepth={queueDepth}
-              queuedMessages={queuedMessages}
-              onCancelQueuedMessage={onCancelQueuedMessage}
-              statusText={statusText}
-              connectionStatus={connectionStatus}
-              contextMetrics={contextMetrics}
-              translucentMode={translucentMode}
-              showFileNav={showFileNav}
-              textareaRef={textareaRef}
-              selectedModelId={selectedModelId}
-              onChatModeChange={onChatModeChange}
-              modelSource={modelSource}
-              onModelSourceChange={onModelSourceChange}
-              reasoningLevel={reasoningLevel}
-              onReasoningLevelChange={onReasoningLevelChange}
-              fileNavRef={fileNavRef}
-              activeTabId={activeTabId}
-              contextPaths={contextPaths}
-              onRemoveContext={onRemoveContext}
-              onOpenFileNav={handleOpenFileNav}
-              onCloseFileNav={handleCloseFileNav}
-              showCreditsLimitNotice={showCreditsLimitNotice}
-              onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
-              onAddCredits={onAddCredits}
-              currentToolCalls={currentToolCalls}
-            />
+            {chatInputArea}
           </>
         )}
       </div>

@@ -10,5 +10,12 @@ export interface RouterContext {
    * regular chat tool calls (those default to the legacy bot scope).
    */
   proactiveBotId?: string;
+  /**
+   * Set on bot/proactive runs where the desktop-side per-agent permission gate
+   * (executeAgentToolRequest) has already decided this call may proceed. When
+   * true, execLocalTool auto-approves the Python agent's approval gate instead
+   * of popping a second prompt — the desktop gate is authoritative for bots.
+   */
+  preapproved?: boolean;
 }
 

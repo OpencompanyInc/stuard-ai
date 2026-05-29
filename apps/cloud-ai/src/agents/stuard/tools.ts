@@ -272,18 +272,6 @@ const RAW_ALL_TOOLS = {
   bot_delete,
   ask_bot,
   bot_ask,
-  // Agent's private kanban + run-log (only meaningful during a proactive run; ctx.proactiveBotId scopes them)
-  agent_memory_list,
-  agent_memory_create,
-  agent_memory_update,
-  agent_memory_delete,
-  agent_memory_log,
-  // Legacy memory aliases kept for compatibility
-  bot_memory_list,
-  bot_memory_create,
-  bot_memory_update,
-  bot_memory_delete,
-  bot_memory_log,
   // Feedback tools
   submit_feedback: submitFeedback,
   report_bug: reportBug,

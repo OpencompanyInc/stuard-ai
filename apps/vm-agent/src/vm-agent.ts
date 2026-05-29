@@ -405,6 +405,8 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'agent_memory_update':
     case 'agent_memory_delete':
     case 'agent_memory_log':
+    case 'agent_memory_profile_get':
+    case 'agent_memory_profile_update':
     case 'agent_memory_export':
     case 'agent_memory_replace':
     case 'agent_memory_merge':
@@ -413,6 +415,8 @@ async function handleCommand(command: string, args: any): Promise<any> {
     case 'bot_memory_update':
     case 'bot_memory_delete':
     case 'bot_memory_log':
+    case 'bot_memory_profile_get':
+    case 'bot_memory_profile_update':
     case 'bot_memory_export':
     case 'bot_memory_replace':
     case 'bot_memory_merge':

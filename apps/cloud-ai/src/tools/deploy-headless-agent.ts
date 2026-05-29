@@ -404,6 +404,13 @@ async function runHeadlessTask(
     } catch (e) {
       // ignore
     }
+    // Deployed custom-integration tools — available to headless agents whose
+    // allowed-tools list includes the compiled `${slug}_${tool}` names.
+    try {
+      const { compileInstalledToTools } = await import('../integrations/compile-tools');
+      const compiled = await compileInstalledToTools(userId);
+      if (Object.keys(compiled.tools).length > 0) mcpTools = { ...mcpTools, ...compiled.tools };
+    } catch {}
 
     // 2. Initialize the headless agent
     const allowedForAgent = mode === 'specialized'

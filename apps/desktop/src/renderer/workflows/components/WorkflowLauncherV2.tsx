@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowDownCircle,
   Activity,
+  Bot,
   Box,
   Calendar,
   CheckCircle2,
@@ -9,16 +10,17 @@ import {
   Compass,
   Download,
   ExternalLink,
+  Home,
   LayoutGrid,
   Layers,
   Lock,
   Play,
   Plug,
+  Plus,
   RefreshCw,
   Rocket,
   Search,
   Share2,
-  Sparkles,
   Square,
   Star,
   Store,
@@ -28,6 +30,10 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { BotsView } from "../../components/BotsView";
+import { CustomToolsView } from "./CustomToolsView";
+import { StudioHome } from "./StudioHome";
+import { confirmDialog } from "./ConfirmDialog";
 import { DiscoverTips } from "./DiscoverTips";
 import {
   formatRelativeTime,
@@ -55,13 +61,22 @@ import {
   type WorkflowLauncherScope,
 } from "../utils/workflowLauncherFilters";
 
-type ActiveView = "workflows" | "deployed" | "shared" | "marketplace" | "skills";
+type ActiveView = "home" | "workflows" | "agents" | "tools" | "marketplace" | "skills";
+/** Views accepted as deep-link inputs; "deployed"/"shared" resolve to Workflows + a preselected filter. */
+type InitialView = ActiveView | "deployed" | "shared";
 type DeployStatus = WorkflowDeployStatus;
+
+/** Resolve an incoming deep-link view to an active view + optional preselected workflow filter. */
+function resolveInitialView(view: InitialView): { view: ActiveView; filter: WorkflowLauncherFilterId } {
+  if (view === "deployed") return { view: "workflows", filter: "deployed" };
+  if (view === "shared") return { view: "workflows", filter: "shared" };
+  return { view, filter: "all" };
+}
 type MarketplaceContentType = "all" | "workflows" | "skills" | "functions";
 
 const MARKETPLACE_CONTENT_TYPES: Array<{ id: MarketplaceContentType; label: string; icon: any; description: string; tint: string; tintDark: string }> = [
   { id: "all",       label: "All",        icon: LayoutGrid, description: "Everything across the community", tint: "text-slate-700",  tintDark: "text-white/80" },
-  { id: "workflows", label: "Workflows",  icon: Layers,     description: "Multi-step automations & flows",  tint: "text-blue-700",   tintDark: "text-blue-300" },
+  { id: "workflows", label: "Workflows",  icon: Layers,     description: "Multi-step automations & flows",  tint: "text-slate-700",  tintDark: "text-white/80" },
   { id: "skills",    label: "Skills",     icon: Wand2,      description: "Reusable agent behaviors",         tint: "text-violet-700", tintDark: "text-violet-300" },
   { id: "functions", label: "Functions",  icon: Box,        description: "Single-node building blocks",      tint: "text-amber-700",  tintDark: "text-amber-300" },
 ];
@@ -71,7 +86,7 @@ interface WorkflowLauncherV2Props {
   loading: boolean;
   runningIds: Record<string, boolean>;
   updates?: Record<string, MarketplaceUpdate>;
-  initialView?: ActiveView;
+  initialView?: InitialView;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onImport: () => void;
@@ -82,7 +97,7 @@ interface WorkflowLauncherV2Props {
   onShowPublished?: () => void;
   onDashboard?: () => void;
   onReplayTour?: () => void;
-  onIntegrationBuilder?: () => void;
+  onIntegrationBuilder?: (seedManifest?: any) => void;
 }
 
 export function WorkflowLauncherV2({
@@ -90,7 +105,7 @@ export function WorkflowLauncherV2({
   loading,
   runningIds,
   updates = {},
-  initialView = "workflows",
+  initialView = "home",
   onSelect,
   onCreate,
   onImport,
@@ -106,10 +121,10 @@ export function WorkflowLauncherV2({
   const { isDark } = useWorkflowTheme();
   const d = isDark;
   const inputRef = useRef<HTMLInputElement>(null);
-  const [activeView, setActiveView] = useState<ActiveView>(initialView);
+  const [activeView, setActiveView] = useState<ActiveView>(() => resolveInitialView(initialView).view);
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [workflowFilter, setWorkflowFilter] = useState<WorkflowLauncherFilterId>("all");
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowLauncherFilterId>(() => resolveInitialView(initialView).filter);
   const [deployStatuses, setDeployStatuses] = useState<Record<string, DeployStatus>>({});
   const [busyMap, setBusyMap] = useState<Record<string, boolean>>({});
   const [marketplaceSearch, setMarketplaceSearch] = useState("");
@@ -140,7 +155,10 @@ export function WorkflowLauncherV2({
   }, [reloadSkills]);
 
   useEffect(() => {
-    if (initialView) setActiveView(initialView);
+    if (!initialView) return;
+    const resolved = resolveInitialView(initialView);
+    setActiveView(resolved.view);
+    if (resolved.view === "workflows") setWorkflowFilter(resolved.filter);
   }, [initialView]);
 
   useEffect(() => {
@@ -189,7 +207,7 @@ export function WorkflowLauncherV2({
   }, [items]);
 
   useEffect(() => {
-    if (activeView !== "deployed") return;
+    if (activeView !== "workflows") return;
     let cancelled = false;
     const run = async () => {
       if (!cancelled) {
@@ -278,25 +296,11 @@ export function WorkflowLauncherV2({
     };
   }, [activeView, marketplaceCategory, marketplaceContentType, marketplaceSearch]);
 
-  const sharedBaseItems = useMemo(() => items.filter((item) => Boolean(item.marketplaceSlug)), [items]);
-
-  const deployedBaseItems = useMemo(
-    () => items.filter((item) => deployStatuses[item.id]?.deployed),
-    [deployStatuses, items]
-  );
-
-  const workflowScope: WorkflowLauncherScope =
-    activeView === "shared" ? "shared" : activeView === "deployed" ? "deployed" : "workflows";
-
-  const workflowBaseItems = useMemo(() => {
-    if (activeView === "shared") return sharedBaseItems;
-    if (activeView === "deployed") return deployedBaseItems;
-    return items;
-  }, [activeView, deployedBaseItems, items, sharedBaseItems]);
+  const workflowScope: WorkflowLauncherScope = "workflows";
 
   const searchedWorkflowItems = useMemo(
-    () => workflowBaseItems.filter((item) => matchesWorkflowSearch(item, search, deployStatuses[item.id])),
-    [deployStatuses, search, workflowBaseItems]
+    () => items.filter((item) => matchesWorkflowSearch(item, search, deployStatuses[item.id])),
+    [deployStatuses, items, search]
   );
 
   const workflowFilterChips = useMemo(
@@ -322,26 +326,20 @@ export function WorkflowLauncherV2({
     [deployStatuses, runningIds, searchedWorkflowItems, workflowFilter]
   );
 
-  const runningDeployed = useMemo(
-    () => deployedBaseItems.filter((item) => Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
-    [deployStatuses, deployedBaseItems, runningIds]
-  );
-
-  const idleDeployed = useMemo(
-    () => deployedBaseItems.filter((item) => !Boolean(deployStatuses[item.id]?.running || runningIds[item.id])),
-    [deployStatuses, deployedBaseItems, runningIds]
-  );
-
-  const selectedItem = activeView === "marketplace"
-    ? null
-    : visibleItems[Math.min(selectedIndex, Math.max(visibleItems.length - 1, 0))] || null;
+  const selectedItem = activeView === "workflows"
+    ? visibleItems[Math.min(selectedIndex, Math.max(visibleItems.length - 1, 0))] || null
+    : null;
 
   useEffect(() => {
     setSelectedIndex(0);
   }, [activeView, marketplaceCategory, marketplaceSearch, search, skillSearch, visibleItems.length, workflowFilter]);
 
   useEffect(() => {
-    if (activeView === "marketplace" || activeView === "skills") return;
+    if (activeView !== "workflows") return;
+    // Only drop stale dynamic trigger filters when their chip disappears. Stable
+    // filters (all/deployed/shared/triggered) persist even when their chip is
+    // momentarily hidden (e.g. deep-linking to "deployed" before statuses load).
+    if (!workflowFilter.startsWith("trigger:")) return;
     if (!workflowFilterChips.some((chip) => chip.id === workflowFilter)) {
       setWorkflowFilter("all");
     }
@@ -375,8 +373,15 @@ export function WorkflowLauncherV2({
     setEditingSkill(null);
   };
 
-  const handleDeleteSkill = (id: string) => {
-    if (!confirm('Delete this skill?')) return;
+  const handleDeleteSkill = async (id: string) => {
+    const skill = skills.find(s => s.id === id);
+    const ok = await confirmDialog({
+      title: `Delete ${skill?.name ? `“${skill.name}”` : "this skill"}?`,
+      message: "Stuard will no longer use this skill. This can’t be undone.",
+      confirmLabel: "Delete skill",
+      tone: "danger",
+    });
+    if (!ok) return;
     window.desktopAPI?.skillsDelete?.(id).catch(() => {});
     setSkills(skills.filter(s => s.id !== id));
   };
@@ -497,7 +502,7 @@ export function WorkflowLauncherV2({
         await action();
       } finally {
         setBusyMap((prev) => ({ ...prev, [key]: false }));
-        if (activeView === "deployed") {
+        if (activeView === "workflows") {
           await refreshDeployStatuses();
         }
       }
@@ -507,7 +512,7 @@ export function WorkflowLauncherV2({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (activeView === "marketplace" || activeView === "skills") return;
+      if (activeView !== "workflows") return;
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((index) => Math.min(index + 1, Math.max(visibleItems.length - 1, 0)));
@@ -567,14 +572,6 @@ export function WorkflowLauncherV2({
       ? "Skills"
       : activeView === "marketplace"
       ? "Marketplace"
-      : activeView === "shared"
-      ? "Shared Workflows"
-      : activeView === "deployed"
-      ? workflowFilter === "running"
-        ? "Running Workflows"
-        : workflowFilter === "idle"
-        ? "Idle Workflows"
-        : "Deployed Workflows"
       : "My Workflows";
 
   const subtitle =
@@ -582,14 +579,6 @@ export function WorkflowLauncherV2({
       ? `${skills.length} skill${skills.length !== 1 ? "s" : ""} · ${skills.filter(s => s.isActive).length} active`
       : activeView === "marketplace"
       ? "Discover community-built automations with theme-aware browsing."
-      : activeView === "shared"
-      ? workflowFiltersActive
-        ? `${visibleItems.length} shown · ${sharedBaseItems.length} shared workflows`
-        : `${sharedBaseItems.length} imported or synced workflows`
-      : activeView === "deployed"
-      ? workflowFiltersActive
-        ? `${visibleItems.length} shown · ${runningDeployed.length} running · ${idleDeployed.length} idle`
-        : `${runningDeployed.length} running · ${idleDeployed.length} idle`
       : workflowFiltersActive
       ? `${visibleItems.length} shown · ${items.length} workflows in your workspace`
       : `${items.length} workflows in your workspace`;
@@ -604,6 +593,8 @@ export function WorkflowLauncherV2({
         return Zap;
       case "shared":
         return Share2;
+      case "deployed":
+        return Rocket;
       case "running":
         return Play;
       case "idle":
@@ -636,21 +627,24 @@ export function WorkflowLauncherV2({
   return (
     <div className="flex h-full w-full overflow-hidden wf-bg wf-fg font-sans">
       <aside className="w-[300px] shrink-0 border-r border-theme-sidebar p-6 flex flex-col gap-5 drag">
-        <div className={`rounded-[20px] border p-6 h-[120px] relative overflow-hidden no-drag ${d ? "border-theme bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
-          <div className={`absolute right-[-10px] top-1/2 -translate-y-1/2 h-40 w-40 rounded-full blur-[35px] ${d ? "bg-blue-500/40" : "bg-blue-500/20"}`} />
-          <div className="relative z-10 text-[18px] font-bold tracking-tight">Stuard Studio</div>
-          <div className={`relative z-10 mt-1 text-[13px] ${d ? "text-slate-300" : "text-slate-500"}`}>All your workflows in one place</div>
+        <div className="wf-card relative h-[120px] overflow-hidden rounded-[20px] p-6 no-drag">
+          <div className="absolute right-[-10px] top-1/2 -translate-y-1/2 h-40 w-40 rounded-full blur-[38px]" style={{ background: "color-mix(in srgb, var(--wf-accent) 50%, transparent)" }} />
+          <div className="relative z-10 text-[18px] font-bold tracking-tight wf-fg">Stuard Studio</div>
+          <div className="relative z-10 mt-1 text-[13px] wf-fg-muted">Everything you build</div>
         </div>
 
         <div className="rounded-[24px] p-3 flex-1 no-drag overflow-y-auto scrollbar-minimal shadow-sm border border-theme-sidebar space-y-1 wf-bg-elevated">
+          <SideNavItem d={d} active={activeView === "home"} icon={Home} label="Home" onClick={() => setActiveView("home")} />
+
+          <SideNavGroupLabel d={d} label="Create" />
           <SideNavItem d={d} active={activeView === "workflows"} icon={Layers} label="My Workflows" onClick={() => setActiveView("workflows")} />
+          <SideNavItem d={d} active={activeView === "agents"} icon={Bot} label="Agents" onClick={() => setActiveView("agents")} />
           <SideNavItem d={d} active={activeView === "skills"} icon={Wand2} label="Skills" onClick={() => setActiveView("skills")} />
-          <SideNavItem d={d} active={activeView === "deployed"} icon={Rocket} label="Deployed Workflows" onClick={() => setActiveView("deployed")} />
-          <SideNavItem d={d} active={activeView === "shared"} icon={Share2} label="Shared Workflows" onClick={() => setActiveView("shared")} />
+          <SideNavItem d={d} active={activeView === "tools"} icon={Plug} label="Custom Tools" onClick={() => setActiveView("tools")} />
+
+          <SideNavGroupLabel d={d} label="Discover" />
           <SideNavItem d={d} active={activeView === "marketplace"} icon={Store} label="Marketplace" onClick={() => setActiveView("marketplace")} accent />
-          {onIntegrationBuilder && (
-            <SideNavItem d={d} icon={Plug} label="Integration Builder" onClick={onIntegrationBuilder} />
-          )}
+
           <div className="h-px my-2 bg-[color:var(--sidebar-border)]" />
           <SideNavItem d={d} icon={ExternalLink} label="Stuard Dashboard" onClick={onDashboard} />
           {onReplayTour && (
@@ -658,20 +652,40 @@ export function WorkflowLauncherV2({
           )}
         </div>
 
-        <div className="rounded-[24px] p-3 no-drag shrink-0 shadow-sm border border-theme-sidebar space-y-1 wf-bg-elevated">
-          <SideNavItem
-            d={d}
-            icon={Play}
-            label="Run Workflow"
-            disabled={!selectedItem || !onRun}
-            onClick={() => selectedItem && onRun ? executeAction(`run:${selectedItem.id}`, () => onRun(selectedItem.id)) : undefined}
-          />
-          <SideNavItem d={d} icon={ArrowDownCircle} label="Import Workflow" onClick={onImport} />
-          <SideNavItem d={d} icon={Upload} label="Publish Workflow" onClick={onShowPublished} />
-        </div>
+        {activeView === "workflows" && (
+          <div className="rounded-[24px] p-3 no-drag shrink-0 shadow-sm border border-theme-sidebar space-y-1 wf-bg-elevated">
+            <SideNavItem
+              d={d}
+              icon={Play}
+              label="Run Workflow"
+              disabled={!selectedItem || !onRun}
+              onClick={() => selectedItem && onRun ? executeAction(`run:${selectedItem.id}`, () => onRun(selectedItem.id)) : undefined}
+            />
+            <SideNavItem d={d} icon={ArrowDownCircle} label="Import Workflow" onClick={onImport} />
+            <SideNavItem d={d} icon={Upload} label="Publish Workflow" onClick={onShowPublished} />
+          </div>
+        )}
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden no-drag">
+        {activeView === "home" ? (
+          <StudioHome
+            items={items}
+            skillsCount={skills.length}
+            onOpenView={(v) => setActiveView(v)}
+            onCreate={onCreate}
+            onSelect={onSelect}
+            onMarketplace={() => setActiveView("marketplace")}
+          />
+        ) : activeView === "agents" ? (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-10 pt-10 pb-2"><BotsView /></div>
+        ) : activeView === "tools" ? (
+          <CustomToolsView
+            onNewTool={() => onIntegrationBuilder?.()}
+            onEditTool={(manifest) => onIntegrationBuilder?.(manifest)}
+          />
+        ) : (
+        <>
         <div className="px-10 pt-10 pb-8 flex items-start justify-between gap-5 shrink-0">
           <div>
             <h1 className="text-[26px] font-bold tracking-tight wf-fg">{title}</h1>
@@ -682,7 +696,7 @@ export function WorkflowLauncherV2({
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <div className="relative w-72 max-w-full group mt-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 wf-fg-faint group-focus-within:text-blue-500 transition-colors" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 wf-fg-faint group-focus-within:text-[color:var(--wf-accent)] transition-colors" />
               <input
                 ref={inputRef}
                 type="text"
@@ -699,8 +713,7 @@ export function WorkflowLauncherV2({
                         : "Search marketplace..."
                       : "Search workflows, descriptions, or triggers..."
                 }
-                className="w-full rounded-full pl-11 pr-11 py-3 text-[14px] focus:outline-none focus:border-blue-500/60 focus:ring-4 focus:ring-blue-500/15 transition-all border shadow-sm"
-                style={{ background: "var(--wf-input-bg)", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" }}
+                className="wf-input w-full rounded-full pl-11 pr-11 py-3 text-[14px] focus:outline-none transition-all shadow-sm"
               />
               {currentSearchValue.trim() && (
                 <button
@@ -777,7 +790,7 @@ export function WorkflowLauncherV2({
             />
           ) : activeView !== "marketplace" && loading ? (
             <div className="py-12 max-w-2xl mx-auto flex flex-col items-center gap-5">
-              <div className={`w-8 h-8 border-2 rounded-full animate-spin ${d ? "border-white/10 border-t-blue-400" : "border-slate-200 border-t-blue-500"}`} />
+              <div className={`w-8 h-8 border-2 rounded-full animate-spin border-[color:var(--wf-border)] border-t-[color:var(--wf-accent)]`} />
               <DiscoverTips
                 title="Discover workflows faster"
                 className="w-full max-w-xl"
@@ -856,53 +869,75 @@ export function WorkflowLauncherV2({
                 <button
                   type="button"
                   onClick={onCreate}
-                  className="group relative h-[200px] rounded-[24px] cursor-pointer overflow-hidden flex flex-col items-center justify-center transition-all border border-blue-500/50 bg-slate-900 hover:border-blue-400 shadow-md hover:shadow-lg"
+                  className="wf-feature-tile group relative h-[200px] rounded-[24px] cursor-pointer overflow-hidden flex flex-col items-center justify-center"
                 >
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180px] h-[180px] bg-blue-500/35 blur-[45px] rounded-full group-hover:bg-blue-400/45 transition-colors duration-500" />
                   <div className="relative z-10 flex flex-col items-center justify-center">
-                    <Sparkles className="w-9 h-9 text-white mb-3 group-hover:scale-110 transition-transform duration-300" />
-                    <span className="text-white font-semibold text-[16px] tracking-wide">Create Workflow</span>
+                    <span className="wf-feature-tile__icon mb-3 flex h-12 w-12 items-center justify-center rounded-[14px]">
+                      <Plus className="w-6 h-6" strokeWidth={1.75} />
+                    </span>
+                    <span className="wf-fg font-semibold text-[16px] tracking-wide">Create Workflow</span>
+                    <span className="wf-fg-muted text-[12.5px] mt-1">Start from a blank canvas</span>
                   </div>
                 </button>
               )}
-              {visibleItems.map((item, idx) => (
-                <WorkflowCard
-                  key={item.id}
-                  d={d}
-                  item={item}
-                  running={Boolean(runningIds[item.id] || deployStatuses[item.id]?.running)}
-                  deployed={activeView === "deployed"}
-                  highlighted={idx === selectedIndex}
-                  updates={updates}
-                  deployStatus={deployStatuses[item.id]}
-                  actionLabel={activeView === "deployed" ? (Boolean(runningIds[item.id] || deployStatuses[item.id]?.running) ? "Stop" : "Start") : undefined}
-                  actionBusy={activeView === "deployed" ? Boolean(busyMap[`${Boolean(runningIds[item.id] || deployStatuses[item.id]?.running) ? "stop" : "run"}:${item.id}`]) : false}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  onOpen={() => onSelect(item.id)}
-                  onDelete={activeView === "deployed" ? undefined : async () => {
-                    if (!confirm(`Delete \"${item.name || item.id}\"?`)) return;
-                    await onDelete(item.id);
-                  }}
-                  onAction={activeView === "deployed"
-                    ? Boolean(runningIds[item.id] || deployStatuses[item.id]?.running)
-                      ? (onStop ? () => executeAction(`stop:${item.id}`, () => onStop(item.id)) : undefined)
-                      : (onRun ? () => executeAction(`run:${item.id}`, () => onRun(item.id)) : undefined)
-                    : undefined}
-                />
-              ))}
+              {visibleItems.map((item, idx) => {
+                const isDeployed = Boolean(deployStatuses[item.id]?.deployed);
+                const isRunning = Boolean(runningIds[item.id] || deployStatuses[item.id]?.running);
+                return (
+                  <WorkflowCard
+                    key={item.id}
+                    d={d}
+                    item={item}
+                    running={isRunning}
+                    deployed={isDeployed}
+                    highlighted={idx === selectedIndex}
+                    updates={updates}
+                    deployStatus={deployStatuses[item.id]}
+                    actionLabel={isDeployed ? (isRunning ? "Stop" : "Start") : undefined}
+                    actionBusy={isDeployed ? Boolean(busyMap[`${isRunning ? "stop" : "run"}:${item.id}`]) : false}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    onOpen={() => onSelect(item.id)}
+                    onDelete={isDeployed ? undefined : async () => {
+                      const ok = await confirmDialog({
+                        title: `Delete “${item.name || item.id}”?`,
+                        message: "This permanently removes the workflow. This can’t be undone.",
+                        confirmLabel: "Delete workflow",
+                        tone: "danger",
+                      });
+                      if (!ok) return;
+                      await onDelete(item.id);
+                    }}
+                    onAction={isDeployed
+                      ? isRunning
+                        ? (onStop ? () => executeAction(`stop:${item.id}`, () => onStop(item.id)) : undefined)
+                        : (onRun ? () => executeAction(`run:${item.id}`, () => onRun(item.id)) : undefined)
+                      : undefined}
+                  />
+                );
+              })}
               {!loading && visibleItems.length === 0 && (
                 <EmptyState
                   d={d}
-                  icon={activeView === "shared" ? Share2 : Layers}
-                  title={activeView === "shared" ? (workflowFiltersActive ? "No shared workflows found" : "No shared workflows yet") : "No workflows found"}
-                  description={activeView === "shared"
-                    ? (workflowFiltersActive ? "Try another search term or switch to a different trigger filter." : "Import something from the marketplace to populate this section.")
-                    : "Try adjusting your search or create a new workflow."}
+                  icon={workflowFilter === "shared" ? Share2 : workflowFilter === "deployed" ? Rocket : Layers}
+                  title={
+                    workflowFilter === "shared" ? "No shared workflows found"
+                    : workflowFilter === "deployed" ? "No deployed workflows found"
+                    : "No workflows found"
+                  }
+                  description={
+                    workflowFilter === "deployed"
+                      ? "Deploy a workflow to run it automatically on its triggers."
+                      : workflowFilter === "shared"
+                      ? "Publish a workflow or import one from the marketplace to populate this filter."
+                      : "Try adjusting your search or create a new workflow."
+                  }
                 />
               )}
             </div>
           )}
         </div>
+        </>
+        )}
       </main>
 
       {publishingSkill && !editingSkill && (
@@ -925,15 +960,33 @@ function LauncherSection({ title, children }: { title: string; children: React.R
   );
 }
 
+function SideNavGroupLabel({ d, label }: { d: boolean; label: string }) {
+  return (
+    <div className={`px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider ${d ? "text-white/35" : "text-slate-400"}`}>
+      {label}
+    </div>
+  );
+}
+
 function SideNavItem({ d, icon: Icon, label, active, disabled, onClick, accent }: { d: boolean; icon: any; label: string; active?: boolean; disabled?: boolean; onClick?: () => void; accent?: boolean }) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-[16px] transition-all group text-left ${disabled ? "opacity-40 cursor-not-allowed" : ""} ${d ? active ? "bg-white/[0.08] text-white font-semibold" : accent ? "text-indigo-300 hover:bg-white/[0.06] hover:text-indigo-200" : "text-white/60 hover:bg-white/[0.06] hover:text-white" : active ? "bg-slate-100 text-slate-900 font-semibold shadow-sm" : accent ? "text-indigo-700 hover:bg-indigo-50 hover:text-indigo-900" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}`}
+      className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-[16px] transition-all group text-left ${disabled ? "opacity-40 cursor-not-allowed" : ""} ${
+        active
+          ? d ? "bg-white/[0.08] text-white font-semibold" : "bg-slate-100 text-slate-900 font-semibold shadow-sm"
+          : d ? "text-white/60 hover:bg-white/[0.06] hover:text-white" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+      }`}
     >
-      <Icon className={`w-5 h-5 shrink-0 ${d ? active ? "text-white" : accent ? "text-indigo-300" : "text-white/40 group-hover:text-white/70" : active ? "text-slate-800" : accent ? "text-indigo-500" : "text-slate-400 group-hover:text-slate-600"}`} />
+      <Icon className={`w-5 h-5 shrink-0 ${
+        active
+          ? d ? "text-white" : "text-slate-800"
+          : accent
+            ? d ? "text-white/40 group-hover:text-[color:var(--wf-accent)]" : "text-slate-400 group-hover:text-[color:var(--wf-accent)]"
+            : d ? "text-white/40 group-hover:text-white/70" : "text-slate-400 group-hover:text-slate-600"
+      }`} />
       <span className="text-[14px] tracking-wide">{label}</span>
     </button>
   );
@@ -944,13 +997,13 @@ function FilterChip({ d, label, icon: Icon, active, onClick, count }: { d: boole
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2.5 px-5 py-2.5 rounded-[12px] border text-[13px] font-medium transition-all shrink-0 ${active ? "border-blue-500 text-blue-500 shadow-sm" : d ? "border-theme-sidebar text-white/50 hover:bg-white/[0.04] hover:border-theme hover:text-white/80" : "border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300 hover:text-slate-900 hover:shadow-sm"}`}
+      className={`flex items-center gap-2.5 px-5 py-2.5 rounded-[12px] border text-[13px] font-medium transition-all shrink-0 ${active ? d ? "border-white/15 bg-white/[0.08] text-white shadow-sm" : "border-slate-300 bg-white text-slate-900 shadow-sm" : d ? "border-theme-sidebar text-white/50 hover:bg-white/[0.04] hover:border-theme hover:text-white/80" : "border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300 hover:text-slate-900 hover:shadow-sm"}`}
     >
-      {Icon ? <Icon className={`w-4 h-4 ${active ? "text-blue-500" : d ? "text-white/30" : "text-slate-400"}`} /> : null}
+      {Icon ? <Icon className={`w-4 h-4 ${active ? d ? "text-white" : "text-slate-800" : d ? "text-white/30" : "text-slate-400"}`} /> : null}
       <span>{label}</span>
       {typeof count === "number" ? (
         <span
-          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${active ? "bg-blue-500/10 text-blue-500" : d ? "bg-white/[0.06] text-white/60" : "bg-slate-100 text-slate-500"}`}
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${active ? d ? "bg-white/[0.12] text-white" : "bg-slate-200 text-slate-700" : d ? "bg-white/[0.06] text-white/60" : "bg-slate-100 text-slate-500"}`}
         >
           {count}
         </span>
@@ -961,23 +1014,19 @@ function FilterChip({ d, label, icon: Icon, active, onClick, count }: { d: boole
 
 function WorkflowCard({ d, item, running, deployed, highlighted, updates, deployStatus, actionLabel, actionBusy, onMouseEnter, onOpen, onDelete, onAction }: { d: boolean; item: WorkflowItem; running: boolean; deployed?: boolean; highlighted?: boolean; updates: Record<string, MarketplaceUpdate>; deployStatus?: DeployStatus; actionLabel?: string; actionBusy?: boolean; onMouseEnter?: () => void; onOpen?: () => void; onDelete?: () => Promise<void> | void; onAction?: () => void }) {
   const update = item.marketplaceSlug ? updates[item.marketplaceSlug] : null;
-  const nameLen = (item.name || item.id).length;
-  const iconColor = nameLen % 3 === 0 ? "text-purple-500" : nameLen % 2 === 0 ? "text-amber-500" : "text-emerald-500";
   return (
     <div
       onClick={onOpen}
       onMouseEnter={onMouseEnter}
-      className={`group relative p-6 rounded-[24px] border shadow-sm hover:shadow-md transition-all flex flex-col h-[200px] cursor-pointer ${highlighted ? "border-blue-500/40 ring-4 ring-blue-500/10" : "hover:border-blue-500/20"}`}
-      style={{
-        background: highlighted ? (d ? "rgba(255,255,255,0.06)" : "#ffffff") : "var(--wf-bg-elevated)",
-        borderColor: highlighted ? undefined : "var(--wf-border)",
-      }}
+      className={`wf-card wf-card-interactive group relative p-6 rounded-[24px] flex flex-col h-[200px] cursor-pointer ${highlighted ? "wf-card-active" : ""}`}
     >
       <div className="flex items-center gap-3.5 mb-4">
         {running ? (
           <Play className="w-5 h-5 text-emerald-500 fill-current shrink-0" />
         ) : (
-          <Activity className={`w-[22px] h-[22px] shrink-0 ${iconColor}`} />
+          <span className="wf-icon-chip flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] transition-colors group-hover:text-[color:var(--wf-accent)]">
+            <Activity className="w-[18px] h-[18px]" />
+          </span>
         )}
         <h3 className="font-semibold text-[17px] truncate flex items-center gap-1.5 leading-none wf-fg">
           {item.name || item.id}
@@ -1009,8 +1058,8 @@ function WorkflowCard({ d, item, running, deployed, highlighted, updates, deploy
             </>
           ) : deployed ? (
             <>
-              <div className={`w-1.5 h-1.5 rounded-full ${deployStatus?.running ? "bg-emerald-500" : "bg-blue-500"}`} />
-              <span className={deployStatus?.running ? "text-emerald-500" : "text-blue-500"}>{deployStatus?.running ? "Auto-running" : "Deployed"}</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${deployStatus?.running ? "bg-emerald-500" : "bg-[color:var(--wf-fg-faint)]"}`} />
+              <span className={deployStatus?.running ? "text-emerald-500" : "wf-fg-muted"}>{deployStatus?.running ? "Auto-running" : "Deployed"}</span>
             </>
           ) : item.updatedAt ? (
             <span>Modified {formatRelativeTime(item.updatedAt)}</span>
@@ -1027,7 +1076,7 @@ function WorkflowCard({ d, item, running, deployed, highlighted, updates, deploy
                 e.stopPropagation();
                 onAction();
               }}
-              className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${actionBusy ? "opacity-60" : ""} ${running ? d ? "text-red-300 hover:text-red-200 hover:bg-red-500/10" : "text-red-600 hover:bg-red-50" : d ? "text-blue-300 hover:text-blue-200 hover:bg-blue-500/10" : "text-blue-600 hover:bg-blue-50"}`}
+              className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${actionBusy ? "opacity-60" : ""} ${running ? d ? "text-red-300 hover:text-red-200 hover:bg-red-500/10" : "text-red-600 hover:bg-red-50" : "wf-fg-muted hover:text-[color:var(--wf-accent)] hover:bg-[var(--wf-accent-soft)]"}`}
             >
               {actionBusy ? "Working..." : actionLabel}
             </button>
@@ -1061,9 +1110,9 @@ function MarketplaceCard({ d, workflow, onClick, compact }: { d: boolean; workfl
     ? "from-violet-500 via-fuchsia-600 to-pink-600"
     : isFunction
       ? "from-amber-500 via-orange-600 to-rose-600"
-      : "from-blue-600 via-indigo-600 to-violet-700";
+      : "from-slate-600 via-slate-700 to-slate-900";
   return (
-    <button type="button" onClick={onClick} className={`overflow-hidden rounded-[24px] border text-left shadow-sm transition-all hover:-translate-y-1 ${d ? "bg-white/[0.03] border-white/10 hover:border-blue-400/30" : "bg-white border-slate-200 hover:border-blue-300"}`}>
+    <button type="button" onClick={onClick} className={`overflow-hidden rounded-[24px] border text-left shadow-sm transition-all hover:-translate-y-1 hover:border-[var(--wf-accent)] ${d ? "bg-white/[0.03] border-white/10" : "bg-white border-slate-200"}`}>
       <div className={`relative ${compact ? "aspect-[16/9]" : "aspect-[16/10]"} overflow-hidden ${d ? "bg-slate-900" : "bg-slate-100"}`}>
         {cover ? (
           <img src={cover} alt={workflow.name} className="h-full w-full object-cover" />
@@ -1110,7 +1159,7 @@ function EmptyState({ d, icon: Icon, title, description, spin }: { d: boolean; i
   return (
     <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
       <div className={`w-16 h-16 shadow-sm rounded-full flex items-center justify-center mb-4 border ${d ? "bg-white/[0.03] border-white/10" : "bg-white border-slate-200"}`}>
-        <Icon className={`w-7 h-7 ${spin ? "animate-spin text-blue-500" : d ? "text-white/50" : "text-slate-400"}`} />
+        <Icon className={`w-7 h-7 ${spin ? "animate-spin text-[color:var(--wf-accent)]" : d ? "text-white/50" : "text-slate-400"}`} />
       </div>
       <h3 className={`text-[16px] font-semibold ${d ? "text-white" : "text-slate-900"}`}>{title}</h3>
       <p className={`text-[14px] mt-1 max-w-md ${d ? "text-white/55" : "text-slate-500"}`}>{description}</p>

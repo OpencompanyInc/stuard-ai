@@ -39,7 +39,17 @@ export interface BotRunLogEntry {
   notes?: string;
 }
 
+export interface BotPersonalMemory {
+  name?: string;
+  preferences?: string;
+  systemPrompt?: string;
+  facts?: string;
+}
+
+export type BotPersonalMemorySlot = keyof BotPersonalMemory;
+
 export interface BotMemoryRecord {
+  profile: BotPersonalMemory;
   cards: BotKanbanCard[];
   runLog: BotRunLogEntry[];
 }
@@ -64,13 +74,25 @@ export function emptyBotMemoryFile(): BotMemoryFile {
 }
 
 export function normalizeBotMemoryRecord(raw: any): BotMemoryRecord {
+  const profile = normalizeProfile(raw?.profile);
   const cards: BotKanbanCard[] = Array.isArray(raw?.cards)
     ? (raw.cards.map(normalizeCard).filter(Boolean) as BotKanbanCard[])
     : [];
   const runLog: BotRunLogEntry[] = Array.isArray(raw?.runLog)
     ? (raw.runLog.map(normalizeRunLog).filter(Boolean) as BotRunLogEntry[])
     : [];
-  return { cards, runLog };
+  return { profile, cards, runLog };
+}
+
+function normalizeProfile(raw: any): BotPersonalMemory {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: BotPersonalMemory = {};
+  if (typeof raw.name === 'string' && raw.name.trim()) out.name = raw.name.trim();
+  if (typeof raw.preferences === 'string' && raw.preferences.trim()) out.preferences = raw.preferences.trim();
+  if (typeof raw.systemPrompt === 'string' && raw.systemPrompt.trim()) out.systemPrompt = raw.systemPrompt.trim();
+  if (typeof raw.system_prompt === 'string' && raw.system_prompt.trim()) out.systemPrompt = raw.system_prompt.trim();
+  if (typeof raw.facts === 'string' && raw.facts.trim()) out.facts = raw.facts.trim();
+  return out;
 }
 
 function normalizeCard(raw: any): BotKanbanCard | null {
@@ -108,7 +130,8 @@ function normalizeRunLog(raw: any): BotRunLogEntry | null {
 }
 
 function ensureRecord(file: BotMemoryFile, botId: string): BotMemoryRecord {
-  if (!file.bots[botId]) file.bots[botId] = { cards: [], runLog: [] };
+  if (!file.bots[botId]) file.bots[botId] = { profile: {}, cards: [], runLog: [] };
+  else if (!file.bots[botId].profile) file.bots[botId].profile = {};
   return file.bots[botId];
 }
 
@@ -117,6 +140,8 @@ function genId(prefix: string): string {
 }
 
 export interface BotMemoryStore {
+  getProfile(botId: string): BotPersonalMemory;
+  updateProfile(botId: string, patch: Partial<BotPersonalMemory>): BotPersonalMemory;
   listCards(botId: string, opts?: { status?: BotKanbanStatus }): BotKanbanCard[];
   getCard(botId: string, cardId: string): BotKanbanCard | null;
   createCard(botId: string, input: { title: string; notes?: string; status?: BotKanbanStatus }, by: BotMemoryActor): BotKanbanCard | null;
@@ -143,6 +168,20 @@ export function createBotMemoryStore(storage: BotMemoryStorage): BotMemoryStore 
       if (!rec) return [];
       const cards = opts.status ? rec.cards.filter(c => c.status === opts.status) : rec.cards;
       return [...cards].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    },
+
+    getProfile(botId) {
+      if (!botId) return {};
+      return { ...(load().bots[botId]?.profile || {}) };
+    },
+
+    updateProfile(botId, patch) {
+      if (!botId) return {};
+      const file = load();
+      const rec = ensureRecord(file, botId);
+      rec.profile = normalizeProfile({ ...(rec.profile || {}), ...(patch || {}) });
+      save(file);
+      return { ...rec.profile };
     },
 
     getCard(botId, cardId) {
@@ -240,17 +279,18 @@ export function createBotMemoryStore(storage: BotMemoryStorage): BotMemoryStore 
     },
 
     exportSnapshot(botId, limit = RUN_LOG_LIMIT) {
-      if (!botId) return { cards: [], runLog: [] };
+      if (!botId) return { profile: {}, cards: [], runLog: [] };
       const rec = load().bots[botId];
-      if (!rec) return { cards: [], runLog: [] };
+      if (!rec) return { profile: {}, cards: [], runLog: [] };
       return {
+        profile: { ...(rec.profile || {}) },
         cards: [...rec.cards],
         runLog: [...rec.runLog].slice(-Math.max(1, Math.min(limit, RUN_LOG_LIMIT))),
       };
     },
 
     replaceRecord(botId, record) {
-      if (!botId) return { cards: [], runLog: [] };
+      if (!botId) return { profile: {}, cards: [], runLog: [] };
       const file = load();
       file.bots[botId] = normalizeBotMemoryRecord(record);
       save(file);
@@ -258,7 +298,7 @@ export function createBotMemoryStore(storage: BotMemoryStorage): BotMemoryStore 
     },
 
     mergeSnapshot(botId, snapshot) {
-      if (!botId) return { cards: [], runLog: [] };
+      if (!botId) return { profile: {}, cards: [], runLog: [] };
       const incoming = normalizeBotMemoryRecord(snapshot);
       const file = load();
       const current = ensureRecord(file, botId);
@@ -279,8 +319,9 @@ export function createBotMemoryStore(storage: BotMemoryStorage): BotMemoryStore 
       const merged = normalizeBotMemoryRecord({
         cards: Array.from(cardsById.values()),
         runLog: Array.from(logsById.values()),
+        profile: { ...(current.profile || {}), ...(incoming.profile || {}) },
       });
-      file.bots[botId] = { cards: merged.cards, runLog: merged.runLog.slice(-RUN_LOG_LIMIT) };
+      file.bots[botId] = { profile: merged.profile, cards: merged.cards, runLog: merged.runLog.slice(-RUN_LOG_LIMIT) };
       save(file);
       return file.bots[botId];
     },
@@ -296,10 +337,19 @@ export function createBotMemoryStore(storage: BotMemoryStorage): BotMemoryStore 
 
     formatForPrompt(botId, opts = {}) {
       if (!botId) return '';
-      const rec = load().bots[botId] || { cards: [], runLog: [] };
+      const rec = load().bots[botId] || { profile: {}, cards: [], runLog: [] };
       const cardLimit = Math.max(3, opts.cardLimitPerColumn ?? 8);
       const runLimit = Math.max(1, opts.runLogLimit ?? 5);
       const sections: string[] = [];
+
+      const profile = rec.profile || {};
+      const profileLines: string[] = ['# YOUR PERSONAL MEMORY SLOTS'];
+      if (profile.name) profileLines.push(`- name: ${profile.name}`);
+      if (profile.preferences) profileLines.push(`- preferences: ${profile.preferences}`);
+      if (profile.facts) profileLines.push(`- facts: ${profile.facts}`);
+      if (profile.systemPrompt) profileLines.push(`- system_prompt: ${profile.systemPrompt}`);
+      profileLines.push('Use bot_memory_profile_update to keep these fixed slots current; do not store these as kanban cards.');
+      sections.push(profileLines.join('\n'));
 
       if (rec.cards.length > 0) {
         const byStatus: Record<BotKanbanStatus, BotKanbanCard[]> = { in_progress: [], queued: [], failed: [], completed: [] };

@@ -655,6 +655,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsUpdateTrigger: (id: string, triggerId: string, patch: any) => ipcRenderer.invoke('bots:updateTrigger', id, triggerId, patch),
   botsRemoveTrigger: (id: string, triggerId: string) => ipcRenderer.invoke('bots:removeTrigger', id, triggerId),
   botsGetAvailableTools: () => ipcRenderer.invoke('bots:getAvailableTools'),
+  integrationsSyncToolNames: (names: string[]) => ipcRenderer.invoke('integrations:syncToolNames', names),
   botsTestSetup: (input: any) => ipcRenderer.invoke('bots:testSetup', input),
   botsRunPreflightProbe: (payload: { request: { probe: string; args?: Record<string, any> }; cloudHttpBase: string; authToken: string | null }) =>
     ipcRenderer.invoke('bots:runPreflightProbe', payload),

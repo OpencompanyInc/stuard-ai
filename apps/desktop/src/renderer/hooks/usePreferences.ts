@@ -324,7 +324,7 @@ export function usePreferences() {
   const [persona, setPersonaState] = useState<string>(() => getLS<string>("persona", ""));
   const [onboardingComplete, setOnboardingCompleteState] = useState<boolean>(() => getLS<boolean>("onboarding_complete", false));
   const [tourComplete, setTourCompleteState] = useState<boolean>(() => getLS<boolean>("tour_complete", false));
-  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => normalizeThemeMode(getLS<any>("theme_mode", "light")));
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => normalizeThemeMode(getLS<any>("theme_mode", "dark")));
   const [themeDarkShade, setThemeDarkShadeState] = useState<string>(() => getLS<string>("theme_dark", "#0f172a"));
   const [themeLightShade, setThemeLightShadeState] = useState<string>(() => getLS<string>("theme_light", "#e2e8f0"));
   const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));

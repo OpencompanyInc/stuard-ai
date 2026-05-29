@@ -653,6 +653,10 @@ def _read_text_like_file(path: str) -> Dict[str, Any]:
 class CheckpointManager:
     _active_id: str | None = None
     _redo_stack: list[str] = []
+    # Actor for the in-flight tool_exec, set by the WS handler before dispatch.
+    # Tags new checkpoints and forces a fresh checkpoint when the actor changes,
+    # so the Settings center can group file changes by source (chat/workflow/bot).
+    _requested_actor: dict | None = None
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -690,10 +694,31 @@ class CheckpointManager:
     @classmethod
     def set_active(cls, id: str):
         cls._active_id = id
-        
+
     @classmethod
     def get_active(cls) -> str | None:
         return cls._active_id
+
+    @classmethod
+    def set_actor(cls, actor: Any) -> None:
+        """Set the actor for subsequent file changes. Pass None/falsy to clear
+        (treated as the default 'chat' actor)."""
+        cls._requested_actor = actor if isinstance(actor, dict) else None
+
+    @staticmethod
+    def _actor_key(actor: Any) -> tuple[str, str]:
+        if not isinstance(actor, dict):
+            return ("chat", "")
+        return (str(actor.get("type") or "chat"), str(actor.get("id") or ""))
+
+    @classmethod
+    def _read_manifest_actor(cls, cp_id: str) -> Any:
+        try:
+            mp = os.path.join(CHECKPOINT_DIR, cp_id, "manifest.json")
+            with open(mp, "r") as f:
+                return json.load(f).get("actor")
+        except Exception:
+            return None
         
     @classmethod
     def list_checkpoints(cls) -> list[Dict[str, Any]]:
@@ -714,20 +739,24 @@ class CheckpointManager:
         return res
 
     @classmethod
-    def create(cls, name: str = "checkpoint") -> str:
+    def create(cls, name: str = "checkpoint", actor: Any = None) -> str:
         ts = int(time.time())
         id = f"{ts}_{uuid.uuid4().hex[:8]}_{name}"
         path = os.path.join(CHECKPOINT_DIR, id)
         os.makedirs(path, exist_ok=True)
+        if actor is None:
+            actor = cls._requested_actor
         manifest = {
             "id": id,
             "timestamp": ts,
             "name": name,
             "files": {},
         }
+        if isinstance(actor, dict):
+            manifest["actor"] = actor
         with open(os.path.join(path, "manifest.json"), "w") as f:
             json.dump(manifest, f)
-        
+
         cls._active_id = id
         cls._redo_stack = []
         return id
@@ -763,13 +792,17 @@ class CheckpointManager:
 
     @classmethod
     def ensure_active(cls) -> str:
-        """Auto-create a checkpoint if none is active. Returns the active checkpoint ID."""
+        """Return the active checkpoint ID, creating one if none is active or if the
+        in-flight actor differs from the active checkpoint's actor (so each actor's
+        run lands in its own checkpoint when runs are sequential)."""
         cls.cleanup_old()
-        
+
         if cls._active_id:
             cp_path = os.path.join(CHECKPOINT_DIR, cls._active_id)
             if os.path.exists(cp_path):
-                return cls._active_id
+                active_actor = cls._read_manifest_actor(cls._active_id)
+                if cls._actor_key(active_actor) == cls._actor_key(cls._requested_actor):
+                    return cls._active_id
         return cls.create("auto")
 
     @classmethod

@@ -95,6 +95,12 @@ vi.mock('../../tools/bridge', () => {
   };
 });
 
+vi.mock('../../tools/workflow', () => {
+  return {
+    getSessionWorkflow: vi.fn(),
+  };
+});
+
 vi.mock('../../services/vm-bridge', () => {
   return {
     getDesktopWs: getDesktopWsMock,

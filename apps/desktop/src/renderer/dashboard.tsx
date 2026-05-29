@@ -18,7 +18,6 @@ import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
 import { MediaLibraryView } from "./components/MediaLibraryView";
-import { BotsView } from "./components/BotsView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
 import { HeaderActionsContext, type HeaderAction } from "./components/HeaderActions";
 import {
@@ -35,8 +34,6 @@ import {
   Cloud,
   HardDrive,
   Image as ImageIcon,
-  Bot,
-  ChevronRight,
 } from "lucide-react";
 import stuardLogo from "./assets/stuard-logo.png";
 import { clsx } from 'clsx';
@@ -223,9 +220,6 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
       <span className="flex-1 text-left leading-none">
         {label}
       </span>
-      {active && (
-        <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_rgba(255,23,39,0.45)]" />
-      )}
     </button>
   );
 }
@@ -236,9 +230,9 @@ function DashboardApp() {
     try {
       const params = new URLSearchParams(window.location.search);
       const initialTab = params.get('tab');
-      // 'proactive' deep-links now redirect to 'bots' since the legacy view was retired.
-      if (initialTab === 'proactive') return 'bots';
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'bots', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
+      // Agents moved to Stuard Studio; the main process redirects 'bots'/'proactive'
+      // deep links there, so the dashboard only handles its own remaining tabs.
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -420,7 +414,7 @@ function DashboardApp() {
       const tab = data?.tab;
       if (
         tab &&
-        ['overview', 'history', 'planner', 'tasks', 'bots', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(tab)
+        ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(tab)
       ) {
         setTab(tab);
       }
@@ -1376,7 +1370,6 @@ function DashboardApp() {
       key: 'intelligence',
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
-        { id: 'bots', label: 'Agents', icon: Bot },
       ],
     },
     {
@@ -1401,7 +1394,6 @@ function DashboardApp() {
     history: { title: 'History', subtitle: 'Review recent activity, conversations, and usage.' },
     planner: { title: 'Planner', subtitle: 'Plan your day with Stuard to unlock maximum productivity.' },
     tasks: { title: 'Tasks', subtitle: 'Track what matters and keep your day moving.' },
-    bots: { title: 'Agents', subtitle: 'Build and deploy 24/7 agents with their own personalities, tools, and memory.' },
     memories: { title: 'Memories', subtitle: 'Browse collections, context, and project knowledge.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
@@ -1492,7 +1484,7 @@ function DashboardApp() {
           <div className="p-1 pt-3 mt-auto">
             {userEmail ? (
               <div className="dashboard-sidebar-section flex items-center gap-3 p-3 cursor-default group">
-                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary border border-theme shadow-inner">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary shadow-inner">
                   {userEmail[0].toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1536,7 +1528,6 @@ function DashboardApp() {
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <img src={stuardLogo} alt="Stuard" className="h-7 w-7 rounded-[9px] object-cover shrink-0" />
               <span className="text-[15px] font-semibold text-theme-fg tracking-tight leading-none">Stuard</span>
-              <ChevronRight className="w-4 h-4 text-theme-muted opacity-50 shrink-0" />
               <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-theme-hover/40 text-theme-fg shrink-0">
                 <CurrentTabIcon className="w-[15px] h-[15px]" />
               </div>
@@ -1570,7 +1561,12 @@ function DashboardApp() {
                     key={action.id}
                     onClick={action.onClick}
                     disabled={action.disabled || action.loading}
-                    className="dashboard-button-primary flex items-center gap-2 px-3.5 py-2 text-[13px] transition-all group active:scale-95 disabled:active:scale-100"
+                    className={clsx(
+                      "flex items-center gap-2 px-3.5 py-2 text-[13px] transition-all group active:scale-95 disabled:active:scale-100",
+                      action.variant === 'primary'
+                        ? "dashboard-button-primary"
+                        : "dashboard-button-secondary",
+                    )}
                     title={action.title || action.label}
                   >
                     {ActionIcon && (
@@ -1680,9 +1676,6 @@ function DashboardApp() {
                             <TasksView />
                           )}
 
-                          {tab === 'bots' && (
-                            <BotsView />
-                          )}
 
                           {tab === 'settings' && userEmail && (
                             <SettingsView

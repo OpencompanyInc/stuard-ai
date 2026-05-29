@@ -1003,12 +1003,14 @@ export function useAppController() {
     Boolean(currentResponse || currentReasoning || currentToolCalls?.length);
 
   // Use ref to avoid recreating handleSend on every render
-  const handleSendRef = useRef<(overrideText?: string) => void>(() => { });
+  const handleSendRef = useRef<(overrideText?: string, sendOptions?: { quick?: boolean }) => void>(() => { });
 
-  handleSendRef.current = useCallback((overrideText?: string) => {
+  handleSendRef.current = useCallback((overrideText?: string, sendOptions?: { quick?: boolean }) => {
     if (!signedIn) { handleSignIn(); return; }
     const text = (typeof overrideText === 'string' ? overrideText : query).trim();
     if (!text && attachments.length === 0 && contextPaths.length === 0) return;
+
+    const isQuick = sendOptions?.quick === true;
 
     const unreadableAttachment = attachments.find((attachment) => !attachment.data || !String(attachment.data).trim());
     if (unreadableAttachment) {
@@ -1033,11 +1035,23 @@ export function useAppController() {
       clearLastError?.();
     }
 
-    const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
-    const isAuto = selected === 'auto';
-    const meta = !isAuto ? modelById.get(selected) : undefined;
-    const modeToSend = isAuto ? 'auto' : ((meta?.category as any) || (meta?.isReasoning ? 'smart' : 'balanced'));
-    const modelIdToSend = !isAuto ? selected : undefined;
+    let modeToSend: string;
+    let modelIdToSend: string | undefined;
+    let reasoningToSend = reasoningLevel;
+
+    if (isQuick) {
+      modeToSend = 'fast';
+      modelIdToSend = typeof chatModels?.fast?.default === 'string' && chatModels.fast.default.trim()
+        ? chatModels.fast.default.trim()
+        : undefined;
+      reasoningToSend = 'none';
+    } else {
+      const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
+      const isAuto = selected === 'auto';
+      const meta = !isAuto ? modelById.get(selected) : undefined;
+      modeToSend = isAuto ? 'auto' : ((meta?.category as any) || (meta?.isReasoning ? 'smart' : 'balanced'));
+      modelIdToSend = !isAuto ? selected : undefined;
+    }
 
     // Build modelConfig from chatModels so server knows tier defaults
     const modelConfigToSend = chatModels ? {
@@ -1066,6 +1080,7 @@ export function useAppController() {
 
     const doSend = (skills: any[]) => {
       if (skills.length > 0) contextData.skills = skills;
+      if (isQuick) contextData.quickResponse = true;
       const fallbackText = buildAttachmentMessageText(attachments, contextPaths);
       sendMessage({
         text: text || fallbackText || 'Attached files',
@@ -1086,7 +1101,8 @@ export function useAppController() {
         modelId: typeof modelIdToSend === 'string' ? modelIdToSend : undefined,
         modelSource,
         modelConfig: modelConfigToSend,
-        reasoningLevel,
+        reasoningLevel: reasoningToSend,
+        skipMemoryIngestion: isQuick,
       });
       setQuery("");
       setAttachments([]);
@@ -1096,17 +1112,27 @@ export function useAppController() {
       baseQueryRef.current = "";
     };
 
+    // Quick sends fire immediately — no skills round-trip (saves ~50–200 ms).
+    if (isQuick) {
+      doSend([]);
+      return;
+    }
+
     // Attach active skills so the agent has them in its system prompt
     Promise.resolve()
       .then(() => (window as any).desktopAPI?.skillsList?.())
       .then((res: any) => (res?.skills || []).filter((s: any) => s.isActive !== false))
       .catch(() => [])
       .then((skills: any[]) => doSend(skills));
-  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, modelSource, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript, lastError, clearLastError]);
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, modelById, modelSource, tone, customTone, persona, reasoningLevel, sendMessage, handleSignIn, clearTranscript, lastError, clearLastError]);
 
   // Stable callback ref for child components
   const handleSend = useCallback((overrideText?: string) => {
     handleSendRef.current(overrideText);
+  }, []);
+
+  const handleQuickSend = useCallback((overrideText?: string) => {
+    handleSendRef.current(overrideText, { quick: true });
   }, []);
 
   // Wrap editMessage so resends use the currently-selected model (matches handleSend),
@@ -1649,8 +1675,9 @@ export function useAppController() {
     if (plannerData?.nextUp) {
       return `${plannerData.nextUp.title} ${plannerData.nextUp.timeLabel}`;
     }
+    if (messages.length > 0) return '';
     return 'Ready';
-  }, [isRecording, queueDepth, updateState.info, statusLabel, plannerData?.nextUp]);
+  }, [isRecording, queueDepth, updateState.info, statusLabel, plannerData?.nextUp, messages.length]);
 
   // AI is "working" only for actual inference phases — NOT connection setup.
   // Connecting/starting/disconnected/error should not surface the video icon.
@@ -1762,8 +1789,13 @@ export function useAppController() {
     }
     if (connectionStatus === 'disconnected') return 'Offline';
     if (connectionStatus === 'error') return 'Connection error';
-    return statusLabel;
-  }, [connectionStatus, statusLabel, ai?.statusText]);
+    const label = statusLabel;
+    if (messages.length > 0) {
+      const idle = ['ready', 'idle'];
+      if (idle.includes(label.toLowerCase())) return '';
+    }
+    return label;
+  }, [connectionStatus, statusLabel, ai?.statusText, messages.length]);
 
   const handleShowSidebar = useCallback(() => {
     setOverlayMode('sidebar');
@@ -2015,6 +2047,7 @@ export function useAppController() {
     query,
     setQuery,
     handleSend,
+    handleQuickSend,
     handleSteer,
     stopGeneration,
     isStreaming,

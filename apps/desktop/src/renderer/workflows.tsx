@@ -34,6 +34,7 @@ import { calculateAutoLayout } from "./workflows/utils/alignment";
 import { WorkflowMainContent } from "./workflows/layout/WorkflowMainContent";
 import { WorkflowOverlays } from "./workflows/layout/WorkflowOverlays";
 import { IntegrationBuilderModal } from "./workflows/components/IntegrationBuilderModal";
+import { ConfirmDialogHost } from "./workflows/components/ConfirmDialog";
 import { PanelErrorBoundary } from "./workflows/layout/PanelErrorBoundary";
 import { WorkflowHeader } from "./workflows/layout/WorkflowHeader";
 import type { OpenFileTab, RightPanel, WorkflowContextMenu, WorkspaceInfo } from "./workflows/layout/types";
@@ -66,10 +67,13 @@ import {
 
 const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || "http://127.0.0.1:8082";
 
-type LauncherView = 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills';
+type LauncherView = 'home' | 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills';
 
 function parseLauncherView(value: string | null | undefined): LauncherView | undefined {
-  if (value === 'workflows' || value === 'deployed' || value === 'shared' || value === 'marketplace' || value === 'skills') {
+  if (
+    value === 'home' || value === 'workflows' || value === 'agents' || value === 'tools' ||
+    value === 'deployed' || value === 'shared' || value === 'marketplace' || value === 'skills'
+  ) {
     return value;
   }
   return undefined;
@@ -106,9 +110,9 @@ function WorkflowsApp() {
   const [launcherView, setLauncherView] = useState<LauncherView>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      return parseLauncherView(params.get('view')) || 'workflows';
+      return parseLauncherView(params.get('view')) || 'home';
     } catch {
-      return 'workflows';
+      return 'home';
     }
   });
   const [model, setModel] = useState<DesignerModel | null>(null);
@@ -559,6 +563,12 @@ function WorkflowsApp() {
 
   // Custom-integration builder (test phase — drafts in localStorage, executor on cloud-ai)
   const [showIntegrationBuilder, setShowIntegrationBuilder] = useState(false);
+  // When set, the builder opens seeded with this deployed integration's manifest (edit flow).
+  const [integrationSeed, setIntegrationSeed] = useState<any | null>(null);
+  const openIntegrationBuilder = useCallback((seedManifest?: any) => {
+    setIntegrationSeed(seedManifest ?? null);
+    setShowIntegrationBuilder(true);
+  }, []);
 
   const {
     showDeployPanel,
@@ -1446,12 +1456,13 @@ function WorkflowsApp() {
           onShowPublished={() => setShowMyPublished(true)}
           onDashboard={() => (window as any).desktopAPI?.openDashboard?.()}
           onReplayTour={onboarding.replay}
-          onIntegrationBuilder={() => setShowIntegrationBuilder(true)}
+          onIntegrationBuilder={openIntegrationBuilder}
         />
 
         <IntegrationBuilderModal
           open={showIntegrationBuilder}
-          onClose={() => setShowIntegrationBuilder(false)}
+          onClose={() => { setShowIntegrationBuilder(false); setIntegrationSeed(null); }}
+          seedManifest={integrationSeed}
           selectedModelId={workflowChatModelId}
           onSelectModel={setWorkflowChatModelId}
           modelSource={modelSource}
@@ -1535,6 +1546,7 @@ function WorkflowsApp() {
           onApplyPendingUpdate={executeWorkflowUpdate}
         />
         </div>
+        <ConfirmDialogHost />
       </div>
       </WorkflowThemeContext.Provider>
     );
@@ -1936,6 +1948,7 @@ function WorkflowsApp() {
         />
       )}
       </div>
+      <ConfirmDialogHost />
     </div>
     </WorkflowGroupsProvider>
     </WorkflowThemeContext.Provider>

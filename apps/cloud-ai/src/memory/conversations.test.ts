@@ -285,4 +285,25 @@ describe('Conversation memory pipeline', () => {
     expect(args.threshold).toBe(0.0);
   });
 
+  it('passes owner scope through to segment_search', async () => {
+    const embedding = Array.from({ length: 3072 }, () => 0);
+    embedMock.mockResolvedValue({ embedding });
+
+    execLocalToolMock.mockResolvedValue({
+      ok: true,
+      results: [],
+    });
+
+    await searchSegments('airport', {
+      limit: 5,
+      threshold: 0.0,
+      owner: { owner_type: 'bot', owner_id: 'bot-1' },
+    });
+
+    const [tool, args] = execLocalToolMock.mock.calls[0];
+    expect(tool).toBe('segment_search');
+    expect(args.owner_type).toBe('bot');
+    expect(args.owner_id).toBe('bot-1');
+  });
+
 });

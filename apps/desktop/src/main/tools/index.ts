@@ -1,6 +1,7 @@
 import { RouterContext } from './types';
 import { getToolKind } from './registry';
-import { execCloudTool } from './handlers/cloud';
+import { execCloudTool, execCustomIntegrationTool } from './handlers/cloud';
+import { isCustomIntegrationTool } from './custom-integrations';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
 import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendNotification, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
 import { execAskUserViaNotification } from './handlers/ask-user-notification';
@@ -13,7 +14,7 @@ import { execCallWorkspaceFunction, execListWorkspaceFunctions } from './handler
 import { execWorkspaceReadFile, execWorkspaceWriteFile, execWorkspaceDeleteFile, execWorkspaceListFiles, execWorkspaceCreateFolder, execWorkspaceGetInfo } from './handlers/workspace-files';
 import { execProactiveTaskCreate, execProactiveTaskList, execProactiveTaskUpdate, execProactiveTaskDelete } from './handlers/proactive';
 import { execBotList, execBotGetStatus, execBotCreate, execBotDeploy, execBotPause, execBotDelete, execBotAsk } from './handlers/bots';
-import { execBotMemoryList, execBotMemoryCreate, execBotMemoryUpdate, execBotMemoryDelete, execBotMemoryLog } from './handlers/bot-memory';
+import { execBotMemoryList, execBotMemoryCreate, execBotMemoryUpdate, execBotMemoryDelete, execBotMemoryLog, execBotMemoryProfileGet, execBotMemoryProfileUpdate } from './handlers/bot-memory';
 import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handlers/wakeword';
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
@@ -174,6 +175,12 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
     return execRustFileTool(toolName, args);
   }
 
+  // Deployed custom-integration tools route to cloud-ai, which resolves the
+  // stored encrypted credentials and runs the declarative executor.
+  if (isCustomIntegrationTool(toolName)) {
+    return withMediaCapture(execCustomIntegrationTool(toolName, args, ctx));
+  }
+
   switch (kind) {
     case 'electron':
       // Internal: register media files from cloud-originated tools into local media library
@@ -306,6 +313,8 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'agent_memory_update' || toolName === 'bot_memory_update') return execBotMemoryUpdate(args, ctx);
       if (toolName === 'agent_memory_delete' || toolName === 'bot_memory_delete') return execBotMemoryDelete(args, ctx);
       if (toolName === 'agent_memory_log' || toolName === 'bot_memory_log') return execBotMemoryLog(args, ctx);
+      if (toolName === 'agent_memory_profile_get' || toolName === 'bot_memory_profile_get') return execBotMemoryProfileGet(args, ctx);
+      if (toolName === 'agent_memory_profile_update' || toolName === 'bot_memory_profile_update') return execBotMemoryProfileUpdate(args, ctx);
       if (toolName === 'wakeword_start') return execWakewordStart(args);
       if (toolName === 'wakeword_stop') return execWakewordStop();
       if (toolName === 'wakeword_status') return execWakewordStatus();

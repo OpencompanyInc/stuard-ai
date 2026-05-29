@@ -7,6 +7,7 @@ import {
   Bot as BotIcon, User as UserIcon,
 } from 'lucide-react';
 import { useBotsPlatform } from './BotsPlatformContext';
+import { platformConfirm } from './dialogs';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,13 @@ export function KanbanTab({
   };
 
   const handleDelete = async (card: KanbanCard) => {
-    if (!confirm(`Delete "${card.title}"?`)) return;
+    const ok = await platformConfirm(platform, {
+      title: `Delete “${card.title}”?`,
+      message: 'This removes the card from the board. This can’t be undone.',
+      confirmLabel: 'Delete card',
+      tone: 'danger',
+    });
+    if (!ok) return;
     await platform.memoryDeleteCard?.(botId, card.id);
     onChanged();
   };

@@ -1,4 +1,4 @@
-import { botService, type Bot, type BotConfig, type BotTrigger, type BotTriggerType } from '../../services/bot-service';
+import { DEFAULT_BOT_AUTO_APPROVE_TOOLS, botService, type Bot, type BotConfig, type BotTrigger, type BotTriggerType } from '../../services/bot-service';
 import { proactiveService } from '../../services/proactive-service';
 import { syncBotTriggers } from '../../services/bot-trigger-dispatcher';
 import { deployBotToVm, pullBotMemoryFromVm, stopBotOnVm } from '../../services/bot-vm-deploy';
@@ -257,6 +257,8 @@ function buildConfig(args: any, triggers: BotTrigger[]): BotConfig {
     notificationChannels: (notificationChannels || ['app']) as any,
     ...(skillIds ? { skillIds } : {}),
     memoryEnabled: args?.memory_enabled === false || args?.memoryEnabled === false ? false : true,
+    permissionMode: 'selective',
+    autoApproveTools: [...DEFAULT_BOT_AUTO_APPROVE_TOOLS],
   };
 }
 

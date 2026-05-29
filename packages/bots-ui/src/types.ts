@@ -19,6 +19,15 @@ export interface BotConfig {
   memoryEnabled: boolean;
   /** Per-agent skill subset. undefined = inherit all globally-active skills. */
   skillIds?: string[];
+  /**
+   * How autonomous the agent is on sensitive tools (writing/deleting files,
+   * running commands, terminal) during a local run:
+   * 'auto' = never ask · 'selective' = auto-run `autoApproveTools`, prompt for
+   * the rest · 'manual' = prompt for every sensitive tool.
+   */
+  permissionMode?: 'auto' | 'selective' | 'manual';
+  /** Sensitive tools auto-approved when permissionMode === 'selective'. */
+  autoApproveTools?: string[];
 }
 
 export type BotTriggerType =

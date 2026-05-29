@@ -7,12 +7,14 @@
 
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { ENVIRONMENT, IS_DEVELOPMENT } from '../utils/config';
 
 // Environment configuration
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const AUTH_SECRET = process.env.AUTH_SECRET || process.env.INTEGRATION_STATE_SECRET || 'stuard-auth-secret-change-in-production';
+const DEFAULT_AUTH_SECRET = 'stuard-auth-secret-change-in-production';
+const AUTH_SECRET = process.env.AUTH_SECRET || process.env.INTEGRATION_STATE_SECRET || DEFAULT_AUTH_SECRET;
 
 // Supabase clients
 let supabaseAnon: SupabaseClient | null = null;
@@ -28,6 +30,38 @@ if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
   supabaseService = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, { 
     auth: { persistSession: false } 
   });
+}
+
+/**
+ * Fail-fast guard for deployed (non-development) environments.
+ *
+ * AUTH_SECRET signs OAuth `state` (CSRF defense for the connect flow) and other
+ * HMACs. If it's unset or still the shipped default, those signatures are
+ * forgeable. Call this once at server boot — throwing here keeps a misconfigured
+ * deploy from ever serving traffic. No-op in development, where the default is
+ * acceptable.
+ *
+ * Note: this does NOT affect chat session auth, which is verified against
+ * Supabase JWKS independently of AUTH_SECRET.
+ */
+export function assertAuthSecretConfigured(): void {
+  if (IS_DEVELOPMENT) return;
+
+  if (AUTH_SECRET === DEFAULT_AUTH_SECRET) {
+    throw new Error(
+      `[auth] Refusing to start in '${ENVIRONMENT}': AUTH_SECRET (or ` +
+        'INTEGRATION_STATE_SECRET) is unset or uses the built-in default, so OAuth ' +
+        '`state` signatures would be forgeable. Set AUTH_SECRET to a high-entropy ' +
+        'random value, e.g. `openssl rand -hex 32`.',
+    );
+  }
+
+  if (AUTH_SECRET.trim().length < 32) {
+    throw new Error(
+      `[auth] Refusing to start in '${ENVIRONMENT}': AUTH_SECRET is too short ` +
+        `(${AUTH_SECRET.trim().length} chars). Use at least 32 random characters.`,
+    );
+  }
 }
 
 // Auth error codes for proper client handling

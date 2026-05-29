@@ -78,6 +78,9 @@ export function specToDesignerModel(spec: any): DesignerModel {
         position: n?.position || { x: 40 + (i % 6) * 140, y: 60 + Math.floor(i / 6) * 90 },
         iconName: typeof n?.iconName === 'string' ? n.iconName : undefined,
         colorKey: typeof n?.colorKey === 'string' ? n.colorKey : undefined,
+        // Preserve the convergence flag — this normalizer rebuilds nodes field by
+        // field, so anything omitted here is silently dropped on a spec round-trip.
+        ...(n?.waitForAll === true ? { waitForAll: true } : {}),
       }));
 
       // Normalize wires (sanitize IDs to match nodes)

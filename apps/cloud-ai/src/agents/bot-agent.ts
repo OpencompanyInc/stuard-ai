@@ -16,6 +16,10 @@ const BOT_INTERNAL_TOOL_NAMES = new Set<string>([
   'get_skill_info',
 ]);
 
+const ALLOWED_BOT_KNOWLEDGE_TOOLS = new Set<string>([
+  'knowledge_stats',
+]);
+
 function cleanToolNames(value: unknown): string[] {
   return Array.from(new Set(
     (Array.isArray(value) ? value : [])
@@ -26,6 +30,7 @@ function cleanToolNames(value: unknown): string[] {
 
 function isBlockedBotToolName(name: string): boolean {
   const trimmed = String(name || '').trim();
+  if (trimmed.startsWith('knowledge_') && !ALLOWED_BOT_KNOWLEDGE_TOOLS.has(trimmed)) return true;
   return trimmed.startsWith('browser_') && !trimmed.startsWith('browser_use_');
 }
 
@@ -40,12 +45,17 @@ function buildBotToolSet(args: {
   botId?: string;
   allowedTools?: unknown;
   mcpTools?: Record<string, any>;
+  customTools?: Record<string, any>;
 }): Record<string, any> {
-  const executionTools = resolveExecutionTools(args.mcpTools || {});
+  const bridgeSecretsRaw = getBridgeSecrets() || {};
+  // Deployed custom-integration tools come from the per-request secret bag
+  // (set in prepare-chat-request) or an explicit arg (headless/scheduled bots).
+  const customTools = { ...((bridgeSecretsRaw as any).__customTools || {}), ...(args.customTools || {}) };
+  const executionTools = { ...resolveExecutionTools(args.mcpTools || {}), ...customTools };
   const addedTools = cleanToolNames(args.allowedTools);
   const bridgeWs = getBridgeWs();
   const bridgeSecrets = {
-    ...(getBridgeSecrets() || {}),
+    ...bridgeSecretsRaw,
     ...(args.botId ? { proactiveBotId: args.botId } : {}),
   };
 
@@ -78,7 +88,9 @@ Your tools are an addition set:
 - Internal bot tools: proactive_task_*, bot_memory_*, search_past_conversations, get_conversation_context, get_skill_info.
 - Added non-internal tools for this bot: ${addedText}.
 
-All other tools are not part of this bot. If the user asks what tools you have, answer only from the two lists above. If the user asks you to change your kanban, call bot_memory_* and only claim success after the tool returns ok=true.${args.promptAddendum ? `\n\n${args.promptAddendum}` : ''}`;
+All other tools are not part of this bot. If the user asks what tools you have, answer only from the two lists above. If the user asks you to change your kanban, call bot_memory_* and only claim success after the tool returns ok=true.
+
+Use bot_memory_profile_get / bot_memory_profile_update for your fixed personal memory slots: name, preferences, facts, and systemPrompt. Use those slots for durable identity/preference/system-prompt notes; use kanban cards for active work.${args.promptAddendum ? `\n\n${args.promptAddendum}` : ''}`;
 }
 
 export function getBotAgent(args: {
@@ -88,6 +100,7 @@ export function getBotAgent(args: {
   modelId?: string;
   allowedTools?: unknown;
   mcpTools?: Record<string, any>;
+  customTools?: Record<string, any>;
   extraTools?: Record<string, any>;
   promptAddendum?: string;
 }): Agent {
@@ -119,6 +132,7 @@ export async function getBotAgentForUser(args: {
   userId?: string | null;
   allowedTools?: unknown;
   mcpTools?: Record<string, any>;
+  customTools?: Record<string, any>;
   extraTools?: Record<string, any>;
   promptAddendum?: string;
 }): Promise<Agent> {
