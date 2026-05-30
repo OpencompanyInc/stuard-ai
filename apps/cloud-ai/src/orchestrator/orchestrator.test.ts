@@ -100,6 +100,7 @@ describe('Capability Packs', () => {
     expect(FILE_OPS_PACK.toolNames).toContain('write_file');
     expect(FILE_OPS_PACK.toolNames).toContain('file_edit');
     expect(FILE_OPS_PACK.toolNames).toContain('run_command');
+    expect(FILE_OPS_PACK.toolNames).toContain('python_install');
     expect(FILE_OPS_PACK.toolNames).toContain('terminal_create');
     expect(FILE_OPS_PACK.toolNames).toContain('grep');
     expect(FILE_OPS_PACK.toolNames).toContain('glob');

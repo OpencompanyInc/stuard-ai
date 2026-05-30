@@ -4,24 +4,28 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, BarChart3, Users, Rocket, Server, Shield, LogOut,
   GitBranch, Clock, CheckCircle, AlertCircle, RefreshCw, Lock, Bug,
-  ChevronsLeft, ChevronsRight, LifeBuoy
+  ChevronsLeft, ChevronsRight, LifeBuoy, Trophy
 } from 'lucide-react';
 import {
   StatusData, AnalyticsData, UserEntry, Activity as ActivityItem,
   SyncSystemData, ServerStatusData, BetaUser, WaitlistEntry, Deployment,
   FeedbackEntry, FeedbackComment, FeedbackStats,
   SupportTicket, SupportTicketMessage, SupportStats, SupportTicketStatus, SupportTicketPriority, SupportAttachment,
+  LeaderboardData, UserActivityData, LeaderboardMetric,
   fetchAnalytics, fetchUsers, fetchRecentActivity, fetchServerStatus,
   fetchSyncSystems as apiFetchSyncSystems, fetchDatabaseStats, fetchBetaUsers as apiFetchBetaUsers,
   fetchWaitlist as apiFetchWaitlist, upsertBetaUser, deleteBetaUser as apiDeleteBeta,
   promoteWaitlistUser, fetchDeployments, recordDeployment, formatTimeAgo,
   fetchFeedback, fetchFeedbackItem, createFeedback, updateFeedback, addFeedbackComment,
   fetchSupportTickets, fetchSupportTicket, updateSupportTicket, replyToSupportTicket,
+  fetchLeaderboard, fetchUserActivity,
 } from './lib/api';
 
 import OverviewTab from './components/OverviewTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import UsersTab from './components/UsersTab';
+import LeaderboardTab from './components/LeaderboardTab';
+import UserDetail from './components/UserDetail';
 import DeployTab from './components/DeployTab';
 import InfraTab from './components/InfraTab';
 import AccessTab from './components/AccessTab';
@@ -29,12 +33,13 @@ import FeedbackTab from './components/FeedbackTab';
 import SupportTab from './components/SupportTab';
 import VersionTab from './components/VersionTab';
 
-type Tab = 'overview' | 'analytics' | 'users' | 'deploy' | 'versions' | 'infra' | 'access' | 'feedback' | 'support';
+type Tab = 'overview' | 'analytics' | 'users' | 'leaderboard' | 'deploy' | 'versions' | 'infra' | 'access' | 'feedback' | 'support';
 
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'users', label: 'Users', icon: Users },
+  { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
   { id: 'deploy', label: 'Deployments', icon: Rocket },
   { id: 'versions', label: 'Versions', icon: GitBranch },
   { id: 'support', label: 'Support Tickets', icon: LifeBuoy },
@@ -175,6 +180,17 @@ export default function OpsConsole() {
   const [usersQuery, setUsersQuery] = useState('');
   const [usersPage, setUsersPage] = useState(0);
   const [planBreakdown, setPlanBreakdown] = useState<Record<string, number>>({});
+
+  // Leaderboard + per-user drill-down
+  const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
+  const [leaderboardDays, setLeaderboardDays] = useState(30);
+  const [leaderboardMetric, setLeaderboardMetric] = useState<LeaderboardMetric>('credits');
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [userActivity, setUserActivity] = useState<UserActivityData | null>(null);
+  const [userActivityDays, setUserActivityDays] = useState(30);
+  const [userActivityLoading, setUserActivityLoading] = useState(false);
+
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [syncSystems, setSyncSystems] = useState<SyncSystemData | null>(null);
   const [dbStats, setDbStats] = useState<Record<string, number> | null>(null);
@@ -234,6 +250,23 @@ export default function OpsConsole() {
       setPlanBreakdown(data.planBreakdown || {});
     }
   }, [usersPage, usersQuery]);
+
+  const loadLeaderboard = useCallback(async (days?: number, metric?: LeaderboardMetric) => {
+    const d = days ?? leaderboardDays;
+    const m = metric ?? leaderboardMetric;
+    setLeaderboardLoading(true);
+    const data = await fetchLeaderboard(d, m, 50);
+    if (data) setLeaderboard(data);
+    setLeaderboardLoading(false);
+  }, [leaderboardDays, leaderboardMetric]);
+
+  const loadUserActivity = useCallback(async (userId: string, days?: number) => {
+    const d = days ?? userActivityDays;
+    setUserActivityLoading(true);
+    const data = await fetchUserActivity(userId, d);
+    if (data) setUserActivity(data);
+    setUserActivityLoading(false);
+  }, [userActivityDays]);
 
   const loadActivities = useCallback(async () => {
     const data = await fetchRecentActivity(30);
@@ -319,6 +352,7 @@ export default function OpsConsole() {
     loadBetaUsers();
     loadWaitlist();
     loadUsers();
+    loadLeaderboard();
     loadDeployments();
     loadFeedbackData();
     loadSupportData();
@@ -327,7 +361,7 @@ export default function OpsConsole() {
     const slow = setInterval(() => {
       loadAnalytics(); loadActivities(); loadSyncSystems(); loadDbStats();
       loadServerStatus(); loadBetaUsers(); loadWaitlist(); loadDeployments();
-      loadFeedbackData(); loadSupportData();
+      loadFeedbackData(); loadSupportData(); loadLeaderboard();
     }, 60000);
 
     return () => { clearInterval(fast); clearInterval(slow); };
@@ -478,6 +512,12 @@ export default function OpsConsole() {
   const handleUsersSearch = () => { setUsersPage(0); loadUsers(0, usersQuery); };
   const handleUsersPageChange = (p: number) => { setUsersPage(p); loadUsers(p, usersQuery); };
 
+  const handleLeaderboardDaysChange = (d: number) => { setLeaderboardDays(d); loadLeaderboard(d, leaderboardMetric); };
+  const handleLeaderboardMetricChange = (m: LeaderboardMetric) => { setLeaderboardMetric(m); loadLeaderboard(leaderboardDays, m); };
+  const handleSelectUser = (userId: string) => { setSelectedUserId(userId); setUserActivity(null); loadUserActivity(userId, userActivityDays); };
+  const handleCloseUser = () => { setSelectedUserId(null); setUserActivity(null); };
+  const handleUserActivityDaysChange = (d: number) => { setUserActivityDays(d); if (selectedUserId) loadUserActivity(selectedUserId, d); };
+
   // ─── Loading state ────────────────────────────────────────────────────────
   if (!status) return (
     <div className="flex flex-col items-center justify-center h-screen gap-3">
@@ -543,7 +583,14 @@ export default function OpsConsole() {
             {activeTab === 'users' && (
               <UsersTab users={usersList} total={usersTotal} planBreakdown={planBreakdown}
                 query={usersQuery} onQueryChange={setUsersQuery} onSearch={handleUsersSearch}
-                onPageChange={handleUsersPageChange} page={usersPage} pageSize={PAGE_SIZE} />
+                onPageChange={handleUsersPageChange} page={usersPage} pageSize={PAGE_SIZE}
+                onSelectUser={handleSelectUser} />
+            )}
+            {activeTab === 'leaderboard' && (
+              <LeaderboardTab data={leaderboard} loading={leaderboardLoading}
+                days={leaderboardDays} onDaysChange={handleLeaderboardDaysChange}
+                metric={leaderboardMetric} onMetricChange={handleLeaderboardMetricChange}
+                onSelectUser={handleSelectUser} />
             )}
             {activeTab === 'deploy' && (
               <DeployTab status={status} onAction={doAction} loading={loading}
@@ -589,6 +636,16 @@ export default function OpsConsole() {
             )}
           </div>
         </main>
+
+        {selectedUserId && (
+          <UserDetail
+            data={userActivity}
+            loading={userActivityLoading}
+            days={userActivityDays}
+            onDaysChange={handleUserActivityDaysChange}
+            onClose={handleCloseUser}
+          />
+        )}
       </div>
     </LoginGate>
   );

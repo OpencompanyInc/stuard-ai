@@ -32,6 +32,15 @@ export async function fetchUsers(limit = 100, offset = 0, q = '') {
   if (q) params.set('q', q);
   return apiFetch<{ users: UserEntry[]; total: number; planBreakdown: Record<string, number> }>(`users?${params}`);
 }
+export type LeaderboardMetric = 'credits' | 'cost' | 'tokens' | 'requests';
+export async function fetchLeaderboard(days = 30, metric: LeaderboardMetric = 'credits', limit = 50) {
+  const params = new URLSearchParams({ days: String(days), metric, limit: String(limit) });
+  return apiFetch<LeaderboardData>(`leaderboard?${params}`);
+}
+export async function fetchUserActivity(userId: string, days = 30) {
+  const params = new URLSearchParams({ userId, days: String(days) });
+  return apiFetch<UserActivityData>(`user-activity?${params}`);
+}
 export async function fetchRecentActivity(limit = 30) { return apiFetch<{ activities: Activity[] }>(`recent-activity?limit=${limit}`); }
 export async function fetchServerStatus() { return apiFetch<ServerStatusData>('server-status'); }
 export async function fetchSyncSystems() { return apiFetch<{ systems: SyncSystemData }>('sync-systems'); }
@@ -207,11 +216,49 @@ export interface AnalyticsData {
   period: { days: number; since: string };
   signupTrend: { date: string; count: number }[];
   usageTrend: { date: string; tokens: number; cost: number; requests: number }[];
+  activeUsersTrend: { date: string; users: number }[];
   modelBreakdown: { model: string; tokens: number; cost: number; count: number; promptTokens: number; completionTokens: number }[];
+  categoryBreakdown: UsageCategory[];
+  engagement: { dau: number; wau: number; mau: number };
   totals: {
     users: number;
     periodSignups: number;
-    totalTokens: number; totalCost: number; totalRequests: number;
+    totalTokens: number; totalCost: number; totalCreditCost: number; totalRequests: number;
+    avgCostPerRequest: number;
+  };
+}
+
+export interface UsageCategory { category: string; credits: number; cost: number; count: number }
+
+export interface LeaderboardEntry {
+  id: string; email: string; plan: string; status: string;
+  requests: number; tokens: number; promptTokens: number; completionTokens: number;
+  cost: number; credits: number; models: number; conversations: number;
+  firstActive: string | null; lastActive: string | null;
+}
+
+export interface LeaderboardData {
+  period: { days: number; since: string };
+  metric: LeaderboardMetric;
+  entries: LeaderboardEntry[];
+  activeUsers: number;
+  totals: { requests: number; tokens: number; cost: number; credits: number };
+}
+
+export interface UserActivityData {
+  period: { days: number; since: string };
+  profile: {
+    id: string; email: string; plan: string; status: string;
+    monthlyTokenLimit: number; createdAt: string | null; lastSignIn: string | null;
+  };
+  usageTrend: { date: string; tokens: number; cost: number; credits: number; requests: number }[];
+  modelBreakdown: { model: string; tokens: number; cost: number; count: number }[];
+  categoryBreakdown: UsageCategory[];
+  totals: {
+    requests: number; tokens: number; cost: number; credits: number;
+    conversations: number; models: number; activeDays: number;
+    firstActive: string | null; lastActive: string | null;
+    avgTokensPerReq: number; avgCostPerReq: number;
   };
 }
 

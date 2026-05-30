@@ -3,6 +3,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
+import MediaAssetSlot from '@/components/sections/MediaAssetSlot';
+import PrivacyBoundaryDiagram from '@/components/sections/PrivacyBoundaryDiagram';
+
+/** Set when hero-loop.mp4 is in public/media */
+const HERO_LOOP_SRC = process.env.NEXT_PUBLIC_HERO_LOOP_SRC;
 
 const HeroSection = () => {
   const { user } = useAuthContext();
@@ -14,98 +19,105 @@ const HeroSection = () => {
   }, []);
 
   return (
-    <section
-      className="
-        hero-section
-        relative
-        flex flex-col items-center justify-center
-        min-h-screen
-        px-4
-        py-20
-        overflow-x-hidden
-        text-white
-      "
-    >
+    <section className="hero-section relative overflow-x-hidden text-white">
       <div className="hero-bg" aria-hidden="true" />
       <div className="hero-vignette" aria-hidden="true" />
 
-      <div className="relative z-10 flex flex-col items-center text-center w-full max-w-[720px] mx-auto gap-7 sm:gap-8 lg:gap-9">
-        <div className="flex flex-col items-center gap-4 sm:gap-5 lg:gap-6 w-full">
-          <h1
-            className="
-              w-full
-              font-medium tracking-tight text-white
-              text-[28px] leading-[1.15]
-              sm:text-[36px] sm:leading-[1.15]
-              md:text-[44px] md:leading-[1.12]
-              lg:text-[52px] lg:leading-[1.1]
-            "
-          >
-            The AI workspace for your PC.
-          </h1>
+      <div className="relative z-10">
+        {/* Headline + CTAs: centered in the viewport, clear of floating nav */}
+        <div className="hero-copy-panel flex min-h-[100svh] min-h-screen flex-col px-4">
+          <div className="flex flex-1 flex-col items-center justify-center pb-10 sm:pb-12">
+            <div className="flex w-full max-w-[720px] flex-col items-center text-center gap-5 sm:gap-6 lg:gap-7">
+              <h1
+                className="
+                  w-full
+                  font-medium tracking-tight text-white
+                  text-[28px] leading-[1.15]
+                  sm:text-[36px] sm:leading-[1.15]
+                  md:text-[44px] md:leading-[1.12]
+                  lg:text-[52px] lg:leading-[1.1]
+                "
+              >
+                The AI that lives on your PC — not in a tab.
+              </h1>
 
-          <p
-            className="
-              max-w-[600px]
-              text-[14px] leading-[20px]
-              sm:text-[15px] sm:leading-[22px]
-              lg:text-[17px] lg:leading-[26px]
-              font-normal
-              text-[#A3A3A3]
-            "
-          >
-            You live on this PC — your files, apps, and daily routines. Stuard learns how you work,
-            and gives you back the hours you lose repeating yourself.
-          </p>
+              <p
+                className="
+                  max-w-[600px]
+                  text-[14px] leading-[20px]
+                  sm:text-[15px] sm:leading-[22px]
+                  lg:text-[17px] lg:leading-[26px]
+                  font-normal
+                  text-[#A3A3A3]
+                "
+              >
+                Stuard knows your files, your apps, and your routines — and finishes the repetitive
+                work you keep redoing. Free. Local-first. No credit card.
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+                <Link href="/download">
+                  <button
+                    type="button"
+                    className="
+                      inline-flex items-center justify-center gap-2
+                      h-[42px] px-5
+                      rounded-full
+                      bg-[#F5F5F5] hover:bg-white
+                      text-black text-[14px] font-medium leading-5
+                      transition-colors
+                      whitespace-nowrap
+                    "
+                  >
+                    <WindowsIcon />
+                    Download for Windows
+                  </button>
+                </Link>
+                <Link href="#demo">
+                  <button
+                    type="button"
+                    className="
+                      inline-flex items-center justify-center
+                      h-[42px] px-5
+                      rounded-full
+                      border border-white/20
+                      text-white text-[14px] font-medium
+                      hover:bg-white/5 transition-colors
+                      whitespace-nowrap
+                    "
+                  >
+                    See it work (60 sec)
+                  </button>
+                </Link>
+              </div>
+
+              <p className="text-[12px] sm:text-[13px] text-[#737373]">
+                Runs locally. Your files never leave your machine.
+              </p>
+
+              <Link
+                href={user ? '/dashboard' : '/signup'}
+                className="text-[13px] font-medium text-[#A3A3A3] transition-colors hover:text-white"
+              >
+                {user ? 'Go to dashboard →' : 'Sign up →'}
+              </Link>
+            </div>
+          </div>
         </div>
 
-        <div className="flex w-full max-w-[480px] flex-col items-center gap-4 sm:gap-5">
-          <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
-            <Link href="/download">
-              <button
-                type="button"
-                className="
-                  inline-flex items-center justify-center gap-2
-                  h-[42px] px-5
-                  rounded-full
-                  bg-[#F5F5F5] hover:bg-white
-                  text-black text-[14px] font-medium leading-5
-                  transition-colors
-                  whitespace-nowrap
-                "
-              >
-                <WindowsIcon />
-                Download for Windows
-              </button>
-            </Link>
-            <Link href="#demo">
-              <button
-                type="button"
-                className="
-                  inline-flex items-center justify-center
-                  h-[42px] px-5
-                  rounded-full
-                  border border-white/20
-                  text-white text-[14px] font-medium
-                  hover:bg-white/5 transition-colors
-                  whitespace-nowrap
-                "
-              >
-                See a 90-second demo
-              </button>
-            </Link>
-          </div>
-          <p className="text-[12px] sm:text-[13px] text-[#737373]">
-            Free. Local-first. No credit card.
-          </p>
-          <Link
-            href={user ? '/dashboard' : '/signup'}
-            className="text-[13px] font-medium text-[#A3A3A3] transition-colors hover:text-white"
-          >
-            {user ? 'Go to dashboard →' : 'Sign up →'}
-          </Link>
+        <div className="mx-auto flex w-full max-w-[1100px] flex-col items-center gap-8 px-4 pb-20 sm:gap-10 sm:pb-24 lg:gap-12 lg:pb-28">
+          <MediaAssetSlot
+            className="w-full"
+            label="6s silent loop: overlay prompt → file card → Gmail draft + attachment → GenUI Send? → Sent ✓"
+            assetPath="/media/hero-loop.mp4"
+            videoSrc={HERO_LOOP_SRC}
+            imageAlt="Stuard finding a contract, composing email, and sending without app-switching"
+          />
 
-          <MacLinuxWaitlist />
+          <div className="flex w-full max-w-[480px] flex-col items-center gap-3">
+            <PrivacyBoundaryDiagram compact />
+            <MacLinuxWaitlist />
+          </div>
         </div>
       </div>
     </section>

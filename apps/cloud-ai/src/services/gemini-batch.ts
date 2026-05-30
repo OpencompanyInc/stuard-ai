@@ -201,6 +201,191 @@ export async function pollBatchJob(id: string): Promise<BatchJob> {
   return job;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EMBEDDINGS BATCH (file-index semantic indexing)
+//
+// NOTE: Google documents embeddings batches only via the SDK
+// (`client.batches.create_embeddings`); the REST shape is not published. We
+// mirror the working generation-batch flow above (upload JSONL → POST
+// /v1beta/batches with { model, src, config }) using an embedding model and
+// embedding-shaped request lines. If Google ships a distinct REST method, set
+// GEMINI_BATCH_EMBED_ENDPOINT to override. Result parsing is intentionally
+// tolerant of several response shapes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface EmbeddingBatchRequest {
+  key: string; // `<fileId>::<chunkIdx>` — kept top-level and mirrored in metadata
+  metadata?: Record<string, any>;
+  request: {
+    model?: string;
+    outputDimensionality?: number;
+    content: {
+      parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>;
+    };
+  };
+}
+
+/**
+ * Submit an embeddings batch job. Returns the Gemini job resource name
+ * (e.g. "batches/abc") — caller tracks lifecycle in its own table.
+ */
+export async function createEmbeddingBatchJob(
+  requests: EmbeddingBatchRequest[],
+  model: string = 'gemini-embedding-2',
+  displayName: string = 'file-index-embed',
+): Promise<{ geminiJobId: string; inputFileId: string }> {
+  if (!GOOGLE_API_KEY) throw new Error('Missing Google API Key');
+
+  const tmpDir = os.tmpdir();
+  const filePath = path.join(tmpDir, `embed-batch-${Date.now()}.jsonl`);
+  const stream = fs.createWriteStream(filePath);
+  for (const req of requests) {
+    stream.write(JSON.stringify(req) + '\n');
+  }
+  await new Promise((resolve, reject) => {
+    stream.on('finish', () => resolve(undefined));
+    stream.on('error', reject);
+    stream.end();
+  });
+
+  try {
+    const inputFileId = await uploadToGemini(filePath, displayName);
+
+    // Embeddings use the dedicated async batch method, NOT /v1beta/batches
+    // (that's generateContent). Ref: POST /v1beta/{model}:asyncBatchEmbedContent
+    // with batch.inputConfig.fileName referencing the uploaded JSONL.
+    const endpoint =
+      process.env.GEMINI_BATCH_EMBED_ENDPOINT ||
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:asyncBatchEmbedContent?key=${GOOGLE_API_KEY}`;
+
+    const batchResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        batch: {
+          displayName,
+          model: `models/${model}`,
+          inputConfig: { fileName: inputFileId },
+        },
+      }),
+    });
+
+    if (!batchResponse.ok) {
+      const errText = await batchResponse.text();
+      throw new Error(`Failed to create Gemini embeddings batch: ${batchResponse.status} ${errText}`);
+    }
+
+    // Response is an Operation whose `name` is "batches/{id}".
+    const batchResult = (await batchResponse.json()) as any;
+    const geminiJobId =
+      batchResult?.name || batchResult?.metadata?.batch?.name || batchResult?.response?.name;
+    if (!geminiJobId) {
+      throw new Error(`Embeddings batch created but no job name returned: ${JSON.stringify(batchResult).slice(0, 200)}`);
+    }
+    return { geminiJobId, inputFileId };
+  } finally {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+}
+
+export interface GeminiBatchState {
+  state: string;
+  outputFileId?: string;
+  /** Some batches return results inline rather than via a file. */
+  inlined?: Array<{ key?: string; embedding: number[] | null; tokens: number }>;
+  stats?: any;
+}
+
+/** Read a Gemini batch job's lifecycle state directly (no DB row needed). */
+export async function getGeminiBatchState(geminiJobId: string): Promise<GeminiBatchState> {
+  if (!GOOGLE_API_KEY) throw new Error('Missing Google API Key');
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/${geminiJobId}?key=${GOOGLE_API_KEY}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to get job status: ${response.status}`);
+  }
+  const result = (await response.json()) as any;
+
+  // State lives under different keys depending on whether the job is wrapped in
+  // an Operation. Normalize BATCH_STATE_* and JOB_STATE_* alike.
+  const meta = result?.metadata || {};
+  const batch = result?.response || meta?.batch || meta || result;
+  const rawState: string =
+    batch?.state || meta?.state || result?.state || (result?.done ? 'BATCH_STATE_SUCCEEDED' : 'BATCH_STATE_RUNNING');
+
+  // Output: either a responses file, or inlined responses.
+  const outputCfg = batch?.output || batch?.dest || batch?.outputConfig || {};
+  const outputFileId =
+    (typeof outputCfg === 'string' ? outputCfg : undefined) ||
+    outputCfg?.responsesFile ||
+    outputCfg?.fileName ||
+    outputCfg?.file_name ||
+    batch?.responsesFile ||
+    undefined;
+
+  let inlined: GeminiBatchState['inlined'];
+  const inlineList =
+    batch?.inlinedResponses?.inlinedResponses ||
+    batch?.inlinedEmbedContentResponses?.inlinedResponses ||
+    batch?.inlinedEmbedContentResponses ||
+    batch?.inlinedResponses;
+  if (Array.isArray(inlineList)) {
+    inlined = inlineList.map((item: any) => {
+      const r = item?.response || item;
+      const embedding =
+        r?.embedding?.values || (Array.isArray(r?.embedding) ? r.embedding : null) || null;
+      const tokens = Number(r?.usageMetadata?.totalTokenCount ?? 0);
+      return { key: item?.metadata?.key || item?.key, embedding, tokens: Number.isFinite(tokens) ? tokens : 0 };
+    });
+  }
+
+  return {
+    state: rawState,
+    outputFileId,
+    inlined,
+    stats: batch?.batchStats || meta?.batchStats,
+  };
+}
+
+/** Download + parse an embeddings result file into per-key vectors. */
+export async function downloadEmbeddingResults(
+  outputFileId: string,
+): Promise<Array<{ key: string; embedding: number[] | null; tokens: number }>> {
+  if (!GOOGLE_API_KEY) throw new Error('Missing Google API Key');
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/${outputFileId}:download?key=${GOOGLE_API_KEY}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to download results: ${response.status}`);
+  }
+  const content = await response.text();
+  return content
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => {
+      let obj: any;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        return { key: '', embedding: null, tokens: 0 };
+      }
+      const key = obj.key || obj.metadata?.key || obj.id || '';
+      const r = obj.response || obj;
+      const embedding: number[] | null =
+        r?.embedding?.values ||
+        (Array.isArray(r?.embedding) ? r.embedding : null) ||
+        r?.embeddings?.[0]?.values ||
+        null;
+      const tokens = Number(
+        r?.usageMetadata?.totalTokenCount ?? r?.usage_metadata?.total_token_count ?? 0,
+      );
+      return { key, embedding, tokens: Number.isFinite(tokens) ? tokens : 0 };
+    });
+}
+
 /**
  * Downloads and parses results from a completed batch job
  */

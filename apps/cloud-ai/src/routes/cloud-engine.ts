@@ -132,13 +132,77 @@ export async function removeOAuthTokensFromVM(
 }
 
 /**
- * Push all OAuth tokens to a user's reachable VM.
- * Fire-and-forget — safe to call even if the VM isn't running.
+ * Pull the desktop's locally-stored OAuth tokens (with secrets) over the client
+ * bridge. The desktop is the authoritative store for device-held providers
+ * (e.g. Google), whose tokens never live in Supabase — so without this step a
+ * freshly provisioned VM would have no way to operate them. Returns [] when the
+ * desktop is offline or has no tokens. Mirrors pushBrowserProfileToVM.
+ */
+async function exportDesktopOAuthTokens(userId: string): Promise<OAuthVmTokenPayload[]> {
+  const desktopWs = getDesktopWs(userId);
+  if (!desktopWs) {
+    console.log('[oauth-sync] Desktop offline, skipping desktop token export');
+    return [];
+  }
+  try {
+    const res = await withClientBridge(desktopWs, async () => {
+      return execLocalTool(
+        'export_oauth_tokens',
+        {},
+        undefined,
+        15_000,
+        { silent: true, noFallback: true },
+      );
+    }) as any;
+    const tokens = res?.tokens || res?.result?.tokens || [];
+    if (!Array.isArray(tokens)) return [];
+    return tokens.map((t: any) => ({
+      provider: t.provider,
+      profileLabel: t.profileLabel || 'default',
+      isDefault: t.isDefault,
+      accessToken: t.accessToken,
+      refreshToken: t.refreshToken || null,
+      expiresAt: t.expiresAt || null,
+      scopes: t.scopes || [],
+      accountEmail: t.accountEmail || null,
+    }));
+  } catch (e: any) {
+    console.warn('[oauth-sync] Desktop token export failed:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Merge token lists keyed by (provider, profileLabel). Later sources win, so
+ * pass the authoritative source (desktop) last.
+ */
+function mergeOAuthTokens(...sources: OAuthVmTokenPayload[][]): OAuthVmTokenPayload[] {
+  const byKey = new Map<string, OAuthVmTokenPayload>();
+  for (const list of sources) {
+    for (const t of list || []) {
+      if (!t?.provider || !t?.accessToken) continue;
+      const key = `${String(t.provider).toLowerCase()}::${t.profileLabel || 'default'}`;
+      byKey.set(key, t);
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Push all OAuth tokens to a user's reachable VM, from BOTH sources:
+ *  - Supabase external_accounts (server-side providers)
+ *  - the desktop's local encrypted store (device-held providers like Google)
+ * Desktop tokens win on conflict. Fire-and-forget — safe to call even if the
+ * VM isn't running or the desktop is offline.
  */
 export async function pushOAuthTokensToVM(userId: string): Promise<void> {
   try {
-    const accounts = await listExternalAccounts(userId);
-    const tokens = toOAuthVmTokens(accounts);
+    const [supaTokens, desktopTokens] = await Promise.all([
+      listExternalAccounts(userId).then(toOAuthVmTokens).catch(() => [] as OAuthVmTokenPayload[]),
+      exportDesktopOAuthTokens(userId),
+    ]);
+    // Desktop is authoritative for device-held providers → pass it last.
+    const tokens = mergeOAuthTokens(supaTokens, desktopTokens);
     if (tokens.length > 0) {
       // Retry once with increased timeout — token payloads are small but
       // the VM may be under load during provisioning

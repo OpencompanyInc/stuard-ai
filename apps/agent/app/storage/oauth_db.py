@@ -183,6 +183,30 @@ def remove_oauth_tokens(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "removed": before - len(remaining), "count": len(remaining)}
 
 
+def set_oauth_default(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Mark one profile as the default for a provider (clears default on siblings)."""
+    provider = str(args.get("provider") or "").strip().lower()
+    profile_label = str(args.get("profileLabel") or "").strip()
+    if not provider or not profile_label:
+        return {"ok": False, "error": "provider_and_profileLabel_required"}
+
+    with _lock:
+        tokens = _read_all()
+        found = False
+        for t in tokens:
+            if str(t.get("provider", "")).lower() != provider:
+                continue
+            is_target = t.get("profileLabel") == profile_label
+            t["isDefault"] = is_target
+            if is_target:
+                found = True
+        if not found:
+            return {"ok": False, "error": "profile_not_found"}
+        _write_all(tokens)
+
+    return {"ok": True}
+
+
 def oauth_list(_args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Secrets-stripped listing for UI / status. Never returns access or refresh
     tokens — only the metadata needed to render which integrations are local."""
@@ -214,6 +238,19 @@ def oauth_list(_args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {"ok": True, "tokens": [_row(t) for t in tokens]}
 
 
+def export_oauth_tokens(_args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Full token export *with secrets* (accessToken / refreshToken).
+
+    Unlike oauth_list (which strips secrets for UI), this is the source for the
+    desktop→VM deploy sync: cloud-ai pulls it over the authenticated client
+    bridge and pushes it into the VM's encrypted store so the cloud engine can
+    operate the same integrations. Tokens are already in the camelCase shape
+    the VM's store_oauth_tokens expects, so they pass through unchanged."""
+    with _lock:
+        tokens = _read_all()
+    return {"ok": True, "tokens": tokens, "count": len(tokens)}
+
+
 # ── Async dispatch wrappers (file IO is small + fast; run inline) ─────────────
 
 async def store_oauth_tokens_handler(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,3 +267,11 @@ async def remove_oauth_tokens_handler(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def oauth_list_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     return oauth_list(args)
+
+
+async def set_oauth_default_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    return set_oauth_default(args)
+
+
+async def export_oauth_tokens_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    return export_oauth_tokens(args)

@@ -8,6 +8,10 @@ export const GENUI_TOOL_NAMES = new Set([
   'show_form',
   // Inline custom React UI (blocking or non-blocking based on args)
   'chat_ui',
+  // Email draft / preview
+  'show_email',
+  'draft_email',
+  'email',
 ]);
 
 // Tools that should be hidden from the chat UI (internal/silent tools)
@@ -110,4 +114,13 @@ export const GENUI_COMPONENT_MAP: Record<string, string> = {
   'wizard': 'show_form',
   'survey': 'show_form',
   'form_wizard': 'show_form',
+  'email': 'show_email',
+  'mail': 'show_email',
+  'draft': 'draft_email',
 };
+
+export const EMAIL_GENUI_TOOL_NAMES = new Set([
+  'show_email',
+  'draft_email',
+  'email',
+]);

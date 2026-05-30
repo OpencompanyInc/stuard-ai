@@ -1891,9 +1891,19 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         return true;
       }
 
+      // Callers (e.g. file-search) can pin the output dimensionality so their
+      // query vectors match how the documents were embedded. Without this,
+      // gemini-embedding-2 returns its 768-dim default and any caller that
+      // stored a different size gets zero cosine matches.
+      const reqDim = Number(body?.outputDimensionality);
+      const outputDimensionality = Number.isFinite(reqDim) && reqDim > 0 ? Math.floor(reqDim) : undefined;
+
       const out = await embed({
         model: embModel,
         value: text.slice(0, 12000),
+        ...(outputDimensionality && modelId.toLowerCase().startsWith('google/')
+          ? { providerOptions: { google: { outputDimensionality } } }
+          : {}),
       });
       await logInferenceUsage(singleEmbUserId, modelId, out.usage, 'Embedding', {
         sourceType: 'embedding',

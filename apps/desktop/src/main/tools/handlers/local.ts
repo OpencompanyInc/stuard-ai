@@ -72,6 +72,13 @@ function deriveCheckpointActor(args: any, ctx: RouterContext): CheckpointActor {
   if (args?.__workflowToolCall || args?.flowId) {
     return { type: 'workflow', id: args?.flowId ? String(args.flowId) : undefined, label: ctx.sourceLabel };
   }
+  // Chat: tag with the conversation title (threaded from the renderer) so the
+  // checkpoint center shows the chat name instead of a generic "Main chat".
+  const chatTitle = typeof args?.__chatTitle === 'string' ? args.__chatTitle.trim() : '';
+  const convId = typeof args?.__conversationId === 'string' ? args.__conversationId.trim() : '';
+  if (chatTitle) {
+    return { type: 'chat', id: convId || undefined, label: chatTitle };
+  }
   return { type: 'chat' };
 }
 

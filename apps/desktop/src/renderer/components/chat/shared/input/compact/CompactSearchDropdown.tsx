@@ -354,9 +354,15 @@ export const CompactSearchDropdown: React.FC<CompactSearchDropdownProps> = ({
                     >
                       <div
                         className="flex items-center justify-center shrink-0"
-                        style={{ width: 36, height: 36, borderRadius: 4, background: c.tile }}
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 9,
+                          background: 'rgb(var(--compact-pill-fg) / 0.06)',
+                          color: 'rgb(var(--compact-pill-fg-muted))',
+                        }}
                       >
-                        <Icon className="w-4 h-4" strokeWidth={1.75} />
+                        <Icon className="w-[15px] h-[15px]" strokeWidth={1.75} />
                       </div>
                       <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
                         <div

@@ -645,10 +645,23 @@ function DashboardApp() {
           if (!isMainChatConversation(raw)) continue;
           const id = raw.id || raw.conversation_id;
           if (!id) continue;
+          // Origin is decided by the conversation's authoritative `source`, not by
+          // which endpoint returned the row. Desktop conversations are mirrored to
+          // the cloud and come back through the cloud-ai endpoint, so keying off the
+          // endpoint (defaultOrigin) mislabels them as VM. Only source==='vm' is VM.
+          const src = String(raw.source || '').trim().toLowerCase();
+          const origin: 'desktop' | 'cloud_vm' =
+            raw.origin === 'cloud_vm' || raw.origin === 'desktop'
+              ? raw.origin
+              : src === 'vm'
+                ? 'cloud_vm'
+                : src === 'desktop'
+                  ? 'desktop'
+                  : defaultOrigin;
           const incoming = {
             ...raw,
             id,
-            origin: raw.origin || defaultOrigin,
+            origin,
             created_at: raw.created_at || raw.updated_at || raw.updatedAt,
             updated_at: raw.updated_at || raw.updatedAt || raw.created_at,
             title: raw.title || 'Untitled Conversation',

@@ -19,23 +19,30 @@ import {
   addRoot as rustAddRoot,
   listRoots as rustListRoots,
   removeRoot as rustRemoveRoot,
+  updateRoot as rustUpdateRoot,
   getStats as rustGetStats,
   scanRoot as rustScanRoot,
   searchFiles as rustSearchFiles,
   listFolder as rustListFolder,
+  getPending as rustGetPending,
+  updateEmbedding as rustUpdateEmbedding,
+  markError as rustMarkError,
+  clearEmbeddings as rustClearEmbeddings,
   isIndexerAvailable,
   resolveIndexerBinary,
   type IndexedRoot,
   type ScanProgress,
   type FileIndexStats,
   type FileSearchResult,
+  type PendingFile,
+  type SearchMode,
 } from "./rust-file-indexer";
 
 // ─────────────────────────────────────────────────────────
 // Re-exports so existing callers keep their imports working
 // ─────────────────────────────────────────────────────────
 
-export type { IndexedRoot, ScanProgress, FileIndexStats, FileSearchResult };
+export type { IndexedRoot, ScanProgress, FileIndexStats, FileSearchResult, PendingFile, SearchMode };
 
 interface ScanOptions {
   computeHashes?: boolean;
@@ -137,10 +144,86 @@ export async function scanRoot(
 
 export async function searchFiles(
   query: string,
-  options: { kind?: string; limit?: number; rootId?: string } = {},
+  options: { kind?: string; limit?: number; rootId?: string; vector?: number[]; mode?: SearchMode } = {},
 ): Promise<FileSearchResult[]> {
   if (!ensureIndexerReady()) return [];
   return await rustSearchFiles(query, options);
+}
+
+// ─────────────────────────────────────────────────────────
+// Semantic embeddings — pending queue + vector write-back
+// ─────────────────────────────────────────────────────────
+
+export async function getPendingFiles(rootId?: string, limit = 500): Promise<PendingFile[]> {
+  if (!ensureIndexerReady()) return [];
+  return await rustGetPending(rootId, limit);
+}
+
+export async function updateFileEmbedding(input: {
+  fileId: string;
+  vector: number[];
+  summary?: string;
+  keywords?: string;
+  embeddingModel?: string;
+}): Promise<boolean> {
+  if (!ensureIndexerReady()) return false;
+  return await rustUpdateEmbedding(input);
+}
+
+export async function markFileEmbeddingError(fileId: string, message: string): Promise<boolean> {
+  if (!ensureIndexerReady()) return false;
+  return await rustMarkError(fileId, message);
+}
+
+export async function setRootExcludes(rootId: string, excludeGlobs: string): Promise<boolean> {
+  if (!ensureIndexerReady()) return false;
+  return await rustUpdateRoot(rootId, { excludeGlobs });
+}
+
+/** Reset semantic embeddings (all folders, or one root) back to un-embedded. */
+export async function clearEmbeddings(rootId?: string): Promise<{ ok: boolean; cleared: number; had_vectors: number }> {
+  if (!ensureIndexerReady()) return { ok: false, cleared: 0, had_vectors: 0 };
+  return await rustClearEmbeddings(rootId);
+}
+
+/** Toggle whether a root is opted into semantic (embedding) search. */
+export async function setRootSemantic(rootId: string, on: boolean): Promise<boolean> {
+  if (!ensureIndexerReady()) return false;
+  return await rustUpdateRoot(rootId, { semantic: on });
+}
+
+/**
+ * Mark a folder for semantic indexing. Reuses an existing index root if the path
+ * is already crawled (e.g. an auto-added name-search root); otherwise registers
+ * it as a new root so its files get discovered. Returns the (semantic) root.
+ */
+export async function addSemanticFolder(folderPath: string): Promise<IndexedRoot | null> {
+  if (!ensureIndexerReady()) return null;
+  const normalized = normalizeIndexedRootPath(folderPath);
+  const existing = (await listRoots()).find(
+    (r) => normalizeIndexedRootPath(r.path) === normalized,
+  );
+  if (existing) {
+    await rustUpdateRoot(existing.id, { semantic: true });
+    return { ...existing, semantic: true };
+  }
+  const root = await addRoot(folderPath, "daily");
+  if (!root) return null;
+  await rustUpdateRoot(root.id, { semantic: true });
+  return { ...root, semantic: true };
+}
+
+/**
+ * Update a root's schedule / enabled state in place. Unlike remove+add, this
+ * preserves the folder's already-indexed files and embeddings (no re-scan, no
+ * re-embedding).
+ */
+export async function updateRootConfig(
+  rootId: string,
+  opts: { enabled?: boolean; schedule?: IndexedRoot["schedule"]; intervalHours?: number },
+): Promise<boolean> {
+  if (!ensureIndexerReady()) return false;
+  return await rustUpdateRoot(rootId, opts);
 }
 
 export async function listFolderContents(
@@ -330,6 +413,16 @@ function getDefaultUserFolders(): string[] {
 async function initializeDefaultFolders(): Promise<number> {
   try {
     const existingRoots = await listRoots();
+
+    // Only auto-seed on a genuinely fresh start. Once the user has any roots,
+    // they're curating the list themselves — re-adding defaults here would
+    // silently resurrect folders they just deleted (the "delete doesn't work"
+    // bug). The explicit "Auto-Setup Common Folders" button
+    // (reinitializeDefaultFolders) still lets them re-seed on demand.
+    if (existingRoots.length > 0) {
+      return 0;
+    }
+
     const existingPaths = new Set(existingRoots.map((r) => r.path.toLowerCase()));
     const defaultFolders = getDefaultUserFolders();
     logger.info(
@@ -588,4 +681,12 @@ export const fileIndexingHandlers = {
   startIndexingScheduler,
   stopIndexingScheduler,
   processSemanticIndexing,
+  getPendingFiles,
+  updateFileEmbedding,
+  markFileEmbeddingError,
+  setRootExcludes,
+  updateRootConfig,
+  clearEmbeddings,
+  setRootSemantic,
+  addSemanticFolder,
 };

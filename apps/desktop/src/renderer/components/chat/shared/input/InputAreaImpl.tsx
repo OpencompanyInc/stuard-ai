@@ -550,7 +550,7 @@ const InputArea = forwardRef(function InputArea(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ text: q, model: 'google/gemini-embedding-2-preview' }),
+        body: JSON.stringify({ text: q, model: 'google/gemini-embedding-2-preview', outputDimensionality: 3072 }),
       });
       const j = await resp.json().catch(() => ({}));
       if (semanticReqIdRef.current !== reqId) return;
@@ -560,7 +560,7 @@ const InputArea = forwardRef(function InputArea(
         query: q,
         vector: j.embedding,
         mode: 'hybrid',
-        limit: 6,
+        limit: 10,
       });
 
       if (semanticReqIdRef.current !== reqId) return;
@@ -1233,7 +1233,7 @@ const InputArea = forwardRef(function InputArea(
       const dropdownHeightForPlacement = needsDropdownForPlacement
         ? COMPACT_DROPDOWN_MAX_HEIGHT
         : 0;
-      if (Date.now() - lastPlacementFlipAtRef.current < 260) {
+      if (Date.now() - lastPlacementFlipAtRef.current < 140) {
         return currentPlacement;
       }
 
@@ -1244,14 +1244,22 @@ const InputArea = forwardRef(function InputArea(
       const roomAbove = Math.max(0, inputTop - screenTop - edgeMargin);
       const roomBelow = Math.max(0, screenBottom - inputBottom - edgeMargin);
 
+      // Flip as soon as the current side can't fit the dropdown — don't wait for
+      // the opposite side to win by `flipBias` while the current side is cramped
+      // (that lag is what made the swap feel "too late"). `flipBias` now only
+      // breaks ties when neither side can fully fit, so near the screen's middle
+      // we open on the roomier side instead of stubbornly staying put.
+      const fitsAbove = roomAbove >= neededDropdownRoom;
+      const fitsBelow = roomBelow >= neededDropdownRoom;
+
       if (currentPlacement === 'top') {
-        return neededDropdownRoom > roomAbove && roomBelow > roomAbove + flipBias
-          ? 'bottom'
-          : 'top';
+        if (fitsAbove) return 'top';
+        if (fitsBelow) return 'bottom';
+        return roomBelow > roomAbove + flipBias ? 'bottom' : 'top';
       }
-      return neededDropdownRoom > roomBelow && roomAbove > roomBelow + flipBias
-        ? 'top'
-        : 'bottom';
+      if (fitsBelow) return 'bottom';
+      if (fitsAbove) return 'top';
+      return roomAbove > roomBelow + flipBias ? 'top' : 'bottom';
     } catch {
       return 'top';
     }
@@ -1267,7 +1275,7 @@ const InputArea = forwardRef(function InputArea(
   // than the OS will grant, Electron silently clamps, and the anchor='bottom'
   // dy math in setOverlaySize teleports the pill upward by the clamped delta
   // every single resize. They MUST agree.
-  const CAP_WINDOW_H = 650;
+  const CAP_WINDOW_H = 760;
   const computeMaxDropdownH = useCallback((placement: 'top' | 'bottom', inputBarH: number): number => {
     try {
       const screenAvailTop = (window?.screen as any)?.availTop ?? 0;

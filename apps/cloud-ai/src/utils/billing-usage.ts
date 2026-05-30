@@ -35,6 +35,15 @@ export function isNonBillableUsageEvent(input: {
     ?? raw.nonBillable
     ?? raw.non_billable;
 
+  // Positive override: file-index embedding batches are intentionally billed
+  // (at the discounted Gemini Batch rate) even though they use an embedding
+  // model. An explicit `billable: true` flag or the dedicated source type opts
+  // back in, overriding the embedding-model auto-exclusion below.
+  const billableOverride = (raw as any).billable ?? (raw as any).is_billable;
+  if (isTruthyFlag(billableOverride) || sourceType === 'file_index_embedding') {
+    return false;
+  }
+
   return (
     isTruthyFlag(billingExcluded) ||
     sourceType === 'embedding' ||

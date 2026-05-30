@@ -44,6 +44,7 @@ import { handleVMBotMemoryCommand } from './vm-bot-memory';
 import { saveSkills as saveVMSkills, loadSkills as loadVMSkills, getStats as getVMSkillsStats, type Skill as VMSkill } from './vm-skills';
 import * as fileManager from './file-manager';
 import { getAgentWs, sendToAgent, sendToAgentStreaming, buildVMMemoryContext, isAgentWsConnected, closeAgentWs, LOCAL_AGENT_WS_URL } from './vm-agent-ws';
+import { encryptOAuthBlob, decryptOAuthBlob, isOAuthEncryptionAvailable } from './oauth-crypto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -1959,7 +1960,10 @@ async function syncAgentData(args: any): Promise<any> {
 // OAuth Token Storage (synced from cloud-ai)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const OAUTH_TOKENS_PATH = `${AGENT_DATA_DIR}/oauth-tokens.json`;
+// Encrypted-at-rest store (AES-256-GCM, key derived from the per-VM secret).
+// `oauth-tokens.json` is the legacy plaintext path, migrated-on-read then deleted.
+const OAUTH_TOKENS_ENC_PATH = `${AGENT_DATA_DIR}/oauth-tokens.enc`;
+const OAUTH_TOKENS_LEGACY_PATH = `${AGENT_DATA_DIR}/oauth-tokens.json`;
 
 interface StoredOAuthToken {
   provider: string;
@@ -1975,19 +1979,58 @@ interface StoredOAuthToken {
 
 let _oauthTokens: StoredOAuthToken[] = [];
 
+function parseTokens(raw: string): StoredOAuthToken[] {
+  const data = JSON.parse(raw);
+  return Array.isArray(data) ? data : [];
+}
+
 function loadOAuthTokens(): StoredOAuthToken[] {
   try {
-    if (fs.existsSync(OAUTH_TOKENS_PATH)) {
-      _oauthTokens = JSON.parse(fs.readFileSync(OAUTH_TOKENS_PATH, 'utf-8'));
+    // Preferred: encrypted store.
+    if (fs.existsSync(OAUTH_TOKENS_ENC_PATH)) {
+      const blob = fs.readFileSync(OAUTH_TOKENS_ENC_PATH, 'utf-8').trim();
+      if (!blob) { _oauthTokens = []; return _oauthTokens; }
+      _oauthTokens = parseTokens(decryptOAuthBlob(blob));
+      return _oauthTokens;
     }
-  } catch { _oauthTokens = []; }
+    // Legacy plaintext: read, then migrate to the encrypted store and remove it.
+    if (fs.existsSync(OAUTH_TOKENS_LEGACY_PATH)) {
+      _oauthTokens = parseTokens(fs.readFileSync(OAUTH_TOKENS_LEGACY_PATH, 'utf-8'));
+      if (isOAuthEncryptionAvailable()) {
+        console.log('[vm-agent] Migrating legacy plaintext OAuth tokens to encrypted store');
+        saveOAuthTokens(); // writes .enc and removes the legacy file
+      }
+      return _oauthTokens;
+    }
+  } catch (e: any) {
+    console.error('[vm-agent] Failed to load OAuth tokens:', e?.message);
+    _oauthTokens = [];
+  }
   return _oauthTokens;
 }
 
 function saveOAuthTokens(): void {
   try {
     fs.mkdirSync(AGENT_DATA_DIR, { recursive: true });
-    fs.writeFileSync(OAUTH_TOKENS_PATH, JSON.stringify(_oauthTokens, null, 2));
+    const json = JSON.stringify(_oauthTokens, null, 2);
+
+    if (!isOAuthEncryptionAvailable()) {
+      // No per-VM secret available — refuse to silently downgrade security on
+      // the encrypted path, but keep the agent functional via the legacy file.
+      console.warn('[vm-agent] VM_TOKEN_SECRET missing — storing OAuth tokens UNENCRYPTED. Set the per-VM secret to enable at-rest encryption.');
+      const tmp = `${OAUTH_TOKENS_LEGACY_PATH}.tmp`;
+      fs.writeFileSync(tmp, json);
+      fs.renameSync(tmp, OAUTH_TOKENS_LEGACY_PATH);
+      return;
+    }
+
+    const blob = encryptOAuthBlob(json);
+    const tmp = `${OAUTH_TOKENS_ENC_PATH}.tmp`;
+    fs.writeFileSync(tmp, blob, { mode: 0o600 });
+    fs.renameSync(tmp, OAUTH_TOKENS_ENC_PATH);
+    try { fs.chmodSync(OAUTH_TOKENS_ENC_PATH, 0o600); } catch { /* best effort */ }
+    // Drop any legacy plaintext file now that the encrypted store is authoritative.
+    try { if (fs.existsSync(OAUTH_TOKENS_LEGACY_PATH)) fs.unlinkSync(OAUTH_TOKENS_LEGACY_PATH); } catch { /* best effort */ }
   } catch (e: any) {
     console.error('[vm-agent] Failed to save OAuth tokens:', e?.message);
   }

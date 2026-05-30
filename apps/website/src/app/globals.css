@@ -315,6 +315,23 @@ body.grid-faded::after {
   background-color: #0A0A0B;
 }
 
+/* Floating nav (top-3/4/6 + ~78px bar) — pad copy panel so headline centers in the viewport */
+.hero-copy-panel {
+  padding-top: max(7.5rem, calc(1.5rem + 78px + 2.5rem));
+}
+
+@media (min-width: 640px) {
+  .hero-copy-panel {
+    padding-top: max(8.5rem, calc(1rem + 68px + 3rem));
+  }
+}
+
+@media (min-width: 1024px) {
+  .hero-copy-panel {
+    padding-top: max(9.5rem, calc(1.5rem + 78px + 3.5rem));
+  }
+}
+
 .hero-section .hero-bg {
   position: absolute;
   inset: 0;

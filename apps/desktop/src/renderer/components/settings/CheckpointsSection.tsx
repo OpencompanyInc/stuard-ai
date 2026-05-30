@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  History, RotateCcw, Redo2, Undo2, FileText, Clock, ChevronRight,
+  History, RotateCcw, Redo2, Undo2, FileText, ChevronRight,
   AlertTriangle, Check, RefreshCw, Bot, MessageSquare, Workflow,
+  FilePlus2, FilePen, FileX2,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,6 +25,7 @@ interface Checkpoint {
 interface CheckpointGroup {
   key: string;
   label: string;
+  sublabel: string;
   icon: typeof MessageSquare;
   latest: number;
   items: Checkpoint[];
@@ -34,22 +36,65 @@ function shortId(id?: string): string {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
 }
 
+function isChatKey(key: string): boolean {
+  return key === 'chat' || key.startsWith('chat:');
+}
+
 function groupKey(cp: Checkpoint): string {
   const a = cp.actor;
-  if (!a || !a.type || a.type === 'chat') return 'chat';
+  if (!a || !a.type || a.type === 'chat') {
+    // Keep distinct conversations apart so each shows its own chat title.
+    return a?.id ? `chat:${a.id}` : 'chat';
+  }
   return `${a.type}:${a.id || ''}`;
 }
 
-function groupMeta(cp: Checkpoint): { label: string; icon: typeof MessageSquare } {
+function groupMeta(cp: Checkpoint): { label: string; sublabel: string; icon: typeof MessageSquare } {
   const a = cp.actor;
   const type = a?.type || 'chat';
   if (type === 'workflow') {
-    return { label: a?.label || `Workflow ${shortId(a?.id)}`.trim(), icon: Workflow };
+    const name = (a?.label || '').replace(/^Workflow:\s*/i, '').trim();
+    return { label: name || `Workflow ${shortId(a?.id)}`.trim(), sublabel: 'Workflow', icon: Workflow };
   }
   if (type === 'bot') {
-    return { label: a?.label || `Agent ${shortId(a?.id)}`.trim(), icon: Bot };
+    const name = (a?.label || '').replace(/^(Agent|Bot):\s*/i, '').trim();
+    return { label: name || `Agent ${shortId(a?.id)}`.trim(), sublabel: 'Agent', icon: Bot };
   }
-  return { label: 'Main chat', icon: MessageSquare };
+  const chatName = (a?.label || '').trim();
+  return { label: chatName || 'Main chat', sublabel: 'Chat with Stuard', icon: MessageSquare };
+}
+
+const baseName = (p: string) => p.split(/[/\\]/).filter(Boolean).pop() || p;
+
+/** A human, glanceable title for a checkpoint, derived from the files it touched
+ *  — so a row reads "Edited oauth_db.py" instead of a meaningless "Auto-checkpoint". */
+function describeCheckpoint(files: Record<string, { action: string }>): string {
+  const entries = Object.entries(files || {});
+  if (entries.length === 0) return 'No file changes';
+
+  const verb = (action: string) =>
+    action === 'create' ? 'Created' : action === 'delete' ? 'Deleted' : action === 'modify' ? 'Edited' : 'Updated';
+
+  if (entries.length === 1) {
+    const [path, info] = entries[0];
+    return `${verb(info.action)} ${baseName(path)}`;
+  }
+
+  const actions = new Set(entries.map(([, info]) => info.action));
+  const verbWord = actions.size === 1 ? verb([...actions][0]) : 'Updated';
+
+  // Common parent folder, if there is a meaningful one.
+  const dirs = entries.map(([p]) => p.split(/[/\\]/).slice(0, -1));
+  let common = dirs[0] || [];
+  for (const d of dirs.slice(1)) {
+    let i = 0;
+    while (i < common.length && i < d.length && common[i] === d[i]) i++;
+    common = common.slice(0, i);
+  }
+  const folder = common.filter(Boolean).pop();
+  return folder
+    ? `${verbWord} ${entries.length} files in ${folder}`
+    : `${verbWord} ${entries.length} files`;
 }
 
 function formatTime(ts: number): string {
@@ -61,13 +106,11 @@ function formatTime(ts: number): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-const actionBadge = (action: string) => {
-  switch (action) {
-    case 'create': return <span className="text-emerald-500 text-[9px] font-bold">NEW</span>;
-    case 'modify': return <span className="text-amber-500 text-[9px] font-bold">MOD</span>;
-    case 'delete': return <span className="text-red-500 text-[9px] font-bold">DEL</span>;
-    default: return <span className="text-gray-400 text-[9px] font-bold">···</span>;
-  }
+const ActionIcon = ({ action }: { action: string }) => {
+  if (action === 'create') return <FilePlus2 className="h-3 w-3 shrink-0 text-emerald-500" />;
+  if (action === 'delete') return <FileX2 className="h-3 w-3 shrink-0 text-red-500" />;
+  if (action === 'modify') return <FilePen className="h-3 w-3 shrink-0 text-amber-500" />;
+  return <FileText className="h-3 w-3 shrink-0 text-theme-muted/50" />;
 };
 
 export const CheckpointsSection: React.FC = () => {
@@ -151,15 +194,16 @@ export const CheckpointsSection: React.FC = () => {
         existing.latest = Math.max(existing.latest, cp.timestamp);
       } else {
         const meta = groupMeta(cp);
-        byKey.set(key, { key, label: meta.label, icon: meta.icon, latest: cp.timestamp, items: [cp] });
+        byKey.set(key, { key, label: meta.label, sublabel: meta.sublabel, icon: meta.icon, latest: cp.timestamp, items: [cp] });
       }
     }
     const list = Array.from(byKey.values());
     for (const g of list) g.items.sort((a, b) => b.timestamp - a.timestamp);
-    // Main chat first, then by most recent activity.
+    // Chats first (most recent first), then workflows/agents by recency.
     return list.sort((a, b) => {
-      if (a.key === 'chat') return -1;
-      if (b.key === 'chat') return 1;
+      const aChat = isChatKey(a.key);
+      const bChat = isChatKey(b.key);
+      if (aChat !== bChat) return aChat ? -1 : 1;
       return b.latest - a.latest;
     });
   }, [checkpoints]);
@@ -167,20 +211,24 @@ export const CheckpointsSection: React.FC = () => {
   const hasCheckpoints = checkpoints.length > 0;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-[28px] bg-theme-card/40 p-5 md:p-6">
-      <div className="mb-5 flex items-start justify-between gap-4 border-b border-theme-sidebar pb-4">
-        <div>
-          <h3 className="flex items-center gap-2 text-[18px] font-semibold tracking-tight text-theme-fg">
-            <History className="h-4 w-4 text-primary" />
-            File Checkpoints
+    <div className="flex h-full flex-col overflow-hidden rounded-[28px] border border-theme bg-theme-card/50 p-5 md:p-6">
+      {/* Header — Studio sub-hero language: quiet eyebrow + headline + lead */}
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-theme-muted/70">File history</p>
+          <h3 className="mt-1.5 flex items-center gap-2 text-[19px] font-semibold tracking-tight text-theme-fg">
+            <span className="flex h-7 w-7 items-center justify-center rounded-[10px] bg-primary/10 text-primary">
+              <History className="h-4 w-4" />
+            </span>
+            Checkpoints
           </h3>
-          <p className="mt-1 text-[13px] font-medium text-theme-muted">
-            Undo & redo file changes made by Stuard, your workflows, and your agents.
+          <p className="mt-1.5 max-w-md text-[13px] leading-relaxed text-theme-muted">
+            Undo or redo file changes made by Stuard, your workflows, and your agents.
           </p>
         </div>
         <button
           onClick={fetchCheckpoints}
-          className="flex items-center gap-1.5 rounded-lg bg-theme-hover/60 px-2.5 py-1.5 text-[11px] font-semibold text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-theme bg-theme-hover/50 px-3 py-1.5 text-[11px] font-semibold text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
           title="Refresh"
         >
           <RefreshCw className={clsx('h-3.5 w-3.5', loading && 'animate-spin')} />
@@ -214,7 +262,7 @@ export const CheckpointsSection: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-minimal">
         {loading && checkpoints.length === 0 ? (
           <div className="py-16 text-center text-theme-muted">
             <div className="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-theme-muted/40 border-t-primary" />
@@ -222,32 +270,42 @@ export const CheckpointsSection: React.FC = () => {
           </div>
         ) : !hasCheckpoints ? (
           <div className="py-16 text-center">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-theme-hover/50">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-theme-hover/60">
               <History className="h-7 w-7 text-theme-muted/40" />
             </div>
             <p className="text-[14px] font-semibold text-theme-fg">No checkpoints yet</p>
-            <p className="mx-auto mt-1 max-w-[280px] text-[12px] leading-relaxed text-theme-muted/60">
+            <p className="mx-auto mt-1 max-w-[300px] text-[12px] leading-relaxed text-theme-muted/70">
               Checkpoints are created automatically whenever Stuard, a workflow, or an agent changes files on disk.
             </p>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {groups.map((group) => {
               const GroupIcon = group.icon;
               return (
                 <div key={group.key}>
-                  <div className="mb-2 flex items-center gap-2 px-1">
-                    <GroupIcon className="h-3.5 w-3.5 text-primary" />
-                    <span className="text-[12px] font-bold tracking-tight text-theme-fg">{group.label}</span>
-                    <span className="rounded-full bg-theme-hover/60 px-1.5 text-[10px] font-bold tabular-nums text-theme-muted">
-                      {group.items.length}
+                  {/* Source lockup — the chat / workflow / agent that made these changes */}
+                  <div className="mb-2.5 flex items-center gap-2.5 px-0.5">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[11px] bg-theme-hover/70 text-theme-muted">
+                      <GroupIcon className="h-4 w-4" />
                     </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[13px] font-semibold tracking-tight text-theme-fg">{group.label}</span>
+                        <span className="rounded-full bg-theme-hover/70 px-1.5 text-[10px] font-bold tabular-nums text-theme-muted">
+                          {group.items.length}
+                        </span>
+                      </div>
+                      <div className="truncate text-[11px] text-theme-muted/70">{group.sublabel}</div>
+                    </div>
                   </div>
+
                   <div className="space-y-1.5">
                     {group.items.map((cp) => {
                       const files = Object.entries(cp.files || {}).map(([path, info]) => ({
-                        path, name: path.split(/[/\\]/).pop() || path, action: info.action || 'modify',
+                        path, name: baseName(path), action: info.action || 'modify',
                       }));
+                      const title = describeCheckpoint(cp.files || {});
                       const isExpanded = expanded === cp.id;
                       const isConfirming = showConfirm === cp.id;
 
@@ -255,19 +313,21 @@ export const CheckpointsSection: React.FC = () => {
                         <div
                           key={cp.id}
                           className={clsx(
-                            'rounded-xl transition-colors',
-                            isConfirming ? 'bg-destructive/5' : 'bg-theme-hover/20 hover:bg-theme-hover/40'
+                            'group rounded-[16px] border transition-all',
+                            isConfirming
+                              ? 'border-destructive/30 bg-destructive/5'
+                              : 'border-theme bg-theme-card/40 hover:-translate-y-px hover:border-primary/30 hover:bg-theme-card/70'
                           )}
                         >
                           {isConfirming ? (
-                            <div className="space-y-2.5 p-3">
+                            <div className="space-y-2.5 p-3.5">
                               <div className="flex items-start gap-2">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                                 <div>
                                   <p className="text-[12px] font-semibold text-destructive">
                                     Revert {files.length} file{files.length !== 1 ? 's' : ''}?
                                   </p>
-                                  <p className="mt-0.5 text-[10px] leading-relaxed text-destructive/70">
+                                  <p className="mt-0.5 text-[10.5px] leading-relaxed text-destructive/70">
                                     Files will be restored to their state before this checkpoint. You can redo this later.
                                   </p>
                                 </div>
@@ -293,17 +353,14 @@ export const CheckpointsSection: React.FC = () => {
                               </div>
                             </div>
                           ) : (
-                            <div className="p-3">
+                            <div className="p-3.5">
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <Clock className="h-3 w-3 shrink-0 text-theme-muted/50" />
-                                    <span className="truncate text-[12px] font-semibold text-theme-fg">
-                                      {cp.name === 'auto' ? 'Auto-checkpoint' : cp.name}
-                                    </span>
-                                  </div>
-                                  <div className="ml-5 mt-0.5 flex items-center gap-1.5 text-[10px] text-theme-muted">
-                                    <span>{formatTime(cp.timestamp)}</span>
+                                  <span className="block truncate text-[13px] font-semibold tracking-tight text-theme-fg">
+                                    {title}
+                                  </span>
+                                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-theme-muted">
+                                    <span className="tabular-nums">{formatTime(cp.timestamp)}</span>
                                     <span className="opacity-30">·</span>
                                     <button
                                       onClick={() => setExpanded(isExpanded ? null : cp.id)}
@@ -320,7 +377,7 @@ export const CheckpointsSection: React.FC = () => {
                                     <button
                                       onClick={() => handleRedo(cp.id)}
                                       disabled={!!redoing}
-                                      className="flex items-center gap-1 rounded-lg bg-blue-500/10 px-2 py-1.5 text-[11px] font-semibold text-blue-600 transition-all hover:bg-blue-500/20 disabled:opacity-50 dark:text-blue-400"
+                                      className="flex items-center gap-1 rounded-lg bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-blue-600 transition-all hover:bg-blue-500/20 disabled:opacity-50 dark:text-blue-400"
                                     >
                                       {redoing === cp.id
                                         ? <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-400/40 border-t-blue-400" />
@@ -330,7 +387,7 @@ export const CheckpointsSection: React.FC = () => {
                                   ) : (
                                     <button
                                       onClick={() => setShowConfirm(cp.id)}
-                                      className="flex items-center gap-1 rounded-lg bg-theme-hover/50 px-2 py-1.5 text-[11px] font-semibold text-theme-muted transition-all hover:bg-theme-hover hover:text-theme-fg"
+                                      className="flex items-center gap-1 rounded-lg bg-theme-hover/60 px-2.5 py-1.5 text-[11px] font-semibold text-theme-muted transition-all hover:bg-theme-hover hover:text-theme-fg"
                                     >
                                       <RotateCcw className="h-3 w-3" />
                                       <span>Revert</span>
@@ -348,16 +405,18 @@ export const CheckpointsSection: React.FC = () => {
                                     transition={{ duration: 0.15 }}
                                     className="overflow-hidden"
                                   >
-                                    <div className="ml-5 mt-2 max-h-[180px] space-y-0.5 overflow-y-auto">
+                                    <div className="mt-2.5 max-h-[180px] space-y-0.5 overflow-y-auto border-t border-theme-sidebar pt-2 scrollbar-minimal">
                                       {files.map((f) => (
                                         <div
                                           key={f.path}
                                           className="flex items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-theme-hover/50"
                                           title={f.path}
                                         >
-                                          {actionBadge(f.action)}
-                                          <FileText className="h-3 w-3 shrink-0 text-theme-muted/40" />
-                                          <span className="flex-1 truncate text-[10px] text-theme-muted">{f.name}</span>
+                                          <ActionIcon action={f.action} />
+                                          <span className="flex-1 truncate text-[11px] text-theme-muted">{f.name}</span>
+                                          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-theme-muted/50">
+                                            {f.action}
+                                          </span>
                                         </div>
                                       ))}
                                     </div>

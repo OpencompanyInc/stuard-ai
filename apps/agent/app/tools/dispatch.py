@@ -862,6 +862,8 @@ _HANDLERS["store_oauth_tokens"] = _oauth_db.store_oauth_tokens_handler
 _HANDLERS["get_oauth_token"] = _oauth_db.get_oauth_token_handler
 _HANDLERS["oauth_list"] = _oauth_db.oauth_list_handler
 _HANDLERS["remove_oauth_tokens"] = _oauth_db.remove_oauth_tokens_handler
+_HANDLERS["set_oauth_default"] = _oauth_db.set_oauth_default_handler
+_HANDLERS["export_oauth_tokens"] = _oauth_db.export_oauth_tokens_handler
 
 
 async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:

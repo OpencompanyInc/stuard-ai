@@ -1,6 +1,7 @@
 'use client';
 
 import { Search, ChevronLeft, ChevronRight, Users, Crown } from 'lucide-react';
+// ChevronRight reused for both pagination and the per-row "view activity" affordance
 import { UserEntry, formatNumber, formatCurrency, formatTimeAgo } from '../lib/api';
 
 const PLAN_COLORS: Record<string, string> = {
@@ -10,7 +11,7 @@ const PLAN_COLORS: Record<string, string> = {
   enterprise: 'bg-amber-50 text-amber-700',
 };
 
-export default function UsersTab({ users, total, planBreakdown, query, onQueryChange, onSearch, onPageChange, page, pageSize }: {
+export default function UsersTab({ users, total, planBreakdown, query, onQueryChange, onSearch, onPageChange, page, pageSize, onSelectUser }: {
   users: UserEntry[];
   total: number;
   planBreakdown: Record<string, number>;
@@ -20,6 +21,7 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
   onPageChange: (p: number) => void;
   page: number;
   pageSize: number;
+  onSelectUser?: (userId: string) => void;
 }) {
   const totalPages = Math.ceil(total / pageSize);
 
@@ -76,11 +78,14 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
                 <th className="px-4 py-3 text-right">Cost (30d)</th>
                 <th className="px-4 py-3 text-right">Requests (30d)</th>
                 <th className="px-4 py-3">Last Sign In</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-gray-100 hover:bg-gray-50/50 transition-colors">
+                <tr key={u.id}
+                  onClick={() => onSelectUser?.(u.id)}
+                  className={`border-t border-gray-100 hover:bg-gray-50/50 transition-colors ${onSelectUser ? 'cursor-pointer' : ''}`}>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-800 text-xs">{u.email || '—'}</div>
                     <div className="text-[10px] font-mono text-gray-400">{u.id.slice(0, 12)}...</div>
@@ -95,10 +100,13 @@ export default function UsersTab({ users, total, planBreakdown, query, onQueryCh
                   <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{formatCurrency(u.costLast30d)}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-gray-700">{u.requestsLast30d}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{formatTimeAgo(u.lastSignIn)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {onSelectUser && <ChevronRight className="w-4 h-4 text-gray-300 inline-block" />}
+                  </td>
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">No users found</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">No users found</td></tr>
               )}
             </tbody>
           </table>

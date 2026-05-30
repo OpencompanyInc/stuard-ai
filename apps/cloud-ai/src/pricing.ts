@@ -189,6 +189,21 @@ export function creditsFromUsd(usd: number): number {
   return snapCredits(preciseCreditsFromUsd(usd));
 }
 
+/**
+ * Estimate credits for an embedding workload. Embeddings are input-only (no
+ * completion tokens). Gemini Batch mode is ~50% cheaper, so pass `{ batch: true }`
+ * for batch jobs. Rate is overridable via EMBEDDING_PRICE_PER_M_USD.
+ */
+export function embeddingUsdForTokens(tokens: number, opts: { batch?: boolean } = {}): number {
+  const perMUsd = envNumber('EMBEDDING_PRICE_PER_M_USD', 0.15);
+  const discount = opts.batch ? 0.5 : 1;
+  return (Math.max(0, tokens) / 1_000_000) * perMUsd * discount;
+}
+
+export function estimateEmbeddingCredits(tokens: number, opts: { batch?: boolean } = {}): number {
+  return creditsFromUsd(embeddingUsdForTokens(tokens, opts));
+}
+
 function planKey(plan: string): string {
   return String(plan || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
 }

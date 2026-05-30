@@ -27,7 +27,7 @@ import {
 } from '../../../../ai-elements/ChainOfThought';
 import type { ChatAttachment } from '../../../../../utils/attachments';
 
-import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES, GENUI_COMPONENT_MAP } from './constants';
+import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES, GENUI_COMPONENT_MAP, EMAIL_GENUI_TOOL_NAMES } from './constants';
 import { toMediaSrc, extractYouTubeVideoId, formatDuration } from './helpers/media';
 import { stripMarkdown, stripMarkdownFromArgs, normalizeMarkdownSpacing, processCustomMarkdown } from './helpers/markdown';
 import { FILE_PATH_RE, IMAGE_EXTS, AUDIO_EXTS, getFileExt, isFilePath, extractFilePaths, getFilenameFromPath } from './helpers/filePaths';
@@ -157,6 +157,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
   const markdownComponents = useMessageMarkdownComponents(role);
 
   const segments = useMemo<ContentSegment[]>(() => extractContentSegments(text), [text]);
+  const isEmailOnlyUserMessage = role === 'user' && segments.length > 0
+    && segments.every((seg) => seg.kind === 'genui' && EMAIL_GENUI_TOOL_NAMES.has(seg.component));
 
   const hasReasoning = reasoning && reasoning.trim().length > 0;
   const hasToolCalls = toolCalls && toolCalls.length > 0;
@@ -372,7 +374,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   role === 'user'
                     ? (isEditing
                       ? "rounded-2xl px-4 py-3 bg-theme-input text-theme-fg w-full font-medium"
-                      : "rounded-2xl px-5 py-3.5 bg-theme-user-bubble text-theme-fg w-fit font-medium mr-2")
+                      : isEmailOnlyUserMessage
+                        ? "rounded-2xl px-0 py-0 bg-transparent text-theme-fg w-fit font-medium mr-2"
+                        : "rounded-2xl px-5 py-3.5 bg-theme-user-bubble text-theme-fg w-fit font-medium mr-2")
                     : "bg-transparent text-theme-fg w-fit font-normal px-0 py-1 ml-2",
                 ),
             );

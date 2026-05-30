@@ -290,7 +290,7 @@ const DEFAULT_MODE_SIZES: ModeSizePrefs = {
 
 // Min/max constraints per mode for user resizing
 const MODE_SIZE_CONSTRAINTS = {
-  compact: { minW: 520, maxW: 1440, minH: 88, maxH: 650 },
+  compact: { minW: 520, maxW: 1440, minH: 88, maxH: 760 },
   sidebar: { minW: 400, maxW: 1100, minH: 400, maxH: 2000 },  // Allow for internal sidebar (320px)
   // Window mode is unbounded so the user can maximize to fill the screen.
   // We still keep a sensible minimum to prevent collapsing the chrome.

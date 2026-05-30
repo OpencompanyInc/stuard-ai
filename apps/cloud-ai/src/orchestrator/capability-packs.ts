@@ -121,6 +121,7 @@ const FILE_OPS_TOOLS = [
   'glob',
   'grep',
   'run_command',
+  'python_install',
   'run_python_script',
   'file_read',
   'file_search',
@@ -189,6 +190,7 @@ Use run_command only for one-shot commands that the dedicated file/search tools 
 | Tool | When to Use | Key Parameters |
 |------|-------------|----------------|
 | run_command | One-shot shell command | command, shell?, timeoutMs?, cwd?, background? |
+| python_install | Install Python packages into the managed default venv (or envId) — prefer over run_command for pip | packages?, requirementsTxt?, envId? |
 | run_python_script | Execute Python code or a .py file in the persistent default venv unless envId is set | code OR path, packages?, envId?, timeoutMs?, cwd? |
 | terminal_create | Start a persistent PTY shell | shell?, cwd?, env? |
 | terminal_send_input | Send a command or line of text | sessionId, input, enter? |
@@ -203,7 +205,7 @@ For long-running coding-agent CLIs (Codex, Cursor Agent, Antigravity, Claude Cod
 ## Rules
 
 1. **Read before editing** — always use read_file or file_read to understand context before making changes with file_edit or write_file.
-2. **Prefer dedicated tools over run_command** — use glob instead of \`find\`/\`dir\`, grep instead of \`grep\`/\`Select-String\`, read_file instead of \`cat\`/\`Get-Content\`, list_directory instead of \`ls\`/\`dir\`.
+2. **Prefer dedicated tools over run_command** — use glob instead of \`find\`/\`dir\`, grep instead of \`grep\`/\`Select-String\`, read_file instead of \`cat\`/\`Get-Content\`, list_directory instead of \`ls\`/\`dir\`, python_install instead of \`pip install\`.
 3. **Use glob/grep to find files** — never guess paths. Search first.
 4. **Plan multi-file operations** — sequence reads, then edits, in a logical order.
 5. **Use terminal_create for interactive or long-running processes** — dev servers, watchers, REPLs. Use run_command for quick one-shot commands.

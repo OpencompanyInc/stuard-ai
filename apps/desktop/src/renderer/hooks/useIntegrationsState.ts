@@ -2,11 +2,62 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { WHATSAPP_INTEGRATION_ENABLED } from "../../../../../shared/integration-flags";
 
-interface UseIntegrationsStateArgs {
-  session: Session | null;
-  AGENT_HTTP: string;
-  CLOUD_AI_HTTP: string;
-  statusChecksEnabled?: boolean;
+/** Google product slugs whose connection state is resolved from the local OAuth store. */
+const GOOGLE_INTEGRATION_SLUGS = [
+  "gmail",
+  "google-drive",
+  "google-calendar",
+  "google-sheets",
+  "google-docs",
+  "google-tasks",
+] as const;
+
+/** Scope → slug mapping — keep in sync with SCOPE_MAP in cloud-ai routes/integrations/google.ts */
+const GOOGLE_SCOPE_TO_SLUG: Record<string, string> = {
+  "https://www.googleapis.com/auth/gmail.send": "gmail",
+  "https://www.googleapis.com/auth/drive.file": "google-drive",
+  "https://www.googleapis.com/auth/calendar.events": "google-calendar",
+  "https://www.googleapis.com/auth/spreadsheets": "google-sheets",
+  "https://www.googleapis.com/auth/documents": "google-docs",
+  "https://www.googleapis.com/auth/tasks": "google-tasks",
+};
+
+function isGoogleIntegrationSlug(slug: string): boolean {
+  return (GOOGLE_INTEGRATION_SLUGS as readonly string[]).includes(slug);
+}
+
+function googleScopesToConnectedSlugs(scopes: unknown[]): Record<string, boolean> {
+  const scopeSet = new Set(scopes.map((s) => String(s)));
+  const out: Record<string, boolean> = {};
+  for (const [scope, slug] of Object.entries(GOOGLE_SCOPE_TO_SLUG)) {
+    if (scopeSet.has(scope)) out[slug] = true;
+  }
+  return out;
+}
+
+async function execLocalAgentTool(
+  agentHttp: string,
+  tool: string,
+  args: Record<string, unknown> = {},
+): Promise<any | null> {
+  try {
+    const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool, args }),
+    });
+    return await resp.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLocalOAuthTokens(agentHttp: string): Promise<{ ok: boolean; tokens: any[] }> {
+  const j = await execLocalAgentTool(agentHttp, "oauth_list", {});
+  if (j && (j as any).ok && Array.isArray((j as any).tokens)) {
+    return { ok: true, tokens: (j as any).tokens };
+  }
+  return { ok: false, tokens: [] };
 }
 
 /** Shape returned by the profiles API */
@@ -16,6 +67,24 @@ interface IntegrationProfile {
   is_default: boolean;
   account_email?: string | null;
   scopes_csv?: string | null;
+}
+
+function localOAuthTokenToProfile(token: any): IntegrationProfile {
+  const scopes = Array.isArray(token?.scopes) ? token.scopes : [];
+  return {
+    provider: String(token?.provider || "").toLowerCase(),
+    profile_label: String(token?.profileLabel || token?.profile_label || "default"),
+    is_default: !!(token?.isDefault ?? token?.is_default),
+    account_email: token?.accountEmail || token?.account_email || null,
+    scopes_csv: scopes.length > 0 ? scopes.join(",") : null,
+  };
+}
+
+interface UseIntegrationsStateArgs {
+  session: Session | null;
+  AGENT_HTTP: string;
+  CLOUD_AI_HTTP: string;
+  statusChecksEnabled?: boolean;
 }
 
 export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statusChecksEnabled = true }: UseIntegrationsStateArgs) {
@@ -81,6 +150,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         if (parsed && typeof parsed === 'object') {
           try { delete (parsed as any)['browser-control']; } catch { }
           try { delete (parsed as any)['browser']; } catch { }
+          // Google is resolved from the local OAuth store on sync — skip stale cache.
+          for (const slug of GOOGLE_INTEGRATION_SLUGS) {
+            try { delete (parsed as any)[slug]; } catch { }
+          }
         }
         setConnectedMap(parsed);
       }
@@ -115,12 +188,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       await Promise.all([
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=drive`, "google-drive"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=calendar`, "google-calendar"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=gmail`, "gmail"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=sheets`, "google-sheets"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=docs`, "google-docs"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=tasks`, "google-tasks"),
+        // Google status is resolved from the local encrypted store below — skip
+        // server polls so stale Supabase/empty-VM responses can't override truth.
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/x/status`, "x"),
@@ -147,36 +216,20 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           : []),
       ]);
 
-      // Device-local Google status: tokens are held in the local encrypted
-      // store, which cloud-ai can't see over plain HTTP (it returns
-      // deviceLocal). Resolve per-product connection from the local store and
-      // OR it into the server view. Scope→product mapping mirrors the server's
-      // SCOPE_MAP in routes/integrations/google.ts — keep in sync.
-      try {
-        const resp = await fetch(`${AGENT_HTTP}/v1/tools/exec`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool: 'oauth_list', args: {} }),
-        });
-        const j = await resp.json().catch(() => null);
-        const tokens = j && (j as any).ok && Array.isArray((j as any).tokens) ? (j as any).tokens : [];
-        const google = tokens.find((t: any) => String(t?.provider || '').toLowerCase() === 'google');
-        if (google) {
-          const scopes = new Set((Array.isArray(google.scopes) ? google.scopes : []).map((s: any) => String(s)));
-          const has = (s: string) => scopes.has(s);
-          const localGoogle: Record<string, boolean> = {
-            gmail: has('https://www.googleapis.com/auth/gmail.send'),
-            'google-drive': has('https://www.googleapis.com/auth/drive.file'),
-            'google-calendar': has('https://www.googleapis.com/auth/calendar.events'),
-            'google-sheets': has('https://www.googleapis.com/auth/spreadsheets'),
-            'google-docs': has('https://www.googleapis.com/auth/documents'),
-            'google-tasks': has('https://www.googleapis.com/auth/tasks'),
-          };
-          for (const [slug, connected] of Object.entries(localGoogle)) {
-            if (connected) serverConnected[slug] = true;
+      // Device-local Google status — authoritative when the local agent responds.
+      const localGoogleConnected: Record<string, boolean> = {};
+      let localOAuthReachable = false;
+      const { ok: localOAuthOk, tokens: localTokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
+      if (localOAuthOk) {
+        localOAuthReachable = true;
+        for (const token of localTokens) {
+          if (String(token?.provider || "").toLowerCase() !== "google") continue;
+          const slugs = googleScopesToConnectedSlugs(Array.isArray(token.scopes) ? token.scopes : []);
+          for (const [slug, connected] of Object.entries(slugs)) {
+            if (connected) localGoogleConnected[slug] = true;
           }
         }
-      } catch {}
+      }
 
       setConnectedMap((prev) => {
         const next: Record<string, boolean> = {};
@@ -190,7 +243,18 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         if (prev.browser_use) next.browser_use = true;
         if (prev['agent-cli']) next['agent-cli'] = true;
 
+        // Google slugs: local store is source of truth when the agent is reachable.
+        if (localOAuthReachable) {
+          for (const slug of GOOGLE_INTEGRATION_SLUGS) {
+            if (localGoogleConnected[slug]) next[slug] = true;
+          }
+        }
+
         for (const [slug, connected] of Object.entries(serverConnected)) {
+          if (isGoogleIntegrationSlug(slug)) {
+            // Already handled from local store above; never preserve stale cache.
+            continue;
+          }
           if (connected === true) {
             next[slug] = true;
             continue;
@@ -202,6 +266,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           // so this won't prevent real user-initiated disconnects.
           if (prev[slug]) {
             next[slug] = true;
+          }
+        }
+
+        // Agent unreachable: fall back to cached Google state (offline/desktop asleep).
+        if (!localOAuthReachable) {
+          for (const slug of GOOGLE_INTEGRATION_SLUGS) {
+            if (prev[slug]) next[slug] = true;
           }
         }
 
@@ -784,8 +855,41 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
 
   const handleDisconnect = async (slug: string, profileLabel?: string) => {
     const token = session?.access_token;
-
     const provider = slugToProvider(slug);
+
+    // Google tokens live in the local encrypted store — not Supabase.
+    if (provider === "google") {
+      let profileToDelete = profileLabel?.trim() || "";
+      if (!profileToDelete) {
+        const { ok, tokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
+        if (ok) {
+          const googleTokens = tokens.filter((t) => String(t?.provider || "").toLowerCase() === "google");
+          const defaultProfile = googleTokens.find((t) => t.isDefault) || googleTokens[0];
+          profileToDelete = String(defaultProfile?.profileLabel || "default").trim();
+        }
+      }
+
+      if (profileToDelete) {
+        await execLocalAgentTool(AGENT_HTTP, "remove_oauth_tokens", {
+          provider: "google",
+          profileLabel: profileToDelete,
+        });
+        // Best-effort cleanup of any legacy Supabase row from before migration.
+        if (token) {
+          try {
+            await fetch(
+              `${CLOUD_AI_HTTP}/integrations/profiles?provider=google&profile=${encodeURIComponent(profileToDelete)}`,
+              { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+            );
+          } catch {}
+        }
+      }
+
+      await refreshProfiles("google");
+      if (token) await syncConnectedFromServer(token);
+      return;
+    }
+
     if (token && provider) {
       let profileToDelete = profileLabel?.trim() || '';
 
@@ -854,38 +958,58 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   /** Fetch all profiles for an optional provider */
   const refreshProfiles = useCallback(async (provider?: string) => {
     const token = session?.access_token;
-    if (!token) return;
     setProfilesLoading(true);
     try {
-      const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+      const localGoogleProfiles: IntegrationProfile[] = [];
+      const { ok: localOk, tokens: localTokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
+      if (localOk) {
+        for (const t of localTokens) {
+          if (String(t?.provider || "").toLowerCase() === "google") {
+            localGoogleProfiles.push(localOAuthTokenToProfile(t));
+          }
+        }
+      }
+
+      const mapServerProfiles = (rows: any[]): IntegrationProfile[] =>
+        rows
+          .filter((p) => String(p?.provider || "").toLowerCase() !== "google")
+          .map((p: any) => ({
+            provider: p.provider || "",
+            profile_label: p.profile || p.profile_label || "default",
+            is_default: !!(p.isDefault ?? p.is_default),
+            account_email: p.email || p.account_email || null,
+            scopes_csv: (Array.isArray(p.scopes) ? p.scopes.join(",") : p.scopes) || p.scopes_csv || null,
+          }));
+
+      if (provider === "google") {
+        setProfiles(localGoogleProfiles);
+        return;
+      }
+
+      if (!token) {
+        setProfiles(provider ? [] : localGoogleProfiles);
+        return;
+      }
+
+      const qs = provider ? `?provider=${encodeURIComponent(provider)}` : "";
       const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/profiles${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const j = await resp.json().catch(() => null);
-      if (j && Array.isArray(j.profiles)) {
-        // Map API field names to frontend interface
-        // API returns: { profile, isDefault, email, scopes, provider }
-        // Frontend expects: { profile_label, is_default, account_email, scopes_csv, provider }
-        const mapped: IntegrationProfile[] = j.profiles.map((p: any) => ({
-          provider: p.provider || '',
-          profile_label: p.profile || p.profile_label || 'default',
-          is_default: !!(p.isDefault ?? p.is_default),
-          account_email: p.email || p.account_email || null,
-          scopes_csv: (Array.isArray(p.scopes) ? p.scopes.join(',') : p.scopes) || p.scopes_csv || null,
-        }));
-        setProfiles(mapped);
+      const serverProfiles = j && Array.isArray(j.profiles) ? mapServerProfiles(j.profiles) : [];
+
+      if (provider) {
+        setProfiles(serverProfiles);
+      } else {
+        setProfiles([...localGoogleProfiles, ...serverProfiles]);
       }
     } catch {} finally {
       setProfilesLoading(false);
     }
-  }, [session?.access_token, CLOUD_AI_HTTP]);
+  }, [session?.access_token, CLOUD_AI_HTTP, AGENT_HTTP]);
 
   useEffect(() => {
     if (!statusChecksEnabled) {
-      setProfiles([]);
-      return;
-    }
-    if (!session?.access_token) {
       setProfiles([]);
       return;
     }
@@ -895,6 +1019,15 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   /** Set a given profile as the default for its provider */
   const setDefaultProfile = useCallback(async (provider: string, profileLabel: string) => {
     const token = session?.access_token;
+    if (provider === "google") {
+      await execLocalAgentTool(AGENT_HTTP, "set_oauth_default", {
+        provider: "google",
+        profileLabel,
+      });
+      await refreshProfiles("google");
+      if (token) await syncConnectedFromServer(token);
+      return;
+    }
     if (!token) return;
     try {
       await fetch(`${CLOUD_AI_HTTP}/integrations/profiles/default`, {
@@ -905,12 +1038,32 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     } catch {}
     await refreshProfiles(provider);
     await syncConnectedFromServer(token);
-  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
+  }, [session?.access_token, CLOUD_AI_HTTP, AGENT_HTTP, refreshProfiles, syncConnectedFromServer]);
 
   /** Delete a specific profile */
   const deleteProfile = useCallback(async (provider: string, profileLabel: string) => {
     const token = session?.access_token;
-    if (!token || !profileLabel) return;
+    if (!profileLabel) return;
+
+    if (provider === "google") {
+      await execLocalAgentTool(AGENT_HTTP, "remove_oauth_tokens", {
+        provider: "google",
+        profileLabel,
+      });
+      if (token) {
+        try {
+          await fetch(
+            `${CLOUD_AI_HTTP}/integrations/profiles?provider=google&profile=${encodeURIComponent(profileLabel)}`,
+            { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+          );
+        } catch {}
+      }
+      await refreshProfiles("google");
+      if (token) await syncConnectedFromServer(token);
+      return;
+    }
+
+    if (!token) return;
     try {
       const resp = await fetch(
         `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
@@ -925,7 +1078,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     }
     await refreshProfiles(provider);
     await syncConnectedFromServer(token);
-  }, [session?.access_token, CLOUD_AI_HTTP, refreshProfiles, syncConnectedFromServer]);
+  }, [session?.access_token, CLOUD_AI_HTTP, AGENT_HTTP, refreshProfiles, syncConnectedFromServer]);
 
   // OAuth completes in an external browser tab; when the user returns to the
   // desktop window we re-pull profiles + connected state so a freshly-linked
@@ -1261,17 +1414,11 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           const j = await resp.json().catch(() => null);
           const tokens = j && (j as any).ok && Array.isArray((j as any).tokens) ? (j as any).tokens : [];
           if (tokens.length > 0) {
-            try {
-              const storeResp = await fetch(`${AGENT_HTTP}/v1/tools/exec`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool: 'store_oauth_tokens', args: { replace: false, tokens } }),
-              });
-              const sj = await storeResp.json().catch(() => null);
-              return !!(sj && (sj as any).ok);
-            } catch {
-              return false;
-            }
+            const sj = await execLocalAgentTool(AGENT_HTTP, "store_oauth_tokens", {
+              replace: false,
+              tokens,
+            });
+            return !!(sj && (sj as any).ok);
           }
         } catch {}
         await sleep(2000);
@@ -1404,14 +1551,8 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       // claimed (e.g. a VM-primary user), fall back to cloud status polling,
       // which reflects the VM's authoritative view.
       const stored = await claimAndStoreLocally();
-      if (stored) {
-        setConnectedMap((prev) => {
-          const next = { ...prev, [slug]: true };
-          try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
-          emitConnectedChanged();
-          return next;
-        });
-      } else {
+      if (!stored) {
+        // VM-primary users: fall back to cloud status (VM authoritative view).
         await pollStatus(`${CLOUD_AI_HTTP}/integrations/google/status?target=${encodeURIComponent(target)}${profileParam}`, slug);
       }
       await refreshProfiles('google');

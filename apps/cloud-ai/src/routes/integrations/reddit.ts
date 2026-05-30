@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID, createHmac } from 'crypto';
-import { upsertExternalAccount, getExternalAccount, listExternalAccounts } from '../../supabase';
-import { pushOAuthTokensToVM, storeOAuthTokensOnVM } from '../cloud-engine';
+import { storeOAuthTokensOnVM } from '../cloud-engine';
+import { stageTokensForClaim } from './oauth-claim-store';
+import { listVMOAuthAccountsForUser } from '../../tools/vm-oauth';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -33,28 +34,33 @@ export async function handleRedditRoutes(req: IncomingMessage, res: ServerRespon
       const userId = authResult.userId;
       const profileLabel = parsedUrl.searchParams.get('profile') || undefined;
 
+      // Tokens are device-held (desktop/VM). The server can authoritatively
+      // answer only for a running VM; for desktop-held tokens it returns
+      // deviceLocal:true so the client resolves status from its local store.
+      const vmAccounts = await listVMOAuthAccountsForUser(userId, 'reddit').catch(() => []);
+
       // List all profiles
       if (parsedUrl.searchParams.get('profiles') === '1') {
-        const accounts = await listExternalAccounts(userId, 'reddit');
-        const profiles = accounts.map(a => ({
+        const profiles = vmAccounts.map(a => ({
           profile: a.profile_label,
           isDefault: a.is_default,
           email: a.account_email || null,
           scopes: a.scopes,
           connected: true,
         }));
-        const body = JSON.stringify({ ok: true, profiles });
+        const body = JSON.stringify({ ok: true, profiles, deviceLocal: vmAccounts.length === 0 });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
         res.end(body);
         return true;
       }
 
-      let connected = false;
-      let acc: any = null;
-      try { acc = await getExternalAccount(userId, 'reddit', profileLabel); connected = !!acc; } catch {}
+      const acc: any = vmAccounts.find(a => !profileLabel || a.profile_label === profileLabel)
+        || (profileLabel ? null : vmAccounts.find(a => a.is_default) || vmAccounts[0] || null);
+      const connected = !!acc;
       const body = JSON.stringify({
         ok: true,
         connected,
+        deviceLocal: vmAccounts.length === 0,
         profile: acc?.profile_label || null,
         isDefault: acc?.is_default ?? null,
         email: acc?.account_email || null,
@@ -217,17 +223,6 @@ export async function handleRedditRoutes(req: IncomingMessage, res: ServerRespon
       } catch {}
 
       if (storageTarget === 'vm') {
-        const account = {
-          userId,
-          provider: 'reddit',
-          access_token,
-          scopes,
-          refresh_token,
-          expires_at: expiresAt,
-          meta: { token_type: tokenBody.token_type || 'bearer', storage_target: 'vm' },
-          profileLabel,
-          accountEmail,
-        };
         const vmResult = await storeOAuthTokensOnVM(userId, [{
           provider: 'reddit',
           profileLabel,
@@ -246,39 +241,24 @@ export async function handleRedditRoutes(req: IncomingMessage, res: ServerRespon
           res.end();
           return true;
         }
-        try {
-          await upsertExternalAccount(account);
-        } catch (saveErr: any) {
-          console.error('[reddit] Failed to save VM token backup:', saveErr?.message || saveErr);
-          res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=reddit&message=${encodeURIComponent('Connected on the VM, but could not save the durable backup: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
-          res.end();
-          return true;
-        }
         res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=reddit&profile=${encodeURIComponent(profileLabel)}&target=vm`, 'Cache-Control': 'no-store' });
         res.end();
         return true;
       }
 
-      try {
-        await upsertExternalAccount({
-          userId,
-          provider: 'reddit',
-          access_token,
-          scopes,
-          refresh_token,
-          expires_at: expiresAt,
-          meta: { token_type: tokenBody.token_type || 'bearer' },
-          profileLabel,
-          accountEmail,
-        });
-      } catch (saveErr: any) {
-        console.error('[reddit] Failed to save token:', saveErr?.message || saveErr);
-        res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/error?provider=reddit&message=${encodeURIComponent('Could not save token: ' + (saveErr?.message || 'database error'))}`, 'Cache-Control': 'no-store' });
-        res.end();
-        return true;
-      }
-      // Auto-sync OAuth tokens to running VM (fire-and-forget)
-      pushOAuthTokensToVM(userId).catch(() => {});
+      // Desktop target: stage for the desktop to claim over the authenticated
+      // /integrations/oauth/claim endpoint. Held in memory only (TTL), never
+      // written to Supabase — the desktop stores it locally encrypted.
+      stageTokensForClaim(userId, [{
+        provider: 'reddit',
+        profileLabel,
+        isDefault: true,
+        accessToken: access_token,
+        refreshToken: refresh_token || null,
+        expiresAt,
+        scopes,
+        accountEmail,
+      }]);
       res.writeHead(302, { Location: `${WEBSITE_BASE_URL}/integrations/success?provider=reddit&profile=${encodeURIComponent(profileLabel)}`, 'Cache-Control': 'no-store' });
       res.end();
       return true;

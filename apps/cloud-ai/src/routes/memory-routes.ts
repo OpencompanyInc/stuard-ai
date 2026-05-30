@@ -65,7 +65,7 @@ async function listCloudConversations(userId: string, limit: number, offset: num
 
     let query = supabase
       .from('conversations')
-      .select('id, title, model, source, status, created_at, updated_at, message_count')
+      .select('id, model, source, status, created_at, updated_at, message_count')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
 
@@ -91,7 +91,7 @@ async function getCloudConversation(userId: string, conversationId: string): Pro
   try {
     const { data, error } = await supabase
       .from('conversations')
-      .select('id, title, model, source, status, created_at, updated_at, message_count')
+      .select('id, model, source, status, created_at, updated_at, message_count')
       .eq('user_id', userId)
       .eq('id', conversationId)
       .not('source', 'in', '("workflow","skill","proactive","bot")')

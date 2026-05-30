@@ -484,6 +484,38 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('file-index:semantic-progress', handler);
     return () => { try { ipcRenderer.off('file-index:semantic-progress', handler); } catch { } };
   },
+  // Semantic embedding (Gemini Batch)
+  fileIndexEmbedEstimate: (rootId: string | undefined, baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedEstimate', rootId, baseUrl, token),
+  fileIndexEmbedStart: (rootId: string | undefined, creditCap: number | undefined, baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedStart', rootId, creditCap, baseUrl, token),
+  fileIndexEmbedActive: () => ipcRenderer.invoke('fileIndex:embedActive'),
+  fileIndexEmbedResume: (baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedResume', baseUrl, token),
+  fileIndexSetExcludes: (rootId: string, excludeGlobs: string) =>
+    ipcRenderer.invoke('fileIndex:setExcludes', rootId, excludeGlobs),
+  fileIndexUpdateRoot: (rootId: string, opts: { enabled?: boolean; schedule?: string; intervalHours?: number }) =>
+    ipcRenderer.invoke('fileIndex:updateRoot', rootId, opts),
+  fileIndexClearEmbeddings: (rootId?: string) =>
+    ipcRenderer.invoke('fileIndex:clearEmbeddings', rootId),
+  fileIndexAddSemanticFolder: (path: string) =>
+    ipcRenderer.invoke('fileIndex:addSemanticFolder', path),
+  fileIndexSetRootSemantic: (rootId: string, on: boolean) =>
+    ipcRenderer.invoke('fileIndex:setRootSemantic', rootId, on),
+  onFileIndexEmbedProgress: (cb: (data: {
+    jobId: string;
+    rootId?: string;
+    status: 'gathering' | 'submitting' | 'running' | 'writing' | 'succeeded' | 'failed';
+    totalFiles: number;
+    embeddedFiles: number;
+    queuedFiles: number;
+    estimatedCredits: number;
+    error?: string;
+  }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('file-index:embed-progress', handler);
+    return () => { try { ipcRenderer.off('file-index:embed-progress', handler); } catch { } };
+  },
 
   // Billing (Polar)
   billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) =>

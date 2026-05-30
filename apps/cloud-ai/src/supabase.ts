@@ -30,18 +30,12 @@ async function shouldPersistConversation(userId: string, forcePersist = false): 
   return prefs.sync_conversations;
 }
 
-export async function setConversationTitle(userId: string, conversationId: string, title: string, forcePersist = false): Promise<void> {
-  if (!supabaseService) return;
-  if (!(await shouldPersistConversation(userId, forcePersist))) return;
-  const t = String(title || '').trim().slice(0, 80);
-  if (!t) return;
-  try {
-    await supabaseService
-      .from('conversations')
-      .update({ title: t })
-      .eq('id', conversationId)
-      .eq('user_id', userId);
-  } catch {}
+// Conversation titles are personal content (an LLM summary of the chat) and are
+// NOT stored in Supabase. Titles sync peer-to-peer between desktop and VM via
+// chat_sync relays (vm-agent `emitChatSyncToDesktop` / memory-routes
+// `title_update`). Kept as a no-op for call-site compatibility.
+export async function setConversationTitle(_userId: string, _conversationId: string, _title: string, _forcePersist = false): Promise<void> {
+  return;
 }
 
 // Enqueue a memory job for the desktop to consume via Realtime
@@ -108,8 +102,10 @@ export function invalidateSyncCache(userId: string): void {
   _syncCache.delete(userId);
 }
 
-/** Shape of an `external_accounts` row as it comes back from Supabase, with
- *  the encryption columns alongside the legacy plaintext fields. */
+/** Shape of an `external_accounts` row as it comes back from Supabase. Tokens
+ *  live only in the AES-256-GCM ciphertext columns; the legacy plaintext
+ *  access_token/refresh_token columns were dropped in
+ *  20260529000000_drop_external_accounts_plaintext_tokens. */
 type ExternalAccountRow = {
   id: string;
   user_id: string;
@@ -118,8 +114,6 @@ type ExternalAccountRow = {
   is_default: boolean;
   account_email: string | null;
   scopes: any;
-  access_token: string | null;
-  refresh_token: string | null;
   expires_at: string | null;
   meta: any;
   access_token_ct: string | null;
@@ -133,7 +127,7 @@ type ExternalAccountRow = {
 
 const ACCOUNT_COLS = [
   'id', 'user_id', 'provider', 'profile_label', 'is_default', 'account_email',
-  'scopes', 'access_token', 'refresh_token', 'expires_at', 'meta',
+  'scopes', 'expires_at', 'meta',
   'access_token_ct', 'access_token_iv', 'access_token_tag',
   'refresh_token_ct', 'refresh_token_iv', 'refresh_token_tag',
   'key_version',
@@ -154,8 +148,6 @@ function decryptRow(row: ExternalAccountRow): ExternalAccount {
       console.error(`[supabase] decrypt access_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
     }
   }
-  // Legacy fallback: row predates encryption migration.
-  if (!accessToken && row.access_token) accessToken = row.access_token;
 
   let refreshToken: string | null = null;
   if (row.refresh_token_ct && row.refresh_token_iv && row.refresh_token_tag) {
@@ -170,7 +162,6 @@ function decryptRow(row: ExternalAccountRow): ExternalAccount {
       console.error(`[supabase] decrypt refresh_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
     }
   }
-  if (!refreshToken && row.refresh_token) refreshToken = row.refresh_token;
 
   return {
     id: row.id,
@@ -195,8 +186,6 @@ function buildEncryptedTokenColumns(
   access_token_ct: string; access_token_iv: string; access_token_tag: string;
   refresh_token_ct: string | null; refresh_token_iv: string | null; refresh_token_tag: string | null;
   key_version: number;
-  // Null out the legacy plaintext columns so a leaked row reveals nothing.
-  access_token: null; refresh_token: null;
 } {
   const at = encryptForUser(userId, accessToken) as EncryptedField;
   const rt = refreshToken ? encryptForUser(userId, refreshToken) : null;
@@ -208,8 +197,6 @@ function buildEncryptedTokenColumns(
     refresh_token_iv: rt?.iv ?? null,
     refresh_token_tag: rt?.tag ?? null,
     key_version: at.key_version,
-    access_token: null,
-    refresh_token: null,
   };
 }
 
@@ -525,7 +512,12 @@ export async function verifyToken(token: string): Promise<{ userId: string; emai
   }
 }
 
-// Start a new automation run and record the user's first message
+// Start a new automation run. Stores ONLY a bare conversation metadata row in
+// Supabase — no title, no message content. Titles/messages are personal content
+// and sync peer-to-peer between desktop and VM (never through Supabase). This
+// row exists for usage metadata and the History VM/Desktop origin badge.
+// `firstMessage`/`firstMessageMetadata`/`initialTitle` are retained in the
+// signature for call-site compatibility but are intentionally not persisted.
 export async function createConversation(
   userId: string,
   firstMessage: string,
@@ -543,12 +535,7 @@ export async function createConversation(
   }
 
   try {
-    // Create a conversation and attach the first user message. Persist a
-    // best-guess title up front so list views never render "Untitled" while
-    // the LLM-generated title is being produced asynchronously.
-    const trimmedTitle = String(initialTitle || '').trim().slice(0, 80);
     const row: Record<string, any> = { user_id: userId, model, source, status: 'started' };
-    if (trimmedTitle) row.title = trimmedTitle;
     const { data: conv, error: convErr } = await supabaseService
       .from('conversations')
       .insert([row])
@@ -556,15 +543,6 @@ export async function createConversation(
       .single();
     if (convErr || !conv?.id) return null;
     const conversationId = conv.id as string;
-    await supabaseService.from('messages').insert([
-      {
-        conversation_id: conversationId,
-        user_id: userId,
-        role: 'user',
-        content: firstMessage,
-        metadata: firstMessageMetadata || null,
-      },
-    ]);
     await touchConversationActivity(userId, conversationId);
     return conversationId;
   } catch {
@@ -621,71 +599,39 @@ async function touchConversationActivity(userId: string, conversationId: string)
   } catch {}
 }
 
+// Message bodies are personal content and are NOT mirrored to Supabase. Chat
+// messages sync peer-to-peer between desktop and VM via chat_sync relays
+// (vm-agent `emitChatSyncToDesktop` / memory-routes `new_message`). We only keep
+// the bare conversation metadata row fresh so History can sort by recency.
 export async function addAssistantMessage(
-  userId: string, 
-  conversationId: string, 
-  text: string,
-  metadata?: MessageMetadata,
-  forcePersist = false,
+  userId: string,
+  conversationId: string,
+  _text: string,
+  _metadata?: MessageMetadata,
+  _forcePersist = false,
 ): Promise<void> {
-  if (!supabaseService) return;
-  if (!(await shouldPersistConversation(userId, forcePersist))) return;
-  try {
-    await supabaseService.from('messages').insert([
-      { 
-        conversation_id: conversationId, 
-        user_id: userId, 
-        role: 'assistant', 
-        content: text,
-        metadata: metadata || null,
-      },
-    ]);
-    await touchConversationActivity(userId, conversationId);
-  } catch {}
+  await touchConversationActivity(userId, conversationId);
 }
 
 export async function addUserMessage(
   userId: string,
   conversationId: string,
-  text: string,
-  metadata?: MessageMetadata,
-  forcePersist = false,
+  _text: string,
+  _metadata?: MessageMetadata,
+  _forcePersist = false,
 ): Promise<void> {
-  if (!supabaseService) return;
-  if (!(await shouldPersistConversation(userId, forcePersist))) return;
-  try {
-    await supabaseService.from('messages').insert([
-      {
-        conversation_id: conversationId,
-        user_id: userId,
-        role: 'user',
-        content: text,
-        metadata: metadata || null,
-      },
-    ]);
-    await touchConversationActivity(userId, conversationId);
-  } catch {}
+  await touchConversationActivity(userId, conversationId);
 }
 
+// Message content is not stored in Supabase (see addUserMessage). Past turns are
+// held by the desktop/VM local stores and fetched from there, so this always
+// returns empty. Kept for call-site compatibility.
 export async function getConversationMessages(
-  userId: string,
-  conversationId: string,
-  limit = 50
+  _userId: string,
+  _conversationId: string,
+  _limit = 50
 ): Promise<Array<{ role: string; content: string; metadata?: MessageMetadata; created_at?: string }>> {
-  if (!supabaseService) return [];
-  try {
-    const { data, error } = await supabaseService
-      .from('messages')
-      .select('role, content, metadata, created_at')
-      .eq('conversation_id', conversationId)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true })
-      .limit(limit);
-    if (error || !Array.isArray(data)) return [];
-    return data as Array<{ role: string; content: string; metadata?: MessageMetadata; created_at?: string }>;
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 export async function logUsageEvent(userId: string, conversationId: string | null, model: string, usage: any): Promise<void> {
@@ -959,7 +905,7 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
     }
     const { data, error } = await supabaseService
       .from('usage_events')
-      .select('model, prompt_tokens, completion_tokens, input_tokens, output_tokens, cost_usd, credit_cost, raw, created_at')
+      .select('model, prompt_tokens, completion_tokens, cost_usd, credit_cost, raw, created_at')
       .eq('user_id', userId)
       .gte('created_at', start.toISOString());
     if (error || !data) return 0;
@@ -973,9 +919,8 @@ export async function getMonthlyUsageCredits(userId: string, monthStart?: Date):
         continue;
       }
       const model = String(r.model || '');
-      // Prefer new columns, fallback to legacy input/output token columns
-      const pt = (Number(r.prompt_tokens) || 0) || (Number(r.input_tokens) || 0);
-      const ct = (Number(r.completion_tokens) || 0) || (Number(r.output_tokens) || 0);
+      const pt = Number(r.prompt_tokens) || 0;
+      const ct = Number(r.completion_tokens) || 0;
       // Try to detect cached input tokens from raw payload if present
       let cachedPt = 0;
       try {
@@ -1820,28 +1765,9 @@ export function getSupabaseService(): SupabaseClient | null {
   return supabaseService;
 }
 
-export async function setConversationTitleIfEmpty(userId: string, conversationId: string, title: string): Promise<void> {
-  if (!supabaseService) return;
-  const t = String(title || '').trim().slice(0, 80);
-  if (!t) return;
-  try {
-    // Fetch current title; update only if null/empty
-    const { data, error } = await supabaseService
-      .from('conversations')
-      .select('id, user_id, title')
-      .eq('id', conversationId)
-      .eq('user_id', userId)
-      .single();
-    if (error || !data) return;
-    const cur = String((data as any)?.title || '').trim();
-    if (!cur) {
-      await supabaseService
-        .from('conversations')
-        .update({ title: t })
-        .eq('id', conversationId)
-        .eq('user_id', userId);
-    }
-  } catch {}
+// No-op: titles are not persisted in Supabase (see setConversationTitle).
+export async function setConversationTitleIfEmpty(_userId: string, _conversationId: string, _title: string): Promise<void> {
+  return;
 }
 
 // ── Cloud Engine DB Helpers ──────────────────────────────────────────────────

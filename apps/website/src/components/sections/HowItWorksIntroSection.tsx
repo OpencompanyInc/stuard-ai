@@ -1,4 +1,5 @@
 import SectionReveal from '@/components/layout/SectionReveal';
+import MediaAssetSlot from '@/components/sections/MediaAssetSlot';
 
 const LADDER_RUNGS = [
   {
@@ -6,24 +7,36 @@ const LADDER_RUNGS = [
     title: 'Chat',
     subtitle: 'butler',
     description: 'Tell Stuard what you want. It uses your computer to get it done.',
+    visualLabel: 'Overlay mid-task — a window being operated (not just chatting)',
+    assetPath: '/media/ladder/chat-overlay.png',
+    caption: 'This actually ran',
   },
   {
     step: '2',
     title: 'Workflows',
     subtitle: 'repeatable',
     description: 'Do something twice? Stuard saves the recipe. Run it again with one click.',
+    visualLabel: 'Visual workflow builder canvas',
+    assetPath: '/media/ladder/workflow-builder.png',
+    caption: 'Saved as a workflow',
   },
   {
     step: '3',
     title: 'Mini-apps',
     subtitle: 'UI on top',
     description: 'Wrap a workflow in a UI and it becomes a tool that lives in your workspace.',
+    visualLabel: 'Mini-app panel in the workspace — drop zone + run',
+    assetPath: '/media/ladder/mini-app-panel.png',
+    caption: 'Lives in your workspace',
   },
   {
     step: '4',
     title: 'Proactive agents',
     subtitle: 'runs on its own',
     description: 'Schedule them, trigger them, let them run while you sleep.',
+    visualLabel: 'Agent schedule / kanban — "ran at 6:00 AM ✓"',
+    assetPath: '/media/ladder/agent-schedule.png',
+    caption: 'Ran at 6:00 AM ✓',
   },
 ] as const;
 
@@ -31,7 +44,7 @@ const HowItWorksIntroSection = () => {
   return (
     <section
       id="how-it-works"
-      className="relative flex min-h-screen flex-col items-center justify-center bg-[#0A0A0B] text-white px-4 py-16 sm:py-20 lg:py-24"
+      className="relative flex flex-col items-center bg-[#0A0A0B] text-white px-4 py-16 sm:py-20 lg:py-24"
     >
       <div className="mx-auto flex w-full max-w-[1100px] flex-col items-center gap-10 sm:gap-12 lg:gap-14">
         <SectionReveal className="flex w-full max-w-[780px] flex-col items-center gap-4 sm:gap-5 lg:gap-7 text-center">
@@ -48,16 +61,24 @@ const HowItWorksIntroSection = () => {
           </p>
         </SectionReveal>
 
-        <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
+        <div className="grid w-full grid-cols-1 gap-8 sm:grid-cols-2 lg:gap-10">
           {LADDER_RUNGS.map((rung, index) => (
             <SectionReveal key={rung.title} delay={0.08 * index} className="h-full">
-              <article className="flex h-full flex-col gap-4 rounded-2xl border border-[#262626] bg-[#111111] p-5 sm:p-6">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[13px] font-semibold text-[#FF383C]">{rung.step}</span>
-                  <h3 className="text-[18px] sm:text-[20px] font-medium text-white">{rung.title}</h3>
+              <article className="flex h-full flex-col gap-4">
+                <MediaAssetSlot
+                  label={rung.visualLabel}
+                  assetPath={rung.assetPath}
+                  caption={rung.caption}
+                  aspectClassName="aspect-[16/10]"
+                />
+                <div className="flex flex-col gap-2 rounded-2xl border border-[#262626] bg-[#111111] p-5 sm:p-6">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[13px] font-semibold text-[#FF383C]">{rung.step}</span>
+                    <h3 className="text-[18px] sm:text-[20px] font-medium text-white">{rung.title}</h3>
+                  </div>
+                  <p className="text-[12px] uppercase tracking-wider text-[#737373]">{rung.subtitle}</p>
+                  <p className="text-[14px] leading-[22px] text-[#D4D4D4]">{rung.description}</p>
                 </div>
-                <p className="text-[12px] uppercase tracking-wider text-[#737373]">{rung.subtitle}</p>
-                <p className="text-[14px] leading-[22px] text-[#D4D4D4]">{rung.description}</p>
               </article>
             </SectionReveal>
           ))}

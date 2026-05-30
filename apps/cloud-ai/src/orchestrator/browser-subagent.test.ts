@@ -104,10 +104,18 @@ describe('Bridge Context Propagation', () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('Browser Pack Tool Resolution', () => {
-  it('every browser pack tool name exists in the execution tools universe', { timeout: 60000 }, async () => {
-    const { BROWSER_PACK } = await import('./capability-packs');
-    const { getExecutionTools } = await import('../agents/stuard/tools');
+  // stuard/tools pulls in the full execution universe; first import can exceed 60s on Windows CI runners.
+  let BROWSER_PACK: Awaited<ReturnType<typeof import('./capability-packs')>>['BROWSER_PACK'];
+  let getExecutionTools: Awaited<typeof import('../agents/stuard/tools')>['getExecutionTools'];
 
+  beforeAll(async () => {
+    [{ BROWSER_PACK }, { getExecutionTools }] = await Promise.all([
+      import('./capability-packs'),
+      import('../agents/stuard/tools'),
+    ]);
+  }, 120_000);
+
+  it('every browser pack tool name exists in the execution tools universe', () => {
     const executionTools = getExecutionTools();
     const executionToolNames = new Set(Object.keys(executionTools));
 
@@ -127,10 +135,7 @@ describe('Browser Pack Tool Resolution', () => {
     expect(missingTools).toEqual([]);
   });
 
-  it('browser pack tools have valid execute functions', { timeout: 60000 }, async () => {
-    const { BROWSER_PACK } = await import('./capability-packs');
-    const { getExecutionTools } = await import('../agents/stuard/tools');
-
+  it('browser pack tools have valid execute functions', () => {
     const executionTools = getExecutionTools();
 
     const toolsWithoutExecute: string[] = [];

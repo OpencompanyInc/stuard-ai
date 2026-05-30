@@ -7,6 +7,7 @@ import { AgentTodoList } from './AgentTodoList';
 import { FormWizard } from './FormWizard';
 import type { DropzoneFile } from './FileDropzone';
 import { ChatUIRenderer } from './ChatUIRenderer';
+import { EmailView } from './EmailView';
 import { GenUIErrorBoundary } from './GenUIErrorBoundary';
 
 export interface GenUIProps {
@@ -126,6 +127,26 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             disabled={disabled}
             isSubmitted={isCompleted && result?.submitted}
             isCancelled={isCompleted && result?.cancelled}
+          />
+        );
+
+      // === Email ===
+      case 'show_email':
+      case 'draft_email':
+      case 'email':
+        return (
+          <EmailView
+            to={safeArgs.to}
+            from={safeArgs.from}
+            cc={safeArgs.cc}
+            bcc={safeArgs.bcc}
+            subject={safeArgs.subject}
+            body={safeArgs.body}
+            attachments={safeArgs.attachments}
+            isDraft={safeArgs.isDraft !== false}
+            readOnly={isCompleted}
+            onSend={(data) => onResult({ action: 'send_email', ...data })}
+            onCancel={() => onResult({ action: 'cancel_email' })}
           />
         );
 

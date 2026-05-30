@@ -59,6 +59,46 @@ function normalizeFeedbackComment(comment: FeedbackCommentRow): Record<string, u
   };
 }
 
+type SupabaseClientType = ReturnType<typeof getSupabase>;
+type AuthUserInfo = { email: string; lastSignIn: string | null; createdAt: string };
+
+// Page through Supabase auth users to map id → email/last-sign-in.
+// Mirrors the `users` route; used by leaderboard + user-activity.
+async function buildAuthUserMap(supabase: NonNullable<SupabaseClientType>): Promise<Record<string, AuthUserInfo>> {
+  const map: Record<string, AuthUserInfo> = {};
+  try {
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error || !data?.users?.length) break;
+      for (const u of data.users) {
+        map[u.id] = { email: u.email || '', lastSignIn: u.last_sign_in_at || null, createdAt: u.created_at };
+      }
+      hasMore = data.users.length === 1000;
+      page++;
+    }
+  } catch { /* continue without emails */ }
+  return map;
+}
+
+const METRIC_KEYS = ['credits', 'cost', 'tokens', 'requests'] as const;
+type LeaderboardMetric = (typeof METRIC_KEYS)[number];
+
+function dayKeysSince(since: string): string[] {
+  const keys: string[] = [];
+  for (let d = new Date(since); d <= new Date(); d.setDate(d.getDate() + 1)) {
+    keys.push(d.toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+function mapRpcRows<T extends Record<string, unknown>>(data: T[] | null | undefined, keyFn: (row: T) => string): Record<string, T> {
+  const map: Record<string, T> = {};
+  for (const row of data || []) map[keyFn(row)] = row;
+  return map;
+}
+
 // ── GET handler ──────────────────────────────────────────────────────────
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
   if (!verifyOpsToken(req)) return err(401, 'unauthorized');
@@ -74,10 +114,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     const days = Math.min(90, Math.max(1, Number(sp.get('days') || 30)));
     const since = new Date(Date.now() - days * 86400000).toISOString();
 
-    const [profilesRes, usageRes, profilesTotal] = await Promise.all([
+    const [
+      profilesRes,
+      profilesTotal,
+      usageDailyRes,
+      activeUsersDailyRes,
+      modelBreakdownRes,
+      categoryBreakdownRes,
+      engagementRes,
+      periodTotalsRes,
+    ] = await Promise.all([
       supabase.from('profiles').select('created_at').gte('created_at', since),
-      supabase.from('usage_events').select('model, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at').gte('created_at', since),
       supabase.from('profiles').select('id', { count: 'exact', head: true }),
+      supabase.rpc('get_ops_usage_daily', { p_since: since }),
+      supabase.rpc('get_ops_active_users_daily', { p_since: since }),
+      supabase.rpc('get_ops_model_breakdown', { p_since: since }),
+      supabase.rpc('get_ops_category_breakdown', { p_since: since }),
+      supabase.rpc('get_ops_engagement_stats', { p_since: since }),
+      supabase.rpc('get_ops_period_totals', { p_since: since }),
     ]);
 
     function groupByDay(items: Record<string, string>[], dateField = 'created_at') {
@@ -87,58 +141,68 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
         if (d) map[d] = (map[d] || 0) + 1;
       }
       const result: { date: string; count: number }[] = [];
-      const start = new Date(since);
-      const end = new Date();
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const key = d.toISOString().slice(0, 10);
-        result.push({ date: key, count: map[key] || 0 });
-      }
+      for (const key of dayKeysSince(since)) result.push({ date: key, count: map[key] || 0 });
       return result;
     }
 
-    const modelMap: Record<string, { tokens: number; cost: number; count: number; promptTokens: number; completionTokens: number }> = {};
-    for (const u of usageRes.data || []) {
-      const m = u.model || 'unknown';
-      if (!modelMap[m]) modelMap[m] = { tokens: 0, cost: 0, count: 0, promptTokens: 0, completionTokens: 0 };
-      modelMap[m].tokens += u.total_tokens || 0;
-      modelMap[m].cost += Number(u.cost_usd) || 0;
-      modelMap[m].count += 1;
-      modelMap[m].promptTokens += u.prompt_tokens || 0;
-      modelMap[m].completionTokens += u.completion_tokens || 0;
-    }
+    type UsageDayRow = { day: string; tokens: number; cost_usd: number; requests: number };
+    type ActiveDayRow = { day: string; users: number };
+    const usageByDay = mapRpcRows(usageDailyRes.data as UsageDayRow[] | null, r => String(r.day).slice(0, 10));
+    const activeByDay = mapRpcRows(activeUsersDailyRes.data as ActiveDayRow[] | null, r => String(r.day).slice(0, 10));
 
-    const usageByDay: Record<string, { tokens: number; cost: number; requests: number }> = {};
-    for (const u of usageRes.data || []) {
-      const d = u.created_at?.slice(0, 10);
-      if (d) {
-        if (!usageByDay[d]) usageByDay[d] = { tokens: 0, cost: 0, requests: 0 };
-        usageByDay[d].tokens += u.total_tokens || 0;
-        usageByDay[d].cost += Number(u.cost_usd) || 0;
-        usageByDay[d].requests += 1;
-      }
-    }
+    const usageTrend = dayKeysSince(since).map(key => {
+      const row = usageByDay[key];
+      return {
+        date: key,
+        tokens: Number(row?.tokens) || 0,
+        cost: Number(row?.cost_usd) || 0,
+        requests: Number(row?.requests) || 0,
+      };
+    });
+    const activeUsersTrend = dayKeysSince(since).map(key => ({
+      date: key,
+      users: Number(activeByDay[key]?.users) || 0,
+    }));
 
-    const usageTrend: { date: string; tokens: number; cost: number; requests: number }[] = [];
-    for (let d = new Date(since); d <= new Date(); d.setDate(d.getDate() + 1)) {
-      const key = d.toISOString().slice(0, 10);
-      usageTrend.push({ date: key, tokens: usageByDay[key]?.tokens || 0, cost: usageByDay[key]?.cost || 0, requests: usageByDay[key]?.requests || 0 });
-    }
-
-    const totalTokens = (usageRes.data || []).reduce((s: number, u: Record<string, number>) => s + (u.total_tokens || 0), 0);
-    const totalCost = (usageRes.data || []).reduce((s: number, u: Record<string, number>) => s + (Number(u.cost_usd) || 0), 0);
-    const totalRequests = (usageRes.data || []).length;
+    const periodTotals = (periodTotalsRes.data as Array<Record<string, number>> | null)?.[0] || {};
+    const totalTokens = Number(periodTotals.tokens) || 0;
+    const totalCost = Number(periodTotals.cost_usd) || 0;
+    const totalCreditCost = Number(periodTotals.credit_cost) || 0;
+    const totalRequests = Number(periodTotals.requests) || 0;
+    const engagement = (engagementRes.data as Array<Record<string, number>> | null)?.[0] || {};
 
     return ok({
       period: { days, since },
       signupTrend: groupByDay(profilesRes.data || []),
       usageTrend,
-      modelBreakdown: Object.entries(modelMap).map(([model, d]) => ({ model, ...d })).sort((a, b) => b.tokens - a.tokens),
+      activeUsersTrend,
+      modelBreakdown: (modelBreakdownRes.data || []).map((row: Record<string, unknown>) => ({
+        model: row.model,
+        tokens: Number(row.tokens) || 0,
+        cost: Number(row.cost_usd) || 0,
+        count: Number(row.requests) || 0,
+        promptTokens: Number(row.prompt_tokens) || 0,
+        completionTokens: Number(row.completion_tokens) || 0,
+      })),
+      categoryBreakdown: (categoryBreakdownRes.data || []).map((row: Record<string, unknown>) => ({
+        category: row.category,
+        credits: Math.round((Number(row.credits) || 0) * 100) / 100,
+        cost: Math.round((Number(row.cost_usd) || 0) * 1000000) / 1000000,
+        count: Number(row.event_count) || 0,
+      })),
+      engagement: {
+        dau: Number(engagement.dau) || 0,
+        wau: Number(engagement.wau) || 0,
+        mau: Number(engagement.mau) || 0,
+      },
       totals: {
         users: profilesTotal.count || 0,
         periodSignups: (profilesRes.data || []).length,
         totalTokens,
         totalCost: Math.round(totalCost * 100) / 100,
+        totalCreditCost: Math.round(totalCreditCost * 100) / 100,
         totalRequests,
+        avgCostPerRequest: totalRequests > 0 ? Math.round((totalCost / totalRequests) * 10000) / 10000 : 0,
       },
     });
   }
@@ -174,13 +238,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       .range(offset, offset + limit - 1);
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-    const { data: usageData } = await supabase.from('usage_events').select('user_id, total_tokens, cost_usd').gte('created_at', thirtyDaysAgo);
+    const { data: usageData } = await supabase.rpc('get_ops_user_usage_summary', { p_since: thirtyDaysAgo });
     const usageMap: Record<string, { tokens: number; cost: number; requests: number }> = {};
     for (const u of usageData || []) {
-      if (!usageMap[u.user_id]) usageMap[u.user_id] = { tokens: 0, cost: 0, requests: 0 };
-      usageMap[u.user_id].tokens += u.total_tokens || 0;
-      usageMap[u.user_id].cost += Number(u.cost_usd) || 0;
-      usageMap[u.user_id].requests += 1;
+      usageMap[u.user_id] = {
+        tokens: Number(u.tokens) || 0,
+        cost: Number(u.cost_usd) || 0,
+        requests: Number(u.requests) || 0,
+      };
     }
 
     let users = (profiles || []).map((p: Record<string, unknown>) => {
@@ -208,6 +273,140 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     for (const p of profiles || []) planBreakdown[p.plan] = (planBreakdown[p.plan] || 0) + 1;
 
     return ok({ users, total: totalProfiles || 0, limit, offset, planBreakdown });
+  }
+
+  // ── leaderboard (ranked heavy users) ──
+  if (route === 'leaderboard') {
+    const days = Math.min(365, Math.max(1, Number(sp.get('days') || 30)));
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const metricParam = (sp.get('metric') || 'credits').toLowerCase();
+    const metric: LeaderboardMetric = (METRIC_KEYS as readonly string[]).includes(metricParam) ? metricParam as LeaderboardMetric : 'credits';
+    const limit = Math.max(1, Math.min(200, Number(sp.get('limit') || 50)));
+
+    const [{ data: leaderboardRows }, { data: periodTotalsRows }, authMap, { data: profileRows }] = await Promise.all([
+      supabase.rpc('get_ops_leaderboard', { p_since: since, p_metric: metric, p_limit: limit }),
+      supabase.rpc('get_ops_period_totals', { p_since: since }),
+      buildAuthUserMap(supabase),
+      supabase.from('profiles').select('user_id, plan, status'),
+    ]);
+
+    const planMap: Record<string, { plan: string; status: string }> = {};
+    for (const p of profileRows || []) planMap[p.user_id] = { plan: p.plan, status: p.status };
+
+    const entries = (leaderboardRows || []).map((row: Record<string, unknown>) => ({
+      id: row.user_id,
+      email: authMap[String(row.user_id)]?.email || '',
+      plan: planMap[String(row.user_id)]?.plan || 'free',
+      status: planMap[String(row.user_id)]?.status || 'unknown',
+      requests: Number(row.requests) || 0,
+      tokens: Number(row.tokens) || 0,
+      promptTokens: Number(row.prompt_tokens) || 0,
+      completionTokens: Number(row.completion_tokens) || 0,
+      cost: Math.round((Number(row.cost_usd) || 0) * 10000) / 10000,
+      credits: Math.round((Number(row.credit_cost) || 0) * 10000) / 10000,
+      models: Number(row.model_count) || 0,
+      conversations: Number(row.conversation_count) || 0,
+      firstActive: row.first_active || null,
+      lastActive: row.last_active || null,
+    }));
+
+    const totals = (periodTotalsRows as Array<Record<string, number>> | null)?.[0] || {};
+
+    return ok({
+      period: { days, since },
+      metric,
+      entries,
+      activeUsers: Number(totals.active_users) || 0,
+      totals: {
+        requests: Number(totals.requests) || 0,
+        tokens: Number(totals.tokens) || 0,
+        cost: Math.round((Number(totals.cost_usd) || 0) * 100) / 100,
+        credits: Math.round((Number(totals.credit_cost) || 0) * 100) / 100,
+      },
+    });
+  }
+
+  // ── user-activity (single-user drill-down) ──
+  if (route === 'user-activity') {
+    const userId = (sp.get('userId') || '').trim();
+    if (!userId) return err(400, 'userId_required');
+    const days = Math.min(365, Math.max(1, Number(sp.get('days') || 30)));
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+
+    const [
+      { data: summaryRows },
+      { data: dailyRows },
+      { data: modelRows },
+      { data: categoryRows },
+      { data: profile },
+      authMap,
+    ] = await Promise.all([
+      supabase.rpc('get_ops_user_activity_summary', { p_user_id: userId, p_since: since }),
+      supabase.rpc('get_ops_user_activity_daily', { p_user_id: userId, p_since: since }),
+      supabase.rpc('get_ops_model_breakdown', { p_since: since, p_user_id: userId }),
+      supabase.rpc('get_ops_category_breakdown', { p_since: since, p_user_id: userId }),
+      supabase.from('profiles').select('plan, status, monthly_token_limit, created_at').eq('user_id', userId).maybeSingle(),
+      buildAuthUserMap(supabase),
+    ]);
+
+    const auth = authMap[userId] || null;
+    const summary = (summaryRows as Array<Record<string, unknown>> | null)?.[0] || {};
+    const byDay = mapRpcRows(dailyRows as Array<{ day: string; tokens: number; cost_usd: number; credit_cost: number; requests: number }> | null, r => String(r.day).slice(0, 10));
+
+    const usageTrend = dayKeysSince(since).map(key => {
+      const v = byDay[key];
+      return {
+        date: key,
+        tokens: Number(v?.tokens) || 0,
+        cost: Math.round((Number(v?.cost_usd) || 0) * 10000) / 10000,
+        credits: Math.round((Number(v?.credit_cost) || 0) * 10000) / 10000,
+        requests: Number(v?.requests) || 0,
+      };
+    });
+
+    const requests = Number(summary.requests) || 0;
+    const totalTokens = Number(summary.tokens) || 0;
+    const totalCost = Number(summary.cost_usd) || 0;
+    const totalCredits = Number(summary.credit_cost) || 0;
+
+    return ok({
+      period: { days, since },
+      profile: {
+        id: userId,
+        email: auth?.email || '',
+        plan: profile?.plan || 'free',
+        status: profile?.status || 'unknown',
+        monthlyTokenLimit: profile?.monthly_token_limit || 0,
+        createdAt: profile?.created_at || auth?.createdAt || null,
+        lastSignIn: auth?.lastSignIn || null,
+      },
+      usageTrend,
+      modelBreakdown: (modelRows || []).map((row: Record<string, unknown>) => ({
+        model: row.model,
+        tokens: Number(row.tokens) || 0,
+        count: Number(row.requests) || 0,
+        cost: Math.round((Number(row.cost_usd) || 0) * 10000) / 10000,
+      })),
+      categoryBreakdown: (categoryRows || []).map((row: Record<string, unknown>) => ({
+        category: row.category,
+        credits: Math.round((Number(row.credits) || 0) * 100) / 100,
+        cost: Math.round((Number(row.cost_usd) || 0) * 1000000) / 1000000,
+        count: Number(row.event_count) || 0,
+      })),
+      totals: {
+        requests,
+        tokens: totalTokens,
+        cost: Math.round(totalCost * 100) / 100,
+        credits: Math.round(totalCredits * 100) / 100,
+        conversations: Number(summary.conversation_count) || 0,
+        models: Number(summary.model_count) || 0,
+        activeDays: Number(summary.active_days) || 0,
+        firstActive: summary.first_active || null,
+        lastActive: summary.last_active || null,
+        avgTokensPerReq: requests > 0 ? Math.round(totalTokens / requests) : 0,
+        avgCostPerReq: requests > 0 ? Math.round((totalCost / requests) * 10000) / 10000 : 0,
+      },
+    });
   }
 
   // ── beta-users ──

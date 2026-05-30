@@ -1,20 +1,46 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import SectionReveal from '@/components/layout/SectionReveal';
+import MediaAssetSlot from '@/components/sections/MediaAssetSlot';
 
-const CAPABILITIES = [
+const MICRO_PROOFS = [
+  {
+    label: 'Browser auto-filling a form',
+    assetPath: '/media/toolbelt/browser-form.mp4',
+  },
+  {
+    label: 'ffmpeg trimming a clip — progress visible',
+    assetPath: '/media/toolbelt/ffmpeg-trim.mp4',
+  },
+  {
+    label: 'Semantic file search resolving a document',
+    assetPath: '/media/toolbelt/file-search.mp4',
+  },
+  {
+    label: 'Gmail draft writing itself with attachment',
+    assetPath: '/media/toolbelt/gmail-draft.mp4',
+  },
+  {
+    label: 'Screen & windows — app operated without switching',
+    assetPath: '/media/toolbelt/window-control.mp4',
+  },
+] as const;
+
+const PRIMARY_LABELS = [
+  'Browser automation',
   'Files & folders',
+  'Gmail, Drive, GitHub, Slack',
   'Screen & windows',
-  'Camera & mic',
-  'Bluetooth',
+  'ffmpeg',
+] as const;
+
+const TRAILING_CAPABILITIES = [
   'Brightness',
   'Wallpaper',
+  'Bluetooth',
+  'Camera & mic',
   'Notifications',
-  'ffmpeg',
   'MediaPipe',
-  'Browser automation',
   'Any installed app',
-  'Gmail, Drive, GitHub, Slack & more',
 ] as const;
 
 const ConnectedAppsSection = () => {
@@ -31,60 +57,44 @@ const ConnectedAppsSection = () => {
           <h2 className="text-[28px] leading-[1.15] sm:text-[40px] sm:leading-[1.15] lg:text-[52px] lg:leading-[1.1] font-normal text-white">
             Your computer&apos;s a toolbox. Stuard knows where everything is.
           </h2>
+          <p className="max-w-[640px] text-[15px] leading-[24px] sm:text-[17px] sm:leading-[26px] text-[#D4D4D4]">
+            If your computer exposes it, Stuard can call it.
+          </p>
         </SectionReveal>
 
-        <div className="grid w-full grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
-          <SectionReveal
-            direction="right"
-            distance={60}
-            className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4"
-          >
-            {CAPABILITIES.map((label) => (
-              <div
-                key={label}
-                className="flex min-h-[72px] items-center justify-center rounded-xl border border-[#262626] bg-[#111111] px-3 py-4 text-center text-[12px] leading-snug text-[#E5E5E5] sm:text-[13px]"
-              >
-                {label}
-              </div>
-            ))}
-          </SectionReveal>
-
-          <SectionReveal direction="left" distance={60} delay={0.1} className="flex flex-col items-start gap-8">
-            <Image
-              src="/connectedapps.png"
-              alt="Apps and system capabilities Stuard can access"
-              width={680}
-              height={560}
-              sizes="(max-width: 1024px) 90vw, 45vw"
-              className="block h-auto w-full max-w-[560px] select-none object-contain"
-            />
-            <p className="max-w-[520px] text-[15px] leading-[24px] sm:text-[17px] sm:leading-[26px] text-[#D4D4D4]">
-              If your computer exposes it, Stuard can call it.
-            </p>
-            <Link href="/features">
-              <button
-                type="button"
-                className="inline-flex h-[52px] items-center justify-center gap-2 rounded-full border border-white/5 bg-[linear-gradient(90deg,rgba(0,0,0,0.8)_0%,rgba(26,26,26,0.8)_100%)] px-6 text-[15px] font-normal text-white transition-opacity hover:opacity-90"
-              >
-                Browse all capabilities
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                  <polyline points="12 5 19 12 12 19" />
-                </svg>
-              </button>
-            </Link>
-          </SectionReveal>
+        <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {MICRO_PROOFS.map((proof, index) => (
+            <SectionReveal key={proof.assetPath} delay={0.06 * index} className="flex flex-col gap-2">
+              <MediaAssetSlot
+                label={proof.label}
+                assetPath={proof.assetPath}
+                aspectClassName="aspect-[4/3]"
+              />
+              <p className="text-center text-[12px] font-medium text-[#A3A3A3]">
+                {PRIMARY_LABELS[index]}
+              </p>
+            </SectionReveal>
+          ))}
         </div>
+
+        <SectionReveal delay={0.1}>
+          <p className="text-[13px] leading-relaxed text-[#737373]">
+            <span className="text-[#A3A3A3]">…and the little stuff too:</span>{' '}
+            {TRAILING_CAPABILITIES.join(' · ')}
+          </p>
+        </SectionReveal>
+
+        <SectionReveal delay={0.15}>
+          <Link href="/features">
+            <button
+              type="button"
+              className="inline-flex h-[48px] items-center justify-center gap-2 rounded-full border border-white/10 px-6 text-[14px] text-white transition-colors hover:bg-white/5"
+            >
+              Browse all capabilities
+              <span aria-hidden="true">→</span>
+            </button>
+          </Link>
+        </SectionReveal>
       </div>
     </section>
   );

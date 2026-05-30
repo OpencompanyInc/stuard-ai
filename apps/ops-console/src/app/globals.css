@@ -118,6 +118,12 @@ body {
 }
 .animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right { animation: slideInRight 0.22s ease-out forwards; }
+
 /* Recharts overrides */
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line { stroke: #F1F5F9; }

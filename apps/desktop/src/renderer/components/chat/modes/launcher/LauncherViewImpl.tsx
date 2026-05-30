@@ -546,7 +546,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ text: q, model: "google/gemini-embedding-2-preview" }),
+            // outputDimensionality must match how documents are embedded in the
+            // batch pipeline (FILE_EMBED_DIM, default 3072 — native, best quality)
+            // or cosine search returns nothing.
+            body: JSON.stringify({ text: q, model: "google/gemini-embedding-2-preview", outputDimensionality: 3072 }),
           },
         );
         const j = await resp.json().catch(() => ({}));
@@ -557,7 +560,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           query: q,
           vector: j.embedding,
           mode: "hybrid",
-          limit: 4,
+          limit: 10,
           root_id: rootId || undefined,
         });
 

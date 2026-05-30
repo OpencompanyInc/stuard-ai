@@ -99,7 +99,7 @@ struct RootOut {
     path: String,
     enabled: bool,
     schedule: String,
-    interval_hours: Option<i64>,
+    interval_hours: Option<f64>,
     last_scan_at: Option<String>,
     next_scan_at: Option<String>,
     last_scan_id: i64,
@@ -107,6 +107,15 @@ struct RootOut {
     watch_state: String,
     volume_serial: Option<String>,
     last_reconcile_at: Option<String>,
+    exclude_globs: Option<String>,
+    // Whether the user opted this folder into semantic (embedding) search. The
+    // global name-search index crawls everything; only `semantic` folders are
+    // shown/managed in the "Search by Meaning" panel and get embedded.
+    semantic: bool,
+    // Per-root semantic-index counts, filled in by do_list_roots. Lets the UI
+    // show which folders are already searchable-by-meaning without a global stat.
+    indexed_files: i64,
+    pending_files: i64,
     created_at: String,
 }
 
@@ -169,6 +178,23 @@ struct StatsOut {
     pending_files: i64,
     folders: i64,
     files_by_kind: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct PendingFileOut {
+    id: String,
+    path: String,
+    filename: String,
+    extension: String,
+    kind: String,
+    size: i64,
+}
+
+#[derive(Serialize)]
+struct PendingOut {
+    ok: bool,
+    files: Vec<PendingFileOut>,
+    count: usize,
 }
 
 // ─────────────────────────────────────────────────────────
@@ -242,6 +268,8 @@ fn should_skip_path(path: &Path, name: &str) -> bool {
         ".hg",
         "__pycache__",
         ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
         "venv",
         ".venv",
         "env",
@@ -256,6 +284,20 @@ fn should_skip_path(path: &Path, name: &str) -> bool {
         ".vscode",
         ".idea",
         ".vs",
+        ".cache",
+        ".gradle",
+        ".terraform",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
+        ".parcel-cache",
+        "coverage",
+        "vendor",
+        "Pods",
+        "bower_components",
+        "tmp",
+        "temp",
         "Application Data",
         "Local Settings",
         "$Recycle.Bin",
@@ -279,6 +321,36 @@ fn should_skip_path(path: &Path, name: &str) -> bool {
         return !(normalized.contains("microsoft/windows/start menu")
             || normalized.contains("microsoft/windows/recent")
             || normalized.contains("programs"));
+    }
+    false
+}
+
+/// Parse a user-provided exclude list (comma/newline/semicolon separated) into
+/// normalized, lowercased patterns. Wildcard `*` characters are stripped — each
+/// pattern is matched as a case-insensitive segment name or path substring.
+fn parse_excludes(raw: Option<&str>) -> Vec<String> {
+    let raw = match raw {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return Vec::new(),
+    };
+    raw.split([',', '\n', ';'])
+        .map(|s| s.trim().trim_matches('*').trim_matches(['\\', '/']).to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// User-defined per-root exclusions. `name` is the directory/file name and
+/// `normalized` is the full path with forward slashes, both lowercased.
+fn is_user_excluded(name_lower: &str, path_normalized_lower: &str, excludes: &[String]) -> bool {
+    if excludes.is_empty() {
+        return false;
+    }
+    for pat in excludes {
+        if name_lower == pat
+            || path_normalized_lower.contains(pat)
+        {
+            return true;
+        }
     }
     false
 }
@@ -514,6 +586,8 @@ fn ensure_root_columns(conn: &Connection) -> rusqlite::Result<()> {
         ("watch_state", "TEXT DEFAULT 'inactive'"),
         ("volume_serial", "TEXT"),
         ("last_reconcile_at", "TEXT"),
+        ("exclude_globs", "TEXT"),
+        ("semantic", "INTEGER DEFAULT 0"),
     ] {
         let exists: bool = conn
             .prepare("SELECT 1 FROM pragma_table_info('indexed_roots') WHERE name = ?")?
@@ -534,7 +608,9 @@ fn row_to_root(row: &rusqlite::Row) -> rusqlite::Result<RootOut> {
         path: row.get("path")?,
         enabled: row.get::<_, i64>("enabled")? != 0,
         schedule: row.get("schedule")?,
-        interval_hours: row.get("interval_hours")?,
+        // Stored as REAL for sub-hour schedules (e.g. Downloads = 0.25h), so read
+        // tolerantly as f64 — reading as i64 throws "Invalid column type Real".
+        interval_hours: row.get::<_, Option<f64>>("interval_hours").unwrap_or(None),
         last_scan_at: row.get("last_scan_at")?,
         next_scan_at: row.get("next_scan_at")?,
         last_scan_id: row.get("last_scan_id")?,
@@ -546,6 +622,13 @@ fn row_to_root(row: &rusqlite::Row) -> rusqlite::Result<RootOut> {
             .unwrap_or_else(|| "inactive".to_string()),
         volume_serial: row.get("volume_serial")?,
         last_reconcile_at: row.get("last_reconcile_at")?,
+        exclude_globs: row
+            .get::<_, Option<String>>("exclude_globs")
+            .unwrap_or(None),
+        semantic: row.get::<_, Option<i64>>("semantic").unwrap_or(None).unwrap_or(0) != 0,
+        // Counts default to 0; do_list_roots overlays the real per-root totals.
+        indexed_files: 0,
+        pending_files: 0,
         created_at: row.get("created_at")?,
     })
 }
@@ -565,7 +648,7 @@ fn cmd_add_root(
     db_path: &str,
     path: &str,
     schedule: &str,
-    interval_hours: Option<i64>,
+    interval_hours: Option<f64>,
 ) -> Result<AddRootOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     init_schema(&conn)?;
@@ -630,6 +713,29 @@ fn do_list_roots(conn: &Connection) -> Result<ListRootsOut, Box<dyn std::error::
     for r in rows {
         roots.push(r?);
     }
+
+    // Overlay per-root semantic-index counts scoped by PATH (not root_id), so a
+    // folder's count reflects everything physically inside it even when a nested
+    // parent/child root owns the rows. Each query is an indexed range scan over
+    // the UNIQUE path column. Tolerant of failure — counts stay 0 on error.
+    if let Ok(mut cnt_stmt) = conn.prepare(
+        "SELECT
+            COALESCE(SUM(CASE WHEN status = 'indexed' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('pending','stale') THEN 1 ELSE 0 END), 0)
+         FROM indexed_files
+         WHERE kind IN ('image','document','code') AND path >= ? AND path < ?",
+    ) {
+        for root in roots.iter_mut() {
+            let (lo, hi) = path_prefix_range(&root.path);
+            if let Ok((idx, pend)) = cnt_stmt.query_row(params![lo, hi], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            }) {
+                root.indexed_files = idx;
+                root.pending_files = pend;
+            }
+        }
+    }
+
     Ok(ListRootsOut { ok: true, roots })
 }
 
@@ -638,15 +744,22 @@ fn cmd_update_root(
     root_id: &str,
     enabled: Option<bool>,
     schedule: Option<&str>,
-    interval_hours: Option<i64>,
+    interval_hours: Option<f64>,
+    exclude_globs: Option<&str>,
+    semantic: Option<bool>,
 ) -> Result<OkOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     init_schema(&conn)?;
+    ensure_root_columns(&conn)?;
     let mut sets: Vec<&'static str> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(e) = enabled {
         sets.push("enabled = ?");
         vals.push(Box::new(if e { 1i64 } else { 0i64 }));
+    }
+    if let Some(s) = semantic {
+        sets.push("semantic = ?");
+        vals.push(Box::new(if s { 1i64 } else { 0i64 }));
     }
     if let Some(s) = schedule {
         sets.push("schedule = ?");
@@ -655,6 +768,10 @@ fn cmd_update_root(
     if let Some(h) = interval_hours {
         sets.push("interval_hours = ?");
         vals.push(Box::new(h));
+    }
+    if let Some(g) = exclude_globs {
+        sets.push("exclude_globs = ?");
+        vals.push(Box::new(g.to_string()));
     }
     if sets.is_empty() {
         return Ok(OkOut { ok: true });
@@ -799,6 +916,7 @@ fn worker(
     root_id: String,
     scan_id: i64,
     created_at: String,
+    excludes: Arc<Vec<String>>,
 ) {
     while !done.load(Ordering::Relaxed) {
         let job = match dirs_rx.recv_timeout(std::time::Duration::from_millis(50)) {
@@ -825,6 +943,14 @@ fn worker(
                     let name = child.file_name().to_string_lossy().to_string();
                     if should_skip_path(&path, &name) {
                         continue;
+                    }
+                    if !excludes.is_empty() {
+                        let name_lower = name.to_lowercase();
+                        let path_lower = path.to_string_lossy().replace('\\', "/").to_lowercase();
+                        if is_user_excluded(&name_lower, &path_lower, &excludes) {
+                            counters.lock().unwrap().skipped_files += 1;
+                            continue;
+                        }
                     }
                     let meta = match fs::symlink_metadata(&path) {
                         Ok(meta) => meta,
@@ -900,6 +1026,16 @@ fn cmd_scan(
         return Err(format!("Root path not accessible: {}", root_path.display()).into());
     }
 
+    // Per-root user exclusions (in addition to the built-in ignore set).
+    let exclude_raw: Option<String> = conn
+        .query_row(
+            "SELECT exclude_globs FROM indexed_roots WHERE id = ?",
+            params![root_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .unwrap_or(None);
+    let excludes = Arc::new(parse_excludes(exclude_raw.as_deref()));
+
     let scan_id = increment_scan(&conn, root_id, &now)?;
 
     let (dirs_tx, dirs_rx) = unbounded::<DirJob>();
@@ -920,6 +1056,7 @@ fn cmd_scan(
             let done = done.clone();
             let root_id = root_id.to_string();
             let created_at = now.clone();
+            let excludes = excludes.clone();
             move || {
                 worker(
                     dirs_rx,
@@ -931,6 +1068,7 @@ fn cmd_scan(
                     root_id,
                     scan_id,
                     created_at,
+                    excludes,
                 )
             }
         });
@@ -1311,6 +1449,7 @@ fn location_order_sql() -> &'static str {
      END"
 }
 
+#[allow(dead_code)]
 fn cmd_search(
     db_path: &str,
     query: &str,
@@ -1320,7 +1459,7 @@ fn cmd_search(
 ) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let conn = open_db(db_path)?;
     ensure_read_schema(&conn)?;
-    do_search(&conn, query, limit, kind, root_id)
+    do_search(&conn, query, limit, kind, root_id, false)
 }
 
 /// Daemon-friendly variant of `cmd_search` that reuses an already-open
@@ -1332,6 +1471,7 @@ fn do_search(
     limit: usize,
     kind: Option<&str>,
     root_id: Option<&str>,
+    semantic_only: bool,
 ) -> Result<SearchOut, Box<dyn std::error::Error>> {
     let query = query.trim();
     if query.is_empty() {
@@ -1367,10 +1507,9 @@ fn do_search(
             sql.push_str(" AND f.kind = ?");
             params_vec.push(k.to_string());
         }
-        if let Some(rid) = root_id {
-            sql.push_str(" AND f.root_id = ?");
-            params_vec.push(rid.to_string());
-        }
+        let (scope_sql, scope_params) = folder_scope_sql(conn, root_id, semantic_only)?;
+        sql.push_str(&scope_sql);
+        params_vec.extend(scope_params);
         // No ORDER BY: FTS5's bm25() forces SQLite to score every matching
         // posting before LIMIT can short-circuit, so a common term like
         // "taxes" (thousands of matches) took 1.5–2s. Without ORDER BY,
@@ -1426,9 +1565,10 @@ fn do_search(
             where_parts.push("kind = ?".to_string());
             params_vec.push(k.to_string());
         }
-        if let Some(rid) = root_id {
-            where_parts.push("root_id = ?".to_string());
-            params_vec.push(rid.to_string());
+        let (scope_sql, scope_params) = folder_scope_sql(conn, root_id, semantic_only)?;
+        if !scope_sql.is_empty() {
+            where_parts.push(scope_sql.trim_start_matches(" AND ").to_string());
+            params_vec.extend(scope_params);
         }
         let sql = format!(
             "SELECT * FROM indexed_files WHERE {} ORDER BY {}, mtime_ms DESC LIMIT {}",
@@ -1596,6 +1736,516 @@ fn do_stats(conn: &Connection) -> Result<StatsOut, Box<dyn std::error::Error>> {
         pending_files,
         folders,
         files_by_kind: serde_json::Value::Object(by_kind),
+    })
+}
+
+// ─────────────────────────────────────────────────────────
+// Semantic embeddings (vector storage + search)
+// ─────────────────────────────────────────────────────────
+
+/// Pack an embedding vector as raw little-endian f32 bytes for the `vector` BLOB.
+fn pack_vector(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// Inverse of `pack_vector`.
+fn unpack_vector(bytes: &[u8]) -> Vec<f32> {
+    let n = bytes.len() / 4;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let b = [
+            bytes[i * 4],
+            bytes[i * 4 + 1],
+            bytes[i * 4 + 2],
+            bytes[i * 4 + 3],
+        ];
+        out.push(f32::from_le_bytes(b));
+    }
+    out
+}
+
+/// Cosine similarity in [-1, 1]; 0 when either vector is empty/zero or the
+/// dimensions don't match (e.g. an embedding written by a different model).
+fn cosine(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0f64;
+    let mut na = 0f64;
+    let mut nb = 0f64;
+    for i in 0..a.len() {
+        let x = a[i] as f64;
+        let y = b[i] as f64;
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// Brute-force vector search over the embedded subset. Cheap in practice
+/// because embedding is opt-in + credit-capped, so only a bounded number of
+/// rows carry a vector. `MAX_SCAN` is a hard ceiling so a pathological index
+/// can't stall a query.
+fn vector_collect(
+    conn: &Connection,
+    query_vec: &[f32],
+    fetch_limit: usize,
+    kind: Option<&str>,
+    root_id: Option<&str>,
+    semantic_only: bool,
+) -> Result<Vec<FileResult>, Box<dyn std::error::Error>> {
+    const MAX_SCAN: usize = 100_000;
+    let mut sql =
+        String::from("SELECT * FROM indexed_files WHERE vector IS NOT NULL AND status = 'indexed'");
+    let mut params_vec: Vec<String> = Vec::new();
+    if let Some(k) = kind {
+        sql.push_str(" AND kind = ?");
+        params_vec.push(k.to_string());
+    }
+    let (scope_sql, scope_params) = folder_scope_sql(conn, root_id, semantic_only)?;
+    sql.push_str(&scope_sql);
+    params_vec.extend(scope_params);
+    sql.push_str(&format!(" LIMIT {}", MAX_SCAN));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params_vec.iter().map(|s| s.as_str())),
+        |row| {
+            let blob: Vec<u8> = row.get("vector")?;
+            let stored = unpack_vector(&blob);
+            let cos = cosine(query_vec, &stored).max(0.0);
+            build_file_result(row, cos, "vector")
+        },
+    )?;
+    let mut out: Vec<FileResult> = Vec::new();
+    for r in rows.flatten() {
+        out.push(r);
+    }
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out.truncate(fetch_limit);
+    Ok(out)
+}
+
+/// Merge keyword (FTS) and vector candidates into one ranked list. FTS scores
+/// (filename/location closeness) and cosine are each clamped to [0,1], blended,
+/// and given a small bonus when a file matched both signals.
+fn merge_hybrid(fts: Vec<FileResult>, vector: Vec<FileResult>) -> Vec<FileResult> {
+    use std::collections::HashMap;
+    const W_FTS: f64 = 0.45;
+    const W_VEC: f64 = 0.55;
+    const OVERLAP_BONUS: f64 = 0.05;
+
+    let mut map: HashMap<String, FileResult> = HashMap::new();
+    for mut r in fts {
+        r.score = W_FTS * r.score.clamp(0.0, 1.0);
+        r.match_type = "hybrid".to_string();
+        map.insert(r.id.clone(), r);
+    }
+    for mut r in vector {
+        let cos = r.score.clamp(0.0, 1.0);
+        if let Some(existing) = map.get_mut(&r.id) {
+            existing.score += W_VEC * cos + OVERLAP_BONUS;
+        } else {
+            r.score = W_VEC * cos;
+            r.match_type = "hybrid".to_string();
+            map.insert(r.id.clone(), r);
+        }
+    }
+    map.into_values().collect()
+}
+
+fn finalize_results(results: &mut Vec<FileResult>, limit: usize) {
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.mtime_ms.cmp(&a.mtime_ms))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    results.truncate(limit);
+    for result in results.iter_mut() {
+        if result.target_path.is_none() && result.extension.eq_ignore_ascii_case(".lnk") {
+            result.target_path = resolve_lnk_target(&result.path);
+        }
+    }
+}
+
+/// Vector-aware search. Falls back to the FTS path (`do_search`) when no query
+/// vector is supplied or `mode` is `quick`, preserving existing behaviour.
+fn do_search_ext(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+    kind: Option<&str>,
+    root_id: Option<&str>,
+    vector: Option<&[f32]>,
+    mode: &str,
+) -> Result<SearchOut, Box<dyn std::error::Error>> {
+    let has_vector = vector.map(|v| !v.is_empty()).unwrap_or(false);
+    let effective_mode = if has_vector { mode } else { "quick" };
+    // Meaning search spans every user-opted semantic folder unless a specific
+    // root was requested. Without this, a parent auto-index root (Desktop,
+    // OneDrive, …) drowns out earlier embedded folders by mtime/recency.
+    let semantic_only =
+        root_id.is_none() && (effective_mode == "semantic" || effective_mode == "hybrid");
+
+    match effective_mode {
+        "semantic" => {
+            let v = vector.unwrap();
+            let mut results =
+                vector_collect(conn, v, limit.max(1), kind, root_id, semantic_only)?;
+            finalize_results(&mut results, limit);
+            let count = results.len();
+            Ok(SearchOut {
+                ok: true,
+                results,
+                count,
+            })
+        }
+        "hybrid" => {
+            let v = vector.unwrap();
+            // Wider candidate windows so neither signal is starved pre-merge.
+            let fts = do_search(
+                conn,
+                query,
+                (limit * 4).clamp(limit, 200),
+                kind,
+                root_id,
+                semantic_only,
+            )?;
+            let vec_results = vector_collect(
+                conn,
+                v,
+                (limit * 4).clamp(limit, 400),
+                kind,
+                root_id,
+                semantic_only,
+            )?;
+            let mut merged = merge_hybrid(fts.results, vec_results);
+            finalize_results(&mut merged, limit);
+            let count = merged.len();
+            Ok(SearchOut {
+                ok: true,
+                results: merged,
+                count,
+            })
+        }
+        _ => do_search(conn, query, limit, kind, root_id, false),
+    }
+}
+
+/// SQL fragment + params that restrict rows to one folder (by path prefix, not
+/// the unreliable root_id column) or to the union of all semantic opt-in roots.
+fn folder_scope_sql(
+    conn: &Connection,
+    root_id: Option<&str>,
+    semantic_only: bool,
+) -> Result<(String, Vec<String>), Box<dyn std::error::Error>> {
+    if let Some(rid) = root_id {
+        if let Some(folder) = root_path(conn, rid) {
+            let (lo, hi) = path_prefix_range(&folder);
+            return Ok((" AND path >= ? AND path < ?".to_string(), vec![lo, hi]));
+        }
+        return Ok((" AND root_id = ?".to_string(), vec![rid.to_string()]));
+    }
+    if !semantic_only {
+        return Ok((String::new(), Vec::new()));
+    }
+    let mut stmt =
+        conn.prepare("SELECT path FROM indexed_roots WHERE semantic = 1 AND enabled != 0")?;
+    let folders: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if folders.is_empty() {
+        return Ok((" AND 0".to_string(), Vec::new()));
+    }
+    let mut clause = String::from(" AND (");
+    let mut params = Vec::new();
+    for (i, folder) in folders.iter().enumerate() {
+        if i > 0 {
+            clause.push_str(" OR ");
+        }
+        let (lo, hi) = path_prefix_range(folder);
+        clause.push_str("(path >= ? AND path < ?)");
+        params.push(lo);
+        params.push(hi);
+    }
+    clause.push(')');
+    Ok((clause, params))
+}
+
+/// Build an indexed half-open range [lo, hi) that matches every path inside a
+/// folder. Used so "this folder" means everything physically under it,
+/// regardless of which indexed_root currently owns the row (nested roots steal
+/// each other's `root_id` on rescan). `path` is UNIQUE → this is an index range
+/// scan, not a LIKE table scan.
+fn path_prefix_range(folder: &str) -> (String, String) {
+    let norm = folder.replace('/', "\\");
+    let base = norm.trim_end_matches('\\');
+    let lo = format!("{}\\", base); // children start with "<folder>\"
+    // Upper bound: bump the trailing separator (0x5C '\') to 0x5D (']') so the
+    // range covers every "<folder>\..." path but nothing else.
+    let mut hi = lo.clone();
+    hi.pop();
+    hi.push(']');
+    (lo, hi)
+}
+
+/// Look up a root's folder path by id.
+fn root_path(conn: &Connection, root_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT path FROM indexed_roots WHERE id = ?",
+        params![root_id],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Files that have been crawled but not yet embedded, scoped by folder PATH (not
+/// root_id) so nested folders see their files even when a parent root owns them.
+fn do_get_pending(
+    conn: &Connection,
+    root_id: Option<&str>,
+    limit: usize,
+) -> Result<PendingOut, Box<dyn std::error::Error>> {
+    // Only content-bearing kinds are semantically embeddable. Videos/audio/
+    // binaries would be "name only" embeds (just the filename as text) which add
+    // no semantic value and, worse, outrank real image/text embeds for text
+    // queries (same-modal text↔text cosine > cross-modal text↔image). They stay
+    // findable by filename via FTS.
+    let mut sql = String::from(
+        "SELECT id, path, filename, extension, kind, size FROM indexed_files
+         WHERE status IN ('pending','stale') AND kind IN ('image','document','code')",
+    );
+    let mut params_vec: Vec<String> = Vec::new();
+    if let Some(rid) = root_id {
+        if let Some(folder) = root_path(conn, rid) {
+            let (lo, hi) = path_prefix_range(&folder);
+            sql.push_str(" AND path >= ? AND path < ?");
+            params_vec.push(lo);
+            params_vec.push(hi);
+        } else {
+            // Unknown root → fall back to exact root_id so we never return the
+            // whole index by accident.
+            sql.push_str(" AND root_id = ?");
+            params_vec.push(rid.to_string());
+        }
+    }
+    // Smallest files first so a credit-capped job can include as many as possible.
+    sql.push_str(&format!(" ORDER BY size ASC LIMIT {}", limit));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params_vec.iter().map(|s| s.as_str())),
+        |row| {
+            Ok(PendingFileOut {
+                id: row.get("id")?,
+                path: row.get("path")?,
+                filename: row.get("filename")?,
+                extension: row.get::<_, Option<String>>("extension")?.unwrap_or_default(),
+                kind: row
+                    .get::<_, Option<String>>("kind")?
+                    .unwrap_or_else(|| "other".to_string()),
+                size: row.get("size")?,
+            })
+        },
+    )?;
+    let mut files = Vec::new();
+    for r in rows {
+        files.push(r?);
+    }
+    let count = files.len();
+    Ok(PendingOut {
+        ok: true,
+        files,
+        count,
+    })
+}
+
+/// Write an embedding (+ summary/keywords) back to a file row and mark it indexed.
+fn do_update_embedding(
+    conn: &Connection,
+    file_id: &str,
+    vector: &[f32],
+    summary: Option<&str>,
+    keywords: Option<&str>,
+    model: &str,
+) -> Result<OkOut, Box<dyn std::error::Error>> {
+    let blob = pack_vector(vector);
+    let now = now_iso();
+    conn.execute(
+        "UPDATE indexed_files
+            SET vector = ?, summary = ?, keywords = ?, embedding_model_version = ?,
+                status = 'indexed', indexed_at = ?, error_message = NULL
+          WHERE id = ?",
+        params![blob, summary, keywords, model, now, file_id],
+    )?;
+    Ok(OkOut { ok: true })
+}
+
+/// Mark a file as errored so it stops appearing in the pending queue.
+fn do_mark_error(
+    conn: &Connection,
+    file_id: &str,
+    message: &str,
+) -> Result<OkOut, Box<dyn std::error::Error>> {
+    conn.execute(
+        "UPDATE indexed_files SET status = 'error', error_message = ? WHERE id = ?",
+        params![message, file_id],
+    )?;
+    Ok(OkOut { ok: true })
+}
+
+#[derive(Serialize)]
+struct ClearEmbeddingsOut {
+    ok: bool,
+    cleared: i64,
+    had_vectors: i64,
+}
+
+/// Wipe semantic state so a folder (or the whole index) starts from scratch:
+/// drop vectors/summary/keywords and flip already-embedded rows back to
+/// `pending` so they can be re-embedded. Keeps the crawl (name search) intact.
+/// Scoped by folder PATH (not root_id, which nested roots steal) and optionally
+/// restricted to specific kinds (e.g. purge only name-only video/audio vectors).
+fn do_clear_embeddings(
+    conn: &Connection,
+    root_id: Option<&str>,
+    kinds: &[String],
+) -> Result<ClearEmbeddingsOut, Box<dyn std::error::Error>> {
+    let mut where_parts: Vec<String> = vec!["status != 'deleted'".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(rid) = root_id {
+        if let Some(folder) = root_path(conn, rid) {
+            let (lo, hi) = path_prefix_range(&folder);
+            where_parts.push("path >= ? AND path < ?".to_string());
+            params_vec.push(Box::new(lo));
+            params_vec.push(Box::new(hi));
+        } else {
+            where_parts.push("root_id = ?".to_string());
+            params_vec.push(Box::new(rid.to_string()));
+        }
+    }
+    if !kinds.is_empty() {
+        let placeholders = kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        where_parts.push(format!("kind IN ({})", placeholders));
+        for k in kinds {
+            params_vec.push(Box::new(k.clone()));
+        }
+    }
+    let where_sql = where_parts.join(" AND ");
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let had_vectors: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM indexed_files WHERE vector IS NOT NULL AND {}", where_sql),
+        params_refs.as_slice(),
+        |r| r.get(0),
+    )?;
+
+    let cleared = conn.execute(
+        &format!(
+            "UPDATE indexed_files
+                SET vector = NULL, summary = NULL, keywords = NULL,
+                    embedding_model_version = NULL, summary_model_version = NULL,
+                    indexed_at = NULL, error_message = NULL,
+                    status = CASE WHEN status IN ('indexed','error') THEN 'pending' ELSE status END
+              WHERE {}",
+            where_sql
+        ),
+        params_refs.as_slice(),
+    )? as i64;
+
+    Ok(ClearEmbeddingsOut {
+        ok: true,
+        cleared,
+        had_vectors,
+    })
+}
+
+// One-shot CLI wrappers (the desktop bridge drives these through the daemon,
+// but the standalone subcommands are handy for testing/debugging).
+
+fn cmd_search_ext(
+    db_path: &str,
+    query: &str,
+    limit: usize,
+    kind: Option<&str>,
+    root_id: Option<&str>,
+    vector: Option<&[f32]>,
+    mode: &str,
+) -> Result<SearchOut, Box<dyn std::error::Error>> {
+    let conn = open_db(db_path)?;
+    ensure_read_schema(&conn)?;
+    do_search_ext(&conn, query, limit, kind, root_id, vector, mode)
+}
+
+fn cmd_get_pending(
+    db_path: &str,
+    root_id: Option<&str>,
+    limit: usize,
+) -> Result<PendingOut, Box<dyn std::error::Error>> {
+    let conn = open_db(db_path)?;
+    ensure_read_schema(&conn)?;
+    do_get_pending(&conn, root_id, limit)
+}
+
+fn cmd_update_embedding(
+    db_path: &str,
+    file_id: &str,
+    vector: &[f32],
+    summary: Option<&str>,
+    keywords: Option<&str>,
+    model: &str,
+) -> Result<OkOut, Box<dyn std::error::Error>> {
+    let conn = open_db(db_path)?;
+    do_update_embedding(&conn, file_id, vector, summary, keywords, model)
+}
+
+fn cmd_mark_error(
+    db_path: &str,
+    file_id: &str,
+    message: &str,
+) -> Result<OkOut, Box<dyn std::error::Error>> {
+    let conn = open_db(db_path)?;
+    do_mark_error(&conn, file_id, message)
+}
+
+fn cmd_clear_embeddings(
+    db_path: &str,
+    root_id: Option<&str>,
+    kinds: &[String],
+) -> Result<ClearEmbeddingsOut, Box<dyn std::error::Error>> {
+    let conn = open_db(db_path)?;
+    do_clear_embeddings(&conn, root_id, kinds)
+}
+
+/// Parse a vector from either a `--vector` JSON-array flag or a `--vector-file`
+/// path. Used only by the one-shot CLI subcommands.
+fn parse_vector_flag(inline: Option<String>, file: Option<String>) -> Option<Vec<f32>> {
+    let raw = match (inline, file) {
+        (_, Some(f)) => fs::read_to_string(f).ok()?,
+        (Some(s), None) => s,
+        (None, None) => return None,
+    };
+    let val: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    val.as_array().map(|a| {
+        a.iter()
+            .filter_map(|x| x.as_f64().map(|f| f as f32))
+            .collect()
     })
 }
 
@@ -1783,6 +2433,13 @@ fn dispatch_daemon_cmd(
             .map(|s| s.to_string())
     };
     let as_i64 = |key: &str| args.get(key).and_then(|v| v.as_i64());
+    let as_vec = |key: &str| -> Option<Vec<f32>> {
+        args.get(key).and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                .collect()
+        })
+    };
 
     match cmd {
         "search" => {
@@ -1790,14 +2447,67 @@ fn dispatch_daemon_cmd(
             let limit = as_i64("limit").unwrap_or(50) as usize;
             let kind = as_str("kind");
             let root_id = as_str("root_id").or_else(|| as_str("root-id"));
-            let out = do_search(
+            let vector = as_vec("vector");
+            let has_vector = vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+            let mode = as_str("mode")
+                .unwrap_or_else(|| if has_vector { "hybrid".into() } else { "quick".into() });
+            let out = do_search_ext(
                 conn,
                 &query,
                 limit.clamp(1, 500),
                 kind.as_deref(),
                 root_id.as_deref(),
+                vector.as_deref(),
+                &mode,
             )?;
             Ok(serde_json::to_value(out)?)
+        }
+        "get-pending" | "get_pending" => {
+            let root_id = as_str("root_id").or_else(|| as_str("root-id"));
+            let limit = as_i64("limit").unwrap_or(500) as usize;
+            Ok(serde_json::to_value(do_get_pending(
+                conn,
+                root_id.as_deref(),
+                limit.clamp(1, 5000),
+            )?)?)
+        }
+        "update-embedding" | "update_embedding" => {
+            let file_id = as_str("file_id")
+                .or_else(|| as_str("file-id"))
+                .ok_or_else(|| "missing file_id".to_string())?;
+            let vector = as_vec("vector").ok_or_else(|| "missing vector".to_string())?;
+            if vector.is_empty() {
+                return Err("empty vector".into());
+            }
+            let summary = as_str("summary");
+            let keywords = as_str("keywords");
+            let model = as_str("embedding_model")
+                .or_else(|| as_str("embedding-model"))
+                .unwrap_or_else(|| "gemini-embedding-2-preview".to_string());
+            Ok(serde_json::to_value(do_update_embedding(
+                conn,
+                &file_id,
+                &vector,
+                summary.as_deref(),
+                keywords.as_deref(),
+                &model,
+            )?)?)
+        }
+        "mark-error" | "mark_error" => {
+            let file_id = as_str("file_id")
+                .or_else(|| as_str("file-id"))
+                .ok_or_else(|| "missing file_id".to_string())?;
+            let message = as_str("error_message")
+                .or_else(|| as_str("error-message"))
+                .unwrap_or_default();
+            Ok(serde_json::to_value(do_mark_error(conn, &file_id, &message)?)?)
+        }
+        "clear-embeddings" | "clear_embeddings" => {
+            let root_id = as_str("root_id").or_else(|| as_str("root-id"));
+            let kinds: Vec<String> = as_str("kinds")
+                .map(|s| s.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect())
+                .unwrap_or_default();
+            Ok(serde_json::to_value(do_clear_embeddings(conn, root_id.as_deref(), &kinds)?)?)
         }
         "stats" => Ok(serde_json::to_value(do_stats(conn)?)?),
         "list-roots" | "list_roots" => Ok(serde_json::to_value(do_list_roots(conn)?)?),
@@ -1896,6 +2606,146 @@ mod tests {
         let expr = build_fts_match(&tokens).expect("non-empty fallback");
         assert!(!expr.is_empty());
     }
+
+    #[test]
+    fn pack_unpack_vector_roundtrip() {
+        let v = vec![0.5f32, -1.0, 2.25, 0.0, 7.5];
+        let packed = pack_vector(&v);
+        assert_eq!(packed.len(), v.len() * 4);
+        assert_eq!(unpack_vector(&packed), v);
+    }
+
+    #[test]
+    fn cosine_orders_by_similarity() {
+        let q = vec![1.0f32, 0.0, 0.0];
+        let near = vec![0.9f32, 0.1, 0.0];
+        let far = vec![0.0f32, 1.0, 0.0];
+        assert!(cosine(&q, &near) > cosine(&q, &far));
+        assert_eq!(cosine(&q, &[]), 0.0); // dimension mismatch → 0
+    }
+
+    #[test]
+    fn parse_excludes_handles_separators_and_wildcards() {
+        let ex = parse_excludes(Some("node_modules, *.cache\n;  Vendor  "));
+        assert!(ex.contains(&"node_modules".to_string()));
+        assert!(ex.contains(&".cache".to_string()));
+        assert!(ex.contains(&"vendor".to_string()));
+        assert!(parse_excludes(None).is_empty());
+    }
+
+    #[test]
+    fn embedding_writeback_then_semantic_search() {
+        let dir = std::env::temp_dir().join(format!("sfi-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("idx.db").to_string_lossy().to_string();
+        let conn = open_db(&db_path).unwrap();
+        init_schema(&conn).unwrap();
+        ensure_root_columns(&conn).unwrap();
+
+        // Paths use backslashes like production (normalize_path). The Camera
+        // Roll bug came from a nested file owned by a *different* root_id, so
+        // f2 is deliberately assigned to a parent root id while living under r1's
+        // path — get-pending must still find it (path-scoped, not root_id-scoped).
+        conn.execute(
+            "INSERT INTO indexed_roots (id, path, enabled, schedule, last_scan_id, created_at, semantic)
+             VALUES ('r1','C:\\x',1,'daily',0,?,1)",
+            params![now_iso()],
+        )
+        .unwrap();
+        // Broader parent root that the nested file is (wrongly) assigned to.
+        conn.execute(
+            "INSERT INTO indexed_roots (id, path, enabled, schedule, last_scan_id, created_at)
+             VALUES ('parent-root','C:\\',1,'daily',0,?)",
+            params![now_iso()],
+        )
+        .unwrap();
+        for (id, p, name, owner) in [
+            ("f1", "C:\\x\\a.txt", "a.txt", "r1"),
+            ("f2", "C:\\x\\sub\\b.txt", "b.txt", "parent-root"),
+        ] {
+            conn.execute(
+                "INSERT INTO indexed_files
+                   (id, root_id, path, filename, extension, kind, size, mtime_ms, status, last_seen_scan_id, created_at)
+                 VALUES (?,?,?,?,?,?,?,?, 'pending', 0, ?)",
+                params![id, owner, p, name, ".txt", "document", 10i64, 0i64, now_iso()],
+            )
+            .unwrap();
+        }
+
+        // Both files under r1's path are pending — including f2 owned by another root.
+        assert_eq!(do_get_pending(&conn, Some("r1"), 100).unwrap().count, 2);
+
+        do_update_embedding(&conn, "f1", &[1.0, 0.0, 0.0], Some("alpha"), Some("a"), "test").unwrap();
+        do_update_embedding(&conn, "f2", &[0.0, 1.0, 0.0], Some("beta"), Some("b"), "test").unwrap();
+
+        // After embedding, nothing is pending.
+        assert_eq!(do_get_pending(&conn, Some("r1"), 100).unwrap().count, 0);
+
+        // Query vector closest to f1 must rank f1 first.
+        let out = do_search_ext(&conn, "", 5, None, None, Some(&[0.95, 0.05, 0.0]), "semantic").unwrap();
+        assert!(out.results.len() >= 2);
+        assert_eq!(out.results[0].id, "f1");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn semantic_search_includes_every_opted_in_root() {
+        let dir = std::env::temp_dir().join(format!("sfi-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("idx.db").to_string_lossy().to_string();
+        let conn = open_db(&db_path).unwrap();
+        init_schema(&conn).unwrap();
+        ensure_root_columns(&conn).unwrap();
+        let now = now_iso();
+        for (id, path) in [("rA", "C:\\folderA"), ("rB", "C:\\folderB")] {
+            conn.execute(
+                "INSERT INTO indexed_roots (id, path, enabled, schedule, last_scan_id, created_at, semantic)
+                 VALUES (?,?,1,'daily',0,?,1)",
+                params![id, path, now],
+            )
+            .unwrap();
+        }
+        for (id, p, name, owner) in [
+            ("fa", "C:\\folderA\\old.jpg", "old.jpg", "rA"),
+            ("fb", "C:\\folderB\\new.jpg", "new.jpg", "rB"),
+        ] {
+            conn.execute(
+                "INSERT INTO indexed_files
+                   (id, root_id, path, filename, extension, kind, size, mtime_ms, status, last_seen_scan_id, created_at, vector)
+                 VALUES (?,?,?,?,?,?,?,?,'indexed',0,?,?)",
+                params![
+                    id,
+                    owner,
+                    p,
+                    name,
+                    ".jpg",
+                    "image",
+                    10i64,
+                    if id == "fa" { 1i64 } else { 999i64 },
+                    now,
+                    pack_vector(&[if id == "fa" { 1.0f32 } else { 0.8 }, 0.0, 0.0]),
+                ],
+            )
+            .unwrap();
+        }
+
+        let out = do_search_ext(
+            &conn,
+            "photo",
+            10,
+            None,
+            None,
+            Some(&[1.0, 0.0, 0.0]),
+            "semantic",
+        )
+        .unwrap();
+        let ids: Vec<String> = out.results.iter().map(|r| r.id.clone()).collect();
+        assert!(ids.contains(&"fa".to_string()), "older folder missing: {:?}", ids);
+        assert!(ids.contains(&"fb".to_string()), "newer folder missing: {:?}", ids);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 struct ArgMap {
@@ -1957,7 +2807,7 @@ fn main() {
         "add-root" => {
             let path = get("path").unwrap_or_else(|| print_err("missing --path"));
             let schedule = get("schedule").unwrap_or_else(|| "daily".to_string());
-            let interval = get("interval-hours").and_then(|s| s.parse::<i64>().ok());
+            let interval = get("interval-hours").and_then(|s| s.parse::<f64>().ok());
             cmd_add_root(&db_path, &path, &schedule, interval)
                 .map(|v| serde_json::to_value(v).unwrap())
         }
@@ -1970,9 +2820,19 @@ fn main() {
             let id = get("root-id").unwrap_or_else(|| print_err("missing --root-id"));
             let enabled = get("enabled").map(|s| s == "1" || s.eq_ignore_ascii_case("true"));
             let schedule = get("schedule");
-            let interval = get("interval-hours").and_then(|s| s.parse::<i64>().ok());
-            cmd_update_root(&db_path, &id, enabled, schedule.as_deref(), interval)
-                .map(|v| serde_json::to_value(v).unwrap())
+            let interval = get("interval-hours").and_then(|s| s.parse::<f64>().ok());
+            let exclude = get("exclude-globs");
+            let semantic = get("semantic").map(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+            cmd_update_root(
+                &db_path,
+                &id,
+                enabled,
+                schedule.as_deref(),
+                interval,
+                exclude.as_deref(),
+                semantic,
+            )
+            .map(|v| serde_json::to_value(v).unwrap())
         }
         "scan" => {
             let id = get("root-id").unwrap_or_else(|| print_err("missing --root-id"));
@@ -1984,14 +2844,66 @@ fn main() {
             cmd_scan(&db_path, &id, root_path, workers).map(|v| serde_json::to_value(v).unwrap())
         }
         "search" => {
-            let query = get("query").unwrap_or_else(|| print_err("missing --query"));
+            let query = get("query").unwrap_or_default();
             let limit = get("limit")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(50)
                 .clamp(1, 500);
             let kind = get("kind");
             let root_id = get("root-id");
-            cmd_search(&db_path, &query, limit, kind.as_deref(), root_id.as_deref())
+            let vector = parse_vector_flag(get("vector"), get("vector-file"));
+            let has_vector = vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+            let mode = get("mode")
+                .unwrap_or_else(|| if has_vector { "hybrid".into() } else { "quick".into() });
+            cmd_search_ext(
+                &db_path,
+                &query,
+                limit,
+                kind.as_deref(),
+                root_id.as_deref(),
+                vector.as_deref(),
+                &mode,
+            )
+            .map(|v| serde_json::to_value(v).unwrap())
+        }
+        "get-pending" => {
+            let root_id = get("root-id");
+            let limit = get("limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(500)
+                .clamp(1, 5000);
+            cmd_get_pending(&db_path, root_id.as_deref(), limit)
+                .map(|v| serde_json::to_value(v).unwrap())
+        }
+        "update-embedding" => {
+            let file_id = get("file-id").unwrap_or_else(|| print_err("missing --file-id"));
+            let vector = parse_vector_flag(get("vector"), get("vector-file"))
+                .unwrap_or_else(|| print_err("missing --vector or --vector-file"));
+            let summary = get("summary");
+            let keywords = get("keywords");
+            let model = get("embedding-model").unwrap_or_else(|| "gemini-embedding-2-preview".into());
+            cmd_update_embedding(
+                &db_path,
+                &file_id,
+                &vector,
+                summary.as_deref(),
+                keywords.as_deref(),
+                &model,
+            )
+            .map(|v| serde_json::to_value(v).unwrap())
+        }
+        "mark-error" => {
+            let file_id = get("file-id").unwrap_or_else(|| print_err("missing --file-id"));
+            let message = get("error-message").unwrap_or_default();
+            cmd_mark_error(&db_path, &file_id, &message)
+                .map(|v| serde_json::to_value(v).unwrap())
+        }
+        "clear-embeddings" => {
+            let root_id = get("root-id");
+            let kinds: Vec<String> = get("kinds")
+                .map(|s| s.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect())
+                .unwrap_or_default();
+            cmd_clear_embeddings(&db_path, root_id.as_deref(), &kinds)
                 .map(|v| serde_json::to_value(v).unwrap())
         }
         "list-folder" => {

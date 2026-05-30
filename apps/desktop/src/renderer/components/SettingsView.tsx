@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { DEFAULT_CHAT_MODELS, type ChatModelsConfig, type ModelMeta, type ThemeMode, type TonePreset } from "../hooks/usePreferences";
-import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard, Brain, Scale, Cpu, ChevronDown, Check, Search } from "lucide-react";
+import { RefreshCw, Download, ArrowUpCircle, CheckCircle, AlertCircle, Loader2, FlaskConical, Beaker, RotateCcw, X, Cloud, CloudOff, Shield, Lock, Eye, EyeOff, Key, Archive, Settings, Palette, Zap, CreditCard, Brain, Scale, Cpu, ChevronDown, Check, Search, History, Folder, SlidersHorizontal, MessageSquare } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { invalidateRendererSyncPrefsCache } from "../utils/syncPrefs";
 import { clsx } from "clsx";
@@ -10,6 +10,7 @@ import { useModelRegistry } from "../hooks/useModelRegistry";
 import { ApiKeysSection } from "./settings/ApiKeysSection";
 import { GlobalHotkeySection } from "./settings/GlobalHotkeySection";
 import { CheckpointsSection } from "./settings/CheckpointsSection";
+import { FileIndexSettings } from "./FileIndexSettings";
 import { ModelProviderLogo } from "./ModelProviderLogo";
 
 type UpdateChannel = "stable" | "beta" | "staging";
@@ -69,10 +70,31 @@ interface SettingsViewProps {
   setChatModels: (v: ChatModelsConfig) => void;
 }
 
-const SectionHeader = ({ title, description }: { title: string, description: string }) => (
-  <div className="mb-6 border-b border-theme-sidebar pb-4">
-    <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">{title}</h3>
-    <p className="text-[13px] text-theme-muted font-medium">{description}</p>
+const SectionHeader = ({
+  icon, eyebrow, title, description, action,
+}: {
+  icon?: React.ReactNode;
+  eyebrow?: string;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) => (
+  <div className="mb-6 flex items-start justify-between gap-4 border-b border-theme-sidebar pb-4">
+    <div className="flex min-w-0 items-start gap-3">
+      {icon && (
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-primary/10 text-primary">
+          {icon}
+        </span>
+      )}
+      <div className="min-w-0">
+        {eyebrow && (
+          <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-theme-muted/70">{eyebrow}</p>
+        )}
+        <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight">{title}</h3>
+        <p className="mt-1 text-[13px] text-theme-muted font-medium">{description}</p>
+      </div>
+    </div>
+    {action && <div className="shrink-0">{action}</div>}
   </div>
 );
 
@@ -598,19 +620,21 @@ function AutoModelRoutingSection({
 
   return (
     <div className="dashboard-card p-6">
-      <div className="flex items-start justify-between gap-4 border-b border-theme-sidebar pb-4 mb-6">
-        <div className="min-w-0">
-          <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight mb-1">Auto Model Routing</h3>
-          <p className="text-[13px] text-theme-muted font-medium">Pick which model Auto picks for each tier of task.</p>
-        </div>
-        <button
-          onClick={() => onChatModelsChange(normalizeChatModelsConfig(DEFAULT_CHAT_MODELS))}
-          className="shrink-0 px-3 py-2 rounded-lg border border-theme bg-theme-hover/50 text-[11px] font-semibold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all flex items-center gap-1.5"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          Reset
-        </button>
-      </div>
+      <SectionHeader
+        icon={<Scale className="w-4 h-4" />}
+        eyebrow="Assistant"
+        title="Auto Model Routing"
+        description="Pick which model Auto picks for each tier of task."
+        action={
+          <button
+            onClick={() => onChatModelsChange(normalizeChatModelsConfig(DEFAULT_CHAT_MODELS))}
+            className="flex items-center gap-1.5 rounded-full border border-theme bg-theme-hover/50 px-3 py-2 text-[11px] font-semibold text-theme-muted transition-all hover:bg-theme-hover hover:text-theme-fg"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reset
+          </button>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {AUTO_MODEL_TIERS.map((tier) => {
@@ -762,11 +786,10 @@ function SecurityPrivacySection() {
   const inputCls = "w-full bg-theme-hover border border-theme rounded-xl px-3 py-2.5 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30 transition-all";
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto space-y-6 px-4 py-4 md:px-6 md:py-4">
+    <div className="max-w-4xl space-y-6">
         {/* Password Management */}
         <div className="dashboard-card p-6">
-          <SectionHeader title="Security & Privacy" description="Protect your vault credentials and conversation history with a password." />
+          <SectionHeader icon={<Shield className="w-4 h-4" />} eyebrow="Privacy" title="Security & Privacy" description="Protect your vault credentials and conversation history with a password." />
 
           <div className="mb-6">
             <div className="flex items-center justify-between p-4 rounded-xl bg-theme-hover border border-theme">
@@ -908,7 +931,6 @@ function SecurityPrivacySection() {
 
         {/* Cloud Sync */}
         <CloudSyncSettings />
-      </div>
     </div>
   );
 }
@@ -1056,12 +1078,11 @@ const UpdateManager: React.FC = () => {
   const canAccessStaging = betaAccess.hasStagingAccess;
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto space-y-6 px-4 py-4 md:px-6 md:py-4">
+    <div className="max-w-4xl space-y-6">
         <div className="dashboard-card p-6 relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-32 bg-gradient-to-bl from-blue-500/5 to-transparent rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity duration-700"></div>
           <div className="relative z-10">
-            <SectionHeader title="Updates" description="Manage application updates and release channels." />
+            <SectionHeader icon={<ArrowUpCircle className="w-4 h-4" />} eyebrow="Maintenance" title="Updates" description="Manage application updates and release channels." />
             <div className="flex items-center justify-between p-5 bg-theme-hover/40 rounded-xl mb-5 border border-theme">
               <div>
                 <div className="text-[11px] font-semibold text-theme-muted tracking-tight mb-1">Current version</div>
@@ -1158,7 +1179,6 @@ const UpdateManager: React.FC = () => {
         </div>
 
         <RestartModal open={showRestartModal} version={state.latestVersion || ""} onConfirm={handleInstall} onCancel={() => setShowRestartModal(false)} />
-      </div>
     </div>
   );
 };
@@ -1240,7 +1260,7 @@ const CloudSyncSettings: React.FC = () => {
 
   return (
     <div className="dashboard-card p-6">
-      <SectionHeader title="Cloud Sync" description="Control what data is synced to StuardAI cloud." />
+      <SectionHeader icon={<Cloud className="w-4 h-4" />} eyebrow="Privacy" title="Cloud Sync" description="Control what data is synced to StuardAI cloud." />
 
       {loading ? (
         <div className="flex items-center gap-2 text-theme-muted text-sm">
@@ -1316,62 +1336,15 @@ function GeneralTab({
   terminalEnabled, setTerminalEnabled,
   screenCaptureInvisible, setScreenCaptureInvisible,
   handleSaveTheme,
-  tone, setTone,
-  customTone, setCustomTone,
-  personaDraft, setPersonaDraft,
-  persona, handleSaveTonePersona,
   setOnboardingComplete,
-  chatModels, setChatModels,
 }: GeneralTabProps) {
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto space-y-6 px-4 py-4 md:px-6 md:py-4">
+    <div className="max-w-4xl space-y-6">
         <GlobalHotkeySection />
-
-        <AutoModelRoutingSection chatModels={chatModels} onChatModelsChange={setChatModels} />
-
-        {/* AI Personality */}
-        <div className="dashboard-card p-6">
-          <SectionHeader title="AI Personality" description="Customize how the assistant communicates with you." />
-          <div className="mb-6">
-            <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Tone of voice</label>
-            <SegmentedControl
-              value={tone}
-              options={TONE_OPTIONS}
-              onChange={(v) => setTone(v as TonePreset)}
-            />
-            {tone === "custom" && (
-              <input
-                value={customTone}
-                onChange={(e) => setCustomTone(e.target.value)}
-                placeholder="e.g. Witty, sarcastic, uses lots of emojis"
-                className="mt-3 w-full max-w-md px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted"
-              />
-            )}
-          </div>
-          <div className="mb-6">
-            <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-1">System persona</label>
-            <p className="text-[11px] text-theme-muted mb-2 font-medium">Instructions included in every system prompt.</p>
-            <textarea
-              value={personaDraft}
-              onChange={(e) => setPersonaDraft(e.target.value)}
-              placeholder="You are an expert TypeScript engineer..."
-              className="w-full min-h-[140px] px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] leading-relaxed font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y shadow-sm placeholder:text-theme-muted"
-            />
-          </div>
-          <div className="flex justify-end pt-4 border-t border-theme">
-            <button
-              onClick={handleSaveTonePersona}
-              className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm"
-            >
-              Save Personality
-            </button>
-          </div>
-        </div>
 
         {/* Appearance */}
         <div className="dashboard-card p-6">
-          <SectionHeader title="Appearance" description="Customize the look of your desktop overlay." />
+          <SectionHeader icon={<Palette className="w-4 h-4" />} eyebrow="Appearance" title="Theme & Overlay" description="Customize the look of your desktop overlay." />
           <div className="space-y-5">
             <div>
               <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Color theme</label>
@@ -1432,7 +1405,7 @@ function GeneralTab({
 
         {/* Advanced Features */}
         <div className="dashboard-card p-6">
-          <SectionHeader title="Advanced Features" description="Enable or disable advanced functionality." />
+          <SectionHeader icon={<SlidersHorizontal className="w-4 h-4" />} eyebrow="Power user" title="Advanced Features" description="Enable or disable advanced functionality." />
           <div className="space-y-2.5">
             <ToggleRow
               accent
@@ -1471,7 +1444,80 @@ function GeneralTab({
             <button onClick={() => { setOnboardingComplete(false); (window as any).desktopAPI.openOnboarding(); }} className="px-4 py-2 rounded-lg border border-red-500/30 text-red-500 text-[12px] font-semibold tracking-tight hover:bg-red-500/10 hover:border-red-500/50 transition-all active:scale-95">Reset</button>
           </div>
         </div>
-      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Assistant Tab Content — how the AI thinks & talks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface AssistantTabProps {
+  tone: TonePreset;
+  setTone: (t: TonePreset) => void;
+  customTone: string;
+  setCustomTone: (v: string) => void;
+  personaDraft: string;
+  setPersonaDraft: (v: string) => void;
+  handleSaveTonePersona: () => void;
+  chatModels: ChatModelsConfig;
+  setChatModels: (v: ChatModelsConfig) => void;
+}
+
+function AssistantTab({
+  tone, setTone,
+  customTone, setCustomTone,
+  personaDraft, setPersonaDraft,
+  handleSaveTonePersona,
+  chatModels, setChatModels,
+}: AssistantTabProps) {
+  return (
+    <div className="max-w-4xl space-y-6">
+        {/* AI Personality */}
+        <div className="dashboard-card p-6">
+          <SectionHeader
+            icon={<MessageSquare className="w-4 h-4" />}
+            eyebrow="Assistant"
+            title="AI Personality"
+            description="Customize how the assistant communicates with you."
+          />
+          <div className="mb-6">
+            <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Tone of voice</label>
+            <SegmentedControl
+              value={tone}
+              options={TONE_OPTIONS}
+              onChange={(v) => setTone(v as TonePreset)}
+            />
+            {tone === "custom" && (
+              <input
+                value={customTone}
+                onChange={(e) => setCustomTone(e.target.value)}
+                placeholder="e.g. Witty, sarcastic, uses lots of emojis"
+                className="mt-3 w-full max-w-md px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted"
+              />
+            )}
+          </div>
+          <div className="mb-6">
+            <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-1">System persona</label>
+            <p className="text-[11px] text-theme-muted mb-2 font-medium">Instructions included in every system prompt.</p>
+            <textarea
+              value={personaDraft}
+              onChange={(e) => setPersonaDraft(e.target.value)}
+              placeholder="You are an expert TypeScript engineer..."
+              className="w-full min-h-[140px] px-3 py-2 rounded-xl border border-theme bg-theme-hover text-theme-fg text-[13px] leading-relaxed font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all resize-y shadow-sm placeholder:text-theme-muted"
+            />
+          </div>
+          <div className="flex justify-end pt-4 border-t border-theme">
+            <button
+              onClick={handleSaveTonePersona}
+              className="px-5 py-2 rounded-lg bg-primary text-primary-fg text-[12px] font-semibold tracking-tight hover:opacity-90 transition-all shadow-sm"
+            >
+              Save Personality
+            </button>
+          </div>
+        </div>
+
+        <AutoModelRoutingSection chatModels={chatModels} onChatModelsChange={setChatModels} />
     </div>
   );
 }
@@ -1482,10 +1528,8 @@ function GeneralTab({
 
 function BillingTab() {
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto px-4 py-4 md:px-6 md:py-4">
-        <BillingSettings />
-      </div>
+    <div className="max-w-4xl">
+      <BillingSettings />
     </div>
   );
 }
@@ -1494,23 +1538,62 @@ function BillingTab() {
 // MAIN COMPONENT (MemoriesView-style layout)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type SettingsTab = 'general' | 'providers' | 'checkpoints' | 'billing' | 'updates';
+type SettingsTab = 'general' | 'assistant' | 'providers' | 'files' | 'checkpoints' | 'billing' | 'updates';
 
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
-  const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'general', label: 'General' },
-    { id: 'providers', label: 'Providers' },
-    { id: 'checkpoints', label: 'Checkpoints' },
-    { id: 'billing', label: 'Billing' },
-    { id: 'updates', label: 'Updates' },
+  type NavItem = { id: SettingsTab; label: string; hint: string; icon: React.ComponentType<{ className?: string }> };
+  const navGroups: { heading: string; items: NavItem[] }[] = [
+    {
+      heading: 'Workspace',
+      items: [
+        { id: 'general', label: 'General', hint: 'Appearance, hotkey & advanced', icon: Settings },
+      ],
+    },
+    {
+      heading: 'Assistant',
+      items: [
+        { id: 'assistant', label: 'Personality & models', hint: 'Tone, persona & auto routing', icon: Brain },
+        { id: 'providers', label: 'Providers', hint: 'Your own API keys', icon: Key },
+      ],
+    },
+    {
+      heading: 'Data',
+      items: [
+        { id: 'files', label: 'Files', hint: 'Folder search & indexing', icon: Folder },
+        { id: 'checkpoints', label: 'Checkpoints', hint: 'Undo file changes', icon: History },
+      ],
+    },
+    {
+      heading: 'Account',
+      items: [
+        { id: 'billing', label: 'Billing', hint: 'Plan & usage', icon: CreditCard },
+        { id: 'updates', label: 'Updates', hint: 'Version & channel', icon: ArrowUpCircle },
+      ],
+    },
   ];
 
   const renderActiveTab = () => {
     switch (activeTab) {
+      case 'assistant':
+        return (
+          <AssistantTab
+            tone={props.tone}
+            setTone={props.setTone}
+            customTone={props.customTone}
+            setCustomTone={props.setCustomTone}
+            personaDraft={props.personaDraft}
+            setPersonaDraft={props.setPersonaDraft}
+            handleSaveTonePersona={props.handleSaveTonePersona}
+            chatModels={props.chatModels}
+            setChatModels={props.setChatModels}
+          />
+        );
       case 'providers':
         return <ApiKeysSection />;
+      case 'files':
+        return <FileIndexSettings />;
       case 'checkpoints':
         return <CheckpointsSection />;
       case 'billing':
@@ -1524,51 +1607,65 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   };
 
   return (
-    <div className="relative h-full px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7" data-onboarding="settings-view">
-      <div className="mx-auto flex h-full w-full max-w-7xl flex-col overflow-hidden rounded-[32px] bg-theme-bg/70 shadow-sm backdrop-blur-xl">
-        {/* Header */}
-        <div className="flex-none px-6 py-6 md:px-8 md:py-8">
-          <div className="flex flex-col gap-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-2">
-                <h1 className="text-2xl font-semibold tracking-tight text-theme-fg md:text-[1.65rem]">Settings</h1>
-                <div className="flex items-center gap-2 text-[13px] text-theme-muted">
-                  <Settings className="h-3.5 w-3.5 text-primary" />
-                  <span>Manage your preferences and application settings.</span>
+    <div className="pb-6" data-onboarding="settings-view">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-theme-muted/70">Preferences</p>
+          <h1 className="mt-1.5 text-[30px] font-semibold font-stuard tracking-tight text-theme-fg leading-none">Settings</h1>
+          <p className="mt-2 flex items-center gap-2 text-[13px] font-medium text-theme-muted">
+            <Settings className="h-3.5 w-3.5 shrink-0 text-primary/80" />
+            <span>Tune how Stuard looks, thinks, and connects — grouped so you can find things fast.</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_248px] xl:items-start">
+        <div className="min-w-0">
+          <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-1 duration-300">
+            {renderActiveTab()}
+          </div>
+        </div>
+
+        <aside className="space-y-3 xl:sticky xl:top-5">
+          <nav className="dashboard-card space-y-2 p-2">
+            {navGroups.map((group) => (
+              <div key={group.heading} className="last:mb-0">
+                <p className="px-2.5 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-theme-muted/55">
+                  {group.heading}
+                </p>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const ItemIcon = item.icon;
+                    const active = activeTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id)}
+                        title={item.hint}
+                        className={clsx(
+                          'flex w-full items-center gap-2.5 rounded-[16px] px-2.5 py-2 text-left transition-all',
+                          active
+                            ? 'bg-theme-hover/70 text-theme-fg shadow-sm'
+                            : 'text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg'
+                        )}
+                      >
+                        <span
+                          className={clsx(
+                            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors',
+                            active ? 'bg-primary/15 text-primary' : 'bg-theme-hover/45 text-theme-muted'
+                          )}
+                        >
+                          <ItemIcon className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="truncate text-[12.5px] font-medium tracking-tight">{item.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-
-            {/* Tab Navigation */}
-            <div className="flex justify-center">
-              <div className="inline-flex flex-wrap items-center gap-1 rounded-full border border-theme bg-theme-hover/70 p-1 shadow-sm">
-                {tabs.map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={clsx(
-                      'memory-mode-tab rounded-full px-5 py-2.5 text-sm font-medium transition-all',
-                      activeTab === tab.id
-                        ? 'memory-mode-tab-active bg-theme-bg text-theme-fg shadow-sm'
-                        : 'text-theme-muted hover:bg-theme-card hover:text-theme-fg'
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tab Content */}
-        <div className="min-h-0 flex-1 px-4 pb-4 md:px-6 md:pb-6">
-          <div className="min-h-[32rem] overflow-hidden rounded-[28px] bg-transparent">
-            <div key={activeTab} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-              {renderActiveTab()}
-            </div>
-          </div>
-        </div>
+            ))}
+          </nav>
+        </aside>
       </div>
     </div>
   );

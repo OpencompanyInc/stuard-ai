@@ -21,7 +21,9 @@
     "sync:tools:validate": "tsx scripts/sync-tools-to-db.ts --validate",
     "sync:workflow-docs": "tsx src/sync-workflow-docs-embeddings.ts",
     "sync:workflow-docs:force": "tsx src/sync-workflow-docs-embeddings.ts --force",
-    "test:telnyx:sms": "tsx scripts/telnyx-send-test.ts --send"
+    "test:telnyx:sms": "tsx scripts/telnyx-send-test.ts --send",
+    "backfill:oauth-encryption": "tsx scripts/backfill-external-account-encryption.ts",
+    "backfill:oauth-encryption:check": "tsx scripts/backfill-external-account-encryption.ts --check"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.77",

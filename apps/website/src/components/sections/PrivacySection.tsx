@@ -1,4 +1,5 @@
 import SectionReveal from '@/components/layout/SectionReveal';
+import PrivacyBoundaryDiagram from '@/components/sections/PrivacyBoundaryDiagram';
 
 const PrivacySection = () => {
   return (
@@ -6,8 +7,8 @@ const PrivacySection = () => {
       id="privacy"
       className="relative bg-[#0A0A0B] px-4 py-16 text-white sm:py-20 lg:py-24"
     >
-      <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-8 text-center">
-        <SectionReveal className="flex flex-col items-center gap-5 sm:gap-7">
+      <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-8 sm:gap-10">
+        <SectionReveal className="flex flex-col items-center gap-5 sm:gap-7 text-center">
           <p className="text-[12px] sm:text-[13px] font-semibold tracking-wider text-[#FF383C]">
             PRIVACY
           </p>
@@ -20,7 +21,14 @@ const PrivacySection = () => {
             you across devices) and your OAuth tokens (so it can talk to Gmail or Drive). Both are
             encrypted per-user with keys we can&apos;t read.
           </p>
-          <p className="text-[15px] sm:text-[16px] font-medium text-white">
+        </SectionReveal>
+
+        <SectionReveal delay={0.1}>
+          <PrivacyBoundaryDiagram />
+        </SectionReveal>
+
+        <SectionReveal delay={0.15}>
+          <p className="text-center text-[15px] sm:text-[16px] font-medium text-white">
             Local where it matters. Cloud where it has to be. Encrypted either way.
           </p>
         </SectionReveal>

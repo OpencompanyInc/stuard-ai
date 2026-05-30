@@ -42,6 +42,12 @@ export interface IndexedRoot {
   watch_state: WatchState;
   volume_serial: string | null;
   last_reconcile_at: string | null;
+  exclude_globs: string | null;
+  /** User opted this folder into semantic (embedding) search. */
+  semantic?: boolean;
+  /** Per-root semantic-index counts (from do_list_roots). */
+  indexed_files?: number;
+  pending_files?: number;
   created_at: string;
 }
 
@@ -92,6 +98,18 @@ export interface FileSearchResult {
   score: number;
   match_type: string;
   target_path?: string;
+}
+
+export type SearchMode = "quick" | "semantic" | "hybrid";
+
+/** A crawled-but-not-yet-embedded file, as returned by the `get-pending` command. */
+export interface PendingFile {
+  id: string;
+  path: string;
+  filename: string;
+  extension: string;
+  kind: string;
+  size: number;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -511,7 +529,7 @@ export async function removeRoot(rootId: string): Promise<boolean> {
 
 export async function updateRoot(
   rootId: string,
-  opts: { enabled?: boolean; schedule?: RootSchedule; intervalHours?: number },
+  opts: { enabled?: boolean; schedule?: RootSchedule; intervalHours?: number; excludeGlobs?: string; semantic?: boolean },
 ): Promise<boolean> {
   await ensureInitialized();
   const res = await runIndexer<{ ok: boolean }>("update-root", {
@@ -519,8 +537,85 @@ export async function updateRoot(
     enabled: opts.enabled === undefined ? undefined : (opts.enabled ? "1" : "0"),
     schedule: opts.schedule,
     "interval-hours": opts.intervalHours,
+    "exclude-globs": opts.excludeGlobs,
+    semantic: opts.semantic === undefined ? undefined : (opts.semantic ? "1" : "0"),
   });
   return !!res?.ok;
+}
+
+// ─────────────────────────────────────────────────────────
+// Semantic embeddings (pending queue + vector write-back)
+// ─────────────────────────────────────────────────────────
+
+/** Files crawled but not yet embedded (status pending/stale). */
+export async function getPending(rootId?: string, limit = 500): Promise<PendingFile[]> {
+  await ensureInitialized();
+  try {
+    const res = await daemon.call<{ ok: boolean; files: PendingFile[] }>(
+      "get-pending",
+      { root_id: rootId, limit },
+      15_000,
+    );
+    return res?.files || [];
+  } catch (err) {
+    logger.warn("[rust-file-indexer] get-pending via daemon failed, falling back to spawn:", err);
+    const res = await runIndexer<{ ok: boolean; files: PendingFile[] }>("get-pending", {
+      "root-id": rootId,
+      limit,
+    }).catch(() => null);
+    return res?.files || [];
+  }
+}
+
+/** Write an embedding (+ summary/keywords) back to a file and mark it indexed. */
+export async function updateEmbedding(input: {
+  fileId: string;
+  vector: number[];
+  summary?: string;
+  keywords?: string;
+  embeddingModel?: string;
+}): Promise<boolean> {
+  await ensureInitialized();
+  const res = await daemon.call<{ ok: boolean }>(
+    "update-embedding",
+    {
+      file_id: input.fileId,
+      vector: input.vector,
+      summary: input.summary,
+      keywords: input.keywords,
+      embedding_model: input.embeddingModel,
+    },
+    20_000,
+  );
+  return !!res?.ok;
+}
+
+/** Mark a file as errored so it leaves the pending queue. */
+export async function markError(fileId: string, message: string): Promise<boolean> {
+  await ensureInitialized();
+  const res = await daemon.call<{ ok: boolean }>(
+    "mark-error",
+    { file_id: fileId, error_message: message },
+    10_000,
+  );
+  return !!res?.ok;
+}
+
+/**
+ * Wipe semantic state (vectors/summary/keywords) and flip embedded rows back to
+ * pending so they can be re-embedded. Optionally scoped to one root. Uses a
+ * one-shot spawn since it can touch many rows.
+ */
+export async function clearEmbeddings(
+  rootId?: string,
+): Promise<{ ok: boolean; cleared: number; had_vectors: number }> {
+  await ensureInitialized();
+  const res = await runIndexer<{ ok: boolean; cleared: number; had_vectors: number }>(
+    "clear-embeddings",
+    { "root-id": rootId },
+    { timeoutMs: 10 * 60 * 1000 },
+  );
+  return res || { ok: false, cleared: 0, had_vectors: 0 };
 }
 
 export async function scanRoot(rootId: string, workers?: number): Promise<ScanProgress | null> {
@@ -545,22 +640,28 @@ export async function getStats(): Promise<FileIndexStats | null> {
 
 export async function searchFiles(
   query: string,
-  options: { kind?: string; limit?: number; rootId?: string } = {},
+  options: { kind?: string; limit?: number; rootId?: string; vector?: number[]; mode?: SearchMode } = {},
 ): Promise<FileSearchResult[]> {
   await ensureInitialized();
+  const hasVector = Array.isArray(options.vector) && options.vector.length > 0;
   const args: Record<string, any> = {
     query,
     limit: options.limit ?? 50,
   };
   if (options.kind) args.kind = options.kind;
   if (options.rootId) args.root_id = options.rootId;
+  if (hasVector) args.vector = options.vector;
+  if (options.mode) args.mode = options.mode;
 
   // The daemon now holds a long-lived SQLite connection and caps FTS token
   // count, so queries that previously timed out at 5s now complete in under
   // 100ms. 8s leaves headroom for the very first cold-cache query on a
   // multi-million-row index without making typo'd searches feel laggy.
+  // A vector (semantic/hybrid) query brute-forces cosine over the embedded
+  // subset, so it gets a wider timeout.
+  const timeoutMs = hasVector ? 15_000 : 8000;
   try {
-    const res = await daemon.call<{ ok: boolean; results: FileSearchResult[] }>("search", args, 8000);
+    const res = await daemon.call<{ ok: boolean; results: FileSearchResult[] }>("search", args, timeoutMs);
     return res?.results || [];
   } catch (err) {
     // Only fall back to a one-shot spawn if the daemon is actually broken —

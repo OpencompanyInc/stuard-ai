@@ -17,7 +17,7 @@ export default function Home() {
     url: 'https://stuard.ai',
     logo: 'https://stuard.ai/stuard-mark.png',
     description:
-      'Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.',
+      'Stuard is the AI that lives on your PC — local-first chat, workflows, mini-apps, and agents that finish real work on your machine.',
     foundingDate: '2024',
     sameAs: [
       'https://twitter.com/stuardai',
@@ -51,7 +51,7 @@ export default function Home() {
       ratingCount: '150',
     },
     description:
-      'Stuard is a local-first AI workspace for your PC. Chat, build workflows, install mini-apps, and run proactive agents on your machine — cloud only when you ask.',
+      'Stuard lives on your PC, not in a tab. Local-first assistant for files, apps, workflows, mini-apps, and proactive agents — cloud only when you ask.',
     featureList: [
       'Desktop chat that controls your PC',
       'Visual workflow builder',

@@ -19,7 +19,11 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
 }) {
   if (!analytics) return <div className="flex items-center justify-center h-64 text-gray-400">Loading analytics...</div>;
 
-  const { signupTrend, usageTrend, modelBreakdown, totals } = analytics;
+  const { signupTrend, usageTrend, activeUsersTrend, modelBreakdown, categoryBreakdown, totals, engagement } = analytics;
+  const CATEGORY_LABELS: Record<string, string> = {
+    inference: 'Inference', voice: 'Voice', messaging: 'Messaging',
+    compute: 'Compute', storage: 'Storage', subagent: 'Subagents',
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -46,6 +50,64 @@ export default function AnalyticsTab({ analytics, days, onDaysChange }: {
         <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Tokens Used</div><div className="text-xl font-bold text-gray-900">{formatNumber(totals.totalTokens)}</div></div>
         <div className="card p-4"><div className="text-xs text-gray-500 mb-1">API Cost</div><div className="text-xl font-bold text-gray-900">{formatCurrency(totals.totalCost)}</div></div>
       </div>
+
+      {/* Engagement cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Active (24h)</div><div className="text-xl font-bold text-gray-900">{formatNumber(engagement?.dau || 0)}</div></div>
+        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Active (7d)</div><div className="text-xl font-bold text-gray-900">{formatNumber(engagement?.wau || 0)}</div></div>
+        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Active (30d)</div><div className="text-xl font-bold text-gray-900">{formatNumber(engagement?.mau || 0)}</div></div>
+        <div className="card p-4"><div className="text-xs text-gray-500 mb-1">Avg Cost / Request</div><div className="text-xl font-bold text-gray-900">{formatCurrency(totals.avgCostPerRequest)}</div></div>
+      </div>
+
+      {/* Active Users trend */}
+      <ChartCard title="Active Users per Day">
+        <ResponsiveContainer width="100%" height={220}>
+          <AreaChart data={activeUsersTrend || []} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+            <defs><linearGradient id="activeGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#06B6D4" stopOpacity={0.25} /><stop offset="100%" stopColor="#06B6D4" stopOpacity={0} /></linearGradient></defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94A3B8' }} tickFormatter={shortDate} interval="preserveStartEnd" />
+            <YAxis tick={{ fontSize: 10, fill: '#94A3B8' }} width={30} allowDecimals={false} />
+            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} />
+            <Area type="monotone" dataKey="users" name="Active Users" stroke="#06B6D4" strokeWidth={2} fill="url(#activeGrad)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      {/* Usage by category (credits) — mirrors billing categorization */}
+      <ChartCard title="Usage by Category (credits)">
+        {!categoryBreakdown || categoryBreakdown.length === 0 ? (
+          <div className="h-[200px] flex items-center justify-center text-sm text-gray-400">No usage data</div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ResponsiveContainer width="100%" height={Math.max(160, categoryBreakdown.length * 38)}>
+              <BarChart data={categoryBreakdown.map(c => ({ ...c, label: CATEGORY_LABELS[c.category] || c.category }))} layout="vertical" margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#94A3B8' }} tickFormatter={(v: number) => formatNumber(v)} />
+                <YAxis type="category" dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} width={90} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E2E8F0' }} formatter={(v: number) => formatNumber(v)} />
+                <Bar dataKey="credits" name="Credits" radius={[0, 4, 4, 0]}>
+                  {categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="overflow-x-auto self-center">
+              <table className="w-full text-xs">
+                <thead><tr className="text-gray-500 border-b border-gray-100"><th className="py-1.5 text-left">Category</th><th className="py-1.5 text-right">Credits</th><th className="py-1.5 text-right">Cost</th><th className="py-1.5 text-right">Events</th></tr></thead>
+                <tbody>
+                  {categoryBreakdown.map(c => (
+                    <tr key={c.category} className="border-b border-gray-50">
+                      <td className="py-1.5 text-gray-700">{CATEGORY_LABELS[c.category] || c.category}</td>
+                      <td className="py-1.5 text-right text-gray-600">{formatNumber(c.credits)}</td>
+                      <td className="py-1.5 text-right text-gray-600">{formatCurrency(c.cost)}</td>
+                      <td className="py-1.5 text-right text-gray-600">{c.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </ChartCard>
 
       {/* Signups + Conversations chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -12,6 +12,10 @@ import {
   scanRoot,
   searchFiles,
   listFolderContents,
+  getPendingFiles,
+  updateFileEmbedding,
+  markFileEmbeddingError,
+  type SearchMode,
 } from "../../services/file-indexing";
 import logger from "../../utils/logger";
 
@@ -21,6 +25,9 @@ export const RUST_FILE_TOOLS = new Set<string>([
   "file_index_list_roots",
   "file_index_scan",
   "file_index_stats",
+  "file_index_get_pending",
+  "file_index_update",
+  "file_index_mark_error",
   "file_search",
   "file_search_by_filename",
   "file_search_by_extension",
@@ -76,8 +83,48 @@ export async function execRustFileTool(toolName: string, args: any): Promise<any
         const kind = args?.kind ? String(args.kind) : undefined;
         const rootId = args?.root_id ? String(args.root_id) : undefined;
         const limit = Number(args?.limit) || 50;
-        const results = await searchFiles(query, { kind, rootId, limit });
-        return { ok: true, results, count: results.length };
+        // Semantic/hybrid: caller (launcher / cloud) supplies a precomputed
+        // query embedding. Only `file_search` carries a vector; the
+        // by_filename / by_kind aliases stay keyword-only.
+        const vector =
+          toolName === "file_search" && Array.isArray(args?.vector) && args.vector.length > 0
+            ? (args.vector as number[])
+            : undefined;
+        const mode: SearchMode | undefined =
+          toolName === "file_search" && typeof args?.mode === "string"
+            ? (args.mode as SearchMode)
+            : undefined;
+        const results = await searchFiles(query, { kind, rootId, limit, vector, mode });
+        return { ok: true, results, count: results.length, mode: mode || "quick" };
+      }
+
+      case "file_index_get_pending": {
+        const rootId = args?.root_id ? String(args.root_id) : undefined;
+        const limit = Number(args?.limit) || 500;
+        const files = await getPendingFiles(rootId, limit);
+        return { ok: true, files, count: files.length };
+      }
+
+      case "file_index_update": {
+        const fileId = String(args?.file_id || "").trim();
+        if (!fileId) return { ok: false, error: "missing file_id" };
+        const vector = Array.isArray(args?.vector) ? (args.vector as number[]) : [];
+        if (vector.length === 0) return { ok: false, error: "missing vector" };
+        const ok = await updateFileEmbedding({
+          fileId,
+          vector,
+          summary: args?.summary ? String(args.summary) : undefined,
+          keywords: args?.keywords ? String(args.keywords) : undefined,
+          embeddingModel: args?.embedding_model ? String(args.embedding_model) : undefined,
+        });
+        return { ok };
+      }
+
+      case "file_index_mark_error": {
+        const fileId = String(args?.file_id || "").trim();
+        if (!fileId) return { ok: false, error: "missing file_id" };
+        const ok = await markFileEmbeddingError(fileId, String(args?.error_message || "indexing error"));
+        return { ok };
       }
 
       case "file_search_by_extension": {

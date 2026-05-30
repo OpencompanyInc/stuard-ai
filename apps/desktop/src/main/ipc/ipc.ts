@@ -12,6 +12,8 @@ import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } fro
 import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
+import { estimateEmbedJob, startEmbedJob, getActiveEmbedJobs, resumeEmbedJobs } from "../services/file-embedding";
+import { setRootExcludes, updateRootConfig, clearEmbeddings, setRootSemantic, addSemanticFolder } from "../services/file-indexing";
 import { setupCodexIpc } from "../codex/codex-service";
 import logger from "../utils/logger";
 import { getFileIconCached, getFilePreviewCached } from "../services/icon-cache";
@@ -1584,9 +1586,15 @@ export function setupIpc() {
     }
   });
 
-  ipcMain.handle('fileIndex:addRoot', async (_e, path: string, schedule?: string) => {
+  ipcMain.handle('fileIndex:addRoot', async (_e, path: any, schedule?: string) => {
     try {
-      const root = await addRoot(path, schedule as any);
+      // Defensive: callers occasionally pass a { path } object; never persist
+      // "[object Object]" as a root path.
+      const resolvedPath = typeof path === 'string' ? path : path?.path;
+      if (!resolvedPath || typeof resolvedPath !== 'string') {
+        return { ok: false, error: 'Invalid folder path' };
+      }
+      const root = await addRoot(resolvedPath, schedule as any);
       if (!root) return { ok: false, error: 'Failed to add root' };
       return { ok: true, root };
     } catch (e: any) {
@@ -1805,6 +1813,97 @@ export function setupIpc() {
       return { ok: true, progress };
     } catch (e: any) {
       logger.error('[fileIndex:processSemanticIndexing] Error:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Semantic embedding (Gemini Batch) — estimate, start, list active, set excludes
+  ipcMain.handle('fileIndex:embedEstimate', async (_e, rootId: string | undefined, baseUrl: string, token: string) => {
+    try {
+      return await estimateEmbedJob(rootId, baseUrl, token);
+    } catch (e: any) {
+      logger.error('[fileIndex:embedEstimate] Error:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('fileIndex:embedStart', async (_e, rootId: string | undefined, creditCap: number | undefined, baseUrl: string, token: string) => {
+    try {
+      return await startEmbedJob(rootId, creditCap, baseUrl, token);
+    } catch (e: any) {
+      logger.error('[fileIndex:embedStart] Error:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('fileIndex:embedActive', () => {
+    try {
+      return { ok: true, jobs: getActiveEmbedJobs() };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Resume in-flight jobs from the cloud after a restart (re-attaches the poller).
+  ipcMain.handle('fileIndex:embedResume', async (_e, baseUrl: string, token: string) => {
+    try {
+      const jobs = await resumeEmbedJobs(baseUrl, token);
+      return { ok: true, jobs };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('fileIndex:setExcludes', async (_e, rootId: string, excludeGlobs: string) => {
+    try {
+      const ok = await setRootExcludes(rootId, excludeGlobs || '');
+      return { ok };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // In-place root config update (schedule/enabled) — must NOT remove+re-add, which
+  // would wipe the folder's indexed files and embeddings and force a full re-scan.
+  ipcMain.handle('fileIndex:updateRoot', async (_e, rootId: string, opts: { enabled?: boolean; schedule?: string; intervalHours?: number }) => {
+    try {
+      const ok = await updateRootConfig(rootId, opts as any);
+      return { ok };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Reset semantic embeddings (all folders, or one root) so they can be re-embedded.
+  ipcMain.handle('fileIndex:clearEmbeddings', async (_e, rootId?: string) => {
+    try {
+      return await clearEmbeddings(rootId);
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Add a folder to semantic (meaning) search — reuses/registers a root + flags it.
+  ipcMain.handle('fileIndex:addSemanticFolder', async (_e, path: any) => {
+    try {
+      const resolvedPath = typeof path === 'string' ? path : path?.path;
+      if (!resolvedPath || typeof resolvedPath !== 'string') {
+        return { ok: false, error: 'Invalid folder path' };
+      }
+      const root = await addSemanticFolder(resolvedPath);
+      if (!root) return { ok: false, error: 'Failed to add folder' };
+      return { ok: true, root };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Toggle a folder's semantic opt-in (e.g. remove from the meaning-search list).
+  ipcMain.handle('fileIndex:setRootSemantic', async (_e, rootId: string, on: boolean) => {
+    try {
+      const ok = await setRootSemantic(rootId, !!on);
+      return { ok };
+    } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     }
   });

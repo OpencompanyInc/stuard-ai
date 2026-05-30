@@ -1695,9 +1695,17 @@ export function useAgent(options?: string | UseAgentOptions) {
                       offsetMinutes: offset
                     } as any;
                   } else {
-                    // Delegate to main process
+                    // Delegate to main process. Tag the call with the owning
+                    // conversation's title so file checkpoints can be labelled by
+                    // chat (the Settings → Checkpoints center groups by source).
                     if ((window as any).desktopAPI?.execTool) {
-                      result = await (window as any).desktopAPI.execTool(tool, args);
+                      const ownerTab = tabsRef.current.find(t => t.id === getTargetTabId());
+                      const chatTitle = String(ownerTab?.title || '').trim();
+                      const isPlaceholder = !chatTitle || chatTitle.toLowerCase() === 'new chat' || chatTitle.toLowerCase() === 'chat';
+                      const taggedArgs = isPlaceholder
+                        ? args
+                        : { ...args, __chatTitle: chatTitle, __conversationId: ownerTab?.serverId || '' };
+                      result = await (window as any).desktopAPI.execTool(tool, taggedArgs);
                     }
                   }
 

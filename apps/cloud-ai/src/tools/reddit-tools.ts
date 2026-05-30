@@ -1,10 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { getExternalAccount, upsertExternalAccount } from '../supabase';
 import { getBridgeSecrets } from './bridge';
 import { getResolvedBridgeSecrets } from './device/shared';
 import { REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET } from '../utils/config';
-import { getVMOAuthAccount, storeVMOAuthAccount } from './vm-oauth';
+import { getClientOAuthAccount, storeClientOAuthAccount } from './vm-oauth';
 
 const REDDIT_API = 'https://oauth.reddit.com';
 
@@ -56,28 +55,16 @@ async function refreshRedditToken(userId: string, acc: any): Promise<string | nu
       const refresh_token = String(tBody.refresh_token || acc.refresh_token || '');
       const scopeStr = String(tBody.scope || '');
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(acc.scopes) ? acc.scopes : []);
+      // Persist the refreshed token back to wherever it lives (desktop or VM).
       try {
-        if (acc.meta?.source === 'vm') {
-          await storeVMOAuthAccount('reddit', {
-            ...acc,
-            access_token: newAccess,
-            refresh_token: refresh_token || null,
-            expires_at,
-            scopes,
-          });
-        } else {
-          await upsertExternalAccount({
-            userId,
-            provider: 'reddit',
-            access_token: newAccess,
-            scopes,
-            refresh_token: refresh_token || null,
-            expires_at,
-            meta: { token_type: tBody.token_type || 'bearer' },
-            profileLabel: acc.profile_label || 'default',
-            accountEmail: acc.account_email || null,
-          });
-        }
+        await storeClientOAuthAccount('reddit', {
+          access_token: newAccess,
+          refresh_token: refresh_token || null,
+          expires_at,
+          scopes,
+          profile_label: acc.profile_label || 'default',
+          account_email: acc.account_email || null,
+        });
       } catch {}
       return newAccess;
     }
@@ -91,7 +78,7 @@ async function refreshRedditToken(userId: string, acc: any): Promise<string | nu
 async function redditFetch(path: string, profileLabel?: string, init?: RequestInit) {
   const userId = requireUserId();
   const profile = resolveProfile(profileLabel);
-  let acc = await getVMOAuthAccount('reddit', profile) || await getExternalAccount(userId, 'reddit', profile);
+  let acc = await getClientOAuthAccount('reddit', profile);
   if (!acc?.access_token) throw new Error('reddit_not_connected');
 
   let accessToken = acc.access_token;

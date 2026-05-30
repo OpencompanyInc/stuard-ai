@@ -1,15 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getExternalAccountMock = vi.fn();
-const upsertExternalAccountMock = vi.fn();
 const logUsageEventMock = vi.fn();
 const checkAccessMock = vi.fn();
-const getVMOAuthAccountMock = vi.fn();
-const storeVMOAuthAccountMock = vi.fn();
+const getClientOAuthAccountMock = vi.fn();
+const storeClientOAuthAccountMock = vi.fn();
 
 vi.mock('../supabase', () => ({
-  getExternalAccount: (...args: any[]) => getExternalAccountMock(...args),
-  upsertExternalAccount: (...args: any[]) => upsertExternalAccountMock(...args),
   logUsageEvent: (...args: any[]) => logUsageEventMock(...args),
   checkAccess: (...args: any[]) => checkAccessMock(...args),
 }));
@@ -22,9 +18,11 @@ vi.mock('./device/shared', () => ({
   getResolvedBridgeSecrets: () => ({ userId: 'user-123' }),
 }));
 
+// Tokens are device-held: tools read via getClientOAuthAccount (VM or desktop)
+// and persist refreshes via storeClientOAuthAccount — never Supabase.
 vi.mock('./vm-oauth', () => ({
-  getVMOAuthAccount: (...args: any[]) => getVMOAuthAccountMock(...args),
-  storeVMOAuthAccount: (...args: any[]) => storeVMOAuthAccountMock(...args),
+  getClientOAuthAccount: (...args: any[]) => getClientOAuthAccountMock(...args),
+  storeClientOAuthAccount: (...args: any[]) => storeClientOAuthAccountMock(...args),
 }));
 
 import { x_list_dms, x_reply_to_comment } from './x-tools';
@@ -44,8 +42,7 @@ describe('x_list_dms', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getVMOAuthAccountMock.mockResolvedValue(null);
-    getExternalAccountMock.mockResolvedValue({
+    getClientOAuthAccountMock.mockResolvedValue({
       access_token: 'x-access-token',
       refresh_token: null,
       scopes: ['dm.read'],
@@ -148,8 +145,7 @@ describe('x_reply_to_comment', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getVMOAuthAccountMock.mockResolvedValue(null);
-    getExternalAccountMock.mockResolvedValue({
+    getClientOAuthAccountMock.mockResolvedValue({
       access_token: 'x-access-token',
       refresh_token: null,
       scopes: ['tweet.read', 'tweet.write', 'users.read'],
@@ -209,7 +205,7 @@ describe('x_reply_to_comment', () => {
   });
 
   it('fails before posting when the stored token is missing tweet.write', async () => {
-    getExternalAccountMock.mockResolvedValue({
+    getClientOAuthAccountMock.mockResolvedValue({
       access_token: 'x-access-token',
       refresh_token: null,
       scopes: ['tweet.read', 'like.write', 'users.read'],
