@@ -148,6 +148,10 @@ eggs/
 .eggs/
 lib64/
 parts/
+# The bare `parts/` above is the Python packaging artifact dir; it must NOT
+# swallow the desktop chat UI source folder of the same name (broke CI when a
+# new file there was silently ignored).
+!apps/desktop/src/renderer/components/chat/modes/window/parts/
 sdist/
 var/
 wheels/
